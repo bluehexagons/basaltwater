@@ -4,13 +4,15 @@ Status: Debian phase 1 implementation is available, with offline identity,
 credential and worker-denial checks. Clean Debian VM, reboot, GitHub-connected
 trigger qualification and upgrade/re-registration evidence remain open; do not
 claim production readiness yet. See [Debian runner operations](../services/github-runner.md).
+Deferred registration and organization scope are implemented; see the
+[improvement delivery plan](../services/github-runner-improvements.md).
 Windows parity remains deferred.
 
 ## Decisions
 
 - Use GitHub's official `actions/runner` application as a persistent service.
-- Start with one GitHub repository per runner setup. Defer organization-wide
-  registration and ephemeral runners.
+- Support one GitHub repository or one organization per runner setup. GitHub
+  runner groups control organization repository access; ephemeral runners remain deferred.
 - Do not require or install Docker as part of runner setup. The current CI
   wrapper invokes Docker to run Debian Trixie checks on Ubuntu-hosted workers.
   If that workflow runs unchanged on a self-hosted runner, it still needs
@@ -107,6 +109,7 @@ Keep the web panel Debian-only.
 
 ### Later
 
-Consider organization-wide runners and disposable job environments only after
-the persistent repository-scoped flow is working. Decide the isolation boundary
-and container runtime separately; Docker is not a default requirement.
+Organization scope and deferred registration extend the initial implementation
+through the [runner improvements](../services/github-runner-improvements.md).
+Disposable job environments remain deferred. Decide the isolation boundary and
+container runtime separately; Docker is not a default requirement.

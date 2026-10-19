@@ -1343,8 +1343,13 @@ def add_setup_arguments(
                        default=None if not for_remote else False,
                        help="Install webhook-based CI/CD system for GitHub Actions")
     
-    parser.add_argument("--ci-repository", metavar="OWNER/REPO",
+    runner_scope = parser.add_mutually_exclusive_group()
+    runner_scope.add_argument("--ci-repository", metavar="OWNER/REPO",
                        help="Private github.com repository for server_github_runner (Debian 13 x86-64)")
+    runner_scope.add_argument("--ci-organization", metavar="ORGANIZATION",
+                             help="GitHub organization for server_github_runner; private repositories only")
+    parser.add_argument("--ci-runner-group", metavar="GROUP",
+                        help="GitHub runner group for organization scope (default: organization's default group)")
     parser.add_argument("--ci-allowed-user", dest="ci_allowed_users", action="append", metavar="LOGIN",
                        help="Trusted GitHub identity allowed by the runner job gate; repeat for each user")
     parser.add_argument("--ci-label", dest="ci_labels", action="append", metavar="LABEL",
@@ -1353,7 +1358,7 @@ def add_setup_arguments(
         parser.add_argument("--ci-registration-payload", action="store_true", help=argparse.SUPPRESS)
     else:
         parser.add_argument("--ci-registration-token-file", metavar="PATH",
-                           help="Private file containing a one-hour repository runner registration token")
+                           help="Private file containing a one-hour runner registration token; omit to install pending registration")
 
     parser.add_argument("--build-server", dest="is_build_server",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",

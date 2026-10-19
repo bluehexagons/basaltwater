@@ -84,7 +84,12 @@ def render_runner_page(load: bool, style: str, host: str, *, navigation: Iterabl
         snapshot = collect_runner_status()
         content = "".join('<p role="status">' + html.escape(issue) + '</p>' for issue in snapshot.issues)
         facts = {
-            "Repository": snapshot.policy.get("repository", "Unavailable"),
+            "Registration": {"pending": "Pending registration", "registered": "Registered"}.get(
+                snapshot.policy.get("registration"), "Unavailable"),
+            "Scope": "Organization" if snapshot.policy.get("organization") else "Repository",
+            "Organization" if snapshot.policy.get("organization") else "Repository":
+                snapshot.policy.get("organization") or snapshot.policy.get("repository", "Unavailable"),
+            "Runner group": snapshot.policy.get("runner_group") or "Default",
             "Runner version": snapshot.policy.get("runner_version", "Unavailable"),
             "Labels": ", ".join(["self-hosted", "Linux", "X64", *snapshot.policy.get("labels", [])]) if snapshot.policy else "Unavailable",
             "Allowed users (read-only)": ", ".join(snapshot.policy.get("allowed_users", [])) or "Unavailable",

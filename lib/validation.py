@@ -51,24 +51,41 @@ def validate_github_runner_labels(value: object) -> None:
         raise ValueError("GitHub runner labels must be up to 20 simple labels of 1–64 characters")
 
 
+def validate_github_runner_group(value: object) -> str:
+    """Accept a bounded runner-group name, including GitHub's default group."""
+    if (not isinstance(value, str) or not 1 <= len(value) <= 100 or value != value.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+        raise ValueError("--ci-runner-group requires a trimmed group name of 1–100 characters")
+    return value
+
+
+def validate_runner_registration_token(value: object) -> bytes:
+    """Validate the one-time input without including it in an error."""
+    if not isinstance(value, bytes) or not re.fullmatch(rb"[A-Za-z0-9_-]{20,4096}", value):
+        raise ValueError("Invalid short-lived runner registration token")
+    return value
+
+
 def validate_github_runner_settings(config: Any) -> None:
     """Validate runner inputs before staging credentials or changing a target."""
     from lib.github_runner_config import ACCOUNT, PROFILE, VERSION, validate_policy
 
     repository = getattr(config, "ci_repository", "")
+    organization = getattr(config, "ci_organization", "")
+    runner_group = getattr(config, "ci_runner_group", "")
     users = getattr(config, "ci_allowed_users", None)
     labels = getattr(config, "ci_labels", None)
     token = getattr(config, "ci_registration_token_file", None)
     payload = getattr(config, "ci_registration_payload", False)
     if config.system_type != PROFILE:
-        if repository or users or labels or token or payload:
+        if repository or organization or runner_group or users or labels or token or payload:
             raise ValueError("--ci-* runner options require server_github_runner")
         return
     if config.username == ACCOUNT:
         raise ValueError("The setup/panel account must differ from the dedicated runner account")
     if config.machine_type in {"oci", "wsl", "unprivileged", "privileged"}:
         raise ValueError("GitHub runner phase 1 requires a native Debian VM or hardware")
-    validate_policy(dict(schema=1, repository=repository, allowed_users=users,
+    validate_policy(dict(schema=1, repository=repository, organization=organization, runner_group=runner_group, allowed_users=users,
                          labels=labels or [], runner_version=VERSION))
     if type(payload) is not bool:
         raise ValueError("ci_registration_payload must be boolean")

@@ -531,6 +531,8 @@ class SetupConfig:
     cloudflare_allow_direct: Optional[bool] = False
     enable_cicd: bool = False
     ci_repository: str = ""
+    ci_organization: str = ""
+    ci_runner_group: str = ""
     ci_allowed_users: Optional[StrList] = None
     ci_labels: Optional[StrList] = None
     ci_registration_token_file: MaybeStr = field(default=None, repr=False)
@@ -2193,6 +2195,10 @@ class SetupConfig:
 
     def _github_runner_args(self) -> StrList:
         args = [f"--ci-repository {shlex.quote(self.ci_repository)}"] if self.ci_repository else []
+        if self.ci_organization:
+            args.append(f"--ci-organization {shlex.quote(self.ci_organization)}")
+        if self.ci_runner_group:
+            args.append(f"--ci-runner-group {shlex.quote(self.ci_runner_group)}")
         args.extend(f"--ci-allowed-user {shlex.quote(user)}" for user in self.ci_allowed_users or [])
         args.extend(f"--ci-label {shlex.quote(label)}" for label in self.ci_labels or [])
         return args
@@ -2902,6 +2908,8 @@ class SetupConfig:
             cloudflare_allow_direct=_optional_bool_arg(args, 'cloudflare_allow_direct'),
             enable_cicd=getattr(args, 'enable_cicd', False),
             ci_repository=_optional_str_arg(args, 'ci_repository') or '',
+            ci_organization=_optional_str_arg(args, 'ci_organization') or '',
+            ci_runner_group=_optional_str_arg(args, 'ci_runner_group') or '',
             ci_allowed_users=(args.ci_allowed_users if isinstance(getattr(args, 'ci_allowed_users', None), list) else None),
             ci_labels=(args.ci_labels if isinstance(getattr(args, 'ci_labels', None), list) else None),
             ci_registration_token_file=_optional_str_arg(args, 'ci_registration_token_file'),

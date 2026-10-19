@@ -1,12 +1,13 @@
 # Debian GitHub Actions runner
 
 `server_github_runner` installs GitHub's official persistent runner for one
-private `github.com` repository on native Debian 13/Trixie x86-64 with systemd.
+private `github.com` repository or one organization on native Debian 13/Trixie
+x86-64 with systemd. Organization jobs must also come from private repositories.
 The implementation has offline checks; clean-VM, reboot and GitHub-connected
 qualification remain required before production use. Windows, WSL, containers,
-organization registration and ephemeral runners are outside phase 1.
-See the [planned runner improvements](github-runner-improvements.md) for
-deferred registration, organization scope, and panel token entry.
+ephemeral runners are outside this implementation.
+See the [runner improvements](github-runner-improvements.md) for delivery and
+qualification requirements.
 
 ## Install
 
@@ -15,16 +16,45 @@ account's access, including its reconnect credentials. Keep production secrets
 and unrelated workloads off this host. The local gate does not turn a
 persistent runner into a sandbox for hostile code.
 
-In the private repository's **Settings → Actions → Runners → New self-hosted
-runner**, obtain a repository registration token. It expires after one hour.
-Place only that token in a private local file (`chmod 600`), then run:
+Install before obtaining a token:
 
 ```bash
 basaltw setup server_github_runner ci.example.net operator \
   --machine vm --ci-repository owner/repository \
   --ci-allowed-user alice --ci-allowed-user bob \
-  --ci-label debian-ci --ci-registration-token-file /private/runner-token
+  --ci-label debian-ci
 ```
+
+This succeeds in **Pending registration** state with the service stopped and
+disabled. It is not ready for jobs. To register later, obtain a fresh token
+from the private repository's **Settings → Actions → Runners → New self-hosted
+runner**. Place only that token in a private local file (`chmod 600`) and repeat
+the same complete setup command with
+`--ci-registration-token-file /private/runner-token`. You may also supply the
+token on the first setup. GitHub registration tokens expire after one hour;
+they cannot be made long-lived. Reconnect uses the credentials generated during
+registration, so routine setup of a registered runner needs no token.
+
+For several private repositories in one organization, replace `--ci-repository`
+with `--ci-organization ORGANIZATION`; optionally add
+`--ci-runner-group 'Private CI'`. Obtain the token from the organization's
+**Settings → Actions → Runners → New runner → New self-hosted runner**, not a
+repository's settings. Use **Settings → Actions → Runner groups → GROUP →
+Repository access → Selected repositories** to choose which repositories can
+assign work. Available group controls depend on your GitHub plan. Without an
+explicit group the runner joins the organization's default group; review its
+repository access too. The local gate enforces organization, repository
+privacy and human identities; GitHub enforces group repository selection.
+See [GitHub registration tokens](https://docs.github.com/en/rest/actions/self-hosted-runners)
+and [runner groups](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access).
+
+An expired, wrong-scope or rejected token leaves the installation pending with
+its service disabled. Obtain a fresh token for the configured scope and retry
+the same command. If an interrupted registration already created an entry in
+GitHub, delete that stale entry before retrying. Partial local credentials are
+preserved and require the recovery procedure below. Never supply a PAT, removal
+token or GitHub App private key to the runner. Automated token minting via a
+trusted control-plane GitHub App is a separate future feature.
 
 The operator account is separate from `basaltwater-runner`. The service account
 has a locked login shell, a dedicated non-root primary group, no supplementary groups, no sudo and no Docker
@@ -36,7 +66,8 @@ access to GitHub and its runner/action download endpoints.
 
 The token crosses SSH in the private expiring setup payload, outside the
 installed source archive. Registration runs unprivileged and receives the token
-through a short-lived process environment. Neither token nor local source path
+through a short-lived process environment. Registration diagnostics use volatile
+`/run` storage and vendor output is discarded. Neither token nor local source path
 is included in saved setup commands, configuration, unit files or logs. The
 target token payload is removed on success and failure; remove your original
 local token file after use. No long-lived GitHub API token is required. The
@@ -56,9 +87,9 @@ separate hosts.
 
 The authoritative policy is root-owned
 `/etc/basaltwater/github-runner.json`. Change the allowlist by repeating setup
-with the **complete** desired `--ci-allowed-user` set and the same repository and
+with the **complete** desired `--ci-allowed-user` set and the same scope, group and
 labels. An existing registration needs no new token for an allowlist change.
-The panel displays this policy read-only. Repository and label changes require
+The panel displays this policy read-only. Scope, group and label changes require
 the deliberate replacement procedure below.
 An allowlist update stops the listener and its current job before publishing
 policy, then restarts the service. Drain trusted jobs before repeating setup.
@@ -67,10 +98,11 @@ policy, then restarts the service. Drain trusted jobs before repeating setup.
 | --- | --- |
 | `push` | GitHub actor and webhook sender must match an allowed human user; deleted refs are denied |
 | `workflow_dispatch` | GitHub actor and webhook sender must match an allowed human user |
-| `pull_request` | PR author and the matching actor/sender must all be allowed human users; only `opened`, `reopened`, `synchronize`, with both head and base in this private repository |
+| `pull_request` | PR author and the matching actor/sender must all be allowed human users; only `opened`, `reopened`, `synchronize`, with head and base in the same private repository |
 
 Repository names and user logins compare without case sensitivity. The hook
-requires a private repository payload matching the configured repository and
+requires a private repository payload matching the configured repository or
+organization (including an organization-type repository owner) and
 the `github.com` server context. Commit author names/emails grant no access.
 Missing, malformed or mismatching identities, forks, public repositories, bots,
 reruns (`GITHUB_RUN_ATTEMPT` other than `1`) and every other event are denied.
@@ -111,7 +143,7 @@ sudo journalctl -u basaltwater-github-runner.service --since today
 The `--check` entry point safely validates the local installation without
 running a job hook or submitting a GitHub job. A successful check exits zero.
 
-The service is enabled at boot and restarts its listener after failure. Local
+After registration, the service is enabled at boot and restarts its listener after failure. Local
 `active` status proves only that the service runs. Confirm **Idle/Online** in
 GitHub's repository runner settings and inspect `_diag` output under
 `/var/lib/basaltwater-github-runner/diag` for connectivity problems.
@@ -122,7 +154,8 @@ pinned version, local service state, boot enablement and up to 100 recent gate
 decisions. It never reads runner credentials or webhook payloads. The outcome
 file is runner-writable operational telemetry, not an independent audit trail.
 Collection errors remain visible; opening the page collects nothing until you
-press Load. Registration, replacement, allowlist editing, queue and lifecycle
+press Load. Registration state and organization/group scope are shown alongside
+the service state. Panel registration, replacement, allowlist editing, queue and lifecycle
 controls are deferred. The existing agent template **Review GitHub Actions
 failures** serves a different purpose.
 
@@ -134,11 +167,11 @@ GitHub requires timely runner updates. Basaltwater deliberately uses
 revision with a reviewed version/checksum pin and qualified gate behavior.
 Do not make the application writable to enable automatic updates.
 
-For upgrade, replacement, repository/label changes or lost registration:
+For upgrade, replacement, scope/group/label changes or lost registration:
 
 1. Stop assigning jobs to this runner and let any trusted job finish. Stop and
    disable `basaltwater-github-runner.service` as root.
-2. Remove the runner in the repository's **Settings → Actions → Runners**. This
+2. Remove the runner in the repository or organization's **Settings → Actions → Runners**. This
    revokes its GitHub registration without copying an API credential onto the
    host. A replacement uses a fresh one-hour registration token, not a removal
    token or PAT.
@@ -155,7 +188,8 @@ For upgrade, replacement, repository/label changes or lost registration:
    before restoring traffic. Delete the root-only quarantine when recovery no
    longer needs it.
 
-An interrupted install is deliberately preserved for inspection. An application
+An interrupted install is deliberately preserved for inspection. A pending
+installation with no credentials can retry registration. An application
 without a valid managed policy is refused; quarantine it before retrying.
 If registration completed in GitHub before local installation failed, remove
 that stale GitHub entry first. A failed allowlist/service reconfiguration leaves
@@ -170,6 +204,15 @@ service is gone. Remove the dedicated account only when no process uses it.
 ## Qualification
 
 On a disposable, clean Debian 13 x86-64 VM and a private test repository:
+
+Start with tokenless setup, verify **Pending registration**, inactive service
+and disabled boot enablement, and reboot to confirm it stays pending. Try an
+expired/rejected token, then register with a fresh token through setup. Repeat
+setup without a token and verify the same GitHub runner identity is preserved.
+Run the checks below for both scopes. For organization scope use two private
+repositories in the organization and one outside it; verify GitHub group access
+selection independently, and reject cross-repository PR heads even within the
+organization. Record live evidence before claiming qualification.
 
 1. Install without Docker; confirm only the dedicated account owns job data,
    has no supplementary groups, cannot write the policy/application/hook or

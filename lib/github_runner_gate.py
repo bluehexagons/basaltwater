@@ -7,7 +7,8 @@ import os
 import stat
 
 from lib.atomic_io import read_json_file, write_json_atomic
-from lib.github_runner_config import APP, EVENTS, GATE, HOOK, MAX_OUTCOMES, OUTCOMES, POLICY, validate_policy
+from lib.github_runner_config import APP, CREDENTIAL_FILES, EVENTS, GATE, HOOK, MAX_OUTCOMES, OUTCOMES, POLICY, validate_policy
+from lib.validation import validate_github_runner_repository
 from lib.validators import validate_github_login
 
 
@@ -27,11 +28,20 @@ def evaluate_job(policy: dict, event: object, environment: dict[str, str]) -> tu
         if not isinstance(event, dict):
             raise ValueError("malformed-event")
         repository = event.get("repository")
+        full_name = validate_github_runner_repository(repository.get("full_name")) if isinstance(repository, dict) else ""
+        organization = policy.get("organization")
+        scope_matches = (full_name.split("/")[0].lower() == organization.lower() if organization
+                         else full_name.lower() == policy["repository"].lower())
         if (not isinstance(repository, dict) or repository.get("private") is not True
-                or repository.get("full_name", "").lower() != policy["repository"].lower()
-                or environment.get("GITHUB_REPOSITORY", "").lower() != policy["repository"].lower()
+                or not scope_matches
+                or environment.get("GITHUB_REPOSITORY", "").lower() != full_name.lower()
                 or environment.get("GITHUB_SERVER_URL") != "https://github.com"):
             return False, "repository-mismatch-or-public", ""
+        if organization:
+            owner = repository.get("owner")
+            if (not isinstance(owner, dict) or owner.get("type") != "Organization"
+                    or _login(owner.get("login")) != organization.lower()):
+                return False, "organization-mismatch", ""
         # Reruns can execute with another user's original privileges. Phase 1
         # admits only the original delivery, with matching server identities.
         if environment.get("GITHUB_RUN_ATTEMPT") != "1":
@@ -55,7 +65,7 @@ def evaluate_job(policy: dict, event: object, environment: dict[str, str]) -> tu
                 raise ValueError("malformed-event")
             for side in ("base", "head"):
                 repo = pr.get(side, {}).get("repo", {})
-                if repo.get("full_name", "").lower() != policy["repository"].lower() or repo.get("private") is not True:
+                if repo.get("full_name", "").lower() != full_name.lower() or repo.get("private") is not True:
                     return False, "fork-denied", actor
             author = pr.get("user")
             if not isinstance(author, dict) or author.get("type") != "User":
@@ -68,11 +78,17 @@ def evaluate_job(policy: dict, event: object, environment: dict[str, str]) -> tu
         return False, "malformed-identity-or-event", ""
 
 
-def check_installation() -> dict:
+def check_installation(*, require_registration: bool = True) -> dict:
     """Require root-controlled policy, hook, interpreter inputs and app files."""
     executables = {APP + "/bin/Runner.Listener", APP + "/bin/Runner.Worker"}
-    for path in (POLICY, HOOK, GATE, APP, APP + "/.env", APP + "/.path", APP + "/.runner",
-                 APP + "/.credentials", APP + "/.credentials_rsaparams",
+    policy = validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
+    if require_registration and policy["registration"] != "registered":
+        raise ValueError("Runner is pending registration")
+    credentials = tuple(APP + "/" + name for name in CREDENTIAL_FILES)
+    if policy["registration"] == "pending" and any(os.path.lexists(path) for path in credentials):
+        raise ValueError("Partial runner registration requires recovery; see runner guide")
+    for path in (POLICY, HOOK, GATE, APP, APP + "/.env", APP + "/.path",
+                 *(credentials if policy["registration"] == "registered" else ()),
                  *sorted(executables)):
         current = path
         while current != "/":
@@ -86,7 +102,7 @@ def check_installation() -> dict:
         access = os.R_OK | (os.X_OK if path == APP or path in executables else 0)
         if not os.access(path, access):
             raise ValueError("Runner installation is not accessible to its service account")
-    return validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
+    return policy
 
 
 def record_outcome(allowed: bool, reason: str, identity: str, environment: dict[str, str]) -> None:

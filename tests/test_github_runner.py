@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 import io
 import json
 import os
@@ -21,7 +22,7 @@ from unittest.mock import patch
 from lib import github_runner_gate as gate
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
-from lib.github_runner_config import ACCOUNT, PROFILE, SERVICE, VERSION, PAYLOAD_NAME
+from lib.github_runner_config import ACCOUNT, PROFILE, SERVICE, VERSION, PAYLOAD_NAME, validate_policy
 from lib.setup_payloads import PAYLOAD_NAMES, receive_payloads
 from lib.system_types import get_steps_for_system_type
 from plugins.post_setup import build_post_setup_steps
@@ -29,7 +30,8 @@ from web import github_runner_steps as steps
 
 
 def policy() -> dict:
-    return dict(schema=1, repository="owner/repo", allowed_users=["alice"], labels=["debian-ci"], runner_version=VERSION)
+    return dict(schema=1, repository="owner/repo", allowed_users=["alice"], labels=["debian-ci"], runner_version=VERSION,
+                registration="registered")
 
 
 def delivery(name: str) -> tuple[dict, dict]:
@@ -50,6 +52,24 @@ def config(**overrides) -> SetupConfig:
 
 
 class IdentityTests(unittest.TestCase):
+    def test_organization_accepts_multiple_private_repositories_but_not_other_owners_or_cross_repo_prs(self) -> None:
+        configured = policy() | dict(repository="", organization="owner", runner_group="CI")
+        for name in ("push", "workflow_dispatch", "pull_request"):
+            for repository in ("owner/repo", "OWNER/second", "other/repo", "owner-lookalike/repo", "owner/../repo"):
+                event, env = delivery(name)
+                event["repository"].update(full_name=repository, owner=dict(login=repository.split("/")[0], type="Organization"))
+                env["GITHUB_REPOSITORY"] = repository
+                with self.subTest(event=name, repository=repository):
+                    self.assertEqual(gate.evaluate_job(configured, event, env)[0], repository in {"owner/repo", "OWNER/second"})
+            event, env = delivery(name)
+            event["repository"]["owner"] = dict(login="owner", type="User")
+            self.assertFalse(gate.evaluate_job(configured, event, env)[0])
+        event, env = delivery("pull_request")
+        event = copy.deepcopy(event)
+        event["repository"]["owner"] = dict(login="owner", type="Organization")
+        event["pull_request"]["head"]["repo"]["full_name"] = "owner/another"
+        self.assertFalse(gate.evaluate_job(configured, event, env)[0])
+
     def test_supported_triggers_allow_deny_missing_and_malformed(self) -> None:
         for name in ("push", "workflow_dispatch", "pull_request"):
             for identity in ("alice", "mallory", None, "alice\n"):
@@ -209,6 +229,26 @@ class IdentityTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_organization_scope_round_trips_and_rejects_ambiguous_or_invalid_scope(self) -> None:
+        original = config(ci_repository="", ci_organization="owner", ci_runner_group="Private CI")
+        parser = create_setup_argument_parser("Remote test", for_remote=True)
+        args = parser.parse_args(shlex.split(" ".join(original.to_remote_args())))
+        args.host = "localhost"
+        remote = SetupConfig.from_args(args, PROFILE)
+        saved = SetupConfig.from_dict("localhost", PROFILE, original.to_dict())
+        for restored in (remote, saved):
+            self.assertEqual(restored.ci_organization, "owner")
+            self.assertEqual(restored.ci_runner_group, "Private CI")
+        self.assertIn("--ci-organization owner", original.to_setup_command())
+        for fields in (dict(ci_repository=""), dict(ci_organization="owner"), dict(ci_runner_group="CI"),
+                       dict(ci_repository="", ci_organization="bad/org"),
+                       dict(ci_repository="", ci_organization="owner", ci_runner_group="bad\ngroup")):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                config(**fields)
+        legacy = policy()
+        del legacy["registration"]
+        self.assertEqual(validate_policy(legacy), policy())
+
     def test_public_values_round_trip_but_one_shot_token_does_not(self) -> None:
         original = config(ci_registration_token_file="/private/token", ci_registration_payload=True)
         self.assertNotIn("/private/token", repr(original))
@@ -350,6 +390,7 @@ class ConfigurationTests(unittest.TestCase):
             application.mkdir()
             account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
             token = b"A" * 40
+            factory = tempfile.TemporaryDirectory
 
             def register(_command, **kwargs):
                 self.assertNotIn(token.decode(), shlex.join(_command))
@@ -359,26 +400,32 @@ class ConfigurationTests(unittest.TestCase):
                     Path(kwargs["cwd"], name).write_bytes(b"generated")
                 return subprocess.CompletedProcess(_command, 0)
 
-            with (patch.object(steps, "DATA", temporary), patch.object(steps, "_extract_release"),
+            with (patch.object(steps, "DATA", temporary), patch.object(steps.shutil, "copytree"),
+                  patch.object(steps.tempfile, "TemporaryDirectory", wraps=tempfile.TemporaryDirectory) as temp,
                   patch.object(steps.os, "chown"), patch.object(steps, "write_bytes_atomic") as write,
                   patch.object(steps, "run", side_effect=register)):
-                steps._register(Path(temporary, "release"), application, policy(), token, account)
+                # Keep volatile diagnostic fixtures inside our test directory.
+                temp.side_effect = lambda **kwargs: factory(**(kwargs | {"dir": temporary}))
+                steps._register(application, policy(), token, account)
             self.assertEqual(write.call_count, 3)
             self.assertTrue(all(call.kwargs["mode"] == 0o640 for call in write.call_args_list))
             self.assertTrue(all(call.kwargs["uid"] == 0 for call in write.call_args_list))
 
     def test_registration_failure_suppresses_vendor_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            with (patch.object(steps, "DATA", temporary), patch.object(steps, "_extract_release"),
+            factory = tempfile.TemporaryDirectory
+            with (patch.object(steps, "DATA", temporary), patch.object(steps.shutil, "copytree"),
+                  patch.object(steps.tempfile, "TemporaryDirectory", side_effect=lambda **kwargs: factory(**(kwargs | {"dir": temporary}))),
                   patch.object(steps.os, "chown"),
                   patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 1, stderr="sensitive token"))):
-                with self.assertRaisesRegex(RuntimeError, "fresh repository registration token") as error:
-                    steps._register(Path("unused"), Path(temporary), policy(), b"A" * 40,
+                with self.assertRaisesRegex(RuntimeError, "fresh registration token") as error:
+                    steps._register(Path(temporary), policy(), b"A" * 40,
                                     SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()))
                 self.assertNotIn("sensitive", str(error.exception))
 
     def test_allowlist_reconfigure_stops_listener_and_needs_no_token(self) -> None:
         with (patch.object(steps, "check_runner_platform"), patch.object(steps, "is_dry_run", return_value=False),
+              patch.object(steps, "runner_lock", side_effect=nullcontext), patch.object(gate, "check_installation"),
               patch.object(steps, "check_directory_path"), patch.object(steps, "read_json_file", return_value=policy()),
               patch.object(steps, "_account", return_value=SimpleNamespace(pw_uid=123, pw_gid=123)),
               patch.object(steps, "_directory"), patch.object(steps, "run") as run,
@@ -390,12 +437,13 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(write.call_args.args[1]["allowed_users"], ["bob"])
             units.assert_called_once()
 
-    def test_missing_registration_and_replacement_fail_before_any_mutation(self) -> None:
-        for previous in (None, policy() | {"repository": "other/repo"}):
+    def test_scope_group_and_label_replacement_fail_before_host_commands(self) -> None:
+        for previous in (policy() | {"repository": "other/repo"}, policy() | {"labels": ["other"]},
+                         policy() | dict(repository="", organization="owner", runner_group="CI")):
             with (patch.object(steps, "check_runner_platform"), patch.object(steps, "is_dry_run", return_value=False),
+                  patch.object(steps, "runner_lock", side_effect=nullcontext),
                   patch.object(steps, "check_directory_path"),
-                  patch.object(steps, "read_json_file", side_effect=FileNotFoundError() if previous is None else None,
-                               return_value=previous), patch.object(steps.os.path, "lexists", return_value=False),
+                  patch.object(steps, "read_json_file", return_value=previous),
                   patch.object(steps, "run") as run):
                 with self.assertRaises(ValueError):
                     steps.setup_github_runner(config())
@@ -436,6 +484,8 @@ class InstallationTests(unittest.TestCase):
         self.token.write_bytes(b"A" * 40)
         self.token.chmod(0o600)
         self.enterContext(patch.object(steps, "check_runner_platform"))
+        self.enterContext(patch.object(steps, "runner_lock", side_effect=nullcontext))
+        self.enterContext(patch.object(gate, "check_installation"))
         self.enterContext(patch.object(steps, "is_dry_run", return_value=False))
         self.enterContext(patch.object(steps, "_account", return_value=SimpleNamespace(pw_uid=123, pw_gid=123)))
 
@@ -454,7 +504,7 @@ class InstallationTests(unittest.TestCase):
                     member.mode, member.size = 0o755, 4
                     archive.addfile(member, io.BytesIO(b"code"))
 
-        def register(_archive, application, _policy, token, _account):
+        def register(application, _policy, token, _account):
             self.assertEqual(token, b"A" * 40)
             for name in (".runner", ".credentials", ".credentials_rsaparams"):
                 (application / name).write_text("generated configuration")
@@ -466,10 +516,11 @@ class InstallationTests(unittest.TestCase):
         self.run = self.enterContext(patch.object(steps, "run"))
 
         def activate(_units, **_kwargs):
-            self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
+            current = json.loads(Path(steps.POLICY).read_text())
             self.assertEqual(Path(steps.HOOK).read_text(), steps.render_hook())
-            for name in (".runner", ".credentials", ".credentials_rsaparams", ".env", ".path", "bin/Runner.Worker"):
+            for name in (".env", ".path", "bin/Runner.Worker"):
                 self.assertTrue(Path(steps.APP, name).is_file())
+            self.assertEqual(bool(_kwargs["activate"]), current["registration"] == "registered")
 
         self.units = self.enterContext(patch.object(steps, "replace_units", side_effect=activate))
 
@@ -486,17 +537,44 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
         self.assertFalse(self.token.exists())
         self.assertEqual(list(self.opt.iterdir()), [Path(steps.APP)])
-        self.units.assert_called_once_with({SERVICE: steps.render_unit()}, activate=(SERVICE,))
+        self.assertEqual(self.units.call_args_list, [unittest.mock.call({SERVICE: steps.render_unit()}, activate=()),
+                                                   unittest.mock.call({SERVICE: steps.render_unit()}, activate=(SERVICE,))])
         self.assertTrue(all("docker" not in shlex.join(call.args[0]) for call in self.run.call_args_list))
 
-    def test_registration_failure_consumes_token_and_never_publishes_or_activates(self) -> None:
+    def test_registration_failure_consumes_token_and_leaves_disabled_pending_installation_retryable(self) -> None:
         self.register.side_effect = RuntimeError("registration failed")
         with self.assertRaisesRegex(RuntimeError, "registration failed"):
             steps.setup_github_runner(config(ci_registration_payload=True))
         self.assertFalse(self.token.exists())
-        self.assertFalse(Path(steps.POLICY).exists())
-        self.assertEqual(list(self.opt.iterdir()), [])
-        self.units.assert_not_called()
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "pending")
+        self.assertTrue(Path(steps.APP, "bin/Runner.Worker").is_file())
+        self.units.assert_called_once_with({SERVICE: steps.render_unit()}, activate=())
+        self.assertIn(unittest.mock.call(["systemctl", "disable", "--now", SERVICE], timeout=120), self.run.call_args_list)
+        self.register.side_effect = lambda application, *_: [(application / name).write_text("generated")
+                                                           for name in (".runner", ".credentials", ".credentials_rsaparams")]
+        self.token.write_bytes(b"A" * 40)
+        self.token.chmod(0o600)
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "registered")
+
+    def test_tokenless_install_and_update_stay_pending_until_later_registration(self) -> None:
+        steps.setup_github_runner(config())
+        self.register.assert_not_called()
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "pending")
+        steps.setup_github_runner(config())
+        self.assertTrue(all(call.kwargs["activate"] == () for call in self.units.call_args_list))
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        self.register.assert_called_once()
+        steps.setup_github_runner(config())
+        self.register.assert_called_once()
+        self.assertEqual(self.units.call_args.kwargs["activate"], (SERVICE,))
+
+    def test_partial_credentials_are_preserved_for_explicit_recovery(self) -> None:
+        steps.setup_github_runner(config())
+        Path(steps.APP, ".credentials").write_text("incomplete")
+        with self.assertRaisesRegex(ValueError, "Partial runner registration"):
+            steps.setup_github_runner(config(ci_registration_payload=True))
+        self.register.assert_not_called()
 
     def test_unusable_token_is_removed_before_host_mutations(self) -> None:
         self.token.chmod(0o644)
