@@ -13,5 +13,24 @@ HOST_REVIEW_PROMPT = (
     "Perform read-only host diagnostics. The runner provides a private run directory and command network access "
     "for service-manager sockets and readiness probes. Do not modify host files or use service-control actions. "
     "The execution directory is empty scratch space, not a project checkout; do not run agent manifest here. "
-    "Use agent doctor with explicit capabilities for host/tool readiness. " + FOLLOW_UP_PROMPT
+    "Use basaltw agent doctor with explicit capabilities for host/tool readiness and basaltw agent resources --json for pressure evidence. "
+    "For service logs use basaltw agent diagnostics with a supported --service, --window and --priority; it limits and redacts output. "
+    "Do not dump raw journals, service environments or command lines. Distinguish denied or missing evidence from unhealthy services. "
+    "Wait for diagnostic commands to finish; do not repeatedly poll running jobs or start repairs. " + FOLLOW_UP_PROMPT
+)
+
+UPDATE_REVIEW_PROMPT = (
+    "Check Debian package and update health using bounded read-only commands: dpkg --audit, apt-mark showhold, "
+    "APT list metadata timestamps, readable update-job results, and /run/reboot-required when present. "
+    "Use apt list --upgradable only against existing indexes and label their age; stale or absent indexes cannot prove the host is current. "
+    "Inspect auto-update-apt.service through basaltw agent diagnostics --service auto-update-apt.service --window 168h --priority 7, "
+    "and read its timer's last/next trigger. Separate intentional holds, failed updates, pending reboot and missing evidence. "
+    "Do not acquire package locks, refresh indexes, install or remove packages, run package repair commands, change holds, or reboot."
+)
+NETWORK_REVIEW_PROMPT = (
+    "Inspect local network, DNS and clock readiness using bounded read-only interface/route summaries, resolver status "
+    "and timedatectl properties. Never dump NetworkManager connection profiles or Wi-Fi credentials. "
+    "Check DNS and TLS only for explicit endpoints in readable Basaltwater configuration, using short timeouts and no authentication or request bodies. "
+    "Do not invent probe targets, scan ports or subnets, contact cloud metadata, change routes/resolvers/firewalls, renew leases, or adjust the clock. "
+    "Distinguish local configuration from verified endpoint reachability; report absent targets and denied evidence as coverage limits."
 )

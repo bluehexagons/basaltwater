@@ -30,6 +30,7 @@ from lib.agent_task_context import (
     CodexEvents, MAX_CHECKPOINT_BYTES, PERSISTENCE_MODES, WORKSPACE_MODES, TaskContextStore, private_directory, private_json,
     validate_follow_up,
 )
+from lib.agent_task_policy import task_policy_issues
 from lib.validation import validate_filesystem_path
 
 
@@ -311,6 +312,13 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     task_id = task.get("id")
     wake_events = task.get("events", [])
     task = validate_task(task, home)
+    policy_issues = task_policy_issues(task)
+    if policy_issues:
+        message = "Task blocked by Codex administrator policy; review policy and task settings."
+        return {"status": "failed", "outcome": "blocked", "output": "\n".join(policy_issues),
+                "message": message, "summary": message, "evidence": policy_issues,
+                "retry_after_minutes": None, "follow_up": None, "exit_code": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0}}
     timeout_seconds = task["timeout_minutes"] * 60
     timeout_message = f"Run exceeded the {task['timeout_minutes']}-minute limit"
     if task["deadline_at"]:

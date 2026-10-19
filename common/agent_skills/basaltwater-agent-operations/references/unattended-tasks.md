@@ -34,6 +34,10 @@ read-only sandbox and should use read-only operations through every integration.
 account's home; command network access and temporary writes are separate options.
 Web search is separate from command network access. Configured hooks and MCP
 servers have their own permissions; the panel does not sandbox them separately.
+Known local administrator-policy conflicts appear in the catalog and task form.
+The runner checks again before launching Codex and records blocked work without
+a provider call. Adjust task settings within the policy; never bypass its profile,
+network, search, hook or integration restrictions.
 
 Host service review templates use Workspace changes, an empty private run
 directory and command network access so local service-manager sockets and
@@ -43,9 +47,16 @@ for host/tool readiness; `agent manifest` requires a project checkout and should
 not run in the empty scratch directory. Saved inspection tasks keep their
 original settings until deliberately replaced from the refreshed template.
 
-The restricted maintenance example retains Inspect only for local evidence;
-the repair example requires a selected directory and an explicit repair plan,
-and defaults to one attempt. When work needs different access, return a
+Use `basaltw agent diagnostics --service UNIT --window 168h --priority 7` for
+bounded, redacted evidence from supported services and weekly jobs. It filters
+service properties and never dumps environments or command lines. Collection
+issues and empty logs do not prove a service is healthy. The independent worker
+receives service-scoped journal access after setup refreshes its systemd unit;
+the login account's groups are unchanged.
+
+The catalog leads with host diagnostics. Update and network checks inspect
+existing state without repairing packages or changing connectivity. Concrete
+repairs need explicit targets and actions. When work needs different access, return a
 `follow_up` proposal in the structured report with exact targets, actions,
 minimum permissions, validation, and rollback. This records a request for the
 operator to review and submit as a separate task; do not activate it yourself.
@@ -73,7 +84,7 @@ does not coordinate with T3 threads, other terminal agents, or other accounts.
 Worktree creation changes Git metadata outside a worktree; do not assume a
 workspace sandbox permits creating or removing one during a run.
 
-The editing templates require a clean existing/shared checkout, including
+Editing templates default to Once and require a clean existing/shared checkout, including
 untracked files. An owned persistent task worktree may continue its own
 unfinished edits after checking them against the saved checkpoint; report
 unrelated changes. Older saved prompts retain their original clean-checkout
@@ -86,7 +97,12 @@ upgrade policy; report larger migrations as follow-up work.
 ## Time, outcomes, and evidence
 
 Maximum runtime is configurable from 1 minute to 7 days. Waiting counts toward
-that limit, so keep each wait bounded by the time remaining. Do not daemonize
+that limit, so keep each wait bounded by the time remaining. Prefer completion
+notifications or blocking waits for tests and jobs. Do not repeatedly inspect
+progress, tail logs, or ask for job status just to catch errors early. Inspect
+while running only for a concrete hang, input request, deadline or user request.
+An unattended CI review reports running checks as pending and can finish without
+watching them. Do not daemonize
 work or hand it to another service to outlive the run. Cancellation and expiry
 stop the local process group without undoing edits or remote actions. They do
 not guarantee cancellation of work owned by an external MCP server or broker.

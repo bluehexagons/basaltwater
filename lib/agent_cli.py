@@ -152,6 +152,9 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Inspect local agentic coding tools",
     )
     commands = parser.add_subparsers(dest="agent_command", help="Agent commands")
+    from lib.agent_diagnostics import add_diagnostics_parser
+
+    add_diagnostics_parser(commands)
     from lib.privilege_client import add_privilege_parser
 
     add_privilege_parser(commands)
@@ -2577,6 +2580,10 @@ def _selected_tools_readiness_healthy(
 
 def run_agent_command(args: argparse.Namespace) -> int:
     """Run a local or remote agent-tool command."""
+    if args.agent_command == "diagnostics":
+        from lib.agent_diagnostics import run_diagnostics_command
+
+        return run_diagnostics_command(args)
     if args.agent_command == "memory":
         from lib.agent_memory_cli import run_memory_command
 

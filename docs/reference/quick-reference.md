@@ -52,6 +52,28 @@ See [the CachyOS guide](../workstations/cachyos.md) for optional project tools, 
 switching between T3 desktop and web mode. This profile uses direct setup
 reruns; it does not populate the generic saved-host lifecycle above.
 
+## Local service evidence
+
+```bash
+basaltw agent diagnostics --service nginx.service
+basaltw agent diagnostics --service t3code.service --window boot --priority 7
+```
+
+Run on the host being inspected. Output is always JSON containing `properties`,
+`events`, and `issues`, using the shared diagnostic collector's redaction.
+`--service` is required; all selectors accept only the fixed choices shown by
+`basaltw agent diagnostics --help`. The defaults are `--window 24h` and
+`--priority 4` (warnings and errors). There are no arbitrary unit or path inputs.
+Collection is read-only, uses the invoking account's permissions without sudo,
+and limits each query to five seconds and 64 KiB, with at most 100 journal events
+and a fixed set of runtime properties. T3 Code uses the current user's service
+manager and journal; other services use the system scope.
+
+Exit `1` indicates collection issues (including unavailable or incomplete
+evidence); exit `0` means no collection issues were reported. Neither exit `0`
+nor empty logs prove service health: filters, permissions, and journal retention
+can limit the evidence. Invalid command-line selectors exit `2` before collection.
+
 ## Find a task
 
 | I need to… | Use |

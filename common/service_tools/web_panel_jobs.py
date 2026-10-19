@@ -142,7 +142,7 @@ def render_jobs(
             content += f'''<section class="event job-card" aria-label="{html.escape(job['label'], quote=True)}">
 <div class="event-head">{render_heading(job['label'], "jobs")}<div>{timer_badge}<span class="badge {result_tone}">{html.escape(job['status'])}</span></div></div>
 <dl class="job-facts">{primary_facts}</dl><details><summary>Run and timer details</summary><dl class="job-facts">{"".join(facts.values())}</dl></details><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a>
-{tool_link("job", "Prepare agent job review", service=job["service"], window="24h", priority="4") if agent_tools else ""}</section>'''
+{tool_link("job", "Prepare agent job review", service=job["service"], window="168h", priority="7") if agent_tools else ""}</section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'
         if any(job["service"] == "storage-ops.service" for job in snapshot.jobs):

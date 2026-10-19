@@ -139,10 +139,8 @@ class AgentPanelToolsTest(unittest.TestCase):
 
     def test_contextual_logs_use_fixed_filters_and_current_user_scope(self) -> None:
         task = tools.prepare_tool({"tool": "logs", "service": "t3code.service", "window": "boot", "priority": "3"}, self.home)
-        self.assertIn("journalctl --user --unit=t3code.service", task["prompt"])
-        self.assertIn("--boot=0", task["prompt"])
-        self.assertIn("--priority=3", task["prompt"])
-        self.assertIn("systemctl --user show", task["prompt"])
+        self.assertIn("basaltw agent diagnostics --service t3code.service --window boot --priority 3", task["prompt"])
+        self.assertNotIn("journalctl", task["prompt"])
         self.assertEqual(task["title"], "Review service logs: T3 Code (current user)")
         self.assertEqual(task["mode"], "workspace")
         self.assertEqual(task["workspace"], "run-directory")
@@ -150,6 +148,7 @@ class AgentPanelToolsTest(unittest.TestCase):
         job = tools.prepare_tool({"tool": "job", "service": "auto-update-apt.service"}, self.home)
         self.assertIn("auto-update-apt.timer", job["prompt"])
         self.assertIn("Do not trigger the job", job["prompt"])
+        self.assertIn("--window 168h --priority 7", job["prompt"])
 
     def test_host_review_form_runs_in_private_directory_and_preserves_source(self) -> None:
         for query in ({"template": "maintenance"}, {}):
@@ -177,6 +176,32 @@ class AgentPanelToolsTest(unittest.TestCase):
                 self.assertFalse(task["temporary_files"])
                 self.assertEqual((self.source / "inventory.csv").read_text(), "id,name\n001,Example\n")
 
+    def test_github_review_runs_in_scratch_with_source_context(self) -> None:
+        task = {**agents.PROMPT_TEMPLATES["github-actions"], "directory": self.home, "interval": "once"}
+        self.state.agent_tasks.create(task, run_now=True)
+        with patch.object(agent_tasks, "execute_prompt", return_value={
+            "status": "completed", "output": "Reviewed", "message": "Done",
+        }) as execute:
+            self.assertTrue(self.state.agent_tasks.tick())
+        task = execute.call_args.args[0]
+        runtime = task["_runtime"]
+        self.assertEqual(runtime["source_directory"], self.home)
+        self.assertNotEqual(runtime["directory"], self.home)
+        command = agent_tasks.codex_command(task, "/test/codex")
+        self.assertIn("sandbox_workspace_write.writable_roots=[]", command)
+        self.assertTrue(task["network"])
+        self.assertFalse(task["temporary_files"])
+        self.assertEqual((self.source / "inventory.csv").read_text(), "id,name\n001,Example\n")
+
+    def test_log_tool_prefers_installed_sources_and_retains_historical_links(self) -> None:
+        with patch.object(self.state, "diagnostic_sources", return_value={"ssh.service": "SSH"}):
+            page = tools.render_tools(self.state, "", {"tool": "logs"})
+            self.assertIn('<option value="ssh.service" selected>', page)
+            self.assertNotIn('<option value="nginx.service"', page)
+            page = tools.render_tools(self.state, "", {"tool": "logs", "service": "homebox.service"})
+        self.assertIn('<option value="homebox.service" selected>', page)
+        self.assertIn("historical logs", page)
+
     def test_every_tool_produces_bounded_valid_settings_and_explicit_contracts(self) -> None:
         for key, (_, _, group, mode, _, _) in tools.TOOLS.items():
             values = {"tool": key}
@@ -184,8 +209,6 @@ class AgentPanelToolsTest(unittest.TestCase):
                 values["service"] = next(iter(diagnostics.JOB_SERVICES))
             if group != "System":
                 values = self.data_values(key)
-                if key == "cleanup":
-                    values["source"] = "incoming"
                 if key == "data-audit":
                     del values["destination"]
             with self.subTest(tool=key):
@@ -201,7 +224,7 @@ class AgentPanelToolsTest(unittest.TestCase):
                     self.assertEqual(task["workspace"], "run-directory")
                     self.assertIn("Do not modify host files", task["prompt"])
                 elif mode == "workspace":
-                    self.assertIn("never overwrite" if key != "cleanup" else "non-overwriting", task["prompt"])
+                    self.assertIn("never overwrite", task["prompt"])
                     self.assertIn("manifest", task["prompt"])
 
     def test_source_output_and_working_directory_boundaries(self) -> None:
@@ -235,19 +258,13 @@ class AgentPanelToolsTest(unittest.TestCase):
         self.assertNotIn("<script>", page)
         self.assertIn("&lt;script&gt;", page)
 
-    def test_import_format_cleanup_age_and_tool_specific_fields(self) -> None:
+    def test_import_format_and_tool_specific_fields(self) -> None:
         for values in (self.data_values(format="pickle"), self.data_values(source="incoming"),
-                       self.data_values("cleanup", age_days="0", source="incoming"),
-                       self.data_values("cleanup", age_days="7.5", source="incoming"),
-                       self.data_values("cleanup", age_days="3651", source="incoming"),
                        self.data_values("cleanup"), {"tool": "checkup", "source": "/tmp"},
                        {"tool": "logs", "service": "nginx.service; reboot"},
                        {"tool": "job", "service": "ssh.service"}):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 tools.prepare_tool(values, self.home)
-        task = tools.prepare_tool(self.data_values("cleanup", source="incoming", age_days="14"), self.home)
-        self.assertIn("older than 14 days", task["prompt"])
-        self.assertIn("does not reclaim disk space", task["prompt"])
 
     def test_query_and_post_reject_duplicates_unknown_choices_and_csrf(self) -> None:
         for query in ("tool=unknown", "tool=logs&service=arbitrary.service", "tool=job", "tool=checkup&service=nginx.service",

@@ -20,7 +20,8 @@ from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
 from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
-from lib.agent_task_templates import FOLLOW_UP_PROMPT, HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS
+from lib.agent_task_policy import task_policy_issues
+from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.agent_tasks import (
     AgentTasks, DEFAULT_FAILURE_LIMIT, DEFAULT_TIMEOUT_MINUTES, EFFORTS, MAX_FAILURE_LIMIT,
     MAX_PROMPT_BYTES, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES, WEB_SEARCH_MODES, codex_models, repeat_seconds, validate_task,
@@ -36,26 +37,22 @@ _REPOSITORY_EDIT_PREFLIGHT = (
 
 
 PROMPT_TEMPLATES = {
-    "maintenance-local": {
-        "scope": "host", "description": "Check readable local evidence without command network or writes; request fuller checks when needed.",
-        "title": "Restricted host maintenance check", "mode": "inspect", "interval": "daily", "network": False,
-        "prompt": "Inspect local resource, disk, reboot, installed-tool, and readable maintenance configuration evidence using read-only operations. Use agent doctor with explicit capabilities; do not run agent manifest outside a project checkout. Service-manager sockets and endpoint probes may be blocked: distinguish inaccessible checks from actual service failures. Do not change files, services, or schedules. " + FOLLOW_UP_PROMPT,
-    },
     "maintenance": {
         "scope": "host", "description": "Inspect resources, services, update timers, and agent readiness.",
         "title": "Host maintenance review", **HOST_REVIEW_SETTINGS, "interval": "daily",
         "prompt": HOST_REVIEW_PROMPT + "Inspect this host's resource usage, failed services, update timers, reboot state, and agent readiness using available Basaltwater diagnostics. Check T3 Code only if installed. Summarize issues, evidence, and recommended repairs. Do not change the host or expose credentials.",
     },
-    "maintenance-repair": {
-        "scope": "host", "description": "Apply a supplied repair plan within a selected directory and account access; review targets before running.",
-        "title": "Apply reviewed maintenance fixes", "mode": "workspace", "workspace": "existing",
-        "network": True, "interval": "once", "max_runs": 1, "select_directory": True,
-        "prompt": "Apply the concrete maintenance repair plan supplied below using this account's existing permissions. If no exact targets and actions are supplied, report blocked without changes. Recheck the evidence, maintenance holds, and active work before each action; defer actions that would interrupt active sessions. Limit file edits to the selected directory, preserve unrelated changes, and execute only the named service actions. Validate each repair and record changes, results, and rollback steps. Do not install updates, delete data, reboot, change access policy, or submit privileged requests unless the supplied plan explicitly authorizes that action through the configured approval workflow. " + FOLLOW_UP_PROMPT + "\n\nRepair plan (required):\n",
+    "updates": {
+        "scope": "host", "title": "Check Debian update health",
+        "description": "Check package consistency, held updates, index age, and reboot evidence.",
+        **HOST_REVIEW_SETTINGS, "interval": "weekly", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + UPDATE_REVIEW_PROMPT,
     },
-    "dependencies": {
-        "scope": "repository", "description": "Prepare dependency changes and validation for review each week.",
-        "title": "Update repository dependencies", "mode": "workspace", "interval": "weekly", "network": True, "temporary_files": True,
-        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Update dependencies using the repository's existing package manager, lockfiles, and update policy. Prefer compatible updates within its declared constraints; report major upgrades needing separate migration work. Run the relevant checks, explain changes and compatibility concerns, and leave the result ready for review. Do not commit, push, publish, or deploy.",
+    "network": {
+        "scope": "host", "title": "Check network and clock readiness",
+        "description": "Inspect routes, resolver and clock state, and configured endpoint reachability.",
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + NETWORK_REVIEW_PROMPT,
     },
     "repository": {
         "scope": "repository", "description": "Inspect repository state and identify maintenance work.",
@@ -65,19 +62,18 @@ PROMPT_TEMPLATES = {
     "ci-repair": {
         "scope": "repository", "title": "Repair failing checks",
         "description": "Reproduce a test, lint, or build failure and prepare a focused fix.",
-        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
+        "mode": "workspace", "interval": "once", "network": True, "temporary_files": True, "timeout_minutes": 60,
         "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Identify failing tests, lint checks, or builds from available local evidence. Reproduce the failure using the existing tooling, then make the smallest justified fix and rerun relevant checks. Do not weaken checks or remove tests to make them pass. If a failure cannot be reproduced or tooling is unavailable, report the missing evidence rather than guessing. Summarize the cause, changes, and validation. Do not commit, push, publish, or deploy.",
     },
-    "regression-tests": {
-        "scope": "repository", "title": "Add regression tests",
-        "description": "Cover important behavior and edge cases using the existing test suite.",
-        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
-        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Read recent commits and existing test conventions. Identify a small number of important behaviors or edge cases lacking meaningful coverage. Add focused regression tests that verify observable behavior, using mocks and temporary directories for external or system operations. Avoid tests that simply mirror implementation details. Run the affected suite and report what the tests cover and any remaining gaps. Do not change production behavior, commit, push, publish, or deploy.",
+    "dependencies": {
+        "scope": "repository", "description": "Prepare dependency changes and validation for review.",
+        "title": "Update repository dependencies", "mode": "workspace", "interval": "once", "network": True, "temporary_files": True,
+        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Update dependencies using the repository's existing package manager, lockfiles, and update policy. Prefer compatible updates within its declared constraints; report major upgrades needing separate migration work. Run the relevant checks, explain changes and compatibility concerns, and leave the result ready for review. Do not commit, push, publish, or deploy.",
     },
     "documentation": {
         "scope": "repository", "title": "Update repository documentation",
         "description": "Reconcile setup instructions, examples, and references with the code.",
-        "mode": "workspace", "interval": "weekly", "network": False, "timeout_minutes": 30,
+        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 30,
         "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Compare its README, setup instructions, CLI or API examples, and configuration references with the current implementation. Correct concrete discrepancies and broken local references using the established documentation format. Preserve accurate content, avoid marketing copy, and do not invent capabilities or unverified results. Run existing documentation checks when available, and report changes and any examples that could not be verified. Do not change application behavior, commit, push, publish, or deploy.",
     },
     "security-review": {
@@ -114,7 +110,7 @@ PROMPT_TEMPLATES = {
         "scope": "host", "title": "Check certificate expiry",
         "description": "Inspect certificate lifetimes, renewal jobs, and configuration gaps.",
         **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
-        "prompt": HOST_REVIEW_PROMPT + "Inspect readable public certificate metadata, configured HTTPS service references, and renewal timer or job state on this host. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures and identify services using certificates where the configuration is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
+        "prompt": HOST_REVIEW_PROMPT + "Inspect public certificates served by explicitly configured HTTPS endpoints with bounded TLS probes, readable public certificate metadata, and renewal timer or job state. Do not assume access to root-owned certificate directories. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures where evidence is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
     },
     "t3-readiness": {
         "requires": "t3", "scope": "host", "title": "Check T3 Code readiness",
@@ -149,8 +145,8 @@ PROMPT_TEMPLATES = {
     "github-actions": {
         "requires": "github", "scope": "repository", "title": "Review GitHub Actions failures",
         "description": "Read recent CI runs with GitHub CLI and identify recurring failures.",
-        "mode": "workspace", "interval": "daily", "network": True, "timeout_minutes": 20,
-        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Identify its GitHub repository from the existing remote without changing it. Use GitHub CLI read-only commands to inspect a bounded number of recent Actions runs and relevant failed-job logs. Compare failures with local workflow configuration; separate likely code, infrastructure, flaky-test, and permission causes. Redact credentials and report unavailable authentication or repository access explicitly. Produce an evidence-backed triage report. Do not modify files, rerun or cancel workflows, create issues or comments, commit, push, publish, or deploy.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 20,
+        "prompt": "The execution directory is empty scratch space. Read repository instructions and Git status from the source directory named in the task context, using git -C SOURCE. Identify its GitHub repository from the existing remote without printing embedded credentials or changing it. Use gh --repo OWNER/REPO and read-only subcommands to inspect a bounded number of recent completed Actions runs and relevant failed-job logs. Report running checks as pending; do not watch or repeatedly poll them. Compare failures with local workflow configuration; separate likely code, infrastructure, flaky-test, and permission causes. Redact credentials and report unavailable authentication or repository access explicitly. Produce an evidence-backed triage report. Do not modify files, rerun or cancel workflows, create issues or comments, commit, push, publish, or deploy.",
     },
     "browser-smoke": {
         "requires": "browser", "scope": "repository", "title": "Run browser smoke checks",
@@ -503,16 +499,23 @@ def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFea
         "notifications": "Notification ingest enabled" if features.get("notification_ingest") is True else "",
         "privilege": "Privilege approvals configured" if "Privilege approvals" in services else "",
     }
-    return {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
-            for key, template in PROMPT_TEMPLATES.items()
-            if ("requires" not in template or capabilities[template["requires"]])
-            and (template["scope"] != "repository" or "git" in selected.tools)}
+    available = {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
+                 for key, template in PROMPT_TEMPLATES.items()
+                 if ("requires" not in template or capabilities[template["requires"]])
+                 and (template["scope"] != "repository" or "git" in selected.tools)}
+    for template in available.values():
+        issues = task_policy_issues(template)
+        if issues:
+            template["availability"] = " ".join(filter(None, (
+                template["availability"], "Policy conflict: " + " ".join(issues),
+            )))
+    return available
 
 
 def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> str:
-    active_scope = templates.get(selected, {}).get("scope", "repository")
+    active_scope = templates.get(selected, {}).get("scope", "host")
     groups = []
-    for scope, label in (("repository", "Repository work"), ("host", "Host checks and maintenance")):
+    for scope, label in (("host", "Host checks and maintenance"), ("repository", "Repository work")):
         links = []
         for key, template in templates.items():
             if template["scope"] != scope:
@@ -583,7 +586,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             error = error or "This template is unavailable: its required feature or software was not detected. Choose another template or write a custom prompt."
         else:
             defaults.update(template)
-            if template["scope"] == "repository" or template.get("select_directory"):
+            if template["scope"] == "repository":
                 defaults["directory"] = ""
     if "edit" in query:
         task = next((task for task in tasks if task["id"] == query["edit"]), None)
@@ -641,6 +644,12 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         alert += '<p class="empty">Prompt execution requires a non-root panel account with its own home directory. Diagnostics remain available.</p>'
     elif not codex_installed:
         alert += '<p class="empty">Install and sign in to Codex as the panel account to run prompts. T3 Code is optional.</p>'
+    policy_issues = task_policy_issues(defaults)
+    if composing and policy_issues:
+        notices = "".join(f"<li>{_escape(issue)}</li>" for issue in policy_issues)
+        alert += ('<aside class="status failed" role="alert"><strong>Execution policy conflict</strong>'
+                  f'<ul>{notices}</ul><p>These settings cannot launch under the local policy. '
+                  'Adjust the task settings or save a draft for review. The runner preserves administrator restrictions.</p></aside>')
     disabled = " disabled" if not ready or not codex_installed else ""
     save_disabled = " disabled" if not ready else ""
     options = "".join(f'<option value="{key}"{" selected" if key == defaults["interval"] else ""}>{label}</option>' for key, label in (

@@ -135,6 +135,39 @@ class DiagnosticQueryTest(unittest.TestCase):
         self.assertIn("omitted", result["events"][0]["message"])
         self.assertEqual(result["events"][0]["timestamp"], "Unknown time")
 
+    def test_malformed_urls_never_restore_credentials_and_ipv6_stays_valid(self) -> None:
+        message = (
+            "https://user:secret@example.test:bad/path?token=hidden "
+            "https://user:secret@[broken/path?token=hidden "
+            "https://user:secret@[::1]:8443/path?token=hidden&safe=kept"
+        )
+        with patch.object(diagnostics, "_bounded_command", side_effect=[
+            ("LoadState=loaded", ""), (json.dumps({"MESSAGE": message}), ""),
+        ]):
+            result = diagnostics.collect_diagnostics(diagnostics.DiagnosticQuery(load=True))
+        rendered = result["events"][0]["message"]
+        for secret in ("user:secret", "hidden"):
+            self.assertNotIn(secret, rendered)
+        self.assertIn("[invalid URL redacted]", rendered)
+        self.assertIn("https://[::1]:8443/path?token=[redacted]&safe=kept", rendered)
+
+    def test_default_service_selection_matches_form_command_and_agent_link(self) -> None:
+        with patch.object(diagnostics, "collect_diagnostics") as collect:
+            page = diagnostics.render_diagnostics(
+                diagnostics.DiagnosticQuery(), "", "host", agent_tools=True,
+                sources={"ssh.service": "SSH"},
+            )
+        collect.assert_not_called()
+        self.assertIn('value="ssh.service" selected', page)
+        self.assertIn("--unit=ssh.service", page)
+        self.assertIn("tool=logs&amp;service=ssh.service", page)
+        self.assertNotIn("--unit=nginx.service", page)
+        with patch.object(diagnostics, "collect_diagnostics", return_value={"issues": [], "events": [], "properties": {}}) as collect:
+            diagnostics.render_diagnostics(
+                diagnostics.DiagnosticQuery(load=True), "", "host", sources={"ssh.service": "SSH"},
+            )
+        self.assertEqual(collect.call_args.args[0].service, "nginx.service")
+
     def test_busy_collectors_do_not_start_processes(self) -> None:
         with (
             patch.object(diagnostics, "_COLLECTORS") as semaphore,

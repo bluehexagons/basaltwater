@@ -17,6 +17,7 @@ from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
+from lib import agent_task_policy as policy
 
 
 class AgentTaskTest(unittest.TestCase):
@@ -67,6 +68,25 @@ class AgentTaskTest(unittest.TestCase):
         self.manager.action(identifier, "delete")
         self.assertEqual(self.manager.snapshot()["tasks"], [])
         self.assertEqual(len(self.manager.snapshot()["runs"]), 1)
+
+    def test_editing_starters_finish_once_and_leave_review_work_untouched(self) -> None:
+        for key in ("ci-repair", "dependencies", "documentation"):
+            with self.subTest(template=key):
+                identifier = self.manager.create({**agents.PROMPT_TEMPLATES[key], "directory": self.home}, run_now=True, now=100)
+                review = Path(self.home) / (key + ".txt")
+
+                def finish(*_args, **_kwargs):
+                    review.write_text("Changes awaiting review")
+                    return {"status": "completed", "output": "Prepared", "message": "Done"}
+
+                with patch.object(tasks, "execute_prompt", side_effect=finish) as execute:
+                    self.assertTrue(self.manager.tick(now=101))
+                    self.assertFalse(self.manager.tick(now=1000000))
+                execute.assert_called_once()
+                self.assertEqual(review.read_text(), "Changes awaiting review")
+                saved = next(task for task in self.manager.snapshot()["tasks"] if task["id"] == identifier)
+                self.assertEqual(saved["interval"], "once")
+                self.assertIsNone(saved["next_run"])
 
     def test_custom_cadence_survives_restart_edits_and_pause_resume(self) -> None:
         values = {**self.values, "interval": "custom", "repeat_minutes": "360"}
@@ -465,10 +485,10 @@ class AgentTaskTest(unittest.TestCase):
                 self.assertEqual(command[-1], "-")
                 self.assertNotIn(task["prompt"], command)
                 if template["scope"] == "host":
-                    if key in {"storage", "maintenance-local"}:
+                    if key == "storage":
                         self.assertEqual(task["mode"], "inspect")
                         self.assertFalse(task["network"])
-                    elif key != "maintenance-repair":
+                    else:
                         self.assertEqual(task["mode"], "workspace")
                         self.assertTrue(task["network"])
                         self.assertEqual(task["workspace"], "run-directory")
@@ -678,7 +698,7 @@ class AgentScreenTest(unittest.TestCase):
         self.assertIn("read-only sandbox", page)
 
     def test_host_templates_prefill_home_and_repository_templates_require_a_checkout(self) -> None:
-        host_templates = {"maintenance-local", "maintenance", "backups", "storage", "incident", "certificates"}
+        host_templates = {"maintenance", "updates", "network", "backups", "storage", "incident", "certificates"}
         with patch.object(tasks, "execute_prompt") as execute, patch.object(self.state.agent_diagnostics, "trigger") as checks:
             for key in agents._available_templates(self.state.manifest, self.temporary.name, self.state.features()):
                 with self.subTest(template=key):
@@ -699,7 +719,7 @@ class AgentScreenTest(unittest.TestCase):
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
         inspect_tools.assert_not_called()
         inspect_t3.assert_not_called()
-        self.assertIn("Repository work · 7 templates", page)
+        self.assertIn("Repository work · 6 templates", page)
         self.assertIn("Host checks and maintenance · 7 templates", page)
         for key, template in agents.PROMPT_TEMPLATES.items():
             if "requires" in template:
@@ -714,6 +734,24 @@ class AgentScreenTest(unittest.TestCase):
         self.assertNotIn('<option value="worktree"', page)
         self.assertIn("Host checks and maintenance · 7 templates", page)
         self.assertIn("New prompt task", page)
+
+    def test_policy_conflicts_are_shown_before_submission_and_drafts_remain_available(self) -> None:
+        path = Path(self.temporary.name) / "requirements.toml"
+        content = ('allowed_web_search_modes = []\n[allowed_permission_profiles]\n":read-only" = true\n')
+        path.write_text(content)
+        before = self.state.agent_tasks.snapshot()
+        with patch.object(policy, "REQUIREMENTS_PATH", path), patch.object(tasks, "execute_prompt") as execute:
+            for key in ("maintenance", "security-review"):
+                with self.subTest(template=key):
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": key})
+                    self.assertIn("Policy conflict:", page)
+                    self.assertIn("Execution policy conflict", page)
+                    self.assertIn('value="draft">Save draft</button>', page)
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "repository"})
+            self.assertNotIn("Execution policy conflict", page)
+        execute.assert_not_called()
+        self.assertEqual(self.state.agent_tasks.snapshot(), before)
+        self.assertEqual(path.read_text(), content)
 
     def test_optional_templates_follow_specific_configuration_and_installed_commands(self) -> None:
         cases = (
@@ -824,12 +862,14 @@ class AgentScreenTest(unittest.TestCase):
         installed.start()
         self.addCleanup(installed.stop)
         cases = (
-            ("ci-repair", "workspace", "once", 60, False, True, "disabled"),
-            ("regression-tests", "workspace", "once", 60, False, True, "disabled"),
-            ("documentation", "workspace", "weekly", 30, False, False, "disabled"),
+            ("ci-repair", "workspace", "once", 60, True, True, "disabled"),
+            ("dependencies", "workspace", "once", 30, True, True, "disabled"),
+            ("documentation", "workspace", "once", 30, False, True, "disabled"),
             ("security-review", "inspect", "weekly", 30, False, False, "live"),
             ("release-review", "inspect", "once", 20, False, False, "disabled"),
             ("backups", "workspace", "daily", 15, True, False, "disabled"),
+            ("updates", "workspace", "weekly", 15, True, False, "disabled"),
+            ("network", "workspace", "once", 15, True, False, "disabled"),
             ("storage", "inspect", "weekly", 15, False, False, "disabled"),
             ("incident", "workspace", "once", 20, True, False, "disabled"),
             ("certificates", "workspace", "daily", 10, True, False, "disabled"),
@@ -859,7 +899,7 @@ class AgentScreenTest(unittest.TestCase):
                 values = {"csrf": self.state.csrf_token, "title": template["title"], "prompt": template["prompt"],
                           "directory": self.temporary.name, "mode": template["mode"], "interval": template["interval"],
                           "workspace": template.get("workspace", "existing"),
-                          "timeout_minutes": str(template["timeout_minutes"]), "web_search": template.get("web_search", "disabled"),
+                          "timeout_minutes": str(template.get("timeout_minutes", tasks.DEFAULT_TIMEOUT_MINUTES)), "web_search": template.get("web_search", "disabled"),
                           "submit": "run" if interval == "once" else "schedule"}
                 if template["network"]:
                     values["network"] = "1"
@@ -874,7 +914,7 @@ class AgentScreenTest(unittest.TestCase):
                                  (mode, interval, runtime, network, temporary_files, web_search))
                 self.assertEqual(saved["queued"], interval == "once")
                 self.assertEqual(saved["workspace"], template.get("workspace", "existing"))
-        self.assertIn("Repository work · 10 templates", page)
+        self.assertIn("Repository work · 9 templates", page)
         self.assertIn("Host checks and maintenance · 17 templates", page)
         self.assertIn("20 min cap · command network", page)
         self.assertIn("30 min cap · command network · temporary writes", page)

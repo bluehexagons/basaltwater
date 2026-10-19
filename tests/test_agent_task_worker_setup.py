@@ -123,6 +123,7 @@ class TaskWorkerSetupTests(unittest.TestCase):
     def test_render_keeps_provider_and_workspace_identity_non_root(self) -> None:
         content = steps.render_task_worker(self.account, revision="reviewed")
         self.assertIn("User=agent", content)
+        self.assertIn("SupplementaryGroups=systemd-journal\n", content)
         self.assertIn('Environment="HOME=' + self.home + '"', content)
         self.assertIn("KillMode=control-group", content)
         self.assertIn("agent tasks worker", content)

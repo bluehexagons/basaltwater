@@ -128,14 +128,13 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertIsNone(validate_report({**report(), "follow_up": None})["follow_up"])
         self.assertIn("follow_up", REPORT_SCHEMA["required"])
 
-    def test_maintenance_examples_have_distinct_access_and_repair_scope(self) -> None:
-        local, review, repair = (agents.PROMPT_TEMPLATES[name] for name in ("maintenance-local", "maintenance", "maintenance-repair"))
-        self.assertEqual((local["mode"], local["network"]), ("inspect", False))
+    def test_maintenance_starter_is_diagnostic_and_repairs_use_follow_up_review(self) -> None:
+        review = agents.PROMPT_TEMPLATES["maintenance"]
         self.assertEqual((review["mode"], review["workspace"], review["network"]), ("workspace", "run-directory", True))
-        self.assertEqual((repair["workspace"], repair["interval"], repair["max_runs"]), ("existing", "once", 1))
-        self.assertIn("If no exact targets and actions are supplied", repair["prompt"])
-        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "maintenance-repair"})
-        self.assertEqual(TaskForm(page).values["directory"], "")
+        self.assertIn("follow_up", review["prompt"])
+        for removed in ("maintenance-local", "maintenance-repair", "regression-tests"):
+            with self.subTest(removed=removed), self.assertRaises(ValueError):
+                agents.parse_agent_query("template=" + removed)
 
     def test_legacy_inspection_tasks_offer_current_templates_without_changing_access(self) -> None:
         identifier = self.manager.create({"title": "Host maintenance review", "prompt": "Inspect live service state",
@@ -167,7 +166,7 @@ class TaskFollowUpTests(unittest.TestCase):
         custom = {"title": "Custom check", "mode": "inspect"}
         self.assertEqual(agents._render_inspection_access(custom), "")
         self.assertIn('href="/agents?view=templates"', agents._render_inspection_access(custom, blocked=True))
-        for key in ("repository", "storage", "maintenance-local", "maintenance"):
+        for key in ("repository", "storage", "maintenance"):
             self.assertEqual(agents._render_inspection_access(agents.PROMPT_TEMPLATES[key]), "")
         self.assertEqual(agents._render_inspection_access({**custom, "mode": "workspace"}, blocked=True), "")
         self.assertIn('href="/agent-tools?tool=checkup">Review current guided task',

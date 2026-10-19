@@ -20,7 +20,7 @@ under the panel account; no T3 Code installation is required.
 | Run agent work | Agents | Persistent Codex context and workspaces, bounded goals, recurring schedules, run evidence, and optional T3 Code diagnostics |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
 | Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
-| Prepare system and data tasks | Agent tools | Contextual checkups, maintenance plans, log and job reviews, cleanup, and local data work |
+| Prepare system and data tasks | Agent tools | Contextual checkups, log and job reviews, Debian update and network checks, maintenance plans, and local data work |
 | Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
@@ -295,14 +295,15 @@ These shortcuts open a setup form and never run a prompt automatically.
 | Tool | Result | Suggested repeat / cap |
 | --- | --- | --- |
 | System checkup | Evidence-backed resource, service, update, backup, and agent readiness findings | Daily / 20 minutes |
-| Plan system maintenance | Prioritized repairs with prerequisites, interruption risks, commands, and verification steps for operator review | Weekly / 30 minutes |
 | Review service logs | Grouped errors, likely causes, and next checks for a fixed service and rolling time window | Daily / 15 minutes |
 | Review a scheduled job | Timer and process evidence, missed runs, failures, and possible overlap | Once / 15 minutes |
+| Check Debian update health | Package consistency, held packages, existing index age, update results, and pending reboot evidence | Weekly / 15 minutes |
 | Review disk cleanup | Space consumers, ownership, retention implications, and cleanup candidates | Weekly / 15 minutes |
-| Check data quality | Aggregate schema, encoding, missing-value, duplicate, and consistency findings | Weekly / 20 minutes |
+| Check network and clock readiness | Local routes, resolver and clock state, plus bounded probes to explicitly configured endpoints | Once / 15 minutes |
+| Plan system maintenance | Prioritized repairs with prerequisites, interruption risks, commands, and verification steps for operator review | Weekly / 30 minutes |
+| Check data quality | Aggregate schema, encoding, missing-value, duplicate, and consistency findings | Once / 20 minutes |
 | Import and normalize data | A new CSV, JSON, or JSONL dataset with count/type and round-trip validation | Once / 30 minutes |
 | Export a dataset | A local directory bundle with checksums, a manifest, and offline restore instructions | Once / 30 minutes |
-| Quarantine old workspace files | Reversible moves from a dedicated cache/build folder with a manifest and rollback instructions | Once / 15 minutes |
 
 Select **Set up task**, fill in its inputs, then **Prepare prompt for review**.
 The resulting Agents form shows the full prompt and normal model, effort,
@@ -313,16 +314,23 @@ neither saves nor queues a task. Reports and saved execution settings appear in
 
 System tools inspect and recommend changes. Repairs remain operator actions
 through separately approved **Admin controls** or the administrator console.
-Log reviews read at most 100 recent entries at run time using the selected
-service, time window, and severity; message-text searches are not copied.
+Log reviews use `basaltw agent diagnostics` to read allowlisted runtime properties
+and at most 100 redacted recent entries at run time using the selected service,
+time window, and severity; message-text searches are not copied. Each underlying
+query has a five-second timeout and a 64 KiB output limit. Job reviews default
+to seven days and all priorities so successful weekly runs remain visible.
+The service selector prefers installed units and retains explicit historical links.
 Repeated reviews use a rolling window and may report the same event again.
 They report inaccessible evidence rather than seeking elevated access.
 
-System checkups, maintenance planning, and service/log/job reviews use workspace
+System checkups, maintenance planning, update/network checks, and service/log/job reviews use workspace
 permissions with command network access and an empty private directory for each
 run. This permits local service sockets and readiness probes while keeping the
 source home outside writable roots. Temporary writes remain disabled, and the
 prompts prohibit host changes. Disk-only reviews retain inspection mode.
+Update checks use existing APT indexes and never refresh or repair packages.
+Network checks use explicitly configured endpoints without scanning or inventing
+probe targets; missing targets and inaccessible evidence remain coverage limits.
 
 Data tools require an existing dedicated working directory inside the panel
 account's home. Source and output paths must be below it; relative paths are
@@ -343,12 +351,8 @@ excluded. Imports stop for ambiguous or lossy conversions rather than silently
 repairing records. Repeating tasks produce new output without purging old
 bundles; monitor output growth separately.
 
-Quarantine requires a dedicated disposable cache/build folder and a minimum
-age of 1–3650 days (default 7). Its prompt limits each run to 100 eligible
-ordinary files, skips tracked, open, sensitive, and uncertain files, and
-requires non-overwriting moves on the same filesystem. It never permanently
-deletes or automatically purges quarantine. Moving files into quarantine does
-not free disk space; use the disk review to plan actual reclamation.
+The former quarantine starter was removed: moving files on the same filesystem
+does not reclaim space. Use the disk review to prepare cleanup recommendations.
 
 These task-specific limits and revalidation requirements guide the agent; the
 runner enforces the selected Codex sandbox, runtime, and output limits. The
@@ -454,23 +458,24 @@ editable before submission; selecting a template does not run or schedule it.
 
 | Template | Default repeat | Runtime cap | Scope |
 | --- | --- | --- | --- |
-| Update repository dependencies | Weekly | 30 minutes | Workspace changes; command network and temporary writes |
 | Repository health check | Weekly | 30 minutes | Inspect only |
-| Repair failing checks | Once | 60 minutes | Workspace changes; temporary writes |
-| Add regression tests | Once | 60 minutes | Workspace changes; temporary writes |
-| Update repository documentation | Weekly | 30 minutes | Workspace changes |
+| Repair failing checks | Once | 60 minutes | Workspace changes; command network and temporary writes |
+| Update repository dependencies | Once | 30 minutes | Workspace changes; command network and temporary writes |
+| Update repository documentation | Once | 30 minutes | Workspace changes; temporary writes |
 | Review repository security | Weekly | 30 minutes | Inspect only; live web search for advisories |
 | Review release readiness | Once | 20 minutes | Inspect only |
-| Restricted host maintenance check | Daily | 30 minutes | Inspect only; no command network or writes |
 | Host maintenance review | Daily | 30 minutes | Workspace permissions; command network; private run directory |
-| Apply reviewed maintenance fixes | Once; one attempt | 30 minutes | Workspace changes in an explicitly selected directory; command network; supplied repair plan required |
+| Check Debian update health | Weekly | 15 minutes | Workspace permissions; command network; private run directory |
+| Check network and clock readiness | Once | 15 minutes | Workspace permissions; command network; private run directory |
 | Check backup health | Daily | 15 minutes | Workspace permissions; command network; private run directory |
 | Review storage cleanup | Weekly | 15 minutes | Inspect only |
 | Triage a service incident | Once | 20 minutes | Workspace permissions; command network; private run directory |
 | Check certificate expiry | Daily | 10 minutes | Workspace permissions; command network; private run directory |
 
 Repository editing templates ask for a clean existing/shared checkout,
-including untracked files, and leave changes for review. A managed persistent
+including untracked files, and leave changes for review. They default to Once
+so another editing run does not immediately block on the previous review backlog.
+A managed persistent
 task worktree may continue its own unfinished changes after inspecting them
 against the checkpoint; unrelated changes still require review. Existing saved
 prompts retain their original instructions. The templates prohibit stashing,
@@ -492,10 +497,12 @@ task from the refreshed template to replace a blocked inspection task. Merely
 resuming it does not change its sandbox. Host reviews use explicit doctor
 capabilities; project manifest discovery requires an actual Git checkout.
 
-**Apply reviewed maintenance fixes** requires a selected directory and an exact
-repair plan, including targets, allowed actions, verification, and rollback.
-It can apply that plan within the account's existing access. Missing plans
-produce a blocked report without repairs. Privileged actions require the
+The catalog opens host checks first and leads repository work with a health
+review. The restricted maintenance duplicate, empty repair-plan starter, and
+speculative regression-test starter were removed. Concrete repair requests can
+be prepared through follow-up review or the custom form with exact targets,
+actions, verification, and rollback. Existing saved tasks and receipts retain
+their original prompts and permissions. Privileged actions require the
 configured Admin approval workflow.
 
 Runs can record a **Follow-up requested** proposal for checks or repairs that
@@ -511,6 +518,14 @@ the detection reason. These checks do not run commands or prove service health,
 browser readiness, repository compatibility, or authentication. Repository
 templates still require you to select a suitable checkout.
 
+The catalog and task form explain known conflicts with local Codex administrator
+requirements, including forbidden sandbox/search modes and restricted permission
+profiles. The runner checks again before provider launch and records a blocked
+outcome with zero token usage when these requirements prevent execution. Drafts
+remain available; policy is never relaxed or retried with broader access. This
+preflight covers known local constraints, while Codex still enforces other
+configuration layers and integrations retain their own permissions.
+
 | Conditional template | Appears when | Default repeat / cap | Scope |
 | --- | --- | --- | --- |
 | Check T3 Code readiness | T3 Code is selected and its runtime or user service unit is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
@@ -518,7 +533,7 @@ templates still require you to select a suitable checkout.
 | Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
 | Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
 | Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Daily / 10 minutes | Workspace permissions; command network; private run directory |
-| Review GitHub Actions failures | Git and `gh` are selected and installed | Daily / 20 minutes | Workspace permissions for command network; prompt requests inspection only |
+| Review GitHub Actions failures | Git and `gh` are selected and installed | Daily / 20 minutes | Command network; private run directory; source checkout read-only |
 | Run browser smoke checks | `basaltwater-playwright-mcp` is installed | Once / 30 minutes | Workspace changes; command network and temporary writes |
 | Validate Godot web export | `godot` or `godot4` is installed | Once / 60 minutes | Workspace changes; temporary writes |
 | Check HomeBox data protection | HomeBox is configured | Daily / 15 minutes | Workspace permissions; command network; private run directory |
@@ -528,8 +543,10 @@ templates still require you to select a suitable checkout.
 | Check privilege approval readiness | Privilege approvals are configured | Weekly / 15 minutes | Workspace permissions; command network; private run directory |
 
 GitHub CI inspection needs command network access; the runner offers that in
-workspace mode, so its prompt explicitly requests no file changes or remote
-actions. Browser checks use isolated loopback previews and synthetic data, without
+workspace mode with a private run directory. Its prompt uses the recorded source
+path for local inspection, requests no remote actions, and reports unfinished
+checks as pending without watching or repeatedly polling them.
+Browser checks use isolated loopback previews and synthetic data, without
 creating gateway previews or forwards. A healthy managed browser installation
 does not prove that browser tools are exposed to the unattended session; missing
 tools are reported as blocked coverage. Godot exports use a documented ignored
@@ -599,7 +616,11 @@ Execution controls remain disabled until storage recovers.
 
 New non-root Debian setups with Codex selected install an independent task
 worker. It runs without the panel or T3 Code, and the screen reports its live
-lease separately from installed unit presence. Older installations retain panel
+lease separately from installed unit presence. Its system service receives
+`systemd-journal` supplementary access for bounded log reviews, matching the
+panel's journal access without adding that group to the login account. Rerun
+Basaltwater setup to update an existing worker's unit; source updates alone do
+not change a running service's groups. Older installations retain panel
 scheduling until setup installs the worker. Tasks persist across panel and host restarts. After
 downtime, each overdue schedule runs at most once, then advances to its next
 interval. Deadlines crossed while a task is running are skipped, preserving its

@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
@@ -27,12 +27,16 @@ SYSTEM_UNITS = {
     "docker.service": "Docker",
     "smbd.service": "File sharing",
     "xrdp.service": "Remote desktop",
+    "xrdp-sesman.service": "Remote desktop sessions",
+    "basaltwater-guacamole.service": "Browser desktop gateway",
+    "basaltwater-syncthing.service": "File synchronization",
+    "antistatic.service": "Antistatic lobby",
+    "antistatic-db.service": "Antistatic database",
     "fail2ban.service": "Login protection",
     "auditd.service": "System audit",
     "basaltwater-web-panel.service": "Web panel",
 }
 JOB_SERVICES = {
-    "basaltwater-web-panel-audit.service": "Audit snapshot exporter",
     "auto-update-apt.service": "Package updates",
     "auto-update-uv.service": "uv updates",
     "auto-update-node.service": "Node.js updates",
@@ -44,13 +48,15 @@ JOB_SERVICES = {
     "cleanup-maintenance.service": "System cleanup",
     "user-cache-maintenance.service": "User cache cleanup",
     "storage-ops.service": "Storage operations",
+    "basaltwater-web-panel-audit.service": "Audit snapshot exporter",
+    "basaltwater-maintenance-agent.service": "Maintenance agent",
 }
 SOURCES = {
     **SYSTEM_UNITS,
     **JOB_SERVICES,
     "t3code.service": "T3 Code (current user)",
 }
-WINDOWS = {"1h": "Last hour", "24h": "Last 24 hours", "boot": "Current boot"}
+WINDOWS = {"1h": "Last hour", "24h": "Last 24 hours", "168h": "Last 7 days", "boot": "Current boot"}
 PRIORITIES = {"4": "Warnings and errors", "3": "Errors only", "7": "All priorities"}
 PROPERTIES = {
     "LoadState": "Unit availability",
@@ -219,7 +225,7 @@ def _redact_log_message(message: str) -> str:
         try:
             parsed = urllib.parse.urlsplit(match[0])
             if not parsed.hostname:
-                return match[0]
+                return "[invalid URL redacted]"
             query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
             safe_query = urllib.parse.urlencode(
                 [
@@ -230,13 +236,15 @@ def _redact_log_message(message: str) -> str:
                 safe="[]",
             )
             host = parsed.hostname
+            if ":" in host:
+                host = f"[{host}]"
             if parsed.port is not None:
                 host += f":{parsed.port}"
             return urllib.parse.urlunsplit(
                 (parsed.scheme, host, parsed.path, safe_query, "[redacted]" if parsed.fragment else "")
             )
         except ValueError:
-            return match[0]
+            return "[invalid URL redacted]"
 
     return _CREDENTIAL_URL_PATTERN.sub(redact_url, message)
 
@@ -330,7 +338,9 @@ def render_diagnostics(
     """Render a separate screen; opening the form never invokes a collector."""
 
     sources = dict(SOURCES if sources is None else sources)
-    if query.service not in sources and (query.load or query.service != "nginx.service"):
+    if query.service not in sources and not query.load and query.service == "nginx.service" and sources:
+        query = replace(query, service=next(iter(sources)))
+    if query.service not in sources:
         # A saved link can still inspect historical logs after removal.
         sources[query.service] = SOURCES[query.service] + " (not installed; historical logs)"
 

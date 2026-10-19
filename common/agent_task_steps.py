@@ -58,6 +58,8 @@ Wants=network-online.target
 Type=simple
 User={account.pw_name}
 Group={account.pw_gid}
+# Match the panel's journal access without changing login-account groups.
+SupplementaryGroups=systemd-journal
 WorkingDirectory={working_directory}
 Environment={_quote('HOME=' + account.pw_dir)}
 Environment={_quote('CODEX_HOME=' + account.pw_dir + '/.codex')}
