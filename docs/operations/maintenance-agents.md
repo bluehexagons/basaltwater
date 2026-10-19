@@ -9,8 +9,10 @@ basaltw patch HOST USER --maintenance-agent \
   --maintenance-agent-escalation-model YOUR_STRONGER_MODEL
 ```
 
-The **Maintenance agent** panel page enables or disables supervision, saves
-the same policy options, requests a check, and displays up to 40 recent records.
+The **Agents → Maintenance** tab enables or disables automatic supervision,
+saves the same policy options, requests a check, and displays up to 40 recent
+records. The Agents dashboard also shows saved maintenance state and can
+request a one-time check.
 Panel setups install the supervisor disabled unless explicitly enabled.
 The supervisor runs independently of the panel and T3 Code. Without a panel,
 configure it using setup flags or the local CLI as the control-directory owner:
@@ -30,7 +32,11 @@ and, when `security` is selected, refreshes security evidence regardless of the
 audit interval. Manual reviews share the same daily attempt and timeout limits
 as automatic reviews; a request does not guarantee an AI call.
 
-Host diagnostics and security audits have independent automatic schedules:
+Manual **Check once now** works while automatic maintenance is disabled. It
+runs host diagnostics and, when security auditing is selected, refreshes
+security evidence regardless of the saved audit interval. It never requests
+housekeeping. Automatic host diagnostics and security audits have independent
+schedules:
 `--maintenance-agent-host-checks` uses the minute `interval`, while
 `--maintenance-agent-security` uses `audit_days`. For security-only automation:
 
@@ -40,10 +46,11 @@ basaltw agent maintenance-agent configure --maintenance-agent \
   --maintenance-agent-audit-days 7 --no-maintenance-agent-routines
 ```
 
-Both schedules require automatic maintenance to be enabled. The fixed timer
-polls every 15 minutes; due checks run on a later poll. Saved cleanup permission
-is independent of both diagnostic schedules and must be disabled separately
-when unwanted. Disabling automatic maintenance pauses all three.
+The fixed timer polls every 15 minutes; enabled schedules run on a later poll
+when due. Saved cleanup permission is independent of both diagnostic schedules
+and must be disabled separately when unwanted. Disabling automatic maintenance
+pauses all three automatic activities while preserving their individual
+preferences for later use.
 
 With a non-root setup user, that user owns maintenance controls and supplies
 the Codex installation and credentials. Root setups use the locked, non-login

@@ -267,7 +267,16 @@ def export_assets(assets: Path) -> None:
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
         patch.object(state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git", "gh"}), t3=True, maintenance=True, admin=True)),
-        patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
+        patch.object(state.agent_tasks, "snapshot", return_value={
+            "tasks": [{"id": "b" * 32, "title": "Review backup readiness", "enabled": False,
+                       "interval": "once", "queued": False, "draft": False, "auto_paused": False,
+                       "stop_reason": "", "attempts": 1, "keep": True, "next_run": None}],
+            "runs": [{"id": "c" * 32, "task": {"id": "b" * 32, "title": "Review backup readiness",
+                      "timeout_minutes": 15}, "status": "completed", "outcome": "complete",
+                      "started_at": 1767258000, "finished_at": 1767258900, "duration_seconds": 900,
+                      "summary": "Backup inventory is present; last restore verification needs review.",
+                      "message": "", "follow_up": None}],
+        }),
         patch.object(state.agent_tasks, "available", return_value=False),
         patch.object(state.agent_diagnostics, "snapshot", return_value={"status": "not_loaded"}),
         patch.object(state.git_settings, "snapshot", return_value={
@@ -283,7 +292,7 @@ def export_assets(assets: Path) -> None:
         patch.object(state.admin, "snapshot", return_value={"blocked": {}, "requests": [], "unit_state": "inactive"}),
         patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)),
         patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}),
-        patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": True}),
+        patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": False}),
         patch.object(maintenance, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}),
         patch.object(maintenance, "load_reports", return_value={
             "version": 1, "username": "operator", "context": {"system_type": "server_dev"}, "reports": [{

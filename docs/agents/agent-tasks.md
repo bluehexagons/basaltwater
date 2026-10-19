@@ -1,7 +1,7 @@
 # Persistent agent tasks and goals
 
 Use **Agents** in the web panel or `basaltw agent tasks` as the task account to
-run saved prompts, continue a bounded goal, or wake scheduled work with an
+review agent activity, run saved prompts, continue a bounded goal, or wake scheduled work with an
 external event. Terminal Codex and agents inside T3 Code can use the same CLI
 or stdio MCP API. All three surfaces share account-local state and controls.
 Current execution uses Codex; installing T3 does not change the executor.
@@ -69,11 +69,22 @@ expecting it to continue a dirty task worktree.
 
 ## Create and control work
 
-New tasks and ordinary templates default to **Once**. The explicitly named
+The Agents dashboard is the starting page. It summarizes recent runs, tasks
+needing review, maintenance status, operator inbox feedback and runtime
+readiness. **Tasks**, **Run history**, and **Readiness** are views within
+Agents; **Agent tools**, **Inbox**, and **Maintenance** are neighboring tabs.
+Dashboard summaries use saved state and do not launch diagnostics or prompts.
+Run history is available at `/agents?view=history` and retains the same
+receipts and controls as task history opened from a run link.
+
+New tasks and ordinary templates default to **Once**. Guided system and data
+tools also prepare one-time work by default. Templates on the Maintenance tab
+are optional one-time reviews; opening one prepares a task for review and does
+not create a schedule. The explicitly named
 **Daily maintenance checks** template supplies a daily routine; other recurrence
 requires a deliberate selection. Existing schedules keep their saved cadence.
 
-The main list shows each task's latest summary and pending follow-up badge.
+The Tasks view shows each task's latest summary and pending follow-up badge.
 Finished one-time tasks move into **Completed one-time tasks** unless **Keep in
 saved tasks** is selected. Their receipts and results remain accessible. When
 the saved-task limit is reached, the oldest finished, unpinned one-time control

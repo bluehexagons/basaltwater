@@ -15,7 +15,7 @@ under the panel account; no T3 Code installation is required.
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Inspect a GitHub runner | GitHub runner | On-demand local service state, repository, labels, read-only allowlist and recent gate outcomes |
-| Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
+| Enable tailored supervision | Agents → Maintenance | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
 | Exchange messages across sessions | Agent inbox | Account-local mailboxes with durable unread messages and explicit acknowledgement |
 | Run agent work | Agents | Persistent Codex context and workspaces, bounded goals, recurring schedules, run evidence, and optional T3 Code diagnostics |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
@@ -363,15 +363,18 @@ exact text for later runs.
 
 ## Maintenance agents and inbox
 
-Open **Maintenance agent** to enable the installed supervisor, set its check
+Open **Agents → Maintenance** to enable the installed supervisor, set its check
 interval, model choices, reasoning effort and daily attempt limits, or request
 a check. Panel setup prepares disabled supervision; `--maintenance-agent`
 enables it during setup. Checks continue independently of the panel and T3 Code.
 Healthy checks make no AI calls. Opt-in housekeeping requests fixed existing
 cleanup jobs; AI reviews provide recommendations.
 
-The page leads with the saved enabled state, check interval, and **Check now**.
-Maintenance records appear before the settings form; incomplete checks retain
+The tab leads with the saved enabled state, check interval, and **Check once now**.
+This manual request works with automatic maintenance disabled; it does not
+enable schedules or request housekeeping. Host checks, security audits, and
+housekeeping have separate controls. Maintenance records appear before the
+settings form; incomplete checks retain
 a warning even when they recorded no findings. Expand **Maintenance settings**
 to edit grouped check/housekeeping and AI review/limit controls. Disabled agents
 show the settings immediately. Failed submissions preserve entered settings
