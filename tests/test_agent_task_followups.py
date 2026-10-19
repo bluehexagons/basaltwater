@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import tomllib
 import unittest
 from io import BytesIO
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from urllib.parse import urlencode
 
 from common.service_tools import web_panel_agents as agents
@@ -136,8 +137,74 @@ class TaskFollowUpTests(unittest.TestCase):
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "maintenance-repair"})
         self.assertEqual(TaskForm(page).values["directory"], "")
 
+    def test_legacy_inspection_tasks_offer_current_templates_without_changing_access(self) -> None:
+        identifier = self.manager.create({"title": "Host maintenance review", "prompt": "Inspect live service state",
+            "directory": self.home, "mode": "inspect", "interval": "daily"}, run_now=True)
+        with patch.object(tasks, "execute_prompt", return_value={
+            "status": "completed", "message": "Done", "output": "", **report("blocked"),
+        }):
+            self.assertTrue(self.manager.tick())
+        before = self.manager.snapshot()
+        run_id = before["runs"][0]["id"]
+        for query in ({}, {"edit": identifier}, {"copy": identifier}, {"reuse": run_id},
+                      {"receipt": identifier + "." + run_id}):
+            with self.subTest(query=query):
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+                self.assertIn("Inspection access is restricted", page)
+                self.assertIn('href="/agents?template=maintenance">Review current host-check template', page)
+                self.assertIn("then pause the old schedule", page)
+                if query and "receipt" not in query:
+                    form = TaskForm(page).values
+                    self.assertEqual((form["mode"], form["workspace"]), ("inspect", "existing"))
+                    self.assertNotIn("network", form)
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "maintenance"})
+        form = TaskForm(page).values
+        self.assertEqual((form["id"], form["mode"], form["workspace"], form["network"]),
+                         ("", "workspace", "run-directory", "1"))
+        self.assertEqual(self.manager.snapshot(), before)
+
+    def test_inspection_guidance_does_not_claim_every_blocker_is_a_permission_failure(self) -> None:
+        custom = {"title": "Custom check", "mode": "inspect"}
+        self.assertEqual(agents._render_inspection_access(custom), "")
+        self.assertIn('href="/agents?view=templates"', agents._render_inspection_access(custom, blocked=True))
+        for key in ("repository", "storage", "maintenance-local", "maintenance"):
+            self.assertEqual(agents._render_inspection_access(agents.PROMPT_TEMPLATES[key]), "")
+        self.assertEqual(agents._render_inspection_access({**custom, "mode": "workspace"}, blocked=True), "")
+        self.assertIn('href="/agent-tools?tool=checkup">Review current guided task',
+                      agents._render_inspection_access({"title": "System checkup", "mode": "inspect"}))
+
 
 class TaskPermissionProfileTests(unittest.TestCase):
+    def test_task_account_bus_is_pinned_for_provider_and_shell_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            process, selector = MagicMock(), MagicMock()
+            process.__enter__.return_value = process
+            process.wait.return_value = 0
+            selector.__enter__.return_value = selector
+            selector.get_map.return_value = {}
+            polluted = {"XDG_RUNTIME_DIR": "/run/user/9999", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/wrong/bus",
+                        "SYSTEMCTL_FORCE_BUS": "0", "CODEX_HOME": "/wrong/codex"}
+            with (
+                patch.dict(os.environ, polluted),
+                patch.object(tasks.os, "geteuid", return_value=1234),
+                patch.object(tasks, "_tool_path", return_value="/test/codex"),
+                patch.object(tasks.subprocess, "Popen", return_value=process) as spawn,
+                patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
+                patch.object(tasks.os, "killpg"),
+            ):
+                result = tasks.execute_prompt({"title": "Check", "prompt": "Inspect live service state",
+                    "directory": home, "interval": "once", **agents.HOST_REVIEW_SETTINGS}, home, threading.Event())
+            self.assertEqual(result["status"], "completed")
+            command = spawn.call_args.args[0]
+            overrides = tomllib.loads("\n".join(command[index + 1] for index, value in enumerate(command) if value == "-c"))
+            expected = {"HOME": home, "CODEX_HOME": home + "/.codex", "XDG_RUNTIME_DIR": "/run/user/1234",
+                        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1234/bus", "SYSTEMCTL_FORCE_BUS": "1"}
+            self.assertEqual(overrides["shell_environment_policy"]["set"], expected)
+            for name, value in expected.items():
+                self.assertEqual(spawn.call_args.kwargs["env"][name], value)
+            self.assertNotIn("inherit", overrides["shell_environment_policy"])
+            self.assertNotIn("filters", overrides["shell_environment_policy"])
+
     def test_task_access_overrides_managed_defaults_in_both_codex_config_generations(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             for mode, network, temporary in (("inspect", False, False), ("workspace", False, False),

@@ -449,6 +449,29 @@ def _task_needs_review(task: dict[str, Any], runs: list[dict[str, Any]]) -> bool
         latest["status"] in {"failed", "interrupted"} or latest.get("outcome") in {"failed", "blocked"}))
 
 
+def _render_inspection_access(task: dict[str, Any], *, blocked: bool = False) -> str:
+    if task.get("mode") != "inspect":
+        return ""
+    from common.service_tools.web_panel_agent_tools import TOOLS
+
+    template = next((key for key, value in PROMPT_TEMPLATES.items()
+                     if value["scope"] == "host" and value.get("workspace") == "run-directory"
+                     and value["title"] == task.get("title")), None)
+    tool = next((key for key, (title, _, group, mode, _, _) in TOOLS.items()
+                 if group == "System" and mode == "workspace" and title == task.get("title")), None)
+    if template is None and tool is None and not blocked:
+        return ""
+    target, label = "/agents?view=templates", "Review task templates"
+    if template:
+        target, label = "/agents?template=" + template, "Review current host-check template"
+    elif tool:
+        target, label = "/agent-tools?tool=" + tool, "Review current guided task"
+    return f'''<aside class="agent-panel"><strong>Inspection access is restricted</strong>
+<p class="agent-help">Inspect only can block local service sockets and endpoint probes. Saved tasks and Reuse run settings keep their original access.</p>
+<a class="refresh-link" href="{target}">{label}</a>
+<p class="agent-help">Live host-check templates use command network access and a private run directory, with prompts that prohibit host changes. Review and submit a new task, then pause the old schedule if replacing it. Opening a template does not change or queue saved work.</p></aside>'''
+
+
 def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFeatures) -> dict[str, dict[str, Any]]:
     """Use saved configuration and executable presence, without executing tools."""
 
@@ -646,7 +669,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     workspace_label = {"existing": "Selected directory", "directory": "Task directory", "worktree": "Git worktree", "run-directory": "New run directory"}.get(defaults["workspace"], defaults["workspace"])
     composer = f'''<div class="agent-panel">{render_heading("Edit prompt task" if editing else "Review prepared task" if prepared else "New prompt task", "agents")}
 {f'<p class="agent-help">{_escape(source_note)}</p>' if source_note else ''}
-<form class="agent-form" method="post" action="/actions/agent-task/save">
+{_render_inspection_access(defaults)}<form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="id" value="{_escape(defaults['id'])}">
 <div class="agent-fields"><label>Task name<input name="title" value="{_escape(defaults['title'])}" maxlength="120" required placeholder="Weekly dependency update"></label>
 <label>Working directory<input name="directory" value="{_escape(defaults['directory'])}" required placeholder="~/repos/project"></label></div>
@@ -727,7 +750,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             due_label += " · due; waiting for worker"
         rows.append(f'''<li><article class="agent-task{' agent-task-active' if running or task['queued'] else ' agent-task-attention' if attention else ''}" aria-labelledby="task-{task['id']}">
 <div class="agent-task-head"><div><h3 id="task-{task['id']}">{_escape(task['title'])}</h3><p class="agent-help"><code>{_escape(task['directory'])}</code></p></div><span class="badge {tone}">{task_status}</span></div>
-{stop_note}<dl class="agent-task-facts"><div><dt>Schedule</dt><dd>{_escape(interval_label)}</dd></div><div><dt>Next run · UTC</dt><dd>{due_label}</dd></div><div><dt>Latest result</dt><dd>{last.capitalize()}<small>{last_timing}</small></dd></div></dl>
+{stop_note}{_render_inspection_access(task)}<dl class="agent-task-facts"><div><dt>Schedule</dt><dd>{_escape(interval_label)}</dd></div><div><dt>Next run · UTC</dt><dd>{due_label}</dd></div><div><dt>Latest result</dt><dd>{last.capitalize()}<small>{last_timing}</small></dd></div></dl>
 <div class="agent-buttons">{controls}</div>{run_note}
 <details><summary>Task settings and more actions</summary><p class="agent-help">{'Inspect only' if task['mode'] == 'inspect' else 'Workspace changes'} · command network {"on" if task['network'] else "off"} · {_escape(task['timeout_minutes'])} min cap · {_escape(task['model'] or 'Configured model')} · effort {_escape(task['effort'] or 'default')}</p>
 <p class="agent-help">{failure_note} · {_escape(task['persistence'])} · {_escape(task['workspace'])} · {task['attempts']} attempts · {task['tokens_used']} reported tokens</p><div class="agent-buttons">{more}</div><p class="agent-help">Remove deletes the saved task; retained run history stays available. Reset context keeps workspace files and receipts.</p></details></article></li>''')
@@ -747,6 +770,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <details><summary>Execution settings</summary><p class="agent-help">{_escape(run['task']['mode'])} · model {_escape(run['task']['model'] or 'configured default')} · effort {_escape(run['task']['effort'] or 'default')} · {_escape(run['task']['timeout_minutes'])} min cap · command network {'on' if run['task']['network'] else 'off'} · temporary writes {'on' if run['task']['temporary_files'] else 'off'} · web search {_escape(run['task']['web_search'])} · Codex history {'kept' if run['task']['session_history'] or run['task']['persistence'] == 'conversation' else 'ephemeral'}</p></details>
 <p class="agent-help">Process: {_escape(run['status'])} · Task outcome: {_escape(run.get('outcome') or 'Not reported by this older run')} · context {_escape(run['task']['persistence'])} · workspace {_escape(run.get('execution_directory') or run['task']['directory'])}</p>
 <a class="refresh-link" href="/agents?reuse={run['id']}">Reuse run settings</a>
+{_render_inspection_access(run['task'], blocked=run.get('outcome') == 'blocked')}
 {_render_follow_up(run)}
 <details><summary>Prompt used for this run</summary><pre>{_escape(run['task']['prompt'])}</pre></details></details>''')
     diagnostics_html = _render_diagnostics(diagnostics, state.csrf_token)
@@ -829,6 +853,7 @@ def _render_receipt(manager: AgentTasks, reference: str) -> str:
 <h3>Verification evidence</h3><pre>{display(json.dumps(run.get('evidence', []), ensure_ascii=False, indent=2))}</pre>
 <h3>Checkpoint from this run</h3><pre>{display(run.get('checkpoint', ''))}</pre>
 <h3>Output</h3><pre>{display(run.get('output', ''))}</pre>
+{_render_inspection_access(run['task'], blocked=run.get('outcome') == 'blocked')}
 {_render_follow_up(run)}
 <details><summary>Original task settings</summary><pre>{display(json.dumps(run['task'], ensure_ascii=False, indent=2))}</pre></details>
 <p class="agent-help">Historical evidence does not change task permissions or reactivate removed work.</p></section>'''

@@ -77,7 +77,13 @@ access to the source home or checkout; temporary writes remain disabled. These
 prompts request read-only diagnostics and recommendations, without host repairs.
 Filesystem-only storage reviews retain inspection mode. Saved tasks keep their
 original settings; create a new task from the refreshed template to replace an
-older inspection task. An established workspace binding cannot be changed in place.
+older inspection task. The panel identifies restricted saved host-check presets
+and links to their current template in task settings, copied/reused forms and
+run reports. Older guided system checks link to their current preparation form.
+Other blocked inspections link to the template catalog. These links
+only open a form; review and submit the replacement, then pause the old schedule
+to avoid duplicate runs. **Reuse run settings** preserves the old permissions.
+An established workspace binding cannot be changed in place.
 
 For custom host reviews, use `agent doctor` with explicit capabilities.
 `agent manifest` requires a project checkout and is not a host readiness check.
@@ -93,7 +99,12 @@ an account restricted to an allowlist of named profiles can reject workspace
 tasks; the runner does not retry with broader access or weaken that policy.
 User-service queries use systemd's ordinary D-Bus connection
 (`SYSTEMCTL_FORCE_BUS=1`) because its private manager connection cannot verify
-peer PIDs across Codex's PID namespace.
+peer PIDs across Codex's PID namespace. Each invocation sets the task account's
+`HOME`, `CODEX_HOME`, runtime directory, D-Bus address and forced-bus setting in
+both the provider environment and Codex's shell environment overrides. This
+prevents a caller's stale bus address or core-only environment inheritance from
+breaking live diagnostics. Explicit administrator policies and shell include
+filters still apply; the runner does not widen environment inheritance.
 
 The maintenance examples offer three starting points:
 

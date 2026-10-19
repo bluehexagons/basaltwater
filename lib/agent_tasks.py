@@ -324,8 +324,8 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     environment = os.environ.copy()
     environment["HOME"] = home
     environment["CODEX_HOME"] = os.path.join(home, ".codex")
-    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.geteuid()}")
-    environment.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={environment['XDG_RUNTIME_DIR']}/bus")
+    environment["XDG_RUNTIME_DIR"] = f"/run/user/{os.geteuid()}"
+    environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={environment['XDG_RUNTIME_DIR']}/bus"
     # The private systemd socket rejects peers in Codex's PID namespace.
     # Use the account's ordinary D-Bus connection with the same permissions.
     environment["SYSTEMCTL_FORCE_BUS"] = "1"
@@ -407,6 +407,11 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
                 or bool(task["deadline_at"]) and time.time() >= task["deadline_at"])
 
     command = codex_command(task, executable)
+    # Codex's shell environment can inherit only core variables or override
+    # individual values. Pin the task account and bus in that layer too; merely
+    # setting the provider process's environment does not configure its shells.
+    for name in ("HOME", "CODEX_HOME", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "SYSTEMCTL_FORCE_BUS"):
+        command[1:1] = ["-c", f"shell_environment_policy.set.{name}={json.dumps(environment[name])}"]
     events = CodexEvents() if runtime else None
     if isolated:
         # Maintenance reviews do not inherit user MCP servers, hooks, provider
