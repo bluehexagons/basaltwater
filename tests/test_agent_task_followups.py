@@ -17,7 +17,7 @@ from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
 from lib.agent_task_api import TaskAPI
-from lib.agent_task_context import CodexEvents, REPORT_SCHEMA, validate_report
+from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, REPORT_SCHEMA, validate_follow_up, validate_report
 from tests.test_agent_panel_tools import TaskForm
 from tests.test_agent_task_persistence import report
 
@@ -109,7 +109,12 @@ class TaskFollowUpTests(unittest.TestCase):
                         {"directory": "/tmp\npath"}, {"prompt": "a" * 4001}, {"title": ""},
                         {"workspace": "external"}, {"mode": "inspect"}, {"command": "sudo repair"}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                validate_report({**report("blocked"), "follow_up": {**self.proposal, **changes}})
+                validate_follow_up({**self.proposal, **changes})
+            diagnostic = {**report("blocked"), "follow_up": {**self.proposal, **changes}}
+            retained = validate_report(diagnostic)
+            self.assertIsNone(retained["follow_up"])
+            self.assertEqual(retained["summary"], diagnostic["summary"])
+            self.assertEqual(retained["follow_up_warning"], FOLLOW_UP_WARNING)
         self.proposal.update(directory="/etc", workspace="existing")
         identifier, run_id = self.record_request()
         before = self.manager.snapshot()
@@ -128,6 +133,41 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertEqual(validate_report(report()), report())
         self.assertIsNone(validate_report({**report(), "follow_up": None})["follow_up"])
         self.assertIn("follow_up", REPORT_SCHEMA["required"])
+
+    def test_invalid_follow_up_does_not_discard_diagnostic_report(self) -> None:
+        diagnostic = {**report("blocked"), "summary": "Service check completed", "evidence": ["unit was inactive"],
+                      "environment_feedback": "é" * 1500,
+                      "follow_up": {**self.proposal, "mode": "inspect"}}
+        events = CodexEvents()
+        event = {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(diagnostic)}}
+        events.feed(json.dumps(event).encode() + b"\n")
+        self.assertEqual(events.report["outcome"], "blocked")
+        self.assertEqual(events.report["summary"], diagnostic["summary"])
+        self.assertEqual(events.report["evidence"], diagnostic["evidence"])
+        self.assertEqual(events.report["environment_feedback"], diagnostic["environment_feedback"])
+        self.assertIsNone(events.report["follow_up"])
+        self.assertEqual(events.report["follow_up_warning"], FOLLOW_UP_WARNING)
+        self.assertLess(len(FOLLOW_UP_WARNING), 500)
+        self.assertEqual(events.error, "")
+        self.assertEqual(diagnostic["follow_up"]["mode"], "inspect")
+        identifier = self.manager.create({"title": "Host review", "prompt": "Inspect only", "directory": self.home,
+                                          "mode": "inspect", "interval": "once", "persistence": "checkpoint"}, run_now=True)
+        with (patch.object(tasks, "execute_prompt", return_value={"status": "completed", "message": FOLLOW_UP_WARNING,
+                  "output": diagnostic["summary"], **events.report}),
+              patch("lib.agent_inbox.AgentInbox.feedback", return_value={"id": "feedback-id"}) as feedback):
+            self.assertTrue(self.manager.tick())
+        self.assertTrue(feedback.call_args.args[1].endswith(diagnostic["environment_feedback"]))
+        run = self.manager.snapshot()["runs"][0]
+        receipt = self.manager.contexts.receipt(identifier, run["id"])
+        self.assertEqual(receipt["evidence"], diagnostic["evidence"])
+        self.assertEqual(receipt["environment_feedback"], diagnostic["environment_feedback"])
+        self.assertEqual(receipt["follow_up_warning"], FOLLOW_UP_WARNING)
+        self.assertEqual(self.manager.contexts.load(identifier)["checkpoint"], diagnostic["checkpoint"])
+        self.assertEqual(self.manager.contexts.pending_follow_ups(identifier), [])
+        self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+        for changes in ({"summary": None}, {"evidence": []}, {"environment_feedback": "x" * 3001}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_report({**diagnostic, "outcome": "complete", **changes})
 
     def test_maintenance_starter_is_diagnostic_and_repairs_use_follow_up_review(self) -> None:
         review = agents.PROMPT_TEMPLATES["maintenance"]
