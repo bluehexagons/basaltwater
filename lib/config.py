@@ -476,6 +476,7 @@ class SetupConfig:
     disable_web_panel: bool = False
     guacamole: Optional[bool] = None
     maintenance_agent: Optional[bool] = None
+    maintenance_agent_host_checks: Optional[bool] = None
     maintenance_agent_interval: Optional[int] = None
     maintenance_agent_routines: Optional[bool] = None
     maintenance_agent_security: Optional[bool] = None
@@ -2836,6 +2837,7 @@ class SetupConfig:
             disable_web_panel=disable_web_panel,
             guacamole=_optional_bool_arg(args, 'guacamole'),
             maintenance_agent=_optional_bool_arg(args, 'maintenance_agent'),
+            maintenance_agent_host_checks=_optional_bool_arg(args, 'maintenance_agent_host_checks'),
             maintenance_agent_interval=_optional_int_arg(args, 'maintenance_agent_interval'),
             maintenance_agent_routines=_optional_bool_arg(args, 'maintenance_agent_routines'),
             maintenance_agent_security=_optional_bool_arg(args, 'maintenance_agent_security'),
