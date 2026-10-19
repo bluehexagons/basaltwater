@@ -31,6 +31,7 @@ from lib.agent_task_context import (
     validate_follow_up,
 )
 from lib.agent_task_policy import task_policy_issues
+from lib.agent_task_access import text_requirements, writable_directories
 from lib.validation import validate_filesystem_path
 
 
@@ -177,7 +178,7 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
     temporary_files = values.get("temporary_files", False)
     if type(temporary_files) is not bool or (temporary_files and mode != "workspace"):
         raise ValueError("Temporary file writes require workspace changes")
-    interval = values.get("interval")
+    interval = values.get("interval", "once")
     if not isinstance(interval, str) or interval not in {*INTERVALS, "custom"}:
         raise ValueError("Select a supported repeat interval")
     repeat_minutes = values.get("repeat_minutes", 0)
@@ -227,12 +228,24 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
     token_budget = _integer(values.get("token_budget", 0), "Token budget", 0, 10**12)
     if continue_until_done and not max_runs and not deadline and not token_budget:
         raise ValueError("A goal needs a run limit, deadline, or token budget")
+    roots = writable_directories(values.get("writable_directories", []), home, check=check_directory)
+    if roots and mode != "workspace":
+        raise ValueError("Additional writable directories require workspace changes")
+    prerequisites = text_requirements(values.get("operator_requirements", []))
+    source_task, source_run = values.get("source_task_id", ""), values.get("source_run_id", "")
+    if any(not isinstance(item, str) or item and not _ID.fullmatch(item) for item in (source_task, source_run)) or bool(source_task) != bool(source_run):
+        raise ValueError("A follow-up requires valid source task and run IDs")
+    keep = values.get("keep", False)
+    if type(keep) is not bool:
+        raise ValueError("Invalid saved task option")
     return {"title": title, "prompt": prompt, "directory": directory, "mode": mode,
             "model": model, "effort": effort, "timeout_minutes": timeout, "failure_limit": failure_limit,
             "web_search": web_search, "session_history": session_history, "temporary_files": temporary_files,
             "interval": interval, "repeat_minutes": repeat_minutes, "network": network,
             "persistence": persistence, "workspace": workspace, "executor": executor,
             "initial_checkpoint": initial_checkpoint,
+            "writable_directories": roots, "operator_requirements": prerequisites,
+            "source_task_id": source_task, "source_run_id": source_run, "keep": keep,
             "continue_until_done": continue_until_done, "completion_criteria": criteria.strip(),
             "continuation_minutes": _integer(values.get("continuation_minutes", 5), "Continuation interval", 1, MAX_REPEAT_MINUTES),
             "max_runs": max_runs, "deadline_at": deadline, "start_at": start, "token_budget": token_budget,
@@ -283,6 +296,8 @@ def codex_command(task: dict[str, Any], executable: str) -> list[str]:
         command += ["-c", f'model_reasoning_effort="{task["effort"]}"']
     command += ["-c", f'web_search="{task["web_search"]}"']
     command += ["exec", "--color", "never"]
+    for directory in task.get("writable_directories", []):
+        command += ["--add-dir", directory]
     runtime = task.get("_runtime")
     if runtime and runtime.get("session_id"):
         command += ["resume", runtime["session_id"]]
@@ -312,9 +327,9 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     task_id = task.get("id")
     wake_events = task.get("events", [])
     task = validate_task(task, home)
-    policy_issues = task_policy_issues(task)
+    policy_issues = task_policy_issues(task) + task["operator_requirements"]
     if policy_issues:
-        message = "Task blocked by Codex administrator policy; review policy and task settings."
+        message = "Task blocked by unresolved prerequisites or administrator policy; review task settings."
         return {"status": "failed", "outcome": "blocked", "output": "\n".join(policy_issues),
                 "message": message, "summary": message, "evidence": policy_issues,
                 "retry_after_minutes": None, "follow_up": None, "exit_code": None,
@@ -359,6 +374,14 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             "If useful work needs different permissions or separate authorization, set follow_up to a proposal "
             "with a reason, exact targets/actions, verification and rollback in its prompt, an absolute source "
             "directory, and the minimum mode/workspace/network/temporary_files settings. Otherwise use null. "
+            "Declare specific additional writable_directories (for example the account's .nvm directory), "
+            "exact service_restarts requiring broker execution, and operator_requirements for other unmet "
+            "prerequisites. Workspace directory modes start empty and do not grant source-directory writes. "
+            "Never ask a later unattended agent to configure its own sandbox or grant its own approval. "
+            "Do not repeat an unchanged blocked proposal; explain the missing operator action in environment_feedback. "
+            "Use environment_feedback for a concise, credential-free report of Basaltwater environment difficulties; "
+            "the runner delivers it to the local operator inbox even when command writes are unavailable. "
+            "Use an empty string when there is no environment feedback. "
             "This only records a request for operator review; it cannot create or run a task, change current "
             "permissions, approve privileged actions, or bypass administrator policy. Do not use task tools "
             "to activate a proposal that needs additional authorization. "
@@ -771,6 +794,17 @@ class AgentTasks:
                         raise ValueError("Creation request key already belongs to different task settings")
                     return existing["id"]
             if len(state["tasks"]) >= MAX_TASKS:
+                # Finished disposable one-shots already have durable receipts.
+                # Reclaim their controls before refusing new authorized work.
+                active = {run["task"]["id"] for run in state["runs"] if run["status"] == "running"}
+                old = next((item for item in state["tasks"] if item["attempts"] and not item["keep"]
+                            and item["interval"] == "once" and not repeat_seconds(item)
+                            and not item["queued"] and not item["enabled"] and not item["draft"]
+                            and item["id"] not in active
+                            and not self.contexts.has_pending_follow_up(item["id"])), None)
+                if old is not None:
+                    state["tasks"].remove(old)
+            if len(state["tasks"]) >= MAX_TASKS:
                 raise ValueError(f"At most {MAX_TASKS} saved tasks are allowed; remove an unused task")
             identifier = uuid.uuid4().hex
             scheduled = bool(interval) or task["interval"] == "event" or bool(task["start_at"])
@@ -798,7 +832,8 @@ class AgentTasks:
                 raise ValueError("Prompt task was not found")
             # Forms that predate portable handoffs omit this create-only field.
             # Preserve its provenance rather than implicitly replacing it.
-            merged = {**task, **values} if partial else {"initial_checkpoint": task["initial_checkpoint"], **values}
+            merged = {**task, **values} if partial else {"initial_checkpoint": task["initial_checkpoint"],
+                "source_task_id": task["source_task_id"], "source_run_id": task["source_run_id"], **values}
             task_values = validate_task(merged, self.home)
             _validate_model_effort(task_values, self.home)
             if task["queued"] or any(run["task"]["id"] == identifier and run["status"] == "running" for run in state["runs"]):
@@ -1047,6 +1082,16 @@ class AgentTasks:
             finished = time.time()
             duration = max(0, time.monotonic() - started)
             stored_run.update(result, finished_at=finished, duration_seconds=duration)
+            feedback = stored_run.get("environment_feedback")
+            if feedback:
+                try:
+                    from lib.agent_inbox import AgentInbox
+
+                    mail = AgentInbox(self.home).feedback("task-" + run["task"]["id"],
+                        f"Task: {run['task']['title']}\nRun: {run['id']}\n\n{feedback}")
+                    stored_run["feedback_message_id"] = mail["id"]
+                except (OSError, ValueError, RuntimeError):
+                    stored_run["feedback_delivery_error"] = "Operator inbox delivery failed; feedback remains in this receipt"
             try:
                 self.contexts.record(run["task"], stored_run)
             except (OSError, ValueError, RuntimeError) as exc:

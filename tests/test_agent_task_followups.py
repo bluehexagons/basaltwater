@@ -101,7 +101,7 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertNotEqual(self.manager.snapshot()["runs"][0]["id"], run_id)
         self.manager.action(identifier, "delete")
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"receipt": reference})
-        self.assertIn("Review follow-up task", page)
+        self.assertIn("Follow-up draft.", page)
         self.assertEqual(self.manager.contexts.receipt(identifier, run_id)["follow_up"], self.proposal)
 
     def test_invalid_requests_and_unavailable_proposals_do_not_prepare_work(self) -> None:
@@ -114,8 +114,9 @@ class TaskFollowUpTests(unittest.TestCase):
         identifier, run_id = self.record_request()
         before = self.manager.snapshot()
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"follow-up": identifier + "." + run_id})
-        self.assertIn("Follow-up request unavailable", page)
-        self.assertEqual(TaskForm(page).values["mode"], "inspect")
+        self.assertIn("Requested by a previous run", page)
+        self.assertEqual(TaskForm(page).values["directory"], "/etc")
+        self.assertEqual(TaskForm(page).values["mode"], "workspace")
         self.assertEqual(self.manager.snapshot(), before)
         for reference in ("missing", "../path", "a" * 32 + "." + "z" * 32):
             with self.subTest(reference=reference), self.assertRaises(ValueError):

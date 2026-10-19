@@ -698,13 +698,12 @@ class AgentScreenTest(unittest.TestCase):
         self.assertIn("read-only sandbox", page)
 
     def test_host_templates_prefill_home_and_repository_templates_require_a_checkout(self) -> None:
-        host_templates = {"maintenance", "updates", "network", "backups", "storage", "incident", "certificates"}
         with patch.object(tasks, "execute_prompt") as execute, patch.object(self.state.agent_diagnostics, "trigger") as checks:
             for key in agents._available_templates(self.state.manifest, self.temporary.name, self.state.features()):
                 with self.subTest(template=key):
                     query = agents.parse_agent_query("template=" + key)
                     page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
-                    directory = self.temporary.name if key in host_templates else ""
+                    directory = self.temporary.name if agents.PROMPT_TEMPLATES[key]["scope"] == "host" else ""
                     self.assertIn(f'name="directory" value="{directory}"', page)
                     self.assertIn(f'href="/agents?template={key}" aria-current="true"', page)
         execute.assert_not_called()
@@ -720,7 +719,7 @@ class AgentScreenTest(unittest.TestCase):
         inspect_tools.assert_not_called()
         inspect_t3.assert_not_called()
         self.assertIn("Repository work · 6 templates", page)
-        self.assertIn("Host checks and maintenance · 7 templates", page)
+        self.assertIn("Host checks and maintenance ·", page)
         for key, template in agents.PROMPT_TEMPLATES.items():
             if "requires" in template:
                 self.assertNotIn(f'href="/agents?template={key}"', page)
@@ -732,7 +731,7 @@ class AgentScreenTest(unittest.TestCase):
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
         self.assertNotIn("Repository work ·", page)
         self.assertNotIn('<option value="worktree"', page)
-        self.assertIn("Host checks and maintenance · 7 templates", page)
+        self.assertIn("Host checks and maintenance ·", page)
         self.assertIn("New prompt task", page)
 
     def test_policy_conflicts_are_shown_before_submission_and_drafts_remain_available(self) -> None:
@@ -843,7 +842,7 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_saved_conditional_task_remains_editable_after_software_is_removed(self) -> None:
         template = agents.PROMPT_TEMPLATES["containers"]
-        identifier = self.state.agent_tasks.create({**template, "directory": self.temporary.name}, run_now=False)
+        identifier = self.state.agent_tasks.create({**template, "directory": self.temporary.name}, run_now=False, draft=True)
         before = self.state.agent_tasks.snapshot()
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"edit": identifier})
         self.assertIn(f'name="title" value="{template["title"]}"', page)
@@ -865,27 +864,28 @@ class AgentScreenTest(unittest.TestCase):
             ("ci-repair", "workspace", "once", 60, True, True, "disabled"),
             ("dependencies", "workspace", "once", 30, True, True, "disabled"),
             ("documentation", "workspace", "once", 30, False, True, "disabled"),
-            ("security-review", "inspect", "weekly", 30, False, False, "live"),
+            ("security-review", "inspect", "once", 30, False, False, "live"),
             ("release-review", "inspect", "once", 20, False, False, "disabled"),
-            ("backups", "workspace", "daily", 15, True, False, "disabled"),
-            ("updates", "workspace", "weekly", 15, True, False, "disabled"),
+            ("daily-maintenance", "workspace", "daily", 30, True, False, "disabled"),
+            ("backups", "workspace", "once", 15, True, False, "disabled"),
+            ("updates", "workspace", "once", 15, True, False, "disabled"),
             ("network", "workspace", "once", 15, True, False, "disabled"),
-            ("storage", "inspect", "weekly", 15, False, False, "disabled"),
+            ("storage", "inspect", "once", 15, False, False, "disabled"),
             ("incident", "workspace", "once", 20, True, False, "disabled"),
-            ("certificates", "workspace", "daily", 10, True, False, "disabled"),
-            ("t3-readiness", "workspace", "daily", 15, True, False, "disabled"),
-            ("containers", "workspace", "daily", 15, True, False, "disabled"),
-            ("web-hosting", "workspace", "daily", 15, True, False, "disabled"),
-            ("shared-storage", "workspace", "daily", 15, True, False, "disabled"),
-            ("remote-desktop", "workspace", "daily", 10, True, False, "disabled"),
-            ("github-actions", "workspace", "daily", 20, True, False, "disabled"),
+            ("certificates", "workspace", "once", 10, True, False, "disabled"),
+            ("t3-readiness", "workspace", "once", 15, True, False, "disabled"),
+            ("containers", "workspace", "once", 15, True, False, "disabled"),
+            ("web-hosting", "workspace", "once", 15, True, False, "disabled"),
+            ("shared-storage", "workspace", "once", 15, True, False, "disabled"),
+            ("remote-desktop", "workspace", "once", 10, True, False, "disabled"),
+            ("github-actions", "workspace", "once", 20, True, False, "disabled"),
             ("browser-smoke", "workspace", "once", 30, True, True, "disabled"),
             ("godot-export", "workspace", "once", 60, False, True, "disabled"),
-            ("homebox-health", "workspace", "daily", 15, True, False, "disabled"),
-            ("gogs-health", "workspace", "daily", 15, True, False, "disabled"),
-            ("antistatic-health", "workspace", "daily", 15, True, False, "disabled"),
-            ("notifications-health", "workspace", "daily", 10, True, False, "disabled"),
-            ("privilege-health", "workspace", "weekly", 15, True, False, "disabled"),
+            ("homebox-health", "workspace", "once", 15, True, False, "disabled"),
+            ("gogs-health", "workspace", "once", 15, True, False, "disabled"),
+            ("antistatic-health", "workspace", "once", 15, True, False, "disabled"),
+            ("notifications-health", "workspace", "once", 10, True, False, "disabled"),
+            ("privilege-health", "workspace", "once", 15, True, False, "disabled"),
         )
         for key, mode, interval, runtime, network, temporary_files, web_search in cases:
             with self.subTest(template=key):
@@ -915,7 +915,7 @@ class AgentScreenTest(unittest.TestCase):
                 self.assertEqual(saved["queued"], interval == "once")
                 self.assertEqual(saved["workspace"], template.get("workspace", "existing"))
         self.assertIn("Repository work · 9 templates", page)
-        self.assertIn("Host checks and maintenance · 17 templates", page)
+        self.assertIn("Host checks and maintenance ·", page)
         self.assertIn("20 min cap · command network", page)
         self.assertIn("30 min cap · command network · temporary writes", page)
 
@@ -1316,7 +1316,7 @@ class AgentScreenTest(unittest.TestCase):
         settings = {"title": "Draft", "prompt": "Inspect", "directory": self.temporary.name,
                     "mode": "inspect", "interval": "once"}
         draft = self.state.agent_tasks.create(settings, run_now=False, draft=True)
-        blocked = self.state.agent_tasks.create({**settings, "title": "Blocked"}, run_now=True)
+        blocked = self.state.agent_tasks.create({**settings, "title": "Blocked", "keep": True}, run_now=True)
         with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "outcome": "blocked", "output": "Report", "message": "Needs access"}):
             self.state.agent_tasks.tick()
         run = self.state.agent_tasks.snapshot()["runs"][0]

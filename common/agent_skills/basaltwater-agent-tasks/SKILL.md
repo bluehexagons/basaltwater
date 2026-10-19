@@ -36,3 +36,10 @@ A saved schedule does not prove worker readiness. Inspect availability; do not
 start an unconfigured detached worker or switch tools to bypass a denied action.
 T3 tools and browser state are thread-specific and are not inherited by an
 independent task. Cancellation does not undo edits or cancel external requests.
+
+For Basaltwater environment difficulties, use the configured
+`basaltwater_operator_feedback` MCP tool or
+`basaltw agent inbox feedback --sender t3-agent 'Issue and relevant evidence' --json`.
+This reports to the account-local operator inbox; include no credentials.
+Independent task agents use `environment_feedback` in their structured report,
+which the runner delivers outside their command sandbox.

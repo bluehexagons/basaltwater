@@ -59,6 +59,9 @@ Creation defaults to an inactive draft. Activate an authorized schedule with
 MCP `draft: false` or CLI `--schedule`; `run_now: true` / `--run-now` also
 queues immediate work and activates its cadence. Running a draft once does not
 activate repetition. Partial CLI/MCP updates preserve counters and activation.
+Repetition defaults to Once; choose a recurring cadence only for an authorized
+routine. Finished, unpinned one-time controls are collapsed in the panel and
+may be reclaimed at the saved-task limit while receipts remain available.
 
 ```bash
 basaltw agent tasks create task.json --schedule --request-key project-follow-up --json
@@ -118,11 +121,22 @@ When a check or repair needs different access or authorization, return a
 `follow_up` proposal in the runner's structured report rather than creating or
 activating broader work. Include `title`, `reason`, `prompt` (at most 3800 UTF-8
 bytes), absolute `directory`, `mode`, `workspace`, `network`, and
-`temporary_files`. Put evidence, exact actions, verification, and rollback in
-the proposal; request the minimum access needed. Use `null` when unnecessary.
-This records evidence only. The operator's **Review follow-up task** link opens
-a one-attempt task for review and submission. It grants neither current-run
-permissions nor privilege approval, and does not reset the original limits.
+`temporary_files`, `writable_directories`, `operator_requirements`, and
+`service_restarts`. Additional write paths must name specific existing,
+account-owned directories; an empty task workspace grants no source writes.
+Service restarts name exact broker-registered units; other unresolved manual
+preparation belongs in operator requirements. Put evidence, exact actions,
+verification, and rollback in the proposal; request the minimum access needed.
+Use `null` when unnecessary.
+This records evidence only. The operator can approve once, review, or block.
+Service prerequisites require separate portal approval and successful execution
+before the follow-up is saved or launched. Never ask another unattended agent
+to configure its own permissions or grant approval. Do not repeat an unchanged
+blocked request; describe the difficulty in `environment_feedback` instead.
+The runner delivers that credential-free report to the operator inbox, even
+when command writes are unavailable. T3 and terminal agents can use the local
+feedback CLI or configured `basaltwater_operator_feedback` MCP tool.
+Proposals grant no current-run permissions and do not reset the original limits.
 
 Full settings, recovery, and worker setup are in the
 [task guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-tasks.md).

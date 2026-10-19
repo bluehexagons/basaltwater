@@ -20,6 +20,7 @@ from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
 from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
+from lib.agent_task_followups import follow_up_state, prepare_follow_up
 from lib.agent_task_policy import task_policy_issues
 from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.agent_tasks import (
@@ -39,13 +40,13 @@ _REPOSITORY_EDIT_PREFLIGHT = (
 PROMPT_TEMPLATES = {
     "maintenance": {
         "scope": "host", "description": "Inspect resources, services, update timers, and agent readiness.",
-        "title": "Host maintenance review", **HOST_REVIEW_SETTINGS, "interval": "daily",
+        "title": "Host maintenance review", **HOST_REVIEW_SETTINGS, "interval": "once",
         "prompt": HOST_REVIEW_PROMPT + "Inspect this host's resource usage, failed services, update timers, reboot state, and agent readiness using available Basaltwater diagnostics. Check T3 Code only if installed. Summarize issues, evidence, and recommended repairs. Do not change the host or expose credentials.",
     },
     "updates": {
         "scope": "host", "title": "Check Debian update health",
         "description": "Check package consistency, held updates, index age, and reboot evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "weekly", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + UPDATE_REVIEW_PROMPT,
     },
     "network": {
@@ -56,7 +57,7 @@ PROMPT_TEMPLATES = {
     },
     "repository": {
         "scope": "repository", "description": "Inspect repository state and identify maintenance work.",
-        "title": "Repository health check", "mode": "inspect", "interval": "weekly", "network": False,
+        "title": "Repository health check", "mode": "inspect", "interval": "once", "network": False,
         "prompt": "Read this repository's agent instructions and inspect Git status, dependency manifests, CI configuration, and recent test evidence. Identify failing checks, stale dependencies, and maintenance gaps. Report findings with file references and suggested next steps. Do not modify files or publish changes.",
     },
     "ci-repair": {
@@ -79,7 +80,7 @@ PROMPT_TEMPLATES = {
     "security-review": {
         "scope": "repository", "title": "Review repository security",
         "description": "Review sensitive code paths and dependency advisories with evidence.",
-        "mode": "inspect", "interval": "weekly", "network": False, "web_search": "live", "timeout_minutes": 30,
+        "mode": "inspect", "interval": "once", "network": False, "web_search": "live", "timeout_minutes": 30,
         "prompt": "Read this repository's instructions, dependency manifests and lockfiles, and relevant authentication, authorization, input-validation, and secret-handling code. Review plausible security issues and use available web search to check current dependency advisories against the installed versions. Cite advisory sources and distinguish confirmed affected versions from uncertain matches. Report severity, evidence, file references, suggested remediation, and coverage limits. Redact any credentials encountered. Do not modify files, run exploit payloads, commit, push, publish, or deploy.",
     },
     "release-review": {
@@ -91,13 +92,13 @@ PROMPT_TEMPLATES = {
     "backups": {
         "scope": "host", "title": "Check backup health",
         "description": "Check backup freshness, job results, and existing verification evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Identify this host's configured backup jobs using available Basaltwater diagnostics, timer state, and readable job metadata or logs. Check the last successful backup, recent failures, next scheduled run, destination capacity when available, retention metadata, and any existing integrity-check or restore-test evidence. If a backup is running, report its state. Distinguish successful job completion from verified recoverability; report missing configuration or inaccessible evidence explicitly. Summarize issues and recommended follow-up. Do not start backups, restore data, change retention, delete files, or expose backup contents or credentials.",
     },
     "storage": {
         "scope": "host", "title": "Review storage cleanup",
         "description": "Find disk and inode pressure and propose cleanup for review.",
-        "mode": "inspect", "interval": "weekly", "network": False, "timeout_minutes": 15,
+        "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 15,
         "prompt": "Inspect this host's filesystem capacity, inode usage, and readable directory-size metadata. Identify major space consumers such as logs, caches, build artifacts, and old backups using available tools. Keep scans bounded to relevant local filesystems and summarize unavailable paths. Report sizes, likely owners, retention implications, and specific cleanup candidates with commands for later review. Do not read private file contents, delete or truncate files, prune containers, alter retention, or change the host.",
     },
     "incident": {
@@ -109,43 +110,43 @@ PROMPT_TEMPLATES = {
     "certificates": {
         "scope": "host", "title": "Check certificate expiry",
         "description": "Inspect certificate lifetimes, renewal jobs, and configuration gaps.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 10,
         "prompt": HOST_REVIEW_PROMPT + "Inspect public certificates served by explicitly configured HTTPS endpoints with bounded TLS probes, readable public certificate metadata, and renewal timer or job state. Do not assume access to root-owned certificate directories. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures where evidence is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
     },
     "t3-readiness": {
         "requires": "t3", "scope": "host", "title": "Check T3 Code readiness",
         "description": "Check the user service, runtime, agent tools, and saved readiness evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect the configured or installed T3 Code runtime using available Basaltwater agent diagnostics without repair options. Check user-service state, runtime and installed version evidence, terminal agent availability, local credential metadata, Git identity readiness, and maintenance holds. Distinguish file presence from verified authentication. Report failures and missing evidence with suggested next steps. Do not update tools, restart services, rotate credentials, read or reveal pairing passwords or credential contents, or change the host.",
     },
     "containers": {
         "requires": "containers", "scope": "host", "title": "Review container health",
         "description": "Inspect Docker or Podman health, resource use, and storage pressure.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Use the installed Docker or Podman CLI for bounded read-only inspection of local containers, health status, restart counts, resource usage, and image or volume storage metadata. Check available recent error evidence without dumping environment variables or secrets. Command presence does not prove daemon access; report unavailable sockets, permissions, or health checks explicitly. Identify failing containers and cleanup candidates with evidence. Do not start, stop, restart, exec into, pull, build, prune, remove, or change containers, images, volumes, or networks.",
     },
     "web-hosting": {
         "requires": "web_hosting", "scope": "host", "title": "Review web hosting",
         "description": "Check gateway registrations, Nginx state, and local upstream evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect existing Basaltwater web gateway registrations and readable Nginx site metadata, service state, and bounded recent error logs using read-only tools. Identify static sites, forwards, missing document roots, failed upstream services, and certificate or route configuration gaps. Do not infer live public reachability from configuration; distinguish saved configuration from verified health. Report inaccessible files or checks blocked by sandbox permissions. Do not publish sites, register forwards, modify configuration, reload services, renew certificates, or expose credentials or private site contents.",
     },
     "shared-storage": {
         "requires": "shared_storage", "scope": "host", "title": "Check shared storage",
         "description": "Check configured SMB shares and existing CIFS or SSHFS mounts.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect configured Samba shares and existing CIFS or SSHFS mount metadata using available Basaltwater diagnostics and readable local configuration. Check local service state, mount presence, ownership, relevant errors, and existing backup coverage. Keep checks bounded: avoid traversing unavailable network mounts, reading shared file contents, or printing credentials and mount passwords. An installed client does not prove a share is configured or reachable; report missing evidence. Do not mount, unmount, reconnect, chmod, change share configuration, delete files, or copy data.",
     },
     "remote-desktop": {
         "requires": "remote_desktop", "scope": "host", "title": "Check remote desktop readiness",
         "description": "Inspect xrdp, session-manager state, and recent connection failures.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 10,
         "prompt": HOST_REVIEW_PROMPT + "Inspect configured remote desktop access, xrdp and session-manager service state, readable session configuration, and bounded recent connection or startup errors. Report missing desktop components, service failures, and relevant permission or certificate evidence. Local readiness does not prove a remote client can connect; distinguish those checks. Do not open or capture another user's desktop, terminate sessions, restart services, modify accounts or configuration, or expose credentials.",
     },
     "github-actions": {
         "requires": "github", "scope": "repository", "title": "Review GitHub Actions failures",
         "description": "Read recent CI runs with GitHub CLI and identify recurring failures.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 20,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 20,
         "prompt": "The execution directory is empty scratch space. Read repository instructions and Git status from the source directory named in the task context, using git -C SOURCE. Identify its GitHub repository from the existing remote without printing embedded credentials or changing it. Use gh --repo OWNER/REPO and read-only subcommands to inspect a bounded number of recent completed Actions runs and relevant failed-job logs. Report running checks as pending; do not watch or repeatedly poll them. Compare failures with local workflow configuration; separate likely code, infrastructure, flaky-test, and permission causes. Redact credentials and report unavailable authentication or repository access explicitly. Produce an evidence-backed triage report. Do not modify files, rerun or cancel workflows, create issues or comments, commit, push, publish, or deploy.",
     },
     "browser-smoke": {
@@ -163,33 +164,38 @@ PROMPT_TEMPLATES = {
     "homebox-health": {
         "requires": "homebox", "scope": "host", "title": "Check HomeBox data protection",
         "description": "Review service health and backup coverage for inventory and attachments.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect the configured HomeBox service using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Identify inventory database and attachment storage paths from configuration without reading their contents. Check available capacity and existing backup-job evidence covering both database and attachments; distinguish job completion from restore verification. Report missing coverage, service failures, and inaccessible evidence. Do not change inventory, query private records, start backups, restore data, copy database files, restart services, or expose credentials.",
     },
     "gogs-health": {
         "requires": "gogs", "scope": "host", "title": "Check Gogs repository hosting",
         "description": "Review service errors, repository storage, and existing backup evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect the configured or installed Gogs service using readable local service and configuration metadata and bounded recent error logs. Identify repository, database, and attachment storage locations without reading private repository or database contents. Check capacity, relevant ownership evidence, and existing backup coverage. Distinguish configured locations from verified availability and report inaccessible evidence. Recommend follow-up for failures or protection gaps. Do not change users or repositories, run repository hooks, migrate data, restart services, start backups, or expose credentials.",
     },
     "antistatic-health": {
         "requires": "antistatic", "scope": "host", "title": "Check Antistatic services",
         "description": "Review configured lobby and database service state and recent errors.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect the configured Antistatic lobby and database services using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Check service state, dependency failures, resource pressure, database storage capacity, and existing backup-job evidence where available. Distinguish configuration from verified application readiness and report unavailable checks. Do not query player records, send game requests, modify databases, restart services, start backups, or expose credentials.",
     },
     "notifications-health": {
         "requires": "notifications", "scope": "host", "title": "Check notification delivery",
         "description": "Inspect receiver configuration and existing delivery evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 10,
         "prompt": HOST_REVIEW_PROMPT + "Inspect the configured Basaltwater panel notification receiver using available diagnostics and readable non-secret configuration or existing delivery logs. Check panel and proxy service state, accepted-event timestamps, sender failure or retry evidence, and relevant throttling or authentication errors. No recent events alone does not prove delivery is broken; report expected cadence only when configured evidence supports it. Redact sender links and bearer tokens. Do not reveal or rotate tokens, send test notifications or messages, change sender configuration, or restart services.",
     },
     "privilege-health": {
         "requires": "privilege", "scope": "host", "title": "Check privilege approval readiness",
         "description": "Review broker service, policy metadata, and available audit evidence.",
-        **HOST_REVIEW_SETTINGS, "interval": "weekly", "timeout_minutes": 15,
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 15,
         "prompt": HOST_REVIEW_PROMPT + "Inspect the configured Basaltwater privilege approval broker using available diagnostics, readable service and policy metadata, and sanitized audit evidence. Check broker service state, socket or endpoint configuration, policy coverage, and recent denial or execution errors. Report inaccessible evidence and distinguish configured permissions from verified readiness. Do not read approval credentials, submit or approve requests, execute privileged commands, change policies or allowlists, restart services, or expose secrets.",
     },
+}
+
+PROMPT_TEMPLATES["daily-maintenance"] = {
+    **PROMPT_TEMPLATES["maintenance"], "title": "Daily maintenance checks", "interval": "daily",
+    "description": "Schedule a read-only host review every day; no automatic repairs.",
 }
 
 _STYLE = """
@@ -201,6 +207,7 @@ _STYLE = """
 .agent-form input:not([type=checkbox]), .agent-form textarea { display: block; width: 100%; min-height: 44px;
   margin-top: 5px; padding: 9px 10px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .agent-form textarea { resize: vertical; min-height: 160px; font-size: .85rem; }
+.agent-form textarea[rows="2"] { min-height: 80px; }
 .agent-form input:not([type=checkbox]), .agent-form textarea, .agent-form select { font-weight: 400; }
 .agent-form textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .agent-form select { background: var(--bg); width: 100%; }
@@ -258,6 +265,9 @@ _STYLE = """
 .agent-run summary { width: 100%; }
 .agent-run .event-head { align-items: center; }
 .agent-run p { margin: 4px 0; }
+.agent-result-preview { display: block; color: var(--text); font-size: .85rem; line-height: 1.5; margin-top: 10px; overflow-wrap: anywhere; }
+.agent-follow-up { border-left: 4px solid var(--warning); margin: 14px 0; }
+.agent-completed { margin-top: 20px; }
 .agent-summary { margin: 18px 0; }
 .agent-history { display: grid; gap: 10px; }
 .agent-history .agent-run { margin: 0; }
@@ -304,7 +314,7 @@ def _other_schedules(tasks: list[dict[str, Any]]) -> str:
     return f" · {once} one-time · {events} event" if once or events else ""
 
 
-def _render_run_summary(tasks: list[dict[str, Any]], runs: list[dict[str, Any]]) -> str:
+def _render_run_summary(tasks: list[dict[str, Any]], runs: list[dict[str, Any]], pending: dict[str, list[dict[str, Any]]]) -> str:
     finished = [run for run in runs if run["status"] != "running"]
     completed = sum(run["status"] == "completed" and run.get("outcome") not in {"blocked", "failed"} for run in finished)
     failed = sum(run["status"] in {"failed", "interrupted"} or run.get("outcome") in {"blocked", "failed"} for run in finished)
@@ -313,7 +323,7 @@ def _render_run_summary(tasks: list[dict[str, Any]], runs: list[dict[str, Any]])
         ("Work queue", f'{sum(run["status"] == "running" for run in runs)} running', f'{sum(task["queued"] for task in tasks)} queued · executes one at a time'),
         ("Schedules", f'{sum(task["enabled"] and bool(repeat_seconds(task)) for task in tasks)} repeating', f'{sum(task.get("draft", False) for task in tasks)} drafts · {sum(task.get("auto_paused", False) for task in tasks)} paused after failures' + _other_schedules(tasks)),
         ("Recent outcomes", f"{completed} completed", f"{failed} failed/interrupted · {cancelled} cancelled · latest {len(finished)} finished runs"),
-        ("Needs review", str(sum(_task_needs_review(task, runs) for task in tasks)), "Auto-paused or latest result failed, blocked or interrupted"),
+        ("Needs review", str(sum(_task_needs_review(task, runs, pending) for task in tasks)), "Pending follow-up, auto-paused or latest result failed, blocked or interrupted"),
     )
     return '<dl class="overview-grid agent-summary" aria-label="Agent workflow summary">' + "".join(
         f'<div class="metric"><dt>{label}</dt><dd><span class="metric-value">{_escape(value)}</span><span class="metric-description">{_escape(note)}</span></dd></div>'
@@ -439,9 +449,9 @@ def _action_form(csrf: str, identifier: str, action: str, label: str) -> str:
 <input type="hidden" name="id" value="{_escape(identifier)}"><button class="agent-secondary" name="action" value="{action}">{label}</button></form>'''
 
 
-def _task_needs_review(task: dict[str, Any], runs: list[dict[str, Any]]) -> bool:
+def _task_needs_review(task: dict[str, Any], runs: list[dict[str, Any]], pending: dict[str, list[dict[str, Any]]]) -> bool:
     latest = next((run for run in reversed(runs) if run["task"]["id"] == task["id"]), None)
-    return bool(task.get("auto_paused") or latest and (
+    return bool(task.get("auto_paused") or pending.get(task["id"]) or latest and (
         latest["status"] in {"failed", "interrupted"} or latest.get("outcome") in {"failed", "blocked"}))
 
 
@@ -562,6 +572,14 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         storage_error = True
         error = error or str(exc)
     tasks, runs = snapshot["tasks"], snapshot["runs"]
+    pending_by_task = {}
+    for task in tasks:
+        try:
+            pending_by_task[task["id"]] = manager.contexts.pending_follow_ups(task["id"])
+        except (OSError, ValueError, RuntimeError):
+            # Keep recent evidence usable if an older receipt is unavailable.
+            pending_by_task[task["id"]] = [run for run in runs if run["task"]["id"] == task["id"]
+                and run.get("follow_up") and _follow_up_status(manager, run)["status"] == "pending"]
     if "run" in query and not any(run["id"] == query["run"] for run in runs):
         error = error or "This run is no longer in retained history. Open a recent run below."
     now = time.time()
@@ -579,6 +597,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
                                "completion_criteria": "", "continuation_minutes": 5, "max_runs": 0,
                                "deadline_at": 0, "start_at": 0, "token_budget": 0, "daily_limit": 0,
                                "backoff_minutes": 0, "history_limit": 100}
+    defaults.update(writable_directories=[], operator_requirements=[], service_restarts=[],
+                    source_task_id="", source_run_id="", keep=False)
     source_note = ""
     if "template" in query:
         template = templates.get(query["template"])
@@ -607,6 +627,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         else:
             defaults.update(source)
             defaults["id"] = ""
+            defaults["source_task_id"] = defaults["source_run_id"] = ""
             if "reuse" in query:
                 defaults["interval"] = "once"
                 defaults["continue_until_done"] = False
@@ -618,10 +639,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             proposal = validate_follow_up(receipt.get("follow_up"))
             if proposal is None:
                 raise ValueError("This run did not request a follow-up")
-            settings = {key: value for key, value in proposal.items() if key != "reason"}
-            settings["prompt"] = (f"Follow-up to task {identifier}, run {run_id}. "
-                                  "Recheck its retained evidence before acting.\n\n" + settings["prompt"])
-            defaults.update(validate_task({**settings, "interval": "once", "max_runs": 1}, manager.home))
+            defaults.update(prepare_follow_up(manager, identifier, run_id, review=True))
             defaults["id"] = ""
             source_note = ("Requested by a previous run: " + _redact_log_message(proposal["reason"])
                            + " Review the evidence, actions, directory, and requested access before submitting. "
@@ -680,6 +698,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 {f'<p class="agent-help">{_escape(source_note)}</p>' if source_note else ''}
 {_render_inspection_access(defaults)}<form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="id" value="{_escape(defaults['id'])}">
+{('<input type="hidden" name="source_task_id" value="' + _escape(defaults['source_task_id']) + '"><input type="hidden" name="source_run_id" value="' + _escape(defaults['source_run_id']) + '">') if defaults['source_task_id'] and not editing else ''}
 <div class="agent-fields"><label>Task name<input name="title" value="{_escape(defaults['title'])}" maxlength="120" required placeholder="Weekly dependency update"></label>
 <label>Working directory<input name="directory" value="{_escape(defaults['directory'])}" required placeholder="~/repos/project"></label></div>
 <label>Prompt<textarea name="prompt" maxlength="{MAX_PROMPT_BYTES}" required placeholder="Describe the task and what a successful result should include.">{_escape(defaults['prompt'])}</textarea></label>
@@ -687,6 +706,13 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <label>Execution mode<select name="mode">{modes}</select></label>
 <label class="agent-check"><input type="checkbox" name="network" value="1"{" checked" if defaults['network'] else ""}><span>Allow command network access for workspace changes, including downloading dependencies.</span></label>
 <label class="agent-check"><input type="checkbox" name="temporary_files" value="1"{" checked" if defaults['temporary_files'] else ""}><span>Allow temporary file writes for workspace changes (/tmp and TMPDIR). Needed by many test and package tools.</span></label>
+<details{' open' if defaults['writable_directories'] or defaults['operator_requirements'] or defaults['source_task_id'] else ''}><summary>Additional write access and prerequisites</summary>
+<label>Additional writable directories<textarea name="writable_directories" rows="2" placeholder="/home/agent/.nvm">{_escape(chr(10).join(defaults['writable_directories']))}</textarea></label>
+<p class="agent-help">One existing account-owned directory per line. These grants accompany the execution directory; a private task directory does not grant writes to the source directory. Credential and task-control stores cannot be added.</p>
+<label>Operator prerequisites<textarea name="operator_requirements" rows="2" placeholder="Actions needed before this task can run">{_escape(chr(10).join(defaults['operator_requirements']))}</textarea></label>
+<p class="agent-help">One prerequisite per line. Complete these outside the unattended task, then remove resolved lines. Tasks with unresolved prerequisites cannot launch.</p>
+{('<label>Service restart prerequisites<textarea name="service_restarts" rows="2" readonly>' + _escape(chr(10).join(defaults['service_restarts'])) + '</textarea></label><p class="agent-help">Use Request service approval on the source proposal. The separate privilege portal must authorize each exact service; the runner verifies successful execution before launch, including before saving a draft.</p>') if defaults['source_task_id'] and not editing else ''}
+</details>
 <p class="agent-help">Inspection uses Codex's read-only sandbox and can block local service sockets and endpoint probes. Workspace changes may edit the execution directory inside this account's home, plus temporary directories when allowed. Host service reviews use command network access and a private run directory; their prompts prohibit host changes. Provider requests still use the network in either mode. Configured hooks and MCP integrations retain their own permissions.</p></fieldset>
 <div class="agent-fields"><label>Maximum runtime (minutes)<input type="number" name="timeout_minutes" min="1" max="{MAX_TIMEOUT_MINUTES}" step="1" value="{_escape(defaults['timeout_minutes'])}" required></label><label>Repeat<select name="interval">{options}</select></label></div>
 <p class="agent-help">1 minute to 7 days, including time spent waiting. A duration cap is not an exact spending limit.</p>
@@ -715,14 +741,15 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <div class="agent-fields"><label>Token budget<input type="number" name="token_budget" min="0" max="1000000000000" value="{_escape(defaults['token_budget'])}" required></label><label>Run attempts per UTC day<input type="number" name="daily_limit" min="0" max="1000" value="{_escape(defaults['daily_limit'])}" required></label></div>
 <div class="agent-fields"><label>Minimum failure backoff (minutes)<input type="number" name="backoff_minutes" min="0" max="{MAX_REPEAT_MINUTES}" value="{_escape(defaults['backoff_minutes'])}" required></label><label>Retained evidence runs<input type="number" name="history_limit" min="1" max="1000" value="{_escape(defaults['history_limit'])}" required></label></div>
 <p class="agent-help">A goal needs completion criteria and at least one total limit: attempts, deadline, or tokens. A Once goal uses its continuation interval; other goals use their repeat cadence. Zero disables an individual usage limit. Token usage is checked after a run and can exceed the budget during that run; runtime and deadline caps stop active processes. Attempts include failed and interrupted runs. Retention applies to generated receipts and logs, preserving workspace files.</p></details>
-<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Start task</button><button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button><button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
+<label class="agent-check"><input type="checkbox" name="keep" value="1"{' checked' if defaults['keep'] else ''}><span>Keep this one-time task in saved tasks after it finishes.</span></label>
+<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Start task</button>' + ('' if defaults['source_task_id'] else '<button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>') + '<button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
 <a href="/agents">Back to tasks</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Start task runs now and activates the selected repetition, event trigger, or goal continuation. Create schedule uses the first-run time or waits one interval. Save draft stays inactive. Saving changes preserves an existing schedule's active or paused state.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
     helper = f'''<aside class="agent-panel agent-helper"><details><summary>Start from a template</summary><p class="agent-help">Selecting a template replaces this form. Review its prompt, directory, permissions, and repetition before submitting.</p>{template_links}</details></aside>'''
-    rows = []
+    rows, completed_rows = [], []
     active_ids = {run["task"]["id"] for run in runs if run["status"] == "running"}
-    ordered_tasks = sorted(tasks, key=lambda task: 0 if task["id"] in active_ids else 1 if task["queued"] else 2 if _task_needs_review(task, runs) else 3)
+    ordered_tasks = sorted(tasks, key=lambda task: 0 if task["id"] in active_ids else 1 if task["queued"] else 2 if _task_needs_review(task, runs, pending_by_task) else 3)
     for task in ordered_tasks:
         latest = next((run for run in reversed(runs) if run["task"]["id"] == task["id"]), None)
         running = bool(latest and latest["status"] == "running")
@@ -751,21 +778,34 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         next_due = task["next_run"] if task["enabled"] else None
         if next_due is not None or task["queued"] and task["not_before"]:
             next_due = max(next_due or 0, task["not_before"])
-        attention = _task_needs_review(task, runs)
+        attention = _task_needs_review(task, runs, pending_by_task)
         tone = "warning" if attention or running or task["queued"] else "success" if task["enabled"] else ""
         due_label = _time(next_due) if next_due is not None else "Waiting in queue" if task["queued"] else "Not scheduled"
         run_note = '<p class="agent-help">Run once keeps this schedule ' + ('active.' if task['enabled'] else 'inactive. Use ' + ('Start schedule' if task.get('draft') else 'Resume') + ' to enable it.') + '</p>' if repeat_seconds(task) and not running and not task['queued'] else ""
         if next_due is not None and next_due <= now:
             due_label += " · due; waiting for worker"
-        rows.append(f'''<li><article class="agent-task{' agent-task-active' if running or task['queued'] else ' agent-task-attention' if attention else ''}" aria-labelledby="task-{task['id']}">
+        proposals = pending_by_task.get(task['id'], [])
+        pending = bool(proposals)
+        target_rows = completed_rows if (task['interval'] == 'once' and not repeat_seconds(task)
+            and task['attempts'] and not task['keep'] and not task['draft'] and not task['enabled']
+            and not running and not task['queued'] and not pending) else rows
+        target_rows.append(f'''<li><article class="agent-task{' agent-task-active' if running or task['queued'] else ' agent-task-attention' if attention else ''}" aria-labelledby="task-{task['id']}">
 <div class="agent-task-head"><div><h3 id="task-{task['id']}">{_escape(task['title'])}</h3><p class="agent-help"><code>{_escape(task['directory'])}</code></p></div><span class="badge {tone}">{task_status}</span></div>
+{('<p class="agent-help">Follow-up in <a href="/agents?context=' + _escape(task['source_task_id']) + '">original task history</a></p>') if task['source_task_id'] else ''}
+{('<span class="badge warning">Follow-up requested</span>') if pending else ''}
+{('<p class="agent-result-preview">' + _escape(_redact_log_message(latest.get('summary') or latest.get('output') or latest.get('message') or '')[:500]) + '</p>') if latest else ''}
+{''.join(_render_follow_up(run, manager, state.csrf_token) for run in proposals)}
 {stop_note}{_render_inspection_access(task)}<dl class="agent-task-facts"><div><dt>Schedule</dt><dd>{_escape(interval_label)}</dd></div><div><dt>Next run · UTC</dt><dd>{due_label}</dd></div><div><dt>Latest result</dt><dd>{last.capitalize()}<small>{last_timing}</small></dd></div></dl>
 <div class="agent-buttons">{controls}</div>{run_note}
 <details><summary>Task settings and more actions</summary><p class="agent-help">{'Inspect only' if task['mode'] == 'inspect' else 'Workspace changes'} · command network {"on" if task['network'] else "off"} · {_escape(task['timeout_minutes'])} min cap · {_escape(task['model'] or 'Configured model')} · effort {_escape(task['effort'] or 'default')}</p>
 <p class="agent-help">{failure_note} · {_escape(task['persistence'])} · {_escape(task['workspace'])} · {task['attempts']} attempts · {task['tokens_used']} reported tokens</p><div class="agent-buttons">{more}</div><p class="agent-help">Remove deletes the saved task; retained run history stays available. Reset context keeps workspace files and receipts.</p></details></article></li>''')
     schedules = '<ul class="agent-task-list">' + "".join(rows) + '</ul>' if rows else '''<div class="agent-panel agent-start"><p><strong>No prompt tasks yet.</strong><br>Write a prompt, choose a starting template, or use Agent tools for a guided system or data task.</p><a class="refresh-link agent-primary" href="/agents?view=new">New task</a><a class="refresh-link" href="/agents?view=templates">Browse templates</a></div>'''
+    if completed_rows and not rows:
+        schedules = '<p class="empty">No active or saved routine tasks. Completed one-time tasks are below.</p>'
     if storage_error:
         schedules = '<p class="empty">Saved tasks could not be loaded. Restore access to task storage, then retry to see schedules and results.</p>'
+    elif completed_rows:
+        schedules += '<details class="agent-completed"><summary>Completed one-time tasks · ' + str(len(completed_rows)) + '</summary><ul class="agent-task-list">' + ''.join(completed_rows) + '</ul></details>'
     history = []
     for run in reversed(runs):
         tone = "error" if run["status"] in {"failed", "interrupted"} or run.get("outcome") in {"blocked", "failed"} else "success" if run["status"] == "completed" else "warning"
@@ -773,14 +813,16 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         timing = f'{_duration(elapsed)} elapsed · {_duration(max(0, run["task"]["timeout_minutes"] * 60 - elapsed))} remaining at page load' if run["status"] == "running" else f'{_duration(elapsed)} duration'
         exit_note = f' · exit code {_escape(run["exit_code"])}' if run.get("exit_code") is not None else ""
         outcome_label = (run.get("outcome") or "completed") if run["status"] == "completed" else run["status"]
-        history.append(f'''<details id="run-{run['id']}" class="agent-panel agent-run"{' open' if query.get('run') == run['id'] else ''}><summary><span class="event-head"><strong>{_escape(run['task']['title'])}</strong><span class="badge {tone}">{_escape(outcome_label)}</span></span><span class="agent-help">{_time(run['started_at'])} · {_escape(run['task']['directory'])}</span></summary>
+        follow_status = _follow_up_status(manager, run).get('status') if run.get('follow_up') else None
+        history.append(f'''<details id="run-{run['id']}" class="agent-panel agent-run"{' open' if query.get('run') == run['id'] else ''}><summary><span class="event-head"><strong>{_escape(run['task']['title'])}</strong><span><span class="badge {tone}">{_escape(outcome_label)}</span>{'<span class="badge warning">Follow-up requested</span>' if follow_status == 'pending' else ''}</span></span><span class="agent-help">{_time(run['started_at'])} · {_escape(run['task']['directory'])}</span><span class="agent-result-preview">{_escape(_redact_log_message(run.get('summary') or run.get('output') or run.get('message') or '')[:350])}</span></summary>
 <p>{_escape(_redact_log_message(run['message']))}</p><p class="agent-help">{timing}{exit_note} · Finished {_time(run['finished_at'])}</p>
 <h3>Report</h3><pre>{_escape(_redact_log_message(run['output'])) if run['output'] else 'Output will appear when the run finishes.' if run['status'] == 'running' else 'No output recorded.'}</pre>
 <details><summary>Execution settings</summary><p class="agent-help">{_escape(run['task']['mode'])} · model {_escape(run['task']['model'] or 'configured default')} · effort {_escape(run['task']['effort'] or 'default')} · {_escape(run['task']['timeout_minutes'])} min cap · command network {'on' if run['task']['network'] else 'off'} · temporary writes {'on' if run['task']['temporary_files'] else 'off'} · web search {_escape(run['task']['web_search'])} · Codex history {'kept' if run['task']['session_history'] or run['task']['persistence'] == 'conversation' else 'ephemeral'}</p></details>
 <p class="agent-help">Process: {_escape(run['status'])} · Task outcome: {_escape(run.get('outcome') or 'Not reported by this older run')} · context {_escape(run['task']['persistence'])} · workspace {_escape(run.get('execution_directory') or run['task']['directory'])}</p>
 <a class="refresh-link" href="/agents?reuse={run['id']}">Reuse run settings</a>
 {_render_inspection_access(run['task'], blocked=run.get('outcome') == 'blocked')}
-{_render_follow_up(run)}
+{_render_follow_up(run, manager, state.csrf_token)}
+{('<p class="agent-help">Environment feedback: ' + _escape(_redact_log_message(run['environment_feedback'])) + ' · <a href="/agent-inbox">Operator inbox</a></p>') if run.get('environment_feedback') else ''}
 <details><summary>Prompt used for this run</summary><pre>{_escape(run['task']['prompt'])}</pre></details></details>''')
     diagnostics_html = _render_diagnostics(diagnostics, state.csrf_token)
     t3_html = _render_t3_update(state)
@@ -812,13 +854,13 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         worker_html = '<p class="agent-help">Task worker status unavailable.</p>'
     context_html = _render_task_context(manager, query["context"]) if "context" in query else ""
     if "receipt" in query:
-        context_html += _render_receipt(manager, query["receipt"])
+        context_html += _render_receipt(manager, query["receipt"], state.csrf_token)
     refresh_href = "/agents"
     if "run" in query:
         refresh_href += "?" + urllib.parse.urlencode({"run": query["run"]}) + "#run-" + query["run"]
     elif "context" in query or "receipt" in query:
         refresh_href += "?" + urllib.parse.urlencode({key: value for key, value in query.items() if key in {"context", "receipt"}})
-    overview = f'<div class="section-heading"><p class="agent-help">Saved panel tasks · one run at a time · all times UTC</p><a class="refresh-link" href="{_escape(refresh_href)}">Refresh status</a></div>{"" if storage_error else _render_run_summary(tasks, runs)}{active_html}'
+    overview = f'<div class="section-heading"><p class="agent-help">Saved panel tasks · one run at a time · all times UTC</p><a class="refresh-link" href="{_escape(refresh_href)}">Refresh status</a></div>{"" if storage_error else _render_run_summary(tasks, runs, pending_by_task)}{active_html}'
     catalog = f'<section>{render_heading("Task templates", "agent-tools")}<p class="endpoint">Choose a starting point, then review and submit its prompt. Selecting a template never runs or schedules work. Templates follow configured features and detected commands; detection does not verify health or sign-in.</p>{template_links}</section>'
     main = catalog if query.get('view') == 'templates' else workbench + task_section if composing else overview + context_html + task_section + workbench
     history_count = "Unavailable" if storage_error else f"Latest {len(runs)} runs · {_duration(sum(_run_seconds(run, now) for run in runs if run['status'] != 'running'))} recorded runtime"
@@ -848,7 +890,7 @@ def _render_task_context(manager: AgentTasks, identifier: str) -> str:
 <h3>Retained evidence</h3><ol>{receipts}</ol><p class="agent-help">Resetting context keeps workspaces and receipts. Native T3 thread binding awaits stable-release qualification.</p></section>'''
 
 
-def _render_receipt(manager: AgentTasks, reference: str) -> str:
+def _render_receipt(manager: AgentTasks, reference: str, csrf: str = "") -> str:
     try:
         identifier, run_id = reference.split(".")
         run = manager.contexts.receipt(identifier, run_id)
@@ -863,21 +905,56 @@ def _render_receipt(manager: AgentTasks, reference: str) -> str:
 <h3>Checkpoint from this run</h3><pre>{display(run.get('checkpoint', ''))}</pre>
 <h3>Output</h3><pre>{display(run.get('output', ''))}</pre>
 {_render_inspection_access(run['task'], blocked=run.get('outcome') == 'blocked')}
-{_render_follow_up(run)}
+{_render_follow_up(run, manager, csrf)}
 <details><summary>Original task settings</summary><pre>{display(json.dumps(run['task'], ensure_ascii=False, indent=2))}</pre></details>
 <p class="agent-help">Historical evidence does not change task permissions or reactivate removed work.</p></section>'''
 
 
-def _render_follow_up(run: dict[str, Any]) -> str:
+def _follow_up_status(manager: AgentTasks, run: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return follow_up_state(manager, run['task']['id'], run['id'])
+    except (OSError, ValueError, RuntimeError):
+        return {"status": "unavailable", "requests": {}}
+
+
+def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> str:
     proposal = run.get("follow_up")
     if not isinstance(proposal, dict):
         return ""
     reference = urllib.parse.urlencode({"follow-up": run["task"]["id"] + "." + run["id"]})
-    return f'''<aside class="agent-panel"><h3>Follow-up requested</h3>
+    status = _follow_up_status(manager, run)
+    pending = status['status'] == 'pending'
+    actions = ''
+    if pending:
+        legacy = not {'writable_directories', 'operator_requirements', 'service_restarts'} <= set(proposal)
+        blocked = legacy or bool(proposal.get('operator_requirements'))
+        def button(action: str, label: str, *, disabled: bool = False) -> str:
+            return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}"{' disabled' if disabled else ''}>{label}</button></form>'''
+        actions = button('follow-up-approve', 'Approve once', disabled=blocked)
+        actions += f'<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>'
+        actions += button('follow-up-block', 'Block')
+        if proposal.get('service_restarts'):
+            actions += button('follow-up-privilege', 'Request service approval')
+        if blocked:
+            actions += '<p class="agent-help">Review and resolve prelaunch prerequisites before approval. A later agent cannot grant its own access.</p>'
+    else:
+        actions = '<p class="agent-help">Follow-up ' + _escape(status['status']) + '.</p>'
+    from common.service_tools.web_panel_admin import _https_url
+    requests = ''
+    for unit, request in status.get('requests', {}).items():
+        url = _https_url(request.get('review_url'))
+        requests += '<p class="agent-help">' + _escape(unit) + ': ' + _escape(request.get('state', 'unknown')) + (f' · <a href="{_escape(url)}">Open separate approval</a>' if url else '') + '</p>'
+    access_details = []
+    for label, field in (('Additional writes', 'writable_directories'), ('Operator prerequisites', 'operator_requirements'), ('Service restarts', 'service_restarts')):
+        if proposal.get(field):
+            access_details.append('<p class="agent-help">' + label + ': ' + _escape(_redact_log_message(', '.join(proposal[field]))) + '</p>')
+    return f'''<aside class="agent-panel agent-follow-up"><h3>Follow-up requested</h3>
+<strong>{_escape(proposal.get('title', ''))}</strong>
 <p>{_escape(_redact_log_message(str(proposal.get('reason', ''))))}</p>
 <p class="agent-help">Requested access: {_escape(proposal.get('mode'))} · {_escape(proposal.get('workspace'))} · command network {'on' if proposal.get('network') else 'off'} · temporary writes {'on' if proposal.get('temporary_files') else 'off'} · <code>{_escape(proposal.get('directory'))}</code></p>
-<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>
-<p class="agent-help">A proposal only. Review and submit a separate task to authorize its actions.</p></aside>'''
+{''.join(access_details)}{requests}<div class="agent-buttons">{actions}</div>
+<details><summary>Proposed actions and verification</summary><pre>{_escape(_redact_log_message(proposal.get('prompt', '')))}</pre></details>
+<p class="agent-help">Approval queues one attempt. Service requests use the separate privilege portal and must succeed before launch. Blocking stops this proposal; it cannot undo a service action already executed.</p></aside>'''
 
 
 def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:

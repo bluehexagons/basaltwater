@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.agent_task_access import text_requirements
+from lib.privilege_policy import UNIT_PATTERN
 from lib.validation import validate_filesystem_path
 
 
@@ -29,8 +31,12 @@ FOLLOW_UP_SCHEMA = {
         "directory": {"type": "string"}, "mode": {"type": "string", "enum": ["inspect", "workspace"]},
         "workspace": {"type": "string", "enum": list(WORKSPACE_MODES)},
         "network": {"type": "boolean"}, "temporary_files": {"type": "boolean"},
+        "writable_directories": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "operator_requirements": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "service_restarts": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
     },
-    "required": ["title", "reason", "prompt", "directory", "mode", "workspace", "network", "temporary_files"],
+    "required": ["title", "reason", "prompt", "directory", "mode", "workspace", "network", "temporary_files",
+                 "writable_directories", "operator_requirements", "service_restarts"],
 }
 
 REPORT_SCHEMA = {
@@ -42,8 +48,9 @@ REPORT_SCHEMA = {
         "evidence": {"type": "array", "items": {"type": "string"}},
         "retry_after_minutes": {"type": ["integer", "null"], "minimum": 1, "maximum": 43200},
         "follow_up": FOLLOW_UP_SCHEMA,
+        "environment_feedback": {"type": "string", "maxLength": 3000},
     },
-    "required": ["outcome", "summary", "checkpoint", "evidence", "retry_after_minutes", "follow_up"],
+    "required": ["outcome", "summary", "checkpoint", "evidence", "retry_after_minutes", "follow_up", "environment_feedback"],
 }
 
 
@@ -51,7 +58,8 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     """Validate a bounded proposal, which never grants authority or queues work."""
     if value is None:
         return None
-    if not isinstance(value, dict) or set(value) != set(FOLLOW_UP_SCHEMA["required"]):
+    legacy = set(FOLLOW_UP_SCHEMA["required"]) - {"writable_directories", "operator_requirements", "service_restarts"}
+    if not isinstance(value, dict) or not legacy <= set(value) or set(value) - set(FOLLOW_UP_SCHEMA["properties"]):
         raise ValueError("Invalid task follow-up request")
     for name, limit in (("title", 120), ("reason", 2000), ("prompt", 3800), ("directory", 4096)):
         text = value[name]
@@ -67,6 +75,20 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     if (type(value["network"]) is not bool or type(value["temporary_files"]) is not bool
             or value["mode"] == "inspect" and (value["network"] or value["temporary_files"] or value["workspace"] != "existing")):
         raise ValueError("Invalid task follow-up permissions")
+    roots = value.get("writable_directories", [])
+    if not isinstance(roots, list) or len(roots) > 8:
+        raise ValueError("Invalid follow-up writable directories")
+    for path in roots:
+        if not isinstance(path, str) or not os.path.isabs(path):
+            raise ValueError("Follow-up writable directories must be absolute paths")
+        validate_filesystem_path(path)
+    if roots and value["mode"] != "workspace":
+        raise ValueError("Write grants require workspace mode")
+    text_requirements(value.get("operator_requirements", []))
+    restarts = value.get("service_restarts", [])
+    if (not isinstance(restarts, list) or len(restarts) > 4
+            or any(not isinstance(unit, str) or not UNIT_PATTERN.fullmatch(unit) for unit in restarts)):
+        raise ValueError("Follow-up service restarts require up to four exact service units")
     return value
 
 
@@ -113,9 +135,13 @@ def private_json(path: Path, *, max_bytes: int = MAX_CONTEXT_BYTES) -> dict[str,
 
 def validate_report(value: object) -> dict[str, Any]:
     """Check semantic output separately from a successful provider exit."""
-    required = set(REPORT_SCHEMA["required"]) - {"follow_up"}
-    if not isinstance(value, dict) or set(value) not in (required, required | {"follow_up"}):
+    required = set(REPORT_SCHEMA["required"]) - {"follow_up", "environment_feedback"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - set(REPORT_SCHEMA["properties"]):
         raise ValueError("Codex did not return a complete task report")
+    feedback = value.get("environment_feedback", "")
+    if (not isinstance(feedback, str) or len(feedback.encode()) > 3000
+            or any(ord(char) < 32 and char not in "\n\t" or ord(char) == 127 for char in feedback)):
+        raise ValueError("Invalid environment feedback")
     validate_follow_up(value.get("follow_up"))
     if value["outcome"] not in OUTCOMES:
         raise ValueError("Invalid task report outcome")
@@ -369,7 +395,7 @@ class TaskContextStore:
         receipts = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
                           key=lambda path: path.stat().st_mtime_ns)
         for old in receipts[:-task["history_limit"]]:
-            for path in (old, old.with_suffix(".jsonl")):
+            for path in (old, old.with_suffix(".jsonl"), old.with_name(old.stem + ".decision.json")):
                 try:
                     info = path.lstat()
                 except FileNotFoundError:
@@ -384,6 +410,31 @@ class TaskContextStore:
         context.pop("session_usage", None)
         context.pop("last_run_id", None)
         self.save(identifier, context)
+
+    def pending_follow_ups(self, identifier: str) -> list[dict[str, Any]]:
+        """Find unresolved retained proposals independently of the latest run."""
+        runs = self.directory(identifier) / "runs"
+        pending = []
+        for path in runs.glob("*.json"):
+            if not _ID.fullmatch(path.stem):
+                continue
+            try:
+                decision = private_json(path.with_name(path.stem + ".decision.json"))
+                if decision.get("status") in {"approved", "blocked", "draft"}:
+                    continue
+            except FileNotFoundError:
+                pass
+            try:
+                receipt = self.receipt(identifier, path.stem)
+            except FileNotFoundError:
+                continue  # Concurrent retention can remove an older receipt.
+            if receipt.get("follow_up"):
+                pending.append(receipt)
+        return sorted(pending, key=lambda run: run["started_at"], reverse=True)
+
+    def has_pending_follow_up(self, identifier: str) -> bool:
+        """Keep unresolved retained proposals discoverable when reclaiming controls."""
+        return bool(self.pending_follow_ups(identifier))
 
     def receipt(self, identifier: str, run_id: str) -> dict[str, Any]:
         """Read exact retained evidence, including for a deleted task."""

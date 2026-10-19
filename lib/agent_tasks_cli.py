@@ -59,6 +59,7 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
     worker.add_argument("--once", action="store_true", help="Claim the worker lease, handle due work, then exit")
     mcp = actions.add_parser("mcp", help="Expose the task API over stdio MCP")
     mcp.add_argument("--allow-write", action="store_true", help="Expose mutations under the caller's existing task authority")
+    mcp.add_argument("--allow-feedback", action="store_true", help="Allow local operator feedback without enabling task mutations")
 
 
 def run_tasks_command(args: argparse.Namespace) -> int:
@@ -70,7 +71,7 @@ def run_tasks_command(args: argparse.Namespace) -> int:
     if operation == "mcp":
         from lib.agent_tasks_mcp import serve
 
-        return serve(allow_write=args.allow_write)
+        return serve(allow_write=args.allow_write, allow_feedback=args.allow_feedback)
     try:
         arguments = {}
         if operation in {"create", "update"}:

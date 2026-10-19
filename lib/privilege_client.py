@@ -12,6 +12,10 @@ from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_R
 from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, sanitize_admin_status
 
 
+class PrivilegeRequestRejected(ValueError):
+    """The broker definitively rejected a request without accepting work."""
+
+
 def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
     data = (canonical(message) + "\n").encode()
     if len(data) > MAX_MESSAGE:
@@ -26,7 +30,7 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
         raise ValueError("Invalid broker response")
     response = json.loads(raw)
     if response.get("ok") is not True:
-        raise ValueError(response.get("error", "Broker rejected request"))
+        raise PrivilegeRequestRejected(response.get("error", "Broker rejected request"))
     return response["result"]
 
 

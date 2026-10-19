@@ -94,11 +94,16 @@ class TaskAPI:
             "receipt": {"id", "run_id"},
             "create": {"task", "run_now", "draft", "request_key"}, "update": {"id", "task"},
             "action": {"id", "action"}, "notify": {"id", "message", "key"},
+            "feedback": {"sender", "message"},
         }
         if operation not in allowed or set(arguments) - allowed[operation]:
             raise ValueError("Unsupported task operation or argument")
         if operation == "capabilities":
             return task_capabilities(self.manager)
+        if operation == "feedback":
+            from lib.agent_inbox import AgentInbox
+
+            return AgentInbox(self.manager.home).feedback(arguments.get("sender"), arguments.get("message"))
         if operation == "list":
             summary, limit = arguments.get("summary", False), arguments.get("history_limit", 40)
             if type(summary) is not bool or type(limit) is not int or not 0 <= limit <= 40:
@@ -108,11 +113,24 @@ class TaskAPI:
             if summary:
                 fields = {"id", "title", "directory", "interval", "persistence", "workspace", "executor", "start_at",
                           "enabled", "queued", "draft", "auto_paused", "next_run", "not_before", "attempts",
-                          "tokens_used", "consecutive_failures", "stop_reason", "max_runs", "deadline_at", "token_budget", "last_run_id"}
+                          "tokens_used", "consecutive_failures", "stop_reason", "max_runs", "deadline_at", "token_budget", "last_run_id",
+                          "source_task_id", "source_run_id", "keep"}
                 state["tasks"] = [{key: value for key, value in task.items() if key in fields} for task in state["tasks"]]
-                run_fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "usage"}
-                state["runs"] = [{**{key: value for key, value in run.items() if key in run_fields},
-                                  "task": {key: run["task"][key] for key in ("id", "title")}} for run in state["runs"]]
+                run_fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "usage", "summary"}
+                compact = []
+                for run in state["runs"]:
+                    status = None
+                    if run.get("follow_up"):
+                        from lib.agent_task_followups import follow_up_state
+
+                        try:
+                            status = follow_up_state(self.manager, run["task"]["id"], run["id"])["status"]
+                        except (OSError, RuntimeError, ValueError):
+                            status = "unavailable"
+                    compact.append({**{key: value for key, value in run.items() if key in run_fields},
+                                    "follow_up_requested": bool(run.get("follow_up")), "follow_up_status": status,
+                                    "task": {key: run["task"][key] for key in ("id", "title")}})
+                state["runs"] = compact
             return {**state, "worker": worker_status(self.manager)}
         if operation == "create":
             task = arguments.get("task")

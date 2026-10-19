@@ -20,6 +20,7 @@ from common.service_tools import web_panel_service as panel
 from common.service_tools import web_panel_storage as storage
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks
+from lib import agent_task_followups
 from lib.agent_inbox import AgentInbox
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.github_runner_config import VERSION as RUNNER_VERSION
@@ -114,6 +115,7 @@ class Scenario:
         self.replace(state.git_settings, "remove_github_token", side_effect=lambda: self.set_token(None))
         state.admin.approval_url = "https://127.0.0.1/fixture-approvals"
         self.replace(admin, "exchange", side_effect=self.exchange)
+        self.replace(agent_task_followups, "exchange", side_effect=self.exchange)
         self.replace(maintenance, "load_policy", side_effect=lambda: copy.deepcopy(self.data["policy"]))
         self.replace(maintenance, "load_reports", side_effect=self.reports)
         self.replace(maintenance, "configure_policy", side_effect=self.policy)
@@ -134,7 +136,6 @@ class Scenario:
         self.replace(state.agent_tasks.contexts, "prepare", side_effect=lambda task, run: {
             "directory": str(self.home), "context_directory": str(self.home), "log_path": "",
         })
-        self.replace(state.agent_tasks.contexts, "record", return_value=None)
         state.agent_tasks._background_tick = None
         marker = self.home / "seeded"
         if not marker.exists():
@@ -166,11 +167,26 @@ class Scenario:
             if message["action"] == "admin-status":
                 return {"blocked": {}, "requests": copy.deepcopy(self.data["requests"]), "unit_state": "inactive"}
             if message["action"] == "request":
+                if message["operation"] == "service.restart":
+                    request = {"id": uuid.uuid4().hex, "action": "service.restart",
+                               "state": "failed" if self.name == "degraded" else "succeeded", "created": time.time(),
+                               "plan": {"operation": "service.restart", "parameters": message["parameters"]}}
+                    self.data["requests"].insert(0, request)
+                    self.save()
+                    return copy.deepcopy(request)
                 self.data["requests"].insert(0, {"id": uuid.uuid4().hex, "action": message["parameters"]["action"],
                     "state": "failed" if self.name == "degraded" else "succeeded", "created": time.time()})
                 self.data["requests"] = self.data["requests"][:20]
                 self.save()
                 return {}
+            if message["action"] in {"status", "cancel"}:
+                request = next((item for item in self.data["requests"] if item["id"] == message["id"]), None)
+                if request is None:
+                    raise ValueError("Synthetic request was not found")
+                if message["action"] == "cancel" and request["state"] == "pending":
+                    request["state"] = "cancelled"
+                    self.save()
+                return copy.deepcopy(request)
             raise ValueError("Unsupported synthetic broker operation")
 
     def diagnostics(self, query) -> dict:
@@ -228,4 +244,11 @@ class Scenario:
         failed = self.name == "degraded"
         return {"status": "failed" if failed else "completed", "outcome": "blocked" if failed else "complete",
                 "message": "Synthetic execution; no provider was contacted", "output": "Development fixture result",
+                "summary": "Synthetic host review completed. An example follow-up is ready for review." if task["title"] == "Example inspection" else "Synthetic verification completed; evidence retained.",
+                "follow_up": {"title": "Verify synthetic service", "reason": "Demonstrate a reviewed follow-up with exact prerequisites.",
+                              "prompt": "Verify the synthetic service's results and report the evidence.", "directory": home,
+                              "mode": "workspace", "workspace": "run-directory", "network": True, "temporary_files": False,
+                              "writable_directories": [], "operator_requirements": [], "service_restarts": ["example.service"]}
+                              if task["title"] == "Example inspection" else None,
+                "environment_feedback": "Synthetic environment feedback for inbox review." if task["title"] == "Example inspection" else "",
                 "exit_code": 1 if failed else 0, "tokens": 0}

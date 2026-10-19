@@ -7,7 +7,10 @@ HOST_REVIEW_SETTINGS = {"mode": "workspace", "workspace": "run-directory", "netw
 FOLLOW_UP_PROMPT = (
     "If a blocked check or recommended repair needs different access or authorization, include a follow_up "
     "request in the structured report with the evidence, exact actions, minimum permissions, verification, "
-    "and rollback plan. The operator must review and submit that separate task; do not create or activate it yourself. "
+    "and rollback plan. Name specific writable_directories, exact service_restarts and any operator_requirements. "
+    "Do not tell another unattended agent to configure its own permissions or approval. "
+    "Do not repeat an unchanged blocked request; report the missing prerequisite as environment_feedback. "
+    "The operator must approve or review the proposal; do not create or activate it yourself. "
 )
 HOST_REVIEW_PROMPT = (
     "Perform read-only host diagnostics. The runner provides a private run directory and command network access "

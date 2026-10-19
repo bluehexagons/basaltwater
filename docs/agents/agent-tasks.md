@@ -69,6 +69,17 @@ expecting it to continue a dirty task worktree.
 
 ## Create and control work
 
+New tasks and ordinary templates default to **Once**. The explicitly named
+**Daily maintenance checks** template supplies a daily routine; other recurrence
+requires a deliberate selection. Existing schedules keep their saved cadence.
+
+The main list shows each task's latest summary and pending follow-up badge.
+Finished one-time tasks move into **Completed one-time tasks** unless **Keep in
+saved tasks** is selected. Their receipts and results remain accessible. When
+the saved-task limit is reached, the oldest finished, unpinned one-time control
+can be reclaimed; drafts, queued/running work, goals and schedules are retained.
+Follow-ups link back to their original task history.
+
 Host service review templates use `mode: "workspace"`, `workspace:
 "run-directory"`, and `network: true`. Command network access permits local
 service-manager sockets and loopback readiness probes that inspection mode can
@@ -118,6 +129,15 @@ The repair example requires a directory and exact plan before running. Include
 targets, permitted changes, verification, and rollback. It reports blocked when
 no plan is supplied. Root actions still use the configured privilege approval
 workflow; workspace mode does not grant root access.
+
+`writable_directories` adds up to eight specific, existing account-owned
+directories to workspace mode. These grants accompany the execution directory,
+including when it is private scratch space. Whole-home grants, symlinks,
+shared writable directories and credential/configuration/control stores are
+rejected. The runner reapplies these grants when resuming a conversation.
+`operator_requirements` records unresolved prerequisites as up to eight short
+lines. A task with unresolved prerequisites stops before provider launch;
+review the evidence and clear resolved entries deliberately.
 
 Prepare a JSON file such as `task.json`:
 
@@ -209,24 +229,61 @@ For example, a restricted check can request live diagnostics:
   "mode": "workspace",
   "workspace": "run-directory",
   "network": true,
-  "temporary_files": false
+  "temporary_files": false,
+  "writable_directories": [],
+  "operator_requirements": [],
+  "service_restarts": []
 }
 ```
 
-The request has exactly these fields. Its prompt accepts up to 3800 UTF-8 bytes
+New reports supply these fields. Older requests remain readable but require
+manual prerequisite review before launch. Its prompt accepts up to 3800 UTF-8 bytes
 and should include concrete targets, actions, verification, and rollback for
 repairs. `directory` must be absolute; the normal task validator rechecks its
 existence and the account's workspace boundary before preparation.
 
-Open **Review follow-up task** in run history or a retained receipt. It opens
-the normal editable task form with the proposed access, a reference to the
-source receipt, **Once**, and a one-attempt limit. Inspect the source evidence
-and actions, then save a draft or submit the new task. Opening the link does
-not save or queue anything. The original task keeps its permissions, schedule,
-limits, and outcome. The same receipt field is readable through CLI/MCP;
-agents must not activate a request needing additional authorization themselves.
-Approving a task does not approve root actions: the separate broker's policy
-and approval checks still govern those actions.
+The main list and run history offer **Approve once**, **Review follow-up task**
+and **Block**, alongside the proposal's summary, access and expandable actions.
+Approve queues one attempt after checking policy and prerequisites. Review opens
+an editable form with the source receipt, **Once**, and a one-attempt limit;
+opening it does not save or queue anything. Repeated submission of a proposal
+returns the same child task. Blocking prevents that proposal from being launched
+and attempts to cancel its pending service requests; it cannot undo an already
+executed action. The original task keeps its permissions, schedule and outcome.
+
+Use `service_restarts` for up to four exact service units registered with the
+privilege broker. **Request service approval** submits those operations to the
+separate privilege portal. The operator approves there; before a follow-up can
+launch or be saved as a draft, the panel verifies that each exact restart
+succeeded. The task agent then verifies the results without repeating the
+restart. Unsupported actions or other manual preparation belong in
+`operator_requirements`, not a prompt asking another unattended agent to grant
+itself permissions. Workspace/network access does not supply root approval.
+Do not repeat unchanged blocked proposals; report environmental difficulties
+as feedback instead. The receipt is also readable through CLI/MCP; agents must
+not activate a request needing additional authorization themselves.
+
+## Report environment difficulties
+
+Task agents return `environment_feedback` in their structured report (empty
+when unnecessary; at most 3000 UTF-8 bytes). The runner delivers it with task/run
+references to the account-local **Agent inbox** (the `operator` mailbox), outside the
+provider's sandbox. A delivery failure is recorded in the receipt without
+discarding the feedback. Describe the failed operation, error and expected
+behavior without credentials or raw private logs.
+
+T3 and terminal agents can use the local CLI:
+
+```bash
+basaltw agent inbox feedback --sender t3-agent 'Describe the environment issue and relevant evidence' --json
+```
+
+The writable task MCP integration exposes `basaltwater_operator_feedback` too.
+For an otherwise read-only integration, `basaltw agent tasks mcp --allow-feedback`
+exposes only this additional mutation. Feedback is self-reported, account-local
+evidence; it neither contacts an external developer nor authorizes repairs.
+The operator inbox supports **Archive** and **Restore** and keeps archived
+messages browsable within its bounded retention.
 
 ## Hand off current work from T3 or a terminal agent
 
