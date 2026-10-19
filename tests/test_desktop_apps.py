@@ -98,13 +98,6 @@ class TestDesktopApps(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Blender installation failed"):
             install_blender(config)
 
-    def test_desktop_steps_exports_librewolf_browser_config(self):
-        """desktop.steps should expose browser configuration with LibreWolf support."""
-        from desktop import steps
-        from desktop.browser_steps import configure_default_browser
-
-        self.assertIs(steps.configure_default_browser, configure_default_browser)
-
     @patch("desktop.apps_steps.install_package", return_value=True)
     def test_geany_editor_uses_debian_package(self, mock_install_package):
         from desktop.apps_steps import install_editor

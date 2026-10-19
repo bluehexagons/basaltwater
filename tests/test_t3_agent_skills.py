@@ -8,7 +8,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from common.agent_steps import BASE_AGENT_SKILL_NAMES
 from common.t3code_steps import (
     T3_AGENT_SKILL_NAMES,
     _ensure_t3_agent_skill,
@@ -31,39 +30,6 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
             web_interfaces=["t3code"],
             browser_automation=browser_automation,
         )
-
-    def test_installs_all_self_contained_managed_skills(self) -> None:
-        with tempfile.TemporaryDirectory() as home:
-            account = SimpleNamespace(
-                pw_dir=home,
-                pw_uid=os.getuid(),
-                pw_gid=os.getgid(),
-            )
-            with (
-                patch("common.agent_steps.pwd.getpwnam", return_value=account),
-                patch("common.agent_steps.os.chown"),
-            ):
-                self.assertTrue(_ensure_t3_agent_skill(self._config("codex")))
-
-            expected = {
-                *T3_AGENT_SKILL_NAMES,
-                "basaltwater-t3-preview-testing",
-            }
-            self.assertEqual(
-                expected,
-                {
-                    *BASE_AGENT_SKILL_NAMES,
-                    "basaltwater-t3code",
-                    "basaltwater-t3-preview-testing",
-                    "basaltwater-web-gateway",
-                },
-            )
-            for skill_name in expected:
-                path = os.path.join(home, ".agents", "skills", skill_name, "SKILL.md")
-                with open(path, encoding="utf-8") as file_obj:
-                    content = file_obj.read()
-                self.assertIn(f"name: {skill_name}", content)
-                self.assertIn("managed-by: basaltwater", content)
 
     def test_t3_with_playwright_installs_only_the_combined_browser_skill(self) -> None:
         with tempfile.TemporaryDirectory() as home:

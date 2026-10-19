@@ -114,6 +114,26 @@ For a focused browser check use
 `make browser-test BROWSER_ARGS="--engine chromium --grep 'panel development'"`;
 filtered results do not count as full application qualification.
 
+## Maintaining tests
+
+Keep tests that exercise an observable contract: parsed arguments, generated
+configuration, state changes, failure propagation, permissions, rollback, or
+credential handling. A regression's age alone is not a reason to remove it.
+
+Before adding a regression, check the owning domain suite for an existing case
+that can cover it. Remove settled feature-presence checks, import/re-export
+identity assertions, and catalog snapshots when behavior tests already cover
+the contract. Test ordering with small fixtures rather than copying the entire
+built-in catalog. Tests must call Basaltwater code; recomputing the same expected
+value with a standard-library function does not verify the application.
+
+When pruning, name the retained coverage in the commit description and preserve
+distinct failure inputs, even if their assertion bodies match. Use `subTest`
+for a shared behavioral contract when it improves clarity. Generated HTML and
+service configuration assertions remain useful when they verify access,
+escaping, activation, or other behavior. Run the affected selection, then
+`make check-ci` once and review any coverage loss before committing.
+
 ## Repository maps
 
 | Topic | Location |

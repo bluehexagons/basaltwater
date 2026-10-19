@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from io import BytesIO
+import hashlib
+import hmac
 import json
 import os
 import stat
@@ -14,7 +16,6 @@ from types import SimpleNamespace
 
 from web.service_tools import cicd_executor, webhook_receiver
 from web.service_tools.cicd_security import (
-    DEFAULT_BRANCHES,
     MAX_WEBHOOK_PAYLOAD_BYTES,
     get_workspace_name,
     validate_branch_ref,
@@ -24,8 +25,13 @@ from web.service_tools.cicd_security import (
 
 
 class TestCICDInputValidation(unittest.TestCase):
-    def test_default_branch_is_main_only(self):
-        self.assertEqual(DEFAULT_BRANCHES, ("main",))
+    def test_signature_verifier_authenticates_both_secret_and_body(self):
+        payload = b'{"test": "data"}'
+        signature = "sha256=" + hmac.new(b"secret", payload, hashlib.sha256).hexdigest()
+        self.assertTrue(webhook_receiver.verify_github_signature("secret", payload, signature))
+        for secret, body in (("wrong-secret", payload), ("secret", payload + b" ")):
+            with self.subTest(secret=secret, body=body):
+                self.assertFalse(webhook_receiver.verify_github_signature(secret, body, signature))
 
     def test_commit_sha_requires_full_hex_object_id(self):
         self.assertEqual(validate_commit_sha("A" * 40), "a" * 40)
@@ -92,12 +98,13 @@ class TestWebhookRequestLimits(unittest.TestCase):
         handler.send_error.assert_called_once_with(413, "Payload Too Large")
         self.assertEqual(handler.rfile.tell(), 0)
 
-    def test_job_filename_does_not_embed_untrusted_payload_fields(self):
+    def test_job_is_queued_without_process_launch_or_untrusted_filename(self):
         with tempfile.TemporaryDirectory() as jobs_dir, patch.object(
             webhook_receiver,
             "JOBS_DIR",
             jobs_dir,
-        ), patch.object(webhook_receiver, 'DELIVERIES_FILE', os.path.join(jobs_dir, 'receipts.sqlite3')):
+        ), patch.object(webhook_receiver, 'DELIVERIES_FILE', os.path.join(jobs_dir, 'receipts.sqlite3')), \
+                patch("subprocess.Popen") as spawn:
             result = webhook_receiver.trigger_cicd_job(
                 "https://example.test/org/repo.git",
                 "refs/heads/main",
@@ -112,6 +119,7 @@ class TestWebhookRequestLimits(unittest.TestCase):
             with open(os.path.join(jobs_dir, filenames[0]), encoding="utf-8") as file_obj:
                 job_data = json.load(file_obj)
             self.assertEqual(job_data["commit_sha"], "a" * 40)
+            spawn.assert_not_called()
 
 
 class TestExecutorJobHardening(unittest.TestCase):

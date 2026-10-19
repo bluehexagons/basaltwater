@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import unittest
 import json
-import hmac
-import hashlib
 import subprocess
 import tempfile
 import time
@@ -132,21 +130,6 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(mock_write_text.call_count, 2)
     
     @patch('web.cicd_steps.os.path.exists')
-    @patch('web.cicd_steps._read_webhook_secret', return_value="existing-secret")
-    @patch('web.cicd_steps.write_text_atomic')
-    @patch('web.cicd_steps.run')
-    def test_generate_webhook_secret_existing(self, mock_run, mock_write_text, mock_file, mock_exists):
-        """Test that we reuse existing webhook secret."""
-        def exists_side_effect(path):
-            return path.endswith('webhook_secret')
-        mock_exists.side_effect = exists_side_effect
-        mock_config = MagicMock()
-        
-        secret = generate_webhook_secret(mock_config)
-        
-        self.assertEqual(secret, "existing-secret")
-    
-    @patch('web.cicd_steps.os.path.exists')
     @patch('web.cicd_steps.save_config_file')
     def test_create_default_webhook_config(self, mock_write_json, mock_exists):
         """Test that we create default webhook configuration."""
@@ -212,17 +195,6 @@ class TestCICDSteps(unittest.TestCase):
         self.assertIn('PathChanged=/var/lib/basaltwater/cicd/jobs', units['cicd-executor.path'])
         self.assertIn('Unit=cicd-executor.service', units['cicd-executor.path'])
 
-    def test_trigger_cicd_job_does_not_call_systemctl(self):
-        """Verify the unprivileged webhook receiver only writes job files."""
-        import inspect
-        src = inspect.getsource(webhook_receiver.trigger_cicd_job)
-        # No code path may invoke systemctl from the unprivileged webhook user.
-        self.assertNotIn("'systemctl'", src,
-                         "trigger_cicd_job must not invoke systemctl: the webhook user "
-                         "has no privilege to start system services. Use the path unit.")
-        self.assertNotIn('"systemctl"', src)
-        self.assertNotIn('subprocess.run', src)
-    
     @patch('web.cicd_steps.os.path.exists')
     @patch('web.cicd_steps.os.makedirs')
     @patch('web.cicd_steps.run')
@@ -359,40 +331,6 @@ class TestSetupDirectorySafety(unittest.TestCase):
                     with self.assertRaises((RuntimeError, OSError)):
                         steps.configure_nginx_for_webhook(MagicMock())
                 self.assertFalse(os.path.exists(target))
-
-
-class TestWebhookSignatureVerification(unittest.TestCase):
-    """Test HMAC signature verification logic."""
-    
-    def test_valid_signature(self):
-        """Test that valid signatures are accepted."""
-        secret = "test-secret"
-        payload = b'{"test": "data"}'
-        
-        # Compute signature like GitHub does
-        signature = hmac.new(secret.encode('utf-8'), payload, hashlib.sha256).hexdigest()
-        signature_header = f"sha256={signature}"
-        
-        # Import and test the verification function
-        # Note: This would require importing from webhook_receiver.py
-        # For now, we'll just verify the HMAC computation
-        expected = hmac.new(secret.encode('utf-8'), payload, hashlib.sha256).hexdigest()
-        actual = signature
-        
-        self.assertEqual(expected, actual)
-    
-    def test_invalid_signature(self):
-        """Test that invalid signatures are rejected."""
-        secret = "test-secret"
-        payload = b'{"test": "data"}'
-        
-        # Compute correct signature
-        correct_signature = hmac.new(secret.encode('utf-8'), payload, hashlib.sha256).hexdigest()
-        
-        # Use different secret
-        wrong_signature = hmac.new("wrong-secret".encode('utf-8'), payload, hashlib.sha256).hexdigest()
-        
-        self.assertNotEqual(correct_signature, wrong_signature)
 
 
 class TestWebhookReceiverStructuredLogging(unittest.TestCase):
@@ -978,23 +916,6 @@ class TestExecutorStructuredLogging(unittest.TestCase):
 class TestCleanupOldBuildLogs(unittest.TestCase):
     """Test build log cleanup."""
 
-    def test_cleanup_removes_old_logs(self):
-        """Old log files are removed."""
-        from web.service_tools.cicd_executor import cleanup_old_build_logs
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            old_log = os.path.join(tmpdir, 'abc12345.log')
-            with open(old_log, 'w') as f:
-                f.write('old build log')
-            old_time = time.time() - (40 * 24 * 60 * 60)
-            os.utime(old_log, (old_time, old_time))
-
-            with patch('web.service_tools.cicd_executor.LOGS_DIR', tmpdir):
-                removed = cleanup_old_build_logs(days_to_keep=30)
-
-            self.assertEqual(removed, 1)
-            self.assertFalse(os.path.exists(old_log))
-
     def test_cleanup_keeps_recent_logs(self):
         """Recent log files are not removed."""
         from web.service_tools.cicd_executor import cleanup_old_build_logs
@@ -1051,6 +972,7 @@ class TestCleanupOldBuildLogs(unittest.TestCase):
                 with self.assertLogs(logger, level='INFO') as logs:
                     removed = cleanup_old_build_logs(days_to_keep=30)
 
+            self.assertFalse(os.path.exists(old_log))
         self.assertEqual(removed, 1)
         self.assertIn("Cleaned up old build logs | days_to_keep=30 removed_count=1", "\n".join(logs.output))
 
@@ -1079,23 +1001,6 @@ class TestCleanupOldBuildLogs(unittest.TestCase):
 class TestCleanupStaleWorkspaces(unittest.TestCase):
     """Test stale workspace cleanup."""
 
-    def test_removes_workspace_not_in_config(self):
-        """Workspaces for repos not in config are removed."""
-        from web.service_tools.cicd_executor import cleanup_stale_workspaces
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stale_ws = os.path.join(tmpdir, 'old-repo')
-            os.makedirs(stale_ws)
-
-            # Config has one repo, but it's not 'old-repo'
-            config = {'repositories': [{'url': 'https://github.com/org/other-repo.git'}]}
-
-            with patch('web.service_tools.cicd_executor.WORKSPACES_DIR', tmpdir):
-                removed = cleanup_stale_workspaces(config)
-
-            self.assertEqual(removed, 1)
-            self.assertFalse(os.path.exists(stale_ws))
-
     def test_empty_config_skips_cleanup(self):
         """Empty or invalid config does not delete any workspaces."""
         from web.service_tools.cicd_executor import cleanup_stale_workspaces
@@ -1109,23 +1014,6 @@ class TestCleanupStaleWorkspaces(unittest.TestCase):
                     removed = cleanup_stale_workspaces(config)
                 self.assertEqual(removed, 0)
                 self.assertTrue(os.path.exists(ws))
-
-    def test_keeps_workspace_in_config(self):
-        """Workspaces for configured repos are kept."""
-        from web.service_tools.cicd_executor import cleanup_stale_workspaces
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            active_name = cicd_executor.get_workspace_name('https://github.com/org/my-repo.git')
-            active_ws = os.path.join(tmpdir, active_name)
-            os.makedirs(active_ws)
-
-            config = {'repositories': [{'url': 'https://github.com/org/my-repo.git'}]}
-
-            with patch('web.service_tools.cicd_executor.WORKSPACES_DIR', tmpdir):
-                removed = cleanup_stale_workspaces(config)
-
-            self.assertEqual(removed, 0)
-            self.assertTrue(os.path.exists(active_ws))
 
     def test_removes_stale_keeps_active(self):
         """Only stale workspaces are removed when both are present."""

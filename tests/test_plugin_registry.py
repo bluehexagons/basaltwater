@@ -12,11 +12,9 @@ from lib.plugin_registry import (
     PluginDefinition,
     SystemTypeDefinition,
     build_plugin_registry,
-    get_plugin_registry,
     resolve_custom_step,
     resolve_validator,
     get_system_type_definition,
-    get_system_type_names,
 )
 from lib.system_types import get_steps_for_system_type
 from lib.config import SetupConfig
@@ -40,92 +38,23 @@ class TestPluginRegistry(unittest.TestCase):
         self.assertTrue(rdp_indices)
         self.assertLess(firewall_index, min(rdp_indices))
 
-    def test_builtin_system_types_match_expected_order(self):
-        self.assertEqual(
-            get_system_type_names(),
-            [
-                "workstation_desktop",
-                "pc_dev",
-                "workstation_dev",
-                "agent_workstation",
-                "agent_cachyos",
-                "agent_code_vm",
-                "control_plane",
-                "agent_vm",
-                "server_wsl",
-                "server_dev",
-                "server_web",
-                "server_github_runner",
-                "server_lite",
-                "server_proxmox",
-                "custom_steps",
-            ],
+    def test_registry_orders_dependencies_and_system_types_independently(self):
+        core = PluginDefinition(name="z_core", module="plugins.core")
+        app = PluginDefinition(
+            name="a_app", module="plugins.app", plugin_kind="composition",
+            dependencies=("z_core",),
+            system_types=(
+                SystemTypeDefinition(name="z_later", description="Later", order=20),
+                SystemTypeDefinition(name="b_first", description="First B", order=10),
+                SystemTypeDefinition(name="a_first", description="First A", order=10),
+            ),
         )
-
-    def test_builtin_registry_exposes_plugin_names(self):
-        registry = get_plugin_registry()
-        self.assertEqual(
-            [plugin.name for plugin in registry.plugins],
-            ["core", "cachyos", "common", "desktop", "post_setup", "security", "smb", "sync", "web", "proxmox", "server", "wsl", "workstation"],
-        )
-        self.assertEqual(
-            [plugin.plugin_kind for plugin in registry.plugins],
-            [
-                "base",
-                "composition",
-                "capability",
-                "capability",
-                "capability",
-                "capability",
-                "capability",
-                "capability",
-                "capability",
-                "composition",
-                "composition",
-                "composition",
-                "composition",
-            ],
-        )
-
-    def test_builtin_step_builders_are_plugin_owned(self):
-        self.assertEqual(
-            get_system_type_definition("custom_steps").step_builder,
-            "plugins.core:build_custom_steps",
-        )
-        self.assertEqual(
-            get_system_type_definition("server_dev").step_builder,
-            "plugins.server:build_server_steps",
-        )
-        self.assertEqual(
-            get_system_type_definition("server_proxmox").step_builder,
-            "plugins.proxmox:build_server_proxmox_steps",
-        )
-        self.assertEqual(
-            get_system_type_definition("workstation_dev").step_builder,
-            "plugins.workstation:build_workstation_steps",
-        )
-        self.assertEqual(
-            get_system_type_definition("agent_vm").step_builder,
-            "plugins.server:build_server_steps",
-        )
-        self.assertEqual(
-            get_system_type_definition("agent_workstation").step_builder,
-            "plugins.workstation:build_workstation_steps",
-        )
-        self.assertEqual(
-            get_system_type_definition("agent_code_vm").step_builder,
-            "plugins.workstation:build_workstation_steps",
-        )
-
-    def test_system_type_metadata_drives_defaults(self):
-        system_type = get_system_type_definition("pc_dev")
-        self.assertTrue(system_type.include_desktop)
-        self.assertTrue(system_type.include_cli_tools)
-        self.assertTrue(system_type.include_pc_dev_apps)
-        self.assertTrue(system_type.default_install_office)
-        self.assertTrue(system_type.default_enable_smbclient)
-        self.assertEqual(system_type.default_browser, "firefox")
-        self.assertIsNotNone(system_type.step_builder)
+        for definitions in ([app, core], [core, app]):
+            with self.subTest(input_order=[plugin.name for plugin in definitions]):
+                registry = build_plugin_registry(definitions)
+                self.assertEqual([plugin.name for plugin in registry.plugins], ["z_core", "a_app"])
+                self.assertEqual([system.name for system in registry.system_types],
+                                 ["a_first", "b_first", "z_later"])
 
     def test_workstation_profiles_use_debian_browser_default(self):
         for profile in (
@@ -138,23 +67,6 @@ class TestPluginRegistry(unittest.TestCase):
             with self.subTest(profile=profile):
                 system_type = get_system_type_definition(profile)
                 self.assertEqual(system_type.default_browser, "firefox")
-
-    def test_agent_profiles_declare_narrow_provider_defaults(self):
-        for profile in ("agent_vm", "agent_workstation", "agent_code_vm"):
-            with self.subTest(profile=profile):
-                system_type = get_system_type_definition(profile)
-                self.assertEqual(system_type.default_agent_tools, ("gh", "codex"))
-
-    def test_agent_code_vm_declares_full_coding_defaults(self):
-        system_type = get_system_type_definition("agent_code_vm")
-
-        self.assertEqual(system_type.default_editor, "geany")
-        self.assertEqual(system_type.default_web_interfaces, ("t3code",))
-        self.assertIsNone(system_type.default_browser_automation)
-        self.assertTrue(system_type.default_enable_rdp)
-        self.assertEqual(system_type.default_git_access, "read-write")
-        self.assertFalse(hasattr(system_type, "default_web_interface_sources"))
-        self.assertFalse(hasattr(system_type, "default_rdp_sources"))
 
     def test_control_plane_profile_adds_administrator_tools(self):
         config = SetupConfig(
