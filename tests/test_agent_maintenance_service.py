@@ -34,6 +34,7 @@ class MaintenancePolicyTest(unittest.TestCase):
             parser, _, _ = basaltwater.create_basaltwater_parser()
         options = {
             "maintenance_agent": "maintenance-agent",
+            "maintenance_agent_host_checks": "maintenance-agent-host-checks",
             "maintenance_agent_routines": "maintenance-agent-routines",
             "maintenance_agent_security": "maintenance-agent-security",
         }
@@ -52,22 +53,24 @@ class MaintenancePolicyTest(unittest.TestCase):
         parser, _, _ = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["setup", "server_web", "test.example", "agent", "--maintenance-agent",
                                   "--maintenance-agent-model", "test-mini", "--maintenance-agent-daily-calls", "3",
-                                  "--no-maintenance-agent-security", "--maintenance-agent-escalation-model", "test-large"])
+                                  "--no-maintenance-agent-host-checks", "--no-maintenance-agent-security",
+                                  "--maintenance-agent-escalation-model", "test-large"])
         config = SetupConfig.from_args(args, "server_web")
         restored = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
         self.assertEqual(setup_policy(restored), {**DEFAULTS, "enabled": True, "model": "test-mini", "daily_calls": 3,
-                                                 "security": False, "escalation_model": "test-large"})
+                                                 "host_checks": False, "security": False, "escalation_model": "test-large"})
         for command in (config.to_remote_args(), config.to_setup_command()):
             self.assertIn("--maintenance-agent", command)
             self.assertIn("--maintenance-agent-daily-calls 3", command)
             self.assertIn("--no-maintenance-agent-security", command)
+            self.assertIn("--no-maintenance-agent-host-checks", command)
         self.assertEqual(build_post_setup_steps(config, Mock())[-1][1], steps.configure_maintenance_agent)
         self.assertFalse(setup_policy(SetupConfig("test.example", "root", "server_web"))["enabled"])
 
     def test_policy_rejects_unbounded_or_injectable_inputs(self) -> None:
         for key, value in (("daily_calls", True), ("daily_calls", 25), ("timeout", 61), ("interval", 0),
                            ("model", "x\n--sandbox"), ("effort", "ultra"), ("escalation_model", "auto"),
-                           ("routines", "true"), ("unknown", 1), ("model", [])):
+                           ("routines", "true"), ("host_checks", "false"), ("unknown", 1), ("model", [])):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 validate_policy({key: value})
 
@@ -171,13 +174,78 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         self.assertEqual(self.notify.call_args.kwargs["state"], "resolved")
         self.assertEqual(len(agent.load_reports(str(self.root / "reports.json"))["reports"]), 3)
 
-    def test_disabled_policy_consumes_wake_without_running_checks(self) -> None:
-        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "enabled": False})
-        write_json_atomic(str(self.root / "control/wake.json"), {"id": "a" * 32})
+    def test_disabled_policy_without_wake_skips_all_automatic_work(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "enabled": False, "routines": True, "security": True})
         with patch.object(agent, "collect_checks") as collect:
             self.assertFalse(agent.run_supervisor(config_path="unused", directory=str(self.root), now=100000))
         collect.assert_not_called()
+
+    def test_manual_checks_run_disabled_preserve_policy_skip_cleanup_and_share_budget(self) -> None:
+        path = self.root / "control/settings.json"
+        policy = {**self.policy, "enabled": False, "host_checks": False, "routines": True, "security": True}
+        write_json_atomic(str(path), policy)
+        original = path.read_bytes()
+        with patch.object(agent, "snapshot_unit_file") as routine, patch.object(agent, "_command") as command, \
+                patch.object(agent, "_review_as_user", return_value={"status": "completed", "output": "done"}) as review, \
+                patch.object(agent, "collect_checks") as collect:
+            for index in range(3):
+                collect.return_value = [dict(ISSUE, key=str(index))]
+                identifier = agent.request_check(directory=str(self.root / "control"))
+                self.assertEqual(len(identifier), 32)
+                self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=100000 + index))
+            collect.assert_called_with(self.baseline["context"], security=True, host=True)
+        self.assertEqual(review.call_count, 2)
+        routine.assert_not_called()
+        command.assert_not_called()
+        self.assertEqual(path.read_bytes(), original)
         self.assertFalse((self.root / "control/wake.json").exists())
+        report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
+        self.assertEqual((report["source"], report["host_check"], report["security_audit"]), ("manual", True, True))
+        self.assertEqual(report["policy"], policy)
+        self.assertEqual(report["review"]["status"], "skipped")
+
+    def test_security_only_schedule_does_not_run_host_checks(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "host_checks": False, "security": True, "audit_days": 1})
+        with patch.object(agent, "collect_checks", return_value=[]) as collect:
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=100000))
+            self.assertFalse(agent.run_supervisor(config_path="unused", directory=str(self.root), now=103600))
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=186400))
+        self.assertEqual(collect.call_count, 2)
+        collect.assert_called_with(self.baseline["context"], security=True, host=False)
+        self.assertEqual(agent._load_state(str(self.root / "state.json"))["last_check"], 0)
+
+    def test_security_due_before_host_interval_retains_host_findings_and_clock(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "interval": 10080, "security": True, "audit_days": 1, "daily_calls": 0})
+        start = 1000000
+        with patch.object(agent, "collect_checks", side_effect=[[ISSUE], []]) as collect:
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=start))
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=start + 86400))
+        collect.assert_called_with(self.baseline["context"], security=True, host=False)
+        state = agent._load_state(str(self.root / "state.json"))
+        self.assertEqual(state["last_check"], start)
+        self.assertEqual(state["reports"][-1]["issues"], [ISSUE])
+        self.assertEqual(self.notify.call_args.kwargs["state"], "firing")
+
+    def test_old_state_retains_budget_and_host_findings_on_upgrade(self) -> None:
+        self.run_check(100000, [])
+        path = self.root / "state.json"
+        state = json.loads(path.read_text())
+        del state["host_issues"]
+        state["calls"] = 2
+        state["reports"][-1]["issues"] = [ISSUE, {**ISSUE, "key": "ssh-root-login"}]
+        write_json_atomic(str(path), state)
+        loaded = agent._load_state(str(path))
+        self.assertEqual(loaded["host_issues"], [ISSUE])
+        self.assertEqual(loaded["calls"], 2)
+
+    def test_host_checks_retain_security_findings_until_next_independent_audit(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "security": True, "daily_calls": 0})
+        security = {**ISSUE, "key": "ssh-root-login"}
+        with patch.object(agent, "collect_checks", side_effect=[[security], []]) as collect:
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=1000000))
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=1003600))
+        collect.assert_called_with(self.baseline["context"], security=False, host=True)
+        self.assertEqual(agent.load_reports(str(self.root / "reports.json"))["reports"][-1]["issues"], [security])
 
     def test_corrupt_budget_state_is_not_reset_or_overwritten(self) -> None:
         self.run_check(100000, [])
@@ -235,6 +303,16 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         routines = agent.load_reports(str(self.root / "reports.json"))["reports"][0]["routines"]
         self.assertEqual(routines, [{"unit": "cleanup-maintenance", "status": "requested"}, {"unit": "user-cache-maintenance", "status": "blocked"}])
 
+    def test_cleanup_schedule_runs_independently_of_disabled_diagnostic_schedules(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "host_checks": False, "routines": True, "daily_calls": 0})
+        with patch.object(agent, "snapshot_unit_file", return_value=None) as inspect, \
+                patch.object(agent, "collect_checks", return_value=[]) as collect:
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=100000))
+            self.assertFalse(agent.run_supervisor(config_path="unused", directory=str(self.root), now=103600))
+            self.assertTrue(agent.run_supervisor(config_path="unused", directory=str(self.root), now=186400))
+        self.assertEqual(inspect.call_count, 4)
+        collect.assert_called_with(self.baseline["context"], security=False, host=False)
+
     def test_unreadable_units_are_recorded_without_dispatching_or_interrupting_checks(self) -> None:
         write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "routines": True, "daily_calls": 0})
         with patch.object(agent, "snapshot_unit_file", side_effect=[ValueError("Unsafe unit"), None]), patch.object(agent, "_command") as dispatch:
@@ -249,7 +327,8 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         path = self.root / "reports.json"
         original = json.loads(path.read_text())
         for values in ({"context": None}, {"review": {"status": []}}, {"routines": [42]},
-                       {"issues": [{**ISSUE, "severity": []}]}):
+                       {"issues": [{**ISSUE, "severity": []}]}, {"host_check": "yes"},
+                       {"source": "other"}, {"policy": {"enabled": "true"}}):
             corrupted = json.loads(json.dumps(original))
             if "context" in values:
                 corrupted.update(values)
@@ -287,6 +366,9 @@ class MaintenanceExecutionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home, patch.object(agent.os, "geteuid", return_value=1000), patch.object(agent.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=home)), patch("lib.agent_tasks.execute_prompt", return_value={"status": "completed", "output": "done"}) as execute:
             agent.run_review({"home": home, "policy": DEFAULTS, "context": {"units": []}, "issues": [ISSUE], "selection": {"model": "test-mini", "effort": "low"}})
             self.assertTrue(execute.call_args.kwargs["isolated"])
+            prompt = execute.call_args.args[0]["prompt"]
+            evidence = json.loads(prompt.split("\n", 1)[1])
+            self.assertEqual(evidence["maintenance_policy"], DEFAULTS)
             command = codex_command(validate_task(execute.call_args.args[0], home), "/test/codex")
             self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
             self.assertIn("--ephemeral", command)
@@ -505,6 +587,15 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
 
 
 class MaintenanceChecksTest(unittest.TestCase):
+    def test_security_only_collection_avoids_host_probes(self) -> None:
+        with patch.object(agent.shutil, "disk_usage") as disk, patch.object(agent.os, "statvfs") as inodes, \
+                patch.object(agent.os, "stat", return_value=SimpleNamespace(st_mode=0o100600)), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0, stdout="permitrootlogin no\n")) as command:
+            self.assertEqual(agent.collect_checks({"units": ["nginx.service"]}, security=True, host=False), [])
+        disk.assert_not_called()
+        inodes.assert_not_called()
+        command.assert_called_once_with(["/usr/sbin/sshd", "-T"])
+
     def test_workload_context_never_serializes_credentials(self) -> None:
         config = SetupConfig("example.test", "agent", "server_web", homebox=["homebox.example.test"], password="private-fixture")
         with patch.object(steps.Path, "is_file", return_value=False):

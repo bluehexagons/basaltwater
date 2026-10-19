@@ -15,7 +15,7 @@ POLICY_FILE = CONTROL_DIR + "/settings.json"
 REPORT_FILE = DATA_DIR + "/reports.json"
 SERVICE_NAME = "basaltwater-maintenance-agent"
 DEFAULTS = {
-    "enabled": False, "interval": 60, "routines": False, "security": True,
+    "enabled": False, "host_checks": True, "interval": 60, "routines": False, "security": True,
     "audit_days": 7, "model": "auto", "effort": "low", "escalation_model": "",
     "escalation_effort": "high", "daily_calls": 2, "daily_escalations": 1, "timeout": 10,
 }
@@ -56,9 +56,10 @@ def add_policy_arguments(parser: argparse.ArgumentParser) -> None:
         flag = "maintenance-agent" if key == "enabled" else "maintenance-agent-" + key.replace("_", "-")
         dest = "maintenance_agent" if key == "enabled" else "maintenance_agent_" + key
         help_text = {
-            "enabled": "Enable tailored host checks and bounded non-root AI reviews",
+            "enabled": "Enable automatic maintenance; disabling retains policy for manual checks",
+            "host_checks": "Schedule host diagnostics independently of security audits",
             "routines": "Allow the fixed service to trigger existing managed cleanup jobs daily",
-            "security": "Include periodic SSH and sensitive-file permission audits",
+            "security": "Schedule independent SSH and sensitive-file permission audits",
             "model": "Routine model ID, or auto to select a cached economy model",
             "escalation_model": "Explicit stronger model for critical or repeatedly unresolved findings (empty disables)",
             "daily_calls": "Maximum total model attempts per UTC day; 0 disables AI",

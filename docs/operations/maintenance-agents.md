@@ -22,6 +22,29 @@ basaltw agent maintenance-agent configure --maintenance-agent \
 basaltw agent maintenance-agent run --json
 ```
 
+For manual-only operation, save `--no-maintenance-agent`. This pauses all
+automatic maintenance without changing the saved check, cleanup or model
+preferences. `run` still requests one bounded check while disabled and never
+enables automatic maintenance or dispatches cleanup. It checks host diagnostics
+and, when `security` is selected, refreshes security evidence regardless of the
+audit interval. Manual reviews share the same daily attempt and timeout limits
+as automatic reviews; a request does not guarantee an AI call.
+
+Host diagnostics and security audits have independent automatic schedules:
+`--maintenance-agent-host-checks` uses the minute `interval`, while
+`--maintenance-agent-security` uses `audit_days`. For security-only automation:
+
+```bash
+basaltw agent maintenance-agent configure --maintenance-agent \
+  --no-maintenance-agent-host-checks --maintenance-agent-security \
+  --maintenance-agent-audit-days 7 --no-maintenance-agent-routines
+```
+
+Both schedules require automatic maintenance to be enabled. The fixed timer
+polls every 15 minutes; due checks run on a later poll. Saved cleanup permission
+is independent of both diagnostic schedules and must be disabled separately
+when unwanted. Disabling automatic maintenance pauses all three.
+
 With a non-root setup user, that user owns maintenance controls and supplies
 the Codex installation and credentials. Root setups use the locked, non-login
 `basaltwater-maintenance` account with home `/var/lib/basaltwater-maintenance`.
@@ -59,7 +82,8 @@ Missing tools, credentials, or model-selector metadata leave an actionable
 record. Deterministic checks still work. OCI targets cannot install persistent
 system services. Setup reruns preserve panel policy when the corresponding
 setup fields were omitted; explicitly saved maintenance flags are reapplied.
-Disabling supervision affects subsequent checks, not an already running review.
+Disabling automatic supervision affects subsequent scheduled work, not an
+already running review or an explicit manual request.
 
 ## Checks, routines and notifications
 
@@ -74,11 +98,17 @@ permissions on `/etc/shadow`, `/etc/gshadow` and the main SSH configuration.
 These bounded checks are not a full vulnerability scan or dependency-advisory
 audit. Unavailable evidence becomes a finding. Between audits, the last security
 findings remain visible until the next audit; disabling auditing drops them from
-subsequent check reports.
+subsequent check reports. Between host checks, saved host findings remain visible
+on security audit records when the host schedule is enabled. Each record includes
+`source` (`manual` or `automatic`), `host_check`, `security_audit` and the selected
+`policy`, so carried findings can be distinguished from checks performed in that
+run. The same non-secret policy is included in AI review context, including
+schedules, cleanup permission, model selection and attempt/runtime limits.
 
 Routine maintenance is opt-in. The fixed root supervisor may request the
 existing verified `cleanup-maintenance.service` and
-`user-cache-maintenance.service` once daily. Those jobs retain their own
+`user-cache-maintenance.service` once daily, independently of diagnostic
+intervals. Manual checks never request these jobs. Those jobs retain their own
 account, lock, retention and capability rules. A request is reported separately
 from job completion; inspect **Scheduled jobs** for the outcome. No AI output
 is executed, and no general root command, package upgrade, restart, deployment
@@ -103,10 +133,11 @@ marks an unfinished recorded check interrupted, and the panel shows that status.
 
 | Flag | Default | Range or behavior |
 | --- | --- | --- |
-| `--maintenance-agent` / `--no-maintenance-agent` | Disabled | Enable or pause checks |
+| `--maintenance-agent` / `--no-maintenance-agent` | Disabled | Enable automatic work or select manual-only operation; retain saved preferences |
+| `--maintenance-agent-host-checks` / `--no-maintenance-agent-host-checks` | On | Schedule host diagnostics independently of security audits |
 | `--maintenance-agent-interval` | 60 minutes | 15–10080 minutes |
 | `--maintenance-agent-routines` / `--no-maintenance-agent-routines` | Off | Request existing managed cleanup jobs daily |
-| `--maintenance-agent-security` / `--no-maintenance-agent-security` | On | Include bounded security audits |
+| `--maintenance-agent-security` / `--no-maintenance-agent-security` | On | Schedule bounded security audits independently; include fresh evidence in manual checks |
 | `--maintenance-agent-audit-days` | 7 | 1–30 days |
 | `--maintenance-agent-model` | `auto` | Explicit model ID or a cached economy-role model |
 | `--maintenance-agent-effort` | `low` | `minimal`, `low`, `medium`, `high`, `xhigh` |
