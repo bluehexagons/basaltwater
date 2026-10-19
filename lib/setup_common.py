@@ -1457,7 +1457,13 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             prepare_web_panel_payload(config, web_panel_payload_dir)
             config.web_panel_payload = True
 
-        config.ci_registration_payload = prepare_registration_payload(config, os.path.join(build_dir, RUNNER_PAYLOAD_NAME))
+        try:
+            config.ci_registration_payload = prepare_registration_payload(
+                config, os.path.join(build_dir, RUNNER_PAYLOAD_NAME),
+            )
+        except (OSError, ValueError) as exc:
+            print(f"Error preparing GitHub runner registration: {exc}")
+            return 1
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
         if config.agent_auth_source == "login" and config.install_codex:

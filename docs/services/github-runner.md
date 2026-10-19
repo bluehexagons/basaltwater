@@ -34,12 +34,20 @@ setup. `--dry-run` makes no token request.
 ## Get a registration token
 
 **GitHub CLI:** Install `gh` on the computer running setup and sign in with
-`gh auth login --hostname github.com`. Your account needs permission to manage
-runners in the chosen repository or organization. Then add
-`--ci-register-with-gh` to setup; only the generated registration token goes to
-the runner. If organization access is denied, check your GitHub role and
-authorize the extra scope with
-`gh auth refresh --hostname github.com --scopes admin:org`.
+`gh auth login --hostname github.com`. For an organization, your account needs
+runner-management access and the browser login needs the `admin:org` scope:
+
+```bash
+gh auth refresh --hostname github.com --scopes admin:org
+```
+
+For a repository, you need repository admin access and the `repo` scope
+(included in a default `gh` login). Then add `--ci-register-with-gh` to setup;
+only the generated registration token goes to the runner. `gh auth status
+--hostname github.com` shows the active account and scopes. `GH_TOKEN` or
+`GITHUB_TOKEN`, when set, overrides the saved login; refreshing that login does
+not change an environment token's permissions. After fixing access, retry the
+same setup command; the existing VM can be reused.
 
 To create a token yourself, run the command for your scope:
 

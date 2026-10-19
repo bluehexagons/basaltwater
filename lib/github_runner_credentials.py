@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -23,17 +24,37 @@ def _token_from_gh(config: SetupConfig) -> bytes:
         result = subprocess.run(
             [executable, "api", "--hostname", "github.com", "--method", "POST",
              f"{scope}/actions/runners/registration-token", "--jq", ".token"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=environment, check=False, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         raise ValueError("GitHub CLI could not request a runner token; retry or use --ci-registration-token-file PATH") from None
     if result.returncode != 0:
+        # Show only a recognized status code, never gh's response or diagnostics.
+        match = re.search(rb"\(HTTP ([1-5][0-9]{2})\)", result.stderr or b"")
+        status = f" (HTTP {match[1].decode('ascii')})" if match else ""
+        if config.ci_organization:
+            target = f"organization {config.ci_organization}"
+            access = "Organization runner-management access is required; OAuth/classic tokens need admin:org."
+            scope_hint = "admin:org"
+        else:
+            target = f"repository {config.ci_repository}"
+            access = "Repository admin access is required; OAuth/classic tokens need repo."
+            scope_hint = "repo"
+        token_variable = next((name for name in ("GH_TOKEN", "GITHUB_TOKEN") if environment.get(name)), None)
+        if token_variable:
+            remedy = (
+                f"{token_variable} overrides gh's saved login. Update that credential's runner permissions "
+                "or unset GH_TOKEN and GITHUB_TOKEN to use the saved login."
+            )
+        else:
+            remedy = f"For a saved gh login, run: gh auth refresh --hostname github.com --scopes {scope_hint}"
         raise ValueError(
-            "GitHub CLI could not create a registration token. Run gh auth login --hostname github.com "
-            "on the controller and check runner-management permissions for the configured scope. "
-            "Organization access may require gh auth refresh --hostname github.com --scopes admin:org. "
-            "Alternatively use --ci-registration-token-file PATH."
+            f"GitHub CLI could not create a registration token for {target}{status}.\n"
+            "  Check the active account with: gh auth status --hostname github.com\n"
+            f"  {access}\n"
+            f"  {remedy}\n"
+            "  Alternatively use --ci-registration-token-file PATH."
         )
     try:
         return validate_runner_registration_token(result.stdout.strip())

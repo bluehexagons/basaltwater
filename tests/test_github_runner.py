@@ -535,8 +535,8 @@ class ControllerCredentialTests(unittest.TestCase):
                 self.assertEqual(options["env"]["GH_TOKEN"], "local-api-secret")
                 self.assertEqual(options["env"]["GH_DEBUG"], "")
                 self.assertEqual(options["env"]["GH_PROMPT_DISABLED"], "1")
-                for name in ("stdin", "stderr"):
-                    self.assertEqual(options[name], subprocess.DEVNULL)
+                self.assertEqual(options["stdin"], subprocess.DEVNULL)
+                self.assertEqual(options["stderr"], subprocess.PIPE)
                 self.assertEqual(options["stdout"], subprocess.PIPE)
                 self.assertEqual(options["timeout"], 30)
                 self.assertEqual(target.stat().st_mode & 0o777, 0o700)
@@ -571,6 +571,40 @@ class ControllerCredentialTests(unittest.TestCase):
                 self.assertNotIn("secret-", str(error.exception))
                 self.assertEqual(list(Path(temporary).iterdir()), [])
 
+    def test_gh_denials_explain_scope_permissions_and_environment_token_precedence(self) -> None:
+        for organization, environment in (
+            (False, {}), (True, {}),
+            (True, {"GH_TOKEN": "secret-env", "GITHUB_TOKEN": "secret-other"}),
+            (True, {"GITHUB_TOKEN": "secret-env"}),
+        ):
+            configured = config(ci_register_with_gh=True)
+            if organization:
+                configured.ci_repository, configured.ci_organization = "", "owner"
+            with (self.subTest(organization=organization, variables=list(environment)),
+                  tempfile.TemporaryDirectory() as temporary,
+                  patch.dict(os.environ, environment, clear=True),
+                  patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
+                  patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess(
+                      [], 1, b"secret-output", b"secret-error (HTTP 403)")),
+                  self.assertRaises(ValueError) as error):
+                credentials.prepare_registration_payload(configured, str(Path(temporary, PAYLOAD_NAME)))
+            message = str(error.exception)
+            self.assertIn("(HTTP 403)", message)
+            self.assertIn("organization owner" if organization else "repository owner/repo", message)
+            self.assertIn("gh auth status --hostname github.com", message)
+            self.assertIn("--ci-registration-token-file PATH", message)
+            self.assertNotIn("secret-", message)
+            if environment:
+                variable = "GH_TOKEN" if "GH_TOKEN" in environment else "GITHUB_TOKEN"
+                self.assertIn(f"{variable} overrides gh's saved login", message)
+                self.assertIn("unset GH_TOKEN and GITHUB_TOKEN", message)
+                self.assertNotIn("gh auth refresh", message)
+            else:
+                scope = "admin:org" if organization else "repo"
+                self.assertIn(f"gh auth refresh --hostname github.com --scopes {scope}", message)
+            if not organization:
+                self.assertNotIn("admin:org", message)
+
     def test_token_file_and_pending_paths_need_no_gh_and_dry_run_makes_no_request(self) -> None:
         with (tempfile.TemporaryDirectory() as temporary, patch.object(credentials.subprocess, "run") as run,
               patch.object(credentials.shutil, "which") as which):
@@ -589,15 +623,32 @@ class ControllerCredentialTests(unittest.TestCase):
             which.assert_not_called()
 
     def test_setup_stages_gh_token_and_cleans_controller_build_after_success_or_failure(self) -> None:
-        for denied in (False, True):
-            with (self.subTest(denied=denied), tempfile.TemporaryDirectory() as temporary,
+        for outcome in ("success", "denied", "timeout", "invalid-token", "unsafe-file", "linked-file"):
+            with (self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary,
+                  patch.object(setup_common, "resource_lock", side_effect=lambda *_: nullcontext()),
                   patch.object(setup_common, "copy_project_files"),
                   patch.object(setup_common, "get_ssh_control_path", return_value=None),
                   patch.object(setup_common, "ensure_remote_sudo", return_value=True),
                   patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
-                  patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess([], int(denied), b"A" * 40)),
+                  patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess(
+                      [], int(outcome == "denied"), b"secret-output" if outcome == "invalid-token" else b"A" * 40,
+                      b"secret-error (HTTP 403)")) as gh,
+                  patch("sys.stdout", new_callable=io.StringIO) as output,
+                  patch("sys.stderr", new_callable=io.StringIO) as errors,
                   patch.object(setup_common, "run_streamed", return_value=0) as stream):
                 configured = config(host="ci.example.test", ci_register_with_gh=True)
+                if outcome == "timeout":
+                    gh.side_effect = subprocess.TimeoutExpired(["gh"], 30, output=b"secret-output", stderr=b"secret-error")
+                if outcome in {"unsafe-file", "linked-file"}:
+                    source = Path(temporary, "source")
+                    source.write_bytes(b"A" * 40)
+                    source.chmod(0o644 if outcome == "unsafe-file" else 0o600)
+                    if outcome == "linked-file":
+                        link = Path(temporary, "link")
+                        link.symlink_to(source)
+                        source = link
+                    configured.ci_register_with_gh = False
+                    configured.ci_registration_token_file = str(source)
                 build = Path(temporary, "build")
                 build.mkdir()
 
@@ -612,15 +663,18 @@ class ControllerCredentialTests(unittest.TestCase):
 
                 with (patch.object(setup_common.tempfile, "mkdtemp", return_value=str(build)),
                       patch.object(setup_common, "create_tar_from_dir", side_effect=archive)):
-                    if denied:
-                        with self.assertRaises(ValueError):
-                            setup_common._run_remote_setup_locked(configured)
+                    self.assertEqual(setup_common.run_remote_setup(configured), int(outcome != "success"))
+                    if outcome != "success":
                         stream.assert_not_called()
+                        self.assertIn("Error preparing GitHub runner registration:", output.getvalue())
+                        self.assertFalse(configured.ci_registration_payload)
                     else:
-                        self.assertEqual(setup_common._run_remote_setup_locked(configured), 0)
                         stream.assert_called_once()
                         self.assertTrue(configured.ci_registration_payload)
                 self.assertFalse(build.exists())
+                self.assertEqual(errors.getvalue(), "")
+                self.assertNotIn("secret-", output.getvalue())
+                self.assertNotIn("A" * 40, output.getvalue())
 
 
 class InstallationTests(unittest.TestCase):
