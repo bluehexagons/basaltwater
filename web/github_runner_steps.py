@@ -28,6 +28,7 @@ from lib.github_runner_config import (
     RunnerPaths, installed_instances, repository_instance, runner_paths, runner_repositories,
 )
 from lib.machine_state import can_manage_system_services
+from lib.github_runner_registration import RunnerRegistrationError, registration_error_message
 from lib.remote_utils import is_dry_run, read_os_release, run
 from lib.setup_directories import check_directory_path, directory_fd
 from lib.unit_transaction import replace_units
@@ -239,7 +240,8 @@ def _register(application: Path, policy: dict, token: bytes, account: pwd.struct
         # Token travels only in this short-lived process's environment, never
         # argv, source, logs, saved setup or a systemd EnvironmentFile.
         try:
-            command = ["runuser", "-u", ACCOUNT, "--", str(registration / "config.sh"),
+            # Debian installs runuser outside the restricted child PATH.
+            command = ["/usr/sbin/runuser", "-u", ACCOUNT, "--", str(registration / "config.sh"),
                  "--unattended", "--url", "https://github.com/" + runner_target(policy),
                  "--name", "basaltwater-" + os.uname().nodename,
                  "--work", DATA + "/work", "--disableupdate", "--replace",
@@ -249,18 +251,23 @@ def _register(application: Path, policy: dict, token: bytes, account: pwd.struct
             result = run(command, cwd=temporary, env=environment, check=False,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=180)
             if result.returncode != 0:
-                raise RuntimeError("Runner registration failed; obtain a fresh registration token for the configured scope")
-        except (subprocess.SubprocessError, TimeoutError):
-            raise RuntimeError("Runner registration failed; obtain a fresh registration token for the configured scope") from None
+                raise RunnerRegistrationError("configure")
+        except (subprocess.TimeoutExpired, TimeoutError):
+            raise RunnerRegistrationError("timeout") from None
+        except (OSError, subprocess.SubprocessError):
+            raise RunnerRegistrationError("start") from None
         generated = {}
-        for name in CREDENTIAL_FILES:
-            descriptor = os.open(registration / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-            with os.fdopen(descriptor, "rb") as stream:
-                info = os.fstat(stream.fileno())
-                content = stream.read(64 * 1024 + 1)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not content or len(content) > 64 * 1024:
-                raise ValueError("Invalid generated runner credential file")
-            generated[name] = content
+        try:
+            for name in CREDENTIAL_FILES:
+                descriptor = os.open(registration / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(descriptor, "rb") as stream:
+                    info = os.fstat(stream.fileno())
+                    content = stream.read(64 * 1024 + 1)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not content or len(content) > 64 * 1024:
+                    raise ValueError("Invalid generated runner credential file")
+                generated[name] = content
+        except (OSError, ValueError):
+            raise RunnerRegistrationError("credentials") from None
         for name, content in generated.items():
             write_bytes_atomic(str(application / name), content, uid=0, gid=account.pw_gid, mode=0o640)
 
@@ -299,7 +306,10 @@ def _register_pending(policy: dict, token: bytes, account: pwd.struct_passwd,
         _register(Path(APP), policy, token, account)
     policy = policy | {"registration": "registered"}
     write_json_atomic(POLICY, policy, mode=0o644)
-    replace_units({SERVICE: render_unit(paths)}, activate=(SERVICE,))
+    try:
+        replace_units({SERVICE: render_unit(paths)}, activate=(SERVICE,))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        raise RunnerRegistrationError("activate") from None
 
 
 def register_pending_runner(token: bytes, instance: str = "") -> None:
@@ -308,7 +318,10 @@ def register_pending_runner(token: bytes, instance: str = "") -> None:
 
     validate_runner_registration_token(token)
     with runner_lock():
-        policy = check_installation(require_registration=False, **({"instance": instance} if instance else {}))
+        try:
+            policy = check_installation(require_registration=False, **({"instance": instance} if instance else {}))
+        except (OSError, ValueError):
+            raise RunnerRegistrationError("installation") from None
         if not instance and (policy["registration"] != "pending" or not policy.get("enabled", True)):
             for candidate in installed_instances(HOOK_DIR):
                 candidate_policy = check_installation(require_registration=False, instance=candidate)
@@ -398,8 +411,8 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
         if token is not None:
             try:
                 _register_pending(policy, token, account, paths)
-            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-                print("  Warning: Runner registration did not complete. Setup will continue; refresh panel status and retry registration.")
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                print(f"  Warning: {registration_error_message(exc)} Setup will continue.")
         else:
             print("  ✓ Runner installed: Pending registration (service disabled)")
 

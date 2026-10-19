@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, "/opt/basaltwater")
 
-from lib.github_runner_registration import peer_uid
+from lib.github_runner_registration import RunnerRegistrationError, peer_uid
 from lib.validation import validate_runner_registration_token
 from web.github_runner_steps import register_pending_runner
 
@@ -35,6 +35,8 @@ def handle_connection(connection: socket.socket, panel_uid: int) -> None:
         with open(os.devnull, "w") as output, redirect_stdout(output), redirect_stderr(output):
             register_pending_runner(token)
         response = b"registered\n"
+    except RunnerRegistrationError as exc:
+        response = f"failed {exc.code}\n".encode("ascii")
     except Exception:
         pass
     try:

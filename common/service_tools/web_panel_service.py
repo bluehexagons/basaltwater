@@ -40,7 +40,10 @@ from common.service_tools.web_panel_github_runner import parse_runner_query, ren
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
 from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
 from lib.config import WEB_PANEL_CA_HTTP_PORT
-from lib.github_runner_registration import ENDPOINT as RUNNER_REGISTRATION_ENDPOINT, MAX_REQUEST_BYTES as RUNNER_REQUEST_LIMIT, submit_registration
+from lib.github_runner_registration import (
+    ENDPOINT as RUNNER_REGISTRATION_ENDPOINT, MAX_REQUEST_BYTES as RUNNER_REQUEST_LIMIT,
+    registration_error_message, submit_registration,
+)
 from lib.validation import validate_runner_registration_token
 from common.service_tools.web_panel_host import (
     FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
@@ -2467,11 +2470,11 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         try:
             token = validate_runner_registration_token(values["token"][0].encode("utf-8"))
             submit_registration(token)
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError) as exc:
             self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_runner_page(
                 True, _PAGE_STYLE, self.state.manifest["host"], navigation=self.state.navigation("github-runner"),
                 csrf=self.state.csrf_token, secure=True,
-                error="Registration did not complete. Refresh status before retrying. If still pending, create a fresh token for the configured scope and retry. If recovery is required, follow the runner guide over SSH.",
+                error=registration_error_message(exc),
             ), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/github-runner?load=1"})

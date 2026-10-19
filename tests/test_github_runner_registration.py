@@ -54,6 +54,37 @@ class HandoffTests(unittest.TestCase):
             result, _ = self.exchange(b"A" * 40, error=error)
             self.assertEqual(result, b"failed\n")
 
+    def test_failure_categories_survive_handoff_without_exception_text(self) -> None:
+        for code in ("start", "configure", "timeout", "credentials", "activate", "installation"):
+            failure = protocol.RunnerRegistrationError(code)
+            # Even replaced exception text must never cross the protocol.
+            failure.args = ("sensitive token",)
+            result, _ = self.exchange(b"A" * 40, error=failure)
+            self.assertEqual(result, f"failed {code}\n".encode())
+            connection = Mock()
+            connection.__enter__ = Mock(return_value=connection)
+            connection.__exit__ = Mock(return_value=False)
+            connection.recv.side_effect = [result[:4], result[4:], b""]
+            with (patch.object(protocol.socket, "socket", return_value=connection),
+                  patch.object(protocol, "peer_uid", return_value=0),
+                  self.assertRaises(protocol.RunnerRegistrationError) as caught):
+                protocol.submit_registration(b"A" * 40)
+            self.assertEqual(caught.exception.code, code)
+            self.assertNotIn("sensitive", str(caught.exception))
+
+    def test_unknown_or_extended_failure_responses_remain_generic(self) -> None:
+        for response in (b"failed sensitive-token\n", b"failed start\nextra", b"failed " + b"A" * 100):
+            connection = Mock()
+            connection.__enter__ = Mock(return_value=connection)
+            connection.__exit__ = Mock(return_value=False)
+            connection.recv.side_effect = [response[:33], b""]
+            with (patch.object(protocol.socket, "socket", return_value=connection),
+                  patch.object(protocol, "peer_uid", return_value=0),
+                  self.assertRaises(protocol.RunnerRegistrationError) as caught):
+                protocol.submit_registration(b"A" * 40)
+            self.assertEqual(caught.exception.code, "failed")
+            self.assertNotIn("sensitive", str(caught.exception))
+
     def test_peer_credentials_come_from_kernel_and_client_checks_root_server(self) -> None:
         first, second = socket.socketpair()
         with first, second:

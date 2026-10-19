@@ -92,8 +92,10 @@ press **Register runner**. Success enables the service and refreshes status.
 For multiple repositories, register the scope shown in the form, then repeat
 for the next pending repository. Each needs its own token.
 
-If a token is rejected, create a fresh one and retry. After an interrupted
-request, load status first. **Recovery required** needs the
+Failures identify whether registration could start, timed out, failed to
+configure, or registered but could not start its service. Follow the displayed
+retry or setup repair instruction. After an interrupted request, load status
+first. **Recovery required** needs the
 [recovery procedure](github-runner-operations.md#updates-deregistration-and-recovery).
 
 ## Check and use it

@@ -414,6 +414,8 @@ class ConfigurationTests(unittest.TestCase):
             factory = tempfile.TemporaryDirectory
 
             def register(_command, **kwargs):
+                self.assertEqual(_command[0], "/usr/sbin/runuser")
+                self.assertEqual(kwargs["env"]["PATH"], "/usr/bin:/bin")
                 self.assertNotIn(token.decode(), shlex.join(_command))
                 self.assertEqual(kwargs["env"]["ACTIONS_RUNNER_INPUT_TOKEN"], token.decode())
                 self.assertIn("--disableupdate", _command)
@@ -455,21 +457,34 @@ class ConfigurationTests(unittest.TestCase):
                   patch.object(steps.tempfile, "TemporaryDirectory", side_effect=lambda **kwargs: factory(**(kwargs | {"dir": temporary}))),
                   patch.object(steps.os, "chown"), patch.object(steps, "write_bytes_atomic") as write,
                   patch.object(steps, "run", side_effect=register)):
-                with self.assertRaisesRegex(ValueError, "credential file"):
+                with self.assertRaisesRegex(steps.RunnerRegistrationError, "complete credentials"):
                     steps._register(application, configured, b"A" * 40, account)
             write.assert_not_called()
             self.assertEqual(list(Path(temporary).iterdir()), [application])
 
     def test_registration_failure_suppresses_vendor_output(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            factory = tempfile.TemporaryDirectory
-            with (patch.object(steps, "DATA", temporary), patch.object(steps.shutil, "copytree"),
-                  patch.object(steps.tempfile, "TemporaryDirectory", side_effect=lambda **kwargs: factory(**(kwargs | {"dir": temporary}))),
-                  patch.object(steps.os, "chown"),
-                  patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 1, stderr="sensitive token"))):
-                with self.assertRaisesRegex(RuntimeError, "fresh registration token") as error:
-                    steps._register(Path(temporary), policy(), b"A" * 40,
-                                    SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()))
+        failures = (
+            (subprocess.CompletedProcess([], 1, stderr="sensitive token"), "configure"),
+            (FileNotFoundError("sensitive token"), "start"),
+            (PermissionError("sensitive token"), "start"),
+            (TimeoutError("sensitive token"), "timeout"),
+            (subprocess.TimeoutExpired([], 180, stderr="sensitive token"), "timeout"),
+            (subprocess.CompletedProcess([], 0), "credentials"),
+        )
+        for failure, code in failures:
+            with self.subTest(code=code, failure=type(failure).__name__), tempfile.TemporaryDirectory() as temporary:
+                factory = tempfile.TemporaryDirectory
+                with (patch.object(steps, "DATA", temporary), patch.object(steps.shutil, "copytree"),
+                      patch.object(steps.tempfile, "TemporaryDirectory", side_effect=lambda **kwargs: factory(**(kwargs | {"dir": temporary}))),
+                      patch.object(steps.os, "chown"), patch.object(steps, "run") as run):
+                    if isinstance(failure, Exception):
+                        run.side_effect = failure
+                    else:
+                        run.return_value = failure
+                    with self.assertRaises(steps.RunnerRegistrationError) as error:
+                        steps._register(Path(temporary), policy(), b"A" * 40,
+                                        SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()))
+                self.assertEqual(error.exception.code, code)
                 self.assertNotIn("sensitive", str(error.exception))
 
     def test_allowlist_reconfigure_stops_listener_and_needs_no_token(self) -> None:
@@ -749,8 +764,11 @@ class InstallationTests(unittest.TestCase):
         self.assertTrue(all("docker" not in shlex.join(call.args[0]) for call in self.run.call_args_list))
 
     def test_registration_failure_consumes_token_and_leaves_disabled_pending_installation_retryable(self) -> None:
-        self.register.side_effect = RuntimeError("registration failed")
-        steps.setup_github_runner(config(ci_registration_payload=True))
+        self.register.side_effect = steps.RunnerRegistrationError("start")
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            steps.setup_github_runner(config(ci_registration_payload=True))
+        self.assertIn("could not start", output.getvalue())
+        self.assertIn("Setup will continue", output.getvalue())
         self.assertFalse(self.token.exists())
         self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "pending")
         self.assertTrue(Path(steps.APP, "bin/Runner.Worker").is_file())

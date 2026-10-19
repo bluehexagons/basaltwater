@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 from email.message import Message
+import html
 import io
 import json
 import os
@@ -18,7 +19,7 @@ from common.service_tools import web_panel_features as features
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_templates import panel_navigation
 from lib.github_runner_config import SERVICE
-from lib.github_runner_registration import ENDPOINT, MAX_REQUEST_BYTES
+from lib.github_runner_registration import ENDPOINT, MAX_REQUEST_BYTES, RunnerRegistrationError, registration_error_message
 from tests.test_github_runner import policy
 
 
@@ -228,3 +229,13 @@ class RegistrationRequestTests(unittest.TestCase):
             self.assertIn("fresh token", page)
             self.assertIn('type="password"', page)
             self.assertNotIn('name="token" value=', page)
+
+    def test_known_failures_show_the_correct_recovery_without_exception_text(self) -> None:
+        for code in ("start", "configure", "timeout", "credentials", "activate", "installation", self.token):
+            failure = RunnerRegistrationError(code)
+            failure.args = (self.token,)
+            self.submit.side_effect = failure
+            self.assertEqual(self.request(), HTTPStatus.UNPROCESSABLE_ENTITY)
+            page = self.handler._send.call_args.args[1]
+            self.assertIn(html.escape(registration_error_message(failure)), page)
+            self.assertNotIn(self.token, page)
