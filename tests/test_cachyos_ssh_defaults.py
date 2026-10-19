@@ -199,6 +199,20 @@ class CachyOSSSHDefaultsTests(unittest.TestCase):
             self.assertNotIn("--ssh", replay.to_remote_args())
             run.assert_not_called()
 
+    def test_timezone_metadata_never_probes_or_changes_the_workstation(self):
+        with patch.object(policy.subprocess, "run") as run:
+            for remote in (False, True):
+                with self.subTest(remote=remote):
+                    config = self.config(remote=remote)
+                    self.assertEqual(config.timezone, "UTC")
+                    config.timezone = "Pacific/Honolulu"
+                    validate_cachyos_config(config)
+                    self.assertEqual(config.timezone, "Pacific/Honolulu")
+                    self.assertNotIn("--timezone", config.to_remote_args())
+                    with self.assertRaisesRegex(ValueError, "does not support.*timezone"):
+                        self.config("--timezone", "UTC", remote=remote)
+            run.assert_not_called()
+
     def test_invalid_config_rejected_before_observation(self):
         config = self.config("--dry-run")
         config.host = "example.com"

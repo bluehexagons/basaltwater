@@ -228,6 +228,9 @@ def _target_runtime(source: Path):
             shutil.copytree(source, staged, ignore=shutil.ignore_patterns(
                 ARGS_NAME, "__pycache__", ".lease-*",
             ))
+            # copytree preserves source permissions, including a writable root.
+            # Publish a private runtime that passes the next run's safety check.
+            staged.chmod(0o700)
             if runtime.exists():
                 runtime.rename(previous)
             try:

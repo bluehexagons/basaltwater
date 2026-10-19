@@ -205,19 +205,23 @@ class CachyosRemoteTests(unittest.TestCase):
             home, source = Path(directory, "home"), Path(directory, "source")
             home.mkdir()
             source.mkdir()
+            source.chmod(0o775)
             Path(source, "remote_setup.py").write_text("first")
             Path(source, remote.ARGS_NAME).write_text('["secret"]')
             with patch.object(remote.Path, "home", return_value=home):
                 with remote._target_runtime(source) as runtime:
+                    self.assertEqual(runtime.stat().st_mode & 0o777, 0o700)
                     self.assertEqual(runtime.parent, home / ".local/share/basaltwater-cachyos-remote")
                     self.assertEqual((runtime / "remote_setup.py").read_text(), "first")
                     self.assertFalse((runtime / remote.ARGS_NAME).exists())
                 Path(source, "remote_setup.py").write_text("second")
                 with remote._target_runtime(source) as updated:
+                    self.assertEqual(updated.stat().st_mode & 0o777, 0o700)
                     self.assertEqual(runtime, updated)
                     self.assertEqual((runtime / "remote_setup.py").read_text(), "second")
                 self.assertFalse((runtime.parent / "previous").exists())
                 self.assertEqual(sorted(p.name for p in runtime.parent.iterdir()), ["runtime", "setup.lock"])
+                self.assertEqual(source.stat().st_mode & 0o777, 0o775)
 
     def test_new_target_gets_launcher_without_replacing_existing_command(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -49,6 +49,8 @@ _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
     "agent_tools_removed", "install_gh", "install_codex", "install_claude",
     "install_opencode",
     "clear_lan_access",
+    # Shared config metadata from older snapshots; this profile never applies it.
+    "timezone",
 }
 
 
@@ -89,6 +91,8 @@ def cachyos_config_from_args(
             setattr(copied, name, getattr(args, name))
     copied.host = getattr(args, "host", "localhost")
     copied.username = getattr(args, "username", None) or pwd.getpwuid(os.getuid()).pw_name
+    # Preserve the workstation's timezone without probing the controller/target.
+    copied.timezone = "UTC"
     # Server profiles infer a wildcard bind from access flags. Desktop access
     # policy must not widen the listener: require an explicit private bind.
     if copied.web_interfaces and copied.web_interface_host is None:
@@ -104,7 +108,9 @@ def cachyos_config_from_args(
 def validate_cachyos_config(config: SetupConfig) -> None:
     """Fail closed when generic callers select features outside this composition."""
     config._validate_ssh_settings()
-    baseline = SetupConfig.from_args(_default_args(), PROFILE)
+    baseline_args = _default_args()
+    baseline_args.timezone = "UTC"
+    baseline = SetupConfig.from_args(baseline_args, PROFILE)
     for field in fields(config):
         if field.name not in _CONFIG_OPTIONS and (
             getattr(config, field.name) != getattr(baseline, field.name)

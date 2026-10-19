@@ -138,3 +138,17 @@ before patching and call it only on temporary fixture paths.
 For ownership fixtures, mock `os.stat()` and `os.lstat()` on the specific
 temporary paths. Do not assume mocking `Path.stat()` also controls
 `Path.lstat()`: Python 3.14 calls `os.lstat()` directly.
+
+## CachyOS configuration and private runtimes
+
+CachyOS parsing and configuration validation must not probe the host. Supply
+an inert timezone when building shared `SetupConfig` defaults so those paths
+do not invoke `timedatectl`. Existing saved timezone metadata remains accepted;
+this profile preserves the workstation timezone and rejects `--timezone`.
+SSH state discovery belongs in target preflight after validation.
+
+Remote source publication must set the staged runtime root to mode `0700`
+after `copytree`, before activation. Copying a group-writable source directory
+otherwise publishes permissions that the next run rejects. Keep rejecting
+unsafe existing runtime directories, and test repeated publication with an
+explicitly group-writable source rather than relying on the test runner's umask.
