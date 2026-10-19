@@ -373,12 +373,18 @@ cleanup jobs; AI reviews provide recommendations.
 The tab leads with the saved enabled state, check interval, and **Check once now**.
 This manual request works with automatic maintenance disabled; it does not
 enable schedules or request housekeeping. Host checks, security audits, and
-housekeeping have separate controls. Maintenance records appear before the
-settings form; incomplete checks retain
-a warning even when they recorded no findings. Expand **Maintenance settings**
-to edit grouped check/housekeeping and AI review/limit controls. Disabled agents
-show the settings immediately. Failed submissions preserve entered settings
-for correction while the status summary continues to show the saved policy.
+housekeeping have separate controls. The settings disclosure is closed by
+default and its summary shows the selected model and daily AI attempt limit;
+open it to edit automatic schedules, housekeeping, model choices, and review
+limits. The maintenance records section follows the settings. Incomplete checks
+retain a warning even when they recorded no findings. Failed submissions
+preserve entered settings for correction while the status summary continues to
+show the saved policy.
+
+Model dropdown choices come from the panel account's local Codex model cache.
+Saved model IDs remain selectable even when absent from that cache, and an
+optional custom model ID can override the selected routine or escalation model.
+Model availability still depends on the account and Codex installation.
 
 **Automatic restart hold** exposes the same account-local hold as
 `basaltw agent maintenance hold`. Expand **Manage restart hold** to choose
