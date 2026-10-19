@@ -186,14 +186,14 @@ class TaskFollowUpTests(unittest.TestCase):
             self.assertTrue(self.manager.tick())
         before = self.manager.snapshot()
         run_id = before["runs"][0]["id"]
-        for query in ({}, {"edit": identifier}, {"copy": identifier}, {"reuse": run_id},
+        for query in ({"view": "tasks"}, {"edit": identifier}, {"copy": identifier}, {"reuse": run_id},
                       {"receipt": identifier + "." + run_id}):
             with self.subTest(query=query):
                 page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
                 self.assertIn("Inspection access is restricted", page)
                 self.assertIn('href="/agents?template=maintenance">Review current host-check template', page)
                 self.assertIn("then pause the old schedule", page)
-                if query and "receipt" not in query:
+                if set(query) & {"edit", "copy", "reuse"}:
                     form = TaskForm(page).values
                     self.assertEqual((form["mode"], form["workspace"]), ("inspect", "existing"))
                     self.assertNotIn("network", form)

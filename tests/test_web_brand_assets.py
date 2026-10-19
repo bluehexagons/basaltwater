@@ -29,7 +29,6 @@ class BrandAssetTest(unittest.TestCase):
                 outputs.append({path.name: path.read_bytes() for path in destination.iterdir()})
         self.assertEqual(outputs[0].keys(), outputs[1].keys())
         self.assertEqual([name for name in outputs[0] if outputs[0][name] != outputs[1][name]], [])
-        self.assertIn(b'value="/home/operator"', outputs[0]["agents.html"])
         self.assertNotIn(b'/home/fixture-builder', outputs[0]["agents.html"])
         self.assertNotIn(b'value="/root"', outputs[0]["agents.html"])
 

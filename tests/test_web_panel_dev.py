@@ -127,8 +127,9 @@ class PanelDevelopmentTests(unittest.TestCase):
     def test_maintenance_and_readiness_forms_show_simulated_results(self) -> None:
         self.serve()
         csrf = self.state.csrf_token
-        self.assertEqual(self.request("/actions/agent-diagnostics", {"csrf": csrf})[0], 303)
-        self.assertIn("Synthetic diagnostics only", self.request("/agents")[2])
+        status, headers, _ = self.request("/actions/agent-diagnostics", {"csrf": csrf})
+        self.assertEqual(status, 303)
+        self.assertIn("Synthetic diagnostics only", self.request(headers["Location"])[2])
         self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": csrf, "submit": "run"})[0], 303)
         self.assertIn("Synthetic development check", self.request("/maintenance-agent")[2])
         self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": csrf, "submit": "hold", "hours": "99"})[0], 422)
