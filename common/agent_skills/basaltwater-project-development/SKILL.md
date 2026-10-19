@@ -39,6 +39,27 @@ priority session and user instructions as well.
   delegation, isolation, and handoff details. For broad audits, split independent
   file groups into bounded read-only reviews, then reconcile findings before edits.
 
+## Wait for jobs to finish
+
+- Let tests, builds, and CI jobs run to completion. Large suites can take ten
+  minutes or longer without new output; silence alone is not a stalled job.
+- Keep the process/session or job handle. Prefer completion notifications or
+  a blocking wait on that handle. Use the longest practical wait allowed by the
+  tool and session; when a wait expires, resume waiting on the same job. A wait
+  timeout does not mean the job failed or authorize restarting it.
+- If status polling is the only completion mechanism, space checks according
+  to the expected duration and back off while the job is unchanged. Avoid
+  repeated short waits, log tails, process listings, or status requests merely
+  to catch failures early. Inspect before completion when the user requests it,
+  the job needs input, or there is evidence of a stall or actionable failure.
+- Do independent work while a job runs when useful. Progress messages should
+  describe meaningful changes. If session instructions require an update while
+  waiting, report that the job is still pending without extra status checks
+  solely to populate the message.
+- Read the final exit status and relevant output before reporting success.
+  Use a native CI/PR watcher when available for monitoring requests, following
+  its wakeup and handoff behavior rather than adding a second polling loop.
+
 ## Review and report
 
 - Choose focused checks defined by the project and relevant to the changed area.

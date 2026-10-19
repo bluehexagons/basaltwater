@@ -7,6 +7,14 @@ applies across repositories; operational skills describe profile-specific
 commands and boundaries that a general coding agent cannot infer from a project
 alone.
 
+The shared project-development skill includes
+[waiting guidance](../../common/agent_skills/basaltwater-project-development/SKILL.md#wait-for-jobs-to-finish)
+for tests, builds, and CI: prefer completion notifications or blocking waits,
+use spaced checks only when polling is necessary, and avoid repeatedly reading
+unchanged logs. Required progress messages do not require extra job-status
+checks. Quiet output from a long suite is expected, and expiration of a wait
+does not mean the underlying job failed.
+
 ## Access from different sessions
 
 Keep discovery separate from procedural context. The catalog advertises skill
