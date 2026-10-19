@@ -396,6 +396,8 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertNotIn(token.decode(), shlex.join(_command))
                 self.assertEqual(kwargs["env"]["ACTIONS_RUNNER_INPUT_TOKEN"], token.decode())
                 self.assertIn("--disableupdate", _command)
+                self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+                self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
                 for name in (".runner", ".credentials", ".credentials_rsaparams"):
                     Path(kwargs["cwd"], name).write_bytes(b"generated")
                 return subprocess.CompletedProcess(_command, 0)
@@ -410,6 +412,32 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(write.call_count, 3)
             self.assertTrue(all(call.kwargs["mode"] == 0o640 for call in write.call_args_list))
             self.assertTrue(all(call.kwargs["uid"] == 0 for call in write.call_args_list))
+
+    def test_organization_registration_sets_group_and_validates_all_credentials_before_publishing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            application = Path(temporary, "app")
+            application.mkdir()
+            account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+            configured = policy() | dict(repository="", organization="owner", runner_group="Private CI")
+            factory = tempfile.TemporaryDirectory
+
+            def register(command, **kwargs):
+                self.assertEqual(command[command.index("--url") + 1], "https://github.com/owner")
+                self.assertEqual(command[command.index("--runnergroup") + 1], "Private CI")
+                self.assertNotIn("--replace", command)
+                self.assertTrue(Path(kwargs["cwd"], "_diag").is_symlink())
+                for name in (".runner", ".credentials", ".credentials_rsaparams"):
+                    Path(kwargs["cwd"], name).write_bytes(b"generated" if name != ".credentials_rsaparams" else b"")
+                return subprocess.CompletedProcess(command, 0)
+
+            with (patch.object(steps, "DATA", temporary), patch.object(steps.shutil, "copytree"),
+                  patch.object(steps.tempfile, "TemporaryDirectory", side_effect=lambda **kwargs: factory(**(kwargs | {"dir": temporary}))),
+                  patch.object(steps.os, "chown"), patch.object(steps, "write_bytes_atomic") as write,
+                  patch.object(steps, "run", side_effect=register)):
+                with self.assertRaisesRegex(ValueError, "credential file"):
+                    steps._register(application, configured, b"A" * 40, account)
+            write.assert_not_called()
+            self.assertEqual(list(Path(temporary).iterdir()), [application])
 
     def test_registration_failure_suppresses_vendor_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -569,12 +597,36 @@ class InstallationTests(unittest.TestCase):
         self.register.assert_called_once()
         self.assertEqual(self.units.call_args.kwargs["activate"], (SERVICE,))
 
+    def test_panel_operation_registers_existing_pending_files_without_persisting_token(self) -> None:
+        steps.setup_github_runner(config())
+        self.token.unlink()
+        pending = json.loads(Path(steps.POLICY).read_text())
+        with patch.object(gate, "check_installation", return_value=pending):
+            steps.register_pending_runner(b"A" * 40)
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
+        self.assertEqual(self.units.call_args.kwargs["activate"], (SERVICE,))
+        self.register.assert_called_once()
+        for path in self.root.rglob("*"):
+            if path.is_file() and not path.is_symlink():
+                self.assertNotIn(b"A" * 40, path.read_bytes(), str(path))
+
     def test_partial_credentials_are_preserved_for_explicit_recovery(self) -> None:
         steps.setup_github_runner(config())
         Path(steps.APP, ".credentials").write_text("incomplete")
         with self.assertRaisesRegex(ValueError, "Partial runner registration"):
             steps.setup_github_runner(config(ci_registration_payload=True))
         self.register.assert_not_called()
+
+    def test_activation_failure_preserves_registration_for_tokenless_service_repair(self) -> None:
+        self.units.side_effect = [None, RuntimeError("activation failed")]
+        with self.assertRaisesRegex(RuntimeError, "activation failed"):
+            steps.setup_github_runner(config(ci_registration_payload=True))
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "registered")
+        self.assertTrue(Path(steps.APP, ".credentials").exists())
+        self.units.side_effect = None
+        steps.setup_github_runner(config())
+        self.register.assert_called_once()
+        self.assertEqual(self.units.call_args.kwargs["activate"], (SERVICE,))
 
     def test_unusable_token_is_removed_before_host_mutations(self) -> None:
         self.token.chmod(0o644)

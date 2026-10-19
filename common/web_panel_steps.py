@@ -28,6 +28,7 @@ from lib.auth_failure_bans import (
     remove_nginx_auth_failure_ban,
 )
 from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
+from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 from lib.remote_utils import install_package, is_dry_run, is_service_active, run
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
@@ -253,6 +254,7 @@ def render_web_panel_nginx(
     key_path: str | None = None,
     notification_ingest: bool = False,
     guacamole: bool = False,
+    github_runner_registration: bool = False,
 ) -> str:
     """Render the Basic-Auth reverse proxy for the Unix-socket app."""
 
@@ -347,6 +349,30 @@ server {{
             if=$basaltwater_web_panel_auth_failure;
     }}
 """
+    registration_location = ""
+    if github_runner_registration and ssl:
+        from lib.github_runner_registration import ENDPOINT, MAX_REQUEST_BYTES
+
+        registration_location = f"""
+    location = {ENDPOINT} {{
+        limit_except POST {{ deny all; }}
+        limit_req zone=basaltwater_web_panel_auth burst=1 nodelay;
+        limit_req_status 429;
+        client_max_body_size {MAX_REQUEST_BYTES};
+        client_body_buffer_size {MAX_REQUEST_BYTES};
+        client_body_in_file_only off;
+        proxy_request_buffering off;
+        proxy_pass http://unix:{WEB_PANEL_SOCKET}:{ENDPOINT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Basaltwater-User $remote_user;
+        proxy_set_header Authorization "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 250s;
+        proxy_send_timeout 10s;
+    }}
+"""
     return f"""{_NGINX_MARKER}
 limit_req_zone $binary_remote_addr zone=basaltwater_web_panel_auth:10m rate=120r/m;
 {ingest_zone}
@@ -371,6 +397,7 @@ server {{
     client_max_body_size 32k;
 {ingest_location}
 {desktop_location}
+{registration_location}
 
     location / {{
         limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
@@ -773,6 +800,7 @@ ProtectKernelTunables=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictSUIDSGID=true
+LimitCORE=0
 StandardOutput=null
 StandardError=journal
 
@@ -1044,8 +1072,12 @@ def remove_web_panel() -> None:
 
     preflight_units()
     preflight_configuration()
+    from web.github_runner_registration_steps import preflight_registration_units, remove_registration_service
+
+    preflight_registration_units()
     _remove_nginx_site(nginx_content, link_exists)
     remove_guacamole()
+    remove_registration_service()
     units_changed = False
     if os.path.exists(WEB_PANEL_SERVICE_FILE):
         run(f"systemctl disable --now {WEB_PANEL_SERVICE_NAME}.service", check=False)
@@ -1159,6 +1191,10 @@ def configure_web_panel(config: SetupConfig) -> None:
         os.makedirs(WEB_PANEL_CONFIG_DIR, mode=0o750, exist_ok=True)
         write_json_atomic(WEB_PANEL_MANIFEST, manifest, mode=0o644, sort_keys=True)
         _configure_audit_exporter(account.pw_gid)
+        if config.system_type == GITHUB_RUNNER_PROFILE and config.enable_ssl:
+            from web.github_runner_registration_steps import configure_registration_service
+
+            configure_registration_service(account)
         _configure_service(config, account.pw_dir)
         if config.guacamole:
             from desktop.guacamole_steps import configure_guacamole
@@ -1172,6 +1208,7 @@ def configure_web_panel(config: SetupConfig) -> None:
                 key_path=key_path,
                 notification_ingest=ingest_enabled,
                 guacamole=config.guacamole is True,
+                github_runner_registration=config.system_type == GITHUB_RUNNER_PROFILE,
             )
         )
         if not ingest_enabled:
@@ -1183,6 +1220,10 @@ def configure_web_panel(config: SetupConfig) -> None:
             from desktop.guacamole_steps import remove_guacamole
 
             remove_guacamole()
+        if config.system_type != GITHUB_RUNNER_PROFILE or not config.enable_ssl:
+            from web.github_runner_registration_steps import remove_registration_service
+
+            remove_registration_service()
     except Exception:
         if auth_changed:
             _restore_auth_file(previous_auth)

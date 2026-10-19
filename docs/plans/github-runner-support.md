@@ -4,7 +4,8 @@ Status: Debian phase 1 implementation is available, with offline identity,
 credential and worker-denial checks. Clean Debian VM, reboot, GitHub-connected
 trigger qualification and upgrade/re-registration evidence remain open; do not
 claim production readiness yet. See [Debian runner operations](../services/github-runner.md).
-Deferred registration and organization scope are implemented; see the
+Deferred registration, organization scope and the panel's one-time HTTPS
+registration handoff are implemented; see the
 [improvement delivery plan](../services/github-runner-improvements.md).
 Windows parity remains deferred.
 
@@ -73,7 +74,7 @@ Windows parity remains deferred.
   credential files. Workflow code from an allowlisted author runs as this
   account and must be treated as trusted.
 
-## Phases
+## Initial phases
 
 ### 1. Debian runner
 
@@ -89,7 +90,8 @@ health, runner updates, deregistration, and recovery.
 The Debian-only web panel should show runner health, repository and labels,
 configured allowlist, and recent gate outcomes. Allowlist editing can be added
 only after its authorization and audit path is defined; otherwise show the
-value read-only. Defer registration, replacement, queue, and lifecycle controls.
+value read-only. The later improvement adds pending registration through HTTPS;
+replacement, queue and lifecycle controls remain deferred.
 This is separate from the existing **Review GitHub Actions failures** template,
 which inspects workflow failures but does not report local runner health or
 policy.

@@ -155,9 +155,33 @@ decisions. It never reads runner credentials or webhook payloads. The outcome
 file is runner-writable operational telemetry, not an independent audit trail.
 Collection errors remain visible; opening the page collects nothing until you
 press Load. Registration state and organization/group scope are shown alongside
-the service state. Panel registration, replacement, allowlist editing, queue and lifecycle
-controls are deferred. The existing agent template **Review GitHub Actions
-failures** serves a different purpose.
+the service state. The existing agent template **Review GitHub Actions failures**
+serves a different purpose.
+
+For panel registration, install with `--web-panel 443 --ssl` and the existing
+panel password/TLS options. Sign in as the operator, open **GitHub runner**, and
+press **Load runner status**. A pending runner shows a link to the configured
+repository or organization's GitHub runner settings. Copy only the registration
+token following `--token` in GitHub's configuration command, paste it into
+**One-time registration token**, and press **Register runner**. Success returns
+to refreshed status and enables the runner service. A rejected or expired token
+clears the field; obtain a fresh token for the same scope and retry. After a
+timeout or interrupted request, refresh status first: registration may already
+have completed. If registered but inactive, repeat tokenless setup to repair
+service activation. Partial credentials show **Recovery required** and require
+the procedure below. Already registered runners have no registration form.
+
+The POST requires authenticated HTTPS, a CSRF token and an 8 KiB bounded form.
+Nginx streams the body without temporary request files. The unprivileged panel
+sends only the token over `/run/basaltwater-github-runner-registration.sock`.
+A socket-activated root helper checks the kernel-supplied panel UID and registers
+only the existing root-owned pending policy under the same lock as setup. It
+accepts no paths, commands or policy changes. Requests and responses stay in
+memory, core dumps and helper output are disabled, and the helper returns only
+a fixed result. Tokens never enter the durable approval broker, panel state,
+saved configuration, URLs, logs or response pages. Removing the panel or
+configuring it without HTTPS removes the helper socket and service template.
+Replacement, allowlist editing, queue and lifecycle controls remain deferred.
 
 ## Updates, deregistration and recovery
 
@@ -199,7 +223,13 @@ retrying. A unit rollback does not undo policy or GitHub registration changes.
 
 For full removal, perform steps 1–3, then remove the fixed unit with the normal
 systemd daemon reload. Remove `/etc/basaltwater/github-runner/` only after the
-service is gone. Remove the dedicated account only when no process uses it.
+service is gone. Remove an installed panel with `--disable-web-panel` through
+setup; this also stops and removes its registration socket and service template.
+If removing units manually, stop and disable
+`basaltwater-github-runner-registration.socket`, stop its active
+`basaltwater-github-runner-registration@*.service` instances, and remove both
+managed unit files before reloading systemd. Remove the dedicated account only
+when no process uses it.
 
 ## Qualification
 
@@ -209,6 +239,12 @@ Start with tokenless setup, verify **Pending registration**, inactive service
 and disabled boot enablement, and reboot to confirm it stays pending. Try an
 expired/rejected token, then register with a fresh token through setup. Repeat
 setup without a token and verify the same GitHub runner identity is preserved.
+Repeat pending registration through the authenticated HTTPS panel, including
+rejected/expired tokens, an interrupted request and fresh-token retry. Verify
+HTTP, unauthenticated, bad-CSRF and oversized requests cannot register a runner;
+inspect logs, setup state and request storage for token leakage. Confirm the
+runner account cannot connect to the registration socket, concurrent setup and
+panel registration cannot race, and panel removal stops the helper instances.
 Run the checks below for both scopes. For organization scope use two private
 repositories in the organization and one outside it; verify GitHub group access
 selection independently, and reject cross-repository PR heads even within the
@@ -259,7 +295,7 @@ organization. Record live evidence before claiming qualification.
    Confirm workflow environment cannot override the hook or identity context.
 5. Load the panel as the separate operator. Check configured policy, failed and
    successful service states, allowed/denied/malformed outcomes and empty or
-   corrupt history. Confirm there are no credentials, payloads or policy-edit
+   corrupt history. Confirm there are no echoed credentials, payloads or policy-edit
    controls. Repeat after the documented upgrade and re-registration procedure.
 
 Offline tests validate identity rules, protected credential staging, service

@@ -7,7 +7,7 @@ allow registration later from setup or the web panel, and support either one
 repository or an organization with several repositories. This targets a VM used
 by one GitHub user or organization; it does not add multi-tenant administration.
 
-## Planned behavior
+## Implemented behavior
 
 - Setup without a registration token installs the runner files and policy in a
   **Pending registration** state. It leaves the runner service disabled and
@@ -54,6 +54,20 @@ and [App private-key guidance](https://docs.github.com/en/apps/creating-github-a
    durable request, response, URL, or log.
 4. Qualify both scopes on disposable GitHub repositories, including reboot,
    pending-state recovery, and GitHub's runner-group repository selection.
+
+Steps 1–3 are implemented with offline lifecycle, organization gate, registration
+protocol, authenticated HTTP handler and generated-unit checks. The panel uses
+a root-owned Unix socket with per-connection activation and kernel peer-UID
+verification, rather than a durable request queue. Rejected tokens are
+retryable; partial credentials are preserved for deliberate recovery, and a
+completed registration with failed service activation can be repaired by
+tokenless setup. Existing registered policies migrate without re-registration.
+See the [operations guide](github-runner.md) for usage and recovery.
+
+Step 4 remains open: no disposable Debian VM or GitHub test organization was
+available during implementation. Offline checks do not establish reboot,
+GitHub delivery or runner-group repository-selection behavior. Record that live
+evidence before claiming production qualification.
 
 GitHub App-based token minting is an optional later enhancement, separate from
 the manual token flow.

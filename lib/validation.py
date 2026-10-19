@@ -61,7 +61,8 @@ def validate_github_runner_group(value: object) -> str:
 
 def validate_runner_registration_token(value: object) -> bytes:
     """Validate the one-time input without including it in an error."""
-    if not isinstance(value, bytes) or not re.fullmatch(rb"[A-Za-z0-9_-]{20,4096}", value):
+    if (not isinstance(value, bytes) or not re.fullmatch(rb"[A-Za-z0-9_-]{20,4096}", value)
+            or value.startswith((b"ghp_", b"github_pat_", b"gho_", b"ghu_", b"ghs_", b"ghr_"))):
         raise ValueError("Invalid short-lived runner registration token")
     return value
 

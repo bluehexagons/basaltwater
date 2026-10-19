@@ -1601,7 +1601,7 @@ deployment workflows.
 | `--ci-registration-token-file PATH` | Private local file containing a one-hour registration token for the configured scope; omit for pending installation and repeat setup with a fresh token to register later |
 
 See [Debian GitHub runner](../services/github-runner.md) for the dedicated
-profile, supported triggers, local fail-closed gate, read-only panel and
+profile, supported triggers, local fail-closed gate, panel registration and
 qualification requirements. Docker is not required or installed.
 
 See [`cicd.md`](../services/cicd.md) for webhook configuration, service units, and

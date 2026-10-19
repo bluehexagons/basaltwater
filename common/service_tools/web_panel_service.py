@@ -40,6 +40,8 @@ from common.service_tools.web_panel_github_runner import parse_runner_query, ren
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
 from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
 from lib.config import WEB_PANEL_CA_HTTP_PORT
+from lib.github_runner_registration import ENDPOINT as RUNNER_REGISTRATION_ENDPOINT, MAX_REQUEST_BYTES as RUNNER_REQUEST_LIMIT, submit_registration
+from lib.validation import validate_runner_registration_token
 from common.service_tools.web_panel_host import (
     FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
 )
@@ -2149,6 +2151,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return self.state.t3_update_available()
         pages = {
             "/github-runner": "github-runner",
+            RUNNER_REGISTRATION_ENDPOINT: "github-runner",
             "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
             "/maintenance-agent": "maintenance-agent", "/credentials": "credentials",
             "/publishing": "publishing", "/admin": "admin",
@@ -2318,6 +2321,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.OK, render_runner_page(
                 load, _PAGE_STYLE, self.state.manifest["host"],
                 navigation=self.state.navigation("github-runner"),
+                csrf=self.state.csrf_token,
+                secure=self.state.credential_transport_available() and self.headers.get("X-Forwarded-Proto", "").lower() == "https",
             ), "text/html")
             return
         if path == "/services":
@@ -2336,6 +2341,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
+        if path == RUNNER_REGISTRATION_ENDPOINT:
+            self._handle_runner_registration(parsed.query)
+            return
         if path == WEB_PANEL_NOTIFICATION_ENDPOINT:
             self._handle_notification_ingest()
             return
@@ -2418,6 +2426,55 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Location", {"agents": "/agents?view=diagnostics", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def _handle_runner_registration(self, query: str) -> None:
+        if not self._feature_available(RUNNER_REGISTRATION_ENDPOINT):
+            self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
+            return
+        if (os.geteuid() == 0 or not self.state.credential_transport_available()
+                or self.headers.get("X-Forwarded-Proto", "").lower() != "https"
+                or self.headers.get("X-Basaltwater-User") != self.state.manifest["username"]):
+            self._send(HTTPStatus.FORBIDDEN, "Authenticated HTTPS required for runner registration\n", "text/plain")
+            return
+        if query or self.headers.get("Transfer-Encoding"):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid registration request\n", "text/plain")
+            return
+        content_type = self.headers.get("Content-Type", "").partition(";")[0].strip().lower()
+        if content_type != "application/x-www-form-urlencoded":
+            self._send(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Expected a registration form\n", "text/plain")
+            return
+        lengths = self.headers.get_all("Content-Length", [])
+        if (len(lengths) != 1 or len(lengths[0]) > 5 or not lengths[0].isascii()
+                or not lengths[0].isdigit() or not 0 < int(lengths[0]) <= RUNNER_REQUEST_LIMIT):
+            self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Invalid registration request\n", "text/plain")
+            return
+        try:
+            self.connection.settimeout(10)
+            length = int(lengths[0])
+            body = self.rfile.read(length)
+            if len(body) != length:
+                raise ValueError("Incomplete registration form")
+            values = urllib.parse.parse_qs(body.decode("utf-8", errors="strict"), keep_blank_values=True,
+                                          strict_parsing=True, max_num_fields=2, errors="strict")
+            if set(values) != {"csrf", "token"} or any(len(entries) != 1 for entries in values.values()):
+                raise ValueError("Invalid registration fields")
+        except (OSError, UnicodeError, ValueError):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid registration request\n", "text/plain")
+            return
+        if not secrets.compare_digest(values["csrf"][0].encode("utf-8"), self.state.csrf_token.encode("utf-8")):
+            self._send(HTTPStatus.FORBIDDEN, "Invalid request\n", "text/plain")
+            return
+        try:
+            token = validate_runner_registration_token(values["token"][0].encode("utf-8"))
+            submit_registration(token)
+        except (OSError, RuntimeError, ValueError):
+            self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_runner_page(
+                True, _PAGE_STYLE, self.state.manifest["host"], navigation=self.state.navigation("github-runner"),
+                csrf=self.state.csrf_token, secure=True,
+                error="Registration did not complete. Refresh status before retrying. If still pending, create a fresh token for the configured scope and retry. If recovery is required, follow the runner guide over SSH.",
+            ), "text/html")
+            return
+        self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/github-runner?load=1"})
 
     def _handle_publishing_action(self, path: str, values: dict[str, list[str]]) -> None:
         if os.geteuid() == 0 or not self.state.credential_transport_available() or self.headers.get("X-Forwarded-Proto", "").lower() != "https":
