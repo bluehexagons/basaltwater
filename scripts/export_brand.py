@@ -299,7 +299,7 @@ def export_assets(assets: Path) -> None:
                 "checked_at": "2026-01-01T09:00:00+00:00", "check_status": "completed", "security_audit": True,
                 "issues": [{"key": "root-disk", "severity": "warning", "message": "Root filesystem is 88% used"}],
                 "routines": [{"unit": "cleanup-maintenance", "status": "requested"}], "notification": "processed by host notification policy",
-                "review": {"status": "completed", "model": "example-mini", "effort": "low", "reason": "Changed findings",
+                "review": {"status": "completed", "model": "example-mini", "effort": "high", "reason": "Changed findings",
                            "output": "Review retention settings and identify the growing directory before removing files."},
             }],
         }),
