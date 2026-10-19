@@ -134,6 +134,14 @@ service configuration assertions remain useful when they verify access,
 escaping, activation, or other behavior. Run the affected selection, then
 `make check-ci` once and review any coverage loss before committing.
 
+Keep related variants in the owning module: optional development bundles share
+`test_development_tool_bundles.py`, disk-space calculations belong in
+`test_disk_utils.py`, and mount boundaries belong in `test_mount_utils.py`.
+Prefer one fixture per contract over rerendering identical configuration for
+each directive. Mock host observations such as disk usage and assert exact
+values and threshold boundaries. Coverage overlap helps locate candidates;
+it does not establish that their assertions or failure inputs are redundant.
+
 ## Repository maps
 
 | Topic | Location |

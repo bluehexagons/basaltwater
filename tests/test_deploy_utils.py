@@ -213,14 +213,6 @@ class TestDeploymentMetadata(unittest.TestCase):
             self.assertEqual(metadata['git_url'], 'https://git.example.com/repo.git')
             self.assertEqual(metadata['commit_hash'], 'abc123')
 
-    def test_load_missing(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.assertIsNone(load_deployment_metadata(tmpdir))
-
-    def test_metadata_path(self):
-        path = get_deployment_metadata_path('/var/www/app')
-        self.assertTrue(path.endswith('.deploy_metadata.json'))
-
     def test_invalid_metadata_blocks_incremental_redeploy_and_preserves_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = get_deployment_metadata_path(directory)

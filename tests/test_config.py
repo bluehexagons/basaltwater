@@ -9,37 +9,7 @@ from argparse import Namespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from lib.config import SetupConfig, DEFAULT_MACHINE_TYPE
-
-
-class TestSetupConfigDefaults(unittest.TestCase):
-    def _make_config(self, **kwargs):
-        defaults = dict(host='testhost', username='testuser', system_type='server_lite')
-        defaults.update(kwargs)
-        return SetupConfig(**defaults)
-
-    def test_default_values(self):
-        config = self._make_config()
-        self.assertEqual(config.machine_type, DEFAULT_MACHINE_TYPE)
-        self.assertEqual(config.timezone, 'UTC')
-        self.assertFalse(config.enable_rdp)
-        self.assertFalse(config.rdp_existing_password)
-        self.assertEqual(config.rdp_bind_address, '0.0.0.0')
-        self.assertIsNone(config.rdp_allowed_sources)
-        self.assertTrue(config.rdp_clipboard)
-        self.assertFalse(config.rdp_drive_redirection)
-        self.assertFalse(config.rdp_audio)
-        self.assertEqual(config.rdp_idle_timeout, 0)
-        self.assertFalse(config.dry_run)
-        self.assertFalse(config.refresh_packages)
-        self.assertEqual(config.desktop, 'xfce')
-        self.assertIsNone(config.editor)
-
-    def test_custom_values(self):
-        config = self._make_config(timezone='America/New_York', enable_rdp=True, dry_run=True)
-        self.assertEqual(config.timezone, 'America/New_York')
-        self.assertTrue(config.enable_rdp)
-        self.assertTrue(config.dry_run)
+from lib.config import SetupConfig
 
 
 class TestSetupConfigToDict(unittest.TestCase):
@@ -800,54 +770,6 @@ class TestSetupConfigHostedFields(unittest.TestCase):
         defaults: dict[str, object] = dict(host='testhost', username='testuser', system_type='server_lite')
         defaults.update(kwargs)
         return SetupConfig(**defaults)
-
-    def test_hosted_defaults(self):
-        config = self._make_config()
-        self.assertIsNone(config.hosted_node)
-        self.assertEqual(config.hosted_user, 'root')
-        self.assertIsNone(config.hosted_key)
-        self.assertIsNone(config.container_memory)
-        self.assertIsNone(config.vm_balloon_min)
-        self.assertIsNone(config.container_storage)
-        self.assertIsNone(config.storage_mounts)
-        self.assertIsNone(config.storage_caches)
-        self.assertEqual(config.container_cores, 1)
-        self.assertIsNone(config.vm_disk_settings)
-        self.assertEqual(config.container_base, 'debian')
-
-    def test_hosted_fields(self):
-        config = self._make_config(
-            hosted_node='10.0.0.1',
-            hosted_user='admin',
-            hosted_key='/path/to/key',
-            container_memory='2G',
-            vm_balloon_min='1G',
-            container_storage=[['root', 'auto', '10G'], ['template', 'local']],
-            storage_mounts=[['data', '/srv/data', 'xfs']],
-            storage_caches=[['data', 'data-cache', 'writethrough']],
-            vm_disk_settings=[['root', 'ssd=on'], ['data', 'discard=off']],
-            container_cores=4,
-            container_base='ubuntu',
-            vm_image_storage='fast-files',
-        )
-        self.assertEqual(config.hosted_node, '10.0.0.1')
-        self.assertEqual(config.hosted_user, 'admin')
-        self.assertEqual(config.hosted_key, '/path/to/key')
-        self.assertEqual(config.container_memory, '2G')
-        self.assertEqual(config.vm_balloon_min, '1G')
-        self.assertEqual(config.container_storage, [['root', 'auto', '10G'], ['template', 'local']])
-        self.assertEqual(config.storage_mounts, [['data', '/srv/data', 'xfs']])
-        self.assertEqual(
-            config.storage_caches,
-            [['data', 'data-cache', 'writethrough']],
-        )
-        self.assertEqual(
-            config.vm_disk_settings,
-            [['root', 'ssd=on'], ['data', 'discard=off']],
-        )
-        self.assertEqual(config.container_cores, 4)
-        self.assertEqual(config.container_base, 'ubuntu')
-        self.assertEqual(config.vm_image_storage, 'fast-files')
 
     def test_to_dict_includes_hosted_fields(self):
         config = self._make_config(

@@ -39,14 +39,6 @@ from lib.validation import (
     validate_service_name_uniqueness,
     validate_redundancy_percentage,
 )
-from lib.disk_utils import (
-    get_free_disk_mb,
-    get_total_disk_mb,
-    get_disk_usage_details,
-    check_disk_space_threshold,
-    estimate_operation_duration,
-)
-from lib.mount_utils import is_path_under_mnt
 from lib.config import SetupConfig
 
 
@@ -379,22 +371,6 @@ class TestGetMountPointsFromConfig(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# is_path_under_mnt
-# ---------------------------------------------------------------------------
-
-class TestIsPathUnderMnt(unittest.TestCase):
-    def test_under_mnt(self):
-        self.assertTrue(is_path_under_mnt('/mnt/data'))
-
-    def test_exact_mnt(self):
-        self.assertTrue(is_path_under_mnt('/mnt'))
-
-    def test_not_under_mnt(self):
-        self.assertFalse(is_path_under_mnt('/home/user'))
-        self.assertFalse(is_path_under_mnt('/mntextra'))
-
-
-# ---------------------------------------------------------------------------
 # validate_filesystem_path
 # ---------------------------------------------------------------------------
 
@@ -497,56 +473,6 @@ class TestValidateRedundancyPercentage(unittest.TestCase):
     def test_non_numeric(self):
         with self.assertRaises(ValueError):
             validate_redundancy_percentage('abc%')
-
-
-# ---------------------------------------------------------------------------
-# disk_utils
-# ---------------------------------------------------------------------------
-
-class TestDiskUtils(unittest.TestCase):
-    def test_get_free_disk_mb(self):
-        free = get_free_disk_mb('/')
-        self.assertGreater(free, 0)
-
-    def test_get_total_disk_mb(self):
-        total = get_total_disk_mb('/')
-        self.assertGreater(total, 0)
-
-    def test_get_disk_usage_details(self):
-        details = get_disk_usage_details('/')
-        self.assertIn('total_mb', details)
-        self.assertIn('used_mb', details)
-        self.assertIn('free_mb', details)
-        self.assertIn('usage_percent', details)
-        self.assertGreaterEqual(details['usage_percent'], 0)
-        self.assertLessEqual(details['usage_percent'], 100)
-
-    def test_get_disk_usage_invalid_path(self):
-        details = get_disk_usage_details('/nonexistent/path/xyz')
-        self.assertEqual(details['total_mb'], 0)
-
-    def test_check_disk_space_threshold(self):
-        status, pct = check_disk_space_threshold('/')
-        self.assertIn(status, ['ok', 'warning', 'critical'])
-        self.assertGreaterEqual(pct, 0)
-
-    def test_estimate_operation_duration(self):
-        duration = estimate_operation_duration('sync', 1000)
-        self.assertGreater(duration, 0)
-        duration_par2 = estimate_operation_duration('par2', 1000)
-        self.assertGreater(duration_par2, duration)  # par2 is slower
-
-    def test_estimate_operation_duration_unknown_type(self):
-        duration = estimate_operation_duration('unknown', 500)
-        self.assertGreater(duration, 0)
-
-    def test_get_free_disk_mb_invalid_path(self):
-        free = get_free_disk_mb('/nonexistent/path/xyz')
-        self.assertEqual(free, 0)
-
-    def test_get_total_disk_mb_invalid_path(self):
-        total = get_total_disk_mb('/nonexistent/path/xyz')
-        self.assertEqual(total, 0)
 
 
 # ---------------------------------------------------------------------------

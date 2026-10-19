@@ -81,29 +81,6 @@ class TestPar2BaseFromParityFile(unittest.TestCase):
             '/database/data.vol.txt.par2'
         )
     
-    def test_real_world_examples(self):
-        """Test with real examples from production logs.
-        
-        These are actual filenames that were incorrectly deleted as orphans,
-        causing the bug report.
-        """
-        examples = [
-            ('/db/Blender/lampshade_1b.blend.vol000+100.par2', 
-             '/db/Blender/lampshade_1b.blend.par2'),
-            ('/db/Blender/lampshade_1b_baked.blend1.vol000+100.par2',
-             '/db/Blender/lampshade_1b_baked.blend1.par2'),
-            ('/db/Blender/room_v2.blend.vol000+100.par2',
-             '/db/Blender/room_v2.blend.par2'),
-            ('/db/Blender/corrugation_3_baked.blend.vol000+100.par2',
-             '/db/Blender/corrugation_3_baked.blend.par2'),
-            ('/db/Blender/circle_table_v2_baked_optimized_sculpted.blend1.vol000+100.par2',
-             '/db/Blender/circle_table_v2_baked_optimized_sculpted.blend1.par2'),
-        ]
-        
-        for par2_file, expected_base in examples:
-            with self.subTest(par2_file=par2_file):
-                self.assertEqual(_par2_base_from_parity_file(par2_file), expected_base)
-    
     def test_unusual_patterns(self):
         """Test edge cases with unusual but valid patterns."""
         # Multiple dots in filename

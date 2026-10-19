@@ -10,7 +10,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from tests.expensive_support import (
     EXPENSIVE_ENV_VAR,
-    KNOWN_CATEGORIES,
     category_enabled,
     category_env_var,
     expensive,
@@ -35,11 +34,6 @@ class TestExpensiveSupport(unittest.TestCase):
 
 
 class TestCategoryGating(unittest.TestCase):
-    def test_known_categories_present(self) -> None:
-        # Sanity: documented categories should at least include live_proxmox,
-        # which is what the proxmox lifecycle test uses.
-        self.assertIn("live_proxmox", KNOWN_CATEGORIES)
-
     def test_category_env_var(self) -> None:
         self.assertEqual(category_env_var("live_proxmox"),
                          "BASALTWATER_RUN_LIVE_PROXMOX")

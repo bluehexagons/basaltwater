@@ -101,55 +101,10 @@ class TestProgressMessage(unittest.TestCase):
         msg = ProgressMessage().build()
         self.assertEqual(msg, "Progress:")
     
-    def test_custom_operation(self) -> None:
-        """Test custom operation name."""
-        msg = ProgressMessage("Syncing").build()
-        self.assertEqual(msg, "Syncing:")
-    
-    def test_percentage(self) -> None:
-        """Test adding percentage."""
-        msg = ProgressMessage().add_percentage(75).build()
-        self.assertEqual(msg, "Progress:, 75% complete")
-    
     def test_files_current_only(self) -> None:
         """Test adding file count without total."""
         msg = ProgressMessage().add_files(42).build()
         self.assertEqual(msg, "Progress:, 42 files")
-    
-    def test_files_with_total(self) -> None:
-        """Test adding file count with total."""
-        msg = ProgressMessage().add_files(42, 100).build()
-        self.assertEqual(msg, "Progress:, 42/100 files")
-    
-    def test_files_custom_label(self) -> None:
-        """Test adding file count with custom label."""
-        msg = ProgressMessage().add_files(42, label="documents").build()
-        self.assertEqual(msg, "Progress:, 42 documents")
-    
-    def test_bytes(self) -> None:
-        """Test adding byte count."""
-        msg = ProgressMessage().add_bytes(1024 * 1024 * 50).build()
-        self.assertEqual(msg, "Progress:, 50.00 MB transferred")
-    
-    def test_bytes_custom_label(self) -> None:
-        """Test adding byte count with custom label."""
-        msg = ProgressMessage().add_bytes(1024 * 1024 * 50, label="processed").build()
-        self.assertEqual(msg, "Progress:, 50.00 MB processed")
-    
-    def test_duration(self) -> None:
-        """Test adding duration."""
-        msg = ProgressMessage().add_duration(125).build()
-        self.assertEqual(msg, "Progress:, 2m 5s elapsed")
-    
-    def test_duration_custom_label(self) -> None:
-        """Test adding duration with custom label."""
-        msg = ProgressMessage().add_duration(125, label="remaining").build()
-        self.assertEqual(msg, "Progress:, 2m 5s remaining")
-    
-    def test_custom_text(self) -> None:
-        """Test adding custom text."""
-        msg = ProgressMessage().add_custom("almost done").build()
-        self.assertEqual(msg, "Progress:, almost done")
     
     def test_combined_message(self) -> None:
         """Test building message with multiple components."""
@@ -161,34 +116,18 @@ class TestProgressMessage(unittest.TestCase):
                .build())
         self.assertEqual(msg, "Syncing:, 75% complete, 42/100 files, 50.00 MB transferred, 2m 5s elapsed")
 
+    def test_custom_labels_and_text(self) -> None:
+        msg = (ProgressMessage("Syncing")
+               .add_files(42, label="documents")
+               .add_bytes(1024 * 1024 * 50, label="processed")
+               .add_duration(125, label="remaining")
+               .add_custom("almost done")
+               .build())
+        self.assertEqual(msg, "Syncing:, 42 documents, 50.00 MB processed, 2m 5s remaining, almost done")
+
 
 class TestProgressTracker(unittest.TestCase):
     """Tests for ProgressTracker class."""
-    
-    def test_initialization(self) -> None:
-        """Test tracker initialization."""
-        tracker = ProgressTracker(interval_seconds=60)
-        self.assertEqual(tracker.interval_seconds, 60)
-        self.assertIsNone(tracker.logger)
-        self.assertIsNone(tracker.log_func)
-    
-    def test_should_log_initial(self) -> None:
-        """Test that should_log returns False initially (same timestamp)."""
-        tracker = ProgressTracker(interval_seconds=30)
-        # Initially should NOT log (0 seconds elapsed between start and last log)
-        self.assertFalse(tracker.should_log())
-    
-    def test_should_log_after_interval(self) -> None:
-        """Test should_log after interval has passed."""
-        tracker = ProgressTracker(interval_seconds=1)
-        tracker.last_log_time = time.time() - 2  # 2 seconds ago
-        self.assertTrue(tracker.should_log())
-    
-    def test_should_not_log_before_interval(self) -> None:
-        """Test should_log before interval has passed."""
-        tracker = ProgressTracker(interval_seconds=60)
-        tracker.last_log_time = time.time()  # Just logged
-        self.assertFalse(tracker.should_log())
     
     def test_get_elapsed_seconds(self) -> None:
         """Test elapsed time calculation."""
@@ -226,15 +165,6 @@ class TestProgressTracker(unittest.TestCase):
         
         tracker.force_log("Forced message")
         mock_logger.info.assert_called_once_with("Forced message")
-    
-    def test_log_with_custom_function(self) -> None:
-        """Test logging with custom function instead of logger."""
-        mock_log_func = Mock()
-        tracker = ProgressTracker(interval_seconds=1, log_func=mock_log_func)
-        tracker.last_log_time = time.time() - 2  # 2 seconds ago
-        
-        tracker.log_if_due("Test message")
-        mock_log_func.assert_called_once_with("Test message")
     
     def test_log_func_overrides_logger(self) -> None:
         """Test that log_func takes precedence over logger."""

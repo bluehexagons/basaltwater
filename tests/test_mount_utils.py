@@ -24,6 +24,8 @@ class TestMountPathHelpers(unittest.TestCase):
             "/mnt/data": True,
             "/mnt-data": False,
             "/var/mnt/data": False,
+            "/home/user": False,
+            "/mntextra": False,
         }
         for path, expected in cases.items():
             with self.subTest(path=path):

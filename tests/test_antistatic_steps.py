@@ -50,193 +50,99 @@ from game.antistatic_steps import (
 
 
 class TestParseAntistaticSpec(unittest.TestCase):
-    def test_domain_only(self):
-        domain, port = parse_antistatic_spec("lobby.example.com")
-        self.assertEqual(domain, "lobby.example.com")
-        self.assertEqual(port, DEFAULT_INTERNAL_PORT)
-
-    def test_domain_with_port(self):
-        domain, port = parse_antistatic_spec("lobby.example.com:9090")
-        self.assertEqual(domain, "lobby.example.com")
-        self.assertEqual(port, 9090)
-
-    def test_domain_with_invalid_port_falls_back(self):
-        domain, port = parse_antistatic_spec("lobby.example.com:notaport")
-        self.assertEqual(domain, "lobby.example.com")
-        self.assertEqual(port, DEFAULT_INTERNAL_PORT)
-
-    def test_subdomain_with_port(self):
-        domain, port = parse_antistatic_spec("game.lobby.mysite.io:8181")
-        self.assertEqual(domain, "game.lobby.mysite.io")
-        self.assertEqual(port, 8181)
-
-    def test_port_only(self):
-        domain, port = parse_antistatic_spec(":8080")
-        self.assertEqual(domain, "")
-        self.assertEqual(port, 8080)
-
-    def test_numeric_spec_is_port_only(self):
-        domain, port = parse_antistatic_spec("8080")
-        self.assertEqual(domain, "")
-        self.assertEqual(port, 8080)
-
-    def test_strict_mode_rejects_invalid_port(self):
-        with self.assertRaisesRegex(ValueError, "Invalid Antistatic server port"):
-            parse_antistatic_spec("lobby.example.com:notaport", strict=True)
-
-    def test_strict_mode_rejects_out_of_range_port(self):
-        with self.assertRaisesRegex(ValueError, "between 1 and 65535"):
-            parse_antistatic_spec(":70000", strict=True)
-
-
-class TestParseAntistaticDbSpec(unittest.TestCase):
-    def test_domain_only(self):
-        domain, port = parse_antistatic_db_spec("api.example.com")
-        self.assertEqual(domain, "api.example.com")
-        self.assertEqual(port, DEFAULT_DB_INTERNAL_PORT)
-
-    def test_domain_with_port(self):
-        domain, port = parse_antistatic_db_spec("api.example.com:9091")
-        self.assertEqual(domain, "api.example.com")
-        self.assertEqual(port, 9091)
-
-    def test_domain_with_invalid_port_falls_back(self):
-        domain, port = parse_antistatic_db_spec("api.example.com:nope")
-        self.assertEqual(domain, "api.example.com")
-        self.assertEqual(port, DEFAULT_DB_INTERNAL_PORT)
-
-    def test_port_only(self):
-        domain, port = parse_antistatic_db_spec(":8081")
-        self.assertEqual(domain, "")
-        self.assertEqual(port, 8081)
-
-    def test_numeric_spec_is_port_only(self):
-        domain, port = parse_antistatic_db_spec("8081")
-        self.assertEqual(domain, "")
-        self.assertEqual(port, 8081)
-
-
-class TestGenerateAntistaticService(unittest.TestCase):
-    def test_contains_required_sections(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn("[Unit]", content)
-        self.assertIn("[Service]", content)
-        self.assertIn("[Install]", content)
-        self.assertIn("WantedBy=multi-user.target", content)
-
-    def test_port_substituted(self):
-        content = generate_antistatic_service(9999)
-        self.assertIn("-port 9999", content)
-
-    def test_stun_port_enabled_by_default(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn(f"-stun-port {DEFAULT_STUN_PORT}", content)
-
-    def test_trust_proxy_flag_present(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn("-trust-proxy", content)
-
-    def test_proxy_mode_binds_loopback_and_limits_trusted_proxies(self):
-        content = generate_antistatic_service(
-            8080,
-            host=PROXY_LISTEN_HOST,
-            trust_proxy=True,
+    def test_domain_and_hostless_specs(self):
+        parsers = (
+            (parse_antistatic_spec, DEFAULT_INTERNAL_PORT),
+            (parse_antistatic_db_spec, DEFAULT_DB_INTERNAL_PORT),
         )
-        self.assertIn(f"-host {PROXY_LISTEN_HOST}", content)
-        self.assertIn(f"-trusted-proxy-cidrs {TRUSTED_NGINX_PROXY_CIDRS}", content)
+        for parse, default_port in parsers:
+            cases = (
+                ("lobby.example.com", ("lobby.example.com", default_port)),
+                ("api.example.com:9091", ("api.example.com", 9091)),
+                ("lobby.example.com:9090", ("lobby.example.com", 9090)),
+                ("lobby.example.com:notaport", ("lobby.example.com", default_port)),
+                ("game.lobby.mysite.io:8181", ("game.lobby.mysite.io", 8181)),
+                (":8080", ("", 8080)),
+                ("8080", ("", 8080)),
+                (":8081", ("", 8081)),
+                ("8081", ("", 8081)),
+            )
+            for spec, expected in cases:
+                with self.subTest(parser=parse.__name__, spec=spec):
+                    self.assertEqual(parse(spec), expected)
 
-    def test_hostless_direct_mode_listens_on_requested_port_without_proxy_trust(self):
-        content = generate_antistatic_service(8080, host="", trust_proxy=False)
-        self.assertIn(f"ExecStart={ANTISTATIC_BINARY} -port 8080", content)
-        self.assertNotIn("-host", content)
-        self.assertNotIn("-trust-proxy", content)
-        self.assertNotIn("-trusted-proxy-cidrs", content)
+    def test_strict_server_ports_reject_invalid_values(self):
+        for spec, message in (
+            ("lobby.example.com:notaport", "Invalid Antistatic server port"),
+            (":70000", "between 1 and 65535"),
+        ):
+            with self.subTest(spec=spec), self.assertRaisesRegex(ValueError, message):
+                parse_antistatic_spec(spec, strict=True)
 
-    def test_listen_options_use_loopback_for_domain_proxy_mode(self):
-        host, trust_proxy = _antistatic_service_listen_options("lobby.example.com")
-        self.assertEqual(host, PROXY_LISTEN_HOST)
-        self.assertTrue(trust_proxy)
 
-    def test_listen_options_use_all_interfaces_for_hostless_direct_mode(self):
-        host, trust_proxy = _antistatic_service_listen_options("")
-        self.assertEqual(host, "")
-        self.assertFalse(trust_proxy)
+class TestGenerateAntistaticServices(unittest.TestCase):
+    def test_service_identity_storage_and_hardening(self):
+        services = (
+            (generate_antistatic_service, 9999, ANTISTATIC_USER,
+             ANTISTATIC_BINARY, "antistatic", ANTISTATIC_DATA_DIR),
+            (generate_antistatic_db_service, 9091, ANTISTATIC_DB_USER,
+             ANTISTATIC_DB_BINARY, "antistatic-db", ANTISTATIC_DB_DATA_DIR),
+        )
+        for generate, port, user, binary, state, directory in services:
+            with self.subTest(service=state):
+                content = generate(port)
+                for directive in (
+                    "[Unit]", "[Service]", "[Install]",
+                    "WantedBy=multi-user.target",
+                    f"User={user}", f"Group={user}",
+                    f"ExecStart={binary}", f"-port {port}",
+                    f"StateDirectory={state}", f"WorkingDirectory={directory}",
+                    "Restart=on-failure", "NoNewPrivileges=yes",
+                    "PrivateTmp=yes", "ProtectSystem=strict", "ProtectHome=yes",
+                ):
+                    with self.subTest(directive=directive):
+                        self.assertIn(directive, content)
 
-    def test_correct_user(self):
+    def test_server_defaults_include_health_check_and_persistent_reports(self):
         content = generate_antistatic_service(8080)
-        self.assertIn(f"User={ANTISTATIC_USER}", content)
-        self.assertIn(f"Group={ANTISTATIC_USER}", content)
+        for directive in (
+            f"-stun-port {DEFAULT_STUN_PORT}", "-trust-proxy",
+            f"Environment=ANTISTATIC_DATA_DIR={ANTISTATIC_DATA_DIR}",
+            "EnvironmentFile=-/etc/antistatic/server.env",
+            "http://127.0.0.1:8080/health", "TimeoutStopSec=40s",
+            "UMask=0077", "StartLimitBurst=3",
+        ):
+            with self.subTest(directive=directive):
+                self.assertIn(directive, content)
 
-    def test_binary_path(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn(f"ExecStart={ANTISTATIC_BINARY}", content)
+    def test_proxy_modes_bind_loopback_and_constrain_trust(self):
+        server = generate_antistatic_service(
+            8080, host=PROXY_LISTEN_HOST, trust_proxy=True,
+        )
+        self.assertIn(f"-host {PROXY_LISTEN_HOST}", server)
+        self.assertIn(f"-trusted-proxy-cidrs {TRUSTED_NGINX_PROXY_CIDRS}", server)
+        database = generate_antistatic_db_service(8081)
+        self.assertIn("-host 127.0.0.1", database)
+        self.assertIn("-trust-proxy", database)
+        self.assertIn(f"-db {ANTISTATIC_DB_PATH}", database)
 
-    def test_restart_on_failure(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn("Restart=on-failure", content)
+    def test_hostless_services_listen_directly(self):
+        server = generate_antistatic_service(8080, host="", trust_proxy=False)
+        self.assertIn(f"ExecStart={ANTISTATIC_BINARY} -port 8080", server)
+        self.assertNotIn("-host", server)
+        self.assertNotIn("-trust-proxy", server)
+        self.assertNotIn("-trusted-proxy-cidrs", server)
+        database = generate_antistatic_db_service(8081, host="")
+        self.assertIn(f"ExecStart={ANTISTATIC_DB_BINARY} -port 8081", database)
+        self.assertNotIn("-host", database)
 
-    def test_security_hardening_directives(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn("NoNewPrivileges=yes", content)
-        self.assertIn("PrivateTmp=yes", content)
-        self.assertIn("ProtectSystem=strict", content)
-        self.assertIn("ProtectHome=yes", content)
-
-    def test_persistent_report_storage_and_health_check(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn("StateDirectory=antistatic", content)
-        self.assertIn(f"WorkingDirectory={ANTISTATIC_DATA_DIR}", content)
-        self.assertIn(f"Environment=ANTISTATIC_DATA_DIR={ANTISTATIC_DATA_DIR}", content)
-        self.assertIn("EnvironmentFile=-/etc/antistatic/server.env", content)
-        self.assertIn("http://127.0.0.1:8080/health", content)
-        self.assertIn("TimeoutStopSec=40s", content)
-        self.assertIn("UMask=0077", content)
-
-    def test_start_limit_burst(self):
-        content = generate_antistatic_service(8080)
-        self.assertIn("StartLimitBurst=3", content)
-
-
-class TestGenerateAntistaticDbService(unittest.TestCase):
-    def test_contains_required_sections(self):
-        content = generate_antistatic_db_service(8081)
-        self.assertIn("[Unit]", content)
-        self.assertIn("[Service]", content)
-        self.assertIn("[Install]", content)
-        self.assertIn("WantedBy=multi-user.target", content)
-
-    def test_port_and_db_path_substituted(self):
-        content = generate_antistatic_db_service(9091)
-        self.assertIn("-port 9091", content)
-        self.assertIn(f"-db {ANTISTATIC_DB_PATH}", content)
-
-    def test_binds_to_loopback_and_trusts_proxy(self):
-        content = generate_antistatic_db_service(8081)
-        self.assertIn("-host 127.0.0.1", content)
-        self.assertIn("-trust-proxy", content)
-
-    def test_hostless_db_can_bind_all_interfaces(self):
-        content = generate_antistatic_db_service(8081, host="")
-        self.assertIn(f"ExecStart={ANTISTATIC_DB_BINARY} -port 8081", content)
-        self.assertNotIn("-host", content)
-
-    def test_correct_user_and_binary(self):
-        content = generate_antistatic_db_service(8081)
-        self.assertIn(f"User={ANTISTATIC_DB_USER}", content)
-        self.assertIn(f"Group={ANTISTATIC_DB_USER}", content)
-        self.assertIn(f"ExecStart={ANTISTATIC_DB_BINARY}", content)
-
-    def test_state_directory_and_working_directory(self):
-        content = generate_antistatic_db_service(8081)
-        self.assertIn("StateDirectory=antistatic-db", content)
-        self.assertIn(f"WorkingDirectory={ANTISTATIC_DB_DATA_DIR}", content)
-
-    def test_security_hardening_directives(self):
-        content = generate_antistatic_db_service(8081)
-        self.assertIn("NoNewPrivileges=yes", content)
-        self.assertIn("PrivateTmp=yes", content)
-        self.assertIn("ProtectSystem=strict", content)
-        self.assertIn("ProtectHome=yes", content)
+    def test_listen_options_follow_domain_presence(self):
+        for domain, expected in (
+            ("lobby.example.com", (PROXY_LISTEN_HOST, True)),
+            ("", ("", False)),
+        ):
+            with self.subTest(domain=domain):
+                self.assertEqual(_antistatic_service_listen_options(domain), expected)
 
 
 class TestGenerateAntistaticNginxConfig(unittest.TestCase):

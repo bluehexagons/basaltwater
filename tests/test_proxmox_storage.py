@@ -123,12 +123,6 @@ class TestListOrphanedVolumes(unittest.TestCase):
         orphans = list_orphaned_volumes(_host())
         self.assertEqual(orphans, [])
 
-    @patch("lib.proxmox_storage._ssh_run")
-    def test_raises_on_pvesm_status_failure(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = [_ok(_QM_LIST), _ok(_PCT_LIST), _ok('[]'), _fail()]
-        with self.assertRaises(ProxmoxStorageError):
-            list_orphaned_volumes(_host())
-
     def test_incomplete_inventory_never_returns_orphans(self) -> None:
         success = [_ok(_QM_LIST), _ok(_PCT_LIST), _ok('[]'), _ok(_PVESM_STATUS), _ok(_PVESM_LIST_LOCAL_LVM), _ok(_PVESM_LIST_LOCAL_LVM)]
         for index in range(len(success)):

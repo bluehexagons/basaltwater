@@ -189,23 +189,16 @@ class TestProxmoxUpdateGates(unittest.TestCase):
 
 class TestRunAptCommand(unittest.TestCase):
     @patch("common.service_tools.auto_update_apt.subprocess.run")
-    def test_sets_noninteractive_frontend(self, mock_run):
+    def test_forwards_arguments_with_noninteractive_frontend(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
         auto_update_apt.run_apt_command(["update", "-qq"])
-        _, kwargs = mock_run.call_args
+        args, kwargs = mock_run.call_args
+        self.assertEqual(args[0], ["apt-get", "update", "-qq"])
         self.assertEqual(kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
-
-    @patch("common.service_tools.auto_update_apt.subprocess.run")
-    def test_passes_arguments_to_apt_get(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
-        auto_update_apt.run_apt_command(["dist-upgrade", "-y"])
-        args, _ = mock_run.call_args
-        self.assertEqual(args[0], ["apt-get", "dist-upgrade", "-y"])
-
 
 class TestUpgradePackages(unittest.TestCase):
     @patch("common.service_tools.auto_update_apt.run_apt_command")
-    def test_uses_dpkg_options(self, mock_run):
+    def test_upgrade_preserves_configuration_and_packages_with_bounded_lock_wait(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr=""
         )
@@ -214,23 +207,7 @@ class TestUpgradePackages(unittest.TestCase):
         self.assertIn("-o", args)
         self.assertIn("Dpkg::Options::=--force-confdef", args)
         self.assertIn("Dpkg::Options::=--force-confold", args)
-
-    @patch("common.service_tools.auto_update_apt.run_apt_command")
-    def test_upgrade_refuses_package_removals(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        auto_update_apt.upgrade_packages()
-        args = mock_run.call_args[0][0]
         self.assertIn("--no-remove", args)
-
-    @patch("common.service_tools.auto_update_apt.run_apt_command")
-    def test_upgrade_uses_lock_timeout(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-        auto_update_apt.upgrade_packages()
-        args = mock_run.call_args[0][0]
         self.assertIn("DPkg::Lock::Timeout=300", args)
 
     @patch("common.service_tools.auto_update_apt.ensure_debian_package_sources")

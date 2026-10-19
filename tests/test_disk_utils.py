@@ -1,67 +1,56 @@
-"""Tests for lib/disk_utils.py: get_multiple_paths_usage and additional edge cases."""
+"""Disk accounting contracts use fixed observations, independent of the host."""
 
 from __future__ import annotations
 
-import os
-import sys
+from collections import namedtuple
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-from lib.disk_utils import get_multiple_paths_usage, check_disk_space_threshold
+from lib import disk_utils as disk
 
 
-class TestGetMultiplePathsUsage(unittest.TestCase):
-    def test_single_valid_path(self):
-        results = get_multiple_paths_usage(['/'])
-        self.assertIn('/', results)
-        self.assertGreater(results['/']['total_mb'], 0)
-
-    def test_multiple_paths(self):
-        results = get_multiple_paths_usage(['/', '/tmp'])
-        self.assertEqual(len(results), 2)
-        self.assertIn('/', results)
-        self.assertIn('/tmp', results)
-
-    def test_invalid_path(self):
-        results = get_multiple_paths_usage(['/nonexistent/path/xyz'])
-        self.assertIn('/nonexistent/path/xyz', results)
-        self.assertEqual(results['/nonexistent/path/xyz']['total_mb'], 0)
-
-    def test_empty_list(self):
-        results = get_multiple_paths_usage([])
-        self.assertEqual(len(results), 0)
+Usage = namedtuple("Usage", "total used free")
+MB = 1024 * 1024
 
 
-class TestCheckDiskSpaceThresholdCustom(unittest.TestCase):
-    def _fake_usage(self, total, used, free):
-        """Create a mock disk_usage result."""
-        from collections import namedtuple
-        Usage = namedtuple('usage', ['total', 'used', 'free'])
-        return Usage(total, used, free)
+class DiskUsageTests(unittest.TestCase):
+    @patch("lib.disk_utils.shutil.disk_usage", return_value=Usage(10 * MB, 6 * MB, 4 * MB))
+    def test_accounts_for_bytes_and_multiple_paths(self, usage):
+        expected = {"total_mb": 10, "used_mb": 6, "free_mb": 4, "usage_percent": 60}
+        self.assertEqual(disk.get_free_disk_mb("/fixture"), 4)
+        self.assertEqual(disk.get_total_disk_mb("/fixture"), 10)
+        self.assertEqual(disk.get_disk_usage_details("/fixture"), expected)
+        usage.assert_called_with("/fixture")
+        self.assertEqual(disk.get_multiple_paths_usage(["/first", "/second"]),
+                         {"/first": expected, "/second": expected})
+        usage.reset_mock()
+        self.assertEqual(disk.get_multiple_paths_usage([]), {})
+        usage.assert_not_called()
 
-    def test_ok_status(self):
-        # 50% usage → ok
-        with patch('shutil.disk_usage', return_value=self._fake_usage(1000, 500, 500)):
-            status, pct = check_disk_space_threshold('/')
-            self.assertEqual(status, 'ok')
-            self.assertEqual(pct, 50)
+    def test_unavailable_usage_returns_zero_for_each_reader(self):
+        for failure in (OSError("unavailable"), AttributeError("missing fields")):
+            with self.subTest(failure=failure), patch("lib.disk_utils.shutil.disk_usage", side_effect=failure):
+                self.assertEqual(disk.get_free_disk_mb("/fixture"), 0)
+                self.assertEqual(disk.get_total_disk_mb("/fixture"), 0)
+                self.assertEqual(disk.get_multiple_paths_usage(["/fixture"]), {
+                    "/fixture": {"total_mb": 0, "used_mb": 0, "free_mb": 0, "usage_percent": 0},
+                })
 
-    def test_warning_status(self):
-        # 85% usage → warning (>=80, <90)
-        with patch('shutil.disk_usage', return_value=self._fake_usage(1000, 850, 150)):
-            status, pct = check_disk_space_threshold('/')
-            self.assertEqual(status, 'warning')
-            self.assertEqual(pct, 85)
+    @patch("lib.disk_utils.shutil.disk_usage", return_value=Usage(0, 0, 0))
+    def test_empty_device_has_no_percentage(self, _usage):
+        self.assertEqual(disk.get_disk_usage_details("/fixture")["usage_percent"], 0)
 
-    def test_critical_status(self):
-        # 95% usage → critical (>=90)
-        with patch('shutil.disk_usage', return_value=self._fake_usage(1000, 950, 50)):
-            status, pct = check_disk_space_threshold('/')
-            self.assertEqual(status, 'critical')
-            self.assertEqual(pct, 95)
+    def test_thresholds_include_the_boundary_and_respect_overrides(self):
+        for warning, critical in ((80, 90), (60, 75)):
+            for percent, status in ((warning - 1, "ok"), (warning, "warning"),
+                                    (critical - 1, "warning"), (critical, "critical")):
+                with self.subTest(warning=warning, critical=critical, percent=percent), patch(
+                    "lib.disk_utils.shutil.disk_usage", return_value=Usage(100 * MB, percent * MB, (100 - percent) * MB),
+                ):
+                    self.assertEqual(disk.check_disk_space_threshold("/fixture", warning, critical), (status, percent))
 
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_duration_estimates_include_minimum_and_operation_overhead(self):
+        for operation, size, expected in (("sync", 1000, 15), ("scrub", 1000, 30),
+                                          ("par2", 1000, 55), ("unknown", 500, 20), ("sync", 0, 6)):
+            with self.subTest(operation=operation, size=size):
+                self.assertEqual(disk.estimate_operation_duration(operation, size), expected)

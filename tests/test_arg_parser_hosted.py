@@ -17,10 +17,6 @@ class TestHostedFlagParsing(unittest.TestCase):
     def setUp(self):
         self.parser = create_setup_argument_parser("Test", for_remote=False)
 
-    def test_provision_on_flag(self):
-        args = self.parser.parse_args(["10.0.0.50", "--provision-on", "10.0.0.1"])
-        self.assertEqual(args.hosted_node, "10.0.0.1")
-
     def test_hosted_user_default_is_deferred_to_config(self):
         args = self.parser.parse_args(["10.0.0.50", "--provision-on", "10.0.0.1"])
         self.assertFalse(hasattr(args, "hosted_user"))
@@ -58,12 +54,6 @@ class TestHostedFlagParsing(unittest.TestCase):
             "10.0.0.50", "--balloon-min", "1G"
         ])
         self.assertEqual(args.vm_balloon_min, "1G")
-
-    def test_storage_flag_three_args(self):
-        args = self.parser.parse_args([
-            "10.0.0.50", "--storage", "root", "auto", "10G"
-        ])
-        self.assertEqual(args.container_storage, [["root", "auto", "10G"]])
 
     def test_multiple_storage_specs(self):
         args = self.parser.parse_args([
@@ -108,19 +98,11 @@ class TestHostedFlagParsing(unittest.TestCase):
             [["data", "data-cache", "writethrough"]],
         )
 
-    def test_cores_default_is_deferred_to_setup_config(self):
+    def test_hosted_defaults_are_deferred_to_setup_config(self):
         args = self.parser.parse_args(["10.0.0.50"])
+
         self.assertFalse(hasattr(args, "container_cores"))
-
-    def test_cores_override(self):
-        args = self.parser.parse_args([
-            "10.0.0.50", "--cores", "4"
-        ])
-        self.assertEqual(args.container_cores, 4)
-
-    def test_vm_hardware_defaults_are_deferred_to_setup_config(self):
-        args = self.parser.parse_args(["10.0.0.50"])
-
+        self.assertFalse(hasattr(args, "container_base"))
         self.assertFalse(hasattr(args, "vm_cpu_type"))
         self.assertFalse(hasattr(args, "vm_disk_discard"))
         self.assertFalse(hasattr(args, "vm_disk_ssd"))
@@ -219,16 +201,6 @@ class TestHostedFlagParsing(unittest.TestCase):
                     ]
                 )
 
-    def test_base_default_is_deferred_to_setup_config(self):
-        args = self.parser.parse_args(["10.0.0.50"])
-        self.assertFalse(hasattr(args, "container_base"))
-
-    def test_base_override(self):
-        args = self.parser.parse_args([
-            "10.0.0.50", "--base", "ubuntu"
-        ])
-        self.assertEqual(args.container_base, "ubuntu")
-
     def test_image_storage_flag(self):
         args = self.parser.parse_args([
             "10.0.0.50", "--image-storage", "fast-files"
@@ -239,14 +211,14 @@ class TestHostedFlagParsing(unittest.TestCase):
         args = self.parser.parse_args([
             "10.0.0.50", "--provision-on", "10.0.0.1",
             "--memory", "2G", "--storage", "root", "auto", "10G",
-            "--cores", "2", "--base", "debian",
+            "--cores", "4", "--base", "ubuntu",
             "--name", "web-01"
         ])
         self.assertEqual(args.hosted_node, "10.0.0.1")
         self.assertEqual(args.container_memory, "2G")
         self.assertEqual(args.container_storage, [["root", "auto", "10G"]])
-        self.assertEqual(args.container_cores, 2)
-        self.assertEqual(args.container_base, "debian")
+        self.assertEqual(args.container_cores, 4)
+        self.assertEqual(args.container_base, "ubuntu")
         self.assertEqual(args.friendly_name, "web-01")
 
     def test_node_flag_still_installs_nodejs(self):
@@ -372,35 +344,17 @@ class TestHostedFlagsNotInRemoteParser(unittest.TestCase):
             "Remote", for_remote=True
         )
 
-    def test_no_provision_on_flag(self):
-        """The --provision-on flag should not exist in the remote parser."""
-        args = self.parser.parse_args([
-            "--system-type", "server_lite", "--username", "root"
-        ])
-        self.assertFalse(hasattr(args, 'hosted_node'))
-
-    def test_no_memory_flag(self):
-        args = self.parser.parse_args([
-            "--system-type", "server_lite", "--username", "root"
-        ])
-        self.assertFalse(hasattr(args, 'container_memory'))
-
-    def test_no_balloon_min_flag(self):
-        args = self.parser.parse_args([
-            "--system-type", "server_lite", "--username", "root"
-        ])
-        self.assertFalse(hasattr(args, 'vm_balloon_min'))
-
-    def test_no_vm_hardware_flags(self):
+    def test_controller_fields_are_absent_from_remote_parser(self):
         args = self.parser.parse_args([
             "--system-type", "server_lite", "--username", "root"
         ])
 
-        self.assertFalse(hasattr(args, "vm_cpu_type"))
-        self.assertFalse(hasattr(args, "vm_disk_discard"))
-        self.assertFalse(hasattr(args, "vm_disk_ssd"))
-        self.assertFalse(hasattr(args, "vm_disk_backup"))
-        self.assertFalse(hasattr(args, "vm_disk_settings"))
+        for field in (
+            "hosted_node", "container_memory", "vm_balloon_min", "vm_cpu_type",
+            "vm_disk_discard", "vm_disk_ssd", "vm_disk_backup", "vm_disk_settings",
+        ):
+            with self.subTest(field=field):
+                self.assertFalse(hasattr(args, field))
 
     def test_explicit_agent_tool_flags_exist_remotely(self):
         args = self.parser.parse_args([

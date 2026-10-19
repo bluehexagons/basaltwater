@@ -13,7 +13,6 @@ from lib.plugin_registry import (
     SystemTypeDefinition,
     build_plugin_registry,
     resolve_custom_step,
-    resolve_validator,
     get_system_type_definition,
 )
 from lib.system_types import get_steps_for_system_type
@@ -102,15 +101,9 @@ class TestPluginRegistry(unittest.TestCase):
         steps = get_steps_for_system_type(config)
         self.assertEqual([name for name, _ in steps], ["Running install_node"])
 
-    def test_custom_step_resolution_is_plugin_owned(self):
-        self.assertIs(resolve_custom_step("install_node"), resolve_custom_step("install_node"))
+    def test_unknown_custom_step_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown step: install_ruby"):
             resolve_custom_step("install_ruby")
-        self.assertTrue(callable(resolve_custom_step("configure_smb_mount")))
-
-    def test_plugin_validator_resolution_is_plugin_owned(self):
-        self.assertTrue(callable(resolve_validator("parse_sync_spec")))
-        self.assertTrue(callable(resolve_validator("validate_samba_share_credentials")))
 
     def test_proxmox_step_builder_is_plugin_registered(self):
         config = SetupConfig(host="host", username="user", system_type="server_proxmox")

@@ -100,9 +100,8 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_validators.py",
     ),
     "desktop": (
-        "tests/test_av_tools.py",
         "tests/test_browser_steps.py",
-        "tests/test_data_analysis_tools.py",
+        "tests/test_development_tool_bundles.py",
         "tests/test_desktop_accessibility.py",
         "tests/test_desktop_apps.py",
         "tests/test_desktop_session.py",
@@ -110,7 +109,6 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_desktop_wait.py",
         "tests/test_native_desktop.py",
         "tests/test_firmware.py",
-        "tests/test_gl_tools.py",
         "tests/test_game_development.py",
         "tests/test_go_setup.py",
         "tests/test_godot*.py",
