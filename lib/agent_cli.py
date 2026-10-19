@@ -186,9 +186,11 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     add_memory_parser(commands)
     from lib.agent_containers import add_containers_parser
     from lib.agent_graphics import add_graphics_parser
+    from lib.agent_storage_inventory import add_storage_parser
 
     add_containers_parser(commands)
     add_graphics_parser(commands)
+    add_storage_parser(commands)
     resources = commands.add_parser("resources", help="Read-only affinity, cgroup limits and pressure on Linux")
     resources.add_argument("--json", action="store_true")
     doctor = commands.add_parser(
@@ -2656,6 +2658,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
         from lib.agent_containers import run_containers_command
 
         return run_containers_command(args)
+    if args.agent_command == "storage":
+        from lib.agent_storage_inventory import run_storage_command
+
+        return run_storage_command(args)
     if args.agent_command == "graphics":
         from lib.agent_graphics import run_graphics_command
 
@@ -2894,7 +2900,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, browser, containers, graphics, resources, visuals, blender, models, inbox, memory, maintenance-agent, tasks, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, browser, containers, graphics, storage, resources, visuals, blender, models, inbox, memory, maintenance-agent, tasks, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 
