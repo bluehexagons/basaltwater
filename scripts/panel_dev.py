@@ -137,10 +137,11 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
                 self._send(HTTPStatus.UNAUTHORIZED, "Disposable panel login required\n", "text/plain",
                            headers={"WWW-Authenticate": 'Basic realm="Basaltwater panel development"'})
                 return False
-            for header in ("X-Forwarded-Proto", "X-Forwarded-Host", "X-Real-IP"):
+            for header in ("X-Forwarded-Proto", "X-Forwarded-Host", "X-Real-IP", "X-Basaltwater-User"):
                 while header in self.headers:
                     del self.headers[header]
             self.headers["X-Forwarded-Proto"] = "https" if settings["https"] else "http"
+            self.headers["X-Basaltwater-User"] = state.manifest["username"]
             return True
 
         def _send(self, status, body, content_type, *, headers=None) -> None:

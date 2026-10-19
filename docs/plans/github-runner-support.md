@@ -3,7 +3,7 @@
 Status: Debian phase 1 implementation is available, with offline identity,
 credential and worker-denial checks. Clean Debian VM, reboot, GitHub-connected
 trigger qualification and upgrade/re-registration evidence remain open; do not
-claim production readiness yet. See [Debian runner operations](../services/github-runner.md).
+claim production readiness yet. See [Debian runner operations](../services/github-runner-operations.md).
 Deferred registration, organization scope and the panel's one-time HTTPS
 registration handoff are implemented; see the
 [improvement delivery plan](../services/github-runner-improvements.md).
@@ -67,7 +67,8 @@ Windows parity remains deferred.
   authorization and audit path; otherwise show the CLI-configured value
   read-only in phase 1. Record only bounded gate outcomes, not full event
   payloads.
-- Supply a short-lived, repository-scoped registration token securely; GitHub
+- Supply a short-lived registration token for the configured repository or
+  organization securely; GitHub
   expires it after one hour ([runner setup](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners)).
   The configured runner retains local credentials to reconnect, so run it as a
   dedicated unprivileged account with no sudo or Docker access and protect its
@@ -90,7 +91,7 @@ health, runner updates, deregistration, and recovery.
 The Debian-only web panel should show runner health, repository and labels,
 configured allowlist, and recent gate outcomes. Allowlist editing can be added
 only after its authorization and audit path is defined; otherwise show the
-value read-only. The later improvement adds pending registration through HTTPS;
+value read-only. Pending registration through HTTPS is implemented;
 replacement, queue and lifecycle controls remain deferred.
 This is separate from the existing **Review GitHub Actions failures** template,
 which inspects workflow failures but does not report local runner health or
@@ -109,9 +110,9 @@ Bring the existing unqualified Windows runner flow into parity with the Linux
 runner's installation, service, repository, allowlist, and verification model.
 Keep the web panel Debian-only.
 
-### Later
+### Registration extensions
 
-Organization scope and deferred registration extend the initial implementation
+Organization scope and deferred registration now extend the initial implementation
 through the [runner improvements](../services/github-runner-improvements.md).
 Disposable job environments remain deferred. Decide the isolation boundary and
 container runtime separately; Docker is not a default requirement.

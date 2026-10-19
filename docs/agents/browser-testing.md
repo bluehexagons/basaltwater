@@ -43,6 +43,11 @@ page:
 - `empty`: optional pages and forms with no saved tasks, messages or job records.
 - `degraded`: high resource use, collector notices and simulated operation failures.
 
+To test runner registration, use `--scenario empty --https` and open **GitHub
+runner → Load runner status**. Enter `reject-sample-runner-token` to test rejection,
+then `sample-runner-registration-token` to simulate success. Tokens are discarded;
+only the simulated registration state survives reloads. Reset restores pending state.
+
 Switching scenarios or selecting **Reset sample data** clears the session's
 temporary account and seeds the selected scenario again. Ordinary source reloads
 preserve saved drafts, inbox changes and simulated account settings. The listener,

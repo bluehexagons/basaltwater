@@ -143,12 +143,18 @@ trust instead of publicly trusted.
 request. `GET /github-runner` collects nothing; `?load=1` inspects the fixed unit
 with a five-second, 64 KiB command limit, bounded 16 KiB policy and 64 KiB outcome
 reads, and one concurrent collector. Unknown or duplicate query fields return
-HTTP 400. The page shows repository, labels, pinned version, read-only allowlist,
-local service state/boot enablement and the last 100 gate outcomes. Local service
-health does not prove GitHub connectivity. Outcomes are runner-writable telemetry,
+HTTP 400. The page shows registration state, repository or organization/group,
+labels, pinned version, read-only allowlist, local service state/boot enablement
+and the last 100 gate outcomes. Local service health does not prove GitHub
+connectivity. Outcomes are runner-writable telemetry,
 not an audit trail. No runner credentials, full event payloads or workflow logs
-are displayed. There are no registration, replacement, queue, lifecycle or
-allowlist-edit controls. See [GitHub runner](github-runner.md).
+are displayed.
+
+Pending runners accept a one-time registration token through authenticated HTTPS
+`POST /actions/github-runner/register`, with CSRF and an 8 KiB form limit. A fixed
+privileged helper receives the token over a volatile Unix socket; it is never
+saved in panel state or responses. Replacement, queue, lifecycle and allowlist
+editing remain unavailable. See [GitHub runner](github-runner.md).
 
 **Local service status** checks a fixed set of installed units, including
 Nginx, SSH, Gogs, HomeBox, Docker, Samba, xrdp, fail2ban, auditd, and the

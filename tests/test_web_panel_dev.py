@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 
 from common.service_tools import web_panel_service as panel
 from lib.atomic_io import read_json_file
+from lib.github_runner_registration import ENDPOINT as RUNNER_REGISTRATION_ENDPOINT
 from scripts import panel_dev
 from scripts.panel_scenarios import Scenario
 
@@ -49,6 +50,8 @@ class PanelDevelopmentTests(unittest.TestCase):
     def request(self, path: str, fields: dict | None = None, *, authenticated: bool = True, headers: dict | None = None):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         supplied = {"Authorization": "Basic " + base64.b64encode(b"developer:disposable-test-password").decode()} if authenticated else {}
+        if fields is not None:
+            supplied["Content-Type"] = "application/x-www-form-urlencoded"
         supplied.update(headers or {})
         try:
             connection.request("POST" if fields is not None else "GET", path,
@@ -61,7 +64,7 @@ class PanelDevelopmentTests(unittest.TestCase):
     def test_every_full_panel_page_renders_without_host_commands(self) -> None:
         self.serve()
         for route in ("/", "/agents", "/agent-tools", "/agent-inbox", "/credentials", "/maintenance-agent",
-                      "/publishing", "/admin", "/jobs?load=1", "/logs?load=1", "/services?load=1"):
+                      "/publishing", "/admin", "/jobs?load=1", "/logs?load=1", "/services?load=1", "/github-runner?load=1"):
             with self.subTest(route=route):
                 status, headers, body = self.request(route)
                 self.assertEqual(status, 200)
@@ -151,6 +154,47 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.assertEqual(self.state.agent_tasks.snapshot()["tasks"], [])
         self.assertIn("No unread messages", self.request("/agent-inbox")[2])
         self.assertEqual(self.request("/agents")[0], 200)
+
+    def test_runner_registration_is_simulated_retryable_and_discards_tokens(self) -> None:
+        host_registration = self.stack.enter_context(patch.object(panel, "submit_registration", side_effect=AssertionError("Unexpected host socket")))
+        self.stack.enter_context(patch.object(panel.os, "geteuid", return_value=1000))
+        self.serve("empty")
+        # Simulate the trusted HTTPS proxy boundary without running TLS in this unit fixture.
+        self.settings["https"] = True
+        self.state.manifest["panel_url"] = "https://127.0.0.1/"
+        status, _, body = self.request("/github-runner?load=1")
+        self.assertEqual(status, 200)
+        self.assertIn("Pending registration", body)
+        self.assertIn("example-org", body)
+        self.assertIn('type="password"', body)
+        fields = {"csrf": self.state.csrf_token, "token": "reject-sample-runner-token"}
+        self.assertEqual(self.request(RUNNER_REGISTRATION_ENDPOINT, fields, authenticated=False)[0], 401)
+        self.assertEqual(self.request(RUNNER_REGISTRATION_ENDPOINT, {**fields, "csrf": "wrong"})[0], 403)
+        self.assertEqual(self.request(RUNNER_REGISTRATION_ENDPOINT, fields)[0], 422)
+        self.assertEqual(self.scenario.runner_status().policy["registration"], "pending")
+        fields["token"] = "sample-runner-registration-token"
+        status, headers, body = self.request(RUNNER_REGISTRATION_ENDPOINT, fields, headers={"X-Basaltwater-User": "forged"})
+        self.assertEqual(status, 303)
+        self.assertNotIn(fields["token"], body)
+        registered = self.request(headers["Location"])[2]
+        self.assertIn("Registered", registered)
+        self.assertNotIn('type="password"', registered)
+        self.assertEqual(self.scenario.runner_status().service["UnitFileState"], "enabled")
+        self.assertEqual(self.request(RUNNER_REGISTRATION_ENDPOINT, fields)[0], 422)
+        with ExitStack() as reloaded:
+            self.assertEqual(Scenario(self.state, "empty", reloaded).runner_status().policy["registration"], "registered")
+        for path in self.directory.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(fields["token"].encode(), path.read_bytes())
+                self.assertNotIn(b"reject-sample-runner-token", path.read_bytes())
+        host_registration.assert_not_called()
+
+    def test_http_development_rejects_runner_registration_with_forged_https(self) -> None:
+        self.serve("empty")
+        self.assertEqual(self.request(RUNNER_REGISTRATION_ENDPOINT, {
+            "csrf": self.state.csrf_token, "token": "sample-runner-registration-token",
+        }, headers={"X-Forwarded-Proto": "https", "X-Basaltwater-User": "operator"})[0], 403)
+        self.assertEqual(self.scenario.runner_status().policy["registration"], "pending")
 
     def test_degraded_scenario_exposes_failures_and_simulates_failed_runs(self) -> None:
         self.serve("degraded")

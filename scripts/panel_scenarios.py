@@ -23,9 +23,9 @@ from lib import agent_tasks
 from lib import agent_task_followups
 from lib.agent_inbox import AgentInbox
 from lib.atomic_io import read_json_file, write_json_atomic
-from lib.github_runner_config import VERSION as RUNNER_VERSION
+from lib.github_runner_config import VERSION as RUNNER_VERSION, validate_policy as validate_runner_policy
 from lib.maintenance_agent_config import DEFAULTS, validate_policy
-from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token
+from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token, validate_runner_registration_token
 from scripts.panel_samples import job_rows
 
 SCENARIOS = ("minimal", "full", "empty", "degraded")
@@ -84,20 +84,8 @@ class Scenario:
             [] if self.name == "empty" else job_rows(),
             ["Synthetic timer collection incomplete"] if self.name == "degraded" else [], absent=9,
         ))
-        self.replace(github_runner, "collect_runner_status", return_value=github_runner.RunnerSnapshot(
-            policy={"repository": "example/private-project", "runner_version": RUNNER_VERSION,
-                    "allowed_users": ["operator", "maintainer"], "labels": ["debian-ci"]},
-            service={"ActiveState": "failed" if self.name == "degraded" else "active",
-                     "SubState": "failed" if self.name == "degraded" else "running",
-                     "UnitFileState": "enabled", "Result": "exit-code" if self.name == "degraded" else "success"},
-            outcomes=[] if self.name == "empty" else [
-                {"time": "2026-01-01T09:00:00Z", "allowed": allowed, "reason": reason,
-                 "identity": identity, "event": "workflow_dispatch", "run_id": run_id}
-                for allowed, reason, identity, run_id in ((False, "actor-denied", "visitor", "102"),
-                                                        (True, "allowed", "operator", "101"))
-            ],
-            issues=["Synthetic runner inspection incomplete"] if self.name == "degraded" else [],
-        ))
+        self.replace(github_runner, "collect_runner_status", side_effect=self.runner_status)
+        self.replace(panel, "submit_registration", side_effect=self.register_runner)
         self.replace(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []})
         self.replace(diagnostics, "collect_diagnostics", side_effect=self.diagnostics)
         self.replace(agents, "_tool_path", side_effect=lambda tool, home: "/fixture/" + tool if tool in self.features.tools else None)
@@ -161,6 +149,40 @@ class Scenario:
             validate_github_token(token)
         with self.lock:
             self.data["github_present"] = token is not None  # Never retain even a sample token.
+            self.save()
+
+    def runner_status(self) -> github_runner.RunnerSnapshot:
+        with self.lock:
+            registered = self.data.get("runner_registered", self.name != "empty")
+            policy = validate_runner_policy({
+                "schema": 1, "registration": "registered" if registered else "pending",
+                "repository": "" if self.name == "empty" else "example/private-project",
+                **({"organization": "example-org", "runner_group": "Private CI"} if self.name == "empty" else {}),
+                "runner_version": RUNNER_VERSION, "allowed_users": ["operator", "maintainer"], "labels": ["debian-ci"],
+            })
+            return github_runner.RunnerSnapshot(
+                policy=policy,
+                service={"ActiveState": "failed" if self.name == "degraded" else "active" if registered else "inactive",
+                         "SubState": "failed" if self.name == "degraded" else "running" if registered else "dead",
+                         "UnitFileState": "enabled" if registered else "disabled",
+                         "Result": "exit-code" if self.name == "degraded" else "success"},
+                outcomes=[] if self.name == "empty" else [
+                    {"time": "2026-01-01T09:00:00Z", "allowed": allowed, "reason": reason,
+                     "identity": identity, "event": "workflow_dispatch", "run_id": run_id}
+                    for allowed, reason, identity, run_id in ((False, "actor-denied", "visitor", "102"),
+                                                            (True, "allowed", "operator", "101"))
+                ],
+                issues=["Synthetic runner inspection incomplete"] if self.name == "degraded" else [],
+            )
+
+    def register_runner(self, token: bytes) -> None:
+        validate_runner_registration_token(token)
+        with self.lock:
+            if self.runner_status().policy["registration"] != "pending":
+                raise ValueError("Synthetic runner is already registered")
+            if token == b"reject-sample-runner-token":
+                raise RuntimeError("Synthetic registration rejected")
+            self.data["runner_registered"] = True  # Retain no sample token or real runner credentials.
             self.save()
 
     def exchange(self, message: dict) -> dict:
