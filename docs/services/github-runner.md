@@ -5,6 +5,8 @@ private `github.com` repository on native Debian 13/Trixie x86-64 with systemd.
 The implementation has offline checks; clean-VM, reboot and GitHub-connected
 qualification remain required before production use. Windows, WSL, containers,
 organization registration and ephemeral runners are outside phase 1.
+See the [planned runner improvements](github-runner-improvements.md) for
+deferred registration, organization scope, and panel token entry.
 
 ## Install
 
