@@ -27,10 +27,11 @@ from datetime import datetime, timezone
 from lib.agent_cli import _tool_path
 from lib.atomic_io import write_text_atomic
 from lib.agent_task_context import (
-    CodexEvents, MAX_CHECKPOINT_BYTES, PERSISTENCE_MODES, WORKSPACE_MODES, TaskContextStore, private_directory, private_json,
-    validate_follow_up,
+    CodexEvents, FOLLOW_UP_WARNING, MAX_CHECKPOINT_BYTES, PERSISTENCE_MODES, WORKSPACE_MODES,
+    TaskContextStore, private_directory, private_json, validate_follow_up,
 )
 from lib.agent_task_policy import task_policy_issues
+from lib.agent_task_templates import FOLLOW_UP_ACCESS_PROMPT
 from lib.agent_task_access import text_requirements, writable_directories
 from lib.validation import validate_filesystem_path
 
@@ -374,6 +375,7 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             "If useful work needs different permissions or separate authorization, set follow_up to a proposal "
             "with a reason, exact targets/actions, verification and rollback in its prompt, an absolute source "
             "directory, and the minimum mode/workspace/network/temporary_files settings. Otherwise use null. "
+            + FOLLOW_UP_ACCESS_PROMPT +
             "Declare specific additional writable_directories (for example the account's .nvm directory), "
             "exact service_restarts requiring broker execution, and operator_requirements for other unmet "
             "prerequisites. Workspace directory modes start empty and do not grant source-directory writes. "
@@ -550,6 +552,15 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
         elif events.report is not None and events.final_turn_completed:
             result.update(events.report)
             result["output"] = events.report["summary"]
+            if result.get("follow_up") is not None:
+                try:
+                    # Check account-specific grant boundaries without requiring
+                    # proposed directories to exist or changing receipt readers.
+                    validate_task(result["follow_up"], home, check_directory=False)
+                except (ValueError, TypeError, UnicodeError, RecursionError):
+                    result.update(follow_up=None, follow_up_warning=FOLLOW_UP_WARNING)
+            if result.get("follow_up_warning") and status == "completed":
+                result["message"] = result["follow_up_warning"]
             if events.report["outcome"] == "failed" and status == "completed":
                 result["status"] = "failed"
         elif status == "completed":

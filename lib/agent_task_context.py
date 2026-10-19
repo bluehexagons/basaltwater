@@ -21,11 +21,21 @@ OUTCOMES = ("progress", "complete", "waiting", "blocked", "failed")
 MAX_CHECKPOINT_BYTES = 16000
 MAX_CONTEXT_BYTES = 64 * 1024
 MAX_EVENT_BYTES = 1024 * 1024
+FOLLOW_UP_WARNING = (
+    "Follow-up proposal omitted because its settings were invalid. "
+    "Review the retained run evidence and submit a corrected proposal with minimum permissions."
+)
 _ID = re.compile(r"[a-f0-9]{32}\Z")
 _SESSION = re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\Z")
 
 FOLLOW_UP_SCHEMA = {
     "type": ["object", "null"], "additionalProperties": False,
+    "description": (
+        "Optional proposal for operator review. inspect requires workspace=existing, network=false, "
+        "temporary_files=false and no writable_directories. Network, temporary writes or a managed "
+        "workspace require mode=workspace, even for diagnostic commands. Use null when no coherent "
+        "proposal is needed; never expand permissions to repair an invalid proposal."
+    ),
     "properties": {
         "title": {"type": "string"}, "reason": {"type": "string"}, "prompt": {"type": "string", "maxLength": 3800},
         "directory": {"type": "string"}, "mode": {"type": "string", "enum": ["inspect", "workspace"]},
@@ -142,7 +152,6 @@ def validate_report(value: object) -> dict[str, Any]:
     if (not isinstance(feedback, str) or len(feedback.encode()) > 3000
             or any(ord(char) < 32 and char not in "\n\t" or ord(char) == 127 for char in feedback)):
         raise ValueError("Invalid environment feedback")
-    validate_follow_up(value.get("follow_up"))
     if value["outcome"] not in OUTCOMES:
         raise ValueError("Invalid task report outcome")
     for name, limit in (("summary", 4000), ("checkpoint", MAX_CHECKPOINT_BYTES)):
@@ -159,6 +168,12 @@ def validate_report(value: object) -> dict[str, Any]:
         raise ValueError("Invalid task retry interval")
     if value["outcome"] == "complete" and not any(item.strip() for item in evidence):
         raise ValueError("Completion requires recorded verification evidence")
+    try:
+        validate_follow_up(value.get("follow_up"))
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        # Validate the diagnostic contract first. Optional proposals cannot
+        # discard evidence or alter feedback, and invalid grants never survive.
+        value = {**value, "follow_up": None, "follow_up_warning": FOLLOW_UP_WARNING}
     return value
 
 

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from lib import agent_tasks as tasks
-from lib.agent_task_context import CodexEvents, TaskContextStore, validate_report
+from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, TaskContextStore, validate_report
 
 
 SESSION = "01234567-89ab-cdef-0123-456789abcdef"
@@ -394,17 +394,11 @@ class CodexTaskProtocolTests(unittest.TestCase):
             task["id"] = identifier
             task["events"] = ["A" * 4000] * 32
             runtime = TaskContextStore(home).prepare(task, run_id)
-            payload = b"\n".join(json.dumps(item).encode() for item in (
-                {"type": "thread.started", "thread_id": SESSION},
-                {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(report())}},
-                {"type": "turn.completed", "usage": {"input_tokens": 15, "output_tokens": 5}},
-            )) + b"\n"
             process, selector = MagicMock(), MagicMock()
             process.__enter__.return_value = process
             process.pid, process.wait.return_value = 1234, 0
             selector.__enter__.return_value = selector
             key = SimpleNamespace(fd=99, fileobj=process.stdout)
-            selector.get_map.side_effect = [{99: key}, {}]
             selector.select.return_value = [(key, 1)]
 
             def launch(_command: list, **kwargs: object) -> object:
@@ -417,17 +411,43 @@ class CodexTaskProtocolTests(unittest.TestCase):
             # Mock the provider's identity without changing the owner used by
             # the private context store; Debian CI itself runs as root.
             provider_os = SimpleNamespace(**vars(os))
-            with (patch.object(tasks, "os", provider_os),
-                  patch.object(provider_os, "geteuid", return_value=1000),
-                  patch.object(tasks, "_tool_path", return_value="/test/codex"),
-                  patch.object(tasks.subprocess, "Popen", side_effect=launch),
-                  patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
-                  patch.object(tasks.os, "read", return_value=payload), patch.object(tasks.os, "killpg")):
-                result = tasks.execute_prompt({**task, "_runtime": runtime}, home, threading.Event())
-            self.assertEqual(result["outcome"], "progress")
-            self.assertEqual(result["output"], report()["summary"])
-            self.assertEqual(Path(runtime["log_path"]).read_bytes(), payload)
-            self.assertEqual(TaskContextStore(home).load(identifier)["session_id"], SESSION)
+            proposal = {"title": "Recheck", "reason": "Socket unavailable", "prompt": "Check service readiness",
+                        "directory": home, "mode": "workspace", "workspace": "run-directory",
+                        "network": True, "temporary_files": False}
+            for changes in (None, {"mode": "inspect"}, {"directory": "/etc"},
+                            {"writable_directories": [home + "/.codex"]}):
+                with self.subTest(changes=changes):
+                    diagnostic = {**report(), "environment_feedback": "Socket access unavailable",
+                                  "follow_up": {**proposal, **(changes or {})}}
+                    payload = b"\n".join(json.dumps(item).encode() for item in (
+                        {"type": "thread.started", "thread_id": SESSION},
+                        {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(diagnostic)}},
+                        {"type": "turn.completed", "usage": {"input_tokens": 15, "output_tokens": 5}},
+                    )) + b"\n"
+                    selector.get_map.side_effect = [{99: key}, {}]
+                    with (patch.object(tasks, "os", provider_os),
+                          patch.object(provider_os, "geteuid", return_value=1000),
+                          patch.object(tasks, "_tool_path", return_value="/test/codex"),
+                          patch.object(tasks.subprocess, "Popen", side_effect=launch),
+                          patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
+                          patch.object(tasks.os, "read", return_value=payload), patch.object(tasks.os, "killpg")):
+                        result = tasks.execute_prompt({**task, "_runtime": runtime}, home, threading.Event())
+                    self.assertEqual(result["status"], "completed")
+                    self.assertEqual(result["exit_code"], 0)
+                    self.assertEqual(result["outcome"], diagnostic["outcome"])
+                    self.assertEqual(result["output"], diagnostic["summary"])
+                    self.assertEqual(result["evidence"], diagnostic["evidence"])
+                    self.assertEqual(result["environment_feedback"], diagnostic["environment_feedback"])
+                    self.assertEqual(result["usage"], {"input_tokens": 15, "output_tokens": 5})
+                    if changes is None:
+                        self.assertEqual(result["follow_up"], proposal)
+                        self.assertNotIn("follow_up_warning", result)
+                    else:
+                        self.assertIsNone(result["follow_up"])
+                        self.assertEqual(result["message"], FOLLOW_UP_WARNING)
+                    self.assertEqual(Path(runtime["log_path"]).read_bytes(), payload)
+                    self.assertEqual(TaskContextStore(home).load(identifier)["session_id"], SESSION)
+                    Path(runtime["log_path"]).unlink()
             process.stdin.write.assert_not_called()
 
 

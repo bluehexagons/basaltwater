@@ -4,6 +4,14 @@ from __future__ import annotations
 
 
 HOST_REVIEW_SETTINGS = {"mode": "workspace", "workspace": "run-directory", "network": True}
+FOLLOW_UP_ACCESS_PROMPT = (
+    "For follow_up, mode=inspect requires workspace=existing, network=false, temporary_files=false, "
+    "and writable_directories=[]. Network access, temporary writes, or any managed workspace "
+    "requires mode=workspace, even when commands only inspect the host. "
+    "Workspace source and writable directories must be inside the account's home; additional write "
+    "grants must name specific directories and cannot include credentials, agent configuration, or control state. "
+    "If no coherent proposal is possible, use follow_up=null and explain the prerequisite in environment_feedback. "
+)
 FOLLOW_UP_PROMPT = (
     "If a blocked check or recommended repair needs different access or authorization, include a follow_up "
     "request in the structured report with the evidence, exact actions, minimum permissions, verification, "
@@ -11,6 +19,7 @@ FOLLOW_UP_PROMPT = (
     "Do not tell another unattended agent to configure its own permissions or approval. "
     "Do not repeat an unchanged blocked request; report the missing prerequisite as environment_feedback. "
     "The operator must approve or review the proposal; do not create or activate it yourself. "
+    + FOLLOW_UP_ACCESS_PROMPT
 )
 HOST_REVIEW_PROMPT = (
     "Perform read-only host diagnostics. The runner provides a private run directory and command network access "
