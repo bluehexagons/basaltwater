@@ -1033,21 +1033,60 @@ def _browser_launcher_features(path: Optional[str] = None) -> JSONDict:
     }
 
 
-def _browser_launchers_secure(paths: Optional[tuple[str, ...]] = None) -> bool:
-    """Return whether managed browser launchers are root-owned safe files."""
+def _browser_launchers_secure(
+    paths: Optional[tuple[str, ...]] = None,
+    *,
+    uid_map_path: str = "/proc/self/uid_map",
+    overflow_uid_path: str = "/proc/sys/kernel/overflowuid",
+) -> bool | None:
+    """Verify launcher security, leaving unmapped ownership unverified.
+
+    A user namespace can expose an unmapped host owner as the overflow UID.
+    That view establishes neither root ownership nor an unsafe host owner.
+    Callers must require True before executing or registering a launcher.
+    """
     launcher_paths = paths or (_BROWSER_MCP_WRAPPER, _BROWSER_DOCTOR_WRAPPER)
+    try:
+        with open(uid_map_path, encoding="ascii") as stream:
+            uid_map = [tuple(map(int, line.split())) for line in stream]
+        if not uid_map or any(
+            len(entry) != 3 or min(entry) < 0 or entry[2] == 0
+            for entry in uid_map
+        ):
+            raise ValueError("Invalid UID map")
+        with open(overflow_uid_path, encoding="ascii") as stream:
+            overflow_uid = int(stream.read().strip())
+        if not 0 <= overflow_uid < 2**32:
+            raise ValueError("Invalid overflow UID")
+    except (OSError, UnicodeError, ValueError):
+        uid_map = []
+        overflow_uid = None
+
+    unverified = False
     for path in launcher_paths:
         try:
             metadata = os.lstat(path)
-        except OSError:
+        except FileNotFoundError:
             return False
+        except OSError:
+            unverified = True
+            continue
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != 0
             or stat.S_IMODE(metadata.st_mode) & 0o022
         ):
             return False
-    return True
+        if not uid_map:
+            unverified = True
+        elif metadata.st_uid == overflow_uid and not any(
+            outside == 0 for _inside, outside, _length in uid_map
+        ):
+            unverified = True
+        elif metadata.st_uid != 0 or not any(
+            inside == outside == 0 for inside, outside, _length in uid_map
+        ):
+            return False
+    return None if unverified else True
 
 
 def _browser_argument_value(arguments: list[str], option: str) -> Optional[str]:
@@ -1231,7 +1270,7 @@ def inspect_browser_automation(
         registrations["opencode"] = _opencode_browser_registration(user_home)
 
     smoke_test: bool | None = None
-    if launchers_installed and run_smoke:
+    if launchers_installed and launchers_secure is True and run_smoke:
         environment = os.environ.copy()
         environment["HOME"] = user_home
         try:
@@ -1254,17 +1293,20 @@ def inspect_browser_automation(
     registration_unknown = any(value is None for value in registrations.values())
     configured = bool(
         launchers_installed
-        and launchers_secure
+        and launchers_secure is True
         and managed_defaults
         and registrations_ready
         and workflow_skill_ready
     )
     healthy = configured and processes_current and smoke_test if run_smoke else None
     issues: list[str] = []
+    if launchers_secure is None:
+        issues.append("launchers_unverified")
     if not launchers_installed:
-        issues.append("launchers_missing")
+        if launchers_secure is not None:
+            issues.append("launchers_missing")
     else:
-        if not launchers_secure:
+        if launchers_secure is False:
             issues.append("launchers_unsafe")
         if launcher_features.get("browser_selection") is not True:
             issues.append("mcp_browser_selection_missing")
@@ -1278,7 +1320,7 @@ def inspect_browser_automation(
         issues.append("registration_unverified" if registration_unknown else "registration_missing")
     if not workflow_skill_ready:
         issues.append("workflow_skill_missing_or_stale")
-    if run_smoke and launchers_installed and smoke_test is not True:
+    if smoke_test is False:
         issues.append("smoke_test_failed")
     if not processes_current:
         issues.append("stale_processes")
@@ -1286,6 +1328,8 @@ def inspect_browser_automation(
     remediation: str | None = None
     if "launchers_unsafe" in issues:
         remediation = "inspect_launcher_security_then_rerun_saved_setup"
+    elif "launchers_unverified" in issues:
+        remediation = "verify_launchers_from_host"
     elif "launchers_missing" in issues or "registration_missing" in issues:
         remediation = "rerun_setup_with_browser_automation"
     elif "registration_unverified" in issues:
@@ -3030,9 +3074,17 @@ def run_agent_command(args: argparse.Namespace) -> int:
                     print(f"      error: {error}")
             elif result["healthy"]:
                 print(f"  ✓ browser: {result['path']} (smoke test passed)")
+            elif "launchers_unverified" in result.get("issues", []):
+                print(
+                    "  ⚠ browser: launcher security is unverified in this context; "
+                    "host ownership may be unmapped by a user namespace. "
+                    "Verify numeric ownership and permissions from an authorized "
+                    "host context; the launcher smoke test was skipped. "
+                    "Do not change ownership or reinstall based on this result alone."
+                )
             elif not result["installed"]:
                 print("  ✗ browser: Playwright launchers are not installed")
-            elif not result.get("launchers_secure"):
+            elif result.get("launchers_secure") is not True:
                 print(
                     "  ✗ browser: managed launchers have unsafe ownership, "
                     "type, or permissions; inspect them and rerun the saved setup"

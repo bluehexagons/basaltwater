@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 import os
 import stat
@@ -579,12 +581,12 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
 
 
 class BrowserAutomationDoctorTests(unittest.TestCase):
-    def test_agent_doctor_allows_managed_smoke_process_to_finish(self) -> None:
+    def test_agent_doctor_only_runs_smoke_with_verified_launchers(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="browser-ready\n", stderr="")
         with (
-            patch.object(agent_cli.os.path, "isfile", return_value=True),
+            patch.object(agent_cli.os.path, "isfile", return_value=True) as isfile,
             patch.object(agent_cli.os, "access", return_value=True),
-            patch.object(agent_cli, "_browser_launchers_secure", return_value=True),
+            patch.object(agent_cli, "_browser_launchers_secure") as security,
             patch.object(
                 agent_cli,
                 "_browser_running_processes",
@@ -614,15 +616,45 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             patch.object(agent_cli, "_codex_browser_registration", return_value=True),
             patch.object(agent_cli.subprocess, "run", return_value=completed) as run,
         ):
-            result = agent_cli.inspect_browser_automation("/home/agent")
+            for secure, installed, issue, remediation in (
+                (True, True, None, None),
+                (None, True, "launchers_unverified", "verify_launchers_from_host"),
+                (None, False, "launchers_unverified", "verify_launchers_from_host"),
+                (False, True, "launchers_unsafe", "inspect_launcher_security_then_rerun_saved_setup"),
+            ):
+                with self.subTest(secure=secure, installed=installed):
+                    security.return_value = secure
+                    isfile.return_value = installed
+                    run.reset_mock()
+                    result = agent_cli.inspect_browser_automation("/home/agent")
+                    self.assertIs(result["launchers_secure"], secure)
+                    self.assertIs(result["healthy"], secure is True)
+                    self.assertEqual(result["issues"], [issue] if issue else [])
+                    self.assertEqual(result["remediation"], remediation)
+                    if secure is True:
+                        self.assertTrue(result["smoke_test"])
+                        self.assertGreater(
+                            run.call_args.kwargs["timeout"],
+                            browser_automation_steps.PLAYWRIGHT_SMOKE_PROCESS_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        run.assert_not_called()
+                        self.assertIsNone(result["smoke_test"])
+                        self.assertIsNone(result["launchable"])
 
-        self.assertTrue(result["healthy"])
-        self.assertEqual(result["issues"], [])
-        self.assertIsNone(result["remediation"])
-        self.assertGreater(
-            run.call_args.kwargs["timeout"],
-            browser_automation_steps.PLAYWRIGHT_SMOKE_PROCESS_TIMEOUT_SECONDS,
-        )
+                    if secure is None:
+                        args = argparse.Namespace(
+                            agent_command="doctor", agent_doctor_capabilities=["browser"],
+                            agent_doctor_tools=None, json=False,
+                        )
+                        with patch.object(agent_cli, "inspect_browser_automation", return_value=result), \
+                                patch.object(agent_cli, "inspect_agent_tools", return_value=[]), \
+                                redirect_stdout(output := StringIO()):
+                            self.assertEqual(agent_cli.run_agent_command(args), 1)
+                        self.assertIn("launcher security is unverified", output.getvalue())
+                        self.assertIn("smoke test was skipped", output.getvalue())
+                        self.assertNotIn("unsafe ownership", output.getvalue())
+                        self.assertNotIn("launchers are not installed", output.getvalue())
 
     def test_agent_doctor_requires_stale_sessions_to_restart(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="browser-ready\n", stderr="")
@@ -932,20 +964,59 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             },
         )
 
-    def test_doctor_rejects_writable_or_non_root_launchers(self) -> None:
+    def test_launcher_security_distinguishes_unmapped_and_unsafe_owners(self) -> None:
         secure = SimpleNamespace(st_mode=stat.S_IFREG | 0o755, st_uid=0)
         writable = SimpleNamespace(st_mode=stat.S_IFREG | 0o775, st_uid=0)
         user_owned = SimpleNamespace(st_mode=stat.S_IFREG | 0o755, st_uid=1000)
+        nobody = SimpleNamespace(st_mode=stat.S_IFREG | 0o755, st_uid=65534)
         symlink = SimpleNamespace(st_mode=stat.S_IFLNK | 0o777, st_uid=0)
+        with tempfile.TemporaryDirectory() as directory:
+            uid_map = Path(directory) / "uid_map"
+            overflow = Path(directory) / "overflowuid"
+            for mapping, overflow_uid, metadata, expected in (
+                ("0 0 4294967295\n", 65534, secure, True),
+                ("0 0 4294967295\n", 65534, writable, False),
+                ("0 0 4294967295\n", 65534, user_owned, False),
+                ("0 0 4294967295\n", 65534, nobody, False),
+                ("0 0 4294967295\n", 65534, symlink, False),
+                ("1000 1000 1\n", 65534, nobody, None),
+                ("1000 1000 1\n65534 65534 1\n", 65534, nobody, None),
+                ("1000 1000 1\n", 65534, user_owned, False),
+                ("0 1000 1\n", 65534, secure, False),
+                ("0 0 1\n", 65534, nobody, False),
+                ("1000 1000 1\n", 1000, user_owned, None),
+                ("invalid\n", 65534, secure, None),
+                ("", 65534, nobody, None),
+                ("0 0 0\n", 65534, secure, None),
+                ("0 -1 1\n", 65534, secure, None),
+                ("0 0 4294967295\n", -1, secure, None),
+                ("invalid\n", 65534, writable, False),
+            ):
+                with self.subTest(mapping=mapping, owner=metadata.st_uid, expected=expected):
+                    uid_map.write_text(mapping, encoding="ascii")
+                    overflow.write_text(str(overflow_uid), encoding="ascii")
+                    with patch.object(agent_cli.os, "lstat", return_value=metadata):
+                        self.assertIs(agent_cli._browser_launchers_secure(
+                            ("one", "two"), uid_map_path=str(uid_map), overflow_uid_path=str(overflow),
+                        ), expected)
 
-        with patch.object(agent_cli.os, "lstat", return_value=secure):
-            self.assertTrue(agent_cli._browser_launchers_secure(("one", "two")))
-        with patch.object(agent_cli.os, "lstat", return_value=writable):
-            self.assertFalse(agent_cli._browser_launchers_secure(("one",)))
-        with patch.object(agent_cli.os, "lstat", return_value=user_owned):
-            self.assertFalse(agent_cli._browser_launchers_secure(("one",)))
-        with patch.object(agent_cli.os, "lstat", return_value=symlink):
-            self.assertFalse(agent_cli._browser_launchers_secure(("one",)))
+            uid_map.write_text("1000 1000 1\n", encoding="ascii")
+            overflow.write_text("65534", encoding="ascii")
+            for metadata, expected in (
+                ([PermissionError(), nobody], None),
+                ([FileNotFoundError()], False),
+                ([nobody, writable], False),
+                ([nobody, symlink], False),
+            ):
+                with self.subTest(metadata=metadata), patch.object(agent_cli.os, "lstat", side_effect=metadata):
+                    self.assertIs(agent_cli._browser_launchers_secure(
+                        ("one", "two"), uid_map_path=str(uid_map), overflow_uid_path=str(overflow),
+                    ), expected)
+            uid_map.unlink()
+            with patch.object(agent_cli.os, "lstat", return_value=secure):
+                self.assertIsNone(agent_cli._browser_launchers_secure(
+                    ("one",), uid_map_path=str(uid_map), overflow_uid_path=str(overflow),
+                ))
 
     def test_doctor_accepts_opencode_jsonc_registration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

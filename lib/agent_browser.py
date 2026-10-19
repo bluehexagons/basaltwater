@@ -219,7 +219,10 @@ def run_browser_command(args: argparse.Namespace) -> int:
             from lib.agent_cli import _browser_launchers_secure
             from common.browser_automation_steps import PLAYWRIGHT_MCP_WRAPPER
 
-            if not _browser_launchers_secure():
+            launcher_security = _browser_launchers_secure()
+            if launcher_security is None:
+                raise ValueError("Managed launcher security is unverified in this context; verify ownership and permissions from an authorized host context")
+            if launcher_security is not True:
                 raise ValueError("Managed launchers are missing or unsafe; rerun the saved setup")
             with open(PLAYWRIGHT_MCP_WRAPPER, encoding="utf-8") as source:
                 if args.engine == "firefox" and '--engine' not in source.read():

@@ -320,9 +320,9 @@ class AgentSupportTests(unittest.TestCase):
                 patch(
                     "lib.agent_cli.inspect_browser_automation",
                     return_value={
-                        "installed": False,
+                        "installed": True,
                         "path": "/secret/browser",
-                        "launchers_secure": True,
+                        "launchers_secure": None,
                         "launcher_features": {
                             "browser_selection": False,
                             "private_evidence": True,
@@ -345,16 +345,17 @@ class AgentSupportTests(unittest.TestCase):
                         ],
                         "workflow_skill_ready": False,
                         "configured": False,
-                        "smoke_test": False,
+                        "smoke_test": None,
                         "healthy": False,
                         "issues": [
-                            "launchers_missing",
+                            "launchers_unverified",
                             "mcp_browser_selection_missing",
                             "registration_missing",
+                            "registration_unverified",
                             "workflow_skill_missing_or_stale",
                             "/secret/browser",
                         ],
-                        "remediation": "rerun_setup_with_browser_automation",
+                        "remediation": "verify_launchers_from_host",
                     },
                 ),
                 patch(
@@ -424,7 +425,8 @@ class AgentSupportTests(unittest.TestCase):
                 },
             )
             self.assertFalse(bundle["browser"]["managed_defaults"])
-            self.assertTrue(bundle["browser"]["launchers_secure"])
+            self.assertIsNone(bundle["browser"]["launchers_secure"])
+            self.assertIsNone(bundle["browser"]["smoke_test"])
             self.assertEqual(
                 bundle["browser"]["running_processes"],
                 {"total": 1, "stale": 1, "inspected": True},
@@ -437,15 +439,16 @@ class AgentSupportTests(unittest.TestCase):
             self.assertEqual(
                 bundle["browser"]["issues"],
                 [
-                    "launchers_missing",
+                    "launchers_unverified",
                     "mcp_browser_selection_missing",
                     "registration_missing",
+                    "registration_unverified",
                     "workflow_skill_missing_or_stale",
                 ],
             )
             self.assertEqual(
                 bundle["browser"]["remediation"],
-                "rerun_setup_with_browser_automation",
+                "verify_launchers_from_host",
             )
             self.assertEqual(bundle["development"]["issues"], [
                 "node_pnpm_missing", "native_command_missing", "native_module_missing", "native_selection_unsafe",

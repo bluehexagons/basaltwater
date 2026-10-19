@@ -168,38 +168,31 @@ class TestAgentReadinessState(unittest.TestCase):
         self.assertIsNone(browser["remediation"])
 
     def test_browser_remediation_is_retained_without_arbitrary_text(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            boot_id = _write_boot_id(temp_dir, _BOOT_ONE)
-            record = build_agent_readiness_record(
-                [],
-                [
-                    {
-                        "capability": "browser",
-                        "healthy": False,
-                        "issues": [
-                            "mcp_browser_selection_missing",
-                            "workflow_skill_missing_or_stale",
-                            "/secret/browser",
-                        ],
-                        "remediation": "rerun_saved_setup",
-                    }
-                ],
-                trigger="manual",
-                now=datetime(2026, 8, 27, tzinfo=timezone.utc),
-                boot_id_path=boot_id,
-            )
-
-        browser = record["capabilities"][0]
-        self.assertFalse(record["healthy"])
-        self.assertEqual(
-            browser["issues"],
-            [
-                "mcp_browser_selection_missing",
-                "workflow_skill_missing_or_stale",
-            ],
-        )
-        self.assertEqual(browser["remediation"], "rerun_saved_setup")
-        self.assertNotIn("/secret", json.dumps(record))
+        for security, issues, remediation in (
+            (False, ["mcp_browser_selection_missing", "workflow_skill_missing_or_stale"], "rerun_saved_setup"),
+            (None, ["launchers_unverified"], "verify_launchers_from_host"),
+            (True, ["registration_unverified"], "use_python_with_toml_support"),
+        ):
+            with self.subTest(issues=issues), tempfile.TemporaryDirectory() as temp_dir:
+                boot_id = _write_boot_id(temp_dir, _BOOT_ONE)
+                record = build_agent_readiness_record(
+                    [],
+                    [{
+                        "capability": "browser", "healthy": False,
+                        "launchers_secure": security, "smoke_test": None,
+                        "issues": [*issues, "/secret/browser"], "remediation": remediation,
+                    }],
+                    trigger="manual",
+                    now=datetime(2026, 8, 27, tzinfo=timezone.utc),
+                    boot_id_path=boot_id,
+                )
+            browser = record["capabilities"][0]
+            self.assertFalse(record["healthy"])
+            self.assertIs(browser["launchers_secure"], security)
+            self.assertIsNone(browser["smoke_test"])
+            self.assertEqual(browser["issues"], issues)
+            self.assertEqual(browser["remediation"], remediation)
+            self.assertNotIn("/secret", json.dumps(record))
 
     def test_optional_inventory_tool_does_not_fail_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

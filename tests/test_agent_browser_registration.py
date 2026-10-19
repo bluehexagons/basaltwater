@@ -99,18 +99,22 @@ class BrowserRegistrationTests(unittest.TestCase):
                                   browser_command="register", agent_tool="codex", json=True)
         checked = {"ok": True, "healthy": True, "engine": "firefox", "context": "managed",
                    "rendering_verified": True, "browser_version": "153.0", "mcp_registered": False}
-        with patch.object(agent_browser, "check_browser", return_value=checked), \
-                patch.object(agent_cli, "_browser_launchers_secure", return_value=False), \
-                patch.object(agent_browser, "register_browser_agent") as register, redirect_stdout(output := StringIO()):
-            self.assertEqual(agent_browser.run_browser_command(args), 1)
-        result = json.loads(output.getvalue())
-        self.assertEqual(result["issue"], "browser_registration_failed")
-        self.assertEqual(result["engine"], "firefox")
-        self.assertEqual(result["context"], "managed")
-        self.assertTrue(result["healthy"])
-        self.assertTrue(result["rendering_verified"])
-        self.assertFalse(result["mcp_registered"])
-        register.assert_not_called()
+        for secure in (False, None):
+            with self.subTest(secure=secure), patch.object(agent_browser, "check_browser", return_value=checked), \
+                    patch.object(agent_cli, "_browser_launchers_secure", return_value=secure), \
+                    patch.object(agent_browser, "register_browser_agent") as register, redirect_stdout(output := StringIO()):
+                self.assertEqual(agent_browser.run_browser_command(args), 1)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["issue"], "browser_registration_failed")
+            self.assertEqual(result["engine"], "firefox")
+            self.assertEqual(result["context"], "managed")
+            self.assertTrue(result["healthy"])
+            self.assertTrue(result["rendering_verified"])
+            self.assertFalse(result["mcp_registered"])
+            if secure is None:
+                self.assertIn("security is unverified", result["error"])
+                self.assertNotIn("rerun", result["error"])
+            register.assert_not_called()
 
     def test_malformed_and_linked_opencode_configs_are_preserved(self) -> None:
         directory = self.home / ".config/opencode"

@@ -46,9 +46,11 @@ _BROWSER_ISSUES = frozenset(
     (
         "launchers_missing",
         "launchers_unsafe",
+        "launchers_unverified",
         "managed_defaults_stale",
         "mcp_browser_selection_missing",
         "registration_missing",
+        "registration_unverified",
         "smoke_test_failed",
         "stale_processes",
         "workflow_skill_missing_or_stale",
@@ -57,6 +59,8 @@ _BROWSER_ISSUES = frozenset(
 _BROWSER_REMEDIATIONS = frozenset(
     (
         "inspect_launcher_security_then_rerun_saved_setup",
+        "verify_launchers_from_host",
+        "use_python_with_toml_support",
         "rerun_setup_with_browser_automation",
         "rerun_saved_setup",
         "inspect_browser_runtime",
@@ -295,7 +299,8 @@ def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:
             **sanitize_browser_context(record),
             "healthy": record.get("healthy") is True,
             "installed": record.get("installed") is True,
-            "launchers_secure": record.get("launchers_secure") is True,
+            "launchers_secure": record.get("launchers_secure")
+            if type(record.get("launchers_secure")) is bool else None,
             "launcher_features": {
                 feature: launcher_features.get(feature) is True
                 for feature in _BROWSER_LAUNCHER_FEATURES

@@ -666,10 +666,28 @@ installed compatible agent has the managed MCP registration; exactly one
 Basaltwater-managed Playwright-capable browser workflow skill is installed as
 a bounded, user-owned file without group or world write access;
 active managed MCP processes use those same safe defaults; and the local
-interaction/rendering smoke test passes. A stale or unsafe launcher is
-unhealthy even when its smoke test passes; inspect an unsafe path, then rerun
-the saved setup to reconcile it. A stale active process instead requires
+interaction/rendering smoke test passes. A stale launcher is unhealthy even
+when its smoke test passes. Inspect an unsafe path, then rerun the saved setup
+to reconcile it. A stale active process instead requires
 restarting the agent session that owns it.
+
+In an agent sandbox, Linux may show an unmapped host owner as the overflow UID
+(normally `65534`/`nobody`). The doctor checks `/proc/self/uid_map` and the kernel's
+configured overflow UID before classifying ownership. If root is not mapped and
+ownership is ambiguous, it reports `launchers_unverified`,
+`launchers_secure: null`, and `verify_launchers_from_host`. Unreadable security
+metadata also leaves security unverified. A visible non-root owner, a linked or
+non-regular launcher, or group/world write permission remains unsafe.
+
+The doctor skips its launcher smoke test when launcher security is unsafe or
+unverified; `smoke_test` and `launchable` remain `null`, without a
+`smoke_test_failed` issue. Readiness still returns nonzero until verification
+succeeds. Verify numeric ownership and modes from an authorized host context;
+an unmapped owner alone is not grounds to change ownership, permissions, or
+reinstall. Readiness records and support bundles preserve the unknown security
+value and the verification recommendation. A smoke-test failure after verified
+launcher security describes the current invocation; sandbox restrictions can
+still prevent browser startup and do not establish a host installation defect.
 
 JSON results include a stable `issues` list and one primary `remediation` code.
 `mcp_browser_selection_missing` identifies a launcher that can pass the direct
