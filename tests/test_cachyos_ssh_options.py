@@ -6,10 +6,11 @@ from contextlib import ExitStack
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
+import pwd
 import shlex
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -23,8 +24,11 @@ class CachyOSSSHOptionsTests(unittest.TestCase):
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
+        stack.enter_context(patch.dict(os.environ))
+        for name in ("LOGNAME", "USER", "LNAME", "USERNAME"):
+            os.environ.pop(name, None)
         self.home = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-        account = SimpleNamespace(pw_name="human", pw_dir=str(self.home))
+        account = pwd.struct_passwd(("human", "x", 1000, 1000, "", str(self.home), "/bin/bash"))
         stack.enter_context(patch.object(refresh, "_account", return_value=account))
         stack.enter_context(patch.object(refresh, "is_cachyos", return_value=True))
         stack.enter_context(patch("lib.cachyos.pwd.getpwuid", return_value=account))
@@ -61,6 +65,16 @@ class CachyOSSSHOptionsTests(unittest.TestCase):
         self.assertTrue(self.config("--ssh").install_ssh)
         self.assertFalse(self.config("--no-ssh").install_ssh)
         self.assertFalse(self.config("--ssh", "--no-ssh-password-auth").ssh_password_auth)
+
+    def test_explicit_account_validation_never_discovers_current_username(self):
+        with patch("lib.system_utils.get_current_username", side_effect=AssertionError("host probe")):
+            config = self.config("--ssh")
+            validate_cachyos_config(config)
+        self.assertEqual(config.username, "human")
+
+    def test_omitted_account_uses_passwd_without_login_environment(self):
+        args = self.parser.parse_args(["setup", "agent_cachyos", "localhost", "--ssh"])
+        self.assertEqual(cachyos_config_from_args(args).username, "human")
 
     def test_window_bounds_and_cli_integer_validation(self):
         for minutes in (1, 60):

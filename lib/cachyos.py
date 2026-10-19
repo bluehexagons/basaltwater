@@ -109,6 +109,8 @@ def validate_cachyos_config(config: SetupConfig) -> None:
     """Fail closed when generic callers select features outside this composition."""
     config._validate_ssh_settings()
     baseline_args = _default_args()
+    # This comparison baseline must not discover the controller's account.
+    baseline_args.username = "basaltwater"
     baseline_args.timezone = "UTC"
     baseline = SetupConfig.from_args(baseline_args, PROFILE)
     for field in fields(config):

@@ -145,6 +145,11 @@ CachyOS parsing and configuration validation must not probe the host. Supply
 an inert timezone when building shared `SetupConfig` defaults so those paths
 do not invoke `timedatectl`. Existing saved timezone metadata remains accepted;
 this profile preserves the workstation timezone and rejects `--timezone`.
+The comparison baseline also needs an inert username so validation never
+discovers the controller's login account. Passwd test fixtures should use
+`pwd.struct_passwd`, which supports both attributes and tuple indexing. Exercise
+account selection without `LOGNAME`, `USER`, `LNAME`, or `USERNAME`; containers
+can omit them, exposing mocks that ordinary login environments conceal.
 SSH state discovery belongs in target preflight after validation.
 
 Remote source publication must set the staged runtime root to mode `0700`
