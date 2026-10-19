@@ -2414,7 +2414,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.CONFLICT, "Action is unavailable\n", "text/plain")
             return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", {"agents": "/agents", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
+        self.send_header("Location", {"agents": "/agents?view=diagnostics", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -2529,10 +2529,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, {}, submitted=submitted, prepared=True), "text/html")
             return
+        redirect = "/agents?view=tasks"
         if path == "/actions/agent-diagnostics":
             if not self.state.agent_diagnostics.trigger():
                 self._send(HTTPStatus.CONFLICT, "Agent diagnostics are already running\n", "text/plain")
                 return
+            redirect = "/agents?view=diagnostics"
         else:
             manager = self.state.agent_tasks
             if manager.error or not manager.available():
@@ -2559,6 +2561,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                             "follow-up-privilege": "request-privilege",
                         }[action]
                         decide_follow_up(manager, identifier, values.get("run_id", [""])[0], decision)
+                        redirect = "/agents?" + urllib.parse.urlencode({"run": values.get("run_id", [""])[0]})
                     else:
                         manager.action(identifier, action)
                 else:
@@ -2583,6 +2586,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                             manager, source_task_id, source_run_id, "approve",
                             settings=submitted, run_now=choice == "run", draft=choice == "draft",
                         )
+                        redirect = "/agents?" + urllib.parse.urlencode({"run": source_run_id})
                     elif submitted.get("service_restarts"):
                         raise ValueError("Service restart prerequisites are only available for follow-up tasks")
                     elif identifier:
@@ -2605,7 +2609,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Prompt task storage is unavailable\n", "text/plain")
                 return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/agents")
+        self.send_header("Location", redirect)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 

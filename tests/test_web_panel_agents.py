@@ -14,10 +14,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 from common.service_tools import web_panel_agents as agents
+from common.service_tools import web_panel_maintenance as maintenance
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
 from lib import agent_task_policy as policy
+from lib.agent_inbox import AgentInbox
+from lib.maintenance_agent_config import DEFAULTS as MAINTENANCE_DEFAULTS
 
 
 class AgentTaskTest(unittest.TestCase):
@@ -691,7 +694,7 @@ class AgentScreenTest(unittest.TestCase):
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "dependencies"})
         checks.assert_not_called()
         execute.assert_not_called()
-        self.assertIn('href="/agents" aria-current="page"', page)
+        self.assertIn('href="/agents?view=tasks" aria-current="page"', page)
         self.assertIn("Update repository dependencies", page)
         self.assertIn("Create schedule", page)
         self.assertNotIn("Update T3 Code</button>", page)
@@ -715,7 +718,7 @@ class AgentScreenTest(unittest.TestCase):
                                     "access": [{"label": None}],
                                     "features": {"t3_update": False, "notification_ingest": "true"}})
         with patch.object(agents, "inspect_agent_tools") as inspect_tools, patch.object(agents, "inspect_t3code") as inspect_t3:
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "templates"})
         inspect_tools.assert_not_called()
         inspect_t3.assert_not_called()
         self.assertIn("Repository work · 6 templates", page)
@@ -728,7 +731,7 @@ class AgentScreenTest(unittest.TestCase):
         with patch.object(agents, "_tool_path", side_effect=lambda name, home: "/test/codex" if name == "codex" else None), patch.object(
             self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex"})),
         ):
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"})
         self.assertNotIn("Repository work ·", page)
         self.assertNotIn('<option value="worktree"', page)
         self.assertIn("Host checks and maintenance ·", page)
@@ -927,7 +930,7 @@ class AgentScreenTest(unittest.TestCase):
             handler.do_POST()
         execute.assert_not_called()
         handler.send_response.assert_called_with(303)
-        handler.send_header.assert_any_call("Location", "/agents")
+        handler.send_header.assert_any_call("Location", "/agents?view=tasks")
         snapshot = self.state.agent_tasks.snapshot()
         self.assertTrue(snapshot["tasks"][0]["enabled"])
         self.assertFalse(snapshot["tasks"][0]["queued"])
@@ -971,7 +974,7 @@ class AgentScreenTest(unittest.TestCase):
         self.assertTrue(task["draft"])
         self.assertFalse(task["enabled"])
         self.assertFalse(task["queued"])
-        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
         self.assertIn('>Draft</span>', page)
         self.assertIn('<dt>Schedule</dt><dd>Every 24 hours</dd>', page)
         self.assertIn("Start schedule</button>", page)
@@ -991,7 +994,6 @@ class AgentScreenTest(unittest.TestCase):
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {action: task["id"]})
             self.assertIn('<option value="custom" selected>', page)
             self.assertIn('name="repeat_minutes" min="1" max="43200" step="1" value="360"', page)
-            self.assertIn("Every 360 minutes", page)
         self.state.agent_tasks.action(task["id"], "run")
         with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "output": "", "message": "Done"}):
             self.state.agent_tasks.tick()
@@ -1031,9 +1033,9 @@ class AgentScreenTest(unittest.TestCase):
         values = {"csrf": self.state.csrf_token, "title": "Prepare", "prompt": "Inspect later",
                   "directory": self.temporary.name, "mode": "inspect", "interval": "once", "submit": "draft"}
         with patch.object(tasks, "_tool_path", return_value=None), patch.object(agents, "_tool_path", return_value=None), patch.object(self.state, "features", return_value=PanelFeatures(t3=True)):
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"})
             self.assertNotIn('class="agent-form"', page)
-            self.assertIn("Runtime diagnostics", page)
+            self.assertIn('action="/actions/agent-diagnostics"', page)
             denied = self.handler("/actions/agent-task/save", {**values, "csrf": "wrong"})
             denied.do_POST()
             self.assertEqual(denied._send.call_args.args[0].value, 404)
@@ -1093,12 +1095,15 @@ class AgentScreenTest(unittest.TestCase):
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
         self.assertIn("0 drafts · 1 paused after failures", page)
         self.assertIn("1 failed/interrupted · 0 cancelled · latest 1 finished runs", page)
-        self.assertIn("2m 05s duration · exit code 2", page)
+        self.assertNotIn("private-value", page)
+        history = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history"})
+        self.assertIn("2m 05s duration · exit code 2", history)
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
         self.assertIn('>Auto-paused</span>', page)
         self.assertIn('<dt>Schedule</dt><dd>Every 24 hours</dd>', page)
         self.assertIn("1 consecutive failure · pause at 1", page)
         self.assertIn(f'href="/agents?copy={identifier}"', page)
-        self.assertIn("Reuse run settings", page)
+        self.assertIn("Reuse run settings", history)
         self.assertNotIn("private-value", page)
 
     def test_dashboard_activity_uses_saved_state_without_collecting_or_showing_prompts(self) -> None:
@@ -1140,7 +1145,7 @@ class AgentScreenTest(unittest.TestCase):
             self.assertNotIn("private-prompt-marker", page)
             self.assertNotIn("private-output-marker", page)
             self.assertNotIn('http-equiv="refresh"', page)
-            screen = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            screen = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history"})
             for run in self.state.agent_tasks.snapshot()["runs"]:
                 self.assertIn(f'href="/agents?run={run["id"]}#run-{run["id"]}"', page)
                 self.assertIn(f'id="run-{run["id"]}"', screen)
@@ -1158,6 +1163,55 @@ class AgentScreenTest(unittest.TestCase):
         page = agents.render_agent_activity(self.state)
         self.assertIn("Scheduler needs attention", page)
         self.assertIn("saved counts do not prove it is executing work", page)
+
+    def test_agent_dashboard_summarizes_saved_maintenance_and_inbox_without_running_checks(self) -> None:
+        AgentInbox(self.temporary.name).send("worker", "operator", "password=private-value <feedback>")
+        records = {"reports": [{"checked_at": "fixture-check-time", "issues": [{"severity": "warning"}]}]}
+        with (
+            patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex"}), maintenance=True)),
+            patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "security": True, "routines": True}),
+            patch.object(maintenance, "load_reports", return_value=records),
+            patch.object(maintenance, "request_check") as maintenance_check,
+            patch.object(self.state.agent_diagnostics, "trigger") as readiness,
+            patch.object(tasks, "execute_prompt") as execute,
+        ):
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        maintenance_check.assert_not_called()
+        readiness.assert_not_called()
+        execute.assert_not_called()
+        self.assertIn("fixture-check-time · 1 findings", page)
+        self.assertIn("1 unread message(s)", page)
+        self.assertIn("&lt;feedback&gt;", page)
+        self.assertNotIn("private-value", page)
+        self.assertIn("Automatic host checks off · security audits off · housekeeping off", page)
+        self.assertIn('value="run">Check once now</button>', page)
+        for detailed in ('class="agent-form"', 'id="agent-history-heading"', 'id="maintenance-settings-form"',
+                         'action="/actions/agent-diagnostics"'):
+            self.assertNotIn(detailed, page)
+
+    def test_agent_dashboard_respects_feature_gates_and_storage_permission_failures(self) -> None:
+        with patch.object(maintenance, "load_policy") as load_policy, patch.object(AgentInbox, "list", return_value=[]) as inbox:
+            with patch.object(self.state, "features", return_value=PanelFeatures(t3=True)):
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            load_policy.assert_not_called()
+            self.assertNotIn('action="/actions/maintenance-agent"', page)
+            self.assertNotIn('href="/agents?view=new"', page)
+            with patch.object(self.state, "features", return_value=PanelFeatures()):
+                agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            self.assertEqual(inbox.call_count, 1)
+        with (
+            patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex"}), maintenance=True)),
+            patch.object(self.state.agent_tasks, "snapshot", side_effect=PermissionError("Unreadable <tasks>")),
+            patch.object(maintenance, "load_policy", side_effect=PermissionError("private-policy")),
+            patch.object(AgentInbox, "list", side_effect=PermissionError("private-inbox")),
+        ):
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn("Unreadable &lt;tasks&gt;", page)
+        self.assertIn("Maintenance state unavailable", page)
+        self.assertIn("Inbox state unavailable", page)
+        self.assertNotIn('aria-label="Agent workflow summary"', page)
+        self.assertNotIn("private-policy", page)
+        self.assertNotIn("private-inbox", page)
 
     def test_dashboard_attention_counts_latest_saved_task_outcomes(self) -> None:
         settings = {"title": "Review", "prompt": "Inspect", "directory": self.temporary.name,
@@ -1190,20 +1244,28 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(self.state.agent_tasks.snapshot(), records)
         self.assertIn(f'id="run-{selected}" class="agent-panel agent-run" open', page)
         self.assertNotIn(f'id="run-{records["runs"][1]["id"]}" class="agent-panel agent-run" open', page)
-        self.assertIn('<details><summary>Create a prompt task</summary>', page)
-        self.assertIn('href="/agents" aria-current="page"', page)
+        self.assertNotIn('class="agent-form"', page)
+        self.assertNotIn('id="agent-tasks-heading"', page)
+        self.assertIn('href="/agents?view=history" aria-current="page"', page)
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"run": "a" * 32})
         self.assertIn("no longer in retained history", page)
 
-    def test_selected_task_forms_precede_saved_list_and_normal_overview_leads_with_tasks(self) -> None:
+    def test_composer_tasks_and_dashboard_are_separate(self) -> None:
         identifier = self.state.agent_tasks.create({"title": "Draft", "prompt": "Inspect", "directory": self.temporary.name,
                                                    "mode": "inspect", "interval": "once"}, run_now=False, draft=True)
         for query in ({"template": "backups"}, {"edit": identifier}, {"copy": identifier}):
             with self.subTest(query=query):
                 page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
-                self.assertLess(page.index('class="agent-form"'), page.index('id="agent-tasks-heading"'))
-        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
-        self.assertLess(page.index('id="agent-tasks-heading"'), page.index('class="agent-form"'))
+                self.assertIn('class="agent-form"', page)
+                self.assertNotIn('id="agent-tasks-heading"', page)
+                self.assertNotIn('id="agent-history-heading"', page)
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
+        self.assertIn('id="agent-tasks-heading"', page)
+        self.assertNotIn('class="agent-form"', page)
+        dashboard = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn("Agents dashboard", dashboard)
+        self.assertIn('href="/agents?view=tasks"', dashboard)
+        self.assertNotIn('id="agent-tasks-heading"', dashboard)
 
     def test_active_run_timing_and_remaining_cap_are_snapshots_not_auto_reload(self) -> None:
         settings = {"title": "Long review", "prompt": "Inspect", "directory": self.temporary.name,
@@ -1211,7 +1273,7 @@ class AgentScreenTest(unittest.TestCase):
         self.state.agent_tasks.create(settings, run_now=True, now=100)
         def inspect_running(*_args: object) -> dict[str, str]:
             with patch.object(agents.time, "time", return_value=225):
-                page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
             self.assertIn("Running: Long review", page)
             self.assertIn("2m 05s elapsed · 7m 55s remaining at page load", page)
             self.assertIn("1 running", page)
@@ -1264,14 +1326,14 @@ class AgentScreenTest(unittest.TestCase):
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"edit": task["id"]})
         self.assertIn('<option value="custom-model" selected>', page)
         self.assertIn('value="1440"', page)
-        self.assertIn("1440 min cap", page)
-        overview = agents.render_agents(self.state, panel._PAGE_STYLE, {})
-        self.assertIn('<details><summary>Create a prompt task</summary>', overview)
-        self.assertLess(overview.index('id="agent-tasks-heading"'), overview.index('class="agent-form"'))
+        overview = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
+        self.assertNotIn('class="agent-form"', overview)
+        self.assertIn('href="/agents?view=new"', overview)
+        self.assertIn("1440 min cap", overview)
 
     def test_model_dropdown_uses_only_cache_labels_and_keeps_default_available(self) -> None:
         with patch.object(agents, "codex_models", return_value=[{"slug": "test-model", "name": "Test <model>", "efforts": ["low"]}]):
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"})
         self.assertIn('<select name="model">', page)
         self.assertIn('<option value="test-model">Test &lt;model&gt;</option>', page)
         self.assertIn("Configured default", page)
@@ -1301,7 +1363,7 @@ class AgentScreenTest(unittest.TestCase):
             for view in ("new", "templates"):
                 query = agents.parse_agent_query("view=" + view)
                 page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
-                self.assertIn('aria-label="Agent workflow"', page)
+                self.assertIn('aria-label="Agents"', page)
                 if view == "new":
                     self.assertIn('class="agent-form"', page)
                     self.assertNotIn('<details><summary>Create a prompt task</summary>', page)
@@ -1321,11 +1383,11 @@ class AgentScreenTest(unittest.TestCase):
             self.state.agent_tasks.tick()
         run = self.state.agent_tasks.snapshot()["runs"][0]
         queued = self.state.agent_tasks.create({**settings, "title": "Queued"}, run_now=True)
-        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
         positions = [page.index(f'<h3 id="task-{identifier}"') for identifier in (queued, blocked, draft)]
         self.assertEqual(positions, sorted(positions))
         self.assertIn(f'href="/agents?run={run["id"]}#run-{run["id"]}">View latest result', page)
-        self.assertIn('<span class="badge error">blocked</span>', page)
+        self.assertIn('<dt>Latest result</dt><dd>Blocked', page)
         self.assertIn('Cancel queued run</button>', page)
         self.assertIn('class="agent-task agent-task-attention"', page)
 
@@ -1375,7 +1437,7 @@ class AgentScreenTest(unittest.TestCase):
             "maintenance": {"status": "inactive", "active": False}, "record": None, "record_error": "",
         }
         with patch.object(self.state, "t3_update_available", return_value=True):
-            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"})
             handler = self.handler("/actions/t3-update", {"csrf": self.state.csrf_token, "return": "agents"})
             with patch.object(self.state, "trigger_t3_update", return_value=True) as update:
                 handler.do_POST()
@@ -1383,14 +1445,14 @@ class AgentScreenTest(unittest.TestCase):
         self.assertIn("Needs attention", page)
         self.assertIn("Update T3 Code</button>", page)
         update.assert_called_once()
-        handler.send_header.assert_any_call("Location", "/agents")
+        handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
 
     def test_history_redacts_common_credentials_and_shows_original_prompt(self) -> None:
         self.state.agent_tasks.create({"title": "Check <host>", "prompt": "Inspect <host>", "directory": self.temporary.name,
                                        "mode": "inspect", "interval": "once", "network": False}, run_now=True)
         with patch.object(tasks, "execute_prompt", return_value={"status": "failed", "message": "Denied", "output": "password=private-value <script>"}):
             self.state.agent_tasks.tick()
-        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history"})
         self.assertNotIn("private-value", page)
         self.assertNotIn("<script>", page)
         self.assertIn("Inspect &lt;host&gt;", page)

@@ -122,7 +122,8 @@ class AgentPanelToolsTest(unittest.TestCase):
                 prepared.do_POST()
                 status, document = prepared._send.call_args.args[:2]
                 self.assertEqual(status.value, 200)
-                self.assertLess(document.index('class="agent-form"'), document.index('id="agent-tasks-heading"'))
+                self.assertIn('class="agent-form"', document)
+                self.assertNotIn('id="agent-tasks-heading"', document)
                 form = TaskForm(document).values
                 form.update(submit=choice, interval="weekly", model="test-model", effort="high", timeout_minutes="180", failure_limit="2")
                 save = self.handler("/actions/agent-task/save", form)
@@ -306,7 +307,8 @@ class AgentPanelToolsTest(unittest.TestCase):
         }], [])), patch.object(jobs, "render_storage", return_value=""):
             job_page = jobs.render_jobs(True, panel._PAGE_STYLE, "host.example", agent_tools=True)
         self.assertIn("tool=job&amp;service=auto-update-apt.service", job_page)
-        self.assertIn(("/agent-tools", "Agent tools", "agent-tools"), self.state.navigation("agent-tools"))
+        self.assertIn(("/agents", "Agents", "agents"), self.state.navigation("agents"))
+        self.assertNotIn(("/agent-tools", "Agent tools", "agent-tools"), self.state.navigation("agents"))
 
 
 if __name__ == "__main__":

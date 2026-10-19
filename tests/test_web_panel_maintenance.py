@@ -45,7 +45,8 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         ):
             item.start()
             self.addCleanup(item.stop)
-        self.state = SimpleNamespace(csrf_token="csrf-fixture", agent_tasks=SimpleNamespace(home=self.home))
+        self.state = SimpleNamespace(csrf_token="csrf-fixture", agent_tasks=SimpleNamespace(home=self.home),
+                                     manifest={"host": "host.example"})
         self.state.features = lambda: PanelFeatures(tools=frozenset({"codex"}), maintenance=True)
         self.state.navigation = lambda current: panel_navigation(current=current, available=self.state.features().pages)
         handler = type("FixtureHandler", (panel.WebPanelHandler,), {"state": self.state})
@@ -93,6 +94,52 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.assertEqual(self.request("/actions/maintenance-agent", values)[0], 422)
         self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
 
+    def test_manual_check_and_master_toggle_preserve_independent_preferences(self) -> None:
+        body = self.request("/maintenance-agent")[1]
+        self.assertIn('name="host_checks" value="1" checked', body)
+        values = {key: str(value) for key, value in DEFAULTS.items() if type(value) is not bool}
+        values.update(csrf=self.state.csrf_token, submit="save", security="1", routines="1", interval="120")
+        for enabled in (True, False, True):
+            with self.subTest(enabled=enabled):
+                selected = values | ({"enabled": "1"} if enabled else {})
+                self.assertEqual(self.request("/actions/maintenance-agent", selected)[0], 303)
+                saved = agent.load_policy(self.policy)
+                self.assertEqual((saved["enabled"], saved["host_checks"], saved["security"], saved["routines"]),
+                                 (enabled, False, True, True))
+                self.assertEqual(saved["interval"], 120)
+                if not enabled:
+                    body = self.request("/maintenance-agent")[1]
+                    self.assertIn('value="run">Check once now</button>', body)
+                    self.assertNotIn('value="run" disabled', body)
+                    self.assertEqual(self.request("/actions/maintenance-agent", {
+                        "csrf": self.state.csrf_token, "submit": "run"})[0], 303)
+                    self.assertTrue((self.control / "wake.json").is_file())
+                    self.assertEqual(agent.load_policy(self.policy), saved)
+
+    def test_cached_and_custom_models_round_trip_when_cache_changes(self) -> None:
+        values = {key: str(value) for key, value in DEFAULTS.items() if type(value) is not bool}
+        values.update(csrf=self.state.csrf_token, submit="save", model="cached-model",
+                      escalation_model="cached-large", custom_model="custom-model",
+                      custom_escalation_model="custom-large")
+        with patch.object(view, "codex_models", return_value=[
+            {"slug": "cached-model", "name": "Cached <model>"},
+            {"slug": "cached-large", "name": "Cached large"},
+        ]) as models:
+            body = self.request("/maintenance-agent")[1]
+            self.assertIn('<option value="cached-model">Cached &lt;model&gt;</option>', body)
+            models.assert_called_with(self.home)
+            self.assertEqual(self.request("/actions/maintenance-agent", values)[0], 303)
+        saved = agent.load_policy(self.policy)
+        self.assertEqual((saved["model"], saved["escalation_model"]), ("custom-model", "custom-large"))
+        with patch.object(view, "codex_models", return_value=[]):
+            body = self.request("/maintenance-agent")[1]
+            for key in ("model", "escalation_model"):
+                self.assertIn(f'<option value="{saved[key]}" selected>', body)
+                values[key] = saved[key]
+                values["custom_" + key] = ""
+            self.assertEqual(self.request("/actions/maintenance-agent", values)[0], 303)
+        self.assertEqual(agent.load_policy(self.policy), saved)
+
     def test_restart_hold_round_trip_is_account_local_and_does_not_change_policy(self) -> None:
         self.assertIn("No active automatic restart hold", self.request("/maintenance-agent")[1])
         with patch("subprocess.run") as command, patch("subprocess.Popen") as spawn:
@@ -126,8 +173,9 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.assertIn('name="enabled" value="1" checked', body)
         self.assertNotIn('name="security" value="1" checked', body)
         self.assertIn('value="bad&quot;&lt;script&gt;"', body)
-        self.assertIn('>Maintenance disabled</strong>', body)
-        self.assertIn('value="run" disabled', body)
+        self.assertIn('>Manual checks only</strong>', body)
+        self.assertIn('value="run">Check once now</button>', body)
+        self.assertNotIn('value="run" disabled', body)
         self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
         status, body, _ = self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "hold", "hours": "73"})
         self.assertEqual(status, 422)
@@ -210,6 +258,18 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.assertIn("Save maintenance settings", body)
         self.assertIn("Healthy checks use no AI", body)
         self.assertIn('href="/agent-inbox"', body)
+
+    def test_agent_pages_use_hub_tabs_while_sidebar_keeps_one_agents_destination(self) -> None:
+        for path in ("/agent-tools", "/agent-inbox", "/maintenance-agent"):
+            with self.subTest(path=path):
+                status, body, _ = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertIn('<nav class="agent-tabs" aria-label="Agents">', body)
+                self.assertIn(f'href="{path}" aria-current="page"', body)
+                sidebar = body.split('<nav class="sidebar"', 1)[1].split('</nav>', 1)[0]
+                self.assertIn('href="/agents"', sidebar)
+                for child in ("/agent-tools", "/agent-inbox", "/maintenance-agent"):
+                    self.assertNotIn(f'href="{child}"', sidebar)
 
     def test_failed_message_keeps_mailbox_and_draft_without_delivering(self) -> None:
         inbox = AgentInbox(self.home)
