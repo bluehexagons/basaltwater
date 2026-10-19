@@ -130,7 +130,7 @@ class TaskPolicyTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["outcome"], "blocked")
         self.assertEqual(result["usage"], {"input_tokens": 0, "output_tokens": 0})
-        self.assertIn("review policy and task settings", result["message"])
+        self.assertIn("generated workspace profile is not allowlisted", result["output"])
         self.assertNotIn("checkpoint", result)
         self.assertIsNone(result["follow_up"])
 
