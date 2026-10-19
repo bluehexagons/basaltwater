@@ -179,7 +179,7 @@ def render_maintenance(state: Any, style: str, *, error: str = "", submitted: di
             links = ' '.join(f'<a href="/agents?template={key}">{label}</a>' for key, label in (
                 ('updates', 'Updates and reboot'), ('backups', 'Backup coverage'), ('network', 'Network and DNS'),
                 ('storage', 'Storage pressure'), ('certificates', 'Certificates')))
-            content += '<section>' + render_heading("Optional one-time reviews", "tools") + '<p class="catalog-nav">' + links + '</p><p class="event-meta">Open a prepared prompt to review its scope before running. These reviews do not enable a schedule.</p></section>'
+            content += '<section>' + render_heading("Optional one-time reviews", "agent-tools") + '<p class="catalog-nav">' + links + '</p><p class="event-meta">Open a prepared prompt to review its scope before running. These reviews do not enable a schedule.</p></section>'
         content += '<section aria-labelledby="maintenance-records-heading">' + render_heading("Maintenance records", "maintenance", heading_id="maintenance-records-heading") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else '<p class="empty">No checks recorded yet. Select Check once now to request one.</p>') + '</section>'
     content += hold_html
     return agent_document(state, style + STYLE, title="Maintenance agent", current="maintenance", content=content,
