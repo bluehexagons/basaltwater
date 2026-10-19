@@ -23,11 +23,17 @@ Select a reference before performing the corresponding operation:
 | An authorized root action through the configured broker | [Privilege requests](references/privilege.md) |
 | Credential status, login, or explicit rotation | [Credentials](references/credentials.md) |
 | Preparing or running unattended prompts | [Unattended tasks](references/unattended-tasks.md), plus the installed task skill |
+| Account-local environment feedback for the operator | [Feedback entrypoint](references/unattended-tasks.md#account-local-operator-feedback) |
 
 Updates, repairs, login, holds, and privilege requests are mutations. Keep them
 within the task; a denied operation remains denied through other tools.
 Maintenance holds are shared account state: preserve a hold another task needs.
 Credential values belong in protected files or input, never logs or repositories.
+When the task or reporting flow authorizes account-local feedback, use
+`basaltw agent inbox feedback --sender LABEL "MESSAGE" --json` to queue an
+environment report for the operator. This permission covers local inbox data
+only; it does not authorize external messages, host repairs or broader actions.
+Sender labels are self-reported. Never include secrets.
 Use the installed workspace and browser skills only when those workflows apply.
 
 Keep the managed context budget unless the user requests or approves a larger

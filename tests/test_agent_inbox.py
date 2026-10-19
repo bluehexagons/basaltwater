@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
+import io
+import json
 import os
 import tempfile
 import threading
@@ -19,6 +22,67 @@ class AgentInboxTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.home = os.path.realpath(temporary.name)
         self.inbox = mail.AgentInbox(self.home)
+
+    def test_feedback_cli_persists_framed_operator_mail_and_restore_round_trip(self) -> None:
+        parser = argparse.ArgumentParser()
+        mail.add_inbox_parser(parser.add_subparsers())
+        with patch.object(mail, "AgentInbox", return_value=self.inbox), patch("sys.stdout", new_callable=io.StringIO) as output:
+            args = parser.parse_args(["inbox", "feedback", "--sender", "t3-agent", "Missing tool\nCheck failed", "--json"])
+            self.assertEqual(mail.run_inbox_command(args), 0)
+            record = json.loads(output.getvalue())
+            self.assertEqual(record["recipient"], "operator")
+            self.assertEqual(record["sender"], "t3-agent")
+            self.assertEqual(record["message"], mail.FEEDBACK_PREFIX + "Missing tool\nCheck failed")
+            self.assertEqual(mail.AgentInbox(self.home).list("operator"), [record])
+            for action in ("ack", "restore"):
+                self.assertEqual(mail.run_inbox_command(parser.parse_args(["inbox", action, "operator", record["id"], "--json"])), 0)
+                retained = self.inbox.list("operator", include_acknowledged=True)
+                self.assertEqual(len(retained), 1)
+                self.assertEqual(retained[0]["acknowledged"], action == "ack")
+        self.assertEqual(self.inbox.list("operator"), [record])
+
+    def test_cli_feedback_errors_preserve_state_and_generic_send_keeps_original_text(self) -> None:
+        parser = argparse.ArgumentParser()
+        mail.add_inbox_parser(parser.add_subparsers())
+        with patch.object(mail, "AgentInbox", return_value=self.inbox), patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(mail.run_inbox_command(parser.parse_args([
+                "inbox", "feedback", "--sender", "worker", " \t", "--json",
+            ])), 1)
+            self.assertIn("Error:", output.getvalue())
+            self.assertFalse(self.inbox.parent.exists())
+            self.assertEqual(mail.run_inbox_command(parser.parse_args([
+                "inbox", "send", "parent", "--sender", "worker", "Original message",
+            ])), 0)
+        self.assertEqual(self.inbox.list("parent")[0]["message"], "Original message")
+        self.assertEqual(self.inbox.list("operator"), [])
+
+    def test_feedback_bounds_include_framing_and_invalid_input_does_not_write(self) -> None:
+        for sender, message in (("bad sender", "hello"), ("worker", " \n\t"), ("worker", "\0"),
+                                ("worker", "a" * (mail.MAX_MESSAGE_BYTES - len(mail.FEEDBACK_PREFIX) + 1)),
+                                ("worker", "é" * 2000), ("worker", None)):
+            with self.subTest(sender=sender, message=str(message)[:20]), self.assertRaises(ValueError):
+                self.inbox.feedback(sender, message)
+        self.assertFalse(self.inbox.parent.exists())
+        record = self.inbox.feedback("worker", "a" * (mail.MAX_MESSAGE_BYTES - len(mail.FEEDBACK_PREFIX)))
+        self.assertEqual(len(record["message"].encode("utf-8")), mail.MAX_MESSAGE_BYTES)
+
+    def test_restore_validates_mailbox_and_protects_restored_mail_from_reclamation(self) -> None:
+        with patch.object(mail, "MAX_MESSAGES", 1):
+            record = self.inbox.feedback("worker", "issue")
+            self.inbox.acknowledge("operator", record["id"])
+            for recipient, identifier in (("other", record["id"]), ("../operator", record["id"]), ("operator", "bad")):
+                with self.subTest(recipient=recipient, identifier=identifier), self.assertRaises(ValueError):
+                    self.inbox.restore(recipient, identifier)
+            self.inbox.restore("operator", record["id"])
+            self.inbox.restore("operator", record["id"])
+            with self.assertRaisesRegex(RuntimeError, "full"):
+                self.inbox.feedback("worker", "next issue")
+            self.assertEqual(self.inbox.list("operator"), [record])
+            self.inbox.acknowledge("operator", record["id"])
+            replacement = self.inbox.feedback("worker", "next issue")
+            self.assertEqual(self.inbox.list("operator", include_acknowledged=True), [replacement])
+            with self.assertRaisesRegex(ValueError, "not found"):
+                self.inbox.restore("operator", record["id"])
 
     def test_restart_preserves_unread_mail_until_explicit_recipient_ack(self) -> None:
         record = self.inbox.send("worker", "parent", "Validation passed\nReady for review")

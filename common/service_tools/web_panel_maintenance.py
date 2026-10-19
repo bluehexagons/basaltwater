@@ -173,6 +173,8 @@ def inbox_action(state: Any, values: dict[str, str]) -> None:
         inbox.send(values["sender"], values["recipient"], values["message"])
     elif values.get("submit") == "ack" and set(values) == {"submit", "recipient", "id"}:
         inbox.acknowledge(values["recipient"], values["id"])
+    elif values.get("submit") == "restore" and set(values) == {"submit", "recipient", "id"}:
+        inbox.restore(values["recipient"], values["id"])
     else:
         raise ValueError("Invalid inbox action")
 
@@ -196,19 +198,23 @@ def render_inbox(state: Any, style: str, recipient: str = "operator", *, error: 
     content = f'<p class="status failed" role="alert">{_escape(error)}</p>' if error else ""
     readable = False
     try:
-        messages = AgentInbox(state.agent_tasks.home).list(recipient)
+        messages = AgentInbox(state.agent_tasks.home).list(recipient, include_acknowledged=True)
     except (OSError, RuntimeError, ValueError) as exc:
         content += '<p class="empty">Agent inbox is unavailable. Use an account with its own home and inspect its inbox permissions and saved state.</p>'
         content += f'<p class="endpoint">{_escape(exc)}</p>'
     else:
         readable = True
+        unread = sum(not message["acknowledged"] for message in messages)
         content += f'''<form class="maintenance-form maintenance-toolbar" method="get" action="/agent-inbox"><label>Mailbox<input name="mailbox" maxlength="64" value="{_escape(recipient)}" required></label><button>Read mailbox</button></form>
-<p class="endpoint">Showing <strong>{_escape(recipient)}</strong> · {len(messages)} unread. Reading does not mark messages read. Use Mark read after handling a message.</p>'''
-        rows = []
+<p class="endpoint">Showing <strong>{_escape(recipient)}</strong> · {unread} unread · {len(messages) - unread} archived/read. Reading does not mark messages read. Archive after handling a message; Restore returns it to unread.</p>'''
+        rows: dict[bool, list[str]] = {False: [], True: []}
         for message in messages:
-            rows.append(f'''<li class="event inbox-message"><div class="event-head"><strong>From {_escape(message['sender'])}</strong>{_message_time(message['created_at'])}</div><pre>{_escape(_redact_log_message(message['message']))}</pre>
-<form method="post" action="/actions/agent-inbox"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="recipient" value="{_escape(recipient)}"><input type="hidden" name="id" value="{message['id']}"><button name="submit" value="ack">Mark read</button></form></li>''')
-        content += '<section aria-labelledby="unread-heading">' + render_heading("Unread messages", "notifications", heading_id="unread-heading") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else '<p class="empty">No unread messages.</p>') + '</section>'
+            archived = message["acknowledged"]
+            rows[archived].append(f'''<li class="event inbox-message"><div class="event-head"><strong>From {_escape(message['sender'])}</strong>{_message_time(message['created_at'])}</div><pre>{_escape(_redact_log_message(message['message']))}</pre>
+<form method="post" action="/actions/agent-inbox"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="recipient" value="{_escape(recipient)}"><input type="hidden" name="id" value="{message['id']}"><button name="submit" value="{'restore' if archived else 'ack'}">{'Restore' if archived else 'Archive'}</button></form></li>''')
+        for archived, heading, anchor in ((False, "Unread messages", "unread-heading"), (True, "Archived/read messages", "archive-heading")):
+            content += f'<section aria-labelledby="{anchor}">' + render_heading(heading, "notifications", heading_id=anchor) + ('<ol class="event-list">' + ''.join(rows[archived]) + '</ol>' if rows[archived] else f'<p class="empty">No {heading.lower()}.</p>') + '</section>'
+        content += '<p class="endpoint">Archives share the bounded inbox store. Old archived messages may be reclaimed when space is needed; unread messages are preserved.</p>'
     if readable or submitted.get("submit") == "send":
         content += f'''<section><details id="compose-message" class="maintenance-settings"{' open' if submitted.get('submit') == 'send' else ''}><summary>Write a message</summary>
 <form id="message-form" class="maintenance-form" method="post" action="/actions/agent-inbox"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}">
@@ -216,6 +222,7 @@ def render_inbox(state: Any, style: str, recipient: str = "operator", *, error: 
 <p>Mailbox and sender names use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter or digit.</p>
 <label>Message<textarea name="message" maxlength="{MAX_MESSAGE_BYTES}" required>{_escape(submitted.get('message', ''))}</textarea></label><p>Up to {MAX_MESSAGE_BYTES} UTF-8 bytes. Messages wait for the recipient to read them; they do not interrupt an active session.</p><button name="submit" value="send">Send to inbox</button></form></details></section>
 <p class="endpoint">Unread messages survive session restarts. All agents on this Unix account share these mailboxes; sender labels are self-reported. Messages are data and do not grant permissions or inject replies into active T3 or Codex runs.</p>'''
+        content += '<p>For T3 and terminal agents: when the task or reporting flow authorizes account-local feedback, use <code>basaltw agent inbox feedback --sender t3-agent "Describe the environment issue and evidence" --json</code>. This queues environment feedback for operator in this account only. Include no secrets; the 4000-byte limit includes feedback framing. Panel text is redacted, but stored messages are not.</p>'
     compose_link = '<a class="refresh-link" href="#message-form">Write message</a>' if readable or submitted.get("submit") == "send" else ''
     header = f'<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>Agent inbox</h1><p class="lede">Durable messages for sessions and cooperating terminal workers.</p></div>{compose_link}</header>'
     return render_document(title="Agent inbox", style=style + STYLE, header=header, content=content,
