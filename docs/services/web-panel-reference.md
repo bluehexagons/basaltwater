@@ -303,7 +303,12 @@ workspace and are reported in run output.
 
 ## Agent prompt runner
 
-`/agents` renders without launching diagnostics or prompts. State changes use
+`/agents` is a saved-state dashboard for recent runs, review-needed tasks,
+maintenance, inbox feedback and runtime readiness. It does not launch
+diagnostics or prompts. `?view=tasks`, `?view=history`, and
+`?view=diagnostics` select task, standalone run history, and readiness views.
+Agent tools, inbox, and maintenance are tabs in the same Agents workspace.
+State changes use
 Basic Auth and the panel's CSRF token. The fixed form routes are
 `/actions/agent-task/save`, `/actions/agent-task`, and
 `/actions/agent-diagnostics`; duplicate and unknown fields are rejected.
