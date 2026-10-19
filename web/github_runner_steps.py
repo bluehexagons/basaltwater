@@ -282,15 +282,27 @@ def _setup_runner(policy: dict, token: bytes | None) -> None:
         previous = validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
     except FileNotFoundError:
         previous = None
-    if previous and (runner_target(previous).lower() != runner_target(policy).lower()
+    replacement = bool(previous and (runner_target(previous).lower() != runner_target(policy).lower()
                      or bool(previous.get("organization")) != bool(policy.get("organization"))
                      or previous.get("runner_group", "") != policy.get("runner_group", "")
-                     or previous["labels"] != policy["labels"]):
-        raise ValueError("Scope/group/label replacement requires deliberate deregistration; see the runner guide")
+                     or previous["labels"] != policy["labels"]))
     if previous is None and os.path.lexists(APP):
         raise ValueError("Unmanaged or interrupted runner installation exists; see runner recovery")
     policy["registration"] = previous["registration"] if previous else "pending"
     if previous:
+        if replacement or previous["registration"] == "pending":
+            credentials = [Path(APP, name) for name in CREDENTIAL_FILES if os.path.lexists(Path(APP, name))]
+            if credentials:
+                run(["systemctl", "stop", SERVICE], timeout=120)
+                recovery = tempfile.mkdtemp(prefix="retired-registration-", dir=DATA)
+                os.chmod(recovery, 0o700)
+                write_json_atomic(os.path.join(recovery, "policy.json"), previous, mode=0o600)
+                for path in credentials:
+                    os.replace(path, Path(recovery, path.name))
+                print("  Retired previous runner credentials; remove its old entry in GitHub Settings → Actions → Runners.")
+            policy["registration"] = "pending"
+            # Validate the unchanged application against its credential-free state.
+            write_json_atomic(POLICY, previous | {"registration": "pending"}, mode=0o644)
         from lib.github_runner_gate import check_installation
 
         check_installation(require_registration=False)
@@ -328,7 +340,10 @@ def _setup_runner(policy: dict, token: bytes | None) -> None:
     if not registered:
         run(["systemctl", "disable", "--now", SERVICE], timeout=120)
         if token is not None:
-            _register_pending(policy, token, account)
+            try:
+                _register_pending(policy, token, account)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                print("  Warning: Runner registration did not complete. Setup will continue; refresh panel status and retry registration.")
         else:
             print("  ✓ Runner installed: Pending registration (service disabled)")
 
@@ -346,7 +361,9 @@ def setup_github_runner(config: SetupConfig) -> None:
     if config.ci_registration_payload:
         try:
             token = _private_token(TOKEN_FILE)
+        except (OSError, ValueError):
+            print("  Warning: Unusable runner registration token; continuing setup with registration deferred.")
         finally:
-            os.unlink(TOKEN_FILE)
+            Path(TOKEN_FILE).unlink(missing_ok=True)
     with runner_lock():
         _setup_runner(policy, token)

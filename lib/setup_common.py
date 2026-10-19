@@ -1462,8 +1462,9 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 config, os.path.join(build_dir, RUNNER_PAYLOAD_NAME),
             )
         except (OSError, ValueError) as exc:
-            print(f"Error preparing GitHub runner registration: {exc}")
-            return 1
+            print(f"Warning: GitHub runner registration deferred: {exc}")
+            print("  Setup will continue. Retry registration through setup or the HTTPS web panel.")
+            config.ci_registration_payload = False
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
         if config.agent_auth_source == "login" and config.install_codex:

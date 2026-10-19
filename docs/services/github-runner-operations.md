@@ -38,8 +38,12 @@ The authoritative policy is root-owned
 `/etc/basaltwater/github-runner.json`. Change the allowlist by repeating setup
 with the **complete** desired `--ci-allowed-user` set and the same scope, group and
 labels. An existing registration needs no new token for an allowlist change.
-The panel displays this policy read-only. Scope, group and label changes require
-the deliberate replacement procedure below.
+The panel displays this policy read-only. Setup applies scope, group and label
+changes by retiring the previous credentials to a root-only recovery directory
+and registering the desired configuration. Without a usable token it stays
+pending; register later through setup or the HTTPS panel. Remove any retired
+runner entry from GitHub's runner settings. A credential-free pending installation
+can change scope directly.
 An allowlist update stops the listener and its current job before publishing
 policy, then restarts the service. Drain trusted jobs before repeating setup.
 
@@ -132,7 +136,9 @@ saved configuration, URLs, logs or response pages. Removing the panel or
 configuring it without HTTPS removes the helper socket and service template.
 Setup and socket removal fail fast while registration holds the runner lock;
 refresh status and retry after that attempt finishes.
-Replacement, allowlist editing, queue and lifecycle controls remain deferred.
+Registration credential errors produce warnings and let the rest of setup,
+including requested restarts, complete. Refresh status before retrying after
+an interrupted registration. Panel policy editing and lifecycle controls remain deferred.
 
 ## Updates, deregistration and recovery
 

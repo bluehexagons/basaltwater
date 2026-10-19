@@ -32,7 +32,8 @@ Choose how to register:
 
 You can add either registration option on the first setup or repeat the same
 complete setup command later. Registered runners need no token on routine
-setup. `--dry-run` makes no token request.
+setup. Credential errors leave registration pending and let the rest of setup,
+including requested restarts, finish. `--dry-run` makes no token request.
 
 ## Get a registration token
 
@@ -103,7 +104,7 @@ same-repository PRs (`opened`, `reopened`, `synchronize`). Forks, public
 repositories, bots, reruns and other events are denied.
 
 To change allowed users, drain jobs and repeat setup with the complete desired
-allowlist. Scope, group or label changes require
-[replacement](github-runner-operations.md#updates-deregistration-and-recovery).
+allowlist. Setup also applies scope, group and label changes; provide a fresh
+token or register later. Remove the retired runner entry from GitHub settings.
 See the [operations reference](github-runner-operations.md) for logs, isolation,
 updates and qualification.

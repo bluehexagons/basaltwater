@@ -486,18 +486,6 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(write.call_args.args[1]["allowed_users"], ["bob"])
             units.assert_called_once()
 
-    def test_scope_group_and_label_replacement_fail_before_host_commands(self) -> None:
-        for previous in (policy() | {"repository": "other/repo"}, policy() | {"labels": ["other"]},
-                         policy() | dict(repository="", organization="owner", runner_group="CI")):
-            with (patch.object(steps, "check_runner_platform"), patch.object(steps, "is_dry_run", return_value=False),
-                  patch.object(steps, "runner_lock", side_effect=nullcontext),
-                  patch.object(steps, "check_directory_path"),
-                  patch.object(steps, "read_json_file", return_value=previous),
-                  patch.object(steps, "run") as run):
-                with self.assertRaises(ValueError):
-                    steps.setup_github_runner(config())
-                run.assert_not_called()
-
     def test_account_rejects_root_or_shared_primary_group_and_extra_groups(self) -> None:
         for uid, gid, group, groups in ((0, 123, ACCOUNT, [123]), (123, 0, "root", [0]),
                                        (123, 123, "shared", [123]), (123, 123, ACCOUNT, [123, 456]),
@@ -661,22 +649,22 @@ class ControllerCredentialTests(unittest.TestCase):
 
                 def archive(source, *, exclude_payloads):
                     self.assertTrue(exclude_payloads)
-                    self.assertEqual(Path(source, PAYLOAD_NAME, "token").read_bytes(), b"A" * 40)
+                    if outcome == "success":
+                        self.assertEqual(Path(source, PAYLOAD_NAME, "token").read_bytes(), b"A" * 40)
                     arguments = json.loads(Path(source, setup_common.REMOTE_ARGS_FILENAME).read_text())
-                    self.assertIn("--ci-registration-payload", arguments)
+                    self.assertEqual("--ci-registration-payload" in arguments, outcome == "success")
                     self.assertNotIn("--ci-register-with-gh", arguments)
                     self.assertNotIn("A" * 40, str(arguments))
                     return b"runtime"
 
                 with (patch.object(setup_common.tempfile, "mkdtemp", return_value=str(build)),
                       patch.object(setup_common, "create_tar_from_dir", side_effect=archive)):
-                    self.assertEqual(setup_common.run_remote_setup(configured), int(outcome != "success"))
+                    self.assertEqual(setup_common.run_remote_setup(configured), 0)
+                    stream.assert_called_once()
                     if outcome != "success":
-                        stream.assert_not_called()
-                        self.assertIn("Error preparing GitHub runner registration:", output.getvalue())
+                        self.assertIn("GitHub runner registration deferred:", output.getvalue())
                         self.assertFalse(configured.ci_registration_payload)
                     else:
-                        stream.assert_called_once()
                         self.assertTrue(configured.ci_registration_payload)
                 self.assertFalse(build.exists())
                 self.assertEqual(errors.getvalue(), "")
@@ -761,8 +749,7 @@ class InstallationTests(unittest.TestCase):
 
     def test_registration_failure_consumes_token_and_leaves_disabled_pending_installation_retryable(self) -> None:
         self.register.side_effect = RuntimeError("registration failed")
-        with self.assertRaisesRegex(RuntimeError, "registration failed"):
-            steps.setup_github_runner(config(ci_registration_payload=True))
+        steps.setup_github_runner(config(ci_registration_payload=True))
         self.assertFalse(self.token.exists())
         self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "pending")
         self.assertTrue(Path(steps.APP, "bin/Runner.Worker").is_file())
@@ -800,17 +787,35 @@ class InstallationTests(unittest.TestCase):
             if path.is_file() and not path.is_symlink():
                 self.assertNotIn(b"A" * 40, path.read_bytes(), str(path))
 
-    def test_partial_credentials_are_preserved_for_explicit_recovery(self) -> None:
+    def test_partial_credentials_are_retired_and_registration_can_retry(self) -> None:
         steps.setup_github_runner(config())
         Path(steps.APP, ".credentials").write_text("incomplete")
-        with self.assertRaisesRegex(ValueError, "Partial runner registration"):
-            steps.setup_github_runner(config(ci_registration_payload=True))
-        self.register.assert_not_called()
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        self.register.assert_called_once()
+        retired = list(Path(steps.DATA).glob("retired-registration-*/.credentials"))
+        self.assertEqual(len(retired), 1)
+        self.assertEqual(retired[0].read_text(), "incomplete")
+
+    def test_pending_organization_can_change_to_repository_without_credentials(self) -> None:
+        steps.setup_github_runner(config(ci_repository="", ci_organization="owner", ci_runner_group="CI"))
+        steps.setup_github_runner(config(ci_labels=["new-label"], ci_registration_payload=True))
+        self.assertEqual(self.register.call_args.args[1]["repository"], "owner/repo")
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "registered")
+
+    def test_registered_scope_and_labels_can_be_replaced_or_left_pending(self) -> None:
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        steps.setup_github_runner(config(ci_repository="owner/second", ci_labels=["second"]))
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "pending")
+        self.assertFalse(Path(steps.APP, ".credentials").exists())
+        self.assertEqual(len(list(Path(steps.DATA).glob("retired-registration-*/.credentials"))), 1)
+        self.token.write_bytes(b"A" * 40)
+        self.token.chmod(0o600)
+        steps.setup_github_runner(config(ci_repository="owner/second", ci_labels=["second"], ci_registration_payload=True))
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "registered")
 
     def test_activation_failure_preserves_registration_for_tokenless_service_repair(self) -> None:
         self.units.side_effect = [None, RuntimeError("activation failed")]
-        with self.assertRaisesRegex(RuntimeError, "activation failed"):
-            steps.setup_github_runner(config(ci_registration_payload=True))
+        steps.setup_github_runner(config(ci_registration_payload=True))
         self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "registered")
         self.assertTrue(Path(steps.APP, ".credentials").exists())
         self.units.side_effect = None
@@ -818,14 +823,12 @@ class InstallationTests(unittest.TestCase):
         self.register.assert_called_once()
         self.assertEqual(self.units.call_args.kwargs["activate"], (SERVICE,))
 
-    def test_unusable_token_is_removed_before_host_mutations(self) -> None:
+    def test_unusable_token_is_removed_and_setup_continues_pending(self) -> None:
         self.token.chmod(0o644)
-        with self.assertRaises(ValueError):
-            steps.setup_github_runner(config(ci_registration_payload=True))
+        steps.setup_github_runner(config(ci_registration_payload=True))
         self.assertFalse(self.token.exists())
-        self.assertFalse(Path(steps.DATA).exists())
-        self.run.assert_not_called()
-        self.units.assert_not_called()
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["registration"], "pending")
+        self.register.assert_not_called()
 
     def test_failed_policy_publication_leaves_stopped_runner_for_repair(self) -> None:
         steps.setup_github_runner(config(ci_registration_payload=True))
