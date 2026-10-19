@@ -13,8 +13,11 @@ basaltw setup server_github_runner ci.example.net operator \
   --ci-allowed-user alice --ci-label debian-ci
 ```
 
-For a single repository, replace the organization and group flags with
-`--ci-repository OWNER/REPO`. Repeat `--ci-allowed-user` for each trusted person.
+`--ci-organization` requires a GitHub organization. For a personal account or
+a single repository, replace the organization and group flags with
+`--ci-repository OWNER/REPO`. GitHub has no personal-account-wide runner scope;
+sharing one registration across repositories requires an organization.
+Repeat `--ci-allowed-user` for each trusted person.
 For organization runners, choose allowed repositories under **Settings →
 Actions → Runner groups → GROUP → Repository access** in GitHub, including
 when using the default group.

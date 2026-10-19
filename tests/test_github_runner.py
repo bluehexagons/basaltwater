@@ -572,28 +572,35 @@ class ControllerCredentialTests(unittest.TestCase):
                 self.assertEqual(list(Path(temporary).iterdir()), [])
 
     def test_gh_denials_explain_scope_permissions_and_environment_token_precedence(self) -> None:
-        for organization, environment in (
-            (False, {}), (True, {}),
-            (True, {"GH_TOKEN": "secret-env", "GITHUB_TOKEN": "secret-other"}),
-            (True, {"GITHUB_TOKEN": "secret-env"}),
+        for organization, environment, status in (
+            (False, {}, "403"), (True, {}, "403"),
+            (False, {}, "404"), (True, {}, "404"),
+            (True, {"GH_TOKEN": "secret-env", "GITHUB_TOKEN": "secret-other"}, "403"),
+            (True, {"GITHUB_TOKEN": "secret-env"}, "403"),
         ):
             configured = config(ci_register_with_gh=True)
             if organization:
                 configured.ci_repository, configured.ci_organization = "", "owner"
-            with (self.subTest(organization=organization, variables=list(environment)),
+            with (self.subTest(organization=organization, variables=list(environment), status=status),
                   tempfile.TemporaryDirectory() as temporary,
                   patch.dict(os.environ, environment, clear=True),
                   patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
                   patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess(
-                      [], 1, b"secret-output", b"secret-error (HTTP 403)")),
+                      [], 1, b"secret-output", f"secret-error (HTTP {status})".encode())),
                   self.assertRaises(ValueError) as error):
                 credentials.prepare_registration_payload(configured, str(Path(temporary, PAYLOAD_NAME)))
             message = str(error.exception)
-            self.assertIn("(HTTP 403)", message)
+            self.assertIn(f"(HTTP {status})", message)
             self.assertIn("organization owner" if organization else "repository owner/repo", message)
             self.assertIn("gh auth status --hostname github.com", message)
             self.assertIn("--ci-registration-token-file PATH", message)
             self.assertNotIn("secret-", message)
+            if organization and status == "404":
+                self.assertIn("--ci-repository owner/REPO", message)
+                self.assertIn("remove --ci-runner-group", message)
+                self.assertIn("If this is an organization", message)
+            else:
+                self.assertNotIn("personal account", message)
             if environment:
                 variable = "GH_TOKEN" if "GH_TOKEN" in environment else "GITHUB_TOKEN"
                 self.assertIn(f"{variable} overrides gh's saved login", message)

@@ -36,6 +36,12 @@ def _token_from_gh(config: SetupConfig) -> bytes:
         if config.ci_organization:
             target = f"organization {config.ci_organization}"
             access = "Organization runner-management access is required; OAuth/classic tokens need admin:org."
+            if match and match[1] == b"404":
+                access = (
+                    "--ci-organization requires a GitHub organization. For a personal account, use "
+                    f"--ci-repository {config.ci_organization}/REPO and remove --ci-runner-group.\n"
+                    f"  If this is an organization, verify its name and permissions. {access}"
+                )
             scope_hint = "admin:org"
         else:
             target = f"repository {config.ci_repository}"
