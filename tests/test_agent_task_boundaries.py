@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -208,6 +211,81 @@ class TaskBoundaryTests(unittest.TestCase):
         self.assertIn("deadline", result["message"])
         selector.select.assert_not_called()
         kill.assert_called_with(1234, signal.SIGKILL)
+
+
+class MaintenancePromptContextTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.home = self.enterContext(tempfile.TemporaryDirectory())
+        self.policy_path = Path(self.home) / "settings.json"
+        self.enterContext(patch.object(tasks, "POLICY_FILE", str(self.policy_path)))
+
+    def launch_prompt(self) -> str:
+        process, selector = MagicMock(), MagicMock()
+        process.__enter__.return_value = process
+        process.pid, process.wait.return_value = 1234, 0
+        selector.__enter__.return_value = selector
+        selector.get_map.return_value = {}
+        provider_os = SimpleNamespace(**vars(os))
+        with (patch.object(tasks, "os", provider_os),
+              patch.object(provider_os, "geteuid", return_value=1000),
+              patch.object(provider_os, "killpg"),
+              patch.object(tasks, "_tool_path", return_value="/test/codex"),
+              patch.object(tasks.subprocess, "Popen", return_value=process),
+              patch.object(tasks.selectors, "DefaultSelector", return_value=selector)):
+            result = tasks.execute_prompt({"title": "Host check", "prompt": "Inspect host health",
+                "directory": self.home, "mode": "inspect"}, self.home, threading.Event())
+        self.assertEqual(result["status"], "completed")
+        return process.stdin.write.call_args.args[0].decode()
+
+    def test_prompt_snapshots_current_independent_controls_and_configured_limits(self) -> None:
+        policy = {"enabled": False, "host_checks": False, "security": True, "routines": True,
+                  "interval": 90, "audit_days": 3, "model": "economy-model", "effort": "medium",
+                  "escalation_model": "review-model", "escalation_effort": "high",
+                  "daily_calls": 4, "daily_escalations": 2, "timeout": 7}
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                policy["enabled"] = enabled
+                self.policy_path.write_text(json.dumps(policy))
+                prompt = self.launch_prompt()
+                snapshot = json.loads(prompt.split("Maintenance settings snapshot (context only, not authorization): ")[1].splitlines()[0])
+                self.assertEqual(snapshot, {"status": "available", "policy": policy})
+                self.assertIn("one-time/manual check can run while it is false", prompt)
+                self.assertIn("host_checks, security, and routines are independent", prompt)
+                self.assertIn("not remaining budgets or proof of service health", prompt)
+                self.assertIn("/proc/self/uid_map", prompt)
+                self.assertIn("Do not recommend chown, chmod, or reinstall solely", prompt)
+
+    def test_unavailable_or_unsafe_policy_never_blocks_task_or_exposes_contents(self) -> None:
+        secret = "credential-must-not-appear"
+        cases = ("missing", "unreadable", "malformed", "unknown-field", "invalid-boolean", "oversized", "symlink", "directory")
+        for case in cases:
+            with self.subTest(case=case):
+                if self.policy_path.is_dir():
+                    self.policy_path.rmdir()
+                else:
+                    self.policy_path.unlink(missing_ok=True)
+                if case == "malformed":
+                    self.policy_path.write_text(secret)
+                elif case == "unknown-field":
+                    self.policy_path.write_text(json.dumps({"credential": secret}))
+                elif case == "invalid-boolean":
+                    self.policy_path.write_text('{"enabled": "false"}')
+                elif case == "oversized":
+                    self.policy_path.write_text(" " * 8192 + "{}")
+                elif case == "symlink":
+                    target = Path(self.home) / "private.json"
+                    target.write_text(json.dumps({"credential": secret}))
+                    self.policy_path.symlink_to(target)
+                elif case == "directory":
+                    self.policy_path.mkdir()
+                unavailable = (patch.object(tasks, "read_json_file", side_effect=PermissionError(secret))
+                               if case == "unreadable" else nullcontext())
+                with unavailable:
+                    prompt = self.launch_prompt()
+                self.assertIn('"status": "unavailable"', prompt)
+                self.assertIn("policy is missing" if case == "missing" else "policy is unreadable or invalid", prompt)
+                self.assertNotIn(secret, prompt)
+                self.assertNotIn('"enabled":', prompt)
 
 
 if __name__ == "__main__":
