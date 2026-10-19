@@ -2366,7 +2366,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values = urllib.parse.parse_qs(
                 self.rfile.read(length).decode("utf-8", errors="strict"),
                 keep_blank_values=True,
-                max_num_fields=40 if path == "/actions/agent-task/save" else 18,
+                max_num_fields=48 if path == "/actions/agent-task/save" else 18,
             )
         except (UnicodeDecodeError, ValueError):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid request\n", "text/plain")
@@ -2502,7 +2502,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         allowed = {
             "/actions/agent-tool/prepare": {"csrf", *FORM_FIELDS},
             "/actions/agent-diagnostics": {"csrf"},
-            "/actions/agent-task": {"csrf", "id", "action"},
+            "/actions/agent-task": {"csrf", "id", "action", "run_id"},
             "/actions/agent-task/save": {
                 "csrf", "id", "title", "prompt", "directory", "mode", "interval", "model",
                 "custom_model", "network", "submit", "effort", "timeout_minutes",
@@ -2511,6 +2511,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "persistence", "workspace", "continue_until_done", "completion_criteria",
                 "continuation_minutes", "max_runs", "deadline_at", "token_budget", "daily_limit",
                 "backoff_minutes", "history_limit", "start_at",
+                "writable_directories", "operator_requirements", "service_restarts",
+                "source_task_id", "source_run_id", "keep",
             },
         }[path]
         if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):
@@ -2541,26 +2543,57 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             submitted["session_history"] = values.get("session_history") == ["1"]
             submitted["temporary_files"] = values.get("temporary_files") == ["1"]
             submitted["continue_until_done"] = values.get("continue_until_done") == ["1"]
+            submitted["keep"] = values.get("keep") == ["1"]
+            for field in ("writable_directories", "operator_requirements", "service_restarts"):
+                if field in values:
+                    submitted[field] = [line.strip() for line in values[field][0].splitlines() if line.strip()]
             try:
                 if path == "/actions/agent-task":
-                    manager.action(values.get("id", [""])[0], values.get("action", [""])[0])
+                    identifier = values.get("id", [""])[0]
+                    action = values.get("action", [""])[0]
+                    if action in {"follow-up-approve", "follow-up-block", "follow-up-privilege"}:
+                        from lib.agent_task_followups import decide_follow_up
+                        decision = {
+                            "follow-up-approve": "approve",
+                            "follow-up-block": "block",
+                            "follow-up-privilege": "request-privilege",
+                        }[action]
+                        decide_follow_up(manager, identifier, values.get("run_id", [""])[0], decision)
+                    else:
+                        manager.action(identifier, action)
                 else:
                     if submitted.get("workspace") == "worktree" and "git" not in self.state.features().tools:
                         raise ValueError("Git must be selected and installed to use a task worktree")
-                    for option in ("network", "session_history", "temporary_files", "continue_until_done"):
+                    for option in ("network", "session_history", "temporary_files", "continue_until_done", "keep"):
                         if option in values and values[option] != ["1"]:
                             raise ValueError("Invalid checkbox option")
                     if submitted.get("custom_model"):
                         submitted["model"] = submitted["custom_model"]
                     identifier = values.get("id", [""])[0]
                     choice = values.get("submit", [""])[0]
-                    if identifier:
+                    source_task_id = submitted.get("source_task_id", "").strip()
+                    source_run_id = submitted.get("source_run_id", "").strip()
+                    if bool(source_task_id) != bool(source_run_id):
+                        raise ValueError("Follow-up source task and run are both required")
+                    if source_task_id:
+                        if identifier or choice not in {"run", "draft"}:
+                            raise ValueError("Select Start task or Save draft for a follow-up")
+                        from lib.agent_task_followups import decide_follow_up
+                        decide_follow_up(
+                            manager, source_task_id, source_run_id, "approve",
+                            settings=submitted, run_now=choice == "run", draft=choice == "draft",
+                        )
+                    elif submitted.get("service_restarts"):
+                        raise ValueError("Service restart prerequisites are only available for follow-up tasks")
+                    elif identifier:
                         if choice != "save":
                             raise ValueError("Select Save changes for an existing task")
+                        submitted.pop("service_restarts", None)
                         manager.update(identifier, submitted)
                     else:
                         if choice not in {"run", "schedule", "draft"}:
                             raise ValueError("Select Start task, Create schedule, or Save draft")
+                        submitted.pop("service_restarts", None)
                         manager.create(submitted, run_now=choice == "run", draft=choice == "draft")
             except ValueError as exc:
                 self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_agents(
