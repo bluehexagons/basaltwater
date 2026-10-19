@@ -157,8 +157,8 @@ class PanelDevelopmentTests(unittest.TestCase):
 
     def test_runner_registration_is_simulated_retryable_and_discards_tokens(self) -> None:
         host_registration = self.stack.enter_context(patch.object(panel, "submit_registration", side_effect=AssertionError("Unexpected host socket")))
-        self.stack.enter_context(patch.object(panel.os, "geteuid", return_value=1000))
         self.serve("empty")
+        self.stack.enter_context(patch.object(panel.os, "geteuid", return_value=1000))
         # Simulate the trusted HTTPS proxy boundary without running TLS in this unit fixture.
         self.settings["https"] = True
         self.state.manifest["panel_url"] = "https://127.0.0.1/"
@@ -198,8 +198,10 @@ class PanelDevelopmentTests(unittest.TestCase):
 
     def test_personal_repositories_register_in_sequence_without_host_operations(self) -> None:
         host = self.stack.enter_context(patch.object(panel, "submit_registration", side_effect=AssertionError("Host socket")))
-        self.stack.enter_context(patch.object(panel.os, "geteuid", return_value=1000))
         self.serve("full")
+        # Seed ownership-checked inbox/task files as the real test account;
+        # only the subsequent HTTPS registration flow needs a simulated UID.
+        self.stack.enter_context(patch.object(panel.os, "geteuid", return_value=1000))
         self.settings["https"] = True
         self.state.manifest["panel_url"] = "https://127.0.0.1/"
         fields = {"csrf": self.state.csrf_token, "token": "sample-runner-registration-token"}
