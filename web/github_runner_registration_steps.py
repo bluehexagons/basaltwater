@@ -7,6 +7,7 @@ import pwd
 from lib.github_runner_config import APP, DATA
 from lib.github_runner_registration import SOCKET
 from lib.unit_transaction import remove_units, replace_units, snapshot_unit_file
+from web.github_runner_steps import runner_lock
 
 
 SOCKET_UNIT = "basaltwater-github-runner-registration.socket"
@@ -70,10 +71,12 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 """
-    replace_units({SOCKET_UNIT: socket_unit, SERVICE_UNIT: service_unit}, activate=(SOCKET_UNIT,))
+    with runner_lock():
+        replace_units({SOCKET_UNIT: socket_unit, SERVICE_UNIT: service_unit}, activate=(SOCKET_UNIT,))
 
 
 def remove_registration_service() -> None:
     preflight_registration_units()
     if any(snapshot_unit_file("/etc/systemd/system/" + unit) for unit in (SOCKET_UNIT, SERVICE_UNIT)):
-        remove_units((SOCKET_UNIT, SERVICE_UNIT))
+        with runner_lock():
+            remove_units((SOCKET_UNIT, SERVICE_UNIT))

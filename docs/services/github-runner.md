@@ -181,6 +181,8 @@ memory, core dumps and helper output are disabled, and the helper returns only
 a fixed result. Tokens never enter the durable approval broker, panel state,
 saved configuration, URLs, logs or response pages. Removing the panel or
 configuring it without HTTPS removes the helper socket and service template.
+Setup and socket removal fail fast while registration holds the runner lock;
+refresh status and retry after that attempt finishes.
 Replacement, allowlist editing, queue and lifecycle controls remain deferred.
 
 ## Updates, deregistration and recovery

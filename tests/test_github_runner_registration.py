@@ -149,6 +149,24 @@ class PrivilegedOperationTests(unittest.TestCase):
 
 
 class RegistrationUnitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch.object(units, "runner_lock", side_effect=nullcontext))
+
+    def test_socket_changes_leave_an_active_registration_alone(self) -> None:
+        with (patch.object(units, "runner_lock", side_effect=RuntimeError("registration is running")),
+              patch.object(units, "snapshot_unit_file", return_value=None),
+              patch.object(units, "replace_units") as replace):
+            with self.assertRaisesRegex(RuntimeError, "registration is running"):
+                units.configure_registration_service(SimpleNamespace(pw_uid=1000, pw_gid=1000))
+        replace.assert_not_called()
+        with (patch.object(units, "runner_lock", side_effect=RuntimeError("registration is running")),
+              patch.object(units, "preflight_registration_units"),
+              patch.object(units, "snapshot_unit_file", return_value={"content": "managed"}),
+              patch.object(units, "remove_units") as remove):
+            with self.assertRaisesRegex(RuntimeError, "registration is running"):
+                units.remove_registration_service()
+        remove.assert_not_called()
+
     def test_panel_setup_installs_handoff_only_for_https_runner_profile(self) -> None:
         account = SimpleNamespace(pw_name="operator", pw_uid=1000, pw_gid=1000, pw_dir="/home/operator")
         for target, tls, expected in (("server_github_runner", True, True), ("server_github_runner", False, False),
