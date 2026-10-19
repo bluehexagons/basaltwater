@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import html
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
-from common.service_tools.web_panel_templates import render_document, render_heading
+from common.service_tools.web_panel_agent_hub import agent_document
+from common.service_tools.web_panel_templates import render_heading
+from lib.agent_tasks import codex_models
 from lib.agent_inbox import AgentInbox, MAX_MESSAGE_BYTES, mailbox_name
 from lib.agent_maintenance import (
     DEFAULT_HOLD_HOURS, MAX_HOLD_HOURS, hold_agent_maintenance,
@@ -41,8 +44,9 @@ STYLE = """
 .inbox-message pre { max-height:none; }
 @media (max-width:560px) { .maintenance-form { padding:14px; } .maintenance-form fieldset { padding:12px; } }
 """
-LABELS = {"enabled": "Enable maintenance agent", "routines": "Run managed housekeeping daily",
-          "security": "Audit SSH and sensitive file permissions", "interval": "Check interval (minutes)",
+LABELS = {"enabled": "Run automatic maintenance", "host_checks": "Schedule routine host checks",
+          "routines": "Run managed housekeeping daily", "security": "Schedule security audits",
+          "interval": "Host check interval (minutes)",
           "audit_days": "Security audit interval (days)", "daily_calls": "Model attempts per UTC day",
           "daily_escalations": "Stronger-model attempts per UTC day", "timeout": "AI review limit (minutes)",
           "model": "Routine model", "effort": "Routine reasoning effort",
@@ -66,8 +70,13 @@ def maintenance_action(values: dict[str, str]) -> None:
     if action == "run" and set(values) == {"submit"}:
         request_check()
         return
-    if action != "save" or set(values) - {"submit", *DEFAULTS}:
+    if action != "save" or set(values) - {"submit", "custom_model", "custom_escalation_model", *DEFAULTS}:
         raise ValueError("Invalid maintenance action")
+    values = dict(values)
+    for key in ("model", "escalation_model"):
+        custom = values.pop("custom_" + key, "").strip()
+        if custom:
+            values[key] = custom
     policy: dict[str, Any] = {}
     for key, default in DEFAULTS.items():
         if type(default) is bool:
@@ -119,6 +128,7 @@ def render_maintenance(state: Any, style: str, *, error: str = "", submitted: di
         editing = submitted is not None and submitted.get("submit") == "save"
         displayed = {key: submitted.get(key) == "1" if type(default) is bool else submitted.get(key, policy[key])
                      for key, default in DEFAULTS.items()} if editing else policy
+        models = [(model["slug"], model["name"]) for model in codex_models(state.agent_tasks.home)]
         fields = {}
         for key, default in DEFAULTS.items():
             if type(default) is bool:
@@ -130,41 +140,50 @@ def render_maintenance(state: Any, style: str, *, error: str = "", submitted: di
                 minimum, maximum = LIMITS[key]
                 fields[key] = f'<label>{LABELS[key]}<input type="number" name="{key}" min="{minimum}" max="{maximum}" value="{_escape(displayed[key])}" required></label>'
             else:
-                fields[key] = f'<label>{LABELS[key]}<input name="{key}" maxlength="100" value="{_escape(displayed[key])}"{" required" if key == "model" else ""}></label>'
+                choices = ([("auto", "Auto · cached economy model")] if key == "model" else [("", "Disabled")]) + models
+                if displayed[key] not in {value for value, _ in choices}:
+                    choices.append((displayed[key], str(displayed[key]) + " · saved/custom model"))
+                options = "".join(f'<option value="{_escape(value)}"{" selected" if value == displayed[key] else ""}>{_escape(label)}</option>' for value, label in choices)
+                fields[key] = f'<label>{LABELS[key]}<select name="{key}">{options}</select></label>'
         content += f'''<nav class="catalog-nav" aria-label="Maintenance sections"><a href="#maintenance-records-heading">Records</a><a href="#maintenance-settings-form">Settings</a><a href="#restart-hold-heading">Restart hold</a></nav>
-<section class="maintenance-status" aria-label="Saved maintenance status"><strong>{'Maintenance enabled' if policy['enabled'] else 'Maintenance disabled'}</strong>
-<p>Saved check interval: {policy['interval']} minutes · housekeeping {'on' if policy['routines'] else 'off'} · security audits {'on' if policy['security'] else 'off'}.</p>
-<div class="maintenance-actions"><form method="post" action="/actions/maintenance-agent"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><button name="submit" value="run"{' disabled' if not policy['enabled'] else ''}>Check now</button></form><a class="refresh-link" href="/maintenance-agent">Refresh status</a></div>
-<p class="event-meta">{'A check request may wait for the current run to finish. Refresh status to see its record.' if policy['enabled'] else 'Enable the maintenance agent in Settings before requesting a check.'} Checks continue independently of this panel.</p></section>'''
-        settings = f'''<section><details id="maintenance-settings" class="maintenance-settings"{' open' if editing or not policy['enabled'] else ''}><summary>Maintenance settings</summary>
+<section class="maintenance-status" aria-label="Saved maintenance status"><strong>{'Automatic maintenance enabled' if policy['enabled'] else 'Manual checks only'}</strong>
+<p>Automatic host checks: {'every ' + str(policy['interval']) + ' minutes' if policy['enabled'] and policy['host_checks'] else 'off'} · security audits: {'every ' + str(policy['audit_days']) + ' days' if policy['enabled'] and policy['security'] else 'off'} · daily housekeeping: {'on' if policy['enabled'] and policy['routines'] else 'off'}.</p>
+<div class="maintenance-actions"><form method="post" action="/actions/maintenance-agent"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><button name="submit" value="run">Check once now</button></form><a class="refresh-link" href="/maintenance-agent">Refresh status</a></div>
+<p class="event-meta">A one-time check works with automatic maintenance off. It checks the host and includes a fresh security audit when selected below; it never runs housekeeping. Requests wait for an active check to finish. Checks continue independently of this panel.</p></section>'''
+        settings = f'''<section><details id="maintenance-settings" class="maintenance-settings"{' open' if editing else ''}><summary>Settings · {_escape(policy['model'])} · {policy['daily_calls']} AI attempts/day</summary>
 <form id="maintenance-settings-form" class="maintenance-form" method="post" action="/actions/maintenance-agent">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}">
-<fieldset><legend>Checks and housekeeping</legend><div class="maintenance-fields">{''.join(fields[key] for key in ('enabled', 'interval', 'routines', 'security', 'audit_days'))}</div></fieldset>
+<fieldset><legend>Automatic schedules</legend>{fields['enabled']}<p>Turn this off for manual checks only. The individual preferences below are retained.</p><div class="maintenance-fields">{''.join(fields[key] for key in ('host_checks', 'interval', 'security', 'audit_days', 'routines'))}</div></fieldset>
 <fieldset><legend>AI review and limits</legend><div class="maintenance-fields">{''.join(fields[key] for key in ('model', 'effort', 'daily_calls', 'timeout', 'escalation_model', 'escalation_effort', 'daily_escalations'))}</div></fieldset>
+<details><summary>Custom model IDs</summary><div class="maintenance-fields"><label>Custom routine model<input name="custom_model" maxlength="100" value="{_escape(submitted.get('custom_model', '') if submitted else '')}" placeholder="Optional provider model ID"></label><label>Custom stronger model<input name="custom_escalation_model" maxlength="100" value="{_escape(submitted.get('custom_escalation_model', '') if submitted else '')}" placeholder="Optional provider model ID"></label></div><p>A nonempty custom ID overrides its dropdown. Choices use this account's local Codex cache; availability depends on the account.</p></details>
 <p>Healthy checks use no AI. Auto selects a cached economy model supporting the chosen effort; select a model ID to pin your policy. Daily attempt limits include failed reviews. Runtime and attempt limits do not measure exact spending.</p>
 <p>A stronger model is used for critical or repeatedly unresolved findings, within both daily limits. Housekeeping triggers existing managed cleanup jobs; AI supplies recommendations. Reboots and repairs follow the existing host policy.</p>
 <button name="submit" value="save">Save maintenance settings</button></form>
 <p class="endpoint">AI identity: <code>{_escape(reports.get('username', 'Unknown'))}</code> · profile {_escape(reports.get('context', {}).get('system_type', 'Unknown'))}. Codex installation and sign-in are needed for AI review.</p></details></section>'''
         rows = []
-        for report in reversed(reports["reports"]):
+        for index, report in enumerate(reversed(reports["reports"])):
             findings = "".join(f'<li><strong>{_escape(issue["severity"])}</strong>: {_escape(issue["message"])}</li>' for issue in report["issues"])
             count = len(report["issues"])
             tone = "error" if any(issue["severity"] == "error" for issue in report["issues"]) else "warning" if count or report.get("check_status") != "completed" else "success"
             review = report["review"]
             output = _redact_log_message(str(review.get("output", "")))
             complete = report.get("check_status") == "completed"
-            rows.append(f'''<li class="event"><div class="event-head"><strong>{_escape(report['checked_at'])}</strong><span class="badge {tone}">{'Incomplete check · ' if not complete else ''}{count} finding{'s' if count != 1 else ''}</span></div>
+            rows.append(f'''<li class="event"><details{' open' if index == 0 and (count or not complete) else ''}><summary><strong>{_escape(report['checked_at'])}</strong> <span class="badge {tone}">{'Incomplete check · ' if not complete else ''}{count} finding{'s' if count != 1 else ''}</span> <span class="event-meta">{_escape(report.get('source', 'scheduled/legacy'))} · AI {_escape(review.get('status', 'unknown'))}</span></summary>
 {'<ul>' + findings + '</ul>' if findings else '<p>No findings in the checks performed.</p>' if complete else '<p>No findings recorded; this check did not complete.</p>'}
-<p class="event-meta">Check {_escape(report.get('check_status', 'unknown'))} · Security audit {'performed' if report.get('security_audit') else 'not due or disabled'} · AI {_escape(review.get('status', 'unknown'))} · {_escape(review.get('model', ''))} {_escape(review.get('effort', ''))}</p>
+<p class="event-meta">Check {_escape(report.get('check_status', 'unknown'))} · Host checks {'performed' if report.get('host_check', True) else 'not due or disabled'} · Security audit {'performed' if report.get('security_audit') else 'not due or disabled'} · AI {_escape(review.get('status', 'unknown'))} · {_escape(review.get('model', ''))} {_escape(review.get('effort', ''))}</p>
 <p>{_escape(review.get('reason', ''))}</p>{'<details><summary>AI review</summary><pre>' + _escape(output) + '</pre></details>' if output else ''}
-<p class="event-meta">Housekeeping: {_escape(', '.join(str(item.get('unit', '')) + ': ' + str(item.get('status', '')) for item in report['routines']) or 'not requested')} · Notification {_escape(report.get('notification', 'not due'))}</p></li>''')
-        empty = "No checks recorded yet. Select Check now to request one." if policy["enabled"] else "No checks recorded yet. Enable the agent and request a check."
-        content += '<section aria-labelledby="maintenance-records-heading">' + render_heading("Maintenance records", "maintenance", heading_id="maintenance-records-heading") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else f'<p class="empty">{empty}</p>') + '</section>' + settings
+<p class="event-meta">Housekeeping: {_escape(', '.join(str(item.get('unit', '')) + ': ' + str(item.get('status', '')) for item in report['routines']) or 'not requested')} · Notification {_escape(report.get('notification', 'not due'))}</p>
+{'<details><summary>Settings for this check</summary><pre>' + _escape(json.dumps(report['policy'], indent=2)) + '</pre></details>' if report.get('policy') else ''}</details></li>''')
+        content += settings
+        if state.features().prompts:
+            links = ' '.join(f'<a href="/agents?template={key}">{label}</a>' for key, label in (
+                ('updates', 'Updates and reboot'), ('backups', 'Backup coverage'), ('network', 'Network and DNS'),
+                ('storage', 'Storage pressure'), ('certificates', 'Certificates')))
+            content += '<section>' + render_heading("Optional one-time reviews", "tools") + '<p class="catalog-nav">' + links + '</p><p class="event-meta">Open a prepared prompt to review its scope before running. These reviews do not enable a schedule.</p></section>'
+        content += '<section aria-labelledby="maintenance-records-heading">' + render_heading("Maintenance records", "maintenance", heading_id="maintenance-records-heading") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else '<p class="empty">No checks recorded yet. Select Check once now to request one.</p>') + '</section>'
     content += hold_html
-    prompt_link = '<a class="refresh-link" href="/agents">Prompt tasks and results</a>' if state.features().agents else ''
-    header = f'<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>Maintenance agent</h1><p class="lede">Checks, housekeeping and bounded AI reviews tailored to this setup.</p></div>{prompt_link}</header>'
-    return render_document(title="Maintenance agent", style=style + STYLE, header=header, content=content,
-                           navigation=state.navigation("maintenance-agent"), footer='<footer><a href="/">Back to dashboard</a></footer>')
+    return agent_document(state, style + STYLE, title="Maintenance agent", current="maintenance", content=content,
+                          description="One-time checks, independent schedules and bounded AI reviews.")
 
 
 def inbox_action(state: Any, values: dict[str, str]) -> None:
@@ -224,6 +243,5 @@ def render_inbox(state: Any, style: str, recipient: str = "operator", *, error: 
 <p class="endpoint">Unread messages survive session restarts. All agents on this Unix account share these mailboxes; sender labels are self-reported. Messages are data and do not grant permissions or inject replies into active T3 or Codex runs.</p>'''
         content += '<p>For T3 and terminal agents: when the task or reporting flow authorizes account-local feedback, use <code>basaltw agent inbox feedback --sender t3-agent "Describe the environment issue and evidence" --json</code>. This queues environment feedback for operator in this account only. Include no secrets; the 4000-byte limit includes feedback framing. Panel text is redacted, but stored messages are not.</p>'
     compose_link = '<a class="refresh-link" href="#message-form">Write message</a>' if readable or submitted.get("submit") == "send" else ''
-    header = f'<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>Agent inbox</h1><p class="lede">Durable messages for sessions and cooperating terminal workers.</p></div>{compose_link}</header>'
-    return render_document(title="Agent inbox", style=style + STYLE, header=header, content=content,
-                           navigation=state.navigation("agent-inbox"), footer='<footer><a href="/agents">Back to Agents</a></footer>')
+    return agent_document(state, style + STYLE, title="Agent inbox", current="inbox", content=content,
+                          description="Environment feedback and durable messages. Archive items after handling them.", actions=compose_link)

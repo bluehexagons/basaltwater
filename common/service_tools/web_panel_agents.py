@@ -14,7 +14,8 @@ from typing import Any
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
 from common.service_tools.web_panel_features import PanelFeatures
-from common.service_tools.web_panel_templates import render_document, render_heading
+from common.service_tools.web_panel_templates import render_heading
+from common.service_tools.web_panel_agent_hub import agent_document
 from lib.agent_cli import _tool_path, inspect_agent_tools, inspect_t3code
 from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
@@ -228,9 +229,6 @@ _STYLE = """
 .agent-buttons button { min-height: 44px; font-size: .8rem; }
 .agent-buttons a { color: var(--accent); min-height: 44px; display: inline-flex; align-items: center; }
 .agent-secondary { background: var(--accent-soft); color: var(--accent); }
-.agent-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 24px; }
-.agent-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 14px; color: var(--accent); border-radius: 8px; text-underline-offset: 4px; }
-.agent-nav a[aria-current=page] { background: var(--workspace-soft); color: var(--workspace); font-weight: 700; }
 .agent-primary { background: var(--accent); color: var(--panel) !important; text-decoration: none; }
 .agent-primary:hover, header .agent-primary:hover { background: var(--text); }
 .agent-task-list { display: grid; gap: 12px; list-style: none; padding: 0; margin: 12px 0; }
@@ -429,7 +427,7 @@ def parse_agent_query(raw: str) -> dict[str, str]:
     query = urllib.parse.parse_qs(raw, keep_blank_values=True, max_num_fields=1)
     if not query:
         return {}
-    if set(query) == {"view"} and query["view"][0] in {"new", "templates"}:
+    if set(query) == {"view"} and query["view"][0] in {"new", "templates", "dashboard", "tasks", "history", "diagnostics"}:
         return {"view": query["view"][0]}
     if set(query) == {"template"} and query["template"][0] in PROMPT_TEMPLATES:
         return {"template": query["template"][0]}
@@ -555,14 +553,10 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     """Render forms, diagnostics, schedules, and history without running agents."""
 
     features = state.features()
-    if not features.prompts:
-        return render_document(
-            title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
-            header=f'<header><p class="eyebrow">Basaltwater web panel</p><h1>Agents</h1><p class="lede">Installed agent runtimes on <code>{_escape(state.manifest["host"])}</code>.</p></header>',
-            content='<section>' + render_heading("Runtime diagnostics", "diagnostics") + _render_diagnostics(state.agent_diagnostics.snapshot(), state.csrf_token) + _render_t3_update(state) + '</section>',
-            navigation=state.navigation("agents"),
-            footer='<footer><a href="/">Back to dashboard</a></footer>',
-        )
+    if query.get("view") == "diagnostics" or not features.prompts and query:
+        return agent_document(state, style + _STYLE, title="Agent readiness", current="diagnostics",
+            description="Inspect installed runtimes, sign-in readiness, and maintenance holds.",
+            content=_render_diagnostics(state.agent_diagnostics.snapshot(), state.csrf_token) + _render_t3_update(state))
     manager: AgentTasks = state.agent_tasks
     snapshot = {"tasks": [], "runs": []}
     storage_error = False
@@ -580,10 +574,12 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             # Keep recent evidence usable if an older receipt is unavailable.
             pending_by_task[task["id"]] = [run for run in runs if run["task"]["id"] == task["id"]
                 and run.get("follow_up") and _follow_up_status(manager, run)["status"] == "pending"]
+    if (not query or query.get("view") == "dashboard") and submitted is None and not prepared:
+        return _render_dashboard(state, style, tasks, runs, pending_by_task, error=error)
+    history_view = query.get("view") == "history" or bool(set(query) & {"run", "receipt", "context"})
     if "run" in query and not any(run["id"] == query["run"] for run in runs):
         error = error or "This run is no longer in retained history. Open a recent run below."
     now = time.time()
-    diagnostics = state.agent_diagnostics.snapshot()
     account_ready = manager.available()
     ready = account_ready and not manager.error and not storage_error
     codex_installed = bool(_tool_path("codex", manager.home))
@@ -743,7 +739,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <p class="agent-help">A goal needs completion criteria and at least one total limit: attempts, deadline, or tokens. A Once goal uses its continuation interval; other goals use their repeat cadence. Zero disables an individual usage limit. Token usage is checked after a run and can exceed the budget during that run; runtime and deadline caps stop active processes. Attempts include failed and interrupted runs. Retention applies to generated receipts and logs, preserving workspace files.</p></details>
 <label class="agent-check"><input type="checkbox" name="keep" value="1"{' checked' if defaults['keep'] else ''}><span>Keep this one-time task in saved tasks after it finishes.</span></label>
 <div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Start task</button>' + ('' if defaults['source_task_id'] else '<button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>') + '<button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
-<a href="/agents">Back to tasks</a></div>
+<a href="/agents?view=tasks">Back to tasks</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Start task runs now and activates the selected repetition, event trigger, or goal continuation. Create schedule uses the first-run time or waits one interval. Save draft stays inactive. Saving changes preserves an existing schedule's active or paused state.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
     helper = f'''<aside class="agent-panel agent-helper"><details><summary>Start from a template</summary><p class="agent-help">Selecting a template replaces this form. Review its prompt, directory, permissions, and repetition before submitting.</p>{template_links}</details></aside>'''
@@ -807,7 +803,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     elif completed_rows:
         schedules += '<details class="agent-completed"><summary>Completed one-time tasks · ' + str(len(completed_rows)) + '</summary><ul class="agent-task-list">' + ''.join(completed_rows) + '</ul></details>'
     history = []
-    for run in reversed(runs):
+    for run in reversed(runs) if history_view else []:
         tone = "error" if run["status"] in {"failed", "interrupted"} or run.get("outcome") in {"blocked", "failed"} else "success" if run["status"] == "completed" else "warning"
         elapsed = _run_seconds(run, now)
         timing = f'{_duration(elapsed)} elapsed · {_duration(max(0, run["task"]["timeout_minutes"] * 60 - elapsed))} remaining at page load' if run["status"] == "running" else f'{_duration(elapsed)} duration'
@@ -824,23 +820,9 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 {_render_follow_up(run, manager, state.csrf_token)}
 {('<p class="agent-help">Environment feedback: ' + _escape(_redact_log_message(run['environment_feedback'])) + ' · <a href="/agent-inbox">Operator inbox</a></p>') if run.get('environment_feedback') else ''}
 <details><summary>Prompt used for this run</summary><pre>{_escape(run['task']['prompt'])}</pre></details></details>''')
-    diagnostics_html = _render_diagnostics(diagnostics, state.csrf_token)
-    t3_html = _render_t3_update(state)
     workbench = f'<div class="agent-columns">{helper}{composer}</div>'
-    if not composing:
-        workbench = "" if storage_error else f'<details><summary>Create a prompt task</summary>{workbench}</details>'
     task_count = "Unavailable" if storage_error else f"{len(tasks)} saved · {sum(t['enabled'] and bool(repeat_seconds(t)) for t in tasks)} repeating · {sum(t['queued'] for t in tasks)} queued{_other_schedules(tasks)}"
     task_section = f'''<section aria-labelledby="agent-tasks-heading"><div class="section-heading">{render_heading("Prompt tasks", "agents", heading_id="agent-tasks-heading")}<span class="count">{task_count}</span></div>{schedules}</section>'''
-    header = f'''<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>Agents</h1><p class="lede">Run tasks, manage schedules, and review results on <code>{_escape(state.manifest['host'])}</code>.</p></div><a class="refresh-link agent-primary" href="/agents?view=new">New task</a></header>'''
-    navigation = '<nav class="agent-nav" aria-label="Agent workflow">' + ''.join(
-        f'<a href="{href}"' + (' aria-current="page"' if current else '') + f'>{label}</a>'
-        for href, label, current in (
-            ('/agents', 'Tasks', not composing and query.get('view') != 'templates'),
-            ('/agents?view=templates', 'Templates', query.get('view') == 'templates'),
-            ('/agent-tools', 'Guided tasks', False),
-            ('/agents#agent-history-heading', 'Run history', False),
-            ('/agents#agent-diagnostics-heading', 'Setup and diagnostics', False),
-        )) + '</nav>'
     active = next((run for run in runs if run["status"] == "running"), None)
     active_html = ""
     if active:
@@ -855,22 +837,94 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     context_html = _render_task_context(manager, query["context"]) if "context" in query else ""
     if "receipt" in query:
         context_html += _render_receipt(manager, query["receipt"], state.csrf_token)
-    refresh_href = "/agents"
+    refresh_href = "/agents?view=history" if history_view else "/agents?view=tasks"
     if "run" in query:
-        refresh_href += "?" + urllib.parse.urlencode({"run": query["run"]}) + "#run-" + query["run"]
+        refresh_href = "/agents?" + urllib.parse.urlencode({"run": query["run"]}) + "#run-" + query["run"]
     elif "context" in query or "receipt" in query:
-        refresh_href += "?" + urllib.parse.urlencode({key: value for key, value in query.items() if key in {"context", "receipt"}})
-    overview = f'<div class="section-heading"><p class="agent-help">Saved panel tasks · one run at a time · all times UTC</p><a class="refresh-link" href="{_escape(refresh_href)}">Refresh status</a></div>{"" if storage_error else _render_run_summary(tasks, runs, pending_by_task)}{active_html}'
+        refresh_href = "/agents?" + urllib.parse.urlencode({key: value for key, value in query.items() if key in {"context", "receipt"}})
+    overview = f'<div class="section-heading"><div>{worker_html}</div><a class="refresh-link" href="{_escape(refresh_href)}">Refresh status</a></div>{active_html}'
     catalog = f'<section>{render_heading("Task templates", "agent-tools")}<p class="endpoint">Choose a starting point, then review and submit its prompt. Selecting a template never runs or schedules work. Templates follow configured features and detected commands; detection does not verify health or sign-in.</p>{template_links}</section>'
-    main = catalog if query.get('view') == 'templates' else workbench + task_section if composing else overview + context_html + task_section + workbench
+    main = catalog if query.get('view') == 'templates' else workbench if composing else overview + task_section
     history_count = "Unavailable" if storage_error else f"Latest {len(runs)} runs · {_duration(sum(_run_seconds(run, now) for run in runs if run['status'] != 'running'))} recorded runtime"
     history_empty = "Run history could not be loaded. Retry after restoring task storage." if storage_error else "No prompt runs have been recorded. Run a task to see its report here."
-    content = f'''{navigation}{alert}{main}
-<section aria-labelledby="agent-history-heading"><div class="section-heading">{render_heading("Run history", "jobs", heading_id="agent-history-heading")}<span class="count">{history_count}</span></div><div class="agent-history">{''.join(history) or '<p class="empty">' + history_empty + '</p>'}</div></section>
-<section aria-labelledby="agent-diagnostics-heading"><div class="section-heading">{render_heading("Runtime diagnostics", "diagnostics", heading_id="agent-diagnostics-heading")}<span class="count">Loaded on request</span></div>{worker_html}<details{' open' if diagnostics['status'] != 'not_loaded' or not ready or not codex_installed else ''}><summary>Check installation and sign-in readiness</summary>{diagnostics_html}{t3_html}<p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. The independent task worker runs without this panel or T3 Code. Older installations use the panel until setup installs the worker. Missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></section>'''
-    return render_document(title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
-                           header=header, content=content, navigation=state.navigation("agents"),
-                           footer='<footer><a href="/">Back to dashboard</a><span>Refresh status to see completed runs</span></footer>')
+    if history_view:
+        main = overview + context_html + f'''<section aria-labelledby="agent-history-heading"><div class="section-heading">{render_heading("Run history", "jobs", heading_id="agent-history-heading")}<span class="count">{history_count}</span></div><div class="agent-history">{''.join(history) or '<p class="empty">' + history_empty + '</p>'}</div></section>'''
+    actions = '<a class="refresh-link" href="/agents?view=templates">Templates</a><a class="refresh-link agent-primary" href="/agents?view=new">New task</a>'
+    return agent_document(state, style + _STYLE, title="Run history" if history_view else "Task templates" if query.get('view') == 'templates' else "Prompt tasks",
+        current="history" if history_view else "tasks", content=alert + main, actions=actions,
+        description="Reports, evidence, and follow-up decisions." if history_view else "Run once, schedule a routine, or continue a bounded goal.")
+
+
+def _render_dashboard(state: Any, style: str, tasks: list[dict[str, Any]], runs: list[dict[str, Any]],
+                      pending: dict[str, list[dict[str, Any]]], *, error: str = "") -> str:
+    """Summarize saved evidence without running tools or rendering other tabs."""
+    from common.service_tools import web_panel_maintenance as maintenance
+    from lib.agent_inbox import AgentInbox
+
+    features = state.features()
+    manager = state.agent_tasks
+    alert = '<aside class="status failed" role="alert">' + _escape(error or manager.error) + '</aside>' if error or manager.error else ''
+    metrics = _render_run_summary(tasks, runs, pending) if not error else ''
+    attention = []
+    for task in tasks:
+        if not _task_needs_review(task, runs, pending):
+            continue
+        latest = next((run for run in reversed(runs) if run['task']['id'] == task['id']), None)
+        label = f"{len(pending[task['id']])} pending follow-up(s)" if pending.get(task['id']) else task.get('stop_reason') or 'Latest result needs review'
+        attention.append(f'<li><a href="/agents?view=tasks"><strong>{_escape(task["title"])}</strong></a><small>{_escape(label)}</small>'
+                         + ('<p>' + _escape(_redact_log_message(latest.get('summary') or latest.get('message') or '')[:220]) + '</p>' if latest else '') + '</li>')
+    recent = []
+    for run in reversed(runs[-5:]):
+        outcome = run.get('outcome') or run['status']
+        recent.append(f'<li><a href="/agents?run={run["id"]}#run-{run["id"]}"><strong>{_escape(run["task"]["title"])}</strong></a>'
+                      f'<small>{_escape(outcome.capitalize())} · {_time(run["started_at"])}</small>'
+                      '<p>' + _escape(_redact_log_message(run.get('summary') or run.get('message') or '')[:280]) + '</p></li>')
+    worker_note = 'Task worker status unavailable'
+    try:
+        worker = worker_status(manager)
+        worker_note = 'Task worker running independently' if worker['running'] else 'Task worker installed; not running' if worker['installed'] else 'Panel scheduling fallback; rerun setup for the independent worker'
+    except (OSError, ValueError, RuntimeError):
+        pass
+    left = '<section class="agent-dashboard-box"><div class="section-heading">' + render_heading('Needs attention', 'agents') + '<a href="/agents?view=tasks">Tasks</a></div>'
+    left += '<ul class="agent-dashboard-list">' + ''.join(attention[:6]) + '</ul>' if attention else '<p class="endpoint">No saved tasks need review.</p>'
+    if len(attention) > 6:
+        left += f'<p class="endpoint">{len(attention) - 6} more tasks need review.</p>'
+    left += '</section><section class="agent-dashboard-box"><div class="section-heading">' + render_heading('Recent runs', 'jobs') + '<a href="/agents?view=history">All run history</a></div>'
+    left += '<ul class="agent-dashboard-list">' + ''.join(recent) + '</ul>' if recent else '<p class="empty">No runs recorded. Start a one-time task or maintenance check.</p>'
+    left += '</section>'
+    right = ''
+    if 'maintenance-agent' in features.pages:
+        right += '<section class="agent-dashboard-box">' + render_heading('Maintenance', 'maintenance')
+        try:
+            policy, records = maintenance.load_policy(), maintenance.load_reports()
+            latest = records['reports'][-1] if records['reports'] else None
+            right += '<p><strong>' + ('Automatic checks enabled' if policy['enabled'] else 'Manual checks only') + '</strong></p>'
+            right += '<p class="endpoint">Automatic host checks ' + ('on' if policy['enabled'] and policy['host_checks'] else 'off') + ' · security audits ' + ('on' if policy['enabled'] and policy['security'] else 'off') + ' · housekeeping ' + ('on' if policy['enabled'] and policy['routines'] else 'off') + '</p>'
+            right += '<p class="endpoint">Last check: ' + _escape(latest['checked_at'] if latest else 'Not run') + (f' · {len(latest["issues"])} findings' if latest else '') + '</p>'
+            right += f'<form method="post" action="/actions/maintenance-agent"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><button name="submit" value="run">Check once now</button></form>'
+        except (OSError, ValueError, RuntimeError):
+            right += '<p class="empty">Maintenance state unavailable. Open its tab for recovery guidance.</p>'
+        right += '<p><a href="/maintenance-agent">Settings and maintenance records</a></p></section>'
+    if 'agent-inbox' in features.pages:
+        right += '<section class="agent-dashboard-box">' + render_heading('Operator inbox', 'notifications')
+        try:
+            mail = AgentInbox(manager.home).list('operator')
+            right += f'<p><strong>{len(mail)} unread message(s)</strong></p><p class="endpoint">Agent environment feedback and account-local messages.</p>'
+            if mail:
+                right += '<p>' + _escape(_redact_log_message(mail[-1]['message'])[:180]) + '</p>'
+        except (OSError, ValueError, RuntimeError):
+            right += '<p class="empty">Inbox state unavailable.</p>'
+        right += '<a href="/agent-inbox">Read and archive feedback</a></section>'
+    diagnostics = state.agent_diagnostics.snapshot()
+    right += '<section class="agent-dashboard-box">' + render_heading('Runtime readiness', 'diagnostics')
+    right += '<p class="endpoint">' + _escape(worker_note) + '</p><p class="endpoint">Readiness: ' + _escape(diagnostics['status'].replace('_', ' ')) + '</p>'
+    right += '<a href="/agents?view=diagnostics">Installation and sign-in checks</a></section>'
+    actions = '<a class="refresh-link" href="/agents">Refresh status</a>'
+    if features.prompts:
+        actions += '<a class="refresh-link agent-primary" href="/agents?view=new">New task</a>'
+    return agent_document(state, style + _STYLE, title="Agents dashboard", current="dashboard", actions=actions,
+        description="Current work, findings, maintenance, and feedback in one place.",
+        content=alert + metrics + '<div class="agent-dashboard-grid"><div>' + left + '</div><div>' + right + '</div></div>')
 
 
 def _render_task_context(manager: AgentTasks, identifier: str) -> str:

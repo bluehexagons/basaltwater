@@ -9,20 +9,21 @@ import shlex
 from typing import Any
 from urllib.parse import parse_qs, urlencode
 
-from common.service_tools.web_panel_templates import render_document, render_heading, render_icon
+from common.service_tools.web_panel_templates import render_heading, render_icon
+from common.service_tools.web_panel_agent_hub import agent_document
 from lib.agent_tasks import MAX_PROMPT_BYTES, validate_task
 from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.validation import validate_filesystem_path
 
 
 TOOLS = {
-    "checkup": ("System checkup", "Correlate resource pressure, service failures, updates, and backup evidence.", "System", "workspace", "daily", 20),
-    "logs": ("Review service logs", "Group recurring errors and correlate them with service state and resource pressure.", "System", "workspace", "daily", 15),
+    "checkup": ("System checkup", "Correlate resource pressure, service failures, updates, and backup evidence.", "System", "workspace", "once", 20),
+    "logs": ("Review service logs", "Group recurring errors and correlate them with service state and resource pressure.", "System", "workspace", "once", 15),
     "job": ("Review a scheduled job", "Investigate failures, missed runs, and overlap in a managed timer and its service.", "System", "workspace", "once", 15),
-    "updates": ("Check Debian update health", "Check package consistency, held updates, index age, and reboot evidence.", "System", "workspace", "weekly", 15),
-    "storage": ("Review disk cleanup", "Identify space consumers and retention concerns before deciding what to remove.", "System", "inspect", "weekly", 15),
+    "updates": ("Check Debian update health", "Check package consistency, held updates, index age, and reboot evidence.", "System", "workspace", "once", 15),
+    "storage": ("Review disk cleanup", "Identify space consumers and retention concerns before deciding what to remove.", "System", "inspect", "once", 15),
     "network": ("Check network and clock readiness", "Inspect routes, resolver and clock state, and configured endpoint reachability.", "System", "workspace", "once", 15),
-    "maintenance": ("Plan system maintenance", "Prioritize repairs and prepare commands and verification steps for an administrator.", "System", "workspace", "weekly", 30),
+    "maintenance": ("Plan system maintenance", "Prioritize repairs and prepare commands and verification steps for an administrator.", "System", "workspace", "once", 30),
     "data-audit": ("Check data quality", "Inspect a local dataset for schema, duplicates, and invalid records.", "Data and workspace", "inspect", "once", 20),
     "data-import": ("Import and normalize data", "Convert a staged CSV, JSON, or JSONL file into a new validated dataset.", "Data and workspace", "workspace", "once", 30),
     "data-export": ("Export a dataset", "Package an explicit local dataset with checksums, counts, and restore instructions.", "Data and workspace", "workspace", "once", 30),
@@ -285,7 +286,6 @@ def render_tools(state: Any, style: str, query: dict[str, str], *, error: str = 
     body += f'<details><summary>Choose another agent tool</summary>{catalog}</details>' if tool in TOOLS else catalog
     repairs = 'separately approved in <a href="/admin">Admin controls</a>' if state.features().admin else 'administrator actions through SSH or the console'
     body += f'<p class="endpoint">Host repairs remain {repairs}. These tools prepare account-level work with the existing Codex runner. T3 Code is optional. Filesystem and data-handling constraints in the prompt guide the agent; review its results and keep an independent backup for valuable data.</p>'
-    header = f'<header class="dashboard-header"><div><p class="eyebrow">System and data tasks</p><h1>Agent tools</h1><p class="lede">Prepare agent work on <code>{escape(state.manifest["host"])}</code>.</p></div><a class="refresh-link" href="/agents">View tasks and results</a></header>'
-    return render_document(title=f'Agent tools · {state.manifest["host"]}', style=style + _STYLE,
-                           header=header, content=body, navigation=state.navigation("agent-tools"),
-                           footer='<footer><a href="/">Back to dashboard</a><span>Review before running or scheduling</span></footer>')
+    return agent_document(state, style + _STYLE, title="Agent tools", current="tools", content=body,
+                          description="Prepare a system or data task, then review its prompt before running.",
+                          actions='<a class="refresh-link" href="/agents?view=tasks">View tasks</a>')

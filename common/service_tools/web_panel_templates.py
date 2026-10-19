@@ -290,9 +290,6 @@ def panel_navigation(
         ("/desktop/", "Desktop", "desktop"),
         ("/console/", "Console", "console"),
         ("/agents", "Agents", "agents"),
-        ("/maintenance-agent", "Maintenance agent", "maintenance-agent"),
-        ("/agent-inbox", "Agent inbox", "agent-inbox"),
-        ("/agent-tools", "Agent tools", "agent-tools"),
         ("/credentials", "Git & credentials", "credentials"),
         ("/publishing", "Publishing", "publishing"),
         ("/admin", "Admin controls", "admin"),
@@ -305,6 +302,8 @@ def panel_navigation(
             ("/logs", "Service diagnostics", "logs"),
         )
     )
+    if current in {"agent-tools", "agent-inbox", "maintenance-agent"}:
+        current = "agents"
     return tuple(
         (href, label, key if key == current else None)
         for href, label, key in items
