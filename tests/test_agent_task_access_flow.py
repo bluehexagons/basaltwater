@@ -105,7 +105,20 @@ class TaskAccessFlowTests(unittest.TestCase):
                     self.assertEqual(command[command.index("resume") + 1], session)
 
     def test_approval_is_idempotent_across_controllers_and_persists_provenance(self) -> None:
-        identifier, run_id = self.record_proposal()
+        requirement = "Operator must provision the private repair directory"
+        identifier, run_id = self.record_proposal(operator_requirements=[requirement])
+        run = self.manager.contexts.receipt(identifier, run_id)
+        from common.service_tools import web_panel_agents as agents
+
+        page = agents._render_follow_up(run, self.manager, "csrf")
+        self.assertIn(requirement, page)
+        self.assertIn("Approve once confirms", page)
+        self.assertIn('value="follow-up-approve"', page)
+        self.assertIn("Review follow-up task", page)
+        with patch.object(followups, "task_policy_issues", return_value=["Network denied by policy"]):
+            with self.assertRaisesRegex(ValueError, "Network denied by policy"):
+                followups.decide_follow_up(self.manager, identifier, run_id, "approve")
+        self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["status"], "pending")
         with patch.object(followups, "exchange") as broker:
             child = followups.decide_follow_up(self.manager, identifier, run_id, "approve")
             other = self.new_manager()
@@ -115,9 +128,13 @@ class TaskAccessFlowTests(unittest.TestCase):
         self.assertEqual(len(saved), 2)
         task = next(item for item in saved if item["id"] == child)
         self.assertTrue(task["queued"])
+        self.assertEqual(task["operator_requirements"], [])
+        self.assertEqual(task["writable_directories"], [])
         self.assertEqual((task["source_task_id"], task["source_run_id"], task["max_runs"]),
                          (identifier, run_id, 1))
         self.assertEqual(followups.follow_up_state(other, identifier, run_id)["status"], "approved")
+        self.assertEqual(followups.follow_up_state(other, identifier, run_id)["acknowledged_requirements"], [requirement])
+        self.assertEqual(self.manager.contexts.receipt(identifier, run_id), run)
         with self.assertRaises(ValueError):
             followups.decide_follow_up(other, identifier, run_id, "block")
 
@@ -133,37 +150,26 @@ class TaskAccessFlowTests(unittest.TestCase):
         self.assertEqual(followups.follow_up_state(other, identifier, run_id)["status"], "blocked")
         self.assertEqual(len(other.snapshot()["tasks"]), 1)
 
-    def test_unresolved_operator_requirements_stop_approval_and_provider_launch(self) -> None:
+    def test_drafts_retain_operator_requirements_and_stop_provider_launch(self) -> None:
         requirement = "Operator must provision the private repair directory"
         identifier, run_id = self.record_proposal(operator_requirements=[requirement])
-        from common.service_tools import web_panel_agents as agents
-
-        run = self.manager.contexts.receipt(identifier, run_id)
-        page = agents._render_follow_up(run, self.manager, "csrf")
-        self.assertIn(requirement, page)
-        self.assertIn("Complete the operator prerequisites", page)
-        self.assertIn("Review follow-up task", page)
-        self.assertNotIn('value="follow-up-approve"', page)
-        with self.assertRaisesRegex(ValueError, "Resolve prerequisites"):
-            followups.decide_follow_up(self.manager, identifier, run_id, "approve")
-        legacy_proposal = {key: value for key, value in run["follow_up"].items() if key != "writable_directories"}
-        with patch.object(self.manager.contexts, "receipt", return_value={**run, "follow_up": legacy_proposal}):
-            reviewed = followups.prepare_follow_up(self.manager, identifier, run_id, review=True)
-            self.assertEqual(reviewed["operator_requirements"], [requirement])
-            with self.assertRaisesRegex(ValueError, "Resolve prerequisites"):
-                followups.decide_follow_up(self.manager, identifier, run_id, "approve", settings=reviewed)
-        task = {**self.values, "operator_requirements": [requirement]}
+        child = followups.decide_follow_up(self.manager, identifier, run_id, "approve", draft=True, run_now=False)
+        task = next(item for item in self.manager.snapshot()["tasks"] if item["id"] == child)
+        self.assertTrue(task["draft"])
+        self.assertFalse(task["queued"])
+        self.assertEqual(task["operator_requirements"], [requirement])
+        self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["acknowledged_requirements"], [])
         with (patch.object(tasks.os, "geteuid", return_value=1234),
               patch.object(tasks.subprocess, "Popen") as spawn):
             result = tasks.execute_prompt(task, self.home, threading.Event())
         spawn.assert_not_called()
         self.assertEqual(result["outcome"], "blocked")
         self.assertIn(requirement, result["evidence"])
-        self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
 
     def test_service_restart_must_succeed_separately_with_the_exact_plan_even_for_drafts(self) -> None:
         unit = "example.service"
-        identifier, run_id = self.record_proposal(service_restarts=[unit])
+        identifier, run_id = self.record_proposal(service_restarts=[unit],
+            operator_requirements=["Confirm the service restart maintenance window"])
         with patch.object(followups, "exchange") as broker:
             for draft in (False, True):
                 with self.subTest(missing_request=True, draft=draft), self.assertRaises(ValueError):
@@ -198,11 +204,13 @@ class TaskAccessFlowTests(unittest.TestCase):
         self.assertEqual(len(self.manager.snapshot()["tasks"]), 2)
 
     def test_legacy_proposal_requires_operator_review_before_one_click_approval(self) -> None:
-        for name in ("writable_directories", "operator_requirements", "service_restarts"):
+        requirement = "Review and authorize this separate investigation"
+        self.proposal["operator_requirements"] = [requirement]
+        for name in ("writable_directories", "service_restarts"):
             self.proposal.pop(name)
         identifier, run_id = self.record_proposal()
         prepared = followups.prepare_follow_up(self.manager, identifier, run_id, review=True)
-        self.assertEqual(prepared["operator_requirements"], [])
+        self.assertEqual(prepared["operator_requirements"], [requirement])
         self.assertEqual(prepared["writable_directories"], [])
         self.assertEqual(prepared["service_restarts"], [])
         with self.assertRaisesRegex(ValueError, "Review this older proposal before approval"):
@@ -213,6 +221,7 @@ class TaskAccessFlowTests(unittest.TestCase):
         self.assertTrue(task["queued"])
         self.assertEqual(task["operator_requirements"], [])
         self.assertEqual(task["writable_directories"], [])
+        self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["acknowledged_requirements"], [requirement])
         self.assertEqual((task["mode"], task["workspace"], task["network"]),
                          (self.proposal["mode"], self.proposal["workspace"], self.proposal["network"]))
         self.assertEqual(followups.decide_follow_up(self.new_manager(), identifier, run_id, "approve"), child)
@@ -226,7 +235,8 @@ class TaskAccessFlowTests(unittest.TestCase):
         self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["status"], "blocked")
 
     def test_review_corrects_invalid_write_grants_without_losing_provenance(self) -> None:
-        identifier, run_id = self.record_proposal(writable_directories=["/var/lib/example"])
+        identifier, run_id = self.record_proposal(writable_directories=["/var/lib/example"],
+            operator_requirements=["Approve this repair"])
         with self.assertRaises(ValueError):
             followups.decide_follow_up(self.manager, identifier, run_id, "approve")
         reviewed = followups.prepare_follow_up(self.manager, identifier, run_id, review=True)

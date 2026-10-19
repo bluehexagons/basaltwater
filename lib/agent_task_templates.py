@@ -10,6 +10,8 @@ FOLLOW_UP_ACCESS_PROMPT = (
     "requires mode=workspace, even when commands only inspect the host. "
     "Workspace source and writable directories must be inside the account's home; additional write "
     "grants must name specific directories and cannot include credentials, agent configuration, or control state. "
+    "operator_requirements is a checklist of concrete outside preparation for the operator to confirm. "
+    "Do not list review or approval of this proposal itself as a prerequisite; Approve once supplies that authorization. "
     "If no coherent proposal is possible, use follow_up=null and explain the prerequisite in environment_feedback. "
 )
 FOLLOW_UP_PROMPT = (

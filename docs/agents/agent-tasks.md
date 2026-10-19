@@ -144,7 +144,10 @@ shared writable directories and credential/configuration/control stores are
 rejected. The runner reapplies these grants when resuming a conversation.
 `operator_requirements` records unresolved prerequisites as up to eight short
 lines. A task with unresolved prerequisites stops before provider launch;
-review the evidence and clear resolved entries deliberately.
+review the evidence and clear resolved entries deliberately. For a follow-up,
+**Approve once** confirms the displayed checklist and records it in the approval
+decision; the queued task no longer carries those entries as unresolved blockers.
+Saving a draft preserves them and does not confirm completion.
 
 Prepare a JSON file such as `task.json`:
 
@@ -247,8 +250,9 @@ New reports supply these fields. Older requests remain readable and offer
 **Review follow-up task** instead of a disabled approval button. Review their
 write targets and operator prerequisites, then select **Approve once** in the
 form. Missing fields default to no additional grants or prerequisites; the
-review requirement is not inserted as an unresolved operator action. Existing
-prerequisites still need to be completed and cleared explicitly.
+review requirement is not inserted as an unresolved operator action. Complete
+any outside preparation before approval; resolved checklist lines can remain in
+the form because **Approve once** confirms them.
 Its prompt accepts up to 3800 UTF-8 bytes
 and should include concrete targets, actions, verification, and rollback for
 repairs. `directory` must be absolute; the normal task validator rechecks its
@@ -256,7 +260,12 @@ existence and the account's workspace boundary before preparation.
 
 The main list and run history offer **Approve once**, **Review follow-up task**
 and **Block**, alongside the proposal's summary, access and expandable actions.
-Approve queues one attempt after checking policy and prerequisites. Review opens
+Approve authorizes the proposed task, confirms that its displayed operator
+checklist is satisfied, and queues one attempt after validating access, policy
+and separate service prerequisites. The decision preserves the confirmed checklist
+and the original receipt remains unchanged. Users do not need to delete an
+agent-written request for approval or resolved preparation notes to proceed.
+Review opens
 an editable form with the source receipt, **Once**, and a one-attempt limit;
 opening it does not save or queue anything. Repeated submission of a proposal
 returns the same child task. Blocking prevents that proposal from being launched
@@ -270,7 +279,11 @@ launch or be saved as a draft, the panel verifies that each exact restart
 succeeded. The task agent then verifies the results without repeating the
 restart. Unsupported actions or other manual preparation belong in
 `operator_requirements`, not a prompt asking another unattended agent to grant
-itself permissions. Workspace/network access does not supply root approval.
+itself permissions. Use this checklist for concrete outside preparation, not
+approval of the proposal itself; selecting **Approve once** supplies that
+authorization. Confirmation cannot grant extra write paths, override policy, or
+satisfy a service restart that has not succeeded through the broker.
+Workspace/network access does not supply root approval.
 Do not repeat unchanged blocked proposals; report environmental difficulties
 as feedback instead. The receipt is also readable through CLI/MCP; agents must
 not activate a request needing additional authorization themselves.

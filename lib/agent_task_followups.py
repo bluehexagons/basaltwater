@@ -68,10 +68,11 @@ def _decision_lock(manager: AgentTasks, identifier: str):
 
 def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision: str, *,
                      settings: dict[str, Any] | None = None, run_now: bool = True, draft: bool = False) -> str | None:
-    """A click authorizes one task, never a sandbox bypass or broker approval.
+    """Approval authorizes one task and confirms its displayed operator checklist.
 
     Service prerequisites execute via the separately authenticated broker before
-    provider launch. Interrupted request submission is never blindly retried.
+    provider launch; policy and write grants are still validated. Drafts retain
+    unresolved requirements. Interrupted submission is never blindly retried.
     """
     if decision not in {"approve", "block", "request-privilege"}:
         raise ValueError("Invalid follow-up decision")
@@ -138,10 +139,17 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
         candidate.update(interval="once", continue_until_done=False, max_runs=1, start_at=0,
                          source_task_id=identifier, source_run_id=run_id)
         task = validate_task(candidate, manager.home)
+        acknowledged = []
         if not draft:
-            issues = task_policy_issues(task) + task["operator_requirements"]
+            issues = task_policy_issues(task)
             if issues:
                 raise ValueError("Resolve prerequisites before approval: " + "; ".join(issues))
+            # The operator has just approved the displayed proposal or review
+            # form. Do not require editing away its checklist to acknowledge it.
+            # Keep the confirmation in the decision, leaving the source receipt
+            # intact, and do not pass resolved blockers to the unattended runner.
+            acknowledged = task["operator_requirements"]
+            task["operator_requirements"] = []
         # Drafts must not lose these prerequisites and later bypass the check
         # through the ordinary Run control.
         for unit in dict.fromkeys(restarts):
@@ -157,6 +165,7 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
                 raise ValueError("Service prerequisite has not succeeded: " + unit)
         child = manager.create(task, run_now=run_now, draft=draft,
                                request_key="follow-up-" + identifier + "-" + run_id)
-        state.update(status="draft" if draft else "approved", task_id=child)
+        state.update(status="draft" if draft else "approved", task_id=child,
+                     acknowledged_requirements=acknowledged)
         write_json_atomic(str(path), state)
         return child

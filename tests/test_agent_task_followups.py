@@ -18,6 +18,7 @@ from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
 from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, REPORT_SCHEMA, validate_follow_up, validate_report
+from lib.agent_task_followups import follow_up_state
 from tests.test_agent_panel_tools import TaskForm
 from tests.test_agent_task_persistence import report
 
@@ -47,7 +48,7 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertEqual(events.report, value)
         with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "message": "Done", "output": "", **events.report}):
             self.assertTrue(self.manager.tick())
-        return identifier, self.manager.snapshot()["runs"][0]["id"]
+        return identifier, self.manager.snapshot()["runs"][-1]["id"]
 
     def test_request_survives_receipt_and_hot_history_without_activating_work(self) -> None:
         identifier, run_id = self.record_request()
@@ -134,6 +135,60 @@ class TaskFollowUpTests(unittest.TestCase):
                 agents.parse_agent_query("follow-up=" + reference)
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"follow-up": "a" * 32 + "." + "b" * 32})
         self.assertIn("Follow-up request unavailable", page)
+
+    def test_operator_checklist_is_confirmed_by_direct_and_reviewed_http_approval(self) -> None:
+        requirement = ("Review and authorize the separate read-only investigation; "
+                       "any subsequent repair requires separate authorization.")
+        self.proposal.update(writable_directories=[], operator_requirements=[requirement], service_restarts=[])
+        for route in ("direct", "review"):
+            with self.subTest(route=route):
+                identifier, run_id = self.record_request()
+                reference = identifier + "." + run_id
+                before = self.manager.snapshot()
+                for query in ({"view": "tasks"}, {"run": run_id}, {"receipt": reference}):
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+                    self.assertIn(requirement, page)
+                    self.assertIn('value="follow-up-approve">Approve once</button>', page)
+                    self.assertIn("Approve once confirms", page)
+                self.assertEqual(self.manager.snapshot(), before)
+                if route == "review":
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, {"follow-up": reference})
+                    form = TaskForm(page).values
+                    self.assertEqual(form["operator_requirements"], requirement)
+                    self.assertIn("you do not need to remove resolved lines", page)
+                    form["submit"] = "run"
+                    path = "/actions/agent-task/save"
+                else:
+                    form = {"csrf": self.state.csrf_token, "id": identifier,
+                            "run_id": run_id, "action": "follow-up-approve"}
+                    path = "/actions/agent-task"
+                body = urlencode(form).encode()
+                handler = object.__new__(panel.WebPanelHandler)
+                handler.state, handler.path = self.state, path
+                handler.headers, handler.rfile = {"Content-Length": str(len(body))}, BytesIO(body)
+                for name in ("_send", "send_response", "send_header", "end_headers"):
+                    setattr(handler, name, Mock())
+                for _ in range(2):
+                    handler.rfile = BytesIO(body)
+                    handler.do_POST()
+                handler._send.assert_not_called()
+                self.assertEqual([call.args for call in handler.send_response.call_args_list], [(303,), (303,)])
+                decision = follow_up_state(self.manager, identifier, run_id)
+                self.assertEqual(decision["acknowledged_requirements"], [requirement])
+                children = [task for task in self.manager.snapshot()["tasks"] if task["source_run_id"] == run_id]
+                self.assertEqual(len(children), 1)
+                child = children[0]
+                self.assertEqual(decision["task_id"], child["id"])
+                self.assertTrue(child["queued"])
+                self.assertEqual(child["operator_requirements"], [])
+                self.assertEqual((child["interval"], child["max_runs"], child["writable_directories"]), ("once", 1, []))
+                self.assertEqual(self.manager.contexts.receipt(identifier, run_id)["follow_up"], self.proposal)
+                with patch.object(tasks, "execute_prompt", return_value={
+                    "status": "completed", "message": "Done", "output": "", **report("complete"),
+                }) as execute:
+                    self.assertTrue(self.manager.tick())
+                    self.assertFalse(self.manager.tick())
+                self.assertEqual(execute.call_args.args[0]["id"], child["id"])
 
     def test_reports_without_requests_remain_readable(self) -> None:
         self.assertEqual(validate_report(report()), report())

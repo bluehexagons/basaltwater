@@ -711,7 +711,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <label>Additional writable directories<textarea name="writable_directories" rows="2" placeholder="/home/agent/.nvm">{_escape(chr(10).join(defaults['writable_directories']))}</textarea></label>
 <p class="agent-help">One existing account-owned directory per line. These grants accompany the execution directory; a private task directory does not grant writes to the source directory. Credential and task-control stores cannot be added.</p>
 <label>Operator prerequisites<textarea name="operator_requirements" rows="2" placeholder="Actions needed before this task can run">{_escape(chr(10).join(defaults['operator_requirements']))}</textarea></label>
-<p class="agent-help">One prerequisite per line. Complete these outside the unattended task, then remove resolved lines. Tasks with unresolved prerequisites cannot launch.</p>
+<p class="agent-help">{'Approve once confirms that the prerequisites listed here are satisfied and authorizes this task. Complete any outside preparation first; you do not need to remove resolved lines. Save draft keeps them unresolved. Service approvals remain separate.' if defaults['source_task_id'] and not editing else 'One prerequisite per line. Complete these outside the unattended task, then remove resolved lines. Tasks with unresolved prerequisites cannot launch.'}</p>
 {('<label>Service restart prerequisites<textarea name="service_restarts" rows="2" readonly>' + _escape(chr(10).join(defaults['service_restarts'])) + '</textarea></label><p class="agent-help">Use Request service approval on the source proposal. The separate privilege portal must authorize each exact service; the runner verifies successful execution before launch, including before saving a draft.</p>') if defaults['source_task_id'] and not editing else ''}
 </details>
 <p class="agent-help">Inspection uses Codex's read-only sandbox and can block local service sockets and endpoint probes. Workspace changes may edit the execution directory inside this account's home, plus temporary directories when allowed. Host service reviews use command network access and a private run directory; their prompts prohibit host changes. Provider requests still use the network in either mode. Configured hooks and MCP integrations retain their own permissions.</p></fieldset>
@@ -986,10 +986,9 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
     actions = ''
     if pending:
         legacy = follow_up_requires_review(proposal)
-        blocked = legacy or bool(proposal.get('operator_requirements'))
         def button(action: str, label: str) -> str:
             return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}">{label}</button></form>'''
-        if not blocked:
+        if not legacy:
             actions = button('follow-up-approve', 'Approve once')
         actions += f'<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>'
         actions += button('follow-up-block', 'Block')
@@ -997,8 +996,8 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
             actions += button('follow-up-privilege', 'Request service approval')
         if legacy:
             actions += '<p class="agent-help">This older proposal needs an access review. Select Review follow-up task, check its permissions and prerequisites, then Approve once.</p>'
-        elif blocked:
-            actions += '<p class="agent-help">Complete the operator prerequisites listed above, then remove their resolved entries in Review follow-up task and Approve once.</p>'
+        elif proposal.get('operator_requirements'):
+            actions += '<p class="agent-help">Approve once confirms that the prerequisites listed above are satisfied and authorizes this task. Complete any outside preparation first; service approvals remain separate.</p>'
     else:
         actions = '<p class="agent-help">Follow-up ' + _escape(status['status']) + '.</p>'
     from common.service_tools.web_panel_admin import _https_url
