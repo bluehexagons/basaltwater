@@ -32,11 +32,7 @@ and, when `security` is selected, refreshes security evidence regardless of the
 audit interval. Manual reviews share the same daily attempt and timeout limits
 as automatic reviews; a request does not guarantee an AI call.
 
-Manual **Check once now** works while automatic maintenance is disabled. It
-runs host diagnostics and, when security auditing is selected, refreshes
-security evidence regardless of the saved audit interval. It never requests
-housekeeping. Automatic host diagnostics and security audits have independent
-schedules:
+Automatic host diagnostics and security audits have independent schedules:
 `--maintenance-agent-host-checks` uses the minute `interval`, while
 `--maintenance-agent-security` uses `audit_days`. For security-only automation:
 
