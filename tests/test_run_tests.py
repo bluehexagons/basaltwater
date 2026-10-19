@@ -15,13 +15,6 @@ import run_tests
 
 
 class TestRunTestsSuites(unittest.TestCase):
-    def test_named_suites_are_available(self) -> None:
-        self.assertIn("smoke", run_tests.TEST_SUITES)
-        self.assertIn("proxmox", run_tests.TEST_SUITES)
-        self.assertIn("agent", run_tests.TEST_SUITES)
-        self.assertIn("services", run_tests.TEST_SUITES)
-        self.assertIn("all", run_tests.TEST_SUITES)
-
     def test_build_named_suite(self) -> None:
         loader = unittest.TestLoader()
         suite = run_tests._build_suite(loader, [], ["smoke"])
@@ -53,6 +46,8 @@ class TestRunTestsSuites(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("smoke", output)
         self.assertIn("proxmox", output)
+        self.assertIn("module(s)", output)
+        self.assertNotIn("tests.test_", output)
 
 
 class TestRunTestsExpensivePrereqs(unittest.TestCase):
@@ -93,7 +88,24 @@ class TestRunTestsDurations(unittest.TestCase):
             rc = run_tests.main(["--durations", "1", "test_expensive_support"])
         self.assertEqual(rc, 0)
         self.assertIn("Slowest 1 tests:", stdout.getvalue())
+        self.assertIn("Slowest 1 modules:", stdout.getvalue())
         self.assertIn("Total test time:", stdout.getvalue())
+
+    def test_module_totals_rank_accumulated_cost_without_hiding_slow_tests(self) -> None:
+        result = run_tests.TimedTextTestResult(io.StringIO(), True, 0)
+        result.test_durations = [
+            (3.0, "tests.single.Contract.test_one"),
+            (2.0, "tests.repeated.First.test_one"),
+            (2.0, "tests.repeated.Second.test_two"),
+        ]
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            run_tests._print_durations(result, 1)
+        output = stdout.getvalue()
+        self.assertIn("Total test time: 7.000s", output)
+        self.assertIn("4.000s      2 tests  tests.repeated", output)
+        self.assertIn("3.000s  tests.single.Contract.test_one", output)
+        self.assertNotIn("tests.repeated.First.test_one", output)
 
 
 class TestRunTestsSelectors(unittest.TestCase):

@@ -79,7 +79,7 @@ panel-dev:
 # optional dev dependency is intentionally separate from the normal check.
 coverage:
 	python3 -m coverage erase
-	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py
+	python3 -m coverage run --branch --source=. --omit='tests/*,build/*,dist/*,.venv/*,*/__pycache__/*' run_tests.py --durations 10
 	python3 -m coverage report --show-missing
 
 # Run all tests with verbose output

@@ -16,13 +16,13 @@ from lib.agent_diagnostics import run_diagnostics_command
 
 
 class AgentDiagnosticsTests(unittest.TestCase):
-    def parser(self) -> argparse.ArgumentParser:
-        parser = argparse.ArgumentParser()
-        add_agent_subparser(parser.add_subparsers(dest="command"))
-        return parser
+    @classmethod
+    def setUpClass(cls):
+        cls.parser = argparse.ArgumentParser()
+        add_agent_subparser(cls.parser.add_subparsers(dest="command"))
 
     def invoke(self, *options: str) -> tuple[int, dict]:
-        args = self.parser().parse_args(["agent", "diagnostics", *options])
+        args = self.parser.parse_args(["agent", "diagnostics", *options])
         output = io.StringIO()
         with redirect_stdout(output):
             code = run_agent_command(args)
@@ -44,20 +44,26 @@ class AgentDiagnosticsTests(unittest.TestCase):
         ))
 
     @patch("lib.agent_diagnostics.collect_diagnostics")
-    def test_all_catalog_selectors_propagate(self, collect):
+    def test_each_selector_and_combined_overrides_propagate(self, collect):
         collect.return_value = {"properties": {}, "events": [], "issues": []}
-        for service in collector.SOURCES:
-            for window in collector.WINDOWS:
-                for priority in collector.PRIORITIES:
-                    with self.subTest(service=service, window=window, priority=priority):
-                        code, result = self.invoke(
-                            "--service", service, "--window", window, "--priority", priority,
-                        )
-                        self.assertEqual(code, 0)
-                        self.assertEqual(result["events"], [])
-                        self.assertEqual(collect.call_args.args[0], collector.DiagnosticQuery(
-                            service=service, window=window, priority=priority, load=True,
-                        ))
+        # The options are independent. Sweep each domain once and retain a
+        # combined override instead of multiplying every catalog size.
+        cases = [
+            *((service, "24h", "4") for service in collector.SOURCES),
+            *(("nginx.service", window, "4") for window in collector.WINDOWS),
+            *(("nginx.service", "24h", priority) for priority in collector.PRIORITIES),
+            ("nginx.service", "1h", "3"),
+        ]
+        for service, window, priority in dict.fromkeys(cases):
+            with self.subTest(service=service, window=window, priority=priority):
+                code, result = self.invoke(
+                    "--service", service, "--window", window, "--priority", priority,
+                )
+                self.assertEqual(code, 0)
+                self.assertEqual(result["events"], [])
+                self.assertEqual(collect.call_args.args[0], collector.DiagnosticQuery(
+                    service=service, window=window, priority=priority, load=True,
+                ))
 
     @patch("lib.agent_diagnostics.collect_diagnostics")
     def test_rejects_missing_service_arbitrary_units_paths_and_filters(self, collect):
@@ -69,7 +75,7 @@ class AgentDiagnosticsTests(unittest.TestCase):
         ):
             with self.subTest(options=options), redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
-                    self.parser().parse_args(["agent", "diagnostics", *options])
+                    self.parser.parse_args(["agent", "diagnostics", *options])
                 self.assertEqual(error.exception.code, 2)
         collect.assert_not_called()
 

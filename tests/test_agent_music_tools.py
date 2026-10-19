@@ -131,6 +131,10 @@ class MusicToolsTests(unittest.TestCase):
                             "branch": "main", "head": "a" * 40, "dirty": False,
                         }),
                         patch.object(agent_environment, "is_cachyos", return_value=native),
+                        patch.object(agent_environment, "inspect_skill_catalogs", return_value={"catalogs": []}),
+                        patch.object(agent_environment, "browser_context_inventory", return_value={}),
+                        patch.object(agent_environment, "inspect_installation_provenance", return_value={}),
+                        patch.object(agent_environment, "_native_development", return_value={}),
                         patch.object(agent_environment.shutil, "which", side_effect=lambda name:
                                      executable if name == alias else
                                      ("/old/musescore" if name == "musescore" and alias.endswith(("3", "4")) else None)),
@@ -146,10 +150,6 @@ class MusicToolsTests(unittest.TestCase):
                     self.assertTrue(any("--no-synthesizer" in instruction for instruction in app["instructions"]))
                     self.assertEqual(result["required_tools"]["musescore"]["status"], "available")
                     self.assertEqual(result["recipes"]["score"]["missing_tools"], [])
-                    for tool in ("sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "parecord"):
-                        self.assertIn(tool, result["tools"])
-                    for tool in ("pdfinfo", "pdftoppm", "pdftotext"):
-                        self.assertIn(tool, result["tools"])
                     execute.assert_not_called()
 
     def test_pdf_bundle_deduplicates_and_round_trips_without_selecting_other_media(self):

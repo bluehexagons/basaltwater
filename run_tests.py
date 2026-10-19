@@ -232,24 +232,6 @@ TEST_SUITES: dict[str, list[str]] = {
         "tests.test_proxmox_cli",
         "tests.test_expensive_support",
     ],
-    "proxmox": [
-        "tests.test_arg_parser_hosted",
-        "tests.test_proxmox_node",
-        "tests.test_proxmox_hosts",
-        "tests.test_proxmox_manage",
-        "tests.test_proxmox_shell",
-        "tests.test_proxmox_cli",
-        "tests.test_proxmox_live",
-    ],
-    "security": [
-        "tests.test_security_steps",
-        "tests.test_shell_safety",
-        "tests.test_samba_hardening",
-        "tests.test_smb_mount_hardening",
-        "tests.test_ssh_utils",
-        "tests.test_validation",
-        "tests.test_validators",
-    ],
     "integration": [
         "tests.test_cicd",
         "tests.test_deploy_utils",
@@ -319,7 +301,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         default=0,
-        help="Show the N slowest test durations after the run.",
+        help="Show the N slowest modules and tests after the run.",
     )
     parser.add_argument(
         "--check-prereqs",
@@ -331,7 +313,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--list-suites", action="store_true",
-        help="List named suites and exit.",
+        help="List named suites and module counts, then exit.",
     )
     parser.add_argument(
         "--list-categories", action="store_true",
@@ -353,8 +335,6 @@ def _list_suites() -> int:
             print(f"  {name:<{width}}  all discovered tests (expensive tests still gated)")
             continue
         print(f"  {name:<{width}}  {len(selectors)} module(s)")
-        for selector in selectors:
-            print(f"  {'':<{width}}    {selector}")
     return 0
 
 
@@ -562,6 +542,14 @@ def _print_durations(result: unittest.TestResult, count: int) -> None:
         return
     print()
     print(f"Total test time: {sum(elapsed for elapsed, _ in durations):.3f}s")
+    modules: dict[str, tuple[float, int]] = {}
+    for elapsed, test_id in durations:
+        module = test_id.rsplit(".", 2)[0]
+        total, tests = modules.get(module, (0.0, 0))
+        modules[module] = (total + elapsed, tests + 1)
+    print(f"Slowest {min(count, len(modules))} modules:")
+    for module, (elapsed, tests) in sorted(modules.items(), key=lambda item: (-item[1][0], item[0]))[:count]:
+        print(f"  {elapsed:8.3f}s  {tests:5d} tests  {module}")
     print(f"Slowest {min(count, len(durations))} tests:")
     for elapsed, test_id in sorted(durations, reverse=True)[:count]:
         print(f"  {elapsed:8.3f}s  {test_id}")

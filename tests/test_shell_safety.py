@@ -46,8 +46,12 @@ class TestShellSafety(unittest.TestCase):
         for path in _python_sources(repo_root):
             if path.name == "test_shell_safety.py":
                 continue
+            source = path.read_text(encoding="utf-8")
+            # Non-ASCII identifiers can normalize to "shell" during parsing.
+            if "shell" not in source and source.isascii():
+                continue
             try:
-                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                tree = ast.parse(source, filename=str(path))
             except SyntaxError as exc:
                 self.fail(f"Failed to parse {path.relative_to(repo_root)}: {exc}")
 

@@ -130,26 +130,36 @@ class TaskBoundaryTests(unittest.TestCase):
             self.assertFalse(reply["result"]["isError"])
 
     def test_hot_history_eviction_preserves_receipts_counters_and_future_runs(self) -> None:
+        # Cross a small storage boundary instead of building a megabyte of
+        # repeated notifications. The real save/eviction/receipt path still runs.
+        self.enterContext(patch.object(tasks, "MAX_STATE_BYTES", 24000))
+        self.enterContext(patch.object(tasks, "FINISH_RESERVE_BYTES", 6000))
         identifier = self.manager.create({**self.values, "interval": "event", "failure_limit": 0}, run_now=False, now=0)
         identifiers = []
-        for index in range(9):
-            for _ in range(32):
-                self.manager.notify(identifier, "x" * 4000)
-            with patch.object(tasks, "execute_prompt", return_value={"status": "failed", "output": "y" * 8192,
+        first_eviction = None
+        for index in range(7):
+            for _ in range(2):
+                self.manager.notify(identifier, "x" * 1000)
+            with patch.object(tasks, "execute_prompt", return_value={"status": "failed", "output": "y" * 1024,
                         "message": "Invalid provider report", "usage": {"input_tokens": 15, "output_tokens": 5}}):
                 self.assertTrue(self.manager.tick(now=index + 1))
-            identifiers.append(self.manager.snapshot()["runs"][-1]["id"])
+            runs = self.manager.snapshot()["runs"]
+            identifiers.append(runs[-1]["id"])
+            if first_eviction is None and len(runs) < len(identifiers):
+                first_eviction = index
         state = self.manager.snapshot()
-        self.assertLess(len(state["runs"]), 9)
+        self.assertIsNotNone(first_eviction)
+        self.assertLessEqual(first_eviction, 4)  # At least two more runs after eviction.
+        self.assertLess(len(state["runs"]), 7)
         self.assertEqual(state["runs"][-1]["id"], identifiers[-1])
-        self.assertEqual(state["tasks"][0]["attempts"], 9)
-        self.assertEqual(state["tasks"][0]["tokens_used"], 180)
+        self.assertEqual(state["tasks"][0]["attempts"], 7)
+        self.assertEqual(state["tasks"][0]["tokens_used"], 140)
         self.assertTrue(state["tasks"][0]["enabled"])
         self.assertLessEqual(self.manager.path.stat().st_size, tasks.MAX_STATE_BYTES)
-        self.assertEqual(len(self.manager.contexts.history(identifier)), 9)
+        self.assertEqual(len(self.manager.contexts.history(identifier)), 7)
         receipt = self.manager.contexts.receipt(identifier, identifiers[0])
-        self.assertEqual(receipt["output"], "y" * 8192)
-        self.assertEqual(len(receipt["task"]["events"]), 32)
+        self.assertEqual(receipt["output"], "y" * 1024)
+        self.assertEqual(len(receipt["task"]["events"]), 2)
 
     def test_pending_events_leave_room_for_an_active_run_to_finish(self) -> None:
         identifier = self.manager.create(self.values, run_now=True, now=0)

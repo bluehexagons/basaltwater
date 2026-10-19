@@ -45,7 +45,11 @@ package metadata checks plus the smoke suite. Select relevant tests with
 `make test TEST=tests.test_gogs_steps.TestGogsNginx`. `TEST_ARGS="--durations 20"`
 reports slow tests. Suite and explicit test selections combine without repeats.
 The fast target omits the generated brand export and wheel build/install checks;
-run `make check-ci` before committing changes exercised by CI.
+run affected checks before committing and let GitHub CI perform full validation.
+Use `python3 run_tests.py --list-suites` to see concise suite names and sizes.
+Choose all affected domains; shared configuration, validators, plugin composition,
+test infrastructure, or uncertain dependencies warrant a full local run.
+Use `make check-ci` for that broad validation or when CI is unavailable.
 
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
@@ -70,6 +74,9 @@ suite once with branch coverage, matching branch CI. Do not also run
 the full suite. `make check` remains available for full verification without
 coverage, and `make coverage` produces a standalone full-suite report. Fast
 selections do not narrow `check-ci` or `coverage`.
+CI replaces obsolete runs when a newer revision is pushed to the same branch
+or pull request. The coverage run reports the ten slowest modules and tests;
+module totals reveal accumulated fixture cost that individual timings can hide.
 
 ```bash
 python3 -m py_compile file.py
@@ -129,10 +136,13 @@ value with a standard-library function does not verify the application.
 
 When pruning, name the retained coverage in the commit description and preserve
 distinct failure inputs, even if their assertion bodies match. Use `subTest`
-for a shared behavioral contract when it improves clarity. Generated HTML and
+for a shared behavioral contract when it improves clarity. Sweep independent
+options separately and keep representative interaction cases; avoid Cartesian
+products unless the options interact. Reuse parsers and immutable fixtures
+within the owning test class. Generated HTML and
 service configuration assertions remain useful when they verify access,
-escaping, activation, or other behavior. Run the affected selection, then
-`make check-ci` once and review any coverage loss before committing.
+escaping, activation, or other behavior. Run the affected selection and review
+coverage when pruning execution paths; a broad cleanup warrants `make check-ci`.
 
 Keep related variants in the owning module: optional development bundles share
 `test_development_tool_bundles.py`, disk-space calculations belong in
@@ -141,6 +151,11 @@ Prefer one fixture per contract over rerendering identical configuration for
 each directive. Mock host observations such as disk usage and assert exact
 values and threshold boundaries. Coverage overlap helps locate candidates;
 it does not establish that their assertions or failure inputs are redundant.
+For storage limits, lower the fixture's limit instead of generating large
+volumes of data. For timeout logic, advance fixture timestamps and control the
+owning module's timer; retain real transport tests for connection lifecycle.
+Synchronize concurrent tests on events instead of fixed sleeps, and keep mocks
+local so they do not change the event loop's clock or unrelated tasks.
 
 ## Repository maps
 

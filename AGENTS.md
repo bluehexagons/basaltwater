@@ -55,7 +55,7 @@ basaltw setup server_web test.com --dry-run
 make check-fast
 make test SUITE=web
 
-# Full pre-commit checks and coverage in one test run
+# Full checks and coverage in CI, or locally for broad/offline validation
 make check-ci
 ```
 

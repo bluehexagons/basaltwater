@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -800,14 +801,14 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await self.session()
         old = self.gateway.session
         old.created = time.monotonic() - service.ATTACH_TIMEOUT - 1
-        worker = asyncio.create_task(self.gateway.expire_pending())
-        try:
-            await asyncio.sleep(1.1)
-            self.assertIsNone(self.gateway.session)
-            self.assertEqual(old.password, "")
-        finally:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
+        # Run one real expiry pass, then cancel the loop at its next wait.
+        timer = SimpleNamespace(**vars(asyncio))
+        timer.sleep = AsyncMock(side_effect=[None, asyncio.CancelledError])
+        with patch.object(service, "asyncio", timer), self.assertRaises(asyncio.CancelledError):
+            await self.gateway.expire_pending()
+        self.assertIsNone(self.gateway.session)
+        self.assertTrue(old.closed.is_set())
+        self.assertEqual(old.password, "")
 
     async def test_reconnect_reaps_expired_pending_attachment_without_waiting_for_timer(self):
         await self.session()

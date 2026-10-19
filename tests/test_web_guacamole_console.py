@@ -6,6 +6,7 @@ import asyncio
 from contextlib import ExitStack
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -157,14 +158,13 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
         await self.connect()
         current = self.gateway.session
         current.created -= service.ATTACH_TIMEOUT + 1
-        worker = asyncio.create_task(self.gateway.expire_pending())
-        try:
-            await asyncio.sleep(1.1)
-            self.assertIsNone(self.gateway.session)
-            self.assertEqual(current.password, "")
-        finally:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
+        timer = SimpleNamespace(**vars(asyncio))
+        timer.sleep = AsyncMock(side_effect=[None, asyncio.CancelledError])
+        with patch.object(service, "asyncio", timer), self.assertRaises(asyncio.CancelledError):
+            await self.gateway.expire_pending()
+        self.assertIsNone(self.gateway.session)
+        self.assertTrue(current.closed.is_set())
+        self.assertEqual(current.password, "")
         await self.connect()
         current = self.gateway.session
         await self.app.shutdown()

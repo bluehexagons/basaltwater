@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# A newer revision replaces obsolete checks for the same branch or PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }} (Debian Trixie)
