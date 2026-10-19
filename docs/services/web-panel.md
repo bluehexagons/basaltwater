@@ -20,7 +20,7 @@ under the panel account; no T3 Code installation is required.
 | Run agent work | Agents | Persistent Codex context and workspaces, bounded goals, recurring schedules, run evidence, and optional T3 Code diagnostics |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
 | Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
-| Prepare system and data tasks | Agent tools | Contextual checkups, log and job reviews, Debian update and network checks, maintenance plans, and local data work |
+| Prepare system and data tasks | Agents → Agent tools | Contextual checkups, log and job reviews, Debian update and network checks, maintenance plans, and local data work |
 | Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
@@ -52,7 +52,7 @@ for the panel account. Host monitoring remains available without either:
 | GitHub runner | Its fixed policy and systemd unit are installed; see [runner setup](github-runner.md) |
 | Desktop | Its Guacamole gateway service is installed |
 | Console | Its private Guacamole SSH socket unit is installed |
-| Admin controls | A valid privilege approval service is configured |
+| Admin controls | Always visible; host actions require the privilege approval service |
 
 Discovery checks the panel's non-secret setup manifest, local executable paths,
 and unit files without running tools, contacting providers, or testing sign-in.
@@ -237,10 +237,11 @@ agent and user workflow.
 ## Admin controls
 
 Open **Admin controls** for host updates and power actions. Host actions require
-the optional [privilege approval service](../agents/privilege-approvals.md), currently
-supported on non-root agent VMs. Inspection pages remain available on other panels,
-and the installed account-level T3 Code updater is available in Agents. The panel
-does not gain root privileges or access to the approval password.
+the optional [privilege approval service](../agents/privilege-approvals.md), supported
+for non-root operators on agent and GitHub runner VMs. Without it, Admin controls
+shows setup guidance and inspection links. The panel does not gain root privileges
+or access to the approval password. Agent tools, tasks, maintenance policy and
+T3 Code updates live under **Agents**.
 
 | Action | Behavior |
 | --- | --- |
@@ -263,19 +264,17 @@ approve it before the two-minute deadline, or use the administrator console.
 After power-off, starting the machine requires its VM controller or physical
 access.
 
-The screen shows recent broker requests across all operations, panel prompt activity, and the latest
+The screen shows recent broker requests across all operations and the latest
 maintenance job's result, timestamps, and exit code. **Dispatched** means the
 maintenance service started, not that its commands finished. A successful power
-job confirms scheduling only. Other agent sessions are not included in the
-panel prompt count. Review running work before updates or interruptions.
+job confirms scheduling only. Review running work before updates or interruptions.
 
 Maintenance runs in a separate root system service with a six-hour limit,
 so restarting the panel or approval broker does not cancel it. One maintenance
 job runs at a time; jobs and uncertain dispatches are never retried automatically.
 Use **Refresh status** to inspect results. The latest job result and request
 history survive panel restarts. Privileged command output is not exposed; use
-administrator SSH or console access for detailed diagnosis. T3 Code uses its
-existing account-level updater and is shown only when installed and configured.
+administrator SSH or console access for detailed diagnosis.
 
 Refresh reuses the installed source and saved successful Debian setup, including
 controller-installed snapshots. It automatically prepares a managed checkout for
@@ -291,9 +290,9 @@ The screen explains unavailable actions rather than granting wider privileges.
 
 ## Agent tools
 
-Open **Agent tools** from the sidebar or dashboard to prepare guided tasks for
-the existing Codex runner. Admin controls offers checkups, maintenance planning,
-and disk reviews. Service diagnostics and local service cards carry the selected
+Open **Agents → Agent tools** to prepare guided tasks for the existing Codex
+runner, including checkups, maintenance planning and disk reviews.
+Service diagnostics and local service cards carry the selected
 service into a log review; scheduled job cards carry the job into a timer review.
 These shortcuts open a setup form and never run a prompt automatically.
 
@@ -653,12 +652,13 @@ for review. The runner executes serially across its shared CLI/panel controls;
 select a managed task worktree when editing could overlap another agent session.
 Removing the panel leaves independent tasks running; pause them explicitly.
 
-Under **Setup and diagnostics**, expand **Check installation and sign-in readiness**.
+Open **Agents → Readiness** for installation and sign-in checks.
 **Check agent readiness** collects versions and local credential metadata for
 selected, installed Codex, Claude Code, OpenCode, and GitHub CLI, plus
 maintenance-hold state and the timestamp of any saved readiness record.
-T3 Code is checked when selected and installed; its update action appears for
-a configured installation.
+T3 Code is checked when selected and installed. Its account-level updater lives
+here too, with elapsed time and command output. Updates continue in the background;
+use **Refresh status** to check progress. Active T3 sessions may reconnect.
 Leftover unselected agent tools and T3 installations are not probed or offered
 as starting templates. Each readiness request resolves current feature selections.
 Credential file presence is not proof of provider authentication. Checks run

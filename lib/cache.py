@@ -564,6 +564,12 @@ def merge_setup_configs(
         elif value is not None:
             merged_dict[key] = value
 
+    if new_config.system_type == "server_github_runner":
+        # These fields form one validated scope; switching away from multiple
+        # repositories must clear the previous list even when the new one is None.
+        for field in ("ci_repository", "ci_repositories", "ci_organization", "ci_runner_group"):
+            merged_dict[field] = new_dict[field]
+
     if new_config.disable_syncthing:
         merged_dict["enable_syncthing"] = False
         merged_dict["disable_syncthing"] = True

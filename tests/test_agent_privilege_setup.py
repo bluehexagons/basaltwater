@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 
 from common.privilege_broker_steps import _requester_has_sudo_grants, render_units
 from common.web_panel_steps import build_web_panel_manifest
-from basaltwater import _patch_preserve_keys, create_basaltwater_parser
+from basaltwater import _patch_preserve_keys, create_basaltwater_parser, run_patch_command
 from lib.arg_parser import add_setup_arguments
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -104,6 +104,78 @@ class SetupTests(unittest.TestCase):
         steps = []
         extend_web_panel_steps(config, steps)
         self.assertEqual([step.__name__ for _, step in steps], ["configure_privilege_broker", "configure_web_panel"])
+
+    def test_runner_host_approvals_do_not_select_agent_workloads(self):
+        from plugins.server import build_github_runner_steps
+
+        parser, _, _ = create_basaltwater_parser()
+        args = parser.parse_args(["setup", "server_github_runner", "vm.example", "operator",
+                                 "--ci-repository", "owner/project", "--ci-allowed-user", "owner",
+                                 "--web-panel", "--ssl", "--privilege-broker"])
+        config = SetupConfig.from_args(args, "server_github_runner")
+        self.assertFalse(config.has_agent_features())
+        self.assertEqual(config.selected_agent_tools(), [])
+        self.assertNotIn(8080, config.effective_web_ports())
+        manifest = build_web_panel_manifest(config, ["vm.example"])
+        self.assertEqual(manifest["features"]["agent_tools"], [])
+        self.assertFalse(manifest["features"]["git"])
+        self.assertIn("https://vm.example:9444/", [service["url"] for service in manifest["services"]])
+        names = [step.__name__ for _, step in build_github_runner_steps(config)]
+        self.assertLess(names.index("setup_user"), names.index("configure_agent_user_security"))
+        self.assertLess(names.index("configure_agent_user_security"), names.index("configure_privilege_broker"))
+        received = argparse.ArgumentParser()
+        add_setup_arguments(received, for_remote=True)
+        remote = received.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        remote.host = "localhost"
+        self.assertEqual(SetupConfig.from_args(remote, "server_github_runner").privilege_broker_port, 9444)
+        args = parser.parse_args(["patch", "vm.example", "operator", "--no-privilege-broker"])
+        with patch("basaltwater.load_setup_command", return_value=config), patch("basaltwater._execute_patch_config", return_value=0) as execute:
+            self.assertEqual(run_patch_command(args), 0)
+        merged = execute.call_args.args[0]
+        self.assertIsNone(merged.privilege_broker_port)
+        disabled = [step.__name__ for _, step in build_github_runner_steps(merged)]
+        self.assertIn("configure_agent_user_security", disabled)
+        self.assertIn("configure_privilege_broker", disabled)
+
+    def test_runner_patch_preserves_or_replaces_the_complete_scope(self):
+        from lib.github_runner_config import runner_repositories
+
+        parser, _, _ = create_basaltwater_parser()
+        for cached_scope in ({"ci_repository": "owner/one"}, {"ci_repositories": ["owner/one", "owner/two"]},
+                             {"ci_organization": "owner", "ci_runner_group": "Private CI"}):
+            cached = SetupConfig(host="vm.example", username="operator", system_type="server_github_runner",
+                                 ci_allowed_users=["alice"], ci_labels=["ci"], **cached_scope)
+            for flags in (["--privilege-broker"], ["--ci-repository", "owner/three"],
+                          ["--ci-organization", "other"], ["--ci-repository", "owner/one", "--ci-repository", "owner/two"]):
+                with self.subTest(cached=cached_scope, flags=flags):
+                    args = parser.parse_args(["patch", "vm.example", "operator", *flags])
+                    with patch("basaltwater.load_setup_command", return_value=cached), patch("basaltwater._execute_patch_config", return_value=0) as execute:
+                        self.assertEqual(run_patch_command(args), 0)
+                    updated = execute.call_args.args[0]
+                    self.assertEqual(updated.ci_allowed_users, ["alice"])
+                    self.assertEqual(updated.ci_labels, ["ci"])
+                    if flags[0] == "--privilege-broker":
+                        self.assertEqual(runner_repositories(updated), runner_repositories(cached))
+                        self.assertEqual(updated.ci_organization, cached.ci_organization)
+                        self.assertEqual(updated.ci_runner_group, cached.ci_runner_group)
+                        self.assertEqual(updated.privilege_broker_port, 9444)
+                    elif flags[0] == "--ci-organization":
+                        self.assertEqual(updated.ci_organization, "other")
+                        self.assertEqual(runner_repositories(updated), [])
+                    else:
+                        self.assertEqual(updated.ci_organization, "")
+                        self.assertEqual(updated.ci_runner_group, "")
+                        self.assertEqual(runner_repositories(updated), flags[1::2])
+
+    def test_runner_approvals_require_a_separate_non_root_vm_operator(self):
+        from lib.github_runner_config import ACCOUNT
+
+        for extra in ({"username": "root"}, {"username": ACCOUNT}, {"machine_type": "hardware"},
+                      {"nopasswd": True}, {"agent_tools": ["codex"]}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                SetupConfig(**{"host": "vm.example", "username": "operator", "system_type": "server_github_runner",
+                               "ci_repository": "owner/project", "ci_allowed_users": ["owner"],
+                               "privilege_broker_port": 9444, **extra})
 
     def test_units_have_distinct_identity_and_private_credentials(self):
         units = render_units()
@@ -226,6 +298,16 @@ class LifecycleTests(unittest.TestCase):
         self.steps.configure_privilege_broker(self.config)
         self.assertEqual(json.loads(self.auth_path.read_text()), changed)
         self.assertTrue(self.polkit_path.read_text().startswith("// Managed"))
+
+    def test_runner_policy_grants_only_the_operator_requester_access(self):
+        self.config.system_type = "server_github_runner"
+        lookup = self.stack.enter_context(patch.object(self.steps.pwd, "getpwnam",
+            side_effect=lambda name: SimpleNamespace(pw_name=name, pw_uid=1000 if name == "agent" else 1001, pw_gid=1000)))
+        self.steps.configure_privilege_broker(self.config)
+        policy = json.loads(self.policy_path.read_text())
+        self.assertEqual(policy["requester_uid"], 1000)
+        self.assertEqual(policy["services"], {})
+        self.assertNotIn("basaltwater-runner", [call.args[0] for call in lookup.call_args_list])
 
     def test_private_umask_keeps_policy_accessible_and_credentials_private(self):
         self.directory.rmdir()

@@ -80,9 +80,9 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
                     response = await self.client.get(path, headers=self.headers)
                     self.assertEqual(response.status, 200)
                     page = await response.text()
-                    for href in ("/desktop/", "/console/"):
+                    for href in ("/desktop/", "/console/", "/admin"):
                         self.assertIn(f'href="{href}"', page)
-                    for href in ("/agents", "/credentials", "/publishing", "/admin"):
+                    for href in ("/agents", "/credentials", "/publishing"):
                         self.assertEqual(f'href="{href}"' in page, bool(features.tools))
             self.discovery.assert_called_with("/home/agent", admin=True)
 

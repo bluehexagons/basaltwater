@@ -1602,7 +1602,7 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("receipt address when investigating", rendered)
         self.assertNotIn("Backup <failed>", rendered)
 
-    def test_page_escapes_content_and_only_shows_available_action(self) -> None:
+    def test_page_escapes_content_and_keeps_agent_updates_in_agents(self) -> None:
         manifest = {
             "version": 1,
             "title": "Agent <VM>",
@@ -1634,12 +1634,13 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Agent &lt;VM&gt;", rendered)
         self.assertIn("Basaltwater web panel", rendered)
         self.assertIn("Agent Code VM", rendered)
-        self.assertIn("Update to latest", rendered)
+        self.assertIn("View scheduled jobs", rendered)
+        self.assertNotIn('action="/actions/t3-update"', rendered)
         self.assertIn("ssh agent@agent-vm.local", rendered)
         self.assertIn("https://agent-vm.local:3773/", rendered)
         self.assertNotIn("Agent <VM>", rendered)
 
-    def test_running_action_refreshes_until_status_changes(self) -> None:
+    def test_running_agent_update_does_not_refresh_the_host_dashboard(self) -> None:
         state = WebPanelState(self._t3_manifest())
         state.action_status = "running"
         state.action_message = "Updating T3 Code…"
@@ -1656,12 +1657,9 @@ class WebPanelEventTest(unittest.TestCase):
         ):
             rendered = render_page(state)
 
-        self.assertIn('<meta http-equiv="refresh" content="3">', rendered)
-        self.assertIn("Update in progress…", rendered)
-        self.assertIn('button type="submit" disabled', rendered)
-        self.assertIn('role="status"', rendered)
-        self.assertIn("2m 05s elapsed", rendered)
-        self.assertIn("refreshes every 3 seconds", rendered)
+        self.assertNotIn('http-equiv="refresh"', rendered)
+        self.assertNotIn("Updating T3 Code", rendered)
+        self.assertNotIn('action="/actions/t3-update"', rendered)
 
     def test_unconfigured_dashboard_sections_are_omitted(self) -> None:
         state = WebPanelState(

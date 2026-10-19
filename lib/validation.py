@@ -109,13 +109,13 @@ def validate_github_runner_settings(config: Any) -> None:
         "deploy_specs", "deploy_latest", "custom_steps", "enable_cloudflare", "enable_samba",
         "samba_shares", "share_credentials", "enable_smbclient", "smb_mounts", "enable_syncthing",
         "sync_specs", "backup_specs", "scrub_specs", "antistatic_server", "antistatic_db",
-        "gogs", "homebox", "device_pairing_providers", "disable_privilege_broker",
+        "gogs", "homebox", "device_pairing_providers",
     )
     if any(getattr(config, name, None) for name in unrelated) or any(
         value is not None for name, value in vars(config).items()
         if name == "maintenance_agent" or name.startswith("maintenance_agent_")
     ):
-        raise ValueError("The dedicated runner profile supports only runner setup and the optional web panel")
+        raise ValueError("The dedicated runner profile supports only runner setup, the web panel and privilege approvals")
 
 
 def validate_systemd_exec_command(

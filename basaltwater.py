@@ -2205,17 +2205,29 @@ def run_patch_command(args: argparse.Namespace) -> int:
         args.enable_rdp = cached_config.enable_rdp
     if getattr(args, "git_access", None) is None:
         args.git_access = cached_config.git_access
+    if cached_config.system_type == "server_github_runner":
+        from lib.github_runner_config import runner_repositories
+
+        # Validate a complete runner policy even for a host-controls-only patch.
+        if args.ci_repository is None and args.ci_organization is None:
+            args.ci_repository = runner_repositories(cached_config) or None
+            args.ci_organization = cached_config.ci_organization or None
+        for field in ("ci_allowed_users", "ci_labels"):
+            if getattr(args, field) is None:
+                setattr(args, field, getattr(cached_config, field))
+        if args.ci_runner_group is None and args.ci_organization == cached_config.ci_organization:
+            args.ci_runner_group = cached_config.ci_runner_group
 
     try:
         new_config = SetupConfig.from_args(args, cached_config.system_type)
+        merged_config = merge_setup_configs(
+            cached_config,
+            new_config,
+            preserve_keys=_patch_preserve_keys(args),
+        )
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
-    merged_config = merge_setup_configs(
-        cached_config,
-        new_config,
-        preserve_keys=_patch_preserve_keys(args),
-    )
     if (
         getattr(args, "web_panel_port", None)
         is WEB_PANEL_DEFAULT_PORT_SENTINEL

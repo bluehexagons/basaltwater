@@ -209,10 +209,11 @@ class PanelFeatureTest(unittest.TestCase):
         with patch("subprocess.run") as run, patch("subprocess.Popen") as spawn:
             available = self.state.features()
             sidebar = render_sidebar(self.state.navigation("dashboard"))
-        self.assertEqual(available.pages, frozenset({"dashboard", "services", "jobs", "logs"}))
+        self.assertEqual(available.pages, frozenset({"dashboard", "services", "jobs", "logs", "admin"}))
         self.assertEqual(sidebar.count('aria-current="page"'), 2)
         self.assertNotIn('href="/#', sidebar)
-        for path in ("agents", "credentials", "admin", "publishing", "maintenance-agent", "agent-tools", "agent-inbox"):
+        self.assertIn('href="/admin"', sidebar)
+        for path in ("agents", "credentials", "publishing", "maintenance-agent", "agent-tools", "agent-inbox"):
             self.assertNotIn(f'href="/{path}"', sidebar)
         run.assert_not_called()
         spawn.assert_not_called()
@@ -223,7 +224,8 @@ class PanelFeatureTest(unittest.TestCase):
         detected = self.state.features()
         self.assertTrue(detected.prompts)
         self.assertTrue({"agents", "credentials", "publishing", "agent-tools", "agent-inbox"} <= detected.pages)
-        self.assertNotIn("admin", detected.pages)
+        self.assertIn("admin", detected.pages)
+        self.assertFalse(detected.admin)
         self.tool.side_effect = None
         self.assertNotIn("agents", self.state.features().pages)
 
@@ -243,6 +245,29 @@ class PanelFeatureTest(unittest.TestCase):
         self.assertTrue(self.state.features().agents)
         self.assertFalse(self.state.features().prompts)
 
+    def test_t3_update_feedback_and_submission_stay_in_agents_readiness(self) -> None:
+        self.units.side_effect = lambda unit, home, **kwargs: unit == "t3code.service"
+        self.state.action_status = "running"
+        self.state.action_message = "Updating T3 Code…"
+        self.state.action_started_at = 100.0
+        self.state.action_output = "Result <details>"
+        with patch.object(self.state, "t3_update_available", return_value=True), patch("common.service_tools.web_panel_agents.time.monotonic", return_value=225.0):
+            page = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"})
+        for text in ("Update in progress…", "2m 05s elapsed", "Refresh status for progress", "Result &lt;details&gt;", "View command output"):
+            self.assertIn(text, page)
+        self.assertIn('<button disabled>', page)
+        self.assertNotIn('http-equiv="refresh"', page)
+        handler = object.__new__(panel.WebPanelHandler)
+        body = ("csrf=" + self.state.csrf_token + "&return=agents").encode()
+        handler.state, handler.path, handler.headers = self.state, "/actions/t3-update", {"Content-Length": str(len(body))}
+        handler.rfile = BytesIO(body)
+        handler.send_response, handler.send_header, handler.end_headers = Mock(), Mock(), Mock()
+        with patch.object(self.state, "t3_update_available", return_value=True), patch.object(self.state, "trigger_t3_update", return_value=True) as trigger:
+            handler.do_POST()
+        trigger.assert_called_once_with()
+        handler.send_response.assert_called_once_with(panel.HTTPStatus.SEE_OTHER)
+        handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
+
     def test_installed_desktop_has_its_own_navigation_destination(self) -> None:
         self.assertNotIn('href="/desktop/"', render_sidebar(self.state.navigation("dashboard")))
         self.units.side_effect = lambda unit, home, **kwargs: unit == "basaltwater-guacamole.service"
@@ -250,7 +275,7 @@ class PanelFeatureTest(unittest.TestCase):
         self.assertFalse(self.state.features().agents)
 
     def test_absent_optional_get_and_post_routes_never_read_or_mutate_state(self) -> None:
-        paths = ("agents", "agent-tools", "agent-inbox", "maintenance-agent", "credentials", "publishing", "admin")
+        paths = ("agents", "agent-tools", "agent-inbox", "maintenance-agent", "credentials", "publishing")
         actions = ("agent-task/save", "agent-task", "agent-tool/prepare", "agent-diagnostics",
                    "agent-inbox", "maintenance-agent", "credentials/identity", "credentials/github",
                    "credentials/github-remove", "publishing/project", "publishing/writing-task", "admin", "admin/cancel")
@@ -264,6 +289,24 @@ class PanelFeatureTest(unittest.TestCase):
                         self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.NOT_FOUND)
         tasks.assert_not_called()
         publishing.assert_not_called()
+
+    def test_runner_admin_page_explains_setup_without_enabling_actions_or_agents(self) -> None:
+        self.state.manifest.update(system_type="server_github_runner", features={})
+        handler = object.__new__(panel.WebPanelHandler)
+        handler.state, handler.path, handler._send = self.state, "/admin", Mock()
+        with patch("common.service_tools.web_panel_admin.exchange") as broker, patch.object(self.state.agent_tasks, "snapshot") as tasks:
+            handler.do_GET()
+        status, page, content_type = handler._send.call_args.args
+        self.assertEqual(status, panel.HTTPStatus.OK)
+        self.assertEqual(content_type, "text/html")
+        self.assertIn('href="/admin" aria-current="page"', page)
+        self.assertIn("--privilege-broker --privilege-broker-password", page)
+        self.assertNotIn('href="/admin?action=', page)
+        self.assertNotIn('href="/agents"', page)
+        self.assertFalse(handler._feature_available("/actions/admin"))
+        self.assertFalse(handler._feature_available("/actions/admin/cancel"))
+        broker.assert_not_called()
+        tasks.assert_not_called()
 
     def test_inspection_pages_have_no_agent_shortcuts_without_codex(self) -> None:
         from common.service_tools import web_panel_jobs as jobs

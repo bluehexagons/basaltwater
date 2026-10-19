@@ -31,8 +31,8 @@ def validate_broker_settings(config) -> None:
         return
     if config.nopasswd or config.harden_agent or config.harden_user:
         raise ValueError("--privilege-broker cannot be combined with --nopasswd or hardened modes; explicitly disable the other posture")
-    if config.username == "root" or config.system_type not in {"agent_vm", "agent_code_vm", "agent_workstation", "custom_steps"}:
-        raise ValueError("--privilege-broker requires a non-root agent VM user")
+    if config.username == "root" or config.system_type not in {"agent_vm", "agent_code_vm", "agent_workstation", "custom_steps", "server_github_runner"}:
+        raise ValueError("--privilege-broker requires a non-root agent or runner VM operator")
     if config.machine_type not in {"auto", "vm"}:
         raise ValueError("--privilege-broker is supported on VMs only")
     if type(config.privilege_broker_port) is not int or not 1024 <= config.privilege_broker_port <= 65535:

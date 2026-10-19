@@ -311,7 +311,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `-k, --key PATH` | SSH private key |
 | `-p, --password PASS` | Target Unix account password, also used for RDP when enabled. A command-line value may appear in shell history and process arguments. |
 | `--nopasswd` / `--no-nopasswd` | Retain or remove the VM setup user's unrestricted passwordless sudo capability rule; disabled by default |
-| `--privilege-broker [PORT]` / `--no-privilege-broker` | Install or remove the separate HTTPS approval page and one-shot privilege broker at the managed host; the default port is 9444 and it requires a non-root agent VM user and conflicts with `--nopasswd` and hardened modes |
+| `--privilege-broker [PORT]` / `--no-privilege-broker` | Install or remove the separate HTTPS approval page and one-shot privilege broker; defaults to port 9444, requires a non-root operator on an agent or GitHub runner VM, and conflicts with `--nopasswd` and hardened modes |
 | `--privilege-broker-password [PASSWORD]` | Set the independent approval-page password; omit `PASSWORD` to prompt securely, and omit the flag on a patch to retain the existing password. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent group restrictions and the hardened coding-agent policy; mutually exclusive with `--nopasswd` when enabled |
 | `--harden-user` / `--no-harden-user` | Also apply or remove password locking, mode-`0700` home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled systemd lingering; enabling implies `--harden-agent` and rejects RDP |
@@ -1606,7 +1606,7 @@ deployment workflows.
 | `--app-server` | Configure an app server to receive deployments |
 | `--deploy-target HOST` | Target app server for deployments |
 | `--cicd` | Install the signed GitHub webhook receiver and isolated executor |
-| `--ci-repository OWNER/REPO` | Private github.com repository for `server_github_runner` |
+| `--ci-repository OWNER/REPO` | Private github.com repository for `server_github_runner`; repeat for up to 20 repositories sharing one active job slot |
 | `--ci-organization ORGANIZATION` | Organization scope instead of `--ci-repository`; the gate still requires private repositories |
 | `--ci-runner-group GROUP` | Organization runner group; defaults to the organization's default group; configure repository access in GitHub |
 | `--ci-allowed-user LOGIN` | Trusted human GitHub identity; repeat to supply the full allowlist |
@@ -1617,6 +1617,9 @@ deployment workflows.
 See [Debian GitHub runner](../services/github-runner.md) for the dedicated
 profile, supported triggers, local fail-closed gate, panel registration and
 qualification requirements. Docker is not required or installed.
+Runner host patches preserve omitted repositories, allowed users and labels.
+An explicit repository list replaces the saved list; an organization scope
+replaces repository scopes.
 
 See [`cicd.md`](../services/cicd.md) for webhook configuration, service units, and
 deployment-boundary behavior.

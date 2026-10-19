@@ -305,7 +305,7 @@ class ConfigurationTests(unittest.TestCase):
                        {"enable_cloudflare": True}, {"enable_samba": True}, {"smb_mounts": [["fixture"]]},
                        {"sync_specs": [["fixture"]]}, {"backup_specs": [["fixture"]]}, {"scrub_specs": [["fixture"]]},
                        {"gogs": ["example.test"]}, {"antistatic_server": "example.test"},
-                       {"disable_privilege_broker": True}, {"maintenance_agent": True},
+                       {"maintenance_agent": True},
                        {"maintenance_agent": False}, {"maintenance_agent_interval": 60},
                        {"custom_steps": "reconcile_samba_shares"}):
             with self.subTest(fields=fields), self.assertRaises(ValueError):

@@ -1071,4 +1071,14 @@ def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:
 def _render_t3_update(state: Any) -> str:
     if not state.t3_update_available():
         return ""
-    return f'''<div class="action"><div><strong>T3 Code maintenance</strong><p>{_escape(state.action_message or 'Update the installed T3 Code service and verify readiness.')}</p></div><form method="post" action="/actions/t3-update"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="return" value="agents"><button{' disabled' if state.action_status == 'running' else ''}>Update T3 Code</button></form></div>'''
+    running = state.action_status == "running"
+    message = state.action_message or "Update the installed T3 Code service and verify readiness. Active sessions may reconnect."
+    if running:
+        started_at = state.action_started_at
+        if isinstance(started_at, (int, float)):
+            minutes, seconds = divmod(max(0, int(time.monotonic() - started_at)), 60)
+            message += f" Still running · {minutes}m {seconds:02d}s elapsed."
+        message += " Refresh status for progress. The update continues in the background."
+    output = '<details><summary>View command output</summary><pre>' + _escape(state.action_output) + '</pre></details>' if state.action_output else ''
+    role = "alert" if state.action_status == "failed" else "status"
+    return f'''<section aria-label="T3 Code maintenance"><div class="action"><div><strong>T3 Code maintenance</strong><p role="{role}">{_escape(message)}</p></div><form method="post" action="/actions/t3-update"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="return" value="agents"><button{' disabled' if running else ''}>{'Update in progress…' if running else 'Update T3 Code'}</button></form></div>{output}<a class="refresh-link" href="/agents?view=diagnostics">Refresh status</a></section>'''

@@ -2027,58 +2027,10 @@ def render_page(state: WebPanelState) -> str:
 {render_heading("Maintenance", "maintenance", heading_id="maintenance-heading")}</div></div>
 <div class="action"><div><strong>Scheduled maintenance</strong><p>Review update timers, housekeeping jobs, and their last results.</p></div>
 <a class="refresh-link" href="/jobs">View scheduled jobs <span aria-hidden="true">→</span></a></div></section>'''
-    if state.t3_update_available():
-        running = state.action_status == "running"
-        disabled = " disabled" if running else ""
-        button_label = "Update in progress…" if running else "Update to latest"
-        action = f'''<section aria-labelledby="maintenance-heading">
-<div class="section-heading"><div>
-{render_heading("Maintenance", "maintenance", heading_id="maintenance-heading")}</div></div>
-<div class="action"><div><strong>T3 Code</strong><p>Install the latest upstream release, then verify that the managed service is ready. This runs in the background.</p></div>
-<form method="post" action="/actions/t3-update">
-<input type="hidden" name="csrf" value="{html.escape(state.csrf_token, quote=True)}">
-<button type="submit"{disabled}>{button_label}</button></form></div></section>'''
-
-    status = ""
-    if state.action_message:
-        output = (
-            f"<details><summary>View command output</summary><pre>{html.escape(state.action_output)}</pre></details>"
-            if state.action_output
-            else ""
-        )
-        role = "alert" if state.action_status == "failed" else "status"
-        message = state.action_message
-        if state.action_status == "running":
-            timeout_minutes = max(1, int(_T3_UPDATE_TIMEOUT_SECONDS // 60))
-            started_at = state.action_started_at
-            if isinstance(started_at, (int, float)):
-                elapsed = max(0, int(time.monotonic() - started_at))
-                minutes, seconds = divmod(elapsed, 60)
-                message = (
-                    f"{message} Still running · {minutes}m {seconds:02d}s elapsed. "
-                    "This panel refreshes every 3 seconds; the updater times out "
-                    f"after {timeout_minutes} minutes."
-                )
-            else:
-                message = (
-                    f"{message} Still running. This panel refreshes every 3 seconds; "
-                    f"the updater times out after {timeout_minutes} minutes."
-                )
-        status = (
-            f'<aside class="status {html.escape(state.action_status)}" role="{role}" '
-            f'aria-live="polite"><strong>Maintenance status</strong>'
-            f"<p>{html.escape(message)}</p>{output}</aside>"
-        )
-
     title = str(manifest.get("title") or "Managed machine")
     host = html.escape(manifest["host"])
     username = html.escape(manifest["username"])
     system_type = html.escape(_system_type_label(manifest["system_type"]))
-    refresh = (
-        '<meta http-equiv="refresh" content="3">'
-        if state.action_status == "running"
-        else ""
-    )
     service_count = f"{len(services)} service" + ("" if len(services) == 1 else "s")
     if services:
         service_count += f" · {service_states['ready']} responding"
@@ -2122,7 +2074,7 @@ def render_page(state: WebPanelState) -> str:
     access_section = f'''<section aria-labelledby="access-heading"><div class="section-heading"><div>
 {render_heading("Access", "access", heading_id="access-heading")}</div>
 <span class="count">{access_label}</span></div>{access_content}</section>''' if access_rows else ""
-    body = f'''{status}{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
+    body = f'''{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
@@ -2140,7 +2092,6 @@ def render_page(state: WebPanelState) -> str:
         content=body,
         navigation=state.navigation("dashboard"),
         footer=footer,
-        refresh=refresh,
     )
 
 
@@ -2170,6 +2121,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if page is None:
             return True
         features = self.state.features()
+        if path in {"/actions/admin", "/actions/admin/cancel"}:
+            return features.admin
         if path in {"/actions/credentials/github", "/actions/credentials/github-remove"} and "gh" not in features.tools:
             return False
         if path == "/actions/publishing/writing-task" and not features.prompts:
@@ -2419,14 +2372,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path in publishing_paths:
             self._handle_publishing_action(path, values)
             return
-        if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["dashboard"])[0] not in {"agents", "admin", "dashboard"}:
+        if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["agents"])[0] != "agents":
             self._send(HTTPStatus.BAD_REQUEST, "Invalid update action\n", "text/plain")
             return
         if not self.state.trigger_t3_update():
             self._send(HTTPStatus.CONFLICT, "Action is unavailable\n", "text/plain")
             return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", {"agents": "/agents?view=diagnostics", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
+        self.send_header("Location", "/agents?view=diagnostics")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 

@@ -974,7 +974,8 @@ class SetupConfig:
             or self.install_git_lfs
             or self.git_author_name is not None
             or self.git_author_email is not None
-            or self.privilege_broker_port is not None
+            # Runner host approvals belong to the operator, not an agent workload.
+            or (self.privilege_broker_port is not None and self.system_type != "server_github_runner")
             or self.publishing_tools
         )
 

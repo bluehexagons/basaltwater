@@ -61,6 +61,15 @@ class AdminScreenTests(unittest.TestCase):
         self.assertIn('href="/logs"', document)
         self.assertNotIn('href="/admin?action=', document)
 
+    def test_admin_does_not_render_or_query_agent_controls(self):
+        self.state.t3_update_available.return_value = True
+        document = self.render()
+        for marker in ("Panel prompt work", "Agent maintenance tools", 'href="/agent-tools?',
+                       'action="/actions/t3-update"', "T3 Code maintenance"):
+            self.assertNotIn(marker, document)
+        self.state.agent_tasks.snapshot.assert_not_called()
+        self.state.t3_update_available.assert_not_called()
+
     def test_safe_job_diagnostics_and_correlated_setup_context_are_visible(self):
         latest = {"action": "refresh", "status": "failed", "stage": "command", "command_index": 1,
                   "failure": "nonzero_exit", "job_id": "a" * 32,

@@ -102,6 +102,22 @@ retry or setup repair instruction. After an interrupted request, load status
 first. **Recovery required** needs the
 [recovery procedure](github-runner-operations.md#updates-deregistration-and-recovery).
 
+## Host administration
+
+**Admin controls** is always visible in the Linux panel. To enable package
+updates, Basaltwater refresh and power actions on a VM, run from an updated controller:
+
+```bash
+basaltw patch ci.example.net operator --privilege-broker --privilege-broker-password
+```
+
+Choose a separate approval password at the hidden prompt. This preserves saved
+runner settings and gives only the non-root operator account access to request
+approvals; the build account remains separate. The broker removes the operator's
+sudo/group privileges; finish old operator sessions afterward. Keep root SSH for
+recovery. See [privilege approvals](../agents/privilege-approvals.md) for access
+restrictions and incompatible sudo/hardening options. Drain jobs before maintenance.
+
 ## Check and use it
 
 Confirm **Online/Idle** in GitHub's runner settings. On the VM:

@@ -67,7 +67,7 @@ PLUGIN = PluginDefinition(
 
 
 def build_github_runner_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
-    """Keep the runner account separate from optional authenticated panel setup."""
+    """Keep the build account separate from operator panel and approval access."""
     from web.github_runner_steps import check_runner_platform, setup_github_runner
     from common.steps import setup_user
     from plugins.common import extend_web_panel_steps
@@ -75,8 +75,12 @@ def build_github_runner_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]
     steps: list[tuple[str, StepFunc]] = [
         ("Checking Debian GitHub runner prerequisites", check_runner_platform),
         ("Setting up operator account", setup_user),
-        ("Installing GitHub runner and author gate", setup_github_runner),
     ]
+    if config.privilege_broker_port is not None or config.disable_privilege_broker:
+        from common.agent_security_steps import configure_agent_user_security
+
+        steps.append(("Configuring operator account security", configure_agent_user_security))
+    steps.append(("Installing GitHub runner and author gate", setup_github_runner))
     extend_web_panel_steps(config, steps)
     return steps
 
