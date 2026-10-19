@@ -86,6 +86,7 @@ basaltw agent visuals compare BEFORE.png AFTER.png [options]
 basaltw agent visuals capture --before REV --after REV --settings JSON [options] -- COMMAND...
 basaltw agent doctor [HOST USER] [options]
 basaltw agent resources [--json]
+basaltw agent storage inspect [--path ABSOLUTE_DIRECTORY]... [--max-entries N] [--timeout SECONDS] [--json]
 basaltw agent containers inspect [--engine podman|docker]... [--json]
 basaltw agent containers preflight --engine podman|docker --image-bytes N [options]
 basaltw agent graphics doctor --context xvfb|display [--json]
@@ -1038,6 +1039,7 @@ basaltw agent doctor --tool codex --tool claude --json
 basaltw agent doctor --all-capabilities --json
 basaltw agent doctor --capability development --json
 basaltw agent resources --json
+basaltw agent storage inspect --json
 basaltw agent containers inspect --engine podman --json
 basaltw agent graphics doctor --context xvfb --json
 basaltw agent doctor --tool codex --tool opencode --capability browser
@@ -1135,6 +1137,17 @@ unavailable; CPU budget is an upper bound rather than a concurrency setting.
 Add `--container-storage` to opt into bounded aggregate Podman/Docker probes;
 the flag also includes host checks and supports the remote `HOST USER` form.
 Ordinary host checks and support collection do not invoke container engines.
+
+`agent storage inspect` prints JSON capacity and cleanup-candidate evidence
+without deleting files, reading their contents or creating reports. Default
+roots cover caches, Trash, logs, temporary data, managed runtimes and projects.
+Repeat `--path` for up to eight exact local directories instead. Scans skip
+symlinks, nested mounts and remote or unknown filesystems. Defaults are 250000
+entries shared across roots, up to 50000 per default root, a cooperative
+20-second budget, and depth 24. `--max-entries` accepts 1–2000000 and `--timeout`
+accepts 1–60 seconds. Partial and unavailable evidence is explicit; allocated
+usage is not a savings guarantee. See [storage cleanup](../agents/storage-cleanup.md)
+for retention checks and approved follow-ups.
 
 `agent containers inspect` observes local storage; repeat `--engine` to narrow
 the inventory. `preflight` compares graph-root space with an explicit estimated

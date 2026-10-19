@@ -23,7 +23,7 @@ from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
 from lib.agent_task_followups import follow_up_requires_review, follow_up_state, prepare_follow_up
 from lib.agent_task_policy import task_policy_issues
-from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
+from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, STORAGE_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.agent_tasks import (
     AgentTasks, DEFAULT_FAILURE_LIMIT, DEFAULT_TIMEOUT_MINUTES, EFFORTS, MAX_FAILURE_LIMIT,
     MAX_PROMPT_BYTES, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES, WEB_SEARCH_MODES, codex_models, repeat_seconds, validate_task,
@@ -98,9 +98,9 @@ PROMPT_TEMPLATES = {
     },
     "storage": {
         "scope": "host", "title": "Review storage cleanup",
-        "description": "Find disk and inode pressure and propose cleanup for review.",
+        "description": "Rank measured cleanup candidates and prepare a bounded follow-up for approval.",
         "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect this host's filesystem capacity, inode usage, and readable directory-size metadata. Identify major space consumers such as logs, caches, build artifacts, and old backups using available tools. Keep scans bounded to relevant local filesystems and summarize unavailable paths. Report sizes, likely owners, retention implications, and specific cleanup candidates with commands for later review. Do not read private file contents, delete or truncate files, prune containers, alter retention, or change the host.",
+        "prompt": STORAGE_REVIEW_PROMPT,
     },
     "incident": {
         "scope": "host", "title": "Triage a service incident",

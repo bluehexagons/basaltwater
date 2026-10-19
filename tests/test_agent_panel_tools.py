@@ -19,6 +19,8 @@ from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks
+from lib.agent_task_context import validate_report
+from lib.agent_task_followups import decide_follow_up
 
 
 class TaskForm(HTMLParser):
@@ -193,6 +195,39 @@ class AgentPanelToolsTest(unittest.TestCase):
         self.assertTrue(task["network"])
         self.assertFalse(task["temporary_files"])
         self.assertEqual((self.source / "inventory.csv").read_text(), "id,name\n001,Example\n")
+
+    def test_storage_entrypoints_retain_ranked_summary_and_approve_exact_cleanup_scope(self) -> None:
+        cache = Path(self.home) / ".cache" / "test-tool"
+        cache.mkdir(parents=True, mode=0o700)
+        cache.parent.chmod(0o700)
+        (cache / "download").write_text("Retain until approved")
+        summary = "Best candidate: test-tool cache, 1 GiB observed; rebuild needs downloads."
+        report = validate_report({"outcome": "complete", "summary": summary, "checkpoint": "Cache review finished",
+            "evidence": ["Exact cache path and retention reviewed"], "retry_after_minutes": None,
+            "environment_feedback": "", "follow_up": {"title": "Clean the reviewed test-tool cache",
+                "reason": "Measured rebuildable cache is the best low-value candidate",
+                "prompt": "Recheck active use, clean only the reviewed cache with its native tool and verify capacity. Deletion is irreversible.",
+                "directory": self.home, "mode": "workspace", "workspace": "run-directory",
+                "network": False, "temporary_files": False, "writable_directories": [str(cache)],
+                "operator_requirements": [], "service_restarts": []}})
+        for settings in (tools.prepare_tool({"tool": "storage"}, self.home),
+                         {**agents.PROMPT_TEMPLATES["storage"], "directory": self.home}):
+            with self.subTest(title=settings["title"]):
+                self.assertIn("basaltw agent storage inspect --json", settings["prompt"])
+                self.assertIn("return one actionable follow_up", settings["prompt"])
+                task_id = self.state.agent_tasks.create(settings, run_now=True)
+                with patch.object(agent_tasks, "execute_prompt", return_value={
+                    "status": "completed", "output": "", "message": "Done", **report,
+                }):
+                    self.assertTrue(self.state.agent_tasks.tick())
+                run = self.state.agent_tasks.snapshot()["runs"][-1]
+                self.assertEqual(run["summary"], summary)
+                self.assertTrue((cache / "download").exists())
+                child_id = decide_follow_up(self.state.agent_tasks, task_id, run["id"], "approve")
+                child = next(task for task in self.state.agent_tasks.snapshot()["tasks"] if task["id"] == child_id)
+                self.assertEqual(child["writable_directories"], [str(cache)])
+                self.assertEqual((child["workspace"], child["max_runs"], child["queued"]), ("run-directory", 1, True))
+                self.state.agent_tasks.action(child_id, "cancel")
 
     def test_log_tool_prefers_installed_sources_and_retains_historical_links(self) -> None:
         with patch.object(self.state, "diagnostic_sources", return_value={"ssh.service": "SSH"}):

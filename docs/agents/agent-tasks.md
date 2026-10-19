@@ -97,8 +97,11 @@ service-manager sockets and loopback readiness probes that inspection mode can
 block. Each run receives an empty private writable directory rather than write
 access to the source home or checkout; temporary writes remain disabled. These
 prompts request read-only diagnostics and recommendations, without host repairs.
-Filesystem-only storage reviews retain inspection mode. Saved tasks keep their
-original settings; create a new task from the refreshed template to replace an
+Filesystem-only storage reviews retain inspection mode. The
+[storage cleanup workflow](storage-cleanup.md) gathers bounded metadata,
+ranks concrete candidates and proposes a separately approved follow-up.
+Saved tasks keep their original settings; create a new task from the refreshed
+template to replace an
 older inspection task. The panel identifies restricted saved host-check presets
 and links to their current template in task settings, copied/reused forms and
 run reports. Older guided system checks link to their current preparation form.

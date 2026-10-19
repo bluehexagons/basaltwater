@@ -42,6 +42,15 @@ Cleanup requires task ownership and separate authorization; preserve SDK caches
 and all referenced workloads. Larger storage or migration is a separate action.
 See [container headroom](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-tooling.md#container-storage-and-sdk-headroom).
 
+For useful local cleanup candidates, run `basaltw agent storage inspect --json`.
+It measures fixed cache, Trash, temporary, log, runtime and project roots using
+metadata only. Drill into the largest relevant children with repeatable
+`--path /exact/directory`. Partial results are lower bounds; allocated usage is
+not guaranteed reclaimable space. Rank concrete candidates with retention,
+active-use checks and rebuild cost. Propose one bounded cleanup follow-up for
+approval, or a targeted investigation if safety remains uncertain. Preserve
+source, unfinished worktrees, sessions, attachments and active runtimes.
+
 If the T3 service is unhealthy, inspect its user unit and bounded recent output:
 
 ```bash

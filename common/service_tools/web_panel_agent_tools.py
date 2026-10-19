@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlencode
 from common.service_tools.web_panel_templates import render_heading, render_icon
 from common.service_tools.web_panel_agent_hub import agent_document
 from lib.agent_tasks import MAX_PROMPT_BYTES, validate_task
-from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
+from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, STORAGE_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.validation import validate_filesystem_path
 
 
@@ -21,7 +21,7 @@ TOOLS = {
     "logs": ("Review service logs", "Group recurring errors and correlate them with service state and resource pressure.", "System", "workspace", "once", 15),
     "job": ("Review a scheduled job", "Investigate failures, missed runs, and overlap in a managed timer and its service.", "System", "workspace", "once", 15),
     "updates": ("Check Debian update health", "Check package consistency, held updates, index age, and reboot evidence.", "System", "workspace", "once", 15),
-    "storage": ("Review disk cleanup", "Identify space consumers and retention concerns before deciding what to remove.", "System", "inspect", "once", 15),
+    "storage": ("Review disk cleanup", "Rank measured cleanup candidates and prepare a bounded follow-up for approval.", "System", "inspect", "once", 15),
     "network": ("Check network and clock readiness", "Inspect routes, resolver and clock state, and configured endpoint reachability.", "System", "workspace", "once", 15),
     "maintenance": ("Plan system maintenance", "Prioritize repairs and prepare commands and verification steps for an administrator.", "System", "workspace", "once", 30),
     "data-audit": ("Check data quality", "Inspect a local dataset for schema, duplicates, and invalid records.", "Data and workspace", "inspect", "once", 20),
@@ -41,7 +41,7 @@ _HOST_PROMPTS = {
     "network": NETWORK_REVIEW_PROMPT,
     "checkup": "Inspect load, memory, disk and inodes, failed services, package-update and restart timers, maintenance holds, agent readiness, and readable backup-job evidence. Use available Basaltwater diagnostics without repair options. Check T3 Code only if installed. Prioritize actionable findings; distinguish missing coverage from a healthy result. Do not change any files or the host.",
     "maintenance": "Inspect resource use, failed services, update history, reboot state, storage pressure, and existing backup evidence. Propose a prioritized maintenance plan with prerequisites, interruption risks, exact commands for operator review, rollback considerations, and post-action checks. Account for active agent work and maintenance holds. Flag repairs needing the separate Admin controls approval workflow. Do not perform repairs, run updates, delete files, submit approvals, or change any files.",
-    "storage": "Inspect filesystem capacity and inode usage and bounded directory-size metadata on relevant local filesystems. Identify caches, logs, build artifacts, and backup space consumers without reading private file contents or traversing network mounts. Report sizes, ownership, retention implications, and specific cleanup candidates for operator review. Do not delete, truncate, prune, move files, or change retention. Quarantine on the same filesystem does not free disk space.",
+    "storage": STORAGE_REVIEW_PROMPT,
 }
 _DATA_RULES = (
     "Revalidate the paths at run time; stop if their boundaries, ownership, or type changed. Read only the explicit source; never follow symlinks or cross mount points. "

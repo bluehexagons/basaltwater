@@ -35,6 +35,27 @@ HOST_REVIEW_PROMPT = (
     "Wait for diagnostic commands to finish; do not repeatedly poll running jobs or start repairs. " + FOLLOW_UP_PROMPT
 )
 
+STORAGE_REVIEW_PROMPT = (
+    "Perform a read-only cleanup review. Run basaltw agent storage inspect --json for capacity, allocated bytes, "
+    "age, ownership and bounded local candidates. Read metadata only, never private contents. Partial sizes are lower bounds. "
+    "Drill into the largest relevant children with --path /exact/directory (up to eight paths) instead of stopping at home totals. "
+    "Compare tool caches (uv, pip, npm/npx, pnpm, Electron), Trash, temporary data, numbered logs, old managed runtimes "
+    "and generated project outputs; use installed tools only. Inspect container usage only if relevant, never prune it. "
+    "Rank up to five candidates by measured benefit, retention and rebuild/download cost. "
+    "Include exact paths, partial-scan limits, active-use checks, proposed commands and required access in evidence; "
+    "put the best candidates and estimated benefit in summary, not just filesystem totals. "
+    "Preserve source, dirty/unmerged worktrees, credentials, sessions, attachments, backups and active runtimes. "
+    "Age or a cache-like name alone does not prove data disposable. Do not delete, truncate, move, prune or change retention. "
+    "When a useful candidate exists, return one actionable follow_up even if this inspection is complete: "
+    "use native cache/retention tooling after rechecking live use and exact targets. "
+    "If safety is uncertain, propose a targeted read-only investigation with a concrete decision to resolve. "
+    "Cleanup needs mode=workspace, workspace=run-directory and exact writable_directories; "
+    "do not grant the whole home. Protected agent or system paths need managed/admin cleanup, not task write grants. "
+    "Specify before/after capacity checks; moving within a filesystem frees no space. Explain irreversible deletion honestly. "
+    "Never treat this review as cleanup authorization. If no coherent follow-up is possible, explain why. "
+    + FOLLOW_UP_PROMPT
+)
+
 UPDATE_REVIEW_PROMPT = (
     "Check Debian package and update health using bounded read-only commands: dpkg --audit, apt-mark showhold, "
     "APT list metadata timestamps, readable update-job results, and /run/reboot-required when present. "
