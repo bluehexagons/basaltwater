@@ -9,12 +9,15 @@ Use OpenAI models currently exposed by the session. Start with Luna for file
 classification, extraction, and bounded documentation edits; use Sol for coding,
 integration reasoning, and substantive reviews. Reserve Astra for a specialized
 task where its expected benefit justifies its cost. A small independent task
-does not need the parent's model or thinking level.
+does not need the parent's model.
 
-For trivial classification, consider `none` only when the exact model **and the
-delegation tool** expose it; otherwise use `low`. Sol usually starts at `medium`;
-raise effort only for demonstrated ambiguity or difficulty. These are starting
-points, not a claim that a model family always wins on every project. Current
+Use `high` reasoning normally, including for inexpensive Luna workers. Consider
+supported `xhigh` for demanding Luna analysis or reviews. Use `medium` as the
+usual minimum when a bounded task justifies less reasoning. Reserve `low` or
+`none` for explicitly scoped trivial work with straightforward verification;
+classification as a broad category does not qualify by itself. Check that the
+exact model **and the delegation tool** expose the chosen setting. These are
+starting points, not a claim that a model family always wins on every project. Current
 [OpenAI model selection](https://developers.openai.com/api/docs/guides/model-selection)
 and [reasoning guidance](https://developers.openai.com/api/docs/guides/reasoning)
 describe model-dependent support. Plan/account access and the runtime tool's
@@ -64,7 +67,7 @@ Stage the two reviewed files explicitly. Do not force-add the whole directory.
 ```bash
 basaltw agent models init ~/repos/PROJECT --json
 basaltw agent models recommend ~/repos/PROJECT classification --available SESSION_MODELS.json --json
-basaltw agent models record ~/repos/PROJECT --task classification --model gpt-6-luna --effort low --outcome accepted --validation 'Parent checked every category against the agreed rules' --json
+basaltw agent models record ~/repos/PROJECT --task classification --model gpt-6-luna --effort high --outcome accepted --validation 'Parent checked every category against the agreed rules' --json
 basaltw agent models report ~/repos/PROJECT --json
 ```
 
@@ -85,10 +88,12 @@ Codex selection; use it only when it represents the task's actual interface.
 Do not substitute a broad API model list for a subagent tool's availability.
 
 Only models with fresh verified metadata and a supported safe effort are
-eligible. The task's requested effort is a minimum. A provisional setting uses
-the lowest supported safe effort at or above it; classification `none` therefore
-falls back to `low` when the tool cannot disable thinking. Proven settings at
-higher supported efforts also compete using their own evidence and costs, so
+eligible. The task's requested effort is a minimum; shipped task classes start
+at `high`. Existing project policies and explicit operator selections are
+preserved. Review older policies that still select low or disabled thinking.
+A provisional setting uses the lowest supported safe effort at or above the
+task minimum. Proven settings at higher supported efforts also compete using
+their own evidence and costs, so
 successful `high` results are not hidden by an unsuccessful `medium` default.
 Untested higher efforts are not automatic retries. Change the task minimum only
 after reviewing its needs. Inspect the returned effort and cost before launch.

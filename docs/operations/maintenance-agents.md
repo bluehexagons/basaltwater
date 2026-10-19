@@ -143,12 +143,17 @@ marks an unfinished recorded check interrupted, and the panel shows that status.
 | `--maintenance-agent-security` / `--no-maintenance-agent-security` | On | Schedule bounded security audits independently; include fresh evidence in manual checks |
 | `--maintenance-agent-audit-days` | 7 | 1–30 days |
 | `--maintenance-agent-model` | `auto` | Explicit model ID or a cached economy-role model |
-| `--maintenance-agent-effort` | `low` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `--maintenance-agent-effort` | `high` | `minimal`, `low`, `medium`, `high`, `xhigh` |
 | `--maintenance-agent-escalation-model` | Empty | Explicit stronger model; empty disables escalation |
 | `--maintenance-agent-escalation-effort` | `high` | Same effort choices |
 | `--maintenance-agent-daily-calls` | 2 | 0–24 total attempts per UTC day; 0 disables AI |
 | `--maintenance-agent-daily-escalations` | 1 | 0–4 stronger-model attempts; also counts toward the total |
 | `--maintenance-agent-timeout` | 10 minutes | 1–60 per review |
+
+New policies use high reasoning. Medium is the usual minimum for bounded work;
+lower settings remain available for explicit trivial exceptions. Setup preserves
+saved effort choices. To update an existing policy, select **High** in the panel
+or configure `--maintenance-agent-effort high`.
 
 `auto` recognizes `luna`, `mini` and `nano` roles in locally cached model IDs
 and requires cached support for the selected effort. These names are role hints,

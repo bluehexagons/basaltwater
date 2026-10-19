@@ -48,10 +48,13 @@ Read [the complete lifecycle](references/lifecycle.md) for assignments, handoffs
 review, merge, validation, removal, and cherry-pick or squash implications.
 
 Read [model selection and project learning](references/model-selection.md)
-before choosing workers. Start with OpenAI Luna and low or supported disabled
-thinking for simple classification, Sol for coding and reviews, and Astra only
-when a specialized task justifies its cost. Verify actual session capabilities;
-do not imply a recommendation changes tool settings. Never autonomously choose
+before choosing workers. Start with OpenAI Luna for classification and bounded
+documentation, Sol for coding and reviews, and Astra only when a specialized
+task justifies its cost. Use high reasoning normally, including for Luna;
+consider supported xhigh for demanding Luna tasks. Medium is the usual minimum.
+Reserve low or disabled thinking for explicitly scoped trivial exceptions.
+Verify actual session capabilities; do not imply a recommendation changes tool
+settings. Never autonomously choose
 or inherit fast service, `max`, or `ultra`. Explicit user selections govern
 exceptions; clarify weak or ambiguous requests without repeating confirmation
 for an already-confirmed selection.

@@ -16,7 +16,7 @@ REPORT_FILE = DATA_DIR + "/reports.json"
 SERVICE_NAME = "basaltwater-maintenance-agent"
 DEFAULTS = {
     "enabled": False, "host_checks": True, "interval": 60, "routines": False, "security": True,
-    "audit_days": 7, "model": "auto", "effort": "low", "escalation_model": "",
+    "audit_days": 7, "model": "auto", "effort": "high", "escalation_model": "",
     "escalation_effort": "high", "daily_calls": 2, "daily_escalations": 1, "timeout": 10,
 }
 LIMITS = {"interval": (15, 10080), "audit_days": (1, 30), "daily_calls": (0, 24),

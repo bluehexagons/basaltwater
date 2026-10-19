@@ -54,19 +54,28 @@ class AgentModelsTests(unittest.TestCase):
         return recommend_agent_model(str(self.repository), task, str(self.available_path), **kwargs)
 
     def _record(self, model: str = "gpt-6-luna", *, task: str = "classification",
-                effort: str = "low", outcome: str = "accepted", cost: float | None = None) -> dict:
+                effort: str = "high", outcome: str = "accepted", cost: float | None = None) -> dict:
         return record_model_outcome(str(self.repository), {
             "task": task, "model": model, "effort": effort, "outcome": outcome,
             "cost_usd": cost, "seconds": 20, "rework_minutes": 0, "attempts": 1,
             "validation": "Parent compared all categories with the agreed rules",
         })
 
-    def test_simple_task_uses_luna_with_runtime_effort_fallback(self) -> None:
+    def _minimum(self, task: str, effort: str) -> None:
+        policy = self._policy()
+        policy["tasks"][task]["effort"] = effort
+        self._write(self.policy_path, policy)
+
+    def test_seed_uses_high_and_trivial_exception_requires_explicit_policy(self) -> None:
         result = self._recommend()
         self.assertEqual(result["selection"]["model"], "gpt-6-luna")
-        self.assertEqual(result["selection"]["effort"], "low")
+        self.assertEqual(result["selection"]["effort"], "high")
         self.assertEqual(result["service"], "standard")
         self.assertTrue(result["provisional"])
+        for task in ("documentation", "coding", "review"):
+            self.assertEqual(self._recommend(task)["selection"]["effort"], "high")
+        self._minimum("classification", "none")
+        self.assertEqual(self._recommend()["selection"]["effort"], "low")
         self.available[0]["efforts"].insert(0, "none")
         self._write(self.available_path, self.available)
         self.assertEqual(self._recommend()["selection"]["effort"], "none")
@@ -74,8 +83,8 @@ class AgentModelsTests(unittest.TestCase):
 
     def test_new_model_is_discovered_then_trialled_before_replacing_incumbent(self) -> None:
         for _ in range(3):
-            self._record("gpt-6.1-sol", task="coding", effort="medium", cost=0.5)
-        self.available.append({"id": "future-openai-model", "efforts": ["medium"]})
+            self._record("gpt-6.1-sol", task="coding", cost=0.5)
+        self.available.append({"id": "future-openai-model", "efforts": ["high"]})
         self._write(self.available_path, self.available)
         result = self._recommend("coding")
         self.assertEqual(result["uncatalogued_models"], ["future-openai-model"])
@@ -89,7 +98,7 @@ class AgentModelsTests(unittest.TestCase):
         self.assertEqual(result["selection"]["model"], "gpt-6.1-sol")
         self.assertIn("future-openai-model", [item["model"] for item in result["trial_candidates"]])
         for _ in range(3):
-            self._record("future-openai-model", task="coding", effort="medium", cost=0.1)
+            self._record("future-openai-model", task="coding", cost=0.1)
         result = self._recommend("coding")
         self.assertEqual(result["selection"]["model"], "future-openai-model")
         self.assertEqual(result["basis"], "reviewed_cost_per_accepted")
@@ -127,6 +136,7 @@ class AgentModelsTests(unittest.TestCase):
         self.assertEqual({row["evaluation"] for row in rows}, {"v1", "v2"})
 
     def test_proven_higher_effort_remains_eligible_after_default_fails(self) -> None:
+        self._minimum("coding", "medium")
         for _ in range(3):
             self._record("gpt-6.1-sol", task="coding", effort="medium", outcome="failed", cost=0.1)
             self._record("gpt-6.1-sol", task="coding", effort="high", cost=0.5)
@@ -140,6 +150,7 @@ class AgentModelsTests(unittest.TestCase):
         self.assertIsNone(self._recommend("coding")["selection"])
 
     def test_efforts_compete_by_cost_and_sparse_higher_effort_needs_a_trial(self) -> None:
+        self._minimum("coding", "medium")
         for _ in range(3):
             self._record("gpt-6.1-sol", task="coding", effort="medium", cost=0.5)
             self._record("gpt-6.1-sol", task="coding", effort="high", cost=0.1)
@@ -157,19 +168,20 @@ class AgentModelsTests(unittest.TestCase):
         self.assertIn("high", [item["effort"] for item in result["trial_candidates"]])
 
     def test_new_lower_effort_does_not_displace_proven_setting(self) -> None:
+        self._minimum("classification", "none")
         for _ in range(3):
             self._record()
         self.available[0]["efforts"].insert(0, "none")
         self._write(self.available_path, self.available)
         result = self._recommend()
-        self.assertEqual(result["selection"]["effort"], "low")
+        self.assertEqual(result["selection"]["effort"], "high")
         self.assertFalse(result["provisional"])
         self.assertIn("none", [item["effort"] for item in result["trial_candidates"]])
 
     def test_unobserved_rework_stays_unknown_with_known_subtotal(self) -> None:
         self._record()
         record_model_outcome(str(self.repository), {
-            "task": "classification", "model": "gpt-6-luna", "effort": "low",
+            "task": "classification", "model": "gpt-6-luna", "effort": "high",
             "outcome": "reworked", "attempts": 1, "validation": "Parent corrected an ambiguous category",
         })
         row = report_model_outcomes(str(self.repository))[0]
@@ -265,7 +277,7 @@ class AgentModelsTests(unittest.TestCase):
     def test_cache_visibility_and_exact_supported_efforts(self) -> None:
         self._write(self.available_path, {"models": [
             {"slug": "gpt-6-luna", "visibility": "hide", "supported_reasoning_levels": [{"effort": "low"}]},
-            {"slug": "gpt-6.1-sol", "visibility": "list", "supported_reasoning_levels": [{"effort": "medium"}]},
+            {"slug": "gpt-6.1-sol", "visibility": "list", "supported_reasoning_levels": [{"effort": "high"}]},
         ]})
         self.assertEqual(self._recommend()["selection"]["model"], "gpt-6.1-sol")
         self._write(self.available_path, [{"id": "gpt-6-luna", "efforts": []}])

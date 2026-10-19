@@ -22,7 +22,7 @@ from lib.maintenance_agent_config import DEFAULTS, setup_policy, validate_policy
 from plugins.post_setup import build_post_setup_steps
 
 
-MODELS = [{"slug": "test-mini", "efforts": ["low"]}, {"slug": "test-large", "efforts": ["high"]}]
+MODELS = [{"slug": "test-mini", "efforts": ["low", "medium", "high"]}, {"slug": "test-large", "efforts": ["high"]}]
 ISSUE = {"key": "service:x", "message": "A configured service failed", "severity": "warning"}
 
 
@@ -77,6 +77,11 @@ class MaintenancePolicyTest(unittest.TestCase):
     def test_default_never_inherits_unknown_expensive_model_or_unsupported_effort(self) -> None:
         selection = agent.select_review(DEFAULTS, MODELS, critical=False, repeated=1, calls=0, escalations=0)
         self.assertEqual(selection["model"], "test-mini")
+        self.assertEqual(selection["effort"], "high")
+        explicit = validate_policy({"effort": "low"})
+        self.assertEqual(agent.select_review(explicit, MODELS, critical=False, repeated=1, calls=0, escalations=0)["effort"], "low")
+        unsupported = [{"slug": "test-mini", "efforts": ["low", "medium"]}]
+        self.assertEqual(agent.select_review(DEFAULTS, unsupported, critical=False, repeated=1, calls=0, escalations=0)["status"], "blocked")
         self.assertEqual(agent.select_review(DEFAULTS, MODELS[1:], critical=False, repeated=1, calls=0, escalations=0)["status"], "blocked")
         self.assertEqual(agent.select_review({**DEFAULTS, "effort": "xhigh"}, MODELS, critical=False, repeated=1, calls=0, escalations=0)["status"], "blocked")
 
