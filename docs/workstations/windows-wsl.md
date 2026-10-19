@@ -73,6 +73,9 @@ an account; a directory sync failure stops preparation before account changes.
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create
 a Basaltwater-managed T3 service in WSL. `-BuildServer` installs Git for
 Windows and starts a WSL keepalive task at login.
+For native GitHub Actions jobs with WSL access, see
+[Windows GitHub runners](windows-github-runner.md). `-BuildServer` alone does
+not register a GitHub runner.
 
 If WSL needs a restart, setup prints an exact `-Resume` command. Restart
 Windows, log in to the same account, and run it. The state and pinned source
@@ -144,7 +147,10 @@ filesystem rather than `/mnt/c`.
 Run `windows\Manage-Wsl.ps1 -Action status|start|stop|refresh|logs` from the
 pinned source directory. `refresh` updates WSL, Ubuntu packages, selected
 tools, and selected WinGet packages without changing the pinned Basaltwater
-source. `stop` terminates the selected distribution and interrupts its active
+source. To advance the source deliberately, run a freshly downloaded installer
+with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
+revision for both Windows and Ubuntu before reapplying setup.
+`stop` terminates the selected distribution and interrupts its active
 work. The optional login worker keeps WSL available after its terminal closes;
 logout, sleep, reboot, or `wsl --shutdown` can still interrupt jobs. Use
 `-Resume` after fixing an interrupted installation.

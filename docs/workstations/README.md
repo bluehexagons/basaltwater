@@ -18,6 +18,7 @@ applications. For coding-agent security and VM profiles, start at
 | [Desktop development](desktop-development.md) | Discover tools, render assets, and run native UI checks |
 | [Visual comparisons](visual-comparisons.md) | Compare captures or rendering results across Git revisions |
 | [Ubuntu WSL](windows-wsl.md) | Prepare a Windows 11 Ubuntu build and agent machine |
+| [Windows GitHub runners](windows-github-runner.md) | Register native Windows jobs with WSL access and a shared queue |
 | [XRDP](xrdp.md) | Configure and troubleshoot the shared Debian desktop |
 | [Guacamole](guacamole.md) | Provide browser access to a managed desktop or console |
 | [Godot](godot.md) | Install and update the engine and select workflow bundles |

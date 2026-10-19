@@ -13,7 +13,16 @@ param(
     [string]$DistroLocation = "",
     [ValidateSet("main", "dev")][string]$Channel = "main",
     [string]$Version = "",
+    [string[]]$CIRepository = @(),
+    [string]$CIOrganization = '',
+    [string[]]$CIAllowedUser = @(),
+    [string[]]$CILabel = @('windows-ci', 'basaltwater-wsl'),
+    [string]$CIRunnerGroup = '',
+    [switch]$CIRegisterWithGh,
+    [string]$CIRegistrationTokenFile = '',
+    [switch]$CIPromptToken,
     [switch]$Plan,
+    [switch]$UpdateSource,
     [switch]$Resume
 )
 
@@ -23,6 +32,8 @@ $stateDirectory = Join-Path $env:LOCALAPPDATA "Basaltwater"
 $statePath = Join-Path $stateDirectory "wsl-setup.json"
 $owner = [Security.Principal.WindowsIdentity]::GetCurrent()
 $setupLock = $null
+$runnerHelpers = Join-Path $PSScriptRoot 'windows\GitHubRunner.Common.ps1'
+if (Test-Path -LiteralPath $runnerHelpers) { . $runnerHelpers }
 
 function Save-State($value) {
     if (-not (Test-Path -LiteralPath $stateDirectory)) {
@@ -240,6 +251,7 @@ function Ensure-WorkerTask {
 
 try {
     Check-Host
+    if ($UpdateSource -and -not $Resume) { throw 'UpdateSource requires Resume' }
     if ($LinuxUser -and ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root")) {
         throw "Invalid Ubuntu username"
     }
@@ -250,6 +262,19 @@ try {
         throw "Distribution location must be an absolute Windows drive path"
     }
     if ($Version -and $Version -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid release reference" }
+    $runnerConfig = $null
+    if ($CIRepository.Count -or $CIOrganization) {
+        # The download-only entry point has no companion files. The pinned
+        # installer validates the saved options before any Windows/WSL changes.
+        if (Get-Command Assert-RunnerArguments -ErrorAction SilentlyContinue) {
+            Assert-RunnerArguments $CIRepository $CIOrganization $CIAllowedUser $CILabel $CIRunnerGroup `
+                $CIRegisterWithGh $CIRegistrationTokenFile $CIPromptToken
+        }
+        $runnerConfig = [pscustomobject]@{ Repository = @($CIRepository); Organization = $CIOrganization;
+            AllowedUser = @($CIAllowedUser); Label = @($CILabel); RunnerGroup = $CIRunnerGroup }
+    } elseif (($CIAllowedUser.Count -or $CIRegisterWithGh -or $CIRegistrationTokenFile -or $CIPromptToken) -and -not $Resume) {
+        throw 'CI options require CIRepository or CIOrganization'
+    }
     $agentTools = @()
     foreach ($selection in $AgentTool) {
         foreach ($tool in $selection.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() }) {
@@ -262,6 +287,7 @@ try {
     if ($Plan) {
         Write-Host "Plan: install WinGet/WSL and stable Ubuntu, configure $Profile, selected runtimes/agents, and optional T3 desktop/worker."
         Write-Host "A reboot and interactive Ubuntu/provider login may be required."
+        if ($runnerConfig) { Write-Host 'GitHub Actions: native Windows login tasks with WSL access; registration may be completed later.' }
         return
     }
     if (Test-Path -LiteralPath $statePath) {
@@ -301,16 +327,39 @@ try {
             Python = [bool]$Python
             Go = [bool]$Go
             AgentTool = $agentTools
+            GitHubRunner = $runnerConfig
             Phase = "staged"
         }
         Save-State $state
         $stagedInstaller = Join-Path $state.Source "install.ps1"
-        & $stagedInstaller -Resume
+        & $stagedInstaller -Resume -CIRegisterWithGh:$CIRegisterWithGh `
+            -CIRegistrationTokenFile $CIRegistrationTokenFile -CIPromptToken:$CIPromptToken
         if (-not $?) { throw "Staged WSL setup failed; rerun the saved installer with -Resume" }
         return
     }
 
     Initialize-DistroSelection
+    if (-not $state.PSObject.Properties['GitHubRunner']) {
+        $state | Add-Member -NotePropertyName GitHubRunner -NotePropertyValue $null
+    }
+    if ($runnerConfig) { $state.GitHubRunner = $runnerConfig; Save-State $state }
+    if ($UpdateSource) {
+        $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
+        $state.Revision = $resolved.Revision
+        $state.Source = $resolved.Source
+        Save-State $state
+        $setupLock.Dispose()
+        $setupLock = $null
+        & (Join-Path $state.Source 'install.ps1') -Resume -CIRegisterWithGh:$CIRegisterWithGh `
+            -CIRegistrationTokenFile $CIRegistrationTokenFile -CIPromptToken:$CIPromptToken
+        if (-not $?) { throw 'Updated source setup failed; rerun the saved installer with -Resume' }
+        return
+    }
+    if ($state.GitHubRunner) {
+        $ci = $state.GitHubRunner
+        Assert-RunnerArguments @($ci.Repository) $ci.Organization @($ci.AllowedUser) @($ci.Label) $ci.RunnerGroup `
+            $CIRegisterWithGh $CIRegistrationTokenFile $CIPromptToken
+    }
     if (-not (Ensure-Wsl)) {
         $state.Phase = "restart-required"
         Save-State $state
@@ -353,6 +402,22 @@ try {
     Ensure-WorkerTask
     $state.Phase = "complete"
     Save-State $state
+    if ($state.GitHubRunner) {
+        try {
+            Ensure-WingetPackage 'Git.Git' 'Git for Windows installation'
+            Ensure-WingetPackage 'Microsoft.PowerShell' 'PowerShell installation'
+            if ($CIRegisterWithGh) { Ensure-WingetPackage 'GitHub.cli' 'GitHub CLI installation' }
+            $runnerOptions = @{
+                Repository = @($state.GitHubRunner.Repository); Organization = $state.GitHubRunner.Organization
+                AllowedUser = @($state.GitHubRunner.AllowedUser); Label = @($state.GitHubRunner.Label)
+                RunnerGroup = $state.GitHubRunner.RunnerGroup; RegisterWithGh = $CIRegisterWithGh
+                RegistrationTokenFile = $CIRegistrationTokenFile; PromptToken = $CIPromptToken
+            }
+            & (Join-Path $state.Source 'windows\Setup-GitHubRunner.ps1') @runnerOptions
+        } catch {
+            Write-Warning ('GitHub runner setup remains incomplete. Other setup completed; retry windows\Setup-GitHubRunner.ps1. ' + $_.Exception.Message)
+        }
+    }
     Write-Host "Basaltwater Ubuntu WSL setup complete. Authenticate selected agents in Ubuntu as $($state.LinuxUser)."
     if ($state.T3CodeDesktop) { Write-Host "In T3 Code Settings > Connections, select $($state.Distro)." }
 } catch {

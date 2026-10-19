@@ -4,6 +4,8 @@ Use a dedicated Debian 13/Trixie x86-64 VM for trusted jobs from private
 `github.com` repositories. This persistent runner is not a sandbox for hostile
 code. Live VM, reboot and GitHub qualification remain open; see the
 [operations reference](github-runner-operations.md#qualification).
+For native Windows jobs with WSL access, use the
+[Windows runner guide](../workstations/windows-github-runner.md).
 
 ## Set up
 
@@ -18,6 +20,8 @@ repositories. Each has its own registration and workspace. **Only one job runs
 workflow steps at a time across the VM**; other assigned jobs wait in the hook.
 Waiting counts toward the job timeout, and order across repositories is not
 guaranteed. These repositories share the same trusted service account.
+For one build that consumes several repositories, see
+[multi-repository builds](github-runner-repositories.md).
 
 Repeat `--ci-allowed-user` for each trusted person. For an organization, replace
 the repository flags with `--ci-organization ORG` and optional

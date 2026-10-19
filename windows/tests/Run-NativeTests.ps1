@@ -230,6 +230,14 @@ try {
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -DistroLocation 'C:relative'
         } 'absolute Windows drive path'
+        $runnerPlan = & (Join-Path $repo 'install.ps1') -Plan -CIRepository owner/repo -CIAllowedUser owner 6>&1 | Out-String
+        Assert-True ($runnerPlan -match 'native Windows login tasks') 'Runner plan did not include Windows tasks'
+        Assert-Throws {
+            & (Join-Path $repo 'install.ps1') -Plan -CIRepository owner/repo -CIAllowedUser owner -CIRegisterWithGh -CIPromptToken
+        } 'Choose RegisterWithGh'
+        Assert-Throws {
+            & (Join-Path $repo 'install.ps1') -Plan -UpdateSource
+        } 'UpdateSource requires Resume'
     } finally {
         Remove-Item Function:\Get-CimInstance
         Remove-Item Function:\Get-PSDrive
@@ -373,6 +381,8 @@ try {
         Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus -Scope Global -ErrorAction SilentlyContinue
     }
 
+    & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')
+    if (-not $?) { throw 'GitHub runner offline qualification failed' }
     Write-Host 'Native Windows qualification passed.'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData

@@ -1,0 +1,20 @@
+name: Windows and WSL smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: [self-hosted, Windows, X64, windows-ci]
+    timeout-minutes: 10
+    steps:
+      - name: Check native Windows and the selected WSL account
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git --version
+          if ($LASTEXITCODE -ne 0) { throw 'Git for Windows is unavailable' }
+          wsl.exe --distribution $env:BASALTWATER_WSL_DISTRO --user $env:BASALTWATER_WSL_USER --exec /usr/bin/id -un
+          if ($LASTEXITCODE -ne 0) { throw 'WSL account is unavailable' }
+          wsl.exe --distribution $env:BASALTWATER_WSL_DISTRO --user $env:BASALTWATER_WSL_USER --exec /usr/bin/git --version
+          if ($LASTEXITCODE -ne 0) { throw 'WSL Git is unavailable' }

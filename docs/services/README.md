@@ -13,6 +13,7 @@ see [Storage](../storage/README.md).
 | [CI/CD webhooks](cicd.md) | Webhook jobs, build servers, and executor behavior |
 | [GitHub runner](github-runner.md) | Set up and register a dedicated Debian runner through setup or the panel |
 | [GitHub runner operations](github-runner-operations.md) | Identity gate, isolation, recovery and live qualification |
+| [Multi-repository builds](github-runner-repositories.md) | Choose runner registrations, dependency checkouts and Antistatic build inputs |
 | [GitHub runner improvements](github-runner-improvements.md) | Implemented registration/scope changes and remaining qualification |
 | [Cloudflare tunnels](cloudflare.md) | Public ingress, tunnel setup, firewall policy, and webhooks |
 | [Gogs](gogs.md) | Self-hosted Git, SSH access, storage, and updates |

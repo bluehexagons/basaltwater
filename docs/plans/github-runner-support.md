@@ -7,12 +7,13 @@ claim production readiness yet. See [Debian runner operations](../services/githu
 Deferred registration, organization scope and the panel's one-time HTTPS
 registration handoff are implemented; see the
 [improvement delivery plan](../services/github-runner-improvements.md).
-Windows parity remains deferred.
+Native Windows runners with WSL access are implemented; live Windows 11/WSL
+qualification remains open. See the [Windows runner guide](../workstations/windows-github-runner.md).
 
 ## Decisions
 
 - Use GitHub's official `actions/runner` application as a persistent service.
-- Support one GitHub repository or one organization per runner setup. GitHub
+- Support up to 20 repository registrations with a shared job slot, or one organization. GitHub
   runner groups control organization repository access; ephemeral runners remain deferred.
 - Do not require or install Docker as part of runner setup. The current CI
   wrapper invokes Docker to run Debian Trixie checks on Ubuntu-hosted workers.
@@ -92,7 +93,8 @@ The Debian-only web panel should show runner health, repository and labels,
 configured allowlist, and recent gate outcomes. Allowlist editing can be added
 only after its authorization and audit path is defined; otherwise show the
 value read-only. Pending registration through HTTPS is implemented;
-replacement, queue and lifecycle controls remain deferred.
+panel policy editing and lifecycle controls remain deferred. Setup replacement
+and a host-wide queue are implemented.
 This is separate from the existing **Review GitHub Actions failures** template,
 which inspects workflow failures but does not report local runner health or
 policy.
@@ -106,9 +108,13 @@ state. Docker must not be a setup prerequisite.
 
 ### 2. Windows runner
 
-Bring the existing unqualified Windows runner flow into parity with the Linux
-runner's installation, service, repository, allowlist, and verification model.
-Keep the web panel Debian-only.
+Native Windows installation, repository/organization registration, shared identity
+evaluation and serial workflow steps are implemented. Limited login tasks run as
+the WSL owner because distributions are account-scoped; job code shares that
+owner's credentials and is trusted. There is no Windows panel or pre-login service.
+Live Windows 11/WSL registration, denied-job, queue, restart and build evidence
+remain required; see the Windows guide. Multi-repository source builds use
+workflow checkouts or locked dependencies, independently of runner registrations.
 
 ### Registration extensions
 
