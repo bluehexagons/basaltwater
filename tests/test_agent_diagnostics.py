@@ -118,6 +118,10 @@ class AgentDiagnosticsTests(unittest.TestCase):
         self.assertEqual(len(result["events"]), 1)
         self.assertNotIn("raw-secret", json.dumps(result))
         self.assertEqual(bounded.call_count, 2)
+        command = bounded.call_args.args[0]
+        self.assertIn("--unit=nginx.service", command)
+        self.assertNotIn("--system", command)
+        self.assertNotIn("--user", command)
 
 
 if __name__ == "__main__":

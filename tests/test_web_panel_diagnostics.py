@@ -122,18 +122,40 @@ class DiagnosticQueryTest(unittest.TestCase):
         self.assertIn("safe=kept", rendered)
         self.assertIn("[private key redacted]", rendered)
 
-    def test_system_scope_and_incomplete_journal_are_visible(self) -> None:
+    def test_system_unit_and_incomplete_journal_are_visible(self) -> None:
         with patch.object(diagnostics, "_bounded_command", side_effect=[
             ("LoadState=not-found", ""),
             ('Hint: You are currently not seeing messages from other users.\n' +
              json.dumps({"MESSAGE": [65, 66], "__REALTIME_TIMESTAMP": "bad"}) + '\n{"MESSAGE":', "Output limit reached"),
         ]) as run:
             result = diagnostics.collect_diagnostics(diagnostics.DiagnosticQuery(load=True))
-        self.assertIn("--system", run.call_args.args[0])
+        self.assertIn("--unit=nginx.service", run.call_args.args[0])
+        self.assertNotIn("--user", run.call_args.args[0])
+        self.assertNotIn("--system", run.call_args.args[0])
         self.assertIn("--since=-1h", run.call_args.args[0])
         self.assertEqual(len(result["issues"]), 2)
         self.assertIn("omitted", result["events"][0]["message"])
         self.assertEqual(result["events"][0]["timestamp"], "Unknown time")
+
+    def test_nonroot_system_service_includes_split_user_journal(self) -> None:
+        def split_journals(command: list[str]) -> tuple[str, str]:
+            if command[0] == "systemctl":
+                return "LoadState=loaded\nActiveState=failed", ""
+            self.assertIn("--unit=auto-update-node.service", command)
+            self.assertNotIn("--user", command)
+            messages = ["Main process exited"]
+            if "--system" not in command:
+                messages.append("Node updater traceback from agent's journal")
+            return "\n".join(json.dumps({"MESSAGE": message}) for message in messages), ""
+
+        with patch.object(diagnostics, "_bounded_command", side_effect=split_journals):
+            page = diagnostics.render_diagnostics(
+                diagnostics.DiagnosticQuery(service="auto-update-node.service", load=True), "", "host",
+            )
+        self.assertIn("Node updater traceback from agent&#x27;s journal", page)
+        self.assertIn("Main process exited", page)
+        self.assertIn("sudo journalctl --unit=auto-update-node.service", page)
+        self.assertNotIn("--system", page)
 
     def test_malformed_urls_never_restore_credentials_and_ipv6_stays_valid(self) -> None:
         message = (

@@ -147,8 +147,9 @@ def _command_issue(command: list[str], code: int, output: str) -> str:
         "not seeing messages from other users",
     )):
         return (
-            "Journal access is restricted for the panel service. Apply the latest "
-            "Basaltwater setup to restore its managed journal permissions, then reload diagnostics."
+            "Journal access is restricted for this process. Basaltwater setup grants managed journal "
+            "permissions to the panel and task worker services; login shells keep their own groups. "
+            "Check which process ran the query before repeating setup."
         )
     if "--user" in command and "failed to connect to" in lowered and "bus" in lowered:
         return "The panel account's user service manager is unavailable. Check its user session and T3 Code service over SSH."
@@ -199,8 +200,12 @@ def _bounded_command(command: list[str]) -> tuple[str, str]:
 
 
 def _journal_command(query: DiagnosticQuery) -> list[str]:
+    # System units running as non-root users can write to split user journals.
+    # --system would hide those application records while retaining PID 1's
+    # lifecycle messages. Keep the unit filter across all readable journals.
+    scope = ["--user"] if query.service == "t3code.service" else []
     command = [
-        "journalctl", "--user" if query.service == "t3code.service" else "--system",
+        "journalctl", *scope,
         "--unit=" + query.service, "--no-pager", "--lines=100", "--reverse",
         "--priority=" + query.priority,
     ]

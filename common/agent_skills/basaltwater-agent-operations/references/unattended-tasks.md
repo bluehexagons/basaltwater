@@ -53,6 +53,10 @@ service properties and never dumps environments or command lines. Collection
 issues and empty logs do not prove a service is healthy. The independent worker
 receives service-scoped journal access after setup refreshes its systemd unit;
 the login account's groups are unchanged.
+System-unit queries include all readable journals because services running as
+non-root accounts can log to split user journals. A login shell can have less
+journal access than the managed panel or worker; check the querying process
+before treating a permission notice as a failed setup refresh.
 
 The catalog leads with host diagnostics. Update and network checks inspect
 existing state without repairing packages or changing connectivity. Concrete
