@@ -69,9 +69,9 @@ def validate_runner_registration_token(value: object) -> bytes:
 
 def validate_github_runner_settings(config: Any) -> None:
     """Validate runner inputs before staging credentials or changing a target."""
-    from lib.github_runner_config import ACCOUNT, PROFILE, VERSION, validate_policy
+    from lib.github_runner_config import ACCOUNT, PROFILE, VERSION, runner_repositories, validate_policy
 
-    repository = getattr(config, "ci_repository", "")
+    repositories = runner_repositories(config)
     organization = getattr(config, "ci_organization", "")
     runner_group = getattr(config, "ci_runner_group", "")
     users = getattr(config, "ci_allowed_users", None)
@@ -82,20 +82,23 @@ def validate_github_runner_settings(config: Any) -> None:
     if type(use_gh) is not bool:
         raise ValueError("ci_register_with_gh must be boolean")
     if config.system_type != PROFILE:
-        if repository or organization or runner_group or users or labels or token or use_gh or payload:
+        if repositories or organization or runner_group or users or labels or token or use_gh or payload:
             raise ValueError("--ci-* runner options require server_github_runner")
         return
     if config.username == ACCOUNT:
         raise ValueError("The setup/panel account must differ from the dedicated runner account")
     if config.machine_type in {"oci", "wsl", "unprivileged", "privileged"}:
         raise ValueError("GitHub runner phase 1 requires a native Debian VM or hardware")
-    validate_policy(dict(schema=1, repository=repository, organization=organization, runner_group=runner_group, allowed_users=users,
-                         labels=labels or [], runner_version=VERSION))
+    for repository in repositories or [""]:
+        validate_policy(dict(schema=1, repository=repository, organization=organization, runner_group=runner_group,
+                             allowed_users=users, labels=labels or [], runner_version=VERSION))
     if type(payload) is not bool:
         raise ValueError("ci_registration_payload must be boolean")
     if use_gh and token is not None:
         raise ValueError("Choose --ci-register-with-gh or --ci-registration-token-file, not both")
     if token is not None:
+        if len(repositories) > 1:
+            raise ValueError("For multiple repositories use --ci-register-with-gh or register each repository in the HTTPS panel")
         if not isinstance(token, str):
             raise ValueError("--ci-registration-token-file must be a path")
         validate_filesystem_path(token)

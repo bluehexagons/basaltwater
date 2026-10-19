@@ -531,6 +531,7 @@ class SetupConfig:
     cloudflare_allow_direct: Optional[bool] = False
     enable_cicd: bool = False
     ci_repository: str = ""
+    ci_repositories: Optional[StrList] = None
     ci_organization: str = ""
     ci_runner_group: str = ""
     ci_allowed_users: Optional[StrList] = None
@@ -2195,7 +2196,9 @@ class SetupConfig:
         return args
 
     def _github_runner_args(self) -> StrList:
-        args = [f"--ci-repository {shlex.quote(self.ci_repository)}"] if self.ci_repository else []
+        from lib.github_runner_config import runner_repositories
+
+        args = [f"--ci-repository {shlex.quote(repository)}" for repository in runner_repositories(self)]
         if self.ci_organization:
             args.append(f"--ci-organization {shlex.quote(self.ci_organization)}")
         if self.ci_runner_group:
@@ -2910,7 +2913,10 @@ class SetupConfig:
             enable_cloudflare=getattr(args, 'enable_cloudflare', False),
             cloudflare_allow_direct=_optional_bool_arg(args, 'cloudflare_allow_direct'),
             enable_cicd=getattr(args, 'enable_cicd', False),
-            ci_repository=_optional_str_arg(args, 'ci_repository') or '',
+            ci_repository=(args.ci_repository[0] if isinstance(getattr(args, 'ci_repository', None), list)
+                           and len(args.ci_repository) == 1 else _optional_str_arg(args, 'ci_repository') or ''),
+            ci_repositories=(args.ci_repository if isinstance(getattr(args, 'ci_repository', None), list)
+                             and len(args.ci_repository) > 1 else None),
             ci_organization=_optional_str_arg(args, 'ci_organization') or '',
             ci_runner_group=_optional_str_arg(args, 'ci_runner_group') or '',
             ci_allowed_users=(args.ci_allowed_users if isinstance(getattr(args, 'ci_allowed_users', None), list) else None),

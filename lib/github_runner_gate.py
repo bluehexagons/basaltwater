@@ -7,7 +7,10 @@ import os
 import stat
 
 from lib.atomic_io import read_json_file, write_json_atomic
-from lib.github_runner_config import APP, CREDENTIAL_FILES, EVENTS, GATE, HOOK, MAX_OUTCOMES, OUTCOMES, POLICY, validate_policy
+from lib.github_runner_config import (
+    APP, CREDENTIAL_FILES, DATA, EVENTS, GATE, HOOK, HOOK_DIR, MAX_OUTCOMES, OUTCOMES, POLICY,
+    repository_instance, runner_paths, validate_policy,
+)
 from lib.validation import validate_github_runner_repository
 from lib.validators import validate_github_login
 
@@ -78,16 +81,22 @@ def evaluate_job(policy: dict, event: object, environment: dict[str, str]) -> tu
         return False, "malformed-identity-or-event", ""
 
 
-def check_installation(*, require_registration: bool = True) -> dict:
+def check_installation(*, require_registration: bool = True, instance: str = "") -> dict:
     """Require root-controlled policy, hook, interpreter inputs and app files."""
-    executables = {APP + "/bin/Runner.Listener", APP + "/bin/Runner.Worker"}
-    policy = validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
+    paths = runner_paths(instance, app=APP, data=DATA, policy=POLICY, hook_dir=HOOK_DIR, hook=HOOK)
+    application, hook, policy_path = paths.app, paths.hook, paths.policy
+    executables = {application + "/bin/Runner.Listener", application + "/bin/Runner.Worker"}
+    policy = validate_policy(read_json_file(policy_path, max_bytes=16 * 1024))
+    if instance and (not policy["repository"] or repository_instance(policy["repository"]) != instance):
+        raise ValueError("Runner instance policy mismatch")
+    if require_registration and not policy.get("enabled", True):
+        raise ValueError("Runner is disabled")
     if require_registration and policy["registration"] != "registered":
         raise ValueError("Runner is pending registration")
-    credentials = tuple(APP + "/" + name for name in CREDENTIAL_FILES)
+    credentials = tuple(application + "/" + name for name in CREDENTIAL_FILES)
     if policy["registration"] == "pending" and any(os.path.lexists(path) for path in credentials):
         raise ValueError("Partial runner registration requires recovery; see runner guide")
-    for path in (POLICY, HOOK, GATE, APP, APP + "/.env", APP + "/.path",
+    for path in (policy_path, hook, GATE, application, application + "/.env", application + "/.path",
                  *(credentials if policy["registration"] == "registered" else ()),
                  *sorted(executables)):
         current = path
@@ -95,24 +104,25 @@ def check_installation(*, require_registration: bool = True) -> dict:
             info = os.lstat(current)
             if info.st_uid != 0 or info.st_mode & 0o022 or stat.S_ISLNK(info.st_mode):
                 raise ValueError("Runner installation is writable or contains a symlink")
-            directory = current != path or path == APP
+            directory = current != path or path == application
             if not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)):
                 raise ValueError("Runner installation contains an unexpected file type")
             current = os.path.dirname(current)
-        access = os.R_OK | (os.X_OK if path == APP or path in executables else 0)
+        access = os.R_OK | (os.X_OK if path == application or path in executables else 0)
         if not os.access(path, access):
             raise ValueError("Runner installation is not accessible to its service account")
     return policy
 
 
-def record_outcome(allowed: bool, reason: str, identity: str, environment: dict[str, str]) -> None:
+def record_outcome(allowed: bool, reason: str, identity: str, environment: dict[str, str], *, instance: str = "") -> None:
     """Retain only the last 100 decisions, never webhook bodies or credentials.
 
     This file is runner-writable operational telemetry, not an audit trail.
     Failure to record a decision also denies execution.
     """
+    outcomes = runner_paths(instance).outcomes if instance else OUTCOMES
     try:
-        previous = read_json_file(OUTCOMES, max_bytes=64 * 1024)
+        previous = read_json_file(outcomes, max_bytes=64 * 1024)
         if not isinstance(previous, list) or len(previous) > MAX_OUTCOMES:
             raise ValueError("Invalid runner outcome history")
     except FileNotFoundError:
@@ -125,12 +135,12 @@ def record_outcome(allowed: bool, reason: str, identity: str, environment: dict[
         "event": event_name if event_name in EVENTS else "unsupported",
         "run_id": run_id if run_id.isascii() and run_id.isdigit() and len(run_id) <= 20 else "",
     })
-    write_json_atomic(OUTCOMES, previous[-MAX_OUTCOMES:], mode=0o644)
+    write_json_atomic(outcomes, previous[-MAX_OUTCOMES:], mode=0o644)
 
 
-def main(*, check: bool = False) -> int:
+def main(*, check: bool = False, instance: str = "", worker: int | None = None) -> int:
     try:
-        policy = check_installation()
+        policy = check_installation(**({"instance": instance} if instance else {}))
         if check:
             return 0
         environment = dict(os.environ)
@@ -139,8 +149,12 @@ def main(*, check: bool = False) -> int:
             allowed, reason, identity = evaluate_job(policy, event, environment)
         except (OSError, ValueError):
             allowed, reason, identity = False, "event-unavailable", ""
-        record_outcome(allowed, reason, identity, environment)
+        record_outcome(allowed, reason, identity, environment, **({"instance": instance} if instance else {}))
         print("GitHub runner gate: " + reason)
+        if allowed and worker is not None:
+            from lib.github_runner_queue import acquire_job_slot
+
+            acquire_job_slot(worker)
         return 0 if allowed else 1
     except (OSError, ValueError, TypeError):
         print("GitHub runner gate: configuration or telemetry unavailable")

@@ -101,6 +101,24 @@ After registration, the service is enabled at boot and restarts its listener aft
 GitHub's repository runner settings and inspect `_diag` output under
 `/var/lib/basaltwater-github-runner/diag` for connectivity problems.
 
+Additional repository instances use a stable ID derived from `OWNER/REPO`:
+applications under `/opt/basaltwater-github-runner/instances/ID`, data under
+`/var/lib/basaltwater-github-runner/instances/ID`, and policies/hooks under
+`/etc/basaltwater/github-runner/instances/ID`. Their services are
+`basaltwater-github-runner-ID.service`. Inspect all with
+`systemctl list-units 'basaltwater-github-runner*.service'`; use `--instance ID`
+with the safe `--check` command. Existing single-runner paths remain valid.
+
+Every listener stays online. After identity approval, the pre-job hook waits on
+the shared `queue.lock` inode in the main data directory. A separate process
+holds that lock until its worker exits, including action post steps and normal
+cleanup. Worker crashes release the slot; service shutdown also stops queued
+hooks and lock holders. Do not remove or replace the lock while any runner runs.
+GitHub shows an assigned waiting job as running, and its timeout includes this
+wait. Action downloads/setup may overlap before the hook; workflow steps are
+serialized. Cross-repository order is not guaranteed. All instances share the
+same account and are for mutually trusted repositories.
+
 The Debian panel's **GitHub runner** page appears when the fixed policy and
 unit are installed. **Load runner status** reads repository, labels, allowlist,
 pinned version, local service state, boot enablement and up to 100 recent gate
@@ -117,7 +135,9 @@ press **Load runner status**. A pending runner shows a link to the configured
 repository or organization's GitHub runner settings. Copy only the registration
 token following `--token` in GitHub's configuration command, paste it into
 **One-time registration token**, and press **Register runner**. Success returns
-to refreshed status and enables the runner service. A rejected or expired token
+to refreshed status and enables that runner service. For multiple repositories,
+the panel offers one pending scope at a time; follow its link and register each
+in turn. A rejected or expired token
 clears the field; obtain a fresh token for the same scope and retry. After a
 timeout or interrupted request, refresh status first: registration may already
 have completed. If registered but inactive, repeat tokenless setup to repair
@@ -148,7 +168,12 @@ GitHub requires timely runner updates. Basaltwater deliberately uses
 revision with a reviewed version/checksum pin and qualified gate behavior.
 Do not make the application writable to enable automatic updates.
 
-For upgrade, replacement, scope/group/label changes or lost registration:
+Setup handles ordinary scope/group/label replacement automatically. Use this
+manual procedure for release upgrades, lost registration or inspection. With
+multiple repositories, stop all runner services first: the original application
+and data directories also contain the additional instances. Quarantine their
+policy/hook tree `/etc/basaltwater/github-runner/` as well, and remove each retired
+runner entry in GitHub. Restore the complete desired repository list on setup.
 
 1. Stop assigning jobs to this runner and let any trusted job finish. Stop and
    disable `basaltwater-github-runner.service` as root.
@@ -169,8 +194,9 @@ For upgrade, replacement, scope/group/label changes or lost registration:
    before restoring traffic. Delete the root-only quarantine when recovery no
    longer needs it.
 
-An interrupted install is deliberately preserved for inspection. A pending
-installation with no credentials can retry registration. An application
+An interrupted install is deliberately preserved for inspection. Another setup
+run retires partial credentials and leaves registration retryable. A pending
+installation with no credentials can retry registration through the panel. An application
 without a valid managed policy is refused; quarantine it before retrying.
 If registration completed in GitHub before local installation failed, remove
 that stale GitHub entry first. A failed allowlist/service reconfiguration leaves
@@ -178,8 +204,9 @@ the runner stopped or failing its preflight; inspect the managed unit recovery
 marker and [transaction recovery](../operations/transaction-recovery.md) before
 retrying. A unit rollback does not undo policy or GitHub registration changes.
 
-For full removal, perform steps 1–3, then remove the fixed unit with the normal
-systemd daemon reload. Remove `/etc/basaltwater/github-runner/` only after the
+For full removal, perform steps 1–3, then remove the main unit and every
+`basaltwater-github-runner-ID.service` unit and reload systemd.
+Remove `/etc/basaltwater/github-runner/` only after the
 service is gone. Remove an installed panel with `--disable-web-panel` through
 setup; this also stops and removes its registration socket and service template.
 If removing units manually, stop and disable
@@ -208,6 +235,14 @@ Run the checks below for both scopes. For organization scope use two private
 repositories in the organization and one outside it; verify GitHub group access
 selection independently, and reject cross-repository PR heads even within the
 organization. Record live evidence before claiming qualification.
+
+For personal repositories, configure at least two with repeated `--ci-repository`
+flags. Start jobs in both; verify their workflow steps never overlap, including
+post steps. Cancel a waiting job, terminate an active worker and stop a service;
+confirm later jobs acquire the slot and denied jobs never run a canary. Test
+reordered setup flags, removing/re-adding a repository, registration permission
+failure for only one scope, and sequential panel registration. With bad `gh`
+credentials, verify the rest of setup and requested restart still complete.
 
 1. Install without Docker; confirm only the dedicated account owns job data,
    has no supplementary groups, cannot write the policy/application/hook or

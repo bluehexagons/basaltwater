@@ -196,6 +196,25 @@ class PanelDevelopmentTests(unittest.TestCase):
         }, headers={"X-Forwarded-Proto": "https", "X-Basaltwater-User": "operator"})[0], 403)
         self.assertEqual(self.scenario.runner_status().policy["registration"], "pending")
 
+    def test_personal_repositories_register_in_sequence_without_host_operations(self) -> None:
+        host = self.stack.enter_context(patch.object(panel, "submit_registration", side_effect=AssertionError("Host socket")))
+        self.stack.enter_context(patch.object(panel.os, "geteuid", return_value=1000))
+        self.serve("full")
+        self.settings["https"] = True
+        self.state.manifest["panel_url"] = "https://127.0.0.1/"
+        fields = {"csrf": self.state.csrf_token, "token": "sample-runner-registration-token"}
+        for repository in ("example/second-project", "example/third-project"):
+            page = self.request("/github-runner?load=1")[2]
+            self.assertIn(repository + "/settings/actions/runners/new", page)
+            self.assertEqual(page.count('name="token"'), 1)
+            self.assertEqual(self.request(RUNNER_REGISTRATION_ENDPOINT, fields)[0], 303)
+        self.assertNotIn('name="token"', self.request("/github-runner?load=1")[2])
+        with ExitStack() as reloaded:
+            status = Scenario(self.state, "full", reloaded).runner_status()
+            self.assertTrue(all(item.policy["registration"] == "registered" for item in status.instances))
+        self.assertNotIn(fields["token"], self.scenario.path.read_text())
+        host.assert_not_called()
+
     def test_degraded_scenario_exposes_failures_and_simulates_failed_runs(self) -> None:
         self.serve("degraded")
         self.assertIn("94% used", self.request("/")[2])

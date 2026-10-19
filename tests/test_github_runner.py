@@ -445,7 +445,7 @@ class ConfigurationTests(unittest.TestCase):
             def register(command, **kwargs):
                 self.assertEqual(command[command.index("--url") + 1], "https://github.com/owner")
                 self.assertEqual(command[command.index("--runnergroup") + 1], "Private CI")
-                self.assertNotIn("--replace", command)
+                self.assertIn("--replace", command)
                 self.assertTrue(Path(kwargs["cwd"], "_diag").is_symlink())
                 for name in (".runner", ".credentials", ".credentials_rsaparams"):
                     Path(kwargs["cwd"], name).write_bytes(b"generated" if name != ".credentials_rsaparams" else b"")
@@ -477,7 +477,7 @@ class ConfigurationTests(unittest.TestCase):
               patch.object(steps, "runner_lock", side_effect=nullcontext), patch.object(gate, "check_installation"),
               patch.object(steps, "check_directory_path"), patch.object(steps, "read_json_file", return_value=policy()),
               patch.object(steps, "_account", return_value=SimpleNamespace(pw_uid=123, pw_gid=123)),
-              patch.object(steps, "_directory"), patch.object(steps, "run") as run,
+              patch.object(steps, "_directory"), patch.object(steps, "_prepare_queue"), patch.object(steps, "run") as run,
               patch.object(steps, "write_text_atomic"), patch.object(steps, "write_json_atomic") as write,
               patch.object(steps, "replace_units") as units, patch.object(steps, "_register") as register):
             steps.setup_github_runner(config(ci_repository="OWNER/REPO", ci_allowed_users=["bob"]))
@@ -694,6 +694,7 @@ class InstallationTests(unittest.TestCase):
         self.enterContext(patch.object(gate, "check_installation"))
         self.enterContext(patch.object(steps, "is_dry_run", return_value=False))
         self.enterContext(patch.object(steps, "_account", return_value=SimpleNamespace(pw_uid=123, pw_gid=123)))
+        self.enterContext(patch.object(steps, "_prepare_queue"))
 
         def directory(path, **kwargs):
             Path(path).mkdir(parents=True, exist_ok=True)

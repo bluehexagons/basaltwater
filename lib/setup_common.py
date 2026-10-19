@@ -1462,6 +1462,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 config, os.path.join(build_dir, RUNNER_PAYLOAD_NAME),
             )
         except (OSError, ValueError) as exc:
+            shutil.rmtree(os.path.join(build_dir, RUNNER_PAYLOAD_NAME), ignore_errors=True)
             print(f"Warning: GitHub runner registration deferred: {exc}")
             print("  Setup will continue. Retry registration through setup or the HTTPS web panel.")
             config.ci_registration_payload = False

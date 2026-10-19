@@ -1344,8 +1344,8 @@ def add_setup_arguments(
                        help="Install webhook-based CI/CD system for GitHub Actions")
     
     runner_scope = parser.add_mutually_exclusive_group()
-    runner_scope.add_argument("--ci-repository", metavar="OWNER/REPO",
-                       help="Private github.com repository for server_github_runner (Debian 13 x86-64)")
+    runner_scope.add_argument("--ci-repository", action="append", metavar="OWNER/REPO",
+                       help="Private github.com repository; repeat for multiple repositories sharing one job slot")
     runner_scope.add_argument("--ci-organization", metavar="ORGANIZATION",
                              help="GitHub organization for server_github_runner; private repositories only")
     parser.add_argument("--ci-runner-group", metavar="GROUP",

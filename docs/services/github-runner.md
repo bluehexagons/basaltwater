@@ -9,16 +9,19 @@ code. Live VM, reboot and GitHub qualification remain open; see the
 
 ```bash
 basaltw setup server_github_runner ci.example.net operator \
-  --machine vm --ci-organization my-org --ci-runner-group 'Private CI' \
-  --ci-allowed-user alice --ci-label debian-ci
+  --machine vm --ci-repository OWNER/REPO1 --ci-repository OWNER/REPO2 \
+  --ci-allowed-user alice --ci-label debian-ci --ci-register-with-gh
 ```
 
-`--ci-organization` requires a GitHub organization. For a personal account or
-a single repository, replace the organization and group flags with
-`--ci-repository OWNER/REPO`. GitHub has no personal-account-wide runner scope;
-sharing one registration across repositories requires an organization.
-Repeat `--ci-allowed-user` for each trusted person.
-For organization runners, choose allowed repositories under **Settings →
+Repeat `--ci-repository` for up to 20 private repositories, including personal
+repositories. Each has its own registration and workspace. **Only one job runs
+workflow steps at a time across the VM**; other assigned jobs wait in the hook.
+Waiting counts toward the job timeout, and order across repositories is not
+guaranteed. These repositories share the same trusted service account.
+
+Repeat `--ci-allowed-user` for each trusted person. For an organization, replace
+the repository flags with `--ci-organization ORG` and optional
+`--ci-runner-group GROUP`. Choose allowed repositories under **Settings →
 Actions → Runner groups → GROUP → Repository access** in GitHub, including
 when using the default group.
 
@@ -27,13 +30,15 @@ Choose how to register:
 | Option added to setup | Result |
 | --- | --- |
 | `--ci-register-with-gh` | Request a token using the controller's existing GitHub CLI login and register now |
-| `--ci-registration-token-file PATH` | Register now using a private local token file (`chmod 600`) |
+| `--ci-registration-token-file PATH` | Register a single configured repository or organization using a private token file (`chmod 600`) |
 | Neither | Install in **Pending registration** state, with the service disabled |
 
 You can add either registration option on the first setup or repeat the same
 complete setup command later. Registered runners need no token on routine
 setup. Credential errors leave registration pending and let the rest of setup,
 including requested restarts, finish. `--dry-run` makes no token request.
+On later setup runs, include the complete desired repository list. Omitted
+repositories are disabled locally; re-adding them reuses their registration.
 
 ## Get a registration token
 
@@ -84,6 +89,8 @@ Add `--web-panel 443 --ssl` to setup; see [panel access](web-panel.md) for
 password and certificate settings. Sign in, open **GitHub runner**, and press
 **Load runner status**. Follow the GitHub settings link, paste the token, and
 press **Register runner**. Success enables the service and refreshes status.
+For multiple repositories, register the scope shown in the form, then repeat
+for the next pending repository. Each needs its own token.
 
 If a token is rejected, create a fresh one and retry. After an interrupted
 request, load status first. **Recovery required** needs the

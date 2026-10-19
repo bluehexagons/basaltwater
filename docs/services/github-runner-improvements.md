@@ -3,8 +3,8 @@
 ## Goal
 
 Make a persistent GitHub Actions runner installable before GitHub registration,
-allow registration later from setup or the web panel, and support either one
-repository or an organization with several repositories. This targets a VM used
+allow registration later from setup or the web panel, and support one or
+several personal repositories or an organization. This targets a VM used
 by one GitHub user or organization; it does not add multi-tenant administration.
 
 ## Implemented behavior
@@ -14,9 +14,15 @@ by one GitHub user or organization; it does not add multi-tenant administration.
   does not report the runner as ready. A later setup with
   `--ci-registration-token-file` or `--ci-register-with-gh` registers and
   activates it. Failed attempts remain retryable. Routine setup of an already
-  registered runner does not require a token; replacement remains an explicit
-  recovery operation.
-- Runner scope is either a repository or an organization. Organization scope
+  registered runner does not require a token. Credential errors warn and let
+  updates, checks and requested restarts complete. Setup applies scope/group/
+  label replacements automatically, preserving retired credentials privately.
+- Repeat `--ci-repository OWNER/REPO` for up to 20 repositories. Each has its
+  own registration, service, workspace and policy. All share one host job slot:
+  approved jobs wait in the hook until the previous worker exits. Queued time
+  counts toward GitHub job timeouts; cross-repository order is not guaranteed.
+  Omitted repositories are disabled; re-adding them reuses registration.
+- Runner scope is either repositories or an organization. Organization scope
   records the organization and optional GitHub runner group. GitHub runner group
   access controls which repositories can assign work; the local gate continues
   to enforce the configured organization and human-actor policy.
@@ -56,7 +62,7 @@ Steps 1–3 are implemented with offline lifecycle, organization gate, registrat
 protocol, authenticated HTTP handler and generated-unit checks. The panel uses
 a root-owned Unix socket with per-connection activation and kernel peer-UID
 verification, rather than a durable request queue. Rejected tokens are
-retryable; partial credentials are preserved for deliberate recovery, and a
+retryable; another setup run retires partial credentials for recovery, and a
 completed registration with failed service activation can be repaired by
 tokenless setup. Existing registered policies migrate without re-registration.
 See the [quick start](github-runner.md) and

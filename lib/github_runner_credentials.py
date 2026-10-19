@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+from copy import copy
 import re
 import shutil
 import subprocess
 
-from lib.atomic_io import write_bytes_atomic
+from lib.atomic_io import write_bytes_atomic, write_json_atomic
+from lib.github_runner_config import runner_repositories
 from lib.config import SetupConfig
 from lib.validation import (
     validate_filesystem_path, validate_github_runner_settings, validate_runner_registration_token,
@@ -79,6 +81,21 @@ def prepare_registration_payload(config: SetupConfig, destination: str) -> bool:
         print(f"  [DRY RUN] Would {source}")
         return False
     if config.ci_register_with_gh:
+        repositories = runner_repositories(config)
+        if len(repositories) > 1:
+            tokens = {}
+            for repository in repositories:
+                scoped = copy(config)
+                scoped.ci_repository, scoped.ci_repositories = repository, None
+                try:
+                    tokens[repository.lower()] = _token_from_gh(scoped).decode("ascii")
+                except ValueError as exc:
+                    print(f"  Warning: Registration deferred for {repository}: {exc}")
+            if not tokens:
+                return False
+            os.makedirs(destination, mode=0o700)
+            write_json_atomic(os.path.join(destination, "tokens.json"), tokens, mode=0o600)
+            return True
         token = _token_from_gh(config)
         os.makedirs(destination, mode=0o700)
         write_bytes_atomic(os.path.join(destination, "token"), token, mode=0o600)

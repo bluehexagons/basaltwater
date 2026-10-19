@@ -160,7 +160,7 @@ class Scenario:
                 **({"organization": "example-org", "runner_group": "Private CI"} if self.name == "empty" else {}),
                 "runner_version": RUNNER_VERSION, "allowed_users": ["operator", "maintainer"], "labels": ["debian-ci"],
             })
-            return github_runner.RunnerSnapshot(
+            result = github_runner.RunnerSnapshot(
                 policy=policy,
                 service={"ActiveState": "failed" if self.name == "degraded" else "active" if registered else "inactive",
                          "SubState": "failed" if self.name == "degraded" else "running" if registered else "dead",
@@ -174,15 +174,29 @@ class Scenario:
                 ],
                 issues=["Synthetic runner inspection incomplete"] if self.name == "degraded" else [],
             )
+            if self.name == "full":
+                for repository in ("example/second-project", "example/third-project"):
+                    ready = repository in self.data.get("runner_registered_repos", [])
+                    result.instances.append(github_runner.RunnerSnapshot(
+                        policy={**policy, "repository": repository, "registration": "registered" if ready else "pending"},
+                        service={"ActiveState": "active" if ready else "inactive",
+                                 "UnitFileState": "enabled" if ready else "disabled"},
+                    ))
+            return result
 
     def register_runner(self, token: bytes) -> None:
         validate_runner_registration_token(token)
         with self.lock:
-            if self.runner_status().policy["registration"] != "pending":
+            status = self.runner_status()
+            pending = next((item for item in [status, *status.instances] if item.policy["registration"] == "pending"), None)
+            if pending is None:
                 raise ValueError("Synthetic runner is already registered")
             if token == b"reject-sample-runner-token":
                 raise RuntimeError("Synthetic registration rejected")
-            self.data["runner_registered"] = True  # Retain no sample token or real runner credentials.
+            if pending is status:
+                self.data["runner_registered"] = True
+            else:
+                self.data.setdefault("runner_registered_repos", []).append(pending.policy["repository"])
             self.save()
 
     def exchange(self, message: dict) -> dict:
