@@ -35,6 +35,7 @@ from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_spec
 from lib.credentials import prepare_runtime_config, store_cli_credentials
 from lib.homebox_config import validate_homebox_settings
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
+from lib.github_runner_credentials import prepare_registration_payload
 from lib.network_transition import finish_network_transition
 from lib.proxmox_hosts import ProxmoxHost, find_proxmox_host, sync_proxmox_host
 from lib.validators import validate_host, validate_username
@@ -1456,11 +1457,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             prepare_web_panel_payload(config, web_panel_payload_dir)
             config.web_panel_payload = True
 
-        if config.ci_registration_token_file and not config.dry_run:
-            from web.github_runner_steps import stage_registration_token
-
-            stage_registration_token(config.ci_registration_token_file, os.path.join(build_dir, RUNNER_PAYLOAD_NAME))
-            config.ci_registration_payload = True
+        config.ci_registration_payload = prepare_registration_payload(config, os.path.join(build_dir, RUNNER_PAYLOAD_NAME))
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
         if config.agent_auth_source == "login" and config.install_codex:

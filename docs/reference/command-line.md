@@ -1598,7 +1598,8 @@ deployment workflows.
 | `--ci-runner-group GROUP` | Organization runner group; defaults to the organization's default group; configure repository access in GitHub |
 | `--ci-allowed-user LOGIN` | Trusted human GitHub identity; repeat to supply the full allowlist |
 | `--ci-label LABEL` | Additional runner label; repeat as needed |
-| `--ci-registration-token-file PATH` | Private local file containing a one-hour registration token for the configured scope; omit for pending installation and repeat setup with a fresh token to register later |
+| `--ci-registration-token-file PATH` | Register during setup using a private local token file (`chmod 600`) |
+| `--ci-register-with-gh` | Request a registration token using the controller's authenticated GitHub CLI; alternative to a token file, used only for this invocation |
 
 See [Debian GitHub runner](../services/github-runner.md) for the dedicated
 profile, supported triggers, local fail-closed gate, panel registration and

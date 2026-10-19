@@ -77,9 +77,12 @@ def validate_github_runner_settings(config: Any) -> None:
     users = getattr(config, "ci_allowed_users", None)
     labels = getattr(config, "ci_labels", None)
     token = getattr(config, "ci_registration_token_file", None)
+    use_gh = getattr(config, "ci_register_with_gh", False)
     payload = getattr(config, "ci_registration_payload", False)
+    if type(use_gh) is not bool:
+        raise ValueError("ci_register_with_gh must be boolean")
     if config.system_type != PROFILE:
-        if repository or organization or runner_group or users or labels or token or payload:
+        if repository or organization or runner_group or users or labels or token or use_gh or payload:
             raise ValueError("--ci-* runner options require server_github_runner")
         return
     if config.username == ACCOUNT:
@@ -90,6 +93,8 @@ def validate_github_runner_settings(config: Any) -> None:
                          labels=labels or [], runner_version=VERSION))
     if type(payload) is not bool:
         raise ValueError("ci_registration_payload must be boolean")
+    if use_gh and token is not None:
+        raise ValueError("Choose --ci-register-with-gh or --ci-registration-token-file, not both")
     if token is not None:
         if not isinstance(token, str):
             raise ValueError("--ci-registration-token-file must be a path")

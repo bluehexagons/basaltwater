@@ -91,13 +91,17 @@ def _registration_form(policy: dict, csrf: str, secure: bool) -> str:
     target = organization or policy["repository"]
     settings = (f"https://github.com/organizations/{organization}/settings/actions/runners/new" if organization else
                 f"https://github.com/{target}/settings/actions/runners/new")
+    scope = f"orgs/{organization}" if organization else f"repos/{target}"
     instructions = f'''<section aria-labelledby="registration-heading"><h2 id="registration-heading">Register this runner</h2>
-<p>In <a class="inline-link" href="{html.escape(settings, quote=True)}">GitHub runner settings for {html.escape(target)}</a>,
-select New self-hosted runner and copy only the token following <code>--token</code> in the configuration command.
-The registration token expires after one hour. Use a token for this {"organization" if organization else "repository"};
-do not enter a personal access token or GitHub App key.</p>'''
+<p>Open <a class="inline-link" href="{html.escape(settings, quote=True)}">GitHub runner settings for {html.escape(target)}</a>
+and copy the value after <code>--token</code>. Paste it below; it expires after one hour.</p>
+<details><summary>Get a token with GitHub CLI instead</summary>
+<p>Run on a computer signed into GitHub with permission to manage these runners:</p>
+<pre><code>gh api --hostname github.com --method POST {html.escape(scope)}/actions/runners/registration-token --jq .token</code></pre>
+<p>To register during setup, add <code>--ci-register-with-gh</code> or
+<code>--ci-registration-token-file PATH</code> to your setup command.</p></details>'''
     if organization:
-        instructions += '<p>In GitHub, restrict the selected runner group to the private repositories that may use this machine.</p>'
+        instructions += '<p>Choose allowed private repositories in GitHub’s runner group settings.</p>'
     if not secure or not csrf:
         return instructions + '<p>Open this panel over HTTPS to submit a token, or register through setup with <code>--ci-registration-token-file</code>.</p></section>'
     return instructions + f'''<form class="diagnostic-filters" method="post" action="{ENDPOINT}" autocomplete="off">
@@ -105,8 +109,7 @@ do not enter a personal access token or GitHub App key.</p>'''
 <label>One-time registration token<input type="password" name="token" required minlength="20" maxlength="4096"
 pattern="[A-Za-z0-9_\\-]{{20,4096}}" autocomplete="off" spellcheck="false" autocapitalize="none"></label>
 <div><button type="submit">Register runner</button></div></form>
-<p>The token is used for this attempt only. Registration can take several minutes. If GitHub rejects an expired token,
-create a fresh token in the same settings and submit it again. Refresh status after an interrupted request before retrying.</p></section>'''
+<p>Registration can take a few minutes. If interrupted, load status before retrying.</p></section>'''
 
 
 def render_runner_page(load: bool, style: str, host: str, *, navigation: Iterable[NavigationItem],
@@ -135,7 +138,7 @@ def render_runner_page(load: bool, style: str, host: str, *, navigation: Iterabl
         ) + '</dl></section>'
         if not snapshot.recovery_required:
             content += _registration_form(snapshot.policy, csrf, secure)
-        content += '<section><h2>Recent gate outcomes</h2>'
+        content += '<section><h2>Recent gate outcomes</h2><p>Last 100 decisions reported by the runner; these are not an independent audit log.</p>'
         if not snapshot.outcomes:
             content += '<p class="empty">No gate outcomes to display.</p>'
         for row in snapshot.outcomes:
@@ -150,8 +153,7 @@ def render_runner_page(load: bool, style: str, host: str, *, navigation: Iterabl
         title=f"GitHub runner · {host}", style=style,
         header=f'<header><p class="eyebrow">Basaltwater web panel</p><h1>GitHub runner</h1><p class="lede">Local runner on {html.escape(host)}</p></header>',
         content='<form method="get" action="/github-runner"><button name="load" value="1">Load runner status</button></form>'
-                '<p>Service state is local; confirm GitHub connectivity in the configured scope’s runner settings. '
-                'The last 100 gate outcomes are runner-writable telemetry. The allowlist is managed through setup.</p>' + content,
+                '<p>Confirm Online in GitHub’s runner settings. Change allowed users through setup.</p>' + content,
         navigation=navigation,
         footer='<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>',
     )

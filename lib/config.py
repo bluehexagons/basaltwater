@@ -536,6 +536,7 @@ class SetupConfig:
     ci_allowed_users: Optional[StrList] = None
     ci_labels: Optional[StrList] = None
     ci_registration_token_file: MaybeStr = field(default=None, repr=False)
+    ci_register_with_gh: bool = False
     ci_registration_payload: bool = False
     is_build_server: bool = False
     is_app_server: bool = False
@@ -2225,6 +2226,7 @@ class SetupConfig:
             'agent_payload',
             'github_auth_payload',
             'ci_registration_token_file',
+            'ci_register_with_gh',
             'ci_registration_payload',
             'git_identity_payload',
             'device_pairing_auth_file',
@@ -2312,6 +2314,7 @@ class SetupConfig:
         data.pop('activate_network', None)
         data.pop('disable_syncthing', None)
         data.pop('ci_registration_token_file', None)
+        data.pop('ci_register_with_gh', None)
         data.pop('ci_registration_payload', None)
         tags_str = data.get('tags')
         if tags_str and isinstance(tags_str, str):
@@ -2913,6 +2916,7 @@ class SetupConfig:
             ci_allowed_users=(args.ci_allowed_users if isinstance(getattr(args, 'ci_allowed_users', None), list) else None),
             ci_labels=(args.ci_labels if isinstance(getattr(args, 'ci_labels', None), list) else None),
             ci_registration_token_file=_optional_str_arg(args, 'ci_registration_token_file'),
+            ci_register_with_gh=_optional_bool_arg(args, 'ci_register_with_gh') is True,
             ci_registration_payload=_optional_bool_arg(args, 'ci_registration_payload') is True,
             is_build_server=is_build_server,
             is_app_server=is_app_server,

@@ -20,6 +20,8 @@ import unittest
 from unittest.mock import patch
 
 from lib import github_runner_gate as gate
+from lib import github_runner_credentials as credentials
+from lib import setup_common
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
 from lib.github_runner_config import ACCOUNT, PROFILE, SERVICE, VERSION, PAYLOAD_NAME, validate_policy
@@ -229,6 +231,25 @@ class IdentityTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_gh_registration_is_controller_only_mutually_exclusive_and_not_replayed(self) -> None:
+        parser = create_setup_argument_parser("Controller test")
+        argv = ["localhost", "operator", "--ci-repository", "owner/repo", "--ci-allowed-user", "alice"]
+        original = SetupConfig.from_args(parser.parse_args([*argv, "--ci-register-with-gh"]), PROFILE)
+        self.assertTrue(original.ci_register_with_gh)
+        self.assertNotIn("ci_register_with_gh", original.to_dict())
+        self.assertNotIn("--ci-register-with-gh", " ".join(original.to_setup_command()))
+        self.assertNotIn("--ci-register-with-gh", " ".join(original.to_remote_args()))
+        restored = SetupConfig.from_dict("localhost", PROFILE, original.to_dict() | {"ci_register_with_gh": True})
+        self.assertFalse(restored.ci_register_with_gh)
+        with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            parser.parse_args([*argv, "--ci-register-with-gh", "--ci-registration-token-file", "/private/token"])
+        for fields in (dict(ci_register_with_gh="yes"),
+                       dict(ci_register_with_gh=True, ci_registration_token_file="/private/token"),
+                       dict(system_type="server_lite", ci_repository="", ci_allowed_users=None,
+                            ci_labels=None, ci_register_with_gh=True)):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                config(**fields)
+
     def test_organization_scope_round_trips_and_rejects_ambiguous_or_invalid_scope(self) -> None:
         original = config(ci_repository="", ci_organization="owner", ci_runner_group="Private CI")
         parser = create_setup_argument_parser("Remote test", for_remote=True)
@@ -492,6 +513,114 @@ class ConfigurationTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         steps._account()
                 run.assert_not_called()
+
+
+class ControllerCredentialTests(unittest.TestCase):
+    def test_gh_uses_selected_scope_and_keeps_api_credentials_and_diagnostics_local(self) -> None:
+        for organization in (False, True):
+            configured = config(ci_register_with_gh=True)
+            if organization:
+                configured.ci_repository, configured.ci_organization = "", "owner"
+            with (self.subTest(organization=organization), tempfile.TemporaryDirectory() as temporary,
+                  patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
+                  patch.dict(os.environ, {"GH_HOST": "other.example", "GH_DEBUG": "api", "GH_TOKEN": "local-api-secret"}),
+                  patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"A" * 40 + b"\n")) as run,
+                  patch("sys.stdout", new_callable=io.StringIO) as output):
+                target = Path(temporary, PAYLOAD_NAME)
+                self.assertTrue(credentials.prepare_registration_payload(configured, str(target)))
+                scope = "orgs/owner" if organization else "repos/owner/repo"
+                self.assertEqual(run.call_args.args[0], ["/usr/bin/gh", "api", "--hostname", "github.com", "--method", "POST",
+                                                       f"{scope}/actions/runners/registration-token", "--jq", ".token"])
+                options = run.call_args.kwargs
+                self.assertEqual(options["env"]["GH_TOKEN"], "local-api-secret")
+                self.assertEqual(options["env"]["GH_DEBUG"], "")
+                self.assertEqual(options["env"]["GH_PROMPT_DISABLED"], "1")
+                for name in ("stdin", "stderr"):
+                    self.assertEqual(options[name], subprocess.DEVNULL)
+                self.assertEqual(options["stdout"], subprocess.PIPE)
+                self.assertEqual(options["timeout"], 30)
+                self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+                self.assertEqual((target / "token").stat().st_mode & 0o777, 0o600)
+                self.assertEqual((target / "token").read_bytes(), b"A" * 40)
+                self.assertEqual(list(target.iterdir()), [target / "token"])
+                self.assertNotIn("local-api-secret", output.getvalue())
+                self.assertNotIn("A" * 40, output.getvalue())
+
+    def test_gh_failures_are_sanitized_and_publish_no_payload(self) -> None:
+        failures = [
+            subprocess.CompletedProcess([], 1, b"secret-output", b"secret-error"),
+            subprocess.CompletedProcess([], 0, b"ghp_" + b"A" * 40),
+            subprocess.CompletedProcess([], 0, b"null\n"),
+            subprocess.CompletedProcess([], 0, b"A" * 4097),
+            subprocess.TimeoutExpired(["gh"], 30, output=b"secret-output", stderr=b"secret-error"),
+            OSError("secret-error"),
+        ]
+        with patch.object(credentials.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(ValueError, "Install GitHub CLI"):
+                credentials.prepare_registration_payload(config(ci_register_with_gh=True), "/unused")
+        for failure in failures:
+            with (self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as temporary,
+                  patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
+                  patch.object(credentials.subprocess, "run") as run):
+                if isinstance(failure, Exception):
+                    run.side_effect = failure
+                else:
+                    run.return_value = failure
+                with self.assertRaises(ValueError) as error:
+                    credentials.prepare_registration_payload(config(ci_register_with_gh=True), str(Path(temporary, PAYLOAD_NAME)))
+                self.assertNotIn("secret-", str(error.exception))
+                self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_token_file_and_pending_paths_need_no_gh_and_dry_run_makes_no_request(self) -> None:
+        with (tempfile.TemporaryDirectory() as temporary, patch.object(credentials.subprocess, "run") as run,
+              patch.object(credentials.shutil, "which") as which):
+            self.assertFalse(credentials.prepare_registration_payload(config(), str(Path(temporary, "pending"))))
+            for fields in (dict(ci_register_with_gh=True), dict(ci_registration_token_file="/missing")):
+                self.assertFalse(credentials.prepare_registration_payload(config(dry_run=True, **fields), str(Path(temporary, "dry"))))
+            source = Path(temporary, "source")
+            source.write_bytes(b"A" * 40)
+            source.chmod(0o600)
+            target = Path(temporary, PAYLOAD_NAME)
+            self.assertTrue(credentials.prepare_registration_payload(config(ci_registration_token_file=str(source)), str(target)))
+            self.assertEqual((target / "token").read_bytes(), source.read_bytes())
+            self.assertTrue(source.exists())
+            self.assertFalse(Path(temporary, "dry").exists())
+            run.assert_not_called()
+            which.assert_not_called()
+
+    def test_setup_stages_gh_token_and_cleans_controller_build_after_success_or_failure(self) -> None:
+        for denied in (False, True):
+            with (self.subTest(denied=denied), tempfile.TemporaryDirectory() as temporary,
+                  patch.object(setup_common, "copy_project_files"),
+                  patch.object(setup_common, "get_ssh_control_path", return_value=None),
+                  patch.object(setup_common, "ensure_remote_sudo", return_value=True),
+                  patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
+                  patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess([], int(denied), b"A" * 40)),
+                  patch.object(setup_common, "run_streamed", return_value=0) as stream):
+                configured = config(host="ci.example.test", ci_register_with_gh=True)
+                build = Path(temporary, "build")
+                build.mkdir()
+
+                def archive(source, *, exclude_payloads):
+                    self.assertTrue(exclude_payloads)
+                    self.assertEqual(Path(source, PAYLOAD_NAME, "token").read_bytes(), b"A" * 40)
+                    arguments = json.loads(Path(source, setup_common.REMOTE_ARGS_FILENAME).read_text())
+                    self.assertIn("--ci-registration-payload", arguments)
+                    self.assertNotIn("--ci-register-with-gh", arguments)
+                    self.assertNotIn("A" * 40, str(arguments))
+                    return b"runtime"
+
+                with (patch.object(setup_common.tempfile, "mkdtemp", return_value=str(build)),
+                      patch.object(setup_common, "create_tar_from_dir", side_effect=archive)):
+                    if denied:
+                        with self.assertRaises(ValueError):
+                            setup_common._run_remote_setup_locked(configured)
+                        stream.assert_not_called()
+                    else:
+                        self.assertEqual(setup_common._run_remote_setup_locked(configured), 0)
+                        stream.assert_called_once()
+                        self.assertTrue(configured.ci_registration_payload)
+                self.assertFalse(build.exists())
 
 
 class InstallationTests(unittest.TestCase):

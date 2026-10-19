@@ -12,9 +12,10 @@ by one GitHub user or organization; it does not add multi-tenant administration.
 - Setup without a registration token installs the runner files and policy in a
   **Pending registration** state. It leaves the runner service disabled and
   does not report the runner as ready. A later setup with
-  `--ci-registration-token-file` registers and activates it. Failed attempts
-  remain retryable. Routine setup of an already registered runner does not
-  require a token; replacement remains an explicit recovery operation.
+  `--ci-registration-token-file` or `--ci-register-with-gh` registers and
+  activates it. Failed attempts remain retryable. Routine setup of an already
+  registered runner does not require a token; replacement remains an explicit
+  recovery operation.
 - Runner scope is either a repository or an organization. Organization scope
   records the organization and optional GitHub runner group. GitHub runner group
   access controls which repositories can assign work; the local gate continues
@@ -29,15 +30,11 @@ by one GitHub user or organization; it does not add multi-tenant administration.
   how to submit it through setup or the panel, and how to retry an expired or
   rejected token.
 
-GitHub's runner registration token expires after one hour and cannot be made
-long-lived. It is needed only to register a runner; normal reconnect uses the
-credentials created during registration. Do not pass a PAT or GitHub App key to
-the runner. If automated token creation is later needed, evaluate a GitHub App
-on the trusted Basaltwater control plane: its private key can mint short-lived
-API credentials and a registration token just before use, but those generated
-tokens also expire. See GitHub's [runner registration API](https://docs.github.com/en/rest/actions/self-hosted-runners),
-[runner group guidance](https://docs.github.com/en/actions/hosting-your-own-runners/managing-access-to-self-hosted-runners-using-groups),
-and [App private-key guidance](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps).
+Registration tokens expire after one hour; normal reconnect needs no token.
+`--ci-register-with-gh` uses the controller's authenticated GitHub CLI to request
+one for the configured scope. It transfers only the registration token and is
+never replayed from saved setup. Website and manual `gh api` instructions are
+in the [quick start](github-runner.md#get-a-registration-token).
 
 ## Delivery and acceptance
 
@@ -62,12 +59,12 @@ verification, rather than a durable request queue. Rejected tokens are
 retryable; partial credentials are preserved for deliberate recovery, and a
 completed registration with failed service activation can be repaired by
 tokenless setup. Existing registered policies migrate without re-registration.
-See the [operations guide](github-runner.md) for usage and recovery.
+See the [quick start](github-runner.md) and
+[operations reference](github-runner-operations.md) for usage and recovery.
 
 Step 4 remains open: no disposable Debian VM or GitHub test organization was
 available during implementation. Offline checks do not establish reboot,
 GitHub delivery or runner-group repository-selection behavior. Record that live
 evidence before claiming production qualification.
 
-GitHub App-based token minting is an optional later enhancement, separate from
-the manual token flow.
+GitHub App-based token minting remains an optional later enhancement.

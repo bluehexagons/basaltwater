@@ -1357,8 +1357,11 @@ def add_setup_arguments(
     if for_remote:
         parser.add_argument("--ci-registration-payload", action="store_true", help=argparse.SUPPRESS)
     else:
-        parser.add_argument("--ci-registration-token-file", metavar="PATH",
-                           help="Private file containing a one-hour runner registration token; omit to install pending registration")
+        runner_auth = parser.add_mutually_exclusive_group()
+        runner_auth.add_argument("--ci-registration-token-file", metavar="PATH",
+                                 help="Private file containing a one-hour runner registration token")
+        runner_auth.add_argument("--ci-register-with-gh", action="store_true",
+                                 help="Request a runner registration token using the controller's GitHub CLI login")
 
     parser.add_argument("--build-server", dest="is_build_server",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",

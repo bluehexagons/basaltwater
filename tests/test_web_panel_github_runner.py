@@ -124,6 +124,8 @@ class RunnerPanelTests(unittest.TestCase):
                 self.assertNotIn('name="token" value=', page)
                 settings = "organizations/owner/settings/actions/runners/new" if organization else "owner/repo/settings/actions/runners/new"
                 self.assertIn(settings, page)
+                scope = "orgs/owner" if organization else "repos/owner/repo"
+                self.assertIn(f"{scope}/actions/runners/registration-token --jq .token", page)
                 self.assertIn("one hour", page)
                 self.assertIn("Pending registration", page)
                 insecure = runner.render_runner_page(True, "", "host", navigation=(), csrf="test-csrf", secure=False)
