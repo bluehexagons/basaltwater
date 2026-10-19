@@ -11,6 +11,7 @@ from pathlib import Path
 
 from common.service_tools import web_panel_service as panel
 from common.service_tools import web_panel_features as features
+from common.service_tools.web_panel_agent_hub import agent_tabs
 from common.service_tools.web_panel_templates import (
     BRAND_PALETTES,
     panel_navigation,
@@ -63,6 +64,25 @@ class WebPanelTemplateTest(unittest.TestCase):
         for current in ("agents", "agent-tools", "credentials", "admin", "services", "jobs", "logs"):
             with self.subTest(current=current):
                 self.assertEqual([(href, label) for href, label, _ in panel_navigation(current=current, available=available)], expected)
+
+    def test_agent_tabs_share_one_sidebar_destination_and_follow_feature_gates(self) -> None:
+        state = Mock()
+        state.features.return_value = features.PanelFeatures(tools=frozenset({"codex"}), maintenance=True)
+        destinations = {"dashboard": "/agents", "tasks": "/agents?view=tasks", "history": "/agents?view=history",
+                        "tools": "/agent-tools", "inbox": "/agent-inbox", "maintenance": "/maintenance-agent",
+                        "diagnostics": "/agents?view=diagnostics"}
+        for current, href in destinations.items():
+            with self.subTest(current=current):
+                tabs = ET.fromstring(agent_tabs(state, current))
+                self.assertEqual([link.attrib["href"] for link in tabs.findall('./a[@aria-current="page"]')], [href])
+                self.assertEqual({link.attrib["href"] for link in tabs.findall("a")}, set(destinations.values()))
+        navigation = panel_navigation(current="agents", available=state.features().pages)
+        self.assertIn(("/agents", "Agents", "agents"), navigation)
+        self.assertFalse({href for href, _, _ in navigation} & {"/agent-tools", "/agent-inbox", "/maintenance-agent"})
+        state.features.return_value = features.PanelFeatures(t3=True)
+        tabs = ET.fromstring(agent_tabs(state, "diagnostics"))
+        self.assertEqual({link.attrib["href"] for link in tabs.findall("a")},
+                         {"/agents", "/agents?view=diagnostics", "/agent-inbox"})
 
     def test_document_has_one_shared_shell_and_escapes_title(self) -> None:
         document = render_document(
@@ -126,14 +146,15 @@ class AgentWorkflowFeedbackTest(unittest.TestCase):
 
     def test_unreadable_storage_is_not_presented_as_an_empty_account(self) -> None:
         with patch.object(self.state.agent_tasks, "snapshot", side_effect=RuntimeError("Unreadable <task storage>")):
-            page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+            page = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
+            history = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "history"})
             submitted = panel.render_agents(self.state, panel._PAGE_STYLE, {}, submitted=self.values)
         self.assertIn("Task storage unavailable", page)
         self.assertIn("Unreadable &lt;task storage&gt;", page)
         self.assertIn('href="/agents">Retry task storage', page)
         for misleading in ("No prompt tasks yet", "No prompt runs have been recorded", "0 running", "0 saved", "requires a non-root panel account"):
             self.assertNotIn(misleading, page)
-        self.assertIn("Run history could not be loaded", page)
+        self.assertIn("Run history could not be loaded", history)
         self.assertIn('value="Review repository"', submitted)
         self.assertIn("Inspect and report.</textarea>", submitted)
         self.assertNotIn("Retry task storage</a>", submitted)
@@ -142,11 +163,11 @@ class AgentWorkflowFeedbackTest(unittest.TestCase):
 
     def test_manual_run_label_explains_an_inactive_repeating_draft(self) -> None:
         identifier = self.state.agent_tasks.create(self.values, run_now=False, draft=True)
-        page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+        page = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
         self.assertIn('value="run">Run once', page)
         self.assertIn("Run once keeps this schedule inactive. Use Start schedule to enable it.", page)
         self.state.agent_tasks.action(identifier, "resume")
-        page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+        page = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
         self.assertIn("Run once keeps this schedule active.", page)
         composer = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"})
         self.assertIn('value="run">Start task', composer)
@@ -165,6 +186,10 @@ class AgentWorkflowFeedbackTest(unittest.TestCase):
             with self.subTest(query=query):
                 page = panel.render_agents(self.state, panel._PAGE_STYLE, query)
                 self.assertIn(f'href="{target}">Refresh status', page)
+                self.assertIn('href="/agents?view=history" aria-current="page"', page)
+                self.assertIn('id="agent-history-heading"', page)
+                self.assertNotIn('id="agent-tasks-heading"', page)
+                self.assertNotIn('class="agent-form"', page)
         self.assertIn("Report ready", page)
 
 
@@ -206,13 +231,13 @@ class PanelFeatureTest(unittest.TestCase):
         self.units.side_effect = lambda unit, home, **kwargs: unit == "t3code.service"
         self.assertTrue(self.state.features().agents)
         self.assertFalse(self.state.features().prompts)
-        page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+        page = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"})
         self.assertIn('href="/agents" aria-current="page"', page)
-        self.assertIn("Runtime diagnostics", page)
+        self.assertIn('action="/actions/agent-diagnostics"', page)
         self.assertNotIn('class="agent-form"', page)
         self.assertNotIn('href="/agent-tools"', page)
         with patch.object(self.state, "t3_update_available", return_value=True):
-            self.assertIn("Update T3 Code</button>", panel.render_agents(self.state, panel._PAGE_STYLE, {}))
+            self.assertIn("Update T3 Code</button>", panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "diagnostics"}))
         self.units.side_effect = None
         self.tool.side_effect = lambda name, home: "/test/claude" if name == "claude" else None
         self.assertTrue(self.state.features().agents)

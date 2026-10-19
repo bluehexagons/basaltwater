@@ -57,7 +57,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
                 decide.assert_called_once_with(self.state.agent_tasks, "a" * 32, "b" * 32, decision)
                 ordinary.assert_not_called()
                 handler.send_response.assert_called_once_with(303)
-                handler.send_header.assert_any_call("Location", "/agents")
+                handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
 
     def settings(self, **changes: str) -> dict[str, str]:
         return {"title": "Follow-up", "prompt": "Inspect", "directory": self.home,
@@ -83,6 +83,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         self.assertFalse(kwargs["run_now"])
         self.assertTrue(kwargs["draft"])
         handler.send_response.assert_called_once_with(303)
+        handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
 
     def test_follow_up_run_forwards_reviewed_settings_without_direct_creation(self) -> None:
         decide = Mock()
@@ -104,6 +105,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         create.assert_not_called()
         update.assert_not_called()
         handler.send_response.assert_called_once_with(303)
+        handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
 
     def test_partial_follow_up_provenance_rerenders_submitted_form(self) -> None:
         handler = self.handler("/actions/agent-task/save", {
@@ -146,6 +148,32 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
             handler.do_POST()
         action.assert_called_once_with("a" * 32, "pause")
         handler.send_response.assert_called_once_with(303)
+        handler.send_header.assert_any_call("Location", "/agents?view=tasks")
+
+    def test_readiness_and_t3_update_return_to_diagnostics_with_or_without_codex(self) -> None:
+        for tools in (frozenset({"codex"}), frozenset()):
+            with self.subTest(tools=tools), patch.object(
+                self.state, "features", return_value=PanelFeatures(tools=tools, t3=True),
+            ), patch.object(self.state.agent_diagnostics, "trigger", return_value=True) as diagnose, \
+                 patch.object(self.state, "t3_update_available", return_value=True), \
+                 patch.object(self.state, "trigger_t3_update", return_value=True) as update:
+                for path, fields in (("/actions/agent-diagnostics", {}),
+                                     ("/actions/t3-update", {"return": "agents"})):
+                    handler = self.handler(path, fields)
+                    handler.do_POST()
+                    handler.send_response.assert_called_once_with(303)
+                    handler.send_header.assert_any_call("Location", "/agents?view=diagnostics")
+                diagnose.assert_called_once_with()
+                update.assert_called_once_with()
+
+    def test_busy_readiness_check_does_not_redirect_or_start_a_task(self) -> None:
+        handler = self.handler("/actions/agent-diagnostics", {})
+        with patch.object(self.state.agent_diagnostics, "trigger", return_value=False), \
+             patch.object(self.state.agent_tasks, "create") as create:
+            handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 409)
+        handler.send_response.assert_not_called()
+        create.assert_not_called()
 
     def test_follow_up_rejects_schedule_edit_and_incomplete_provenance(self) -> None:
         changes = ({"submit": "schedule"}, {"id": "c" * 32, "submit": "save"},
