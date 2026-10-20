@@ -71,7 +71,7 @@ private hostnames, personal data, or raw logs that contain them.
 
 - [ ] `pyproject.toml` declares the matching PEP 440 version, such as
   `2.0.0rc1` for `v2.0.0-rc.1`.
-- [ ] Release CI passes on Python 3.10 and 3.14, builds the wheel, and
+- [ ] Release CI passes on Python 3.11 and 3.15, builds the wheel, and
   installs and smoke-tests the packaged launchers on Python 3.13.
 - [ ] The GitHub release is marked **pre-release** and contains the wheel built
   from the tagged commit.

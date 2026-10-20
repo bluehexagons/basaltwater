@@ -9,11 +9,11 @@ use separate paths under `GITHUB_WORKSPACE` and explicit commit/tag refs:
 
 ```yaml
 steps:
-  - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     with:
       path: game
       persist-credentials: false
-  - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     with:
       repository: OWNER/DEPENDENCY
       ref: REVIEWED_COMMIT_OR_TAG

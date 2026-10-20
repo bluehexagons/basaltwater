@@ -101,7 +101,7 @@ try {
         Assert-True ($global:BootstrapCalls.Count -eq 1) 'Existing Python should skip apt bootstrap'
         $global:BootstrapCalls = @()
         $global:BootstrapOldPython = $true
-        Assert-Throws { Ensure-UbuntuPython } 'Python 3.10 or newer'
+        Assert-Throws { Ensure-UbuntuPython } 'Python 3.11 or newer'
         Assert-True ($global:BootstrapCalls.Count -eq 1) 'Unsupported Python must stop before apt or source preparation'
         $global:BootstrapOldPython = $false
         $global:BootstrapPythonInstalled = $false

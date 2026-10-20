@@ -139,11 +139,11 @@ function Ensure-WingetPackage([string]$packageId, [string]$label) {
 }
 
 function Ensure-UbuntuPython {
-    $pythonCheck = @('/usr/bin/python3', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 2)')
+    $pythonCheck = @('/usr/bin/python3', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 2)')
     & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { return }
     if ($LASTEXITCODE -eq 2) {
-        throw "Ubuntu system Python 3.10 or newer is required; select a supported Ubuntu distro. Setup does not upgrade the Ubuntu release."
+        throw "Ubuntu system Python 3.11 or newer is required; select a supported Ubuntu distro. Setup does not upgrade the Ubuntu release."
     }
     Invoke-Checked "Ubuntu Python prerequisite package index" {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/apt-get update -qq
@@ -152,7 +152,7 @@ function Ensure-UbuntuPython {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/env `
             DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y -qq python3
     }
-    Invoke-Checked "Ubuntu Python 3.10+ prerequisite verification" {
+    Invoke-Checked "Ubuntu Python 3.11+ prerequisite verification" {
         & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck
     }
 }

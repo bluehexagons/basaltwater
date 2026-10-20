@@ -54,7 +54,7 @@ before ownership is saved also requires explicit confirmation; setup never
 assumes ownership from an attempted installation.
 Catalog selection handles WSL's null-padded output and excludes preview names.
 Before running Linux preparation scripts, setup checks Ubuntu's system Python
-and installs `python3` if missing. Python 3.10 or newer is required; an older
+and installs `python3` if missing. Python 3.11 or newer is required; an older
 system Python stops preparation with remediation rather than upgrading Ubuntu.
 Bootstrap probes run explicitly as root;
 coding tools and builds still belong to the configured non-root Linux account.

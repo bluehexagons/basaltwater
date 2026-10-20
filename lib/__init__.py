@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import sys
+
+if sys.version_info < (3, 11):
+    raise RuntimeError("Basaltwater requires Python 3.11 or newer; use a supported system Python.")
+
 from .config import SetupConfig
 from .runtime_config import RuntimeConfig
 from .validators import validate_host, validate_ip_address, validate_username

@@ -56,6 +56,14 @@ into CachyOS's or Debian's system Python.
 CI installs the same `dev` and `completion` extras from `pyproject.toml`, so new
 test dependencies such as Guacamole's aiohttp are included automatically.
 
+Python 3.11 is the minimum supported interpreter; release CI also checks Python
+3.15. Keep this range aligned with `pyproject.toml` and the installer checks.
+The build backend requires setuptools 78.1.1 or newer, and the development
+extra requires aiohttp 3.14.4 or newer, excluding versions affected by the
+[setuptools path traversal advisory](https://github.com/pypa/setuptools/security/advisories/GHSA-5rjg-fvgr-3xxf)
+and [aiohttp security fixes](https://github.com/aio-libs/aiohttp/releases/tag/v3.14.4).
+Target services use distribution-managed packages and their security updates.
+
 Routine CI uses Python 3.13 in Debian Trixie. Branch and release workflows run
 [`scripts/run_debian_ci.py`](../../../scripts/run_debian_ci.py) on a hosted
 runner. It tries Docker's official Debian image from

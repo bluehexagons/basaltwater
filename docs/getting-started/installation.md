@@ -28,6 +28,11 @@ without running the installer under `sudo`.
 
 ## Prerequisites
 
+Basaltwater requires Python 3.11 or newer on the controller and target. This
+matches its use of the standard-library TOML parser; Python 3.10 is no longer
+supported. Use a distribution with a supported system Python rather than
+replacing `/usr/bin/python3` independently of its package manager.
+
 Use a regular account with access to `sudo` on Debian. `sudo` asks for your
 account password and grants administrator privileges to that command. If the
 account cannot use it, ask the machine's administrator to provide access before

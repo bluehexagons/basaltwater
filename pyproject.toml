@@ -1,12 +1,12 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=78.1.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "basaltwater"
 version = "2.0.0rc1"
 description = "Basaltwater: infrastructure management, from one machine to your whole network"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [project.urls]
@@ -16,7 +16,7 @@ Issues = "https://github.com/bluehexagons/basaltwater/issues"
 
 [project.optional-dependencies]
 completion = ["argcomplete>=3.0.0"]
-dev = ["build", "coverage>=7.0", "aiohttp>=3.11,<4"]
+dev = ["build", "coverage>=7.0", "aiohttp>=3.14.4,<4"]
 
 [project.scripts]
 basaltw = "basaltwater:main"

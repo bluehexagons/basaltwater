@@ -226,8 +226,8 @@ For the faster smoke-suite edit loop without the wheel build, use
 
 Routine continuous integration runs the suite in Debian Trixie on Python 3.13,
 the interpreter shipped by that release. Version-tagged releases additionally
-run the suite on the minimum supported Python version (3.10) and the latest
-Python 3 version in the release policy (3.14). Expensive live tests remain
+run the suite on the minimum supported Python version (3.11) and the latest
+Python 3 version in the release policy (3.15). Expensive live tests remain
 opt-in.
 
 See [Saved configuration operations](docs/operations/operations.md) for test selectors and
