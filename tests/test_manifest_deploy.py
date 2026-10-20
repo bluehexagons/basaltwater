@@ -595,6 +595,15 @@ class TestDeployManifest(unittest.TestCase):
         units = patch('lib.deployment.SYSTEMD_UNIT_DIR', unit_dir)
         units.start()
         self.addCleanup(units.stop)
+        self.unit_state = {
+            'LoadState': 'loaded', 'ActiveState': 'inactive',
+            'SubState': 'dead', 'UnitFileState': 'enabled',
+        }
+        inspection = patch('lib.unit_transaction.run', side_effect=lambda command, **kwargs:
+                           MagicMock(returncode=0, stdout='\n'.join(
+                               f'{key}={value}' for key, value in self.unit_state.items())))
+        self.inspect_run = inspection.start()
+        self.addCleanup(inspection.stop)
 
         # A repo with a static site and a service, plus the artifacts a build
         # would have produced (so the binary-exists check passes).
@@ -647,14 +656,40 @@ class TestDeployManifest(unittest.TestCase):
 
     @patch('lib.deployment.run')
     def test_stop_requires_unit_to_be_inactive(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        for active, substate in (('active', 'running'), ('activating', 'auto-restart')):
+            with self.subTest(active=active, substate=substate):
+                self.unit_state.update(ActiveState=active, SubState=substate)
+                mock_run.reset_mock()
+                with self.assertRaisesRegex(RuntimeError, "remained active or restarting"):
+                    self.orch._stop_app_unit("app-example_com-api")
+                mock_run.assert_called_once_with(
+                    'systemctl stop app-example_com-api.service',
+                    check=False, capture_output=True,
+                )
 
-        with self.assertRaisesRegex(RuntimeError, "remained active"):
-            self.orch._stop_app_unit("app-example_com-api")
+    @patch('lib.deployment.run')
+    def test_stop_accepts_only_quiescent_states(self, mock_run):
+        for active, substate in (('inactive', 'dead'), ('failed', 'failed')):
+            with self.subTest(active=active):
+                self.unit_state.update(ActiveState=active, SubState=substate)
+                self.assertFalse(self.orch._stop_app_unit('app-example_com-api'))
+        mock_run.assert_not_called()
+
+    @patch('lib.deployment.run')
+    def test_stop_rejects_busy_or_uninspectable_units(self, mock_run):
+        for state in (
+            {'ActiveState': 'activating', 'SubState': 'start'},
+            {'ActiveState': 'deactivating', 'SubState': 'stop'},
+            {'LoadState': 'error'},
+        ):
+            with self.subTest(state=state):
+                previous = self.unit_state.copy()
+                self.unit_state.update(state)
+                with self.assertRaisesRegex(RuntimeError, 'busy or uninspectable'):
+                    self.orch._stop_app_unit('app-example_com-api')
+                self.unit_state = previous
+        mock_run.assert_not_called()
 
     @patch('lib.deployment.run')
     def test_restart_requires_unit_to_be_active(self, mock_run):
@@ -996,6 +1031,7 @@ class TestDeployManifest(unittest.TestCase):
         _mock_health,
         _mock_snapshots,
     ):
+        self.unit_state.update(ActiveState='active', SubState='running')
         active = os.path.join(self.base_dir, "example_com")
         os.makedirs(active)
         marker = os.path.join(active, "previous.txt")
@@ -1037,6 +1073,7 @@ class TestDeployManifest(unittest.TestCase):
     def test_rollback_stop_failure_is_reported_after_release_restore(
         self, mock_run, mock_meta, _mock_service, _mock_health
     ):
+        self.unit_state.update(ActiveState='active', SubState='running')
         active = os.path.join(self.base_dir, "example_com")
         os.makedirs(active)
         marker = os.path.join(active, "previous.txt")
@@ -1138,19 +1175,12 @@ class TestDeployManifest(unittest.TestCase):
     def test_pre_activation_status_failure_keeps_previous_inactive_unit_stopped(self, mock_run):
         snapshots = _old_unit_snapshot()
         snapshots['app-example_com-api']['state']['ActiveState'] = 'inactive'
-        status_checks = 0
-
-        def run(command, **kwargs):
-            nonlocal status_checks
-            if 'is-active --quiet' in command:
-                status_checks += 1
-                return MagicMock(returncode=1 if status_checks == 1 else 3,
-                                 stdout='', stderr='')
-            return MagicMock(returncode=0, stdout='', stderr='')
-
-        mock_run.side_effect = run
+        self.inspect_run.side_effect = [RuntimeError('inspection failed'), MagicMock(
+            stdout='\n'.join(f'{key}={value}' for key, value in self.unit_state.items()),
+        )]
+        mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
         with patch.object(self.orch, '_app_unit_snapshots', return_value=snapshots):
-            with self.assertRaisesRegex(RuntimeError, 'Could not determine'):
+            with self.assertRaisesRegex(RuntimeError, 'inspection failed'):
                 self.orch.deploy_manifest(self.manifest, self.source, 'example.com',
                                           '/', 'url', 'hash', keep_source=True)
         self.assertFalse(any('systemctl restart' in call.args[0]

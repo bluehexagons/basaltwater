@@ -168,17 +168,14 @@ def get_deployment_metadata_path(deployment_path: str) -> str:
 
 
 def save_deployment_metadata(deployment_path: str, git_url: str, commit_hash: Optional[str]) -> None:
-    """Save deployment metadata to track versions."""
+    """Persist required version metadata; let failures trigger release rollback."""
     metadata: dict[str, str | None] = {
         'git_url': git_url,
         'commit_hash': commit_hash
     }
     metadata_path = get_deployment_metadata_path(deployment_path)
     
-    try:
-        write_json_atomic(metadata_path, metadata)
-    except OSError as e:
-        print(f"  ⚠ Warning: Could not save deployment metadata: {e}")
+    write_json_atomic(metadata_path, metadata)
 
 
 def load_deployment_metadata(deployment_path: str) -> Optional[dict[str, str | None]]:

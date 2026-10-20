@@ -691,18 +691,13 @@ class DeploymentOrchestrator:
         return f"systemctl {action} {shlex.quote(unit_name)}.service"
 
     def _stop_app_unit(self, unit_name: str) -> bool:
-        """Stop one active unit and verify it became inactive."""
-
-        status = run(
-            self._unit_command(unit_name, "is-active --quiet"),
-            check=False,
-            capture_output=True,
-        )
-        if status.returncode in {3, 4}:
+        """Quiesce an active or retrying unit before touching its files or data."""
+        state = inspect_unit_state(f"{unit_name}.service")
+        if state["ActiveState"] in {"inactive", "failed"}:
             return False
-        if status.returncode != 0:
-            raise RuntimeError(f"Could not determine whether {unit_name}.service is active")
 
+        # is-active exits 3 during activating/auto-restart too. An explicit
+        # stop cancels that pending restart before backup or release renames.
         result = run(
             self._unit_command(unit_name, "stop"),
             check=False,
@@ -711,15 +706,9 @@ class DeploymentOrchestrator:
         if result.returncode != 0:
             error = self._get_command_error(result, "systemctl stop failed")
             raise RuntimeError(f"Could not stop {unit_name}.service: {error}")
-        status = run(
-            self._unit_command(unit_name, "is-active --quiet"),
-            check=False,
-            capture_output=True,
-        )
-        if status.returncode == 0:
-            raise RuntimeError(f"Unit remained active after stop: {unit_name}.service")
-        if status.returncode not in {3, 4}:
-            raise RuntimeError(f"Could not verify that {unit_name}.service stopped")
+        state = inspect_unit_state(f"{unit_name}.service")
+        if state["ActiveState"] not in {"inactive", "failed"}:
+            raise RuntimeError(f"Unit remained active or restarting after stop: {unit_name}.service")
         return True
 
     def _restart_app_units(self, unit_names: Iterable[str]) -> None:

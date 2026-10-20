@@ -116,7 +116,7 @@ class TestDeploymentUnitOwnership(unittest.TestCase):
         manifest = parse_manifest({'version': 1, 'components': [{
             'name': 'site', 'type': 'static', 'domain': 'example.test', 'output': '.',
         }]})
-        with patch('lib.deployment.save_deployment_metadata', side_effect=OSError('metadata failed')), patch(
+        with patch('lib.deploy_utils.write_json_atomic', side_effect=OSError('metadata failed')), patch(
             'lib.deployment.cleanup_service',
         ) as cleanup:
             with self.assertRaisesRegex(OSError, 'metadata failed'):
@@ -170,6 +170,11 @@ class TestReleaseRecovery(unittest.TestCase):
                          CompletedProcess(command, 3 if "is-active" in command else 0, "", ""))
         self.run.start()
         self.addCleanup(self.run.stop)
+        inspection = patch('lib.unit_transaction.run', side_effect=lambda command, **kwargs:
+                           CompletedProcess(command, 0,
+                               'LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=enabled', ''))
+        inspection.start()
+        self.addCleanup(inspection.stop)
         self.units = patch.object(self.orchestrator, "_app_unit_snapshots", return_value={})
         self.units.start()
         self.addCleanup(self.units.stop)
@@ -184,7 +189,7 @@ class TestReleaseRecovery(unittest.TestCase):
         return self.orchestrator.deploy_from_archive(*args)
 
     def test_static_metadata_failure_restores_last_release(self):
-        with patch("lib.deployment.save_deployment_metadata", side_effect=OSError("disk full")):
+        with patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("disk full")):
             with self.assertRaisesRegex(OSError, "disk full"):
                 self.deploy()
         self.assertEqual((self.dest / "index.html").read_text(), "old")
@@ -204,7 +209,7 @@ class TestReleaseRecovery(unittest.TestCase):
     def test_static_first_release_metadata_failure_removes_failed_activation(self):
         (self.dest / "index.html").unlink()
         self.dest.rmdir()
-        with patch("lib.deployment.save_deployment_metadata", side_effect=OSError("disk full")):
+        with patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 self.deploy()
         self.assertFalse(self.dest.exists())
@@ -250,7 +255,7 @@ class TestReleaseRecovery(unittest.TestCase):
                 raise OSError("restore failed")
             return rename(source, target)
 
-        with patch("lib.deployment.save_deployment_metadata", side_effect=OSError("disk full")), patch(
+        with patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("disk full")), patch(
             "lib.deployment.os.rename", side_effect=fail,
         ):
             with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
@@ -272,7 +277,7 @@ class TestReleaseRecovery(unittest.TestCase):
                     return transition(store, operation_id, phase, **kwargs)
 
                 with patch.object(OperationStateStore, "transition", fail), patch(
-                    "lib.deployment.save_deployment_metadata", side_effect=OSError("metadata unavailable"),
+                    "lib.deploy_utils.write_json_atomic", side_effect=OSError("metadata unavailable"),
                 ), patch.object(self.orchestrator, "_restore_app_units"):
                     with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
                         self.deploy(manifest=manifest)
@@ -310,7 +315,7 @@ class TestReleaseRecovery(unittest.TestCase):
             with self.subTest(previous=previous):
                 if previous is not None:
                     ports.write_text(json.dumps(previous))
-                with patch("lib.deployment.save_deployment_metadata", side_effect=OSError("disk full")), patch.object(
+                with patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("disk full")), patch.object(
                     self.orchestrator, "_restore_app_units",
                 ):
                     with self.assertRaisesRegex(OSError, "disk full"):
@@ -355,7 +360,7 @@ class TestReleaseRecovery(unittest.TestCase):
 
         with (
             patch("lib.deployment.rename_path_durable", side_effect=rename),
-            patch("lib.deployment.save_deployment_metadata", side_effect=OSError("metadata failed")),
+            patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("metadata failed")),
             patch.object(self.orchestrator, "_restore_app_units") as restore,
         ):
             with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
@@ -389,7 +394,7 @@ class TestReleaseRecovery(unittest.TestCase):
 
         with (
             patch("lib.deployment.write_json_atomic", side_effect=write),
-            patch("lib.deployment.save_deployment_metadata", side_effect=OSError("metadata failed")),
+            patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("metadata failed")),
             patch.object(self.orchestrator, "_restore_app_units"),
         ):
             with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
@@ -544,13 +549,192 @@ class TestReleaseRecovery(unittest.TestCase):
 
         with (
             patch("lib.deployment.rename_path_durable", side_effect=rename),
-            patch("lib.deployment.save_deployment_metadata", side_effect=OSError("metadata failed")),
+            patch("lib.deploy_utils.write_json_atomic", side_effect=OSError("metadata failed")),
             patch.object(self.orchestrator, "_restore_app_units") as restore,
         ):
             with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
                 self.deploy(manifest=True)
         restore.assert_not_called()
         self.assertEqual((self.dest / "index.html").read_text(), "new")
+
+
+class TestManifestQuiescence(unittest.TestCase):
+    """Exercise real unit snapshots, SQLite backup and release rollback offline."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / 'source'
+        self.source.mkdir()
+        (self.source / 'index.html').write_text('new')
+        self.base = self.root / 'www'
+        self.dest = self.base / 'example_com'
+        self.dest.mkdir(parents=True)
+        (self.dest / 'index.html').write_text('old')
+        self.metadata = self.dest / '.deploy_metadata.json'
+        self.metadata.write_text('{"git_url":"old-url","commit_hash":"old"}')
+        self.old_metadata = self.metadata.read_bytes()
+        self.orchestrator = DeploymentOrchestrator(base_dir=str(self.base))
+        self.manifest = parse_manifest({'version': 1, 'components': [{
+            'name': 'api', 'type': 'service', 'domain': 'example.com',
+            'exec': '/bin/true', 'port': 8090,
+            'sqlite_backup': '{{data_dir}}/app.sqlite3',
+        }]})
+        component = self.manifest.components[0]
+        self.name, user = self.orchestrator._service_identity(str(self.dest), component)
+        self.units = self.root / 'units'
+        self.units.mkdir()
+        self.unit_path = self.units / (self.name + '.service')
+        self.old_unit = generate_managed_service(
+            self.name, '/bin/true', str(self.dest), user, user,
+            description='basaltwater.json service: api',
+            writable_paths=[self.orchestrator._component_data_dir(str(self.dest), component)],
+        )
+        self.unit_path.write_text(self.old_unit)
+        self.unit_path.chmod(0o640)
+        self.state_dir = Path(self.orchestrator._get_persistent_root(self.dest.name))
+        data = Path(self.orchestrator._component_data_dir(str(self.dest), component))
+        data.mkdir(parents=True)
+        with sqlite3.connect(data / 'app.sqlite3') as database:
+            database.execute('CREATE TABLE demo (value INTEGER)')
+            database.execute('INSERT INTO demo VALUES (7)')
+        self.ports = self.state_dir / 'manifest-ports.json'
+        self.ports.write_text('{"api":8123}')
+        self.unit_state = {
+            'LoadState': 'loaded', 'ActiveState': 'activating',
+            'SubState': 'auto-restart', 'UnitFileState': 'enabled',
+        }
+        self.commands = []
+        self.leave_restart_armed = False
+        for target in ('lib.deployment.run', 'lib.unit_transaction.run'):
+            runner = patch(target, side_effect=self.run_command)
+            runner.start()
+            self.addCleanup(runner.stop)
+        units = patch('lib.deployment.SYSTEMD_UNIT_DIR', str(self.units))
+        units.start()
+        self.addCleanup(units.stop)
+        build = patch.object(self.orchestrator, '_ensure_build_user')
+        build.start()
+        self.addCleanup(build.stop)
+        ports = patch.object(self.orchestrator, '_get_used_ports', return_value=set())
+        ports.start()
+        self.addCleanup(ports.stop)
+        install = patch.object(self.orchestrator, '_install_service_component', side_effect=self.install)
+        install.start()
+        self.addCleanup(install.stop)
+
+    def run_command(self, command, **kwargs):
+        self.commands.append(command)
+        if isinstance(command, list):
+            self.assertEqual(command[:3], ['systemctl', 'show', self.name + '.service'])
+            return CompletedProcess(command, 0, '\n'.join(
+                f'{key}={value}' for key, value in self.unit_state.items()), '')
+        if command == f'systemctl stop {self.name}.service':
+            if not self.leave_restart_armed:
+                self.unit_state.update(ActiveState='inactive', SubState='dead')
+        elif command == f'systemctl restart {self.name}.service':
+            self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+            self.assertEqual(self.unit_path.read_text(), self.old_unit)
+            self.unit_state.update(ActiveState='active', SubState='running')
+        elif command == f'systemctl disable {self.name}.service':
+            self.unit_state['UnitFileState'] = 'disabled'
+        elif command == f'systemctl enable {self.name}.service':
+            self.unit_state['UnitFileState'] = 'enabled'
+        code = 0
+        if 'is-active' in command and self.unit_state['ActiveState'] != 'active':
+            code = 3
+        return CompletedProcess(command, code, '', '')
+
+    def install(self, *args):
+        self.assertEqual((self.dest / 'index.html').read_text(), 'new')
+        self.unit_path.write_text(self.old_unit.replace('ExecStart=/bin/true', 'ExecStart=/bin/false'))
+        self.unit_path.chmod(0o644)
+        self.unit_state.update(ActiveState='active', SubState='running')
+
+    def deploy(self):
+        return self.orchestrator.deploy_manifest(
+            self.manifest, str(self.source), 'example.com', '/', 'new-url', 'new', keep_source=True,
+        )
+
+    def test_retrying_unit_is_stopped_before_sqlite_open_and_release_renames(self):
+        from lib.atomic_io import rename_path_durable
+
+        connect = sqlite3.connect
+        events = []
+
+        def open_database(*args, **kwargs):
+            self.assertEqual(self.unit_state['ActiveState'], 'inactive')
+            self.assertIn(f'systemctl stop {self.name}.service', self.commands)
+            events.append('database')
+            return connect(*args, **kwargs)
+
+        def rename(source, destination):
+            self.assertEqual(self.unit_state['ActiveState'], 'inactive')
+            events.append('rename')
+            rename_path_durable(source, destination)
+
+        with patch('lib.deployment.sqlite3.connect', side_effect=open_database), patch(
+            'lib.deployment.rename_path_durable', side_effect=rename,
+        ):
+            self.deploy()
+        self.assertEqual(events[:2], ['database', 'database'])
+        backups = list((self.state_dir / 'api' / 'backups').glob('*.sqlite3'))
+        self.assertEqual(len(backups), 1)
+        with sqlite3.connect(backups[0]) as database:
+            self.assertEqual(database.execute('SELECT value FROM demo').fetchone(), (7,))
+        self.assertEqual((self.dest / 'index.html').read_text(), 'new')
+
+    def test_stop_that_leaves_restart_armed_blocks_backup_and_release_swap(self):
+        self.leave_restart_armed = True
+        with patch.object(self.orchestrator, '_backup_component_sqlite') as backup, patch(
+            'lib.deployment.rename_path_durable',
+        ) as rename:
+            with self.assertRaisesRegex(RuntimeError, 'recovery was incomplete'):
+                self.deploy()
+        backup.assert_not_called()
+        rename.assert_not_called()
+        self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+        self.assertEqual(self.metadata.read_bytes(), self.old_metadata)
+        record = OperationStateStore(str(self.state_dir / 'manifest-operation.json')).load()
+        self.assertEqual(record.status, 'recovery_required')
+
+    def test_backup_failure_restores_prior_running_state_without_swapping_release(self):
+        for active, substate in (('active', 'running'), ('activating', 'auto-restart')):
+            with self.subTest(active=active):
+                self.commands.clear()
+                self.unit_state.update(ActiveState=active, SubState=substate)
+                with patch('lib.deployment.sqlite3.connect', side_effect=sqlite3.OperationalError('backup failed')), patch(
+                    'lib.deployment.rename_path_durable',
+                ) as rename:
+                    with self.assertRaisesRegex(sqlite3.OperationalError, 'backup failed'):
+                        self.deploy()
+                rename.assert_not_called()
+                self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+                self.assertEqual(self.metadata.read_bytes(), self.old_metadata)
+                self.assertEqual(self.unit_state['ActiveState'], 'active' if active == 'active' else 'inactive')
+                self.assertEqual(f'systemctl restart {self.name}.service' in self.commands, active == 'active')
+                self.assertFalse((self.state_dir / 'manifest-operation.json').exists())
+
+    def test_metadata_write_failure_restores_release_units_ports_and_running_state(self):
+        for active, substate in (('active', 'running'), ('inactive', 'dead'), ('activating', 'auto-restart')):
+            with self.subTest(active=active):
+                self.commands.clear()
+                self.unit_state.update(ActiveState=active, SubState=substate)
+                with patch('lib.deploy_utils.write_json_atomic', side_effect=OSError('disk full')) as write:
+                    with self.assertRaisesRegex(OSError, 'disk full'):
+                        self.deploy()
+                write.assert_called_once_with(str(self.metadata), {'git_url': 'new-url', 'commit_hash': 'new'})
+                self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+                self.assertEqual(self.metadata.read_bytes(), self.old_metadata)
+                self.assertEqual(self.unit_path.read_text(), self.old_unit)
+                self.assertEqual(self.unit_path.stat().st_mode & 0o777, 0o640)
+                self.assertEqual(json.loads(self.ports.read_text()), {'api': 8123})
+                self.assertEqual(self.unit_state['ActiveState'], 'active' if active == 'active' else 'inactive')
+                self.assertEqual(self.unit_state['UnitFileState'], 'enabled')
+                self.assertEqual(f'systemctl restart {self.name}.service' in self.commands, active == 'active')
+                self.assertFalse((self.state_dir / 'manifest-operation.json').exists())
+                self.assertEqual(list(self.base.glob('.*.failed-*')), [])
 
 
 class TestSQLiteBackupDurability(unittest.TestCase):
