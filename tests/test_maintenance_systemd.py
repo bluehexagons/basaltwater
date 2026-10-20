@@ -140,8 +140,34 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
         self.assertIn("ProtectSystem=strict", service_content)
         self.assertIn("ProtectHome=read-only", service_content)
         self.assertIn(
-            "ReadWritePaths=-/home/agent/.config/tool",
+            'ReadWritePaths="-/home/agent/.config/tool"',
             service_content,
+        )
+
+    def test_preserves_literal_environment_and_paths(self):
+        with patch("lib.maintenance_systemd.replace_units") as replace:
+            self.assertTrue(configure_maintenance_timer(
+                service_name="literal-path-check",
+                service_desc="Literal path check",
+                timer_desc="Literal path check daily",
+                script_path='/opt/tool %h/$HOME/with\\backslash/and "quote".py',
+                schedule="daily",
+                check_name="Literal path",
+                user="agent",
+                environment={"DATA": 'https://example.test/a%20b?q="value"\\$HOME'},
+                sandbox_user_service=True,
+                writable_paths=("/home/literal%h/with space/and'quote\\data",),
+            ))
+        content = replace.call_args.args[0]["literal-path-check.service"]
+        self.assertIn(
+            'Environment="DATA=https://example.test/a%%20b?q=\\"value\\"\\\\$HOME"\n', content,
+        )
+        self.assertIn(
+            'ExecStart=/usr/bin/python3 "/opt/tool %%h/$$HOME/with\\\\backslash/and \\"quote\\".py"\n',
+            content,
+        )
+        self.assertIn(
+            'ReadWritePaths="-/home/literal%%h/with space/and\'quote\\\\data"\n', content,
         )
 
 

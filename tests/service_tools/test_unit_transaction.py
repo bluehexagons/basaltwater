@@ -469,6 +469,73 @@ class TestUnitRemoval(unittest.TestCase):
         self.assertTrue(all(state[0] == "inactive" for state in self.states.values()))
         self.assertFalse(any(command[:2] == ["systemctl", "restart"] for command in self.commands))
 
+    def test_unreached_activators_are_quiesced_when_definition_restore_fails(self):
+        original = units.write_text_atomic
+        for failure in ("publication", "activation"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.root = root
+                self.commands.clear()
+                self.states = {name: ["active", "enabled"] for name in self.names}
+                for name in self.names:
+                    (root / name).write_text(f"old {name}")
+                self.failure = ["systemctl", "restart", "demo.timer"] if failure == "activation" else None
+                failed = False
+
+                def write(path, content, **kwargs):
+                    nonlocal failed
+                    if path == str(root / "demo.timer") and failure == "publication" and not failed:
+                        failed = True
+                        raise OSError("timer publication failed")
+                    if path == str(root / "demo.service") and content == "old demo.service":
+                        raise OSError("service restoration failed")
+                    original(path, content, **kwargs)
+
+                with patch.object(units, "write_text_atomic", side_effect=write):
+                    with self.assertRaises(units.UnitRecoveryError) as error:
+                        units.replace_units(
+                            {name: f"new {name}" for name in reversed(self.names)},
+                            activate=("demo.timer", "demo.path"), unit_dir=directory,
+                        )
+                for name in ("demo.timer", "demo.path"):
+                    self.assertIn(["systemctl", "stop", name], self.commands)
+                    self.assertEqual(self.states[name], ["inactive", "disabled"])
+                self.assertNotIn(["systemctl", "restart", "demo.path"], self.commands)
+                self.assertEqual((root / "demo.service").read_text(), "new demo.service")
+                self.assertTrue(Path(error.exception.marker_path).is_file())
+                self.assertTrue((Path(error.exception.backup_dir) / "previous.json").is_file())
+
+    def test_failed_publication_before_new_activator_exists_restores_cleanly(self):
+        timer = self.root / "demo.timer"
+        timer.unlink()
+        self.states["demo.timer"] = ["inactive", ""]
+        writer = units.write_text_atomic
+        command = self.run_command
+        failed = False
+
+        def write(path, content, **kwargs):
+            nonlocal failed
+            writer(path, content, **kwargs)
+            if path == str(self.root / "demo.service") and not failed:
+                failed = True
+                raise OSError("publication fsync failed")
+
+        def run(args, **kwargs):
+            if args[:2] == ["systemctl", "stop"] and not (self.root / args[-1]).exists():
+                raise subprocess.CalledProcessError(5, args)
+            return command(args, **kwargs)
+
+        with patch.object(units, "write_text_atomic", side_effect=write), patch.object(
+            units, "run", side_effect=run,
+        ), self.assertRaisesRegex(OSError, "publication fsync failed"):
+            units.replace_units(
+                {"demo.service": "new service", "demo.timer": "new timer"},
+                activate=("demo.timer",), unit_dir=str(self.root),
+            )
+        self.assertEqual((self.root / "demo.service").read_text(), "old demo.service")
+        self.assertFalse(timer.exists())
+        self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+
     def test_ineffective_stop_or_disable_fails_before_any_file_deletion(self):
         original = self.run_command
         for ineffective in ("stop", "disable"):

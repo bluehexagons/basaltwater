@@ -21,6 +21,21 @@ Grouped unit rollback restores services before their timers or paths. Native
 mount pairs require the automount to start before its matching mount: systemd
 rejects starting an automount over an already mounted path. Keep this ordering
 when extending `lib.unit_transaction`, and model that constraint in unit tests.
+Rollback quiesces every requested activation, including activators whose normal
+activation was never reached. If any prior definition cannot be restored, keep
+the group stopped and retain recovery evidence. Services staged only for a
+timer or socket remain outside activation so executing oneshots are left alone.
+
+Recovery decisions made before acquiring operation ownership must pass the
+inspected record as `expected_record` to `OperationStateStore.transition()`.
+Matching only the operation ID can replay a stale checkpoint after another
+owner has recorded an interrupted mutation.
+
+Maintenance timer provisioning treats environment values, script paths and
+sandbox writable paths as literal data. Quote complete systemd words, escape
+backslashes and quotes, and double percent signs to prevent specifier expansion;
+`ExecStart` arguments also require doubled dollar signs to prevent variable
+expansion. Shell quoting alone does not preserve these values in a unit file.
 
 ## Limits
 

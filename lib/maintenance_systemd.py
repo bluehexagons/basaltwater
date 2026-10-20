@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 from typing import Optional
 
 from lib.remote_utils import is_dry_run
@@ -23,9 +22,10 @@ def _validate_unit_value(value: str, name: str) -> None:
         raise ValueError(f"{name} must be non-empty and contain no control characters")
 
 
-def _escape_environment_value(value: str) -> str:
-    """Escape a value for a quoted systemd Environment directive."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+def _quote_unit_value(value: str) -> str:
+    """Quote one literal word without allowing systemd specifier expansion."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{escaped}"'
 
 
 def configure_maintenance_timer(
@@ -106,7 +106,7 @@ def configure_maintenance_timer(
                 raise ValueError(
                     f"Sandbox writable path must be absolute and normalized: {path}"
                 )
-            rendered_paths.append(f"ReadWritePaths=-{shlex.quote(path)}")
+            rendered_paths.append(f"ReadWritePaths={_quote_unit_value('-' + path)}")
         sandbox_lines = "\n".join(
             (
                 "UMask=0077",
@@ -131,7 +131,9 @@ def configure_maintenance_timer(
         if not _ENVIRONMENT_NAME_RE.fullmatch(name):
             raise ValueError(f"Invalid environment variable name: {name}")
         _validate_unit_value(value, f"environment variable {name}")
-        environment_lines += f'Environment="{name}={_escape_environment_value(value)}"\n'
+        environment_lines += f"Environment={_quote_unit_value(f'{name}={value}')}\n"
+
+    script_argument = _quote_unit_value(script_path).replace("$", "$$")
 
     network_lines = "Wants=network-online.target\nAfter=network-online.target\n" if network_online else ""
     service_content = f"""[Unit]
@@ -141,7 +143,7 @@ Documentation=man:systemd.service(5)
 
 [Service]
 Type=oneshot
-{user_line}{environment_lines}{sandbox_lines}ExecStart=/usr/bin/python3 {shlex.quote(script_path)}
+{user_line}{environment_lines}{sandbox_lines}ExecStart=/usr/bin/python3 {script_argument}
 TimeoutStartSec={timeout}
 StandardOutput=journal
 StandardError=journal

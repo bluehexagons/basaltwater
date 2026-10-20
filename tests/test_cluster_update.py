@@ -247,6 +247,40 @@ class TestClusterUpdate(unittest.TestCase):
                 run_cluster_update(["pve1"], resume=True)
             execute.assert_not_called()
 
+    @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
+    @patch("lib.cluster_update.prepare_validated_runtime_config")
+    @patch("lib.cluster_update.load_setup_command", side_effect=lambda _: _config("10.0.0.10"))
+    def test_resume_rejects_checkpoint_changed_before_ownership(self, _load, _prepare, _report):
+        with patch("basaltwater._execute_patch_config", return_value=1):
+            self.assertEqual(run_cluster_update(["pve1"]), 1)
+        path = os.path.join(self.workspace, "cluster-update.json")
+        original = cluster_update.OperationStateStore.transition
+        newer = None
+
+        def concurrent_transition(store, operation_id, phase, **kwargs):
+            nonlocal newer
+            if phase == "resuming":
+                with open(path) as stream:
+                    marker = json.load(stream)
+                marker["context"]["nodes"][0]["phase"] = "patching"
+                marker["phase"] = "updating"
+                # Simulate another owner updating and releasing this operation
+                # after our eligible read but before we acquire its stable lock.
+                with open(path, "w") as stream:
+                    json.dump(marker, stream)
+                newer = marker
+            return original(store, operation_id, phase, **kwargs)
+
+        with patch.object(cluster_update.OperationStateStore, "transition", concurrent_transition), patch(
+            "basaltwater._execute_patch_config",
+        ) as execute, patch.object(cluster_update, "_reboot_and_wait") as reboot:
+            with self.assertRaisesRegex(ValueError, "changed before recovery"):
+                run_cluster_update(["pve1"], resume=True)
+        execute.assert_not_called()
+        reboot.assert_not_called()
+        with open(path) as stream:
+            self.assertEqual(json.load(stream), newer)
+
 
 class TestRollingPolicyAndDeadlines(unittest.TestCase):
     def test_policy_rejects_ha_ceph_unknown_and_command_failure(self):

@@ -258,7 +258,7 @@ def run_cluster_update(
                 if node["phase"] == "complete" and result.status != "updated":
                     raise ValueError("Invalid completed rolling-update result")
             nodes = saved
-            record = store.transition(previous.operation_id, "resuming")
+            record = store.transition(previous.operation_id, "resuming", expected_record=previous)
         else:
             record = store.begin("cluster-update", "ordered-nodes", "prepared", context={"nodes": nodes})
 

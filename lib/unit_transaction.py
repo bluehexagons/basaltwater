@@ -177,7 +177,13 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                     return False
 
             if modified:
-                for name in touched:
+                # Publication can fail before activation is reached, while an
+                # existing timer/socket/path still references a changed file.
+                rollback_units = list(dict.fromkeys((*touched, *activate)))
+                for name in rollback_units:
+                    if (name not in touched and states[name]["LoadState"] == "not-found"
+                            and not os.path.lexists(os.path.join(unit_dir, name))):
+                        continue
                     attempt(lambda name=name: _command("systemctl", "stop", name))
                     if name in activate or states[name]["UnitFileState"] in {"enabled", "enabled-runtime"}:
                         flags = ["--runtime"] if name not in activate and states[name]["UnitFileState"] == "enabled-runtime" else []
@@ -196,11 +202,11 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 # Keep the group quiescent if any old definition is unsafe.
                 if reloaded and len(restored) == len(snapshots):
                     # Restore the service before rearming its timer/path.
-                    restore_order = list(reversed(touched)) if removals or deactivate else list(touched)
+                    restore_order = list(reversed(rollback_units)) if removals or deactivate else list(rollback_units)
                     # An automount cannot start over an already mounted path.
                     # Keep the other unit ordering, but rearm each native
                     # automount before restoring its associated active mount.
-                    for name in touched:
+                    for name in rollback_units:
                         if name.endswith(".automount"):
                             mount = name.removesuffix(".automount") + ".mount"
                             if mount in restore_order and restore_order.index(name) > restore_order.index(mount):
@@ -213,7 +219,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                             attempt(lambda name=name, flags=flags: _command("systemctl", "enable", *flags, name))
                         if state["ActiveState"] == "active":
                             attempt(lambda name=name: _command("systemctl", "restart", name))
-                for name in touched:
+                for name in rollback_units:
                     def verify(name=name):
                         actual = inspect_unit_state(name)
                         previous = states[name]
