@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -81,6 +84,7 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
                 return MagicMock(returncode=0, stderr="")
 
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
+                 patch.object(samba_steps.os, "fchown"), \
                  patch.object(samba_steps, "run", side_effect=fake_run):
                 samba_steps.configure_samba_global_settings(_make_config())
 
@@ -112,8 +116,9 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
                 )
 
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
+                 patch.object(samba_steps.os, "fchown"), \
                  patch.object(samba_steps, "run", side_effect=fake_run):
-                with self.assertRaisesRegex(RuntimeError, "security configuration validation failed"):
+                with self.assertRaisesRegex(RuntimeError, "Samba configuration validation failed"):
                     samba_steps.configure_samba_global_settings(_make_config())
 
             with open(smb_conf) as file_obj:
@@ -134,6 +139,7 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
                 return MagicMock(returncode=0, stderr="")
 
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
+                 patch.object(samba_steps.os, "fchown"), \
                  patch.object(samba_steps, "run", side_effect=fake_run):
                 samba_steps.configure_samba_global_settings(
                     _make_config(
@@ -537,6 +543,32 @@ class TestVetoFilesPattern(unittest.TestCase):
 
 
 class TestReconcileSambaShares(unittest.TestCase):
+    def test_non_normalized_root_cannot_bypass_missing_declared_storage(self) -> None:
+        for path in ("/srv/other/../data/docs", "/srv/data/./docs", "//srv/data/docs", "/srv/data/docs/"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory:
+                conf = Path(directory) / "smb.conf"
+                conf.write_text("[global]\n")
+                config = _make_config(
+                    samba_shares=[["write", "docs", path, "alice:secret"]],
+                    storage_mounts=[["data", "/srv/data", "ext4", "empty"]],
+                )
+                with patch.object(samba_steps, "SMB_CONF_PATH", str(conf)), \
+                     patch.object(samba_steps, "run") as run, \
+                     patch.object(samba_steps.os, "makedirs") as mkdir, \
+                     patch.object(samba_steps, "_prepare_samba_share") as prepare, \
+                     patch("common.storage_steps.read_json_file", side_effect=FileNotFoundError):
+                    with self.assertRaisesRegex(ValueError, "must be normalized"):
+                        samba_steps.reconcile_samba_shares(config)
+                    # The canonical spelling must still fail the actual mount
+                    # guard when no declared storage marker is available.
+                    config.samba_shares[0][2] = "/srv/data/docs"
+                    with self.assertRaisesRegex(RuntimeError, "storage marker is missing"):
+                        samba_steps.reconcile_samba_shares(config)
+                run.assert_not_called()
+                mkdir.assert_not_called()
+                prepare.assert_not_called()
+                self.assertEqual(conf.read_text(), "[global]\n")
+
     def test_overlapping_roots_fail_before_any_account_or_filesystem_mutation(self) -> None:
         for first, second in (
             ("/srv/docs", "/srv/docs"),
@@ -583,6 +615,7 @@ class TestReconcileSambaShares(unittest.TestCase):
                 file_obj.write(original)
             config = _make_config(samba_shares=shares)
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
+                 patch.object(samba_steps.os, "fchown"), \
                  patch.object(samba_steps, "run", side_effect=fake_run), \
                  patch.object(samba_steps, "assert_declared_storage_mount") as assert_mount, \
                  patch.object(samba_steps.os, "makedirs"):
@@ -690,6 +723,121 @@ class TestReconcileSambaShares(unittest.TestCase):
         commands = [command for command, _ in calls]
         self.assertIn("chmod -R --preserve-root g+rX,g-w /srv/docs", commands)
         self.assertNotIn("chmod -R --preserve-root 2755 /srv/docs", commands)
+
+
+class TestSambaConfigActivation(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.conf = Path(directory) / "smb.conf"
+        self.original = ("[global]\n   workgroup = LEGACY\n\n[obsolete_read]\n"
+                         "   path = /srv/obsolete\n   valid users = @smb_obsolete_read\n"
+                         "   force group = smb_obsolete_read\n")
+        self.conf.write_text(self.original)
+        self.conf.chmod(0o640)
+        self.commands: list[str] = []
+        self.candidates: list[Path] = []
+        self.failure = ""
+        self.error: BaseException | None = None
+        self.enterContext(patch.object(samba_steps, "SMB_CONF_PATH", str(self.conf)))
+        self.enterContext(patch.object(samba_steps, "run", side_effect=self.run_command))
+        self.enterContext(patch.object(samba_steps.os, "fchown"))
+        self.enterContext(patch.object(samba_steps, "assert_declared_storage_mount"))
+        self.enterContext(patch.object(samba_steps, "_prepare_samba_share", return_value=(
+            "smb_docs_read", "[docs_read]\n   path = /srv/docs\n",
+        )))
+
+    def configure(self, operation: str) -> None:
+        config = _make_config(samba_shares=[["read", "docs", "/srv/docs", "alice:secret"]])
+        if operation == "global":
+            samba_steps.configure_samba_global_settings(config)
+        else:
+            samba_steps.reconcile_samba_shares(config)
+
+    def run_command(self, command: str, **_kwargs: object) -> MagicMock:
+        self.commands.append(command)
+        if command.startswith("testparm -s "):
+            candidate = Path(shlex.split(command)[-1])
+            self.candidates.append(candidate)
+            self.assertNotEqual(candidate, self.conf)
+            self.assertEqual(candidate.parent, self.conf.parent)
+            self.assertEqual(candidate.stat().st_mode & 0o777, 0o600)
+            self.assertNotEqual(candidate.read_text(), self.original)
+            self.assertEqual(self.conf.read_text(), self.original)
+        if self.failure and command.startswith(self.failure):
+            if self.error:
+                raise self.error
+            return MagicMock(returncode=1, stderr="bad candidate")
+        return MagicMock(returncode=0, stderr="")
+
+    def assert_restored(self) -> None:
+        self.assertEqual(self.conf.read_text(), self.original)
+        self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
+        self.assertTrue(all(not path.exists() for path in self.candidates))
+        self.assertEqual(list(self.conf.parent.iterdir()), [self.conf])
+
+    def test_validation_rejection_exception_timeout_and_interrupt_preserve_live_file(self) -> None:
+        for operation in ("global", "shares"):
+            for error in (None, subprocess.CalledProcessError(1, "testparm"),
+                          subprocess.TimeoutExpired("testparm", 30), KeyboardInterrupt()):
+                with self.subTest(operation=operation, error=type(error).__name__):
+                    self.commands.clear()
+                    self.failure, self.error = "testparm -s ", error
+                    with self.assertRaises(type(error) if error else RuntimeError):
+                        self.configure(operation)
+                    self.assert_restored()
+                    self.assertFalse(any(command.startswith(("systemctl", "groupdel", "printf"))
+                                         for command in self.commands))
+
+    def test_activation_failure_restores_config_and_retry_reloads(self) -> None:
+        for operation, failure in (
+            ("global", "systemctl reload smbd"),
+            ("shares", "install -d -m 0755"),
+            ("shares", "printf %s"),
+            ("shares", "systemctl daemon-reload"),
+            ("shares", "systemctl reload smbd"),
+        ):
+            with self.subTest(operation=operation, failure=failure):
+                self.conf.write_text(self.original)
+                self.commands.clear()
+                self.failure, self.error = failure, subprocess.CalledProcessError(1, failure)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.configure(operation)
+                self.assert_restored()
+                self.assertNotIn("groupdel smb_obsolete_read", self.commands)
+
+                self.commands.clear()
+                self.failure = ""
+                self.configure(operation)
+                self.assertNotEqual(self.conf.read_text(), self.original)
+                self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
+                self.assertEqual(self.commands.count("systemctl reload smbd"), 1)
+                self.commands.clear()
+                self.configure(operation)
+                self.assertNotIn("systemctl reload smbd", self.commands)
+                self.assertFalse(any(command.startswith("testparm") for command in self.commands))
+
+    def test_activation_interrupt_restores_previous_file(self) -> None:
+        self.failure, self.error = "systemctl reload smbd", KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.configure("global")
+        self.assert_restored()
+
+    def test_post_publication_sync_error_also_restores_previous_file(self) -> None:
+        writer = samba_steps.write_text_atomic
+        publications = 0
+
+        def fail_after_replace(*args, **kwargs):
+            nonlocal publications
+            writer(*args, **kwargs)
+            publications += 1
+            if publications == 1:
+                raise OSError("directory sync failed after replacement")
+
+        with patch.object(samba_steps, "write_text_atomic", side_effect=fail_after_replace), \
+             self.assertRaisesRegex(OSError, "directory sync failed"):
+            self.configure("global")
+        self.assert_restored()
+        self.assertNotIn("systemctl reload smbd", self.commands)
 
 
 if __name__ == '__main__':

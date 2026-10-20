@@ -47,12 +47,25 @@ filesystem; this prevents accidentally creating a share on the root disk when
 a data drive is missing.
 
 Setup checks every declared share mount before changing any share permissions.
-Share roots with symbolic-link traversal are rejected. The managed
+Share roots must use normalized absolute paths without `..`, `.` components,
+repeated separators or a trailing slash. Reconciliation rejects other spellings
+before storage checks or share mutations, so aliases cannot bypass a declared
+data mount. Share roots with symbolic-link traversal are rejected. The managed
 `smbd.service.d/basaltwater-storage.conf` drop-in requires the configured share
 and custom metadata-cache mounts at service startup, including mounts marked
-`nofail` in fstab. Keep their persistent mount definitions in place. Rejected
-global hardening configuration restores the previous file and fails setup;
-it is not reported as a successful security update.
+`nofail` in fstab. Keep their persistent mount definitions in place.
+
+Share reconciliation and global hardening validate a private candidate with
+`testparm` before atomically replacing `smb.conf`, preserving its permissions
+and ownership. Validation errors, exceptions and interruptions leave the live
+file untouched. If publishing the validated file, installing the mount drop-in,
+reloading systemd or reloading Samba fails, the previous `smb.conf` is restored
+and the error propagates. Retry the same operation to repeat activation; unchanged
+successful configurations skip the Samba reload. Account, password, permission,
+cache-directory and mount drop-in changes are outside this file rollback. This
+is bounded exception recovery, without a durable Samba transaction marker:
+after a hard kill, failed restoration or an uncertain reload, inspect the live
+configuration and service before retrying or manually reloading Samba.
 
 `--samba-source` adds a Samba-only ingress policy. It is combined with any
 generic `--access-source`/`--lan-access` policy but does not restrict SSH,
@@ -331,6 +344,11 @@ boot-enabled mount during migration. Unit validation or activation failures
 restore the previous unit files and activation state; incomplete rollback
 retains the shared systemd recovery marker. Credentials and directory ownership
 changes are outside that unit transaction.
+
+Credential filenames retain systemd's literal unit-name escapes (for example,
+`\x2d` for a hyphen) in `Options=`, so mounts with hyphens, spaces or percent
+signs reference the actual root-only credential file. Percent signs in unit
+values are escaped to prevent systemd specifier expansion.
 
 ## Troubleshooting
 
