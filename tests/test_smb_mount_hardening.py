@@ -185,9 +185,25 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         self.assertIn("What=//192.168.1.10/docs%%H/reports%%u\n", mount)
         for content in (mount, automount):
             self.assertIn(f"Where={self.mountpoint}%%h\n", content)
-        self.assertIn("/credentials-mnt-share\\\\x25h,", mount)
+        self.assertIn("/credentials-mnt-share\\x25h,", mount)
         self.assertIn(str(self.creds).replace("%", "%%"), mount)
         self.assertTrue((self.creds / ("credentials-" + self.escaped)).is_file())
+
+    def test_credentials_option_resolves_to_actual_file_for_escaped_mount_names(self) -> None:
+        for mount_name, escaped in (("my-share", r"mnt-my\x2dshare"),
+                                    ("space dir", r"mnt-space\x20dir"),
+                                    ("percent%h", r"mnt-percent\x25h")):
+            with self.subTest(mount_name=mount_name):
+                self.escaped = escaped
+                self.configure(mountpoint=str(self.root / mount_name))
+                content = (self.unit_dir / (escaped + ".mount")).read_text()
+                options = next(line.removeprefix("Options=") for line in content.splitlines()
+                               if line.startswith("Options="))
+                # Upstream config_parse_unit_string_printf expands %% without
+                # unescaping backslashes; mount.cifs opens this value verbatim.
+                credential_path = options.split(",", 1)[0].removeprefix("credentials=").replace("%%", "%")
+                self.assertEqual(credential_path, str(self.creds / ("credentials-" + escaped)))
+                self.assertEqual(Path(credential_path).read_text(), "username=svc\npassword=hunter2\n")
 
     def test_distinct_mountpoints_use_distinct_credential_files(self) -> None:
         self.escaped = "mnt-a_b"

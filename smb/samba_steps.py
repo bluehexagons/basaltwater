@@ -4,9 +4,14 @@ import os
 import ipaddress
 import shlex
 import re
+import stat
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Optional, cast
 
 from common.storage_steps import assert_declared_storage_mount
+from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_firewall
 from lib.mount_utils import is_path_under_mnt, get_mount_ancestor
@@ -466,6 +471,8 @@ def reconcile_samba_shares(config: SetupConfig, **_: Any) -> None:
     sections: list[str] = []
     for share_config in share_configs:
         for share_path in cast(list[str], share_config["paths"]):
+            if share_path != "/" + os.path.normpath(share_path).lstrip("/"):
+                raise ValueError(f"Samba share path must be normalized: {share_path}")
             if os.path.realpath(share_path) != os.path.abspath(share_path):
                 raise RuntimeError(f"Refusing symlinked Samba share path: {share_path}")
             assert_declared_storage_mount(config, share_path)
@@ -491,31 +498,28 @@ def reconcile_samba_shares(config: SetupConfig, **_: Any) -> None:
     elif desired_content:
         desired_content += "\n"
 
-    if desired_content != previous_content and not _write_validated_smb_config(
-        SMB_CONF_PATH, previous_content, desired_content,
-    ):
-        raise RuntimeError("Samba share configuration validation failed")
-
     # Local-fs ordering alone does not require nofail data mounts to succeed.
     # Keep smbd from exporting an underlying boot-disk directory at startup.
     paths = sorted({path for share in share_configs for path in share["paths"]})
     if config.samba_metadata_cache:
         paths.append(config.samba_metadata_cache)
     dropin = "/etc/systemd/system/smbd.service.d/basaltwater-storage.conf"
-    if paths:
-        quoted = [
-            '"' + path.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
-            for path in paths
-        ]
-        content = "[Unit]\nRequiresMountsFor=" + " ".join(quoted) + "\n"
-        run("install -d -m 0755 /etc/systemd/system/smbd.service.d")
-        run(f"printf %s {shlex.quote(content)} > {shlex.quote(dropin)}")
-    else:
-        run(f"rm -f -- {shlex.quote(dropin)}")
-    run("systemctl daemon-reload")
+    with _validated_smb_config(SMB_CONF_PATH, previous_content, desired_content) as changed:
+        if paths:
+            quoted = [
+                '"' + path.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+                for path in paths
+            ]
+            content = "[Unit]\nRequiresMountsFor=" + " ".join(quoted) + "\n"
+            run("install -d -m 0755 /etc/systemd/system/smbd.service.d")
+            run(f"printf %s {shlex.quote(content)} > {shlex.quote(dropin)}")
+        else:
+            run(f"rm -f -- {shlex.quote(dropin)}")
+        run("systemctl daemon-reload")
+        if changed:
+            run("systemctl reload smbd")
 
-    if desired_content != previous_content:
-        run("systemctl reload smbd")
+    if changed:
         print(f"  ✓ Reconciled {len(sections)} Samba share(s)")
     else:
         print(f"  ✓ {len(sections)} Samba share(s) already up to date")
@@ -595,31 +599,48 @@ findtime = 600
 """
 
 
-def _write_validated_smb_config(
+@contextmanager
+def _validated_smb_config(
     smb_conf: str,
     previous_content: str,
     desired_content: str,
-) -> bool:
-    """Write a Samba config candidate and restore it if testparm rejects it."""
+) -> Iterator[bool]:
+    """Validate off-line, publish atomically, and restore on activation failure.
 
-    with open(smb_conf, "w") as file_obj:
-        file_obj.write(desired_content)
+    The caller owns activation inside the context. Restoring the old bytes
+    also makes a subsequent attempt retry validation and the Samba reload.
+    Accounts, share permissions and the systemd drop-in are outside rollback.
+    """
+    if desired_content == previous_content:
+        yield False
+        return
 
-    result = run(
-        f"testparm -s {shlex.quote(smb_conf)}",
-        check=False,
-        capture_output=True,
-    )
-    if result.returncode == 0:
-        return True
+    metadata = os.stat(smb_conf)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=os.path.dirname(smb_conf),
+        prefix=".smb.conf-", suffix=".candidate",
+    ) as candidate:
+        candidate.write(desired_content)
+        candidate.flush()
+        os.fsync(candidate.fileno())
+        result = run(
+            f"testparm -s {shlex.quote(candidate.name)}",
+            check=False, capture_output=True,
+        )
+        if result.returncode != 0:
+            if result.stderr:
+                print(f"  Error: {result.stderr[:200]}")
+            raise RuntimeError("Samba configuration validation failed")
 
-    with open(smb_conf, "w") as file_obj:
-        file_obj.write(previous_content)
-
-    print("  ✗ Samba configuration has errors; restored the previous configuration")
-    if result.stderr:
-        print(f"  Error: {result.stderr[:200]}")
-    return False
+    attributes = dict(mode=stat.S_IMODE(metadata.st_mode), uid=metadata.st_uid, gid=metadata.st_gid)
+    try:
+        write_text_atomic(smb_conf, desired_content, **attributes)
+        yield True
+    except BaseException:
+        # Include interruptions and post-rename sync errors: publication may
+        # already have happened even when the atomic writer raises.
+        write_text_atomic(smb_conf, previous_content, **attributes)
+        raise
 
 
 def _render_hardened_global_settings(
@@ -680,10 +701,8 @@ def configure_samba_global_settings(config: SetupConfig) -> None:
         print("  ✓ Global Samba configuration already up to date")
         return
 
-    if not _write_validated_smb_config(smb_conf, content, desired_content):
-        raise RuntimeError("Samba global security configuration validation failed")
-
-    run("systemctl reload smbd")
+    with _validated_smb_config(smb_conf, content, desired_content):
+        run("systemctl reload smbd")
     print("  ✓ Updated global Samba configuration with security hardening")
 
 

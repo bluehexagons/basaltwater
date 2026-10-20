@@ -136,6 +136,10 @@ password={password}
         return value.replace("%", "%%").replace("\\", "\\\\")
     
     escaped_desc = _escape_systemd_value(mountpoint).replace('"', "'")
+    # Mount.Options uses config_parse_unit_string_printf, which expands
+    # specifiers without unescaping backslashes. mount.cifs opens the supplied
+    # credentials filename verbatim, including systemd-escape's literal \\xNN.
+    escaped_credentials = creds_file.replace("%", "%%")
     
     unit_content = f"""[Unit]
 Description=SMB mount for {escaped_desc}
@@ -146,7 +150,7 @@ Wants=network-online.target
 What={_escape_systemd_value(unc_path)}
 Where={_escape_systemd_value(mountpoint)}
 Type=cifs
-Options=credentials={_escape_systemd_value(creds_file)},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail
+Options=credentials={escaped_credentials},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail
 """
 
     automount_content = f"""[Unit]
