@@ -65,6 +65,10 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
                 self.assertTrue(path.exists(), "must not stop a missing automount")
                 state[0] = "inactive"
             elif command[1] == "restart":
+                if name.endswith(".automount"):
+                    mount = name.removesuffix(".automount") + ".mount"
+                    if self.states.get(mount, ["inactive"])[0] == "active":
+                        raise subprocess.CalledProcessError(1, command, stderr="Path is already a mount point")
                 state[0] = "active"
             elif command[1] == "enable":
                 state[1] = "enabled-runtime" if "--runtime" in command else "enabled"
@@ -162,6 +166,15 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         self.assertFalse(any(command[1] == "stop" for command in self.commands))
         for name, content in originals.items():
             self.assertEqual((self.unit_dir / name).read_text(), content)
+
+    def test_migration_rollback_rearms_automount_before_mount(self) -> None:
+        self.seed_old_units(automount=True)
+        self.failure = ["systemctl", "daemon-reload"]
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.configure()
+        self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled-runtime"])
+        self.assertEqual(self.states["mnt-share.mount"], ["active", "enabled"])
+        self.assertFalse((self.unit_dir / ".basaltwater-unit-operation.json").exists())
 
     def test_unit_values_preserve_literal_percent_signs_and_escaped_name_backslashes(self) -> None:
         self.escaped = "mnt-share\\x25h"

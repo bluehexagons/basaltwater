@@ -196,7 +196,17 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 # Keep the group quiescent if any old definition is unsafe.
                 if reloaded and len(restored) == len(snapshots):
                     # Restore the service before rearming its timer/path.
-                    for name in reversed(touched) if removals or deactivate else touched:
+                    restore_order = list(reversed(touched)) if removals or deactivate else list(touched)
+                    # An automount cannot start over an already mounted path.
+                    # Keep the other unit ordering, but rearm each native
+                    # automount before restoring its associated active mount.
+                    for name in touched:
+                        if name.endswith(".automount"):
+                            mount = name.removesuffix(".automount") + ".mount"
+                            if mount in restore_order and restore_order.index(name) > restore_order.index(mount):
+                                restore_order.remove(name)
+                                restore_order.insert(restore_order.index(mount), name)
+                    for name in restore_order:
                         state = states[name]
                         if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                             flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
@@ -238,7 +248,8 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     backups and a blocking marker survive failed rollback or process death.
     ``deactivate`` units stop and disable before publication, in the supplied
     order (activators before their mount/service), and stay stopped unless also
-    in ``activate``. Rollback restores their previous state in reverse order.
+    in ``activate``. Rollback restores their previous state in reverse order,
+    except that an automount is restored before its matching mount.
     """
     _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir, deactivate=deactivate)
 

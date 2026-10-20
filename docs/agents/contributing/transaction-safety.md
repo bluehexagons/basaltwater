@@ -17,6 +17,11 @@ retry until the recorded recovery path is inspected.
 | Application deployment | Static and manifest deployment orchestration | Stage a sibling release, retain the previous tree through activation and health checks, and preserve recovery state after interruption. |
 | Generated Nginx configuration | Nginx reconciliation | Use its own lock, durable snapshots, `nginx -t`, reload verification, and recovery marker. This is separate from application release activation. |
 
+Grouped unit rollback restores services before their timers or paths. Native
+mount pairs require the automount to start before its matching mount: systemd
+rejects starting an automount over an already mounted path. Keep this ordering
+when extending `lib.unit_transaction`, and model that constraint in unit tests.
+
 ## Limits
 
 Transactions protect the resources owned by these mechanisms. They do not
