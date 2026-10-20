@@ -216,7 +216,7 @@ def fetch_preferred_gogs_release(arch: str) -> tuple[str, str, str]:
 
 
 def _publish_gogs_release(release_dir: str) -> None:
-    """Publish both release links, restoring their prior targets on failure."""
+    """Publish both links, recovering on failure or interruption before re-raising."""
     links = (
         (GOGS_CURRENT_DIR, release_dir),
         (GOGS_BINARY_LINK, f"{GOGS_CURRENT_DIR}/gogs"),
@@ -235,8 +235,9 @@ def _publish_gogs_release(release_dir: str) -> None:
         for path, target in links:
             attempted.append(path)
             run(f"ln -sfn {shlex.quote(target)} {shlex.quote(path)}", check=True)
-    except Exception as publication_error:
+    except BaseException as publication_error:
         recovery_errors = []
+        recovery_interruption: BaseException | None = None
         for path in reversed(attempted):
             previous_target = previous_targets[path]
             try:
@@ -244,13 +245,27 @@ def _publish_gogs_release(release_dir: str) -> None:
                     run(f"rm -f {shlex.quote(path)}", check=True)
                 else:
                     run(f"ln -sfn {shlex.quote(previous_target)} {shlex.quote(path)}", check=True)
-            except Exception as recovery_error:
-                recovery_errors.append(f"{path}: {recovery_error}")
+            except BaseException as recovery_error:
+                recovery_errors.append(
+                    f"{path} (previous target {previous_target!r}): "
+                    f"{type(recovery_error).__name__}: {recovery_error}"
+                )
+                if not isinstance(recovery_error, Exception) and recovery_interruption is None:
+                    recovery_interruption = recovery_error
         if recovery_errors:
-            raise RuntimeError(
-                f"Gogs release publication failed: {publication_error}; "
+            message = (
+                "Gogs release publication failed: "
+                f"{type(publication_error).__name__}: {publication_error}; "
                 "link recovery failed: " + "; ".join(recovery_errors)
-            ) from publication_error
+            )
+            # Keep cancellation visible to callers, with evidence of incomplete recovery.
+            if not isinstance(publication_error, Exception):
+                publication_error.add_note(message)
+            elif recovery_interruption is not None:
+                recovery_interruption.add_note(message)
+                raise recovery_interruption from publication_error
+            else:
+                raise RuntimeError(message) from publication_error
         raise
 
 
