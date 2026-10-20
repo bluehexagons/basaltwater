@@ -155,6 +155,11 @@ or activating it. A failed activation restores the prior verified release;
 if no verified rollback target exists, setup stops the service. Setup also
 refuses to replace an active release whose digest-qualified path disagrees
 with the saved state; repair or restore that root-owned state before retrying.
+If either release-link publication command fails, setup and the updater restore
+the previous link targets (or remove newly created links on first install), so
+a retry can use the unchanged saved state. A failed restoration reports both
+the publication and recovery errors, including the affected link path; inspect
+that path and the saved state before retrying.
 Setup and patch also run a SQLite quick check, verify that the `git` user can
 read and write each managed
 directory, reject CIFS/SMB live storage, and print the backing filesystem, free
@@ -185,9 +190,18 @@ Cloudflare edge, or credentials work. Defaults require at least 1 GiB and
 `auto-update-gogs.timer` checks weekly (Sunday at 05:30). It validates the
 downloaded binary from a private, randomly named temporary workspace, refreshes
 authorized keys and hooks, restarts Gogs, and updates the saved state only after
-success. If a post-update command, restart, or state write fails, the previous
-release symlink is restored and a failure notification is emitted when
-notifications are configured. Every completed check records a root-owned
+the existing bounded HTTP readiness probe succeeds on the backend port read
+from `app.ini`. An unreadable or invalid backend port stops the check before
+release installation. If a post-update command, restart, readiness probe, or
+state write fails, the previous release symlink is restored and a failure
+notification is emitted when notifications are configured. Rollback also checks
+HTTP readiness before reporting the prior release restored; an unready service
+remains a failed update and never records the candidate version as installed.
+This is binary/link recovery only: it does not undo database migrations or
+other application data writes, and HTTP readiness does not prove schema
+compatibility. Keep a consistent pre-update backup; restoring SQLite or
+downgrading its schema requires an explicit operator recovery decision.
+Every completed check records a root-owned
 result in `/opt/basaltwater/state/gogs_update.json`; health fails when the last
 result failed or the record (falling back to initial setup state before the
 first timer run) is older than nine days.

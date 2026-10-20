@@ -160,6 +160,88 @@ class TestFetchPreferredGogsRelease(unittest.TestCase):
 
 
 class TestInstallGogsRelease(unittest.TestCase):
+    def test_failed_first_publication_removes_only_new_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            current = os.path.join(directory, "current")
+            binary = os.path.join(directory, "binary")
+
+            def run(command, **kwargs):
+                tokens = shlex.split(command)
+                if tokens[:2] == ["ln", "-sfn"]:
+                    os.symlink(tokens[-2], tokens[-1])
+                    if tokens[-1] == binary:
+                        raise RuntimeError("publication denied")
+                elif tokens[:2] == ["rm", "-f"]:
+                    os.unlink(tokens[-1])
+                else:
+                    self.fail(f"Unexpected host command: {command}")
+
+            with (
+                patch.object(gogs_steps, "GOGS_CURRENT_DIR", current),
+                patch.object(gogs_steps, "GOGS_BINARY_LINK", binary),
+                patch.object(gogs_steps, "run", side_effect=run),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "publication denied"):
+                    gogs_steps._publish_gogs_release(os.path.join(directory, "release"))
+            self.assertFalse(os.path.lexists(current))
+            self.assertFalse(os.path.lexists(binary))
+
+    def test_failed_publication_restores_selection_and_allows_retry(self):
+        for failed_link in ("current", "binary"):
+            for restore_fails in (False, True):
+                with self.subTest(failed_link=failed_link, restore_fails=restore_fails), tempfile.TemporaryDirectory() as directory:
+                    releases = os.path.join(directory, "releases")
+                    previous = os.path.join(releases, "v1.2.3-" + "b" * 12)
+                    target = os.path.join(releases, "v1.2.4-" + "a" * 12)
+                    current = os.path.join(directory, "current")
+                    binary = os.path.join(directory, "binary")
+                    for release in (previous, target):
+                        os.makedirs(release)
+                        open(os.path.join(release, "gogs"), "w").close()
+                    os.symlink(previous, current)
+                    os.symlink(current + "/gogs", binary)
+                    fail_path = current if failed_link == "current" else binary
+                    publication_failed = False
+
+                    def run(command, **kwargs):
+                        nonlocal publication_failed
+                        tokens = shlex.split(command)
+                        if tokens[:2] == ["ln", "-sfn"]:
+                            destination = tokens[-1]
+                            if not publication_failed and destination == fail_path:
+                                publication_failed = True
+                                # Model a command that unlinks the old entry before failing.
+                                os.unlink(destination)
+                                raise RuntimeError("publication denied")
+                            if publication_failed and restore_fails and destination == current:
+                                raise RuntimeError("recovery denied")
+                            if os.path.lexists(destination):
+                                os.unlink(destination)
+                            os.symlink(tokens[-2], destination)
+                        stdout = f"{'a' * 64} archive" if tokens[0] == "sha256sum" else ""
+                        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+                    with (
+                        patch.object(gogs_steps, "GOGS_RELEASES_DIR", releases),
+                        patch.object(gogs_steps, "GOGS_CURRENT_DIR", current),
+                        patch.object(gogs_steps, "GOGS_BINARY_LINK", binary),
+                        patch.object(gogs_steps, "detect_release_arch", return_value="amd64"),
+                        patch.object(gogs_steps, "fetch_preferred_gogs_release", return_value=("v1.2.4", "https://example.com/gogs.tar.gz", "a" * 64)),
+                        patch.object(gogs_steps, "_load_gogs_state", return_value={"tag_name": "v1.2.3", "archive_sha256": "b" * 64}),
+                        patch.object(gogs_steps, "run", side_effect=run),
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "publication denied") as error:
+                            gogs_steps.install_or_update_gogs_release()
+                        if restore_fails:
+                            self.assertIn("recovery denied", str(error.exception))
+                            self.assertIn(current, str(error.exception))
+                            continue
+                        self.assertEqual(os.path.realpath(current), previous)
+                        self.assertEqual(os.readlink(binary), current + "/gogs")
+                        # Saved metadata still describes the old selection; a retry must work.
+                        self.assertEqual(gogs_steps.install_or_update_gogs_release(), ("v1.2.4", True, "a" * 64))
+                        self.assertEqual(os.path.realpath(current), target)
+
     @patch("web.gogs_steps.run")
     @patch("web.gogs_steps.os.path.exists", return_value=True)
     @patch(
@@ -232,6 +314,7 @@ class TestInstallGogsRelease(unittest.TestCase):
         mock_run.assert_not_called()
 
     @patch("web.gogs_steps.run")
+    @patch("web.gogs_steps.os.path.lexists", return_value=False)
     @patch("web.gogs_steps.os.path.exists", return_value=False)
     @patch("web.gogs_steps._load_gogs_state", return_value={"tag_name": "v1.2.3", "archive_sha256": "b" * 64})
     @patch(
@@ -245,6 +328,7 @@ class TestInstallGogsRelease(unittest.TestCase):
         _fetch,
         mock_state,
         _exists,
+        _lexists,
         mock_run,
     ):
         def result_for(command: str, **_kwargs):
