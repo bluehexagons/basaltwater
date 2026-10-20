@@ -28,6 +28,20 @@ build. An npm project without a lockfile uses `npm install`, which can create a
 silently commit or discard that file. Use `--no-install` only when dependencies
 are already usable.
 
+Some projects have a separate packaging or staging command: their build updates
+runtime files but does not create the publishable tree. Run the project's
+documented build and packaging commands first, then publish that exact output:
+
+```bash
+basaltwater-web publish site NAME --project . --output dist --no-build --no-install
+basaltwater-web site verify NAME --project . --output dist --json
+```
+
+Replace `dist` with the project's staging directory. The gateway does not infer
+an extra packaging step from a build script. Avoid publishing the checkout root
+just because it contains an `index.html`; it can also contain development files
+that the native packager deliberately excludes.
+
 `site doctor` checks directory and root HTTP readiness. For freshness, use
 `site verify NAME --project PATH --output dist --json`: it compares the private
 receipt with the publication, local build inventory, and served HTTPS bytes.
