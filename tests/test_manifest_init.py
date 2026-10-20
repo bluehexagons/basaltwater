@@ -94,12 +94,55 @@ class ManifestInitTests(unittest.TestCase):
         self.assertEqual(manifest.components[1].output, 'web/dist')
 
     def test_package_manager_is_detected_from_project_not_cwd(self):
-        self.package(dependencies={'express': '*'}, scripts={'start': 'node app.js'})
-        (self.root / 'package-lock.json').unlink()
-        (self.root / 'pnpm-lock.yaml').write_text('lockfileVersion: 9')
-        result = propose_manifest(str(self.root))
-        self.assertEqual(result['manifest']['components'][0]['exec'], '/usr/bin/env pnpm start')
-        self.assertEqual(result['manifest']['ci']['install'][0]['argv'], ['pnpm', 'install', '--frozen-lockfile'])
+        for index, (declaration, lock, header, command) in enumerate((
+            ('', 'package-lock.json', '{}', ['npm', 'ci']),
+            ('npm@12.1.0', 'npm-shrinkwrap.json', '{}', ['npm', 'ci']),
+            ('', '', '', ['npm', 'install']),
+            ('pnpm@10.0.0', '', '', ['pnpm', 'install', '--no-frozen-lockfile']),
+            ('', 'pnpm-lock.yaml', 'lockfileVersion: 9', ['pnpm', 'install', '--frozen-lockfile']),
+            ('yarn@1.22.22', 'yarn.lock', '# yarn lockfile v1', ['yarn', 'install', '--frozen-lockfile']),
+            ('yarn@4.10.0', 'yarn.lock', '__metadata:\n  version: 8', ['yarn', 'install', '--immutable']),
+            ('', 'yarn.lock', '# yarn lockfile v1', ['yarn', 'install', '--frozen-lockfile']),
+            ('', 'yarn.lock', '__metadata:\n  version: 8', ['yarn', 'install', '--immutable']),
+            ('yarn@4.10.0', '', '', ['yarn', 'install', '--no-immutable']),
+        )):
+            with self.subTest(declaration=declaration, lock=lock):
+                directory = str(index)
+                self.package(directory=directory, dependencies={'express': '*'},
+                             scripts={'start': 'node app.js'}, packageManager=declaration)
+                project = self.root / directory
+                (project / 'package-lock.json').unlink()
+                if lock:
+                    (project / lock).write_text(header)
+                with patch('subprocess.run', side_effect=AssertionError('Inference executed code')):
+                    result = propose_manifest(str(project))['manifest']
+                self.assertEqual(result['components'][0]['exec'], f'/usr/bin/env {command[0]} start')
+                self.assertEqual(result['ci']['install'][0]['argv'], command)
+
+    def test_package_manager_conflicts_and_unsafe_locks_fail_before_execution(self):
+        for index, problem in enumerate(('conflict', 'mismatch', 'unversioned', 'floating',
+                                         'null', 'unsupported', 'unknown-yarn', 'symlink', 'fifo')):
+            with self.subTest(problem=problem):
+                fields = {'packageManager': {
+                    'mismatch': 'pnpm@10.0.0', 'unversioned': 'pnpm', 'floating': 'pnpm@latest',
+                    'null': None, 'unsupported': 'bun@1.0.0',
+                }.get(problem, '')}
+                self.package(directory=str(index), **fields)
+                project = self.root / str(index)
+                if problem == 'conflict':
+                    (project / 'pnpm-lock.yaml').write_text('lockfileVersion: 9')
+                elif problem in ('unknown-yarn', 'symlink', 'fifo'):
+                    lock = project / 'package-lock.json'
+                    lock.unlink()
+                    if problem == 'unknown-yarn':
+                        (project / 'yarn.lock').write_text('not a supported lock header')
+                    elif problem == 'symlink':
+                        lock.symlink_to(project / 'package.json')
+                    else:
+                        os.mkfifo(lock)
+                with patch('subprocess.run', side_effect=AssertionError('Inference executed code')):
+                    with self.assertRaises(ValueError):
+                        propose_manifest(str(project))
 
     def test_existing_manifest_preserved_and_invalid_not_overwritten(self):
         self.package()

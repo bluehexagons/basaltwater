@@ -41,6 +41,7 @@ from lib.validation import (
 )
 from lib.local_http import open_loopback
 from lib.remote_utils import CommandTimeoutError, run as run_command
+from lib.node_project import NodePackageManager, select_package_manager
 
 
 POLICY_FILE = "/etc/basaltwater/internal-web/policy.json"
@@ -268,6 +269,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     preview_start.add_argument("name")
     preview_start.add_argument("--project", default=".")
+    preview_start.add_argument("--script", help="Vite package script to run instead of detecting dev/preview")
     preview_start.add_argument("--port", default="auto")
     preview_start.add_argument("--listen", default="auto")
     preview_start.add_argument("--profile", choices=_PROFILES, default="general")
@@ -1563,7 +1565,10 @@ def _project_node_command(project: str, command: list[str]) -> list[str]:
     ]
 
 
-def _automatic_preview_command(project: str, port: int) -> list[str]:
+def _automatic_preview_workflow(
+    project: str, script: str | None,
+) -> tuple[NodePackageManager, dict[str, object], str]:
+    """Validate project metadata independently of the eventual preview port."""
     package = _read_preview_package(project)
     scripts = package.get("scripts")
     dependencies = {
@@ -1577,35 +1582,31 @@ def _automatic_preview_command(project: str, port: int) -> list[str]:
         raise ValueError("Automatic preview currently requires Vite; provide a command after --")
     if not isinstance(scripts, dict):
         raise ValueError("package.json has no scripts; provide a command after --")
-    script = next(
+    script = script if script is not None else next(
         (name for name in ("dev", "preview") if isinstance(scripts.get(name), str)),
         None,
     )
     if script is None:
         raise ValueError("No dev or preview script found; provide a command after --")
-    if os.path.isfile(os.path.join(project, "pnpm-lock.yaml")):
-        command = ["corepack", "pnpm", "run", script]
-    elif os.path.isfile(os.path.join(project, "yarn.lock")):
-        command = ["corepack", "yarn", "run", script]
-    else:
-        command = ["npm", "run", script]
-    return _project_node_command(
-        project,
-        [*command, "--", "--host", "127.0.0.1", "--port", str(port), "--strictPort"],
+    manager = select_package_manager(project, package)
+    manager.script_command(package, script)
+    return manager, package, script
+
+
+def _automatic_preview_command(project: str, port: int, *, script: str | None = None) -> list[str]:
+    manager, package, script = _automatic_preview_workflow(project, script)
+    command = manager.script_command(
+        package, script, corepack=True,
+        arguments=("--host", "127.0.0.1", "--port", str(port), "--strictPort"),
     )
+    return _project_node_command(project, command)
 
 
 def _install_preview_dependencies(project: str, account: pwd.struct_passwd) -> None:
     if os.path.isdir(os.path.join(project, "node_modules")):
         return
-    if os.path.isfile(os.path.join(project, "pnpm-lock.yaml")):
-        command = ["corepack", "pnpm", "install", "--frozen-lockfile"]
-    elif os.path.isfile(os.path.join(project, "yarn.lock")):
-        command = ["corepack", "yarn", "install", "--immutable"]
-    elif os.path.isfile(os.path.join(project, "package-lock.json")):
-        command = ["npm", "ci"]
-    else:
-        command = ["npm", "install"]
+    manager = select_package_manager(project, _read_preview_package(project))
+    command = manager.install_command(corepack=True)
     command = _resolve_preview_executable(_project_node_command(project, command), account)
     runtime_path = ":".join(
         dict.fromkeys(
@@ -1645,10 +1646,12 @@ def _install_preview_dependencies(project: str, account: pwd.struct_passwd) -> N
         )
 
 
-def _preview_command(raw: list[str], project: str, port: int) -> list[str]:
+def _preview_command(raw: list[str], project: str, port: int, *, script: str | None = None) -> list[str]:
     command = raw[1:] if raw and raw[0] == "--" else list(raw)
     if not command:
-        return _automatic_preview_command(project, port)
+        return _automatic_preview_command(project, port, script=script)
+    if script is not None:
+        raise ValueError("--script cannot be combined with an explicit preview command")
     replaced = [
         argument.replace("{port}", str(port)).replace("{host}", "127.0.0.1")
         for argument in command
@@ -1902,6 +1905,8 @@ def _preview_start(args: argparse.Namespace) -> int:
         raise ValueError("--wait must be greater than 0 and at most 300 seconds")
     health = _validate_health_path(args.health)
     body_size = _validate_body_size(args.max_body_size, "--max-body-size")
+    if args.script is not None and args.preview_argv:
+        raise ValueError("--script cannot be combined with an explicit preview command")
     routes = _load_forwards(policy)
     previews = _load_previews(policy)
     existing = next(
@@ -1915,6 +1920,8 @@ def _preview_start(args: argparse.Namespace) -> int:
     if existing is not None:
         if not args.replace:
             raise RuntimeError(f"Live preview already exists: {name}; use --replace")
+        if not args.preview_argv:
+            _automatic_preview_workflow(project, args.script)
         _stop_preview_record(existing, policy, routes, previews)
     conflicting_route = next((route for route in routes if route["name"] == name), None)
     if conflicting_route is not None:
@@ -1922,7 +1929,7 @@ def _preview_start(args: argparse.Namespace) -> int:
 
     port = _select_target_port(args.port, routes, previews)
     command = _resolve_preview_executable(
-        _preview_command(args.preview_argv, project, port),
+        _preview_command(args.preview_argv, project, port, script=args.script),
         account,
         project,
     )

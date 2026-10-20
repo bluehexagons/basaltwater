@@ -20,6 +20,7 @@ import time
 import webbrowser
 
 from lib.node_toolchain import select_node
+from lib.node_project import select_package_manager
 from lib.remote_utils import CommandTimeoutError, run
 from lib.static_publication import RECEIPT_FILE, RESERVED_FILES, verify_receipt, write_receipt
 from lib.validation import validate_filesystem_path, validate_positive_integer
@@ -60,6 +61,7 @@ def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Publish existing output without running a project build",
     )
+    parser.add_argument("--build-script", default="build", help="Package script to build the site (default: build)")
     parser.add_argument(
         "--no-install",
         action="store_true",
@@ -110,22 +112,6 @@ def _project_name(project_dir: str, package: dict[str, object] | None) -> str:
     return os.path.basename(project_dir.rstrip(os.sep)) or "static-site"
 
 
-def _package_commands(project_dir: str) -> tuple[list[str], list[str]]:
-    if os.path.isfile(os.path.join(project_dir, "pnpm-lock.yaml")):
-        return (
-            ["corepack", "pnpm", "install", "--frozen-lockfile"],
-            ["corepack", "pnpm", "run", "build"],
-        )
-    if os.path.isfile(os.path.join(project_dir, "yarn.lock")):
-        return (
-            ["corepack", "yarn", "install", "--immutable"],
-            ["corepack", "yarn", "run", "build"],
-        )
-    if os.path.isfile(os.path.join(project_dir, "package-lock.json")):
-        return (["npm", "ci"], ["npm", "run", "build"])
-    return (["npm", "install"], ["npm", "run", "build"])
-
-
 def _run_project_build(
     project_dir: str,
     package: dict[str, object] | None,
@@ -133,13 +119,13 @@ def _run_project_build(
     install: bool,
     json_output: bool = False,
     timeout: int = 3600,
+    script: str = "build",
 ) -> None:
     if package is None:
         raise ValueError("No package.json found; use --no-build with an existing output")
-    scripts = package.get("scripts")
-    if not isinstance(scripts, dict) or not isinstance(scripts.get("build"), str):
-        raise ValueError("package.json has no build script; use --no-build")
-    install_command, build_command = _package_commands(project_dir)
+    manager = select_package_manager(project_dir, package)
+    install_command = manager.install_command(corepack=True)
+    build_command = manager.script_command(package, script, corepack=True)
     environment = select_node(project_dir).environment()
     deadline = time.monotonic() + timeout
     if install and not os.path.isdir(os.path.join(project_dir, "node_modules")):
@@ -387,6 +373,7 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
             _run_project_build(
                 project_dir, package, install=not args.no_install, json_output=args.json,
                 timeout=args.build_timeout,
+                script=args.build_script,
             )
         output_dir = _resolve_output(project_dir, args.output)
         _validate_output_tree(output_dir)

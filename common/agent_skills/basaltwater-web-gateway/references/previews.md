@@ -6,6 +6,17 @@ For Vite, project and command detection is automatic:
 basaltwater-web preview start NAME --project .
 ```
 
+For a separate web workflow, keep the project's script name:
+
+```bash
+basaltwater-web preview start NAME --project . --script dev:web
+```
+
+The selected Vite script receives strict loopback, port, and `--strictPort`
+arguments. The gateway honors npm, pnpm, and Yarn declarations and lockfiles;
+conflicting managers fail before project commands run. `--script` cannot be
+combined with an explicit command after `--`.
+
 Automatic previews and dependency installation use the project's Node selection
 (`.nvmrc`, `.node-version`, and package engines) as the requesting user. A missing
 compatible runtime fails without installing Node or changing the account default;
