@@ -215,6 +215,45 @@ def fetch_preferred_gogs_release(arch: str) -> tuple[str, str, str]:
     )
 
 
+def _publish_gogs_release(release_dir: str) -> None:
+    """Publish both release links, restoring their prior targets on failure."""
+    links = (
+        (GOGS_CURRENT_DIR, release_dir),
+        (GOGS_BINARY_LINK, f"{GOGS_CURRENT_DIR}/gogs"),
+    )
+    previous_targets: dict[str, str | None] = {}
+    for path, _target in links:
+        if os.path.lexists(path):
+            if not os.path.islink(path):
+                raise RuntimeError(f"Refusing to replace a non-symlink Gogs path: {path}")
+            previous_targets[path] = os.readlink(path)
+        else:
+            previous_targets[path] = None
+
+    attempted: list[str] = []
+    try:
+        for path, target in links:
+            attempted.append(path)
+            run(f"ln -sfn {shlex.quote(target)} {shlex.quote(path)}", check=True)
+    except Exception as publication_error:
+        recovery_errors = []
+        for path in reversed(attempted):
+            previous_target = previous_targets[path]
+            try:
+                if previous_target is None:
+                    run(f"rm -f {shlex.quote(path)}", check=True)
+                else:
+                    run(f"ln -sfn {shlex.quote(previous_target)} {shlex.quote(path)}", check=True)
+            except Exception as recovery_error:
+                recovery_errors.append(f"{path}: {recovery_error}")
+        if recovery_errors:
+            raise RuntimeError(
+                f"Gogs release publication failed: {publication_error}; "
+                "link recovery failed: " + "; ".join(recovery_errors)
+            ) from publication_error
+        raise
+
+
 def install_or_update_gogs_release() -> tuple[str, bool, str]:
     """Install the preferred Gogs release and return tag, change, and digest."""
     arch = detect_release_arch()
@@ -280,15 +319,7 @@ def install_or_update_gogs_release() -> tuple[str, bool, str]:
             capture_output=True,
             cwd=release_dir,
         )
-        run(
-            f"ln -sfn {shlex.quote(release_dir)} {shlex.quote(GOGS_CURRENT_DIR)}",
-            check=True,
-        )
-        run(
-            f"ln -sfn {shlex.quote(GOGS_CURRENT_DIR)}/gogs "
-            f"{shlex.quote(GOGS_BINARY_LINK)}",
-            check=True,
-        )
+        _publish_gogs_release(release_dir)
     print(f"  ✓ Installed Gogs {tag_name}")
     return tag_name, True, expected_sha256
 

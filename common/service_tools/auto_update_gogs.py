@@ -5,6 +5,7 @@ Auto-update Gogs.
 
 from __future__ import annotations
 
+import configparser
 import os
 import subprocess
 import sys
@@ -16,11 +17,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.atomic_io import write_json_atomic
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
+from lib.validation import validate_network_port
 from web.gogs_steps import (
     GOGS_BINARY_LINK,
     GOGS_CURRENT_DIR,
     GOGS_RELEASES_DIR,
     GOGS_SERVICE,
+    _wait_for_gogs_ready,
     build_gogs_admin_command,
     install_or_update_gogs_release,
     read_gogs_state,
@@ -47,6 +50,17 @@ def _derive_data_path(config_path: str) -> str | None:
     return None
 
 
+def _read_gogs_http_port(config_path: str) -> int:
+    """Read the actual backend port, allowing Gogs' sectionless root keys."""
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with open(config_path, encoding="utf-8") as source:
+            parser.read_string("[DEFAULT]\n" + source.read())
+        return validate_network_port(parser.getint("server", "HTTP_PORT"), "Gogs HTTP port")
+    except (OSError, ValueError, configparser.Error) as exc:
+        raise ValueError(f"Cannot read a valid Gogs HTTP port from {config_path}") from exc
+
+
 def _current_release_path() -> str | None:
     """Return the active versioned release directory when one is installed."""
     current_binary = os.path.join(GOGS_CURRENT_DIR, "gogs")
@@ -62,8 +76,8 @@ def _current_release_path() -> str | None:
     return release_path
 
 
-def _rollback_gogs_release(previous_release: str | None) -> bool:
-    """Restore the previous release symlink and restart Gogs."""
+def _rollback_gogs_release(previous_release: str | None, http_port: int) -> bool:
+    """Restore the previous release symlink and verify Gogs HTTP readiness."""
     if not previous_release or not os.path.exists(os.path.join(previous_release, "gogs")):
         log_event(logger, "Gogs rollback unavailable", level=ERROR)
         return False
@@ -78,6 +92,12 @@ def _rollback_gogs_release(previous_release: str | None) -> bool:
     if restart_result.returncode != 0:
         details = restart_result.stderr.strip() or restart_result.stdout.strip() or "systemctl restart failed"
         log_event(logger, "Gogs rollback restart failed", level=ERROR, stderr=details)
+        return False
+
+    try:
+        _wait_for_gogs_ready(http_port)
+    except Exception as exc:
+        log_event(logger, "Gogs rollback readiness failed", level=ERROR, stderr=str(exc))
         return False
 
     log_event(logger, "Rolled Gogs back to previous release", release_path=previous_release)
@@ -107,6 +127,7 @@ def _run_update() -> int:
     previous_release = _current_release_path()
     log_event(logger, "Starting Gogs update check", current_version=installed_tag or "unknown")
     try:
+        http_port = _read_gogs_http_port(config_path)
         target_tag, changed, archive_sha256 = install_or_update_gogs_release()
     except Exception as exc:
         details = str(exc)
@@ -136,7 +157,7 @@ def _run_update() -> int:
         data_path = _derive_data_path(config_path)
     if not data_path:
         details = f"Missing Gogs data path for config {config_path}"
-        rolled_back = _rollback_gogs_release(previous_release)
+        rolled_back = _rollback_gogs_release(previous_release, http_port)
         log_event(logger, "Gogs state update failed", level=ERROR, stderr=details)
         send_notification_safe(
             notification_configs,
@@ -155,7 +176,7 @@ def _run_update() -> int:
         result = _run_shell_command(build_gogs_admin_command(admin_args, config_path))
         if result.returncode != 0:
             details = result.stderr.strip() or result.stdout.strip() or f"Failed to refresh {label}"
-            rolled_back = _rollback_gogs_release(previous_release)
+            rolled_back = _rollback_gogs_release(previous_release, http_port)
             log_event(logger, "Gogs post-update command failed", level=ERROR, step=label, stderr=details)
             send_notification_safe(
                 notification_configs,
@@ -171,7 +192,7 @@ def _run_update() -> int:
     restart_result = _run_command(["systemctl", "restart", GOGS_SERVICE])
     if restart_result.returncode != 0:
         details = restart_result.stderr.strip() or restart_result.stdout.strip() or "systemctl restart failed"
-        rolled_back = _rollback_gogs_release(previous_release)
+        rolled_back = _rollback_gogs_release(previous_release, http_port)
         log_event(logger, "Gogs service restart failed", level=ERROR, stderr=details)
         send_notification_safe(
             notification_configs,
@@ -185,10 +206,27 @@ def _run_update() -> int:
         return 1
 
     try:
+        _wait_for_gogs_ready(http_port)
+    except Exception as exc:
+        details = str(exc)
+        rolled_back = _rollback_gogs_release(previous_release, http_port)
+        log_event(logger, "Gogs service readiness failed", level=ERROR, stderr=details)
+        send_notification_safe(
+            notification_configs,
+            subject="Error: Gogs update failed",
+            job="auto_update_gogs",
+            status="error",
+            message="Updated Gogs but the service did not become HTTP-ready",
+            details=_details_with_rollback(details, rolled_back),
+            logger=logger,
+        )
+        return 1
+
+    try:
         write_gogs_state(target_tag, data_path, config_path, archive_sha256)
     except (OSError, ValueError) as exc:
         details = str(exc)
-        rolled_back = _rollback_gogs_release(previous_release)
+        rolled_back = _rollback_gogs_release(previous_release, http_port)
         log_event(logger, "Gogs state update failed", level=ERROR, stderr=details)
         send_notification_safe(
             notification_configs,
