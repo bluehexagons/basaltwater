@@ -35,10 +35,10 @@ class ManifestInitTests(unittest.TestCase):
 
     def test_node_package_is_ci_only(self):
         for scripts, selected in (
-            ({"compile": "tsc", "test": "test-tool"}, 'test'),
-            ({"compile": "tsc", "check": "lint && test", "test": "test-tool"}, 'check'),
+            ({"compile": "tsc", "test": "test-tool"}, ['test']),
+            ({"compile": "tsc", "check": "lint && tsc", "test": "test-tool"}, ['check', 'test']),
             ({"compile": "tsc", "check:ci": "lint && test", "check": "lint && browser-test",
-              "test": "interactive-test-tool"}, 'check:ci'),
+              "test": "interactive-test-tool"}, ['check:ci']),
         ):
             with self.subTest(selected=selected):
                 self.package(scripts=scripts)
@@ -49,7 +49,8 @@ class ManifestInitTests(unittest.TestCase):
                 self.assertEqual(manifest.components, [])
                 self.assertEqual(manifest.ci['install'][0].argv, ['npm', 'ci'])
                 self.assertEqual(manifest.ci['build'][0].argv, ['npm', 'run', 'compile'])
-                self.assertEqual(manifest.ci['test'][0].argv, ['npm', 'run', selected])
+                self.assertEqual([step.argv for step in manifest.ci['test']],
+                                 [['npm', 'run', script] for script in selected])
 
     def test_vite_output_and_dry_run(self):
         self.package(dependencies={'vite': '*'}, scripts={'build': 'vite build --outDir site'})
