@@ -17,6 +17,7 @@ from lib.validators import validate_username
 WSL_SKILL_NAMES = (
     "basaltwater-wsl-workspace",
     "basaltwater-project-development",
+    "basaltwater-project-adoption",
     "basaltwater-frontend-design",
     "basaltwater-subagents",
 )

@@ -76,12 +76,12 @@ depend on the active session. The shared subagent skill ships
 with a worker assignment example and guidance for each context.
 
 Windows `server_wsl` installs `basaltw`, `basaltwater-wsl-workspace`,
-`basaltwater-project-development`, `basaltwater-frontend-design`, and
-`basaltwater-subagents` when a supported coding agent is selected. These are
-Linux-user skills; native Windows providers have separate homes and are not
-provisioned by this profile. Native PowerShell artifact jobs execute committed
-scripts rather than Codex prompts. WSL does not receive VM maintenance, panel,
-XRDP, or managed browser skills. See
+`basaltwater-project-development`, `basaltwater-project-adoption`,
+`basaltwater-frontend-design`, and `basaltwater-subagents` when a supported
+coding agent is selected. These are Linux-user skills; native Windows providers
+have separate homes and are not provisioned by this profile. Native PowerShell
+artifact jobs execute committed scripts rather than Codex prompts. WSL does not
+receive VM maintenance, panel, XRDP, or managed browser skills. See
 [Windows/WSL](../workstations/windows-wsl.md).
 
 ## Installed skills
@@ -89,7 +89,8 @@ XRDP, or managed browser skills. See
 The limited [`agent_cachyos` profile](../workstations/cachyos.md) has a separate catalog:
 `basaltwater-cachyos-workstation`, `basaltwater-cachyos-workspace`,
 `basaltwater-cachyos-desktop`, the shared `basaltwater-project-development`,
-`basaltwater-frontend-design`, and `basaltwater-subagents`, plus optional
+`basaltwater-project-adoption`, `basaltwater-frontend-design`, and
+`basaltwater-subagents`, plus optional
 `basaltwater-cachyos-t3code`.
 It does not receive the VM or browser skills below.
 Its installer reconciles known managed VM skills while preserving personal
@@ -101,6 +102,7 @@ scope and reruns.
 | `basaltwater-cachyos-workstation` | Native package bundles, diagnostics, and desktop/session boundaries |
 | `basaltwater-cachyos-workspace` | User-owned repository workspaces and safe reruns |
 | `basaltwater-project-development` | Repo-agnostic workflow, local instructions, scoped changes, and useful independent review or delegation |
+| `basaltwater-project-adoption` | Incrementally convert an existing project while preserving useful conventions and native tooling |
 | `basaltwater-frontend-design` | New frontend screens, substantial UI redesigns, responsive behavior, and interaction design |
 | `basaltwater-subagents` | Bounded delegation, complete local worktree lifecycle, and cost-aware project model learning on either platform |
 | `basaltwater-cachyos-desktop` | Task-scoped KDE portal/AT-SPI control, native Blender and media workflows, reusable grants, and physical-key recovery |
@@ -117,6 +119,7 @@ receives these base skills:
 | Skill | Use it for |
 | --- | --- |
 | `basaltwater-project-development` | Repo-agnostic workflow, local instructions, scoped changes, and useful independent review or delegation |
+| `basaltwater-project-adoption` | Incrementally convert an existing project while preserving useful conventions and native tooling |
 | `basaltwater-frontend-design` | New frontend screens, substantial UI redesigns, responsive behavior, and interaction design |
 | `basaltwater-agent-operations` | Readiness checks, deliberate terminal-agent updates, maintenance holds, controller-side credential rotation, and unattended panel task guidance |
 | `basaltwater-agent-tasks` | Scheduling authorized follow-ups, recurring/event checks, bounded goals, and portable context handoffs from T3 or terminal agents |
@@ -270,10 +273,10 @@ conventions and declared deployment mappings. See [Agent environment manifest](a
 
 Skill sources live in `common/agent_skills`. Keep each entrypoint short and
 self-contained, with a precise discovery description and non-obvious platform
-behavior. The project-development and frontend-design skills are cross-project
-guidance: keep them repository-agnostic and defer platform details and
-delegation mechanics to the relevant workspace and subagent skills. Add shared
-skills to `BASE_AGENT_SKILL_NAMES` in `common/agent_steps.py` and the parallel
+behavior. The project-development, project-adoption, and frontend-design skills
+are cross-project guidance: keep them repository-agnostic and defer platform
+details and delegation mechanics to the relevant workspace and subagent skills.
+Add shared skills to `BASE_AGENT_SKILL_NAMES` in `common/agent_steps.py` and the parallel
 `CACHYOS_SKILLS` catalog in `common/cachyos_steps.py`. Browser variants belong in
 `BROWSER_AGENT_SKILL_NAMES` and the capability selector; other capability skill
 tuples should extend the base constant so standalone capability setup remains
