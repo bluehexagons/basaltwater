@@ -44,9 +44,13 @@ know.
 - Proxy routes preserve application `Cache-Control` and `Expires` headers.
   Static-file caching rules do not overwrite backend `no-store` or private
   policies merely because a proxied URL ends in `.json`, `.css`, or `.js`.
-- A manifest release is rolled back when service activation or a declared 2xx
-  health check fails. Previous systemd units are restored with their permissions,
-  ownership, enablement, and running state; previously stopped services stay stopped.
+- A manifest release is rolled back when service activation, a declared 2xx
+  health check, or required version metadata persistence fails. Previous systemd
+  units are restored with their permissions, ownership, enablement, and running
+  state; previously stopped services stay stopped.
+  Services waiting for an automatic restart are explicitly stopped before
+  backup or release replacement and remain stopped on rollback, matching other
+  previously non-running services.
   Failure to remove an old backup after successful activation leaves that
   backup for later cleanup without undoing the new release.
 - Manifest activation writes a versioned operation marker before staging or
@@ -60,8 +64,9 @@ know.
   configuration. Incomplete recovery blocks retry and preserves the snapshot.
   Nginx must already be active; this path does not start an inactive daemon.
 - Services that declare `sqlite_backup` receive a consistent SQLite API backup
-  while the old unit is verified inactive and before replacement, with
-  an integrity check and manifest-controlled retention. Symlinked backup
+  while the old unit is verified inactive or failed, with no automatic restart
+  pending, and before replacement. Backups have an integrity check and
+  manifest-controlled retention. Symlinked backup
   directories and pre-existing temporary backup paths are rejected before a
   privileged backup is written.
   Backup contents and publication are synced before pruning older archives;
