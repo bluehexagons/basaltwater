@@ -117,12 +117,12 @@ Live Windows 11/WSL registration, denied-job, queue, restart and build evidence
 remain required; see the Windows guide. Multi-repository source builds use
 workflow checkouts or locked dependencies, independently of runner registrations.
 
-The narrowed [Windows plan](windows-support.md) adds a minimal read-only runner
-web panel and focused setup/qualification for Windows issue reproduction and
-project checks. Retain WSL unless removing it requires only a small adapter;
-native-only operation and pre-login service mode are not acceptance requirements.
-Current panel and login-task limitations remain until changes are delivered and
-qualified.
+The narrowed [Windows plan](windows-support.md) targets current Windows 11 and
+Antistatic qualification, with a small panel for system monitoring, runner rule
+configuration, and notifications. Assess native panel and gate execution
+together before deciding whether WSL is still useful. Owner-login startup is
+sufficient initially; pre-login service mode is not required. Current panel and
+policy-editing limitations remain until changes are delivered and qualified.
 
 ### Registration extensions
 
