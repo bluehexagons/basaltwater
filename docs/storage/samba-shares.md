@@ -17,6 +17,10 @@ more users:
 dots, underscores, and hyphens, and must be unique in a command. A share has
 exactly one directory root (never `/`); use a separate `--share` option for
 each directory.
+Roots must not be equal or nested, including normalized aliases such as
+`/srv/docs/../docs`. Setup and direct share reconciliation reject overlaps
+before changing accounts or filesystem permissions, because each share owns
+its root's recursive group permissions.
 
 The server creates a Unix user and Samba password for every declared user, then
 uses a per-share Unix group. The share's group membership and configuration are
@@ -54,6 +58,15 @@ it is not reported as a successful security update.
 generic `--access-source`/`--lan-access` policy but does not restrict SSH,
 Gogs, or other services. Repeat it for each client network. A later patch can
 use `--no-samba-source` to clear the saved Samba-specific list.
+
+On firewall-capable machines, `server_lite --samba` also selects the base UFW
+setup. Samba firewall reconciliation requires active UFW with a deny or reject
+incoming default. Failed inspection, rule removal, reload, or policy verification
+fails setup. Obsolete managed source rules and exact legacy broad TCP port
+allows are removed; unrelated rules remain. If another rule still permits
+unrequested SMB sources (including an application profile or port range), setup
+reports it for operator review. The Proxmox profile retains its native firewall
+plan; Samba's UFW step does not establish native Proxmox filtering.
 
 Samba also has a small disposable TDB metadata cache. To place that metadata
 on an SSD-backed filesystem, declare an absolute directory that is outside all
@@ -308,6 +321,16 @@ username backed by the workspace credential store, or an inline
 Managed SMB mountpoints must be distinct, normalized directories below `/mnt`
 (for example, `/mnt/projects`). This prevents a mount configuration from
 changing ownership of an operating-system path.
+
+Each client mount uses matching native `.mount` and `.automount` units. Only
+the automount is enabled at boot; first access mounts the share after network
+readiness, and `TimeoutIdleSec=60` requests unmount after a minute of inactivity.
+The automount itself has no network dependency, so it can start before the
+network is available. Setup replaces both units together, disabling the old
+boot-enabled mount during migration. Unit validation or activation failures
+restore the previous unit files and activation state; incomplete rollback
+retains the shared systemd recovery marker. Credentials and directory ownership
+changes are outside that unit transaction.
 
 ## Troubleshooting
 

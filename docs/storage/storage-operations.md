@@ -73,6 +73,13 @@ The service mount guard includes only mounts used by configured sync, backup,
 or scrub paths. An unrelated configured share does not block storage work.
 Literal percent signs in mount paths are escaped when generating the unit.
 
+Managed SMB client mounts use native systemd automount units, with a 60-second
+idle timeout. Access triggers the matching network-ordered mount; enabling the
+automount does not prove that the server is reachable. Storage operations still
+check the actual mount before writing. Client setup replaces the mount and
+automount as one recoverable unit group and reports activation failures; see
+[Samba client mounts](samba-shares.md#connecting-from-a-client).
+
 ## Parity and repair behavior
 
 `--scrub DIRECTORY DATABASE_PATH REDUNDANCY FREQUENCY` uses `par2` to create

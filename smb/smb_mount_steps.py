@@ -10,13 +10,14 @@ from typing import Any, Optional
 
 from lib.config import SetupConfig
 from lib.remote_utils import run
-from lib.systemd_service import cleanup_systemd_unit
+from lib.unit_transaction import replace_units
 from lib.validation import validate_smb_mount_specs
 from lib.validators import validate_username
 from lib.setup_directories import check_directory_path, directory_fd
 
 
 SMB_CREDENTIALS_DIR = "/root/.smb"
+SMB_UNIT_DIR = "/etc/systemd/system"
 
 
 def _write_credentials(directory: str, name: str, content: str) -> None:
@@ -110,7 +111,7 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
         raise RuntimeError(f"Unable to derive a safe systemd unit name for mountpoint: {mountpoint}")
 
     unit_name = f"{escaped_mountpoint}.mount"
-    unit_path = f"/etc/systemd/system/{unit_name}"
+    automount_name = f"{escaped_mountpoint}.automount"
 
     with directory_fd(mountpoint, create=True) as descriptor:
         os.fchown(descriptor, uid, gid)
@@ -130,14 +131,11 @@ password={password}
     
     unc_path = f"//{ip}/{share}{subdir}"
     
-    def _escape_systemd_description(value: str) -> str:
-        """Escape value for safe use in a systemd Description field."""
-        return value.replace("%", "%%").replace("\\", "\\\\").replace("\n", " ").replace('"', "'")
+    def _escape_systemd_value(value: str) -> str:
+        """Preserve literal specifiers and backslashes in unit values."""
+        return value.replace("%", "%%").replace("\\", "\\\\")
     
-    escaped_desc = _escape_systemd_description(mountpoint)
-    
-    # Clean up existing mount unit before creating new one
-    cleanup_systemd_unit(escaped_mountpoint, "mount")
+    escaped_desc = _escape_systemd_value(mountpoint).replace('"', "'")
     
     unit_content = f"""[Unit]
 Description=SMB mount for {escaped_desc}
@@ -145,24 +143,30 @@ After=network-online.target
 Wants=network-online.target
 
 [Mount]
-What={unc_path.replace('%', '%%')}
-Where={mountpoint.replace('%', '%%')}
+What={_escape_systemd_value(unc_path)}
+Where={_escape_systemd_value(mountpoint)}
 Type=cifs
-Options=credentials={creds_file.replace('%', '%%')},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail,x-systemd.automount,x-systemd.idle-timeout=60
+Options=credentials={_escape_systemd_value(creds_file)},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail
+"""
+
+    automount_content = f"""[Unit]
+Description=SMB automount for {escaped_desc}
+
+[Automount]
+Where={_escape_systemd_value(mountpoint)}
+TimeoutIdleSec=60
 
 [Install]
 WantedBy=multi-user.target
 """
-    
-    with open(unit_path, 'w') as f:
-        f.write(unit_content)
-    
-    run("systemctl daemon-reload")
-    run(f"systemctl enable {shlex.quote(unit_name)}")
-    
-    result = run(f"systemctl start {shlex.quote(unit_name)}", check=False)
-    if result.returncode == 0:
-        print(f"  ✓ SMB mount configured and mounted: {mountpoint} → {unc_path}")
-    else:
-        print(f"  ✓ SMB mount configured: {mountpoint} → {unc_path} (will mount at boot)")
+
+    # Quiesce the activator before the mount. In particular, disable the old
+    # boot-enabled .mount while retaining both definitions and activation state
+    # for rollback. Only the automount starts now; network access is on demand.
+    replace_units(
+        {unit_name: unit_content, automount_name: automount_content},
+        activate=(automount_name,), deactivate=(automount_name, unit_name),
+        unit_dir=SMB_UNIT_DIR,
+    )
+    print(f"  ✓ SMB automount configured: {mountpoint} → {unc_path}")
 

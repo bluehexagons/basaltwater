@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -61,23 +62,33 @@ def inspect_unit_state(unit: str) -> dict[str, str]:
     return state
 
 
-def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str) -> None:
+def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str,
+                     deactivate: tuple[str, ...] = ()) -> None:
     validate_filesystem_path(unit_dir, must_exist=False)
-    if (not units and not remove) or not set(activate) <= units.keys():
+    if (not units and not remove) or not (set(activate) | set(deactivate)) <= units.keys():
         raise ValueError("Activation requires staged units")
     names = (*units, *remove)
-    if len(set(names)) != len(names) or len(set(activate)) != len(activate):
+    if (len(set(names)) != len(names) or len(set(activate)) != len(activate)
+            or len(set(deactivate)) != len(deactivate)):
         raise ValueError("Systemd unit names must be unique")
     if any(name.endswith("@.service") for name in activate):
         raise ValueError("Activate a socket or concrete instance, not a service template")
     for name in names:
         base, separator, kind = name.rpartition(".")
-        kinds = {"service", "socket", "timer", "path", "mount"} if name in remove else {"service", "socket", "timer", "path"}
+        kinds = {"service", "socket", "timer", "path", "mount", "automount"}
         if not separator or kind not in kinds:
             raise ValueError(f"Unsupported systemd unit: {name}")
         # Accept service templates used by socket activation, while retaining
         # the ordinary validator for their fixed, non-instance name.
-        validate_service_name_uniqueness(base.removesuffix("@") if kind == "service" else base, [])
+        if kind in {"mount", "automount"}:
+            # systemd-escape path names may start with digits, contain literal
+            # dashes and use \\xHH for other path bytes. Never accept a slash,
+            # control character, arbitrary backslash escape or path traversal.
+            if (len(name) > 255 or base in {"", ".", ".."}
+                    or not re.fullmatch(r"(?:[A-Za-z0-9:_.-]|\\x[0-9A-Fa-f]{2})+", base)):
+                raise ValueError(f"Invalid systemd mount unit: {name}")
+        else:
+            validate_service_name_uniqueness(base.removesuffix("@") if kind == "service" else base, [])
     for content in units.values():
         if not isinstance(content, str) or len(content.encode("utf-8")) > 1024 * 1024:
             raise ValueError("Unit content must be text no larger than 1 MiB")
@@ -100,7 +111,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             # Templates have files but no running state. The owning activator
             # stops its instances (e.g. through PartOf) before file removal.
             managed_removals = tuple(name for name in removals if not name.endswith("@.service"))
-            states = {name: inspect_unit_state(name) for name in (*activate, *managed_removals)}
+            states = {name: inspect_unit_state(name) for name in dict.fromkeys((*activate, *deactivate, *managed_removals))}
             if not units and not removals:
                 store.complete(record.operation_id)
                 resolved = True
@@ -120,7 +131,9 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             modified = True
             # Stop activators before their service, but retain every file until
             # the entire group is quiescent. A timed-out stop may have acted.
-            for name in managed_removals:
+            for name in (*deactivate, *managed_removals):
+                if states[name]["LoadState"] == "not-found":
+                    continue
                 touched.append(name)
                 _command("systemctl", "stop", name)
                 if states[name]["UnitFileState"] in {"enabled", "enabled-runtime"}:
@@ -139,7 +152,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Removed unit is still active or enabled: {name}")
             for name in activate:
-                touched.append(name)
+                if name not in touched:
+                    touched.append(name)
                 _command("systemctl", "enable", name)
                 _command("systemctl", "restart", name)
                 state = inspect_unit_state(name)
@@ -182,7 +196,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 # Keep the group quiescent if any old definition is unsafe.
                 if reloaded and len(restored) == len(snapshots):
                     # Restore the service before rearming its timer/path.
-                    for name in reversed(touched) if removals else touched:
+                    for name in reversed(touched) if removals or deactivate else touched:
                         state = states[name]
                         if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                             flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
@@ -215,14 +229,18 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 print(f"  ⚠ Systemd backup cleanup failed at {backup_dir}: {exc}")
 
 
-def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir: str = "/etc/systemd/system") -> None:
+def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir: str = "/etc/systemd/system",
+                  deactivate: tuple[str, ...] = ()) -> None:
     """Validate, replace, enable and restart units, restoring on any failure.
 
-    Only ``activate`` units have their running/enabled state changed. This lets
+    Only ``activate`` and ``deactivate`` units change running/enabled state. This lets
     timer/path replacements leave an executing oneshot service alone. Recovery
     backups and a blocking marker survive failed rollback or process death.
+    ``deactivate`` units stop and disable before publication, in the supplied
+    order (activators before their mount/service), and stay stopped unless also
+    in ``activate``. Rollback restores their previous state in reverse order.
     """
-    _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir)
+    _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir, deactivate=deactivate)
 
 
 def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system") -> None:
