@@ -1,192 +1,166 @@
-# Windows debugging and runner support
+# Windows runner support
 
-Status: narrowed project scope, revised 2026-10-20. This is a small extension
-of the existing Windows/WSL setup for Windows issue reproduction and CI. The
-development panel below is proposed work, not an available feature. Windows
-remains outside the current [v2.0.0 stable-release gate](../release-qualification.md).
+Status: runner-only project scope, revised 2026-10-20. The minimal panel and
+native setup below are proposed work. The current Windows runner code is not
+in use and may be replaced without backwards compatibility. Windows remains
+outside the current [v2.0.0 stable-release gate](../release-qualification.md).
 
 ## Purpose and limits
 
-Use a Windows VM when a project needs a Windows bug investigated or its Windows
-build checked. Regular development stays on the existing development systems.
-The Windows desktop needs only the tools necessary to reproduce, inspect,
-debug, and verify those issues.
+Deliver a small Windows GitHub runner setup, automated as far as practical:
 
-Deliver three things:
+- Install and configure the runner and its necessary tools.
+- Provide a minimal remote web panel for current system/runner status,
+  allowed-user rules, and outgoing webhook notifications.
+- Qualify the setup with Antistatic's project-owned Windows build and tests.
 
-- A small, repeatable setup for the selected project's Windows tools, using
-  WinGet and the existing PowerShell installer where practical.
-- A working native Windows GitHub runner with the existing execution policy.
-- A minimal Basaltwater web panel for system monitoring, runner rules, and
-  notifications, with the same remote-access experience as Linux.
+The tools must also be installable on an ordinary Windows desktop without
+enabling the runner or panel. Optional T3 Code and software available through
+WinGet or comparable package/vendor installers are conveniences only. Do not
+add managed desktop workflows, agent integration, or custom application support.
 
-An existing coding tool or agent may help investigate a Windows issue; a new
-native agent platform or general development workstation is not required.
-Godot, Electron, and custom engines are examples of projects to investigate,
-not separate tool bundles or compatibility matrices to maintain.
+Windows is not a Basaltwater spoke. Exclude notification ingest, spoke
+enrollment, fleet coordination, agent pages, job approval, and remote job
+orchestration. General Windows development/debugging support, engine bundles,
+desktop automation, GPU qualification, signing/publishing, VM provisioning,
+and historical Windows compatibility matrices are also outside this phase.
+Implement features necessary for the runner or inexpensive reuse of existing
+components; anything larger needs a separately justified scope.
 
 ## Decisions
 
-| Question | Agreed direction |
+| Area | Direction |
 | --- | --- |
-| Q01: Windows and projects | Generally use the latest publicly available stable Windows 11 build, keeping the VM current. Record the exact build and test date for evidence rather than maintaining a historical build matrix. Antistatic is a required starting workload; other real projects can follow as needed. |
-| Q02: Panel and remote access | Include basic host monitoring, runner rule configuration, and notifications. Use the existing Linux-style authenticated remote panel experience. Agent tooling and most other dashboard features are excluded. |
-| Q03: WSL | Prefer a small native Windows implementation if the reduced panel and runner can work without substantial compatibility code. WSL exists to support Basaltwater tooling, not the Windows applications under test. Decide from a bounded feasibility check, retaining WSL only if it makes the selected features materially simpler. |
-| Q04: Startup | Owner-login startup is sufficient for the first version. Unattended pre-login CI and service mode are not required. |
+| Baseline | Use the latest publicly available stable Windows 11 x64 build on one manually prepared Proxmox VM. Record the exact build, project revision, and test date. |
+| Workload | Antistatic is the required first runner workload. Its repository owns dependencies, toolchain versions, build commands, and test coverage. |
+| Execution | Target one native Windows implementation. Prove the gate and minimal panel can stay small before committing to their adapters; revisit scope if necessary instead of adding a second backend. WSL is not a required feature. |
+| Startup | Owner-login startup is sufficient. Pre-login CI and service mode are deferred. |
+| Panel | One small runner panel with current metrics, allowed-user editing, and outgoing webhook settings/status. Preserve the Linux-style authenticated remote-access experience. |
+| Desktop tools | Optional package installation, including T3 Code, can run independently. No desktop use or additional T3/agent features are deliverables. |
+| Compatibility | No migration, old Windows runner configuration/flag compatibility, or continued WSL-backed runner support is required. Preserve shared Debian runner behavior and policy safeguards. |
 
-Exclude general Windows workstation support, Debian feature parity, a broad
-Windows version/hardware matrix, generalized language/engine setup, native
-desktop automation, and additional coding-provider ports. Automated Windows
-installation/templates, Proxmox fleet management, GPU/migration infrastructure,
-and signing/publishing systems are also outside this project.
-
-## Reuse the current implementation
+## Reuse selectively
 
 The [Windows/WSL guide](../workstations/windows-wsl.md) and
-[Windows runner guide](../workstations/windows-github-runner.md) describe current
-behavior. Keep their setup, source pinning, owner checks, resume, native job
-execution, and runner registration/cleanup paths.
+[Windows runner guide](../workstations/windows-github-runner.md) describe the
+current implementation, not requirements to preserve. Native jobs currently
+depend on WSL setup state and invoke the policy gate through WSL in
+[`GitHubRunner.Common.ps1`](../../windows/GitHubRunner.Common.ps1). A native
+panel alone does not remove that dependency.
 
-Jobs already run on Windows. The runner still uses completed WSL setup state
-and calls its policy gate through WSL in
-[`GitHubRunner.Common.ps1`](../../windows/GitHubRunner.Common.ps1). Evaluate a
-native panel and runner together: a native panel alone does not remove this
-dependency. Check the small host-metrics, policy/state, notification, and access
-adapters before choosing the implementation. Reuse portable logic and extract
-it from POSIX-only imports as necessary; do not port the entire runtime or
-duplicate runner authorization rules. Keep existing Windows/WSL installations
-working, without building two new panel implementations.
+Reuse useful source pinning, owner checks, verified downloads, registration,
+worker cancellation, and cleanup code. Extract portable policy/validation logic
+from POSIX-only imports and add only necessary Windows state/permissions
+adapters. Avoid a full CLI/runtime port or a second authorization implementation.
+Replace unused Windows paths, flags, and state formats directly where simpler;
+a clean reinstall is acceptable. Remove obsolete paths and tests when replaced,
+while retaining meaningful coverage of supported behavior.
 
-Use a manually prepared, current Windows 11 x64 Proxmox VM. Record the working
-configuration; WSL/nested-virtualization prerequisites apply only if WSL is
-retained. Basaltwater does not need a Windows VM provisioner, image builder, or
-template lifecycle to finish this work.
+## Small automated setup
 
-## Minimal automated setup
+Build on [`install.ps1`](../../install.ps1) where useful. Support a tools-only
+selection independently of runner/panel setup; avoid a new package framework.
 
-Build on [`install.ps1`](../../install.ps1); avoid a new package/configuration
-framework. Automate tool installation and necessary configuration after the
-operator has supplied the Windows VM.
+- Install Git, PowerShell, GitHub CLI, and the chosen backend runtime only as
+  needed. Offer T3 Code as an optional package. Add project tools through a small
+  explicit package selection or the project's own bootstrap.
+- Use exact WinGet package identities, deliberate install scope, and supported
+  vendor installers where required. Verify tools under the intended Windows
+  account and record versions. Do not add custom integrations for installed apps.
+- Handle repeated setup, installation failure, and required restart/resume.
+  Verify downloads, bound/redact logs, and avoid disrupting an active job.
+- Keep enrollment, authentication, and privilege consent explicit; report
+  remaining manual steps. Do not turn setup into a general software updater.
 
-- Install Git, PowerShell, and GitHub CLI as needed for the selected workflow.
-  Add only the project's required runtime, compiler/SDK, debugger, or editor.
-  Reuse existing T3/agent setup if needed for investigation.
-- Use exact WinGet package identities and deliberate install scope. Use a
-  supported vendor installer for required components that WinGet alone does
-  not configure. Record selected versions and verify the tool works under the
-  actual Windows account; package presence alone is insufficient.
-- Reuse the existing source pin and resume flow. Handle already installed
-  tools, failed installation, and required restart without silently declaring
-  success or interrupting an active job. Keep downloads verified and logs
-  bounded and free of credentials.
-- Keep authentication/enrollment and any necessary privilege consent explicit.
-  Report remaining manual steps. Do not install unrelated packages or upgrade
-  the whole machine's software as part of setup.
+Use native Windows checkouts and build directories. Run the CI instance as a
+dedicated non-administrator account without unrelated desktop/T3 credentials.
+Tools-only desktop installation does not require a separate desktop test matrix.
+The current `-Node`, `-Python`, and `-Go` options configure Ubuntu; the new
+interface may replace them with an explicitly native selection.
 
-Use a native Windows checkout and build directory for Windows work. Project
-instructions own the build/debug/test commands and dependencies; Basaltwater
-only prepares what the selected workflow needs. Current `-Node`, `-Python`,
-and `-Go` installer options configure Ubuntu, so native tools must be identified
-explicitly without changing those options' meaning accidentally.
+### Antistatic workload
 
-### Antistatic qualification workload
-
-Use the sibling `../antistatic` repository for the first real build and Windows
-debug/check workflow. Its [setup guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md),
+Use the sibling `../antistatic` repository. Its
+[setup guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md),
 [dependency policy](https://github.com/bluehexagons/antistatic/blob/main/docs/development/dependencies.md),
 and [Windows CI](https://github.com/bluehexagons/antistatic/blob/main/.github/workflows/ci.yml)
-own the prerequisites and commands. Provision compatible native Node/npm,
-the native compiler/CMake prerequisites, and Go for the netplay test fixture
-when running that suite. Antistatic owns its pinned vcpkg/SDL dependencies.
+own the prerequisites and commands. Prepare native Node/npm, compiler/CMake
+prerequisites, and Go when its netplay fixture needs it. Antistatic owns the
+pinned vcpkg/SDL dependencies and fixture preparation.
 
-Follow the repository's `npm run bootstrap:windows`, `npm ci`, `npm run doctor`,
-and `npm run build` workflow, then `npm run test:windows` with its documented
-lobby fixture preparation. Check interactive behavior relevant to a real issue.
-Keep versions and build logic in Antistatic; Basaltwater should prepare the host
-and run the project's commands rather than copy its dependency/build machinery.
+Run its documented `npm run bootstrap:windows`, `npm ci`, `npm run doctor`,
+`npm run build`, and `npm run test:windows` workflow through the runner.
+Keep build/test scripts and toolchain pins in Antistatic. Interactive debugging,
+gameplay, and desktop compatibility checks are not Basaltwater acceptance gates.
 
-## Minimal development web panel
+## Minimal runner panel and notifications
 
-Reuse the existing [panel](../services/web-panel.md),
+Reuse portable parts of the existing [panel](../services/web-panel.md),
 [runner view](../../common/service_tools/web_panel_github_runner.py), and
-[notification contracts](../services/notifications.md) where practical, with
-narrow Windows adapters. Current collectors and service wiring use Linux paths
-and systemd; importing the complete Debian panel service is not the plan.
+[outgoing notification contract](../services/notifications.md). The full Debian
+panel and its Linux service/metrics collectors are not a porting target.
 
-The first version includes:
+- **Current status:** uptime, CPU/memory use, free disk space, runner registration,
+  repository/organization, labels/version, local task/process state, and bounded
+  recent gate outcomes. Cache/bound probes and show unavailable data clearly.
+  Link to GitHub for authoritative runner/job status.
+- **Runner rules:** edit only the allowed-user list for existing registrations.
+  Setup, forms, and the gate share one authoritative configuration and validator.
+  Authenticate writes, protect against CSRF, serialize/atomically apply changes,
+  and reject invalid input without losing working policy. Keep supported event,
+  private-repository, fork, and identity restrictions fixed.
+- **Outgoing webhooks:** configure/test a delivery target and show bounded recent
+  local delivery outcomes. Reuse existing payload/redaction and bounded retry
+  behavior where available. No notification receiver, inbox, ingest token,
+  spoke routing, or general notification history service is needed.
 
-- **System monitoring:** uptime, CPU use, memory use, disk capacity, and local
-  runner health. Collect Windows readings, bound/cache probes, and mark missing
-  data unavailable rather than copying Linux-specific metrics or audit systems.
-- **Runner status:** configured repository/organization, labels, version,
-  registration, local task/process state, and recent allowed/denied gate
-  outcomes. Link to GitHub's runner settings; local state cannot prove Online/Idle.
-- **Runner rules:** configure the allowed-user list for existing registrations
-  through authenticated forms. Use the same validation and authoritative policy
-  as setup and the gate. Serialize/atomically apply changes, reject invalid
-  updates without losing working rules, and record bounded change outcomes.
-  Preserve the existing private-repository, event, fork, and identity limits.
-- **Notifications:** show recent development/system/runner alerts and configure
-  and test the selected delivery target/level, reusing the existing event format
-  and bounded history. Settle the first event/target set before implementation;
-  a new notification platform is unnecessary.
+Start the runner and panel automatically at owner login and provide an
+authenticated HTTPS URL with Windows-appropriate wiring. Choose one LAN/tunnel
+access arrangement for initial qualification. Keep backend access private, protect
+configuration/credentials with native account permissions, and never display
+tokens or raw job payloads. Test delivery failure and stopped/unavailable states.
 
-Setup should configure and start the panel automatically for the chosen login
-model. Remote access should work like the Linux panel: a configured URL,
-authenticated HTTPS, and the normal configured LAN/tunnel access route. Match
-the existing access and CSRF requirements with Windows-appropriate wiring;
-do not require Nginx, systemd, Unix sockets, or WSL merely to copy deployment
-details. Keep the application listener private behind the authenticated entry
-point and protect policy/notification credentials with native account access.
-
-Show pending, stopped, invalid/unavailable, and delivery-failure states clearly.
-Never expose tokens, credential files, or raw job payloads. Agent pages,
-scheduling, prompts, a browser shell, job approval, publishing, and the rest of
-the Debian dashboard remain excluded. Runner registration can retain its
-existing CLI workflow; a web token form is not required.
+Keep registration in the CLI. Exclude metrics history/charts, general service
+inventory, a browser shell, new job/artifact interfaces, and advanced dashboard
+features. Installed T3 Code needs no integration with this panel.
 
 ## Delivery and acceptance
 
 | Step | Completion condition |
 | --- | --- |
-| WIN-01: Feasibility and small setup | On current Windows 11, check the reduced native panel/runner adapters and choose native or WSL-backed execution. Prepare Antistatic's necessary tools, verify them as the intended user, and handle repeat setup and restart/resume. Record the choice and its remaining dependencies. |
-| WIN-02: Runner and development panel | Run native Windows jobs and deliver monitoring, allowed-user rule editing, and notifications through authenticated remote access. Start at owner login. Retain the existing runner policy, shared slot, cancellation, and cleanup behavior. |
-| WIN-03: Focused qualification | Build/test Antistatic through the runner, investigate/check its relevant Windows behavior, exercise monitoring/rule/notification failure states, and document the tested configuration and limitations. Rerun focused checks after Windows updates; no wider historical platform matrix is required. |
+| WIN-01: Native proof and setup | Demonstrate the native policy gate, one protected status page, and one outgoing webhook on current Windows 11. Automate the required tools and login startup; tools-only installation works without runner enrollment. Record the runtime/access choice. |
+| WIN-02: Runner and small panel | Register/run Windows jobs; expose current status, allowed-user editing, and webhook configuration/test/outcomes. Retain shared policy, host-wide serialization, cancellation, and worker cleanup safeguards. |
+| WIN-03: Runner qualification | Build/test Antistatic on the VM; check setup failures, rule enforcement, remote access, webhook failures, and session lifecycle. Record the baseline and remaining limitations. |
 
-Qualify on the selected Windows 11 Proxmox VM, with focused checks for:
+Use focused offline checks for policy, Windows adapters, configuration, and
+panel behavior, plus the real VM for installation and GitHub-connected evidence:
 
-- Fresh/repeated setup, failed installation, and restart/resume without broken
-  owner state or leaked credentials.
-- Antistatic's Windows build/tests and a chosen issue-reproduction/debug or
-  compatibility check. Interactive testing covers only what that project
-  requires on this VM; record the exact Windows build and project revision.
-- Runner registration, an allowed job, denied/malformed identity cases including
-  `if: always()` canaries, shared-slot/cancellation cleanup, and login/reboot
-  behavior. Preserve existing private-repository and identity restrictions.
-- Monitoring/status for running, stopped, pending, and invalid/unavailable state;
-  authenticated rule changes reflected in the next gated job, rejected invalid
-  changes, CSRF protection, and consistency with setup.
-- Notification display/configuration, test delivery and failure reporting,
-  bounded outcomes, remote access, login startup, and no secret disclosure.
+- Fresh/repeated setup, failed installation, restart/resume, tools-only setup,
+  and native execution without WSL.
+- Antistatic build/tests at a recorded revision; no independent desktop or
+  engine compatibility suite.
+- An allowed job and denied/malformed identities, including `if: always()`
+  canaries; shared-slot/cancellation cleanup and protected credentials/state.
+- Authenticated access and rule changes taking effect on the next gated job;
+  invalid updates, CSRF protection, unavailable probes, and webhook failure.
+- Login, session lock, RDP disconnect, logoff, and reboot/login behavior. An
+  owner-login runner is not expected to provide unattended pre-login CI.
 
-Retain existing offline Windows checks and add focused adapter/panel checks for
-new code. Use the real VM for installation, login, and GitHub-connected evidence.
-If a native-only path is selected, check it without WSL and retain the
-existing WSL regression checks. Otherwise qualify the existing WSL-backed path;
-do not require two implementations. Update operator guides only for delivered
-behavior, with the exact baseline and limitations recorded.
+Adapt/remove tests for retired Windows paths; WSL runner regression or migration
+qualification is not required. Preserve shared Debian policy tests. Update
+operator guides for the delivered implementation, not the proposed interface.
+Rerun focused qualification after relevant Windows or runner changes.
 
-## Remaining implementation choices
+## Remaining choices and suggested further cuts
 
-- Which small native server/runtime and HTTPS/authentication/tunnel adapters
-  best reuse the current code? Include the runner gate, not just panel rendering,
-  in the native feasibility result before deciding whether WSL adds value.
-- Which notification events and first delivery target are needed? Start with
-  useful system/runner failures and a tested target; decide whether inbound
-  notification ingest is required initially.
-- Are runner rule forms beyond the allowed-user list needed initially? Keep
-  supported trigger/identity restrictions fixed and scope any additional fields
-  through the existing runner configuration model.
-
-Finish the selected debug/check workflow, runner, and minimal panel before
-considering any further Windows scope.
+- Prefer one small Python backend for shared gate/panel/webhook logic, with
+  PowerShell for installation and Windows queries. Confirm native imports and
+  permissions in WIN-01 before selecting dependencies; avoid a general port.
+- Choose one remote-access arrangement and one webhook target for version one.
+  Which local runner failures need alerts? Start with runner failure and failed
+  delivery status; leave build-result notifications with GitHub.
+- Keep registration in the CLI and rules limited to allowed users. Add no other
+  editable policy fields without a concrete runner need.
+- Keep runner execution independent of the panel: a panel restart or webhook
+  outage must not stop jobs. Reuse GitHub workflow commands, logs, and artifacts
+  rather than introducing a separate Windows job protocol or build dashboard.

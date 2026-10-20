@@ -12,7 +12,8 @@ qualification remains open. See the [Windows runner guide](../workstations/windo
 
 ## Decisions
 
-- Use GitHub's official `actions/runner` application as a persistent service.
+- Use GitHub's official `actions/runner` application, with a persistent service
+  on Debian and owner-login startup on Windows.
 - Support up to 20 repository registrations with a shared job slot, or one organization. GitHub
   runner groups control organization repository access; ephemeral runners remain deferred.
 - Do not require or install Docker as part of runner setup. The current CI
@@ -30,21 +31,16 @@ qualification remains open. See the [Windows runner guide](../workstations/windo
 
 ## Initial test environment
 
-- Use a manually provisioned Windows 11 x86-64 VM on Proxmox as the initial
-  Windows issue-reproduction and runner qualification host. Prepare it with
-  the existing [`server_wsl` setup](../workstations/windows-wsl.md); add the
-  native T3 Code desktop only if needed for the investigation workflow.
-  Expose virtualization extensions to the guest so WSL 2 can run. Basaltwater
-  supports configuring this guest but does not create or manage the Proxmox VM.
-- This single VM can be reused for Windows runner qualification in phase 2, so
-  a second large Windows guest is not required. Keep the T3 Code/WSL owner and
-  runner service accounts separate where the qualification allows. If a test
-  must run the runner as the interactive WSL owner, restrict it to manually
-  dispatched, allowlisted trusted workflows and treat that account's
-  credentials as accessible to job code.
-- The Windows host supports focused debugging and project-specific Windows
-  checks; it does not replace phase 1's native Debian runner qualification.
-  Ubuntu in WSL is not a Debian VM.
+- Use one manually provisioned, current stable Windows 11 x64 VM on Proxmox
+  for Windows runner qualification, with Antistatic build/tests as the first
+  workload. Follow the [runner-only Windows plan](windows-support.md); WSL
+  and a managed desktop are not requirements. Basaltwater does not provision
+  the Windows VM.
+- Run the CI instance as a dedicated non-administrator account without unrelated
+  desktop/T3 credentials. Owner-login startup is sufficient initially. Treat
+  allowlisted workflow code as trusted code with access to that account's
+  credentials. Optional T3 Code/package installation is independent of CI setup.
+- Windows qualification does not replace phase 1's native Debian qualification.
 
 ## Phase 1 start gates
 
@@ -113,15 +109,18 @@ Native Windows installation, repository/organization registration, shared identi
 evaluation and serial workflow steps are implemented. Limited login tasks run as
 the WSL owner because distributions are account-scoped; job code shares that
 owner's credentials and is trusted. There is no Windows panel or pre-login service.
-Live Windows 11/WSL registration, denied-job, queue, restart and build evidence
-remain required; see the Windows guide. Multi-repository source builds use
-workflow checkouts or locked dependencies, independently of runner registrations.
+The current WSL-backed path lacks live Windows 11 registration, denied-job,
+queue, restart and build evidence; see the Windows guide. Replacement
+qualification follows the runner-only plan below. Multi-repository source builds
+use workflow checkouts or locked dependencies, independently of runner registrations.
 
-The narrowed [Windows plan](windows-support.md) targets current Windows 11 and
-Antistatic qualification, with a small panel for system monitoring, runner rule
-configuration, and notifications. Assess native panel and gate execution
-together before deciding whether WSL is still useful. Owner-login startup is
-sufficient initially; pre-login service mode is not required. Current panel and
+The [runner-only Windows plan](windows-support.md) targets current Windows 11
+and Antistatic build/tests, with a small panel for current system/runner status,
+allowed-user editing, and outgoing webhooks. Target one native gate/panel
+implementation; the current unused Windows code can be replaced without
+migration or backwards compatibility. Preserve shared policy safeguards.
+Owner-login startup is sufficient; pre-login service mode, desktop workflows,
+spoke roles, and notification ingest are excluded. Current panel and
 policy-editing limitations remain until changes are delivered and qualified.
 
 ### Registration extensions
