@@ -11,6 +11,7 @@ import shlex
 import tempfile
 
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.node_project import select_package_manager
 from lib.project_manifest import MANIFEST_FILENAME, load_manifest, parse_manifest
 from lib.validation import validate_filesystem_path
 
@@ -70,43 +71,20 @@ def _go_entrypoint(directory: Path) -> str | None:
     return entries[0] if entries else None
 
 
-def _manager(directory: Path, package: dict) -> tuple[list[str], list[str]]:
-    declared = package.get("packageManager", "")
-    if not isinstance(declared, str):
-        raise ValueError("packageManager must be a string")
-    name = declared.split("@", 1)[0] if declared else None
-    locks = [manager for manager, filenames in (
-        ("npm", ("package-lock.json", "npm-shrinkwrap.json")),
-        ("pnpm", ("pnpm-lock.yaml",)), ("yarn", ("yarn.lock",)),
-    ) if any((directory / filename).is_file() for filename in filenames)]
-    if len(locks) > 1 or (name and locks and name not in locks):
-        raise ValueError("Conflicting package-manager declarations or lockfiles; choose one before initialization")
-    name = name or (locks[0] if locks else "npm")
-    if name == "npm":
-        return ["npm", "ci" if locks else "install"], ["npm", "run"]
-    if name == "pnpm":
-        return ["pnpm", "install", *(["--frozen-lockfile"] if locks else [])], ["pnpm", "run"]
-    if name == "yarn":
-        major = declared.removeprefix("yarn@").split(".", 1)[0]
-        flag = "--frozen-lockfile" if major == "1" or not declared else "--immutable"
-        return ["yarn", "install", *([flag] if locks else [])], ["yarn", "run"]
-    raise ValueError(f"Unsupported package manager: {name!r}")
-
-
 def _step(argv: list[str], directory: str = ".") -> dict:
     return {"argv": argv, **({"directory": directory} if directory != "." else {})}
 
 
 def _node_workflows(directory: Path, relative: str, package: dict) -> dict:
-    install, runner = _manager(directory, package)
+    manager = select_package_manager(directory, package)
     scripts = package.get("scripts", {})
-    result = {"install": [_step(install, relative)]}
+    result = {"install": [_step(manager.install_command(), relative)]}
     build = next((name for name in ("build", "compile") if name in scripts), None)
     tests = ["check:ci"] if "check:ci" in scripts else [name for name in ("check", "test") if name in scripts]
     if build:
-        result["build"] = [_step([*runner, build], relative)]
+        result["build"] = [_step(manager.script_command(package, build), relative)]
     if tests:
-        result["test"] = [_step([*runner, test], relative) for test in tests]
+        result["test"] = [_step(manager.script_command(package, test), relative) for test in tests]
     return result
 
 
@@ -120,7 +98,7 @@ def _node_component(directory: Path, relative: str, package: dict, kind: str, na
         if not isinstance(start, str) or not start.strip():
             raise ValueError("A Node service needs a start script; add one before initialization")
         return {"name": name, "type": "service", "domain": "{{domain}}", "port": "auto",
-                "working_dir": relative, "exec": "/usr/bin/env " + shlex.join(_manager(directory, package)[1][:1]) + " start",
+                "working_dir": relative, "exec": "/usr/bin/env " + select_package_manager(directory, package).name + " start",
                 "runtime_env": {"HOST": "127.0.0.1", "PORT": "{{port}}"}}
     output = "build" if "react-scripts" in (set(package.get("dependencies", {})) | set(package.get("devDependencies", {}))) else "dist"
     build = scripts.get("build", "")

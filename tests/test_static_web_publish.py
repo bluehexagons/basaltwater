@@ -23,6 +23,7 @@ def _args(project: str, **overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
         "json": False,
         "build_timeout": 3600,
+        "build_script": "build",
         "no_build": True,
         "no_install": False,
         "open": False,
@@ -137,7 +138,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 output.mkdir(parents=True)
                 (output / "index.html").write_text("new site", encoding="utf-8")
                 (project / "package.json").write_text(
-                    json.dumps({"scripts": {"build": "vite build"}}), encoding="utf-8",
+                    json.dumps({"scripts": {"build:web": "vite build"}}), encoding="utf-8",
                 )
                 sites_root = Path(directory) / "sites"
                 destination = sites_root / "agent" / "demo"
@@ -147,7 +148,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 self.select_node.side_effect = ValueError("Project Node unavailable") if failure == "runtime" else None
 
                 def run(command: list[str], **kwargs: object) -> SimpleNamespace:
-                    phase = "build" if command == ["npm", "run", "build"] else "install"
+                    phase = "build" if command == ["npm", "run", "build:web"] else "install"
                     print(f"{phase} log", file=kwargs.get("stdout"))
                     return SimpleNamespace(returncode=1 if phase == failure else 0)
 
@@ -159,7 +160,9 @@ class TestStaticWebPublish(unittest.TestCase):
                     contextlib.redirect_stdout(stdout),
                     contextlib.redirect_stderr(stderr),
                 ):
-                    status = static_web_publish.main(["demo", "--project", str(project), "--json"])
+                    status = static_web_publish.main([
+                        "demo", "--project", str(project), "--build-script", "build:web", "--json",
+                    ])
                 result = json.loads(stdout.getvalue())
                 self.assertEqual(result["ok"], failure is None)
                 self.assertEqual(status, 0 if failure is None else 2 if failure == "runtime" else 1)
@@ -174,6 +177,27 @@ class TestStaticWebPublish(unittest.TestCase):
                     (destination / "index.html").read_text(encoding="utf-8"),
                     "new site" if failure is None else "old site",
                 )
+
+    def test_declared_package_manager_build_and_invalid_workflows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            package = {"packageManager": "pnpm@10.0.0", "scripts": {"build:web": "vite build"}}
+            with patch.object(static_web_publish, "run", return_value=SimpleNamespace(returncode=0)) as execute:
+                static_web_publish._run_project_build(directory, package, script="build:web", install=True)
+            self.assertEqual([call.args[0] for call in execute.call_args_list], [
+                ["corepack", "pnpm", "install", "--no-frozen-lockfile"],
+                ["corepack", "pnpm", "run", "build:web"],
+            ])
+            self.select_node.reset_mock()
+            for problem in ("missing", "-build", "build\n", "conflict"):
+                with self.subTest(problem=problem):
+                    script = "build:web" if problem == "conflict" else problem
+                    if problem == "conflict":
+                        (Path(directory) / "package-lock.json").write_text('{}')
+                    with patch.object(static_web_publish, "run") as execute:
+                        with self.assertRaises(ValueError):
+                            static_web_publish._run_project_build(directory, package, script=script, install=True)
+                    execute.assert_not_called()
+                    self.select_node.assert_not_called()
 
     def test_scan_failure_preserves_publication_before_copying(self) -> None:
         for unreadable_root in (False, True):

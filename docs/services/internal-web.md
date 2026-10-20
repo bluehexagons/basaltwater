@@ -95,6 +95,7 @@ Specify the name, project, or output when detection is not sufficient:
 
 ```bash
 basaltwater-web publish site docs --project ~/repos/product --output web/dist
+basaltwater-web publish site game --build-script build:web --output dist
 basaltwater-web publish site docs --project ~/repos/product --no-build --output dist
 basaltwater-web publish site docs --no-install
 basaltwater-web publish site docs --json
@@ -106,10 +107,27 @@ automatic dependency installation but still runs the build. Static output must
 contain `index.html`, remain inside the project, and contain no symbolic links
 or special files. An unreadable output directory or other scan error stops
 publication before activation and leaves the previous site intact.
-When an npm project has no lockfile and `node_modules` is
-absent, the automatic `npm install` can create `package-lock.json`; inspect Git
-status before and after publication and handle that file according to the
-project's dependency policy.
+`--build-script NAME` selects an existing package script; it defaults to `build`.
+Projects can keep separate web and desktop commands such as `build:web` without
+adding aliases for the gateway.
+
+Initialization, static builds, and automatic previews select npm, pnpm, or Yarn
+from the project's exact-version `packageManager` declaration and lockfiles.
+Conflicting managers or linked/special lockfiles fail before project commands
+run. With no declaration or lockfile, npm is the default. npm recognizes both
+`package-lock.json` and `npm-shrinkwrap.json`; Yarn's lock header distinguishes
+classic and modern releases when no version is declared. Existing lockfiles use
+`npm ci`, pnpm's frozen mode, Yarn classic's frozen mode, or modern Yarn's
+immutable mode. Without a lockfile, installation can create one; inspect Git
+status before and after and follow the project's dependency policy. pnpm and
+Yarn web commands use Corepack, which must already be available. Corepack can
+download the selected package-manager version on first use; offline operation
+requires that version in its cache. Manifest workflows retain native commands.
+
+Builds and automatic previews use the project's Node selection (`.nvmrc`,
+`.node-version`, and package engines) as the requesting user. An unavailable
+compatible runtime fails without installing Node or changing the account default;
+inspect it with `basaltw node doctor --project .`.
 
 With `--json`, stdout contains only the publication result or error object.
 Dependency installation and build logs stream to stderr, including on failure.
@@ -188,6 +206,18 @@ arguments, starts a bounded systemd service as the requesting user, waits for
 HTTP readiness, and then creates the managed HTTPS forward. The service is not
 enabled at boot.
 
+Select a different Vite package script when a project separates web and desktop
+development:
+
+```bash
+basaltwater-web preview start my-project --project . --script dev:web
+```
+
+This retains automatic dependency installation, project Node selection, and
+strict loopback arguments. The selected script must accept Vite's `--host`,
+`--port`, and `--strictPort` options. Do not combine `--script` with an explicit
+command after `--`; use that command route for other server interfaces.
+
 When dependencies are missing, installation runs as the requesting user with a
 30-minute process-group deadline. Gateway and systemd control commands have a
 60-second deadline; a timeout aborts the mutation and leaves the existing
@@ -234,6 +264,8 @@ basaltwater-web preview prune --yes
 ```
 
 Use `--replace` to deliberately replace an existing same-named preview. A
+missing or invalid automatic script or conflicting package-manager metadata
+fails before the existing preview is stopped. A
 startup, readiness, route, or state-write failure rolls back both the service
 and route. `preview prune` removes stopped services and their routes; it does
 not touch another user's previews.

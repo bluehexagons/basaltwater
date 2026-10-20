@@ -17,6 +17,12 @@ basaltwater-web site url NAME
 ```
 
 Use `--project`, `--output`, or `--no-build` when auto-detection is not enough.
+Select an existing custom build script without adding aliases:
+
+```bash
+basaltwater-web publish site NAME --project . --build-script build:web --output dist
+```
+
 Published sites are available beneath `/sites/USERNAME/NAME/` on shared HTTPS
 port 8443. Static applications must therefore use relative assets or a build
 base that includes that prefix; root-relative `/assets/...` URLs point outside
@@ -27,10 +33,12 @@ build. Both steps use the project's Node selection (`.nvmrc`, `.node-version`,
 and package engines), without changing the account default or installing Node.
 An unavailable runtime fails before either step; use `basaltw node doctor
 --project .` to inspect it. `--no-build` needs no Node runtime.
-An npm project without a lockfile uses `npm install`, which can create a
-`package-lock.json`; inspect Git status before and after publishing and do not
-silently commit or discard that file. Use `--no-install` only when dependencies
-are already usable.
+The package manager follows the project's npm, pnpm, or Yarn declaration and
+lockfiles; conflicting managers fail before project commands run. Existing
+lockfiles use frozen/immutable installation with the appropriate Yarn version's
+flags. Installation without a lockfile can create one; inspect Git status before
+and after publishing and do not silently commit or discard it. Use `--no-install`
+only when dependencies are already usable.
 
 Some projects have a separate packaging or staging command: their build updates
 runtime files but does not create the publishable tree. Run the project's

@@ -266,27 +266,30 @@ class TestInfraWebPreviews(unittest.TestCase):
         self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
 
     def test_automatic_vite_command_is_loopback_only_and_strict(self) -> None:
-        with tempfile.TemporaryDirectory() as project:
-            with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
-                json.dump(
-                    {
-                        "scripts": {"dev": "vite"},
+        for declaration, script, prefix in (
+            ('', None, ['npm', 'run', 'dev', '--']),
+            ('pnpm@10.0.0', None, ['corepack', 'pnpm', 'run', 'dev']),
+            ('yarn@4.10.0', None, ['corepack', 'yarn', 'run', 'dev']),
+            ('', 'dev:web', ['npm', 'run', 'dev:web', '--']),
+        ):
+            with self.subTest(declaration=declaration, script=script), tempfile.TemporaryDirectory() as project:
+                with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
+                    json.dump({
+                        "scripts": {script or "dev": "vite"},
                         "devDependencies": {"vite": "1.0.0"},
-                    },
-                    file_obj,
-                )
+                        "packageManager": declaration,
+                    }, file_obj)
 
-            command = basaltwater_web._automatic_preview_command(project, 4173)
+                command = basaltwater_web._automatic_preview_command(project, 4173, script=script)
 
-        self.assertEqual(command[:8], [
-            basaltwater_web.sys.executable, "-I",
-            os.path.join(basaltwater_web.SOURCE_ROOT, "basaltwater.py"),
-            "node", "exec", "--project", project, "--",
-        ])
-        self.assertEqual(command[8:11], ["npm", "run", "dev"])
-        self.assertIn("127.0.0.1", command)
-        self.assertIn("4173", command)
-        self.assertIn("--strictPort", command)
+                self.assertEqual(command[:8], [
+                    basaltwater_web.sys.executable, "-I",
+                    os.path.join(basaltwater_web.SOURCE_ROOT, "basaltwater.py"),
+                    "node", "exec", "--project", project, "--",
+                ])
+                self.assertEqual(command[8:], [
+                    *prefix, '--host', '127.0.0.1', '--port', '4173', '--strictPort',
+                ])
 
     def test_relative_preview_executable_is_resolved_from_project(self) -> None:
         with tempfile.TemporaryDirectory() as project:
@@ -328,6 +331,8 @@ class TestInfraWebPreviews(unittest.TestCase):
 
     def test_missing_preview_dependencies_install_as_requesting_user(self) -> None:
         with tempfile.TemporaryDirectory() as project:
+            with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
+                json.dump({}, file_obj)
             with open(os.path.join(project, "package-lock.json"), "w", encoding="utf-8"):
                 pass
             account = SimpleNamespace(pw_dir="/home/agent", pw_name="agent")
@@ -371,6 +376,8 @@ class TestInfraWebPreviews(unittest.TestCase):
             basaltwater_web._PREVIEW_INSTALL_TIMEOUT_SECONDS,
         )
         with tempfile.TemporaryDirectory() as project:
+            with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
+                json.dump({}, file_obj)
             with open(os.path.join(project, "package-lock.json"), "w", encoding="utf-8"):
                 pass
             with (
@@ -464,8 +471,11 @@ class TestInfraWebPreviews(unittest.TestCase):
         self.assertEqual(state[0]["unit"], "basaltwater-web-preview-agent-demo.service")
         self.assertNotIn("command", state[0])
 
-    def test_invalid_preview_body_limit_cannot_replace_existing_service(self) -> None:
+    def test_invalid_preview_options_cannot_replace_existing_service(self) -> None:
         with tempfile.TemporaryDirectory() as project:
+            package = {"scripts": {"dev": "vite", "empty": ""}, "devDependencies": {"vite": "1.0.0"}}
+            with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
+                json.dump(package, file_obj)
             account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
             with (
                 patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
@@ -476,11 +486,22 @@ class TestInfraWebPreviews(unittest.TestCase):
                 patch.object(basaltwater_web, "_load_previews", return_value=[{"name": "demo", "owner": "agent"}]),
                 patch("builtins.print"),
             ):
-                for limit in ("0", "2g", "129m; include /tmp/unsafe"):
-                    with self.subTest(limit=limit):
+                for options in (
+                    ['--max-body-size', '0'], ['--max-body-size', '2g'],
+                    ['--max-body-size', '129m; include /tmp/unsafe'],
+                    ['--script', 'dev:web', '--', '/usr/bin/true'],
+                    ['--script', 'missing'], ['--script', ''], ['--script', 'empty'],
+                    ['--script=--unsafe'], ['--script', 'dev\n'], [],
+                ):
+                    with self.subTest(options=options):
+                        if not options:
+                            with open(os.path.join(project, 'package-lock.json'), 'w', encoding='utf-8') as file_obj:
+                                file_obj.write('{}')
+                            with open(os.path.join(project, 'pnpm-lock.yaml'), 'w', encoding='utf-8') as file_obj:
+                                file_obj.write('lockfileVersion: 9')
                         self.assertEqual(basaltwater_web.main([
                             "preview", "start", "demo", "--project", project,
-                            "--replace", "--max-body-size", limit, "--json",
+                            "--replace", "--json", *options,
                         ]), 2)
                 stop.assert_not_called()
                 start.assert_not_called()
