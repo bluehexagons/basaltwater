@@ -23,7 +23,11 @@ base that includes that prefix; root-relative `/assets/...` URLs point outside
 the site.
 
 When `node_modules` is absent, publication installs dependencies before the
-build. An npm project without a lockfile uses `npm install`, which can create a
+build. Both steps use the project's Node selection (`.nvmrc`, `.node-version`,
+and package engines), without changing the account default or installing Node.
+An unavailable runtime fails before either step; use `basaltw node doctor
+--project .` to inspect it. `--no-build` needs no Node runtime.
+An npm project without a lockfile uses `npm install`, which can create a
 `package-lock.json`; inspect Git status before and after publishing and do not
 silently commit or discard that file. Use `--no-install` only when dependencies
 are already usable.

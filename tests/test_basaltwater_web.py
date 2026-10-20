@@ -278,7 +278,12 @@ class TestInfraWebPreviews(unittest.TestCase):
 
             command = basaltwater_web._automatic_preview_command(project, 4173)
 
-        self.assertEqual(command[:3], ["npm", "run", "dev"])
+        self.assertEqual(command[:8], [
+            basaltwater_web.sys.executable, "-I",
+            os.path.join(basaltwater_web.SOURCE_ROOT, "basaltwater.py"),
+            "node", "exec", "--project", project, "--",
+        ])
+        self.assertEqual(command[8:11], ["npm", "run", "dev"])
         self.assertIn("127.0.0.1", command)
         self.assertIn("4173", command)
         self.assertIn("--strictPort", command)
@@ -328,11 +333,6 @@ class TestInfraWebPreviews(unittest.TestCase):
             account = SimpleNamespace(pw_dir="/home/agent", pw_name="agent")
             completed = SimpleNamespace(returncode=0)
             with (
-                patch.object(
-                    basaltwater_web,
-                    "_resolve_preview_executable",
-                    return_value=["/home/agent/.nvm/current/bin/npm", "ci"],
-                ),
                 patch.object(basaltwater_web, "run_command", return_value=completed) as run,
             ):
                 basaltwater_web._install_preview_dependencies(project, account)
@@ -340,7 +340,11 @@ class TestInfraWebPreviews(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:4], ["runuser", "-u", "agent", "--"])
         self.assertIn("HOME=/home/agent", command)
-        self.assertEqual(command[-2:], ["/home/agent/.nvm/current/bin/npm", "ci"])
+        self.assertEqual(command[7:], [
+            os.path.realpath(basaltwater_web.sys.executable), "-I",
+            os.path.join(basaltwater_web.SOURCE_ROOT, "basaltwater.py"),
+            "node", "exec", "--project", project, "--", "npm", "ci",
+        ])
         self.assertEqual(
             run.call_args.kwargs["timeout"],
             basaltwater_web._PREVIEW_INSTALL_TIMEOUT_SECONDS,
@@ -379,6 +383,28 @@ class TestInfraWebPreviews(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "exceeded 1800 seconds"):
                     basaltwater_web._install_preview_dependencies(project, account)
+
+    def test_unsupported_automatic_preview_never_installs_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as project:
+            with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
+                json.dump({"scripts": {"dev": "custom-server"}}, file_obj)
+            account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
+            with (
+                patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+                patch.object(basaltwater_web, "_requesting_username", return_value="agent"),
+                patch.object(basaltwater_web.pwd, "getpwnam", return_value=account),
+                patch.object(basaltwater_web, "_load_forwards", return_value=[]),
+                patch.object(basaltwater_web, "_load_previews", return_value=[]),
+                patch.object(basaltwater_web, "_select_target_port", return_value=4173),
+                patch.object(basaltwater_web, "_install_preview_dependencies") as install,
+                patch.object(basaltwater_web, "_write_preview_service") as start,
+                patch("builtins.print"),
+            ):
+                self.assertEqual(basaltwater_web.main([
+                    "preview", "start", "demo", "--project", project, "--json",
+                ]), 2)
+            install.assert_not_called()
+            start.assert_not_called()
 
     def test_preview_start_waits_then_applies_route_and_records_state(self) -> None:
         with tempfile.TemporaryDirectory() as project:

@@ -40,6 +40,11 @@ class TestStaticWebPublish(unittest.TestCase):
         source = patch("lib.static_publication.source_state", return_value={"commit": "a" * 40, "dirty": False})
         source.start()
         self.addCleanup(source.stop)
+        self.environment = {"PATH": "/selected/node/bin:/usr/bin", "PROJECT_SETTING": "retained"}
+        self.select_node = self.enterContext(patch.object(
+            static_web_publish, "select_node",
+            return_value=Mock(environment=Mock(return_value=self.environment)),
+        ))
 
     def test_publishes_existing_output_atomically_and_updates_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -70,6 +75,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 result = static_web_publish.publish(_args(project))
 
             self.assertTrue(result["ok"])
+            self.select_node.assert_not_called()
             self.assertEqual(result["url"], "https://sites.example:8443/sites/agent/demo/")
             with open(os.path.join(old_site, "index.html"), encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), "new site")
@@ -104,10 +110,13 @@ class TestStaticWebPublish(unittest.TestCase):
                         pass
                 return SimpleNamespace(returncode=0)
 
-            with patch.object(static_web_publish, "run", side_effect=run):
+            with patch.object(static_web_publish, "run", side_effect=run) as execute:
                 static_web_publish._run_project_build(project, {"scripts": {"build": "vite"}}, install=True)
 
             self.assertEqual(commands, [["npm", "ci"], ["npm", "run", "build"]])
+            self.select_node.assert_called_once_with(project)
+            self.assertEqual([call.kwargs["env"] for call in execute.call_args_list],
+                             [self.environment, self.environment])
 
     def test_rejects_symlinks_in_static_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
@@ -121,7 +130,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 static_web_publish._validate_output_tree(output)
 
     def test_json_publication_keeps_build_logs_on_stderr(self) -> None:
-        for failure in (None, "install", "build"):
+        for failure in (None, "runtime", "install", "build"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 project = Path(directory) / "project"
                 output = project / "dist"
@@ -135,6 +144,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 destination.mkdir(parents=True)
                 (destination / "index.html").write_text("old site", encoding="utf-8")
                 stdout, stderr = io.StringIO(), io.StringIO()
+                self.select_node.side_effect = ValueError("Project Node unavailable") if failure == "runtime" else None
 
                 def run(command: list[str], **kwargs: object) -> SimpleNamespace:
                     phase = "build" if command == ["npm", "run", "build"] else "install"
@@ -145,16 +155,20 @@ class TestStaticWebPublish(unittest.TestCase):
                     patch.object(static_web_publish, "SITES_ROOT", str(sites_root)),
                     patch.object(static_web_publish, "_base_url", return_value=None),
                     patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
-                    patch.object(static_web_publish, "run", side_effect=run),
+                    patch.object(static_web_publish, "run", side_effect=run) as execute,
                     contextlib.redirect_stdout(stdout),
                     contextlib.redirect_stderr(stderr),
                 ):
                     status = static_web_publish.main(["demo", "--project", str(project), "--json"])
                 result = json.loads(stdout.getvalue())
                 self.assertEqual(result["ok"], failure is None)
-                self.assertEqual(status, 0 if failure is None else 1)
-                self.assertIn("install log", stderr.getvalue())
-                if failure != "install":
+                self.assertEqual(status, 0 if failure is None else 2 if failure == "runtime" else 1)
+                if failure == "runtime":
+                    execute.assert_not_called()
+                    self.assertIn("Project Node unavailable", result["error"])
+                else:
+                    self.assertIn("install log", stderr.getvalue())
+                if failure in (None, "build"):
                     self.assertIn("build log", stderr.getvalue())
                 self.assertEqual(
                     (destination / "index.html").read_text(encoding="utf-8"),

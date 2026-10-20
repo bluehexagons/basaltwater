@@ -6,6 +6,13 @@ For Vite, project and command detection is automatic:
 basaltwater-web preview start NAME --project .
 ```
 
+Automatic previews and dependency installation use the project's Node selection
+(`.nvmrc`, `.node-version`, and package engines) as the requesting user. A missing
+compatible runtime fails without installing Node or changing the account default;
+inspect it with `basaltw node doctor --project .`. The service selects again on
+restart. Custom commands keep control of their own runtime; wrap a Node command
+with `basaltw node exec --project /absolute/project -- COMMAND` when appropriate.
+
 For another server, pass an argv command after `--`; `{host}` and `{port}` are
 replaced without shell evaluation:
 

@@ -18,6 +18,11 @@ from lib.remote_utils import CommandTimeoutError
 
 
 class TestPublisherDeadlines(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(
+            static, "select_node", return_value=SimpleNamespace(environment=lambda: {"PATH": "/selected/bin"}),
+        ))
+
     def test_gateway_forwards_godot_deadline(self):
         with patch.object(godot, "main", return_value=0) as publish:
             self.assertEqual(basaltwater_web.main(["publish", "godot", "demo", "--build-timeout", "7"]), 0)

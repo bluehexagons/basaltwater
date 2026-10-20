@@ -19,6 +19,7 @@ import tempfile
 import time
 import webbrowser
 
+from lib.node_toolchain import select_node
 from lib.remote_utils import CommandTimeoutError, run
 from lib.static_publication import RECEIPT_FILE, RESERVED_FILES, verify_receipt, write_receipt
 from lib.validation import validate_filesystem_path, validate_positive_integer
@@ -139,10 +140,12 @@ def _run_project_build(
     if not isinstance(scripts, dict) or not isinstance(scripts.get("build"), str):
         raise ValueError("package.json has no build script; use --no-build")
     install_command, build_command = _package_commands(project_dir)
+    environment = select_node(project_dir).environment()
     deadline = time.monotonic() + timeout
     if install and not os.path.isdir(os.path.join(project_dir, "node_modules")):
         install_result = run(
             install_command, cwd=project_dir, check=False,
+            env=environment,
             stdout=sys.stderr if json_output else None,
             timeout=timeout,
         )
@@ -155,6 +158,7 @@ def _run_project_build(
         raise CommandTimeoutError("Static-site dependency installation/build", timeout)
     build_result = run(
         build_command, cwd=project_dir, check=False,
+        env=environment,
         stdout=sys.stderr if json_output else None,
         timeout=remaining,
     )

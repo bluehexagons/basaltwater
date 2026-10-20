@@ -1555,6 +1555,14 @@ def _read_preview_package(project: str) -> dict[str, object]:
     return value
 
 
+def _project_node_command(project: str, command: list[str]) -> list[str]:
+    """Select Node only after runuser/systemd has switched to the project owner."""
+    return [
+        sys.executable, "-I", os.path.join(SOURCE_ROOT, "basaltwater.py"),
+        "node", "exec", "--project", project, "--", *command,
+    ]
+
+
 def _automatic_preview_command(project: str, port: int) -> list[str]:
     package = _read_preview_package(project)
     scripts = package.get("scripts")
@@ -1581,7 +1589,10 @@ def _automatic_preview_command(project: str, port: int) -> list[str]:
         command = ["corepack", "yarn", "run", script]
     else:
         command = ["npm", "run", script]
-    return [*command, "--", "--host", "127.0.0.1", "--port", str(port), "--strictPort"]
+    return _project_node_command(
+        project,
+        [*command, "--", "--host", "127.0.0.1", "--port", str(port), "--strictPort"],
+    )
 
 
 def _install_preview_dependencies(project: str, account: pwd.struct_passwd) -> None:
@@ -1595,7 +1606,7 @@ def _install_preview_dependencies(project: str, account: pwd.struct_passwd) -> N
         command = ["npm", "ci"]
     else:
         command = ["npm", "install"]
-    command = _resolve_preview_executable(command, account)
+    command = _resolve_preview_executable(_project_node_command(project, command), account)
     runtime_path = ":".join(
         dict.fromkeys(
             [
@@ -1910,14 +1921,14 @@ def _preview_start(args: argparse.Namespace) -> int:
         raise RuntimeError(f"HTTPS forward already uses the preview name: {name}")
 
     port = _select_target_port(args.port, routes, previews)
-    if not args.preview_argv:
-        _install_preview_dependencies(project, account)
     command = _resolve_preview_executable(
         _preview_command(args.preview_argv, project, port),
         account,
         project,
     )
     listen = _select_listen_port(args.listen, routes, policy, None)
+    if not args.preview_argv:
+        _install_preview_dependencies(project, account)
     unit = ""
     launcher = ""
     route_applied = False
