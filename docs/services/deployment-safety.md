@@ -23,6 +23,9 @@ know.
   services; first deploy an all-static manifest to retire those units safely.
 - Repository symlinks and special files are rejected on the controller before
   manifest inspection or upload. Target-side source copying also refuses links.
+- Release destinations must stay inside the deployment base and outside
+  `.basaltwater_shared`, so a release cannot replace application data or its
+  own operation marker and lock.
 - Artifact uploads validate and normalize local source paths and separate rsync
   options from operands, including relative names resembling options or hosts.
 - Incremental deployment metadata and manifest port assignments use bounded,
@@ -39,6 +42,10 @@ know.
   rollback preserve other applications' units. A service-name collision with
   another deployment or an unmanaged unit aborts before building or stopping
   services; choose another component name or deployment path to resolve it.
+  Matching local timer, path, or socket activators also block deployment,
+  including service retirement: manifest services run directly, and their
+  snapshots do not manage operator-created activators. Stop and remove the
+  activator or choose another service identity before retrying.
 - Manifest runtime environment values preserve literal percent signs, including
   percent-encoded URLs, instead of expanding systemd unit specifiers.
 - Proxy routes preserve application `Cache-Control` and `Expires` headers.

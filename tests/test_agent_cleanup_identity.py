@@ -43,10 +43,10 @@ class CleanupIdentityTests(unittest.TestCase):
 
     def test_recreated_original_path_is_preserved_during_disposal(self):
         rmtree = cleanup_paths.shutil.rmtree
-        def recreate(path):
+        def recreate(path, *, dir_fd):
             self.path.mkdir()
             (self.path / "report").write_text("new active work")
-            rmtree(path)
+            rmtree(path, dir_fd=dir_fd)
         with patch.object(cleanup_paths.shutil, "rmtree", side_effect=recreate):
             self.assertTrue(self.remove())
         self.assertEqual((self.path / "report").read_text(), "new active work")
@@ -55,14 +55,13 @@ class CleanupIdentityTests(unittest.TestCase):
     def test_recreated_private_disposal_name_is_not_removed(self):
         rmtree = cleanup_paths.shutil.rmtree
         recreated = []
-        def recreate(path):
-            descriptor_path = Path(path).parent
-            private = Path(os.readlink(descriptor_path))
+        def recreate(path, *, dir_fd):
+            private = Path(os.readlink(f"/proc/self/fd/{dir_fd}"))
             private.rename(self.root / "retained-private-directory")
             private.mkdir()
             (private / "report").write_text("keep")
             recreated.append(private)
-            rmtree(path)
+            rmtree(path, dir_fd=dir_fd)
         with patch.object(cleanup_paths.shutil, "rmtree", side_effect=recreate):
             self.assertTrue(self.remove())
         self.assertTrue((recreated[0] / "report").exists())

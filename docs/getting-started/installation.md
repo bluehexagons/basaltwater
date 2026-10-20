@@ -32,6 +32,10 @@ Basaltwater requires Python 3.11 or newer on the controller and target. This
 matches its use of the standard-library TOML parser; Python 3.10 is no longer
 supported. Use a distribution with a supported system Python rather than
 replacing `/usr/bin/python3` independently of its package manager.
+The shell installer checks an existing interpreter before package or source
+changes, including during `--plan`; if Python is missing, it checks again after
+installing prerequisites. It does not upgrade the operating-system release to
+obtain a newer Python.
 
 Use a regular account with access to `sudo` on Debian. `sudo` asks for your
 account password and grants administrator privileges to that command. If the

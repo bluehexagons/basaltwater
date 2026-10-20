@@ -84,9 +84,7 @@ def remove_checked_path(path: str, expected: os.stat_result, *, uid: int,
         if on_isolated is not None:
             on_isolated(recovery_path)
         if stat.S_ISDIR(current.st_mode):
-            # /proc/self/fd anchors the private parent on Linux, including
-            # Python 3.10 where rmtree has no dir_fd argument.
-            shutil.rmtree(f"/proc/self/fd/{disposal}/entry")
+            shutil.rmtree("entry", dir_fd=disposal)
         else:
             os.unlink("entry", dir_fd=disposal)
         return True

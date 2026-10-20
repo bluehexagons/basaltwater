@@ -66,6 +66,12 @@ fail() {
     exit 1
 }
 
+require_supported_python() {
+    if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+        fail "Python 3.11 or newer is required; use a distribution with a supported system Python. The installer does not upgrade the OS release."
+    fi
+}
+
 confirm_unsupported_host() {
     printf '%s\n' "Warning: unsupported host distribution detected: ${HOST_OS_ID:-unknown}."
     printf '%s\n' "Debian is officially supported; Ubuntu and Linux Mint are best-effort."
@@ -384,6 +390,11 @@ for command_name in python3 git ssh rsync curl; do
         missing_prerequisites="$missing_prerequisites$command_name"
     fi
 done
+# Refuse an old interpreter before package, download or source changes, even
+# during a plan. A missing interpreter is checked after prerequisite installation.
+if command -v python3 >/dev/null 2>&1; then
+    require_supported_python
+fi
 if [ "$PLAN_ONLY" -eq 1 ]; then
     printf 'Installer plan for %s (%s):\n' "$TARGET_USER" "$HOST_OS_ID"
     printf '  Source destination: %s\n  Requested channel: %s\n' "$INSTALL_DIR" "$CHANNEL"
@@ -656,6 +667,8 @@ if [ "$HOST_OS_SUPPORTED" -eq 1 ] && [ "$missing_prerequisite" -eq 1 ]; then
         install -y -q \
         ca-certificates curl git openssh-client python3 rsync
 fi
+
+require_supported_python
 
 python3 - "$INSTALL_DIR" "$TARGET_HOME" "$HOST_OS_ID" <<'EOF'
 from __future__ import annotations

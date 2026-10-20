@@ -152,8 +152,8 @@ class DeploymentOrchestrator:
         else:
             return os.path.join(self.base_dir, repo_name)
 
-    def _open_deployment_lock(self, dest_path: str) -> IO[str]:
-        """Serialize both release paths and reject unresolved prior operations."""
+    def _validate_release_destination(self, dest_path: str) -> None:
+        """Keep active releases separate from the deployment's control/data paths."""
         validate_filesystem_path(dest_path, must_exist=False)
         if os.path.islink(dest_path) or (os.path.lexists(dest_path) and not os.path.isdir(dest_path)):
             raise ValueError(f"Release path must be a directory, not a link: {dest_path}")
@@ -161,6 +161,13 @@ class DeploymentOrchestrator:
         destination = os.path.realpath(dest_path)
         if os.path.commonpath((base, destination)) != base or destination == base:
             raise ValueError(f"Release path must be inside the deployment base: {dest_path}")
+        state = os.path.realpath(os.path.join(self.base_dir, ".basaltwater_shared"))
+        if os.path.commonpath((state, destination)) in {state, destination}:
+            raise ValueError(f"Release path must not overlap deployment state: {dest_path}")
+
+    def _open_deployment_lock(self, dest_path: str) -> IO[str]:
+        """Serialize both release paths and reject unresolved prior operations."""
+        self._validate_release_destination(dest_path)
         shared_root = os.path.join(self.base_dir, ".basaltwater_shared")
         app_root = self._get_persistent_root(os.path.basename(dest_path))
         for directory in (shared_root, app_root):
@@ -202,13 +209,10 @@ class DeploymentOrchestrator:
                 source_path, dest_path, domain, path, git_url, commit_hash, full_deploy,
             )
 
-    @staticmethod
-    def _validate_release_source(source_path: str, dest_path: str) -> None:
+    def _validate_release_source(self, source_path: str, dest_path: str) -> None:
         """Keep source copying and cleanup outside the active release tree."""
+        self._validate_release_destination(dest_path)
         validate_filesystem_path(source_path, must_exist=True)
-        validate_filesystem_path(dest_path, must_exist=False)
-        if os.path.islink(dest_path):
-            raise ValueError(f"Release path must be a directory, not a link: {dest_path}")
         if os.path.islink(source_path) or not os.path.isdir(source_path):
             raise ValueError(f"Deployment source must be a directory, not a link: {source_path}")
         source = os.path.realpath(source_path)
@@ -622,10 +626,23 @@ class DeploymentOrchestrator:
                     f"Service unit {unit_name} is not owned by this deployment; "
                     "choose another component name or deployment path"
                 )
+            self._assert_no_service_activators(unit_name.removesuffix('.service'))
+
+    @staticmethod
+    def _assert_no_service_activators(service_name: str) -> None:
+        """Manifest services run directly; their operator-owned activators are unsupported."""
+        for kind in ('timer', 'path', 'socket'):
+            filename = f'{service_name}.{kind}'
+            if os.path.lexists(os.path.join(SYSTEMD_UNIT_DIR, filename)):
+                raise RuntimeError(
+                    f"Service activator {filename} is not managed by manifest deployment; "
+                    "stop and remove it or choose another service identity before deploying"
+                )
 
     def _app_unit_snapshots(self, dest_path: str) -> dict[str, dict[str, Any]]:
         snapshots: dict[str, dict[str, Any]] = {}
         for service_name in sorted(self._app_unit_names(dest_path)):
+            self._assert_no_service_activators(service_name)
             filename = f"{service_name}.service"
             try:
                 previous = snapshot_unit_file(os.path.join(SYSTEMD_UNIT_DIR, filename))
@@ -905,10 +922,10 @@ class DeploymentOrchestrator:
             manifest = self._resolve_manifest_ports(manifest, dest_path)
             previous_ports = read_state_object(self._port_state_path(dest_path), versioned=False)
             self._validate_manifest_routes(manifest, domain)
+            unit_snapshots = self._app_unit_snapshots(dest_path)
             print(f"Deploying manifest ({len(manifest.components)} component(s)) to {dest_path}...")
             build_user = self._build_identity(dest_path)
             self._ensure_build_user(build_user)
-            unit_snapshots = self._app_unit_snapshots(dest_path)
             write_json_atomic(
                 os.path.join(os.path.dirname(operation_store.path), "manifest-units.previous.json"),
                 unit_snapshots, mode=0o600,

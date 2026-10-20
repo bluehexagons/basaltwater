@@ -143,6 +143,37 @@ class TestDeploymentUnitOwnership(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'owned by this deployment'):
             self.orchestrator._assert_manifest_unit_ownership(manifest, str(self.dest))
 
+    def test_matching_activators_are_rejected_before_build_or_service_changes(self):
+        own_name = self.write_unit('foo', 'api')
+        service = {'name': 'api', 'type': 'service', 'domain': 'example.test',
+                   'exec': '/bin/true', 'port': 8123}
+        static = {'name': 'site', 'type': 'static', 'domain': 'example.test', 'output': '.'}
+        for kind, component in (('timer', static), ('path', static), ('socket', service)):
+            with self.subTest(kind=kind):
+                activator = self.units / f'{own_name}.{kind}'
+                activator.write_text('operator-owned activator')
+                old_service = (self.units / f'{own_name}.service').read_bytes()
+                manifest = parse_manifest({'version': 1, 'components': [component]})
+                try:
+                    with patch.object(self.orchestrator, '_stop_app_unit') as stop, patch.object(
+                        self.orchestrator, '_install_service_component',
+                    ) as install, patch('lib.deployment.cleanup_service') as cleanup:
+                        with self.assertRaisesRegex(RuntimeError, 'activator'):
+                            self.orchestrator.deploy_manifest(
+                                manifest, str(self.source), None, '/foo',
+                                'https://example.test/foo.git', 'new', keep_source=True,
+                            )
+                    stop.assert_not_called()
+                    install.assert_not_called()
+                    cleanup.assert_not_called()
+                    self.build_user.assert_not_called()
+                    self.run.assert_not_called()
+                    self.assertEqual(activator.read_text(), 'operator-owned activator')
+                    self.assertEqual((self.units / f'{own_name}.service').read_bytes(), old_service)
+                    self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+                finally:
+                    activator.unlink()
+
 
 class TestReleaseRecovery(unittest.TestCase):
     def setUp(self):
@@ -468,6 +499,31 @@ class TestReleaseRecovery(unittest.TestCase):
                             self.orchestrator.deploy_from_archive(*args)
                     self.assertEqual((self.dest / "index.html").read_text(), "old")
                     self.assertFalse(self.state.exists())
+
+    def test_reserved_state_destination_is_rejected_before_lock_or_mutations(self):
+        shared = self.base / '.basaltwater_shared'
+        other_data = shared / 'other-app' / 'api' / 'data'
+        other_data.mkdir(parents=True)
+        database = other_data / 'database'
+        database.write_bytes(b'preserve application state')
+        before = sorted(str(path.relative_to(shared)) for path in shared.rglob('*'))
+        with patch.object(self.orchestrator, '_open_deployment_lock') as lock, patch(
+            'lib.deployment.run',
+        ) as command, patch('lib.deployment.rename_path_durable') as rename:
+            for manifest in (False, True):
+                with self.subTest(manifest=manifest):
+                    args = (str(self.source), None, '/.basaltwater_shared',
+                            'https://example.test/site.git', 'new')
+                    with self.assertRaisesRegex(ValueError, 'deployment state'):
+                        if manifest:
+                            self.orchestrator.deploy_manifest(self.manifest, *args)
+                        else:
+                            self.orchestrator.deploy_from_archive(*args)
+            lock.assert_not_called()
+            command.assert_not_called()
+            rename.assert_not_called()
+        self.assertEqual(database.read_bytes(), b'preserve application state')
+        self.assertEqual(sorted(str(path.relative_to(shared)) for path in shared.rglob('*')), before)
 
     def test_source_special_file_is_rejected_before_copying_its_contents(self):
         os.mkfifo(self.source / "pipe")

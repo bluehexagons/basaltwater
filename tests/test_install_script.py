@@ -280,6 +280,40 @@ class TestInstallScript(unittest.TestCase):
                 ["setup", "server_dev", "10.0.0.50", "agent", "--dry-run"],
             )
 
+    def test_unsupported_python_leaves_existing_install_untouched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, log_path, environment = self._create_fixture(directory)
+            install_dir = Path(directory, "installed")
+            self._mark_managed(str(install_dir))
+            previous = install_dir / "old-version"
+            previous.write_text("keep the old source", encoding="utf-8")
+            python = Path(directory, "bin", "python3")
+            python.write_text(
+                f"#!{sys.executable}\n"
+                "from __future__ import annotations\n"
+                "import os\nimport sys\n"
+                "if sys.argv[1:2] == ['-c']:\n"
+                "    sys.version_info = (3, 10, 0)\n"
+                "    exec(sys.argv[2])\n"
+                "else:\n"
+                "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
+                encoding="utf-8",
+            )
+            python.chmod(0o755)
+
+            for options in ([], ["--plan"]):
+                with self.subTest(options=options):
+                    result = subprocess.run(
+                        ["sh", INSTALL_SCRIPT, *options, "--install-dir", str(install_dir)],
+                        env=environment, text=True, capture_output=True, timeout=20,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Python 3.11 or newer", result.stderr)
+                    self.assertEqual(previous.read_text(encoding="utf-8"), "keep the old source")
+                    self.assertEqual(list(Path(directory).glob("installed.*")), [])
+                    self.assertFalse(Path(log_path).exists())
+                    self.assertEqual(os.listdir(home), [])
+
     def test_cachyos_installer_bootstraps_without_retired_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             _, log_path, environment = self._create_fixture(directory)
