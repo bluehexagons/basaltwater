@@ -16,8 +16,8 @@ basaltw agent storage inspect --path /absolute/path/to/one/relevant/directory --
 Use allocated and apparent bytes, age, owner UID, file counts, and largest
 children to choose a small set of candidates. These are estimates: age does not
 prove disuse, allocated bytes do not equal reclaimable space, and overlapping
-parent/child totals must not be added. Do not publish live sizes or inspect
-private session database contents. On a live VM, Codex session history may
+parent/child totals must not be added. Report measured metadata when useful,
+without inspecting private session database contents. Codex session history may
 appear in `~/.codex/thread_history_1.sqlite`; T3 state may use
 `~/.t3/userdata/statev2.sqlite` or `state.sqlite`, with SQLite WAL/SHM files.
 Treat these as owner-app state, not files to edit or manually remove.
@@ -37,7 +37,7 @@ resume. A filename or old timestamp alone is not a retention decision.
 For Basaltwater tasks, distinguish context modes before proposing cleanup:
 
 - `fresh` starts a new conversation each run; retained session history does
-  not make those sessions resumable.
+  not make this task resume them automatically.
 - `checkpoint` starts a new conversation from saved findings and next steps.
 - `conversation` resumes the exact recorded Codex session and retains its
   session binding.
@@ -87,18 +87,25 @@ and same-filesystem moves do not establish reclaimed capacity.
 
 ## Project cleanup metadata
 
-The planned project inventory is:
+Inspect optional project cleanup metadata with:
 
 ```bash
 basaltw agent storage project /absolute/repo --json
 ```
 
-It reads `/absolute/repo/.basaltwater/cleanup.json` and describes configured
+It reads `/absolute/repo/.basaltwater/cleanup.json` (or a custom path selected
+by `--policy relative/path.json`) and describes configured
 cleanup scripts as preview/apply argv, plus any agent archive instructions.
 It is an inventory and proposal aid: it never executes those commands. Review
 the target, preview, active-use checks, retention choice, and expected effect;
 execution remains a separate explicitly approved action. Do not infer that a
 configured apply command is safe merely because the inventory can display it.
+
+Honor existing project layouts and cleanup systems first. For projects without
+one, the inspector suggests a standard layout separating generated output,
+review captures and curated archives; it creates nothing. See
+[project cleanup conventions](project-cleanup.md) for that fallback and the
+archive provenance workflow.
 
 See [storage cleanup reviews](storage-cleanup.md) for bounded filesystem
 inventory and follow-up review guidance.

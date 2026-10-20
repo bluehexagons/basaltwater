@@ -39,7 +39,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.stack.enter_context(patch.object(clean_generated, "repository_root", return_value=self.root))
         self.git = self.stack.enter_context(patch.object(
             clean_generated.subprocess, "run",
-            return_value=subprocess.CompletedProcess([], 0, stdout=b"", stderr=b""),
+            return_value=subprocess.CompletedProcess([], 1),
         ))
         self.inventory = self.stack.enter_context(patch.object(
             clean_generated.agent_storage_inventory, "inspect_storage", side_effect=self.scan,
@@ -76,10 +76,9 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.assertIn("measured; dry-run", output.getvalue())
         self.git.assert_called()
         command = self.git.call_args.args[0]
-        self.assertIn("-z", command)
-        self.assertIn("build/", command)
-        self.assertIn("dist/", command)
-        self.assertIn("htmlcov/", command)
+        self.assertIn("--error-unmatch", command)
+        self.assertEqual({call.args[0][-1] for call in self.git.call_args_list}, {"build/", "dist/", "htmlcov/"})
+        self.assertEqual(self.git.call_args.kwargs["stdout"], subprocess.DEVNULL)
         self.assertEqual(self.git.call_args.kwargs["timeout"], 10)
         self.assertEqual(self.git.call_args.kwargs["env"]["GIT_OPTIONAL_LOCKS"], "0")
         self.assertEqual(self.process_use.call_count, 6)
@@ -95,15 +94,35 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.assertTrue((self.root / "docs" / "brand" / "logo.svg").exists())
 
     def test_active_target_blocks_the_whole_apply_before_first_removal(self):
-        self.process_use.side_effect = lambda path, uid=None: path.endswith("/dist")
+        self.process_use.side_effect = lambda path, **kwargs: path.endswith("/dist")
         errors = StringIO()
         with redirect_stderr(errors):
             self.assertEqual(clean_generated.main(["--apply"]), 1)
         self.assertIn("in use", errors.getvalue())
         self.assertTrue(all(target.exists() for target in self.targets))
 
+    def test_hidden_daemon_descriptors_report_limited_coverage_once(self):
+        def hidden(path, **kwargs):
+            kwargs["on_incomplete"]()
+            return False
+
+        self.process_use.side_effect = hidden
+        with redirect_stderr(StringIO()) as errors, redirect_stdout(StringIO()):
+            self.assertEqual(clean_generated.main(["--dry-run"]), 0)
+        self.assertEqual(errors.getvalue().count("Open-file inspection is incomplete"), 1)
+        self.assertTrue(all(target.exists() for target in self.targets))
+
+    def test_shared_repository_is_refused_before_disposal(self):
+        info = self.root.lstat()
+        fields = list(info)
+        fields[0] = (info.st_mode & ~0o777) | 0o755
+        with patch.object(Path, "lstat", return_value=os.stat_result(fields)), redirect_stderr(StringIO()):
+            self.assertEqual(clean_generated.main(["--apply"]), 1)
+        self.inventory.assert_not_called()
+        self.assertTrue(all(target.exists() for target in self.targets))
+
     def test_tracked_target_is_refused(self):
-        self.git.return_value = subprocess.CompletedProcess([], 0, stdout=b"build/tracked.py\0", stderr=b"")
+        self.git.return_value = subprocess.CompletedProcess([], 0)
         errors = StringIO()
         with redirect_stderr(errors):
             self.assertEqual(clean_generated.main(["--apply"]), 1)
@@ -122,19 +141,21 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.targets[0].unlink()
         (self.root / "build").mkdir()
         (self.root / "build" / "output.bin").write_bytes(b"generated")
-        original_scan = self.scan
+        for changes, message in (({"status": "partial", "issues": ["nested_mounts_skipped"]}, "nested_mounts_skipped"),
+                                 ({"is_mountpoint": True}, "mountpoint"),
+                                 ({"other_owner_entries": 1}, "outside the current account")):
+            with self.subTest(changes=changes):
+                def incomplete(**kwargs):
+                    result = self.scan(**kwargs)
+                    result["candidates"][1].update(changes)
+                    return result
 
-        def partial(**kwargs):
-            result = original_scan(**kwargs)
-            result["candidates"][1]["status"] = "partial"
-            result["candidates"][1]["issues"] = ["nested_mounts_skipped"]
-            return result
-
-        self.inventory.side_effect = partial
-        with redirect_stderr(errors):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
-        self.assertIn("nested_mounts_skipped", errors.getvalue())
-        self.assertTrue(all(target.exists() for target in self.targets))
+                self.inventory.side_effect = incomplete
+                errors = StringIO()
+                with redirect_stderr(errors):
+                    self.assertEqual(clean_generated.main(["--apply"]), 1)
+                self.assertIn(message, errors.getvalue())
+                self.assertTrue(all(target.exists() for target in self.targets))
 
     def test_symlink_repository_ancestor_is_refused(self):
         real_root = self.root.with_name("repo-real")
@@ -153,11 +174,14 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
             self.assertEqual(clean_generated.main(["--apply"]), 1)
         self.assertIn("Git preflight failed", errors.getvalue())
         self.git.side_effect = None
-        self.git.return_value = subprocess.CompletedProcess([], 0, stdout=b"", stderr=b"")
-        with patch.object(clean_generated.cleanup_paths, "remove_checked_path", side_effect=OSError("disposal failed")):
-            with redirect_stderr(errors):
-                self.assertEqual(clean_generated.main(["--apply"]), 1)
+        self.git.return_value = subprocess.CompletedProcess([], 1)
+        recovery = str(self.root / ".basaltwater-dispose-fixture/entry")
+        for failure in (OSError("disposal failed"), clean_generated.cleanup_paths.CleanupPathError("disposal failed", recovery)):
+            with self.subTest(failure=type(failure).__name__), patch.object(clean_generated.cleanup_paths, "remove_checked_path", side_effect=failure):
+                with redirect_stderr(errors):
+                    self.assertEqual(clean_generated.main(["--apply"]), 1)
         self.assertIn("disposal failed", errors.getvalue())
+        self.assertIn(recovery, errors.getvalue())
         self.assertTrue(all(target.exists() for target in self.targets))
 
     def test_apply_and_dry_run_are_mutually_exclusive(self):

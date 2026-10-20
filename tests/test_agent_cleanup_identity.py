@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from common.service_tools import cleanup_maintenance as root_cleanup
 from common.service_tools import user_cache_maintenance as user_cleanup
@@ -167,3 +168,36 @@ class CleanupIdentityTests(unittest.TestCase):
         self.assertFalse(cleanup_paths.process_uses_path(str(self.path), str(proc), uid=os.getuid() + 1))
         arguments.write_bytes(b"x" * 65537)
         self.assertTrue(cleanup_paths.process_uses_path(str(self.path), str(proc)))
+
+    def test_open_descriptor_checks_detect_use_and_fail_closed_on_denial_or_limit(self):
+        proc = self.root / "proc"
+        process = proc / "123"
+        descriptors = process / "fd"
+        descriptors.mkdir(parents=True)
+        (process / "cmdline").write_bytes(b"worker\0")
+        (descriptors / "4").symlink_to(self.path / "payload")
+        self.assertFalse(cleanup_paths.process_uses_path(str(self.path), str(proc)))
+        self.assertTrue(cleanup_paths.process_uses_path(str(self.path), str(proc), include_open_files=True))
+        (descriptors / "4").unlink()
+        scandir = cleanup_paths.os.scandir
+
+        def denied(path):
+            if str(path) == str(descriptors):
+                raise PermissionError
+            return scandir(path)
+
+        with patch.object(cleanup_paths.os, "scandir", side_effect=denied):
+            self.assertTrue(cleanup_paths.process_uses_path(str(self.path), str(proc), include_open_files=True))
+            incomplete = []
+            self.assertFalse(cleanup_paths.process_uses_path(str(self.path), str(proc), include_open_files=True,
+                on_incomplete=lambda: incomplete.append(True)))
+            self.assertEqual(incomplete, [True])
+        with patch.object(cleanup_paths.os, "readlink", return_value="/unrelated"):
+            entries = MagicMock()
+            entries.__enter__.return_value = [SimpleNamespace(path="fd")] * 4097
+
+            def crowded(path):
+                return entries if str(path) == str(descriptors) else scandir(path)
+
+            with patch.object(cleanup_paths.os, "scandir", side_effect=crowded):
+                self.assertTrue(cleanup_paths.process_uses_path(str(self.path), str(proc), include_open_files=True))

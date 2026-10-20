@@ -107,8 +107,15 @@ def remove_checked_path(path: str, expected: os.stat_result, *, uid: int,
         os.close(parent)
 
 
-def process_uses_path(path: str, proc_root: str = "/proc", *, uid: int | None = None) -> bool:
-    """Check accessible cwd/executable links and bounded owner argument vectors."""
+def process_uses_path(path: str, proc_root: str = "/proc", *, uid: int | None = None,
+                      include_open_files: bool = False,
+                      on_incomplete: Callable[[], None] | None = None) -> bool:
+    """Check owner process paths; optionally include bounded open descriptors.
+
+    Descriptor inspection fails closed on denied access unless a caller handles
+    that coverage limit explicitly. More than 4096 FDs always defers cleanup.
+    This remains a snapshot, not an exclusion lock for future work.
+    """
     current_uid = os.getuid() if uid is None else uid
     absolute_path = os.path.abspath(path)
     encoded_path = os.fsencode(absolute_path)
@@ -149,4 +156,27 @@ def process_uses_path(path: str, proc_root: str = "/proc", *, uid: int | None = 
                 continue
             except OSError:
                 return True
+            if include_open_files:
+                try:
+                    with os.scandir(os.path.join(entry.path, "fd")) as descriptors:
+                        for index, descriptor in enumerate(descriptors):
+                            if index >= 4096:
+                                return True
+                            try:
+                                target = os.readlink(descriptor.path).removesuffix(" (deleted)")
+                            except (FileNotFoundError, ProcessLookupError):
+                                continue
+                            if target.startswith("/") and os.path.commonpath((target, absolute_path)) == absolute_path:
+                                return True
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                except PermissionError:
+                    # Non-dumpable account daemons also hide cwd/exe. A caller
+                    # may expose this limitation rather than declare every
+                    # unrelated directory active; never silently claim coverage.
+                    if on_incomplete is None:
+                        return True
+                    on_incomplete()
+                except (OSError, ValueError):
+                    return True
     return False

@@ -21,8 +21,14 @@ counts, owner UID, entries with other owners, bytes with modification times
 older than 30 days, newest file timestamp, and largest immediate subdirectories.
 It never reads file contents, deletes data, runs package managers or writes a
 report. Fixed candidates include tool caches, npm/pnpm stores, Trash, temporary
-directories, agent logs and runtime versions, project checkouts and task
-worktrees. Missing paths and permission failures stay explicit.
+directories, agent logs and runtime versions, project checkouts, task
+worktrees, session directories and attachments. The separate `session_state`
+section lists only metadata for SQLite/WAL/SHM files directly in `~/.codex` and
+`~/.t3/userdata` (up to 1024 directory entries per location, outside the recursive
+entry budget). It never opens those databases. Missing paths and permission
+failures stay explicit. See [session retention](session-retention.md) before
+proposing any session or app-state cleanup; archiving threads is not a disk
+reclamation operation.
 
 The default budget is 250000 entries across all candidates, up to 50000 per
 default root, 20 seconds cooperatively checked between entries, and depth 24.
@@ -38,6 +44,24 @@ do not guarantee space recovered by deletion. Child sizes are already included
 in their parent. Hardlinks are counted once per root; overlapping requests and
 shared/reflink extents must not be added as independent savings. Compare free
 space on the affected filesystem before and after an approved cleanup.
+
+## Inspect project conventions economically
+
+Read each project's `AGENTS.md` and existing cleanup tooling before choosing
+targets. `basaltw agent storage project /absolute/repo --json` describes an
+optional cleanup policy and measures its roots without running commands. Use
+`--policy relative/path.json` for a custom location. Existing layouts and
+non-JSON systems are supported through project instructions. The standard
+layout is a fallback only; inspection creates nothing. See
+[project cleanup conventions](project-cleanup.md) for scripts, agent curation
+and preserving selected screenshots/videos as development history.
+
+Use cheap Luna workers at high reasoning and standard service for bounded
+classification of selected file lists or redacted log excerpts when delegation
+is available. Set file/byte limits and request compact findings with paths or
+offsets. Do not copy bulk logs or private transcripts into worker or parent
+context. If no worker interface is exposed, use bounded local summaries and
+report uncertainty. The installed VM-triage skill has the same workflow.
 
 ## Choose a follow-up
 

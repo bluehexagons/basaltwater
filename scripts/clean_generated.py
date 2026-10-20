@@ -55,24 +55,46 @@ def _identity(info: os.stat_result | None) -> tuple[int, int, int, int, int] | N
     return (info.st_dev, info.st_ino, info.st_uid, info.st_mode, info.st_mtime_ns)
 
 
+def _require_private_repository(root: Path, uid: int) -> None:
+    """Owner process checks require a checkout inaccessible to other accounts."""
+    if root.lstat().st_uid != uid:
+        raise CleanupRefused("Repository must belong to the current account")
+    for ancestor in (root, *root.parents):
+        info = ancestor.lstat()
+        if info.st_uid == uid and not info.st_mode & 0o077:
+            return
+    raise CleanupRefused("Repository must be beneath an owner-only directory (for example a private home); shared checkouts require coordinated project cleanup")
+
+
+def _in_use(path: Path, root: Path, uid: int, coverage: set[str]) -> bool:
+    _require_private_repository(root, uid)
+
+    def incomplete() -> None:
+        message = "Open-file inspection is incomplete for non-dumpable account processes; stop builds and reviews before applying cleanup."
+        if message not in coverage:
+            coverage.add(message)
+            print(message, file=sys.stderr)
+
+    return cleanup_paths.process_uses_path(str(path), uid=uid, include_open_files=True,
+                                          on_incomplete=incomplete)
+
+
 def _git_untracked_by_index(root: Path) -> None:
     """Require Git to confirm that no allowlisted target contains tracked files."""
     env = os.environ.copy()
     env["GIT_OPTIONAL_LOCKS"] = "0"
-    command = [
-        "git", "-C", str(root), "--no-optional-locks", "ls-files", "-z", "--",
-        *(f"{name}/" for name in _TARGET_NAMES),
-    ]
-    try:
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=_GIT_TIMEOUT, check=False, env=env)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CleanupRefused(f"Git preflight failed: {exc}") from exc
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise CleanupRefused(f"Git preflight failed with status {result.returncode}: {detail}")
-    if result.stdout:
-        raise CleanupRefused("Refusing generated directories containing tracked files")
+    for name in _TARGET_NAMES:
+        command = ["git", "-C", str(root), "--no-optional-locks", "ls-files",
+                   "--error-unmatch", "--", f"{name}/"]
+        try:
+            result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    timeout=_GIT_TIMEOUT, check=False, env=env)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CleanupRefused(f"Git preflight failed: {exc}") from exc
+        if result.returncode == 0:
+            raise CleanupRefused(f"Refusing generated directory containing tracked files: {name}")
+        if result.returncode != 1:
+            raise CleanupRefused(f"Git preflight failed with status {result.returncode}")
 
 
 def _inventory_by_path(root: Path, paths: list[Path]) -> dict[str, dict]:
@@ -96,6 +118,8 @@ def _inventory_by_path(root: Path, paths: list[Path]) -> dict[str, dict]:
         issues = row.get("issues")
         if issues:
             raise CleanupRefused(f"Storage inventory issues for {path}: {issues}")
+        if row.get("is_mountpoint"):
+            raise CleanupRefused(f"Target is a mountpoint: {path}")
         if row.get("status") not in ("measured", "absent"):
             raise CleanupRefused(f"Storage inventory is incomplete for {path}: {row.get('status')}")
     return by_path
@@ -105,6 +129,7 @@ def _preflight(root: Path) -> list[tuple[Path, os.stat_result | None, dict]]:
     _reject_symlink_components(root)
     if not root.is_dir():
         raise CleanupRefused(f"Repository root is unavailable: {root}")
+    _require_private_repository(root, os.getuid())
     root_identity = root.lstat()
     paths = _target_paths(root)
     for path in paths:
@@ -155,6 +180,7 @@ def run(*, apply: bool = False) -> int:
     try:
         targets = _preflight(root)
         uid = os.getuid()
+        coverage: set[str] = set()
         for path, expected, record in targets:
             byte_count = record.get("allocated_bytes", 0)
             status = record["status"]
@@ -163,7 +189,7 @@ def run(*, apply: bool = False) -> int:
                 continue
             if not cleanup_paths.remove_checked_path(
                     str(path), expected, uid=uid,
-                    in_use=lambda selected=str(path): cleanup_paths.process_uses_path(selected, uid=uid),
+                    in_use=lambda selected=path: _in_use(selected, root, uid, coverage),
                     dry_run=True):
                 raise CleanupRefused(f"Target is in use: {path}")
             print(f"{path}: {byte_count} allocated bytes ({status}; {'apply' if apply else 'dry-run'})")
@@ -174,13 +200,15 @@ def run(*, apply: bool = False) -> int:
                 continue
             removed = cleanup_paths.remove_checked_path(
                 str(path), expected, uid=uid,
-                in_use=lambda selected=str(path): cleanup_paths.process_uses_path(selected, uid=uid),
+                in_use=lambda selected=path: _in_use(selected, root, uid, coverage),
             )
             if not removed:
                 raise CleanupRefused(f"Target became active before removal: {path}")
         return 0
     except (CleanupRefused, OSError, ValueError) as exc:
         print(f"clean_generated: {exc}", file=sys.stderr)
+        if isinstance(exc, cleanup_paths.CleanupPathError):
+            print(f"Retained for recovery: {exc.recovery_path}", file=sys.stderr)
         return 1
 
 

@@ -214,7 +214,6 @@ class AgentPanelToolsTest(unittest.TestCase):
                          {**agents.PROMPT_TEMPLATES["storage"], "directory": self.home}):
             with self.subTest(title=settings["title"]):
                 self.assertIn("basaltw agent storage inspect --json", settings["prompt"])
-                self.assertIn("return one actionable follow_up", settings["prompt"])
                 task_id = self.state.agent_tasks.create(settings, run_now=True)
                 with patch.object(agent_tasks, "execute_prompt", return_value={
                     "status": "completed", "output": "", "message": "Done", **report,

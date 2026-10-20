@@ -1,0 +1,128 @@
+# Project cleanup conventions
+
+Basaltwater agents support a project's existing layout, cleanup scripts and
+instructions. Read `AGENTS.md`, contributor guidance and native tooling first.
+An optional JSON policy makes script targets and agent curation rules visible
+to the storage inspector; it does not replace a project's own system. Use the
+managed `basaltwater-project-adoption` skill when converting a project.
+
+## A default for projects without a system
+
+Use this layout only when the project lacks suitable conventions:
+
+| Location | Purpose | Cleanup |
+| --- | --- | --- |
+| `artifacts/generated/` | Reproducible builds, reports and temporary output | Project-owned script after reproducibility and active-use checks |
+| `artifacts/review/` | Screenshots, videos and logs awaiting review | Agent selects useful evidence before proposing removal |
+| `artifacts/archive/YYYY-MM-DD--milestone/` | Selected development history | Preserve; maintain a small index and provenance |
+| `.basaltwater/cleanup.json` | Optional adapter describing rules | Track the policy; keep unrelated local control state ignored |
+
+Do not move existing outputs merely to match the table. For example, a project
+may keep builds in `out/`, capture reviews in `build/review-evidence/`, and
+archives in `docs/development-history/`. Document those paths instead. Never
+infer disposability from Git ignore rules, extensions or timestamps: ignored
+build directories can contain release packages and valuable review evidence;
+source textures and videos remain source assets.
+
+## Inspect a policy
+
+```bash
+basaltw agent storage project /absolute/repo --json
+basaltw agent storage project /absolute/repo --policy tools/cleanup.json --json
+```
+
+The default policy path is `.basaltwater/cleanup.json`; `--policy` selects a
+literal project-relative path. Inspection reads that bounded JSON file and
+filesystem metadata only. It never executes scripts, reads artifact contents,
+creates a policy, relocates files or authorizes cleanup. If absent, the result
+contains a suggested starter policy, with agent review rules until a real
+project-owned script is added. Check existing non-JSON systems before adopting
+that suggestion.
+
+The policy is at most 65536 bytes, with `version: 1`, project `instructions`,
+optional `preserve` paths, and 1–16 `rules`. See this repository's
+[working policy](../../.basaltwater/cleanup.json), which preserves its existing
+layout and pairs a script with manual evidence review. Each rule declares:
+
+| Field | Contract |
+| --- | --- |
+| `name` | Unique lowercase identifier, digits and hyphens allowed |
+| `paths` | 1–16 literal relative directories; at most eight distinct inspection roots overall |
+| `strategy` | `script` for deterministic generated-output cleanup, or `agent` for review |
+| `instructions` | Reproducibility, retention, active-use and verification requirements |
+| `preview`, `apply` | Required literal argv arrays for script rules; no automatic execution |
+| `archive` | Optional protected destination for agent-selected evidence |
+| `min_age_days` | Optional minimum age, 1–36500 days; never sufficient authority to delete |
+
+Paths cannot escape the repository, contain globs, or target known Git, agent
+control or credential locations. Scripts cannot overlap preserved paths,
+archives or agent-curated roots. Agent review may cover a mixed directory containing
+preserved subtrees; those subtrees remain excluded from removal. Their measured
+bytes are still included, so the total is not a reclamation estimate. Custom
+policy files are also preserved. Rules describe intended scope, not a sandbox:
+review commands and their implementation before running even a preview.
+
+Inspection defaults to 50000 entries and 10 seconds shared across rule roots;
+`--max-entries` and `--timeout` use the same limits as
+[storage inspection](storage-cleanup.md). Missing roots, skipped links/mounts
+and incomplete scans remain explicit evidence. A valid policy means its shape
+is understood, not that its instructions or commands are trustworthy.
+
+## Script contract
+
+Prefer the project's existing cleanup tool. A new script should preview by
+default, require an explicit apply option, select exact generated paths, and
+stop on tracked files, unexpected ownership, active work or incomplete evidence.
+Avoid broad `git clean`, recursive home cleanup or extension-based deletion.
+Check every target before removing any of them, recheck identities and use at
+removal, and return failure if a check or deletion fails. Stop builds and review
+jobs first: process checks are best effort and cannot establish future disuse.
+
+This repository's [generated-output script](../../scripts/clean_generated.py)
+previews only root `build/`, `dist/` and `htmlcov/`. `--apply` removes only those
+allowlisted directories after bounded inventory, Git, owner, link, mount and
+process checks, including open files for the account. It requires a user-owned
+checkout beneath an owner-only directory (such as a mode-0700 home); shared
+checkouts need coordinated project cleanup. It preserves `artifacts/`, `.venv/`,
+source and brand exports.
+
+Some non-dumpable account daemons hide their descriptors; the script reports
+that coverage limit rather than treating every unrelated target as busy.
+Activity detection is best effort: stop project jobs before applying cleanup.
+Run its relative argv from the repository root. Apply needs write access to
+that root to isolate selected directories before disposal; account for parent
+directory operations when preparing follow-up access, rather than granting only
+the removed directories or the whole home.
+It is specific to this repository; do not copy its targets into another project
+without reviewing what those directories contain. Failed disposal may retain
+a private recovery directory; report it rather than retrying deletion blindly.
+
+## Agent curation and timeline evidence
+
+Use cheap Luna workers at high reasoning and standard service for bounded
+classification of selected file lists or redacted log excerpts when delegation
+is available. Prefer metadata, hashes, small contact sheets and representative
+samples; return a short list with exact paths and evidence offsets. Do not send
+bulk logs, private transcripts or databases to the parent or a worker. Without
+delegation, use deterministic summaries and document uncertainty.
+
+Preserve captures that explain milestones, UI changes, regressions, comparisons
+or released behavior. Propose a dated archive folder with original media and a
+small Markdown index (or the project's existing index format) recording:
+
+- Capture time, project commit/build and task/session reference when known.
+- Original relative path, filename, SHA-256 and a concise caption.
+- Why it was selected and any gaps in provenance; avoid invented dates.
+
+Review private content before archiving or publishing. In an authorized cleanup,
+verify copied media and checksums before removing original candidates. Keep
+selected originals when thumbnails or contact sheets lose useful detail. Link
+the dated folder from the archive index so later agents can build a visual
+development timeline. A move on the same filesystem frees no space; external
+archival needs its own destination, permissions and verified copy.
+
+The initial storage review remains read-only. Its follow-up should name exact
+cleanup and archive targets, retained evidence, expected benefit, write access,
+verification and any irreversible step. Execute only the authorized scope; do
+not turn a project convention into standing deletion permission. For provider
+sessions and live app databases, use [session retention](session-retention.md).

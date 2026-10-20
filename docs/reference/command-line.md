@@ -87,6 +87,7 @@ basaltw agent visuals capture --before REV --after REV --settings JSON [options]
 basaltw agent doctor [HOST USER] [options]
 basaltw agent resources [--json]
 basaltw agent storage inspect [--path ABSOLUTE_DIRECTORY]... [--max-entries N] [--timeout SECONDS] [--json]
+basaltw agent storage project ABSOLUTE_PROJECT [--policy RELATIVE_JSON] [--max-entries N] [--timeout SECONDS] [--json]
 basaltw agent containers inspect [--engine podman|docker]... [--json]
 basaltw agent containers preflight --engine podman|docker --image-bytes N [options]
 basaltw agent graphics doctor --context xvfb|display [--json]
@@ -1140,7 +1141,10 @@ Ordinary host checks and support collection do not invoke container engines.
 
 `agent storage inspect` prints JSON capacity and cleanup-candidate evidence
 without deleting files, reading their contents or creating reports. Default
-roots cover caches, Trash, logs, temporary data, managed runtimes and projects.
+roots cover caches, Trash, logs, temporary data, managed runtimes, projects,
+sessions and attachments. A separate metadata-only listing covers session
+SQLite/WAL/SHM files, at most 1024 entries in each of `~/.codex` and
+`~/.t3/userdata`; it never opens databases.
 Repeat `--path` for up to eight exact local directories instead. Scans skip
 symlinks, nested mounts and remote or unknown filesystems. Defaults are 250000
 entries shared across roots, up to 50000 per default root, a cooperative
@@ -1148,6 +1152,17 @@ entries shared across roots, up to 50000 per default root, a cooperative
 accepts 1–60 seconds. Partial and unavailable evidence is explicit; allocated
 usage is not a savings guarantee. See [storage cleanup](../agents/storage-cleanup.md)
 for retention checks and approved follow-ups.
+
+`agent storage project ABSOLUTE_PROJECT` reads optional project cleanup JSON
+and measures declared roots without executing any repository command. The
+default path is `.basaltwater/cleanup.json`; `--policy` selects another literal
+project-relative path. Script rules describe preview/apply argv; agent rules
+describe curation and protected archives. Defaults are 50000 entries and a
+10-second shared scan budget. If the policy is absent, the result includes an
+optional starter layout but creates nothing. Follow existing project tooling
+and instructions first. See [project cleanup](../agents/project-cleanup.md) for
+the format, script contract and visual development archives, and
+[session retention](../agents/session-retention.md) for app-owned cleanup.
 
 `agent containers inspect` observes local storage; repeat `--engine` to narrow
 the inventory. `preflight` compares graph-root space with an explicit estimated

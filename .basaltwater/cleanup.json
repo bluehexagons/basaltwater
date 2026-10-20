@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "instructions": "Follow AGENTS.md. Keep this repository's existing layout. Generated packaging/coverage output has a guarded script; artifacts mix development evidence and need agent review.",
+  "preserve": ["docs/brand", "docs/development-history", ".venv"],
+  "rules": [
+    {
+      "name": "generated-output",
+      "paths": ["build", "dist", "htmlcov"],
+      "strategy": "script",
+      "instructions": "Run from the repository root. Confirm no packaging, coverage or release work needs these outputs. The script previews by default and refuses tracked files, active use, unsafe paths or incomplete inventory. Apply needs repository-root writes to isolate selected directories before disposal; never grant the whole home.",
+      "preview": ["python3", "scripts/clean_generated.py", "--dry-run"],
+      "apply": ["python3", "scripts/clean_generated.py", "--apply"]
+    },
+    {
+      "name": "development-evidence",
+      "paths": ["artifacts"],
+      "strategy": "agent",
+      "archive": "docs/development-history",
+      "instructions": "Review logs, screenshots and videos. Propose archiving useful milestones, regressions and comparisons with capture date, commit, original path, caption and checksum. Preserve release and unfinished-work evidence; delete only explicitly approved remnants after archive verification."
+    }
+  ]
+}

@@ -66,6 +66,24 @@ class StorageInventoryTests(unittest.TestCase):
         self.assertTrue(any(row["category"] == "project-checkouts" for row in report["candidates"]))
         self.assertTrue(any("not guaranteed reclaimable" in note for note in report["notes"]))
 
+    def test_session_state_is_metadata_only_and_skips_links_and_pipes(self) -> None:
+        for directory in (self.home / ".codex", self.home / ".t3/userdata"):
+            directory.mkdir(parents=True)
+            (directory / "state.sqlite").write_text("private database payload")
+            (directory / "state.sqlite-wal").write_text("private transaction payload")
+            (directory / "link.sqlite").symlink_to(directory / "state.sqlite")
+            os.mkfifo(directory / "pipe.sqlite")
+        with patch("builtins.open", side_effect=AssertionError("Must not read database contents")):
+            result = self.inspect()
+        files = result["session_state"]["files"]
+        self.assertEqual(len(files), 4)
+        self.assertEqual(result["session_state"]["issues"], [])
+        self.assertTrue(all(row["apparent_bytes"] > 0 and row["owner_uid"] == os.getuid() for row in files))
+        self.assertNotIn("private database payload", json.dumps(result))
+        self.assertEqual({row["category"] for row in result["candidates"]} &
+                         {"codex-sessions", "archived-sessions", "session-attachments"},
+                         {"codex-sessions", "archived-sessions", "session-attachments"})
+
     def test_entry_and_time_limits_report_partial_evidence(self) -> None:
         for index in range(4):
             (self.home / str(index)).write_bytes(b"x" * 4096)
@@ -88,6 +106,7 @@ class StorageInventoryTests(unittest.TestCase):
         row = self.inspect(self.home)["candidates"][0]
         self.assertEqual(row["files"], 0)
         self.assertIn("nested_mounts_skipped", row["issues"])
+        self.assertTrue(self.inspect(nested)["candidates"][0]["is_mountpoint"])
         self.mounts.return_value[str(nested)] = "nfs4"
         with patch.object(inventory, "_open_directory", side_effect=AssertionError("Do not touch remote paths")):
             row = self.inspect(nested)["candidates"][0]

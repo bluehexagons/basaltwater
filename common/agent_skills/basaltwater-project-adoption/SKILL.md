@@ -10,8 +10,7 @@ metadata:
 Use this skill when asked to adopt or convert an existing repository to
 Basaltwater project standards. A conversion request authorizes ordinary,
 reversible source, configuration, and documentation edits within its scope.
-Keep the change incremental and preserve useful project conventions. Do not
-apply the general project-development skill's workflow as a mandatory template.
+Keep the change incremental and preserve useful project conventions.
 
 ## Discover before changing
 
@@ -48,7 +47,8 @@ apply the general project-development skill's workflow as a mandatory template.
   scripts and their established formats where present; do not require adopting
   a JSON policy. The optional adapter is `.basaltwater/cleanup.json`.
 - For Basaltwater cleanup metadata, run
-  `basaltw agent storage project /absolute/repo [--policy relative/path.json] --json`.
+  `basaltw agent storage project /absolute/repo --json`; add
+  `--policy relative/path.json` for a custom adapter path.
   It reads project metadata and describes JSON policy; it does not execute a
   cleanup action. A policy can describe script argv with preview/apply commands
   or agent curation rules and archive paths. Read the policy and cleanup script

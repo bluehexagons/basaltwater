@@ -25,8 +25,11 @@ _ROOTS = (
     (".codex/packages/standalone/releases", "codex-releases", "Preserve the active release and rollback; use managed retention, never delete the whole Codex directory."),
     (".codex/cache", "codex-cache", "Protected agent directory: use managed maintenance; ordinary task write grants cannot include it."),
     (".codex/tmp", "codex-temporary", "Protected agent directory: stale entries need managed maintenance and active-process checks."),
+    (".codex/sessions", "codex-sessions", "Preserve resumable sessions. Review app-owned retention and selected handoffs; never bulk-delete transcripts based on age."),
+    (".codex/archived_sessions", "archived-sessions", "Archived does not mean disposable; verify supported app removal and resume dependencies before proposing reclamation."),
     (".t3/runtime/versions", "t3-runtimes", "Preserve the active runtime, rollback and all process references; use managed retention."),
     (".t3/userdata/logs", "t3-logs", "Prefer old numbered rotations; preserve current logs, sessions, attachments and application state."),
+    (".t3/userdata/attachments", "session-attachments", "Preserve attachments referenced by sessions and visual development history; use app-managed retention."),
     (".t3/scratch", "t3-scratch", "Check task ownership and running work before selecting abandoned scratch data."),
     ("repos", "project-checkouts", "Preserve source and Git data. Drill into the largest projects to investigate node_modules, .venv, .next, target or build output; verify generated and unused before proposing cleanup."),
     (".t3/worktrees", "task-worktrees", "Preserve unfinished work and branches. Use managed workspace ownership and integration checks; never delete the worktree directory wholesale."),
@@ -75,10 +78,46 @@ class _LimitReached(Exception):
     pass
 
 
+def _session_state_files(home: str, mounts: dict[str, str]) -> dict:
+    """Stat a bounded directory listing; never open session databases or WALs."""
+    result = {"files": [], "issues": []}
+    for relative in (".codex", ".t3/userdata"):
+        directory = os.path.join(home, relative)
+        if not _local(directory, mounts):
+            result["issues"].append("session_state_filesystem_unavailable")
+            continue
+        descriptor = -1
+        try:
+            descriptor = _open_directory(directory)
+            with os.scandir(descriptor) as entries:
+                for index, entry in enumerate(entries):
+                    if index >= 1024:
+                        result["issues"].append("session_state_listing_limit")
+                        break
+                    if not entry.name.endswith((".sqlite", ".sqlite-wal", ".sqlite-shm")):
+                        continue
+                    info = entry.stat(follow_symlinks=False)
+                    if stat.S_ISREG(info.st_mode):
+                        result["files"].append({"path": os.path.join(directory, entry.name),
+                            "allocated_bytes": info.st_blocks * 512, "apparent_bytes": info.st_size,
+                            "owner_uid": info.st_uid, "mtime": info.st_mtime,
+                            "retention": "Protected app state; age and size do not authorize deletion, SQL edits, truncation or vacuum."})
+        except FileNotFoundError:
+            pass
+        except OSError:
+            result["issues"].append("session_state_metadata_unavailable")
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+    result["files"].sort(key=lambda row: (-row["allocated_bytes"], row["path"]))
+    return result
+
+
 def _scan(path: str, mounts: dict[str, str], budget: dict, *, entry_limit: int, now: float) -> dict:
     result = {"path": path, "status": "unavailable", "allocated_bytes": 0, "apparent_bytes": 0,
               "files": 0, "older_than_30_days_bytes": 0, "newest_file_mtime": None,
               "owner_uid": None, "other_owner_entries": 0, "hardlinked_files": 0,
+              "is_mountpoint": path in mounts,
               "issues": [], "largest_children": []}
     if not _local(path, mounts):
         result["issues"] = ["nonlocal_or_unknown_filesystem"]
@@ -197,6 +236,8 @@ def inspect_storage(*, home: str | None = None, paths: list[str] | None = None,
         result["issues"].append("mount_inventory_unavailable")
         return result
     budget = {"entries": max_entries, "deadline": time.monotonic() + timeout}
+    if not paths:
+        result["session_state"] = _session_state_files(home, mounts)
     targets = [(path, "selected", "Operator-selected path; inspect retention and active users before cleanup.") for path in dict.fromkeys(paths)] if paths else [
         (path if path.startswith("/") else os.path.join(home, path), category, caution) for path, category, caution in _ROOTS]
     for path in dict.fromkeys(("/", home)):
@@ -225,10 +266,23 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     inspect.add_argument("--max-entries", type=int, default=250000)
     inspect.add_argument("--timeout", type=int, default=20, help="Shared scan budget in seconds (1-60)")
     inspect.add_argument("--json", action="store_true")
+    project = actions.add_parser("project", help="Inspect project cleanup rules and artifacts without running scripts")
+    project.add_argument("repository", metavar="ABSOLUTE_PROJECT")
+    project.add_argument("--policy", default=".basaltwater/cleanup.json", help="Literal project-relative JSON policy path; existing project conventions take precedence")
+    project.add_argument("--max-entries", type=int, default=50000)
+    project.add_argument("--timeout", type=int, default=10)
+    project.add_argument("--json", action="store_true")
 
 
 def run_storage_command(args: argparse.Namespace) -> int:
     try:
+        if args.agent_storage_command == "project":
+            from lib.agent_project_cleanup import inspect_project_cleanup
+
+            result = inspect_project_cleanup(args.repository, policy_path=args.policy,
+                                             max_entries=args.max_entries, timeout=args.timeout)
+            print(json.dumps(result, indent=2))
+            return 1 if result["evidence"] and result["evidence"]["issues"] else 0
         result = inspect_storage(paths=args.path, max_entries=args.max_entries, timeout=args.timeout)
         print(json.dumps(result, indent=2))
         return 1 if result["issues"] else 0
