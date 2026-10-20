@@ -108,6 +108,23 @@ class CachyOSSetupTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider CLI"):
             self.config("--t3code-desktop", "--no-agent-tool", "codex")
 
+    def test_setup_command_places_t3_options_after_positionals(self):
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        for profile, option in (("agent_cachyos", "t3code_desktop"),
+                                ("server_dev", "t3code_ready")):
+            config = SetupConfig(host="localhost", username="human", system_type=profile,
+                                 install_codex=True, **{option: True})
+            for include_username in (True, False):
+                with self.subTest(profile=profile, include_username=include_username):
+                    command = shlex.split(" ".join(config.to_setup_command(include_username)))
+                    positionals = ["basaltw", "setup", profile, "localhost"]
+                    if include_username:
+                        positionals.append("human")
+                    self.assertEqual(command[:len(positionals)], positionals)
+                    args = parser.parse_args(command[1:])
+                    self.assertEqual(args.username, "human" if include_username else None)
+                    self.assertTrue(getattr(args, option))
+
     def test_desktop_dry_run_does_not_probe_or_install(self):
         with patch("common.cachyos_t3.run") as run, patch("lib.cachyos.is_cachyos", return_value=False):
             self.assertEqual(remote_setup.run_cachyos_setup(self.config("--t3code-desktop", "--dry-run")), 0)

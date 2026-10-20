@@ -189,13 +189,31 @@ class TestDevelopmentWorkflows(unittest.TestCase):
     def test_cli_node_options_before_or_after_script_preserve_arguments(self):
         parser = argparse.ArgumentParser()
         development.add_development_parser(parser.add_subparsers(dest="command"))
-        literal = ["--json", "$HOME", "%n", "two words", ""]
-        for before in (True, False):
-            opts = ["--project", str(self.project), "--dry-run", "--manager", "pnpm"]
-            args = parser.parse_args(["develop", "node", *(opts + ["dev:electron"] if before else ["dev:electron", *opts]), "--", *literal])
-            self.assertEqual(args.script, "dev:electron")
-            self.assertEqual(args.argv, literal)
-            self.assertFalse(args.json)
+        literal = ["--json", "--manager", "yarn", "--project", "$HOME", "%n", "two words", "", "--unknown"]
+        opts = ["--project", str(self.project), "--dry-run", "--manager", "pnpm"]
+        for prefix in (opts + ["dev:electron"], ["dev:electron", *opts],
+                       [*opts[:2], "dev:electron", *opts[2:]]):
+            for suffix in ([], ["--"], ["--", *literal], ["--", "--", *literal]):
+                with self.subTest(prefix=prefix, suffix=suffix):
+                    args = parser.parse_args(["develop", "node", *prefix, *suffix])
+                    self.assertEqual(args.script, "dev:electron")
+                    self.assertEqual(args.project, str(self.project))
+                    self.assertEqual(args.argv, suffix[1:])
+                    self.assertEqual(args.manager, "pnpm")
+                    self.assertTrue(args.dry_run)
+                    self.assertFalse(args.json)
+
+    def test_cli_node_literal_suffix_cannot_supply_required_options_or_hide_errors(self):
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        for arguments in (["test", "--", "--project", str(self.project)],
+                          ["--project", str(self.project), "--", "test"],
+                          ["test", "--project", str(self.project), "--unknown", "--", "literal"],
+                          ["test", "--project", str(self.project), "--manager", "bun", "--", "literal"]):
+            with self.subTest(arguments=arguments), patch("sys.stderr", new_callable=StringIO), \
+                    self.assertRaises(SystemExit) as error:
+                parser.parse_args(["develop", "node", *arguments])
+            self.assertEqual(error.exception.code, 2)
 
     def test_recipe_git_timeout_returns_cli_failure_without_launching(self):
         parser = argparse.ArgumentParser()
