@@ -1576,14 +1576,13 @@ class SetupConfig:
             shlex.quote(setup_host),
         ]
 
+        # Keep all positionals before options for Python 3.11 argparse.
+        if include_username:
+            cmd_parts.append(self.username)
         if self.t3code_ready:
             cmd_parts.append("--t3code-ready")
         if self.t3code_desktop:
             cmd_parts.append("--t3code-desktop")
-        
-        # Add username if different from current user or if requested
-        if include_username:
-            cmd_parts.append(self.username)
         cmd_parts.extend(self._homebox_args())
         cmd_parts.extend(self._ssh_args())
         from lib.maintenance_agent_config import setup_policy_args

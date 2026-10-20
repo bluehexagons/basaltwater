@@ -29,9 +29,27 @@ UNIT_PREFIX = "basaltwater-development-"
 KINDS = ("editor", "run", "import", "exec", "node", "check")
 
 
+class _DevelopmentArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args, script_arguments: bool = False, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.script_arguments = script_arguments
+
+    def parse_known_args(self, args=None, namespace=None) -> tuple[argparse.Namespace, list[str]]:
+        arguments = list(sys.argv[1:] if args is None else args)
+        if not self.script_arguments or "--" not in arguments:
+            return super().parse_known_args(arguments, namespace)
+        # Python 3.11 cannot resume a '*' positional after intervening options.
+        # Parse only the CLI prefix so script flags and further '--' stay literal.
+        separator = arguments.index("--")
+        parsed, unknown = super().parse_known_args(arguments[:separator], namespace)
+        parsed.argv.extend(arguments[separator + 1:])
+        return parsed, unknown
+
+
 def add_development_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("develop", help="Check projects and supervise native development tasks without screen control")
-    actions = parser.add_subparsers(dest="development_command", required=True)
+    actions = parser.add_subparsers(dest="development_command", required=True,
+                                   parser_class=_DevelopmentArgumentParser)
     for name in ("doctor", "editor", "run", "import", "exec"):
         action = actions.add_parser(name)
         action.add_argument("--project", required=True, help="Existing project or worktree directory")
@@ -50,7 +68,8 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
         elif name == "exec":
             action.add_argument("argv", nargs=argparse.REMAINDER, help="Explicit application/project command following --")
     for name in ("node", "check"):
-        action = actions.add_parser(name, help="Run a declared package script" if name == "node" else "Run a declared project rendering/test recipe in the native session")
+        action = actions.add_parser(name, script_arguments=(name == "node"),
+                                    help="Run a declared package script" if name == "node" else "Run a declared project rendering/test recipe in the native session")
         action.add_argument("script" if name == "node" else "recipe")
         action.add_argument("--project", required=True)
         action.add_argument("--json", action="store_true")
