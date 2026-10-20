@@ -88,6 +88,7 @@ basaltw agent doctor [HOST USER] [options]
 basaltw agent resources [--json]
 basaltw agent storage inspect [--path ABSOLUTE_DIRECTORY]... [--max-entries N] [--timeout SECONDS] [--json]
 basaltw agent storage project ABSOLUTE_PROJECT [--policy RELATIVE_JSON] [--max-entries N] [--timeout SECONDS] [--json]
+basaltw agent storage clean-generated ABSOLUTE_PROJECT --rule NAME [--policy RELATIVE_JSON] [--dry-run | --apply]
 basaltw agent containers inspect [--engine podman|docker]... [--json]
 basaltw agent containers preflight --engine podman|docker --image-bytes N [options]
 basaltw agent graphics doctor --context xvfb|display [--json]
@@ -1157,12 +1158,27 @@ for retention checks and approved follow-ups.
 and measures declared roots without executing any repository command. The
 default path is `.basaltwater/cleanup.json`; `--policy` selects another literal
 project-relative path. Script rules describe preview/apply argv; agent rules
-describe curation and protected archives. Defaults are 50000 entries and a
-10-second shared scan budget. If the policy is absent, the result includes an
-optional starter layout but creates nothing. Follow existing project tooling
-and instructions first. See [project cleanup](../agents/project-cleanup.md) for
-the format, script contract and visual development archives, and
-[session retention](../agents/session-retention.md) for app-owned cleanup.
+describe curation and protected archives. The read-only result includes
+`generated_cleanup_commands` with preview/apply argv for generated cleanup
+strategies. Defaults are 50000 entries and a 10-second shared scan budget. If
+the policy is absent, the result includes an optional starter layout but
+creates nothing. Follow existing project tooling and instructions first.
+
+`agent storage clean-generated ABSOLUTE_PROJECT --rule NAME` previews by
+default; use `--apply` only after reviewing the planned cleanup. A rule must
+name an existing strategy generated from a reviewed version 1 cleanup policy.
+`--policy` selects a project-relative JSON policy path. Generated strategies
+select exact, disjoint relative directories and cannot overlap preserved paths,
+archives, or agent roots. They have no age filter or archive step. The command
+never executes policy commands and accepts no arbitrary path arguments. Before
+removal, guards check Git tracked files, ownership, private checkout ancestry,
+links and mounts, bounded inventory, and active use. Process checks are best
+effort; stop jobs using generated files first. Apply requires both explicit
+`--apply` and authorized cleanup scope, including writes to target parents when
+using an isolated checkout. Existing script and agent rules remain supported.
+See [project cleanup](../agents/project-cleanup.md) for policy and strategy
+details, and [session retention](../agents/session-retention.md) for app-owned
+cleanup.
 
 `agent containers inspect` observes local storage; repeat `--engine` to narrow
 the inventory. `preflight` compares graph-root space with an explicit estimated
@@ -1788,6 +1804,25 @@ automatic stable-release check through the recovery-aware update timer;
 Cloudflare ingress is not supported.
 
 ## Storage and data movement
+
+Generated project cleanup uses the guarded command below. Preview is the
+default; apply requires explicit `--apply` and authorized cleanup scope:
+
+```text
+basaltw agent storage clean-generated ABSOLUTE_PROJECT --rule NAME [--policy RELATIVE_JSON] [--dry-run | --apply]
+```
+
+The rule must name an existing strategy generated from a reviewed version 1
+cleanup policy. Rules select exact disjoint relative directories and cannot
+overlap preserved paths, archives, or agent roots; generated strategies have
+no age filter or archive step. The remover never executes policy commands or
+accepts arbitrary path argv. Its guards check Git tracked files, ownership,
+private checkout ancestry, links and mounts, bounded inventory, and active use.
+Process checks are best effort, so stop jobs that use generated files first.
+For isolated checkouts, authorized cleanup scope must also permit writes to
+target parents. The read-only `agent storage project` command reports
+`generated_cleanup_commands` preview/apply argv. Existing script and agent
+cleanup rules remain supported.
 
 `basaltw scrub status HOST` lists persistent integrity findings. Use `inspect`
 or `verify` with `--file /absolute/target/path` to inspect one file or check its
