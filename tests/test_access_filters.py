@@ -401,14 +401,23 @@ class TestGenericUfwFiltering(unittest.TestCase):
     @patch("smb.samba_steps.run")
     def test_generic_source_restricts_samba_and_removes_stale_rules(self, mock_run) -> None:
         status = (
+            "Status: active\n"
             "[ 2] 445/tcp ALLOW IN 10.0.0.0/8 "
             "# basaltwater Samba 445/tcp source 10.0.0.0/8\n"
         )
+        inspections = 0
 
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
+            nonlocal inspections
+            if command == "ufw status numbered":
+                inspections += 1
+                return SimpleNamespace(returncode=0, stdout=status if inspections <= 2 else (
+                    "Status: active\n[ 1] 445/tcp ALLOW IN 192.168.1.0/24 "
+                    "# basaltwater Samba 445/tcp source 192.168.1.0/24\n"
+                ))
             return SimpleNamespace(
                 returncode=0,
-                stdout=status if command == "ufw status numbered" else "",
+                stdout="Status: active\nDefault: deny (incoming)\n" if command == "ufw status verbose" else "",
             )
 
         mock_run.side_effect = run_side_effect
@@ -428,12 +437,19 @@ class TestGenericUfwFiltering(unittest.TestCase):
             "comment 'basaltwater Samba 445/tcp source 192.168.1.0/24'",
             commands,
         )
-        self.assertIn("ufw delete allow 445/tcp", commands)
         self.assertIn("ufw --force delete 2", commands)
 
     @patch("smb.samba_steps.run")
     def test_samba_source_does_not_restrict_other_services(self, mock_run) -> None:
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="")
+        def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
+            numbered = (
+                "Status: active\n[ 1] 445/tcp ALLOW IN 192.168.20.0/24 "
+                "# basaltwater Samba 445/tcp source 192.168.20.0/24\n"
+            )
+            return SimpleNamespace(returncode=0, stdout=numbered if command == "ufw status numbered" else (
+                "Status: active\nDefault: deny (incoming)\n" if command == "ufw status verbose" else ""
+            ))
+        mock_run.side_effect = run_side_effect
         config = SetupConfig(
             host="host.example.test",
             username="admin",

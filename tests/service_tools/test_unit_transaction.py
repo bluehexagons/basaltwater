@@ -123,6 +123,25 @@ class TestUnitTransaction(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "template"):
             units.replace_units({"shell@.service": "bad"}, activate=("shell@.service",), unit_dir=str(self.root))
 
+    def test_mount_names_accept_systemd_path_escapes_but_reject_unsafe_names(self):
+        for base in ("mnt-assets", "123-data", r"mnt-projects\x2dold", r"mnt-share\x25h", "-"):
+            with self.subTest(base=base):
+                pair = {base + ".mount": "mount", base + ".automount": "automount"}
+                units.replace_units(pair, activate=(), unit_dir=str(self.root))
+                for name in pair:
+                    self.assertEqual((self.root / name).read_text(), pair[name])
+        for name in ("../bad.mount", "a/b.automount", "..mount", "...automount",
+                     "mnt-evil\n.mount", r"mnt-\q.mount", "a" * 250 + ".automount"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                units.replace_units({name: "bad"}, activate=(), unit_dir=str(self.root))
+
+    def test_deactivation_requires_unique_staged_unit_names(self):
+        for deactivate in (("missing.mount",), ("demo.timer", "demo.timer")):
+            with self.subTest(deactivate=deactivate), self.assertRaises(ValueError):
+                units.replace_units({"demo.timer": "new"}, activate=(), deactivate=deactivate, unit_dir=str(self.root))
+        self.assertEqual(self.path.read_text(), "old unit")
+        self.assertEqual(self.commands, [])
+
     def test_template_removal_does_not_query_or_stop_an_abstract_service(self):
         (self.root / "shell@.service").write_text("login template")
         (self.root / "shell.socket").write_text("socket")

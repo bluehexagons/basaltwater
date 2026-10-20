@@ -17,6 +17,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.config import SetupConfig
+from lib.validation import validate_samba_share_specs
 from smb import samba_steps
 
 
@@ -202,23 +203,47 @@ class TestSambaFail2banJail(unittest.TestCase):
 
 
 class TestConfigureSambaFirewall(unittest.TestCase):
+    def setUp(self) -> None:
+        self.rules: list[str] = []
+        self.commands: list[str] = []
+        self.verbose = "Status: active\nDefault: deny (incoming), allow (outgoing)\n"
+
+    def run_ufw(self, command: str, **_kwargs: object) -> MagicMock:
+        import shlex
+
+        self.commands.append(command)
+        stdout = ""
+        if command == "ufw status numbered":
+            stdout = "Status: active\n" + "\n".join(
+                f"[{number:2}] {rule}" for number, rule in enumerate(self.rules, 1)
+            )
+        elif command == "ufw status verbose":
+            stdout = self.verbose + "\n".join(self.rules)
+        elif command.startswith("ufw --force delete "):
+            del self.rules[int(command.rsplit(" ", 1)[1]) - 1]
+        elif command.startswith("ufw allow "):
+            args = shlex.split(command)
+            source = args[3] if args[2] == "from" else "Anywhere"
+            if ":" in source:
+                self.rules.append(f"445/tcp (v6) ALLOW IN {source} # {args[-1]}")
+            else:
+                index = next((index for index, rule in enumerate(self.rules) if "(v6)" in rule), len(self.rules))
+                self.rules.insert(index, f"445/tcp ALLOW IN {source} # {args[-1]}")
+        return MagicMock(returncode=0, stdout=stdout, stderr="")
+
     def test_only_opens_445_and_removes_legacy_139(self) -> None:
-        commands: list[str] = []
-
-        def fake_run(cmd, **kwargs):
-            commands.append(cmd)
-            res = MagicMock()
-            res.returncode = 0
-            return res
-
-        with patch.object(samba_steps, 'run', side_effect=fake_run):
+        self.rules = ["139/tcp ALLOW IN Anywhere", "139 ALLOW IN Anywhere (v6)",
+                      "139/udp ALLOW IN 10.0.0.0/8 # operator"]
+        with patch.object(samba_steps, 'run', side_effect=self.run_ufw):
             samba_steps.configure_samba_firewall(_make_config())
 
-        joined = "\n".join(commands)
-        self.assertIn("ufw delete allow 139/tcp", joined)
+        joined = "\n".join(self.commands)
+        self.assertIn("ufw --force delete 3", joined)
+        self.assertIn("ufw --force delete 1", joined)
         self.assertIn("ufw allow 445/tcp", joined)
+        self.assertIn("139/udp ALLOW IN 10.0.0.0/8 # operator", self.rules)
         # No allow rule for 139 should be issued.
-        self.assertFalse(any("ufw allow 139" in c for c in commands))
+        self.assertFalse(any("ufw allow 139" in c for c in self.commands))
         self.assertIn("ufw reload", joined)
 
     def test_captures_expected_ufw_reconciliation_output(self) -> None:
@@ -226,7 +251,7 @@ class TestConfigureSambaFirewall(unittest.TestCase):
 
         def fake_run(command: str, **kwargs: object) -> MagicMock:
             calls.append((command, kwargs))
-            return MagicMock(returncode=0, stdout="", stderr="")
+            return self.run_ufw(command, **kwargs)
 
         with patch.object(samba_steps, "run", side_effect=fake_run):
             samba_steps.configure_samba_firewall(_make_config())
@@ -236,24 +261,138 @@ class TestConfigureSambaFirewall(unittest.TestCase):
                 self.assertTrue(kwargs.get("capture_output"), command)
 
     def test_container_defers_firewall_to_host(self) -> None:
-        with patch.object(samba_steps, "run") as mock_run:
-            samba_steps.configure_samba_firewall(
-                _make_config(machine_type="unprivileged")
-            )
-
-        mock_run.assert_not_called()
+        for machine_type in ("unprivileged", "oci", "wsl"):
+            with self.subTest(machine_type=machine_type), patch.object(samba_steps, "run") as mock_run:
+                samba_steps.configure_samba_firewall(_make_config(machine_type=machine_type))
+            mock_run.assert_not_called()
 
     def test_required_samba_rule_failure_stops_setup(self) -> None:
         def fake_run(command: str, **_kwargs: object) -> MagicMock:
-            return MagicMock(
-                returncode=1 if command.startswith("ufw allow 445/tcp") else 0,
-                stdout="",
-                stderr="permission denied",
-            )
+            if command.startswith("ufw allow 445/tcp"):
+                return MagicMock(returncode=1, stderr="permission denied")
+            return self.run_ufw(command)
 
         with patch.object(samba_steps, "run", side_effect=fake_run):
             with self.assertRaisesRegex(RuntimeError, "Samba firewall rule"):
                 samba_steps.configure_samba_firewall(_make_config())
+
+    def test_revocation_removes_broad_and_stale_rules_in_descending_order(self) -> None:
+        self.rules = [
+            "445/tcp ALLOW IN Anywhere # Samba SMB",
+            "22/tcp ALLOW IN 10.0.0.0/8 # operator",
+            "445/tcp ALLOW IN 10.0.0.0/8 # basaltwater Samba 445/tcp source 10.0.0.0/8",
+            "445/tcp (v6) ALLOW IN Anywhere (v6) # Samba SMB",
+        ]
+        with patch.object(samba_steps, "run", side_effect=self.run_ufw):
+            samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+        deletes = [command for command in self.commands if "delete" in command]
+        self.assertEqual(deletes, ["ufw --force delete 5", "ufw --force delete 3", "ufw --force delete 1"])
+        self.assertEqual(len(self.rules), 2)
+        self.assertIn("22/tcp ALLOW IN 10.0.0.0/8 # operator", self.rules)
+
+    def test_clearing_sources_removes_old_managed_restrictions(self) -> None:
+        self.rules = ["445/tcp ALLOW IN 10.0.0.0/8 # basaltwater Samba 445/tcp source 10.0.0.0/8"]
+        with patch.object(samba_steps, "run", side_effect=self.run_ufw):
+            samba_steps.configure_samba_firewall(_make_config())
+        self.assertEqual(self.rules, ["445/tcp ALLOW IN Anywhere # Samba SMB"])
+
+    def test_inspection_deletion_and_reload_failures_are_fatal(self) -> None:
+        for failed_command in ("ufw status numbered", "ufw --force delete 1", "ufw reload", "ufw status verbose"):
+            with self.subTest(failed_command=failed_command):
+                self.rules = ["445/tcp ALLOW IN Anywhere"]
+                def fail(command, **kwargs):
+                    if command == failed_command:
+                        return MagicMock(returncode=1, stdout="", stderr="failed")
+                    return self.run_ufw(command, **kwargs)
+                with patch.object(samba_steps, "run", side_effect=fail), self.assertRaises(RuntimeError):
+                    samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+
+    def test_successful_but_ineffective_deletion_is_fatal(self) -> None:
+        self.rules = ["445/tcp ALLOW IN Anywhere"]
+        def ignore_delete(command, **kwargs):
+            if command.startswith("ufw --force delete"):
+                return MagicMock(returncode=0)
+            return self.run_ufw(command, **kwargs)
+        with patch.object(samba_steps, "run", side_effect=ignore_delete), \
+             self.assertRaisesRegex(RuntimeError, "Obsolete Samba firewall rules remain"):
+            samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+
+    def test_inactive_numbered_status_fails_before_rule_mutation(self) -> None:
+        with patch.object(samba_steps, "run", return_value=MagicMock(
+            returncode=0, stdout="Status: inactive\n",
+        )) as run, self.assertRaisesRegex(RuntimeError, "requires active UFW"):
+            samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+        self.assertEqual([call.args[0] for call in run.call_args_list], ["ufw status numbered"])
+
+    def test_failed_final_inspection_or_missing_requested_rule_is_fatal(self) -> None:
+        for fail_inspection in (False, True):
+            with self.subTest(fail_inspection=fail_inspection):
+                self.rules = []
+                inspections = 0
+                def inspect(command, **kwargs):
+                    nonlocal inspections
+                    if command == "ufw status numbered":
+                        inspections += 1
+                        if inspections == 3:
+                            return MagicMock(returncode=int(fail_inspection), stdout="Status: active\n")
+                    return self.run_ufw(command, **kwargs)
+                with patch.object(samba_steps, "run", side_effect=inspect), self.assertRaises(RuntimeError):
+                    samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+
+    def test_inactive_firewall_or_unfiltered_default_cannot_report_success(self) -> None:
+        for output in ("Status: inactive\n", "Status: active\nDefault: allow (incoming)\n", "Status: active\n"):
+            with self.subTest(output=output):
+                self.verbose = output
+                with patch.object(samba_steps, "run", side_effect=self.run_ufw), self.assertRaises(RuntimeError):
+                    samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+
+    def test_unrelated_rules_that_widen_smb_access_are_reported_and_preserved(self) -> None:
+        for rule in (
+            "440:450/tcp ALLOW IN Anywhere # operator range",
+            "137,138/udp ALLOW IN Anywhere\n139,445/tcp ALLOW IN Anywhere # expanded Samba profile",
+            "445/tcp ALLOW IN 10.0.0.0/8 # operator subnet",
+            "445/tcp (v6) ALLOW IN 2001:db8::/32 # operator IPv6",
+        ):
+            with self.subTest(rule=rule):
+                self.rules = [rule]
+                with patch.object(samba_steps, "run", side_effect=self.run_ufw), \
+                     self.assertRaisesRegex(RuntimeError, "unrequested source"):
+                    samba_steps.configure_samba_firewall(_make_config(samba_sources=["192.168.1.0/24"]))
+                self.assertIn(rule, self.rules)
+
+    def test_requested_ipv4_and_ipv6_sources_pass_verification(self) -> None:
+        with patch.object(samba_steps, "run", side_effect=self.run_ufw):
+            samba_steps.configure_samba_firewall(_make_config(
+                samba_sources=["192.168.1.0/24", "fd00::/64"], machine_type="privileged",
+            ))
+        self.assertEqual(len(self.rules), 2)
+
+
+class TestSambaFirewallComposition(unittest.TestCase):
+    def test_capable_server_lite_samba_selects_base_firewall(self) -> None:
+        from plugins.server import build_server_steps
+        from security.steps import configure_firewall
+
+        for machine in ("vm", "hardware", "privileged", "unprivileged", "oci", "wsl"):
+            with self.subTest(machine=machine):
+                steps = build_server_steps(_make_config(enable_samba=True, machine_type=machine))
+                functions = [function for _label, function in steps]
+                self.assertEqual(functions.count(configure_firewall), int(machine in {"vm", "hardware", "privileged"}))
+
+    def test_existing_profiles_keep_single_firewall_and_proxmox_native_plan(self) -> None:
+        from plugins.server import build_server_steps
+        from plugins.workstation import build_workstation_steps
+        from plugins.proxmox import build_server_proxmox_steps
+        from security.steps import configure_firewall, configure_firewall_web
+
+        for profile, builder in (("server_dev", build_server_steps), ("server_web", build_server_steps),
+                                 ("workstation_dev", build_workstation_steps), ("server_proxmox", build_server_proxmox_steps)):
+            with self.subTest(profile=profile):
+                functions = [function for _label, function in builder(_make_config(
+                    enable_samba=True, system_type=profile, include_web_firewall=profile == "server_web",
+                ))]
+                self.assertEqual(sum(function in {configure_firewall, configure_firewall_web} for function in functions),
+                                 int(profile != "server_proxmox"))
 
 
 class TestConfigureSambaFail2banLegacyCleanup(unittest.TestCase):
@@ -398,6 +537,34 @@ class TestVetoFilesPattern(unittest.TestCase):
 
 
 class TestReconcileSambaShares(unittest.TestCase):
+    def test_overlapping_roots_fail_before_any_account_or_filesystem_mutation(self) -> None:
+        for first, second in (
+            ("/srv/docs", "/srv/docs"),
+            ("/srv/docs", "/srv/docs/archive"),
+            ("/srv/docs/archive", "/srv/docs"),
+            ("/srv/docs/", "/srv/other/../docs"),
+            ("//srv/docs", "/srv/docs/archive"),
+        ):
+            with self.subTest(first=first, second=second):
+                shares = [["read", "docs", first, "alice:secret"],
+                          ["write", "archive", second, "bob:secret"]]
+                with self.assertRaisesRegex(ValueError, "Overlapping Samba share roots"):
+                    validate_samba_share_specs(shares)
+                with patch.object(samba_steps, "run") as run, \
+                     patch.object(samba_steps.os, "makedirs") as mkdir, \
+                     patch.object(samba_steps, "_prepare_samba_share") as prepare, \
+                     self.assertRaisesRegex(ValueError, "Overlapping Samba share roots"):
+                    samba_steps.reconcile_samba_shares(_make_config(samba_shares=shares))
+                run.assert_not_called()
+                mkdir.assert_not_called()
+                prepare.assert_not_called()
+
+    def test_sibling_roots_with_shared_prefix_are_allowed(self) -> None:
+        validate_samba_share_specs([
+            ["read", "docs", "/srv/docs", "alice:secret"],
+            ["write", "archive", "/srv/docs-archive", "bob:secret"],
+        ])
+
     def _run_reconcile(
         self,
         original: str,

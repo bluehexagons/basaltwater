@@ -1074,6 +1074,7 @@ def validate_samba_share_specs(
     credentials = parse_share_credentials(share_credentials)
 
     share_names: set[str] = set()
+    share_roots: list[str] = []
     for share_spec in samba_shares:
         share_config = parse_share_spec(share_spec, credentials)
         share_name = share_config["share_name"]
@@ -1091,9 +1092,19 @@ def validate_samba_share_specs(
         for path in cast(list[str], share_config["paths"]):
             if not os.path.isabs(path):
                 raise ValueError(f"Share path must be absolute: {path}")
-            if os.path.normpath(path) == "/":
+            normalized_path = "/" + os.path.normpath(path).lstrip("/")
+            if normalized_path == "/":
                 raise ValueError("Samba share path must not be the filesystem root")
             validate_filesystem_path(path, must_exist=False)
+            for previous_root in share_roots:
+                if os.path.commonpath((normalized_path, previous_root)) in {
+                    normalized_path, previous_root,
+                }:
+                    raise ValueError(
+                        "Overlapping Samba share roots are not supported: "
+                        f"{previous_root}, {path}"
+                    )
+            share_roots.append(normalized_path)
 
         if not share_config["users"]:
             raise ValueError(f"No users specified for share: {share_name}")

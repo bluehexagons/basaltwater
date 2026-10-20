@@ -138,6 +138,7 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         get_final_steps,
     )
     from plugins.security import get_security_steps, get_web_firewall_steps
+    from lib.machine_state import can_manage_firewall
     from plugins.desktop import extend_desktop_steps, extend_desktop_browser_and_office_steps
     from plugins.sync import extend_syncthing_steps
     from plugins.web import (
@@ -166,11 +167,12 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         or config.enable_mdns
         or config.clear_mdns
         or config.enable_rdp
+        or (config.enable_samba and can_manage_firewall(config.machine_type))
     ):
         from security.steps import configure_firewall
 
         steps.append(
-            ("Configuring firewall for requested services" if config.enable_rdp
+            ("Configuring firewall for requested services" if config.enable_rdp or config.enable_samba
              else "Configuring firewall for requested web ports", configure_firewall)
         )
 

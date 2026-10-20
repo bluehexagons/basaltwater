@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import shlex
 import re
 from typing import Any, Optional, cast
@@ -56,23 +57,76 @@ def install_samba(config: SetupConfig) -> None:
     print("  ✓ Samba installed/updated and service started")
 
 
+def _samba_firewall_status(kind: str) -> str:
+    result = run(
+        f"ufw status {kind}", check=False, capture_output=True,
+        env={**os.environ, "LC_ALL": "C"},
+    )
+    if result.returncode != 0 or not isinstance(result.stdout, str):
+        raise RuntimeError(f"Could not inspect Samba firewall policy (ufw status {kind})")
+    if not re.search(r"^Status: active\s*$", result.stdout, re.MULTILINE):
+        raise RuntimeError("Samba firewall policy requires active UFW; run base firewall setup first")
+    return result.stdout
+
+
+def _obsolete_samba_rules(status: str, desired_comments: set[str], *, restricted: bool) -> list[int]:
+    """Select managed stale rules and the exact legacy broad port allows."""
+    numbers = []
+    for line in status.splitlines():
+        match = re.match(r"^\[\s*(\d+)\]\s*(.*)", line.strip())
+        if not match:
+            continue
+        rule, _, comment = match[2].partition("#")
+        comment = comment.strip()
+        stale = (
+            comment.startswith(SAMBA_FIREWALL_COMMENT_PREFIX)
+            and comment not in desired_comments
+        )
+        legacy = re.fullmatch(
+            r"(139(?:/tcp)?|445/tcp)\s+(?:\(v6\)\s+)?ALLOW IN\s+Anywhere(?: \(v6\))?\s*",
+            rule.strip(),
+        )
+        if stale or (legacy and (legacy[1].startswith("139") or restricted)):
+            numbers.append(int(match[1]))
+    return numbers
+
+
+def _verify_samba_firewall(sources: list[str]) -> None:
+    """Check effective defaults and all inbound allows affecting SMB."""
+    from security.security_steps import _ufw_destination_allows_tcp
+
+    status = _samba_firewall_status("verbose")
+    if not re.search(r"^Default:\s+(?:deny|reject)\s+\(incoming\)", status, re.MULTILINE):
+        raise RuntimeError("Samba firewall policy requires a deny or reject incoming default")
+    if not sources:
+        return
+    networks = [ipaddress.ip_network(source, strict=False) for source in sources]
+    for line in status.splitlines():
+        match = re.match(r"^(.+?)\s+(?:ALLOW|LIMIT) IN\s+(.+?)(?:\s+#.*)?$", line.strip())
+        if not match or not _ufw_destination_allows_tcp(match[1], 445):
+            continue
+        source = match[2].removesuffix(" (v6)").strip()
+        if source == "Anywhere":
+            source = "::/0" if "(v6)" in line else "0.0.0.0/0"
+        try:
+            allowed = ipaddress.ip_network(source, strict=False)
+        except ValueError as exc:
+            raise RuntimeError(f"Could not verify Samba UFW rule: {line.strip()}") from exc
+        if allowed.is_loopback:
+            continue
+        if not any(allowed.version == desired.version and allowed.subnet_of(desired) for desired in networks):
+            raise RuntimeError(f"Samba firewall still permits an unrequested source: {line.strip()}")
+
+
 def configure_samba_firewall(config: SetupConfig) -> None:
     if not can_manage_firewall(config.machine_type):
         print("  ✓ Skipping Samba guest firewall (container host must enforce access)")
         return
 
-    # Modern SMB only needs 445/tcp. NetBIOS (137/138/139) is disabled in the
-    # global Samba config (`disable netbios = yes`), so opening 139/tcp would
-    # only widen the attack surface for no benefit. Remove any pre-existing
-    # 139/tcp rule that an earlier version of this tool may have added.
-    cleanup_rules = [
-        "ufw delete allow 139/tcp",
-        "ufw delete allow 139",
-    ]
-    for rule in cleanup_rules:
-        run(rule, check=False, capture_output=True)
-
     sources = config.effective_samba_sources()
+    # Inspect before adding anything. Inactive UFW cannot enumerate saved
+    # rules, and reload alone does not establish that filtering is active.
+    _samba_firewall_status("numbered")
     desired_comments: set[str] = set()
     if sources:
         for source in sources:
@@ -89,7 +143,6 @@ def configure_samba_firewall(config: SetupConfig) -> None:
                 raise RuntimeError(
                     f"Failed to restrict Samba to access source {source}"
                 )
-        run("ufw delete allow 445/tcp", check=False, capture_output=True)
     else:
         result = run(
             "ufw allow 445/tcp comment 'Samba SMB'",
@@ -99,25 +152,25 @@ def configure_samba_firewall(config: SetupConfig) -> None:
         if result.returncode != 0:
             raise RuntimeError("Failed to add Samba firewall rule for TCP 445")
 
-    status = run("ufw status numbered", check=False, capture_output=True)
-    stale_numbers: list[int] = []
-    if status.returncode == 0 and isinstance(status.stdout, str):
-        for line in status.stdout.splitlines():
-            match = re.match(r"^\[\s*(\d+)\]", line.strip())
-            if not match or "#" not in line:
-                continue
-            comment = line.split("#", 1)[1].strip()
-            if (
-                comment.startswith(SAMBA_FIREWALL_COMMENT_PREFIX)
-                and comment not in desired_comments
-            ):
-                stale_numbers.append(int(match.group(1)))
+    # UFW groups IPv4 before IPv6. Adding an IPv4 rule can renumber existing
+    # IPv6 entries, so enumerate again after additions before deleting by index.
+    status = _samba_firewall_status("numbered")
+    stale_numbers = _obsolete_samba_rules(status, desired_comments, restricted=bool(sources))
     for number in sorted(stale_numbers, reverse=True):
-        run(f"ufw --force delete {number}", check=False, capture_output=True)
+        result = run(f"ufw --force delete {number}", check=False, capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to remove obsolete Samba firewall rule {number}")
 
     reload_result = run("ufw reload", check=False, capture_output=True)
     if reload_result.returncode != 0:
         raise RuntimeError("Failed to reload UFW after Samba rule reconciliation")
+    final_status = _samba_firewall_status("numbered")
+    if _obsolete_samba_rules(final_status, desired_comments, restricted=bool(sources)):
+        raise RuntimeError("Obsolete Samba firewall rules remain after reconciliation")
+    comments = {line.partition("#")[2].strip() for line in final_status.splitlines() if "#" in line}
+    if not desired_comments <= comments:
+        raise RuntimeError("Requested Samba firewall rules are missing after reconciliation")
+    _verify_samba_firewall(sources)
     if sources:
         print(
             "  ✓ Firewall restricts Samba (445/tcp) to "

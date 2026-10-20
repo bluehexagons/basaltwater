@@ -1,186 +1,202 @@
-"""Regression tests for SMB client mount hardening defaults."""
+"""SMB unit generation, migration and rollback without system mutation."""
 
 from __future__ import annotations
 
 import os
-import sys
+from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
 from lib.config import SetupConfig
+from lib import unit_transaction
 from smb import smb_mount_steps
 
 
 class TestConfigureSmbMountUnit(unittest.TestCase):
-    def test_unit_pins_smb3_and_uses_safe_file_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            etc_systemd = os.path.join(tmp, 'etc-systemd')
-            creds_dir = os.path.join(tmp, 'creds')
-            mountpoint = os.path.join(tmp, 'mnt-share')
-            os.makedirs(etc_systemd)
-            os.makedirs(creds_dir)
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.unit_dir = self.root / "units"
+        self.unit_dir.mkdir()
+        self.creds = self.root / "creds%h"
+        self.mountpoint = str(self.root / "mnt-share")
+        self.escaped = "mnt-share"
+        self.states: dict[str, list[str]] = {}
+        self.commands: list[list[str]] = []
+        self.failure: list[str] | None = None
+        for target, replacement in (
+            ("SMB_UNIT_DIR", str(self.unit_dir)),
+            ("SMB_CREDENTIALS_DIR", str(self.creds)),
+        ):
+            self.enterContext(patch.object(smb_mount_steps, target, replacement))
+        self.enterContext(patch.object(smb_mount_steps, "validate_smb_mount_specs"))
+        self.enterContext(patch.object(smb_mount_steps.os, "fchown"))
+        self.enterContext(patch.object(smb_mount_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=123)))
+        self.enterContext(patch.object(smb_mount_steps.grp, "getgrnam", return_value=MagicMock(gr_gid=456)))
+        self.enterContext(patch.object(smb_mount_steps, "run", side_effect=lambda *args, **kwargs: MagicMock(
+            returncode=0, stdout=self.escaped + "\n",
+        )))
+        self.enterContext(patch.object(unit_transaction, "run", side_effect=self.run_command))
+        self.enterContext(patch.object(unit_transaction, "is_dry_run", return_value=False))
 
-            real_open = open
+    def run_command(self, command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        self.commands.append(command)
+        if command == self.failure:
+            self.failure = None
+            raise subprocess.CalledProcessError(1, command)
+        output = ""
+        if command[0] == "systemd-analyze":
+            self.assertEqual(len(command[2:]), 2)
+            self.assertTrue(all(Path(candidate).is_file() for candidate in command[2:]))
+        elif command[0] == "systemctl" and command[1] != "daemon-reload":
+            name = command[2] if command[1] == "show" else command[-1]
+            path = self.unit_dir / name
+            state = self.states.setdefault(name, ["inactive", ""])
+            if command[1] == "show":
+                enabled = state[1] if path.exists() else ""
+                if path.exists() and "[Install]" not in path.read_text():
+                    enabled = "static"
+                output = (f"LoadState={'loaded' if path.exists() else 'not-found'}\n"
+                          f"ActiveState={state[0]}\nUnitFileState={enabled}\n")
+            elif command[1] == "stop":
+                self.assertTrue(path.exists(), "must not stop a missing automount")
+                state[0] = "inactive"
+            elif command[1] == "restart":
+                state[0] = "active"
+            elif command[1] == "enable":
+                state[1] = "enabled-runtime" if "--runtime" in command else "enabled"
+            elif command[1] == "disable":
+                state[1] = "disabled"
+        return subprocess.CompletedProcess(command, 0, output, "")
 
-            def fake_open(path, mode='r', *args, **kwargs):
-                if path.startswith('/etc/systemd/system/'):
-                    target = os.path.join(etc_systemd, os.path.basename(path))
-                    return real_open(target, mode, *args, **kwargs)
-                if path.startswith('/root/.smb/'):
-                    target = os.path.join(creds_dir, os.path.basename(path))
-                    return real_open(target, mode, *args, **kwargs)
-                return real_open(path, mode, *args, **kwargs)
+    def configure(self, **overrides: str) -> None:
+        smb_mount_steps.configure_smb_mount(
+            SetupConfig(host="h", username="alice", system_type="server_lite"),
+            [overrides.get("mountpoint", self.mountpoint), "192.168.1.10",
+             overrides.get("credentials", "svc:hunter2"), overrides.get("share", "docs"),
+             overrides.get("subdir", "/sub")],
+        )
 
-            def fake_run(cmd, **kwargs):
-                res = MagicMock()
-                res.returncode = 0
-                if 'systemd-escape' in cmd:
-                    escaped = mountpoint.lstrip('/').replace('/', '-')
-                    res.stdout = escaped + '\n'
-                else:
-                    res.stdout = ''
-                return res
+    def seed_old_units(self, *, automount: bool) -> dict[str, str]:
+        original = {"mnt-share.mount": "old mount\n[Install]\nWantedBy=multi-user.target\n"}
+        self.states["mnt-share.mount"] = ["active", "enabled"]
+        if automount:
+            original["mnt-share.automount"] = "old automount\n[Install]\nWantedBy=multi-user.target\n"
+            self.states["mnt-share.automount"] = ["active", "enabled-runtime"]
+        for name, content in original.items():
+            path = self.unit_dir / name
+            path.write_text(content)
+            path.chmod(0o640)
+        return original
 
-            config = SetupConfig(host='h', username='alice', system_type='server_lite')
+    def test_native_pair_pins_smb3_and_enables_only_the_automount(self) -> None:
+        self.configure()
+        mount = (self.unit_dir / "mnt-share.mount").read_text()
+        automount = (self.unit_dir / "mnt-share.automount").read_text()
+        self.assertIn("vers=3.0,seal,nofail", mount)
+        self.assertIn("file_mode=0644,dir_mode=0755", mount)
+        self.assertNotIn("x-systemd.", mount)
+        self.assertNotIn("[Install]", mount)
+        self.assertIn("After=network-online.target\nWants=network-online.target\n", mount)
+        self.assertIn(f"[Automount]\nWhere={self.mountpoint}\nTimeoutIdleSec=60\n", automount)
+        self.assertNotIn("network-online.target", automount)
+        self.assertIn("WantedBy=multi-user.target", automount)
+        self.assertIn(["systemctl", "enable", "mnt-share.automount"], self.commands)
+        self.assertNotIn(["systemctl", "enable", "mnt-share.mount"], self.commands)
+        self.assertNotIn(["systemctl", "restart", "mnt-share.mount"], self.commands)
+        self.assertEqual((self.creds / "credentials-mnt-share").read_text(), "username=svc\npassword=hunter2\n")
 
-            with patch.object(smb_mount_steps, 'run', side_effect=fake_run), \
-                 patch.object(smb_mount_steps, 'open', side_effect=fake_open, create=True), \
-                 patch.object(smb_mount_steps, 'cleanup_systemd_unit'), \
-                 patch.object(smb_mount_steps, 'validate_smb_mount_specs'), \
-                 patch.object(smb_mount_steps, 'SMB_CREDENTIALS_DIR', creds_dir), \
-                 patch.object(smb_mount_steps.pwd, 'getpwnam', return_value=MagicMock(pw_uid=123)), \
-                 patch.object(smb_mount_steps.grp, 'getgrnam', return_value=MagicMock(gr_gid=456)), \
-                 patch.object(smb_mount_steps.os, 'fchown'):
-                smb_mount_steps.configure_smb_mount(
-                    config,
-                    mount_spec=[mountpoint, '192.168.1.10', 'svc:hunter2', 'docs', '/sub'],
-                )
+    def test_migration_disables_old_mount_before_enabling_automount(self) -> None:
+        self.seed_old_units(automount=False)
+        self.configure()
+        self.assertEqual(self.states["mnt-share.mount"], ["inactive", "disabled"])
+        self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled"])
+        self.assertLess(self.commands.index(["systemctl", "disable", "mnt-share.mount"]),
+                        self.commands.index(["systemctl", "enable", "mnt-share.automount"]))
 
-            unit_files = os.listdir(etc_systemd)
-            self.assertEqual(len(unit_files), 1, f"unexpected units: {unit_files}")
-            with real_open(os.path.join(etc_systemd, unit_files[0])) as f:
-                unit_body = f.read()
+    def test_existing_automount_stops_before_mount_and_repeated_setup_succeeds(self) -> None:
+        self.seed_old_units(automount=True)
+        self.configure()
+        self.assertLess(self.commands.index(["systemctl", "stop", "mnt-share.automount"]),
+                        self.commands.index(["systemctl", "stop", "mnt-share.mount"]))
+        self.configure()
+        self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled"])
 
-            cred_files = os.listdir(creds_dir)
-            self.assertEqual(len(cred_files), 1, f"unexpected creds: {cred_files}")
-            with real_open(os.path.join(creds_dir, cred_files[0])) as f:
-                cred_body = f.read()
+    def test_migration_failures_restore_previous_files_modes_and_states(self) -> None:
+        for automount in (False, True):
+            for action in ("stop", "disable", "daemon-reload", "enable", "restart"):
+                with self.subTest(automount=automount, action=action):
+                    for path in self.unit_dir.glob("mnt-share.*"):
+                        path.unlink()
+                    self.states.clear()
+                    self.commands.clear()
+                    originals = self.seed_old_units(automount=automount)
+                    expected_states = {name: list(state) for name, state in self.states.items()}
+                    self.failure = ["systemctl", action]
+                    if action in {"stop", "disable"}:
+                        self.failure.append("mnt-share.mount")
+                    elif action in {"enable", "restart"}:
+                        self.failure.append("mnt-share.automount")
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.configure()
+                    for name, content in originals.items():
+                        self.assertEqual((self.unit_dir / name).read_text(), content)
+                        self.assertEqual((self.unit_dir / name).stat().st_mode & 0o777, 0o640)
+                        self.assertEqual(self.states[name], expected_states[name])
+                    if not automount:
+                        self.assertFalse((self.unit_dir / "mnt-share.automount").exists())
+                    self.assertFalse((self.unit_dir / ".basaltwater-unit-operation.json").exists())
 
-        # Pinned to SMB3+ minimum and request encryption-on-the-wire.
-        self.assertIn("vers=3.0", unit_body)
-        self.assertIn("seal", unit_body)
-        # Files should not be world-executable by default.
-        self.assertIn("file_mode=0644", unit_body)
-        self.assertIn("dir_mode=0755", unit_body)
-        # Defensive defaults for boot-time behaviour are preserved.
-        self.assertIn("nofail", unit_body)
-        self.assertIn("x-systemd.automount", unit_body)
-        # Credentials still contain the username/password lines.
-        self.assertIn("username=svc", cred_body)
-        self.assertIn("password=hunter2", cred_body)
+    def test_validation_failure_preserves_old_units_without_stopping(self) -> None:
+        originals = self.seed_old_units(automount=True)
+        real_runner = self.run_command
+        def fail_verify(command, **kwargs):
+            if command[0] == "systemd-analyze":
+                raise subprocess.CalledProcessError(1, command)
+            return real_runner(command, **kwargs)
+        with patch.object(unit_transaction, "run", side_effect=fail_verify), self.assertRaises(subprocess.CalledProcessError):
+            self.configure()
+        self.assertFalse(any(command[1] == "stop" for command in self.commands))
+        for name, content in originals.items():
+            self.assertEqual((self.unit_dir / name).read_text(), content)
+
+    def test_unit_values_preserve_literal_percent_signs_and_escaped_name_backslashes(self) -> None:
+        self.escaped = "mnt-share\\x25h"
+        self.configure(mountpoint=self.mountpoint + "%h", share="docs%H", subdir="/reports%u")
+        mount = (self.unit_dir / (self.escaped + ".mount")).read_text()
+        automount = (self.unit_dir / (self.escaped + ".automount")).read_text()
+        self.assertIn(f"Description=SMB mount for {self.mountpoint}%%h\n", mount)
+        self.assertIn("What=//192.168.1.10/docs%%H/reports%%u\n", mount)
+        for content in (mount, automount):
+            self.assertIn(f"Where={self.mountpoint}%%h\n", content)
+        self.assertIn("/credentials-mnt-share\\\\x25h,", mount)
+        self.assertIn(str(self.creds).replace("%", "%%"), mount)
+        self.assertTrue((self.creds / ("credentials-" + self.escaped)).is_file())
 
     def test_distinct_mountpoints_use_distinct_credential_files(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            etc_systemd = os.path.join(tmp, "etc-systemd")
-            creds_dir = os.path.join(tmp, "creds")
-            first_mountpoint = os.path.join(tmp, "a_b")
-            second_mountpoint = os.path.join(tmp, "a", "b")
-            os.makedirs(etc_systemd)
-            os.makedirs(creds_dir)
+        self.escaped = "mnt-a_b"
+        self.configure(mountpoint=str(self.root / "a_b"), credentials="first:one")
+        self.escaped = "mnt-a-b"
+        self.configure(mountpoint=str(self.root / "a" / "b"), credentials="second:two")
+        self.assertEqual(sorted(path.name for path in self.creds.iterdir()), ["credentials-mnt-a-b", "credentials-mnt-a_b"])
+        self.assertIn("username=first", (self.creds / "credentials-mnt-a_b").read_text())
+        self.assertIn("username=second", (self.creds / "credentials-mnt-a-b").read_text())
 
-            real_open = open
-            escaped_names = iter(("tmp-a_5fb", "tmp-a-b"))
 
-            def fake_open(path, mode="r", *args, **kwargs):
-                if path.startswith("/etc/systemd/system/"):
-                    return real_open(os.path.join(etc_systemd, os.path.basename(path)), mode, *args, **kwargs)
-                if path.startswith("/root/.smb/"):
-                    return real_open(os.path.join(creds_dir, os.path.basename(path)), mode, *args, **kwargs)
-                return real_open(path, mode, *args, **kwargs)
-
-            def fake_run(command, **_kwargs):
-                result = MagicMock(returncode=0, stdout="")
-                if "systemd-escape" in command:
-                    result.stdout = next(escaped_names) + "\n"
-                return result
-
-            config = SetupConfig(host="h", username="alice", system_type="server_lite")
-            with patch.object(smb_mount_steps, "run", side_effect=fake_run), \
-                 patch.object(smb_mount_steps, "open", side_effect=fake_open, create=True), \
-                 patch.object(smb_mount_steps, "cleanup_systemd_unit"), \
-                 patch.object(smb_mount_steps, "validate_smb_mount_specs"), \
-                 patch.object(smb_mount_steps, 'SMB_CREDENTIALS_DIR', creds_dir), \
-                 patch.object(smb_mount_steps.pwd, 'getpwnam', return_value=MagicMock(pw_uid=123)), \
-                 patch.object(smb_mount_steps.grp, 'getgrnam', return_value=MagicMock(gr_gid=456)), \
-                 patch.object(smb_mount_steps.os, 'fchown'):
-                smb_mount_steps.configure_smb_mount(
-                    config,
-                    mount_spec=[first_mountpoint, "192.168.1.10", "first:one", "docs", "/"],
-                )
-                smb_mount_steps.configure_smb_mount(
-                    config,
-                    mount_spec=[second_mountpoint, "192.168.1.11", "second:two", "docs", "/"],
-                )
-
-            credential_files = sorted(os.listdir(creds_dir))
-            self.assertEqual(
-                credential_files,
-                ["credentials-tmp-a-b", "credentials-tmp-a_5fb"],
-            )
-
-            with real_open(os.path.join(creds_dir, "credentials-tmp-a_5fb")) as file_obj:
-                self.assertIn("username=first", file_obj.read())
-            with real_open(os.path.join(creds_dir, "credentials-tmp-a-b")) as file_obj:
-                self.assertIn("username=second", file_obj.read())
-
+class TestSmbMountPreflight(unittest.TestCase):
     def test_invalid_spec_is_rejected_before_filesystem_changes(self) -> None:
-        config = SetupConfig(host="h", username="alice", system_type="server_lite")
-
-        with patch.object(smb_mount_steps.os, "makedirs") as mock_makedirs, \
-             patch.object(smb_mount_steps, "run") as mock_run:
+        with patch.object(smb_mount_steps, "run") as run, \
+             patch.object(smb_mount_steps, "directory_fd") as directory:
             with self.assertRaisesRegex(ValueError, "control characters"):
                 smb_mount_steps.configure_smb_mount(
-                    config,
-                    mount_spec=["/mnt/share", "192.168.1.10", "svc:secret\nvalue", "docs", "/"],
-                )
-
-        mock_makedirs.assert_not_called()
-        mock_run.assert_not_called()
-
-    def test_unit_values_preserve_literal_percent_signs(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            credentials = os.path.join(root, "creds%h")
-            unit = unittest.mock.mock_open()
-            with patch.object(smb_mount_steps, "open", unit, create=True), \
-                 patch.object(smb_mount_steps, "run", return_value=MagicMock(
-                     returncode=0, stdout="mnt-share\\x25h\n",
-                 )), \
-                 patch.object(smb_mount_steps, "cleanup_systemd_unit"), \
-                 patch.object(smb_mount_steps, "check_directory_path"), \
-                 patch.object(smb_mount_steps, "directory_fd"), \
-                 patch.object(smb_mount_steps, "_write_credentials") as write_credentials, \
-                 patch.object(smb_mount_steps, "SMB_CREDENTIALS_DIR", credentials), \
-                 patch.object(smb_mount_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=123)), \
-                 patch.object(smb_mount_steps.grp, "getgrnam", return_value=MagicMock(gr_gid=456)), \
-                 patch.object(smb_mount_steps.os, "fchown"):
-                smb_mount_steps.configure_smb_mount(
                     SetupConfig(host="h", username="alice", system_type="server_lite"),
-                    ["/mnt/share%h", "192.0.2.10", "svc:secret", "docs%H", "/reports%u"],
+                    ["/mnt/share", "192.168.1.10", "svc:secret\nvalue", "docs", "/"],
                 )
-            body = unit().write.call_args.args[0]
-            self.assertIn("Description=SMB mount for /mnt/share%%h\n", body)
-            self.assertIn("What=//192.0.2.10/docs%%H/reports%%u\n", body)
-            self.assertIn("Where=/mnt/share%%h\n", body)
-            self.assertIn(
-                "Options=credentials=" + credentials.replace("%", "%%") + "/credentials-mnt-share\\x25h,",
-                body,
-            )
-            write_credentials.assert_called_once_with(
-                credentials, "credentials-mnt-share\\x25h", "username=svc\npassword=secret\n",
-            )
+        run.assert_not_called()
+        directory.assert_not_called()
 
     def test_symlink_mount_or_credentials_components_fail_before_mutation(self):
         for credentials in (False, True):
