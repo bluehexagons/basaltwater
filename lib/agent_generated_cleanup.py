@@ -7,9 +7,10 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import time
 
 from lib import agent_storage_inventory, cleanup_paths
-from lib.agent_project_cleanup import read_cleanup_policy
+from lib.agent_project_cleanup import _sensitive, read_cleanup_policy
 
 
 _INVENTORY_MAX_ENTRIES = 50_000
@@ -111,6 +112,51 @@ def _inventory_by_path(root: Path, paths: list[Path]) -> dict[str, dict]:
     return by_path
 
 
+def _reject_protected_content(paths: list[Path]) -> None:
+    """Inspect names without following links, sharing bounded work across targets."""
+    remaining = _INVENTORY_MAX_ENTRIES
+    deadline = time.monotonic() + _INVENTORY_TIMEOUT
+    try:
+        mounts = agent_storage_inventory._mounts()
+    except (OSError, ValueError, IndexError) as exc:
+        raise CleanupRefused("Protected-content mount inspection is unavailable") from exc
+
+    def walk(descriptor: int, path: Path, depth: int) -> None:
+        nonlocal remaining
+        before = os.fstat(descriptor)
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                if remaining <= 0 or time.monotonic() >= deadline:
+                    raise CleanupRefused("Protected-content inspection limit reached")
+                remaining -= 1
+                target = path / entry.name
+                if _sensitive(entry.name):
+                    raise CleanupRefused(f"Target contains protected content: {target}")
+                info = entry.stat(follow_symlinks=False)
+                if (str(target) in mounts or info.st_dev != before.st_dev
+                        or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))):
+                    raise CleanupRefused(f"Protected-content inspection cannot safely inspect: {target}")
+                if stat.S_ISDIR(info.st_mode):
+                    if depth >= 24:
+                        raise CleanupRefused("Protected-content inspection depth limit reached")
+                    child = os.open(entry.name, agent_storage_inventory._OPEN_DIRECTORY, dir_fd=descriptor)
+                    try:
+                        if _identity(os.fstat(child)) != _identity(info):
+                            raise CleanupRefused(f"Directory changed during protected-content inspection: {target}")
+                        walk(child, target, depth + 1)
+                    finally:
+                        os.close(child)
+        if _identity(os.fstat(descriptor)) != _identity(before):
+            raise CleanupRefused(f"Directory changed during protected-content inspection: {path}")
+
+    for path in paths:
+        descriptor = agent_storage_inventory._open_directory(str(path))
+        try:
+            walk(descriptor, path, 0)
+        finally:
+            os.close(descriptor)
+
+
 def _preflight(root: Path, names: list[str]) -> list[tuple[Path, os.stat_result | None, dict]]:
     _reject_symlink_components(root)
     if not root.is_dir():
@@ -131,6 +177,7 @@ def _preflight(root: Path, names: list[str]) -> list[tuple[Path, os.stat_result 
         before_inventory[str(path)] = info
     _git_untracked_by_index(root, names)
     inventory = _inventory_by_path(root, paths)
+    _reject_protected_content([path for path in paths if before_inventory[str(path)] is not None])
     _reject_symlink_components(root)
     if _identity(root.lstat()) != _identity(root_identity):
         raise CleanupRefused("Repository root changed during preflight")

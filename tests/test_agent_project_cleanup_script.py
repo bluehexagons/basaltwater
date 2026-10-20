@@ -142,6 +142,86 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.assertTrue(all(target.exists() for target in self.targets))
         self.inventory.assert_not_called()
 
+    def test_nested_git_file_or_directory_blocks_preview_and_apply_before_any_removal(self):
+        nested = self.targets[-1] / "cache/checkout"
+        nested.mkdir(parents=True)
+        work = nested / "uncommitted.txt"
+        work.write_text("local work")
+        marker = nested / ".git"
+        for directory in (False, True):
+            if directory:
+                marker.mkdir()
+                (marker / "HEAD").write_text("ref: refs/heads/local")
+            else:
+                marker.write_text("gitdir: elsewhere")
+            for apply in (False, True):
+                with self.subTest(directory=directory, apply=apply), redirect_stderr(StringIO()) as errors:
+                    with patch.object(clean_generated.cleanup_paths, "remove_checked_path") as remove:
+                        self.assertEqual(self.run_cleanup(apply=apply), 1)
+                        remove.assert_not_called()
+                    self.assertIn("protected content", errors.getvalue())
+                    self.assertTrue(all((target / "output.bin").exists() for target in self.targets))
+                    self.assertEqual(work.read_text(), "local work")
+                    self.assertTrue(marker.exists())
+            if directory:
+                (marker / "HEAD").unlink()
+                marker.rmdir()
+            else:
+                marker.unlink()
+        self.process_use.assert_not_called()
+
+    def test_nested_credentials_and_control_state_are_refused(self):
+        nested = self.targets[-1] / "cache"
+        nested.mkdir()
+        for name in (".env", ".env.local", ".ssh", "credentials", ".basaltwater", ".codex", ".t3"):
+            protected = nested / name
+            protected.mkdir()
+            (protected / "state").write_text("retain")
+            with self.subTest(name=name), redirect_stderr(StringIO()) as errors:
+                with patch.object(clean_generated.cleanup_paths, "remove_checked_path") as remove:
+                    self.assertEqual(self.run_cleanup(apply=True), 1)
+                    remove.assert_not_called()
+                self.assertIn("protected content", errors.getvalue())
+                self.assertEqual((protected / "state").read_text(), "retain")
+                self.assertTrue(all(target.exists() for target in self.targets))
+            (protected / "state").unlink()
+            protected.rmdir()
+
+    def test_protected_content_entry_and_time_limits_are_shared_across_targets(self):
+        for budget, clock in ((2, [0, 0, 0, 0]), (50_000, [0, 0, 11])):
+            with self.subTest(budget=budget), patch.object(clean_generated, "_INVENTORY_MAX_ENTRIES", budget):
+                with patch.object(clean_generated.time, "monotonic", side_effect=clock):
+                    with redirect_stderr(StringIO()) as errors, patch.object(clean_generated.cleanup_paths, "remove_checked_path") as remove:
+                        self.assertEqual(self.run_cleanup(apply=True), 1)
+                        remove.assert_not_called()
+                self.assertIn("inspection limit reached", errors.getvalue())
+                self.assertTrue(all((target / "output.bin").exists() for target in self.targets))
+
+    def test_protected_content_depth_and_unreadable_directory_fail_closed(self):
+        nested = self.targets[-1]
+        for _ in range(25):
+            nested /= "child"
+            nested.mkdir()
+        with redirect_stderr(StringIO()) as errors, patch.object(clean_generated.cleanup_paths, "remove_checked_path") as remove:
+            self.assertEqual(self.run_cleanup(apply=True), 1)
+            remove.assert_not_called()
+        self.assertIn("depth limit reached", errors.getvalue())
+        self.inventory.return_value = self.scan(
+            home=str(self.root), paths=[str(target) for target in self.targets], max_entries=50_000, timeout=10,
+        )
+        self.inventory.side_effect = None
+        with patch.object(clean_generated.os, "scandir", side_effect=PermissionError("unreadable directory")):
+            with redirect_stderr(StringIO()) as errors, patch.object(clean_generated.cleanup_paths, "remove_checked_path") as remove:
+                self.assertEqual(self.run_cleanup(apply=True), 1)
+                remove.assert_not_called()
+        self.assertIn("unreadable directory", errors.getvalue())
+        self.assertTrue(all((target / "output.bin").exists() for target in self.targets))
+        with patch.object(agent_storage_inventory, "_mounts", side_effect=[{"/": "ext4"}, IndexError()]):
+            with redirect_stderr(StringIO()) as errors, patch.object(clean_generated.cleanup_paths, "remove_checked_path") as remove:
+                self.assertEqual(self.run_cleanup(apply=True), 1)
+                remove.assert_not_called()
+        self.assertIn("mount inspection is unavailable", errors.getvalue())
+
     def test_symlink_target_and_incomplete_inventory_are_refused(self):
         self.targets[0].rename(self.root / "saved-build")
         self.targets[0].symlink_to(self.root / "saved-build", target_is_directory=True)

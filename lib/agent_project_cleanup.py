@@ -46,8 +46,9 @@ def _overlap(left: str, right: str) -> bool:
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
-def _sensitive(path: str) -> bool:
-    return any(part in _PROTECTED or part.startswith(".env.") for part in path.split("/"))
+def _sensitive(path: str, *, allow_basaltwater: bool = False) -> bool:
+    return any((part in _PROTECTED and not (allow_basaltwater and part == ".basaltwater"))
+               or part.startswith(".env.") for part in path.split("/"))
 
 
 def _argv(value: object) -> list[str]:
@@ -180,6 +181,8 @@ def read_cleanup_policy(repository: str, *, policy_path: str = POLICY_PATH) -> d
     if not os.path.isabs(repository) or os.path.normpath(repository) != repository:
         raise ValueError("Project directory must be absolute and normalized")
     policy_path = _relative(policy_path)
+    if _sensitive(policy_path, allow_basaltwater=True):
+        raise ValueError("Cleanup policy cannot use Git state, agent configuration or credential locations")
     policy = _load_policy(repository, policy_path)
     if policy is not None:
         for rule in policy["rules"]:
