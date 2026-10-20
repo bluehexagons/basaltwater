@@ -35,9 +35,12 @@ basaltw agent storage project /absolute/repo --policy tools/cleanup.json --json
 ```
 
 The default policy path is `.basaltwater/cleanup.json`; `--policy` selects a
-literal project-relative path. Inspection reads that bounded JSON file and
-filesystem metadata only. It never executes scripts, reads artifact contents,
-creates a policy, relocates files or authorizes cleanup. If absent, the result
+literal project-relative path. Git, provider-state and credential locations
+(including `.ssh`, `.credentials` and `.env.*`) are refused before opening the
+policy. Default and custom paths beneath `.basaltwater` remain supported.
+Inspection reads that bounded JSON file and filesystem metadata only. It never
+executes scripts, reads artifact contents, creates a policy, relocates files or
+authorizes cleanup. If absent, the result
 contains a suggested starter policy, with agent review rules until exact generated
 targets or a project-owned script have been reviewed. Check existing non-JSON systems before adopting
 that suggestion.
@@ -105,6 +108,10 @@ This repository's [policy](../../.basaltwater/cleanup.json) selects only root
 `build/`, `dist/` and `htmlcov/`. The [shared remover](../../lib/agent_generated_cleanup.py)
 checks every selected directory before deleting any: bounded inventory, Git,
 owner, link, mount and process checks, including open files for the account.
+Preview and apply also refuse nested Git markers (files or directories),
+credentials and agent control state. This no-follow name inspection shares a
+50000-entry, 10-second budget across targets and stops at 24 directory levels;
+incomplete inspection refuses the whole rule before any removal.
 It requires a user-owned
 checkout beneath an owner-only directory (such as a mode-0700 home); shared
 checkouts need coordinated project cleanup. It preserves `artifacts/`, `.venv/`,

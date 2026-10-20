@@ -62,6 +62,27 @@ class ProjectCleanupTests(unittest.TestCase):
         self.scan.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_sensitive_custom_policy_paths_are_refused_before_loading(self) -> None:
+        for path in (".git/policy.json", "cache/.git", ".ssh/policy.json", ".credentials/policy.json",
+                     "credentials/policy.json", "secrets/policy.json", ".env", ".env.production",
+                     "config/.aws/policy.json", ".azure/policy.json", ".kube/policy.json",
+                     ".gnupg/policy.json", ".agents/policy.json", ".codex/policy.json",
+                     ".t3/policy.json", ".basaltwater/private/.credentials/policy.json"):
+            self.write_policy(self.policy(), path)
+            with self.subTest(path=path), patch.object(cleanup, "_load_policy", wraps=cleanup._load_policy) as load:
+                with self.assertRaisesRegex(ValueError, "policy cannot use"):
+                    cleanup.inspect_project_cleanup(str(self.root), policy_path=path)
+                load.assert_not_called()
+        self.scan.assert_not_called()
+
+    def test_basaltwater_default_and_custom_policy_locations_remain_readable(self) -> None:
+        expected = self.policy()
+        for path in (cleanup.POLICY_PATH, ".basaltwater/policies/retention.json", "tools/retention.json"):
+            self.write_policy(expected, path)
+            with self.subTest(path=path):
+                self.assertEqual(cleanup.read_cleanup_policy(str(self.root), policy_path=path), expected)
+        self.process.assert_not_called()
+
     def test_generated_rules_offer_native_commands_without_running_them(self) -> None:
         value = self.policy()
         value["rules"][0] = {"name": "build", "paths": ["build/linux", "build/web"],
