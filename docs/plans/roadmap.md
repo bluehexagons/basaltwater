@@ -100,12 +100,13 @@ provider contracts, retain packaging smoke checks, and consider focused lint,
 type, and coverage gates. New operating systems need explicit CI and live-test
 expectations.
 
-The [Windows plan](windows-support.md) is limited to tools for investigating
-Windows issues and checking a selected project's Windows behavior, the existing
-native GitHub runner, and a minimal runner web panel. Reuse the current WSL
-foundation unless native-only operation needs only a small change. General
-Windows workstation support and VM provisioning are excluded; Windows remains
-outside the current v2.0.0 stable-release gate.
+The [Windows plan](windows-support.md) targets current Windows 11 for focused
+debugging and project checks, with Antistatic as a required workload, the native
+GitHub runner, and a small panel for monitoring, runner rules, and notifications.
+Prefer native execution if the reduced features remove the need for WSL with
+little compatibility code; owner-login startup is sufficient initially. General
+workstation support and VM provisioning are excluded. Windows remains outside
+the current v2.0.0 stable-release gate.
 
 Game publishing is available through the VM-local panel and CLI, but provider
 account behavior and rendering remain unqualified. Steam default release stays
