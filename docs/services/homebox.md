@@ -120,7 +120,11 @@ complete backup because startup can migrate SQLite.
 
 Setup blocks public inventory requests, stops the service, snapshots its full
 state, and verifies the new API and HTTPS route before reopening requests.
-A failure before reopening restores the old snapshot and executable. A failure
+If writing the maintenance marker, stopping, snapshotting, or recording the
+recovery archive in the marker fails, setup restarts the previously active
+service and clears maintenance without restoring data or changing releases.
+The marker is only cleared after that restart succeeds. Once activation begins,
+a failure before reopening restores the old snapshot and executable. A failure
 after reopening is reported without rolling back newly accepted writes. Stop
 SSH-tunnel clients and local API jobs during maintenance: local processes can
 reach the private listener independently of Nginx's maintenance gate.

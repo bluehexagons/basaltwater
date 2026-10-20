@@ -854,17 +854,19 @@ def _transition_to_ready(
     """Activate one verified release with the same recovery path for all updates."""
     _reserve_backend_port(previous, desired)
     archive = BACKUPS / f"{time.time_ns()}-before-setup.tar.gz"
-    _maintenance(None)
     was_active = _active()
-    _stop_service()
     try:
+        _maintenance(None)
+        _stop_service()
         create_backup(previous, archive)
+        _maintenance(archive)
     except BaseException:
+        # Preparation has not changed the executable, configuration, or data;
+        # restart the previous service without restoring its snapshot.
         if was_active:
             _command("systemctl", "start", SERVICE)
         remove_file_durable(str(CONFIG / "maintenance"))
         raise
-    _maintenance(archive)
     activated = False
     try:
         if before_activate is not None:

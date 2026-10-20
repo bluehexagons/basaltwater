@@ -715,6 +715,90 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         activate.assert_not_called()
         self.assertFalse((h.CONFIG / "maintenance").exists())
 
+    def test_backup_marker_failure_restarts_unchanged_service_without_restoring_data(self):
+        self.fixture_setup()
+        maintenance = h._maintenance
+        # An atomic write can fail before replacement or while syncing the
+        # directory afterwards. Both leave application state unchanged.
+        for marker_written in (False, True):
+            with self.subTest(marker_written=marker_written):
+                def fail_backup_marker(archive):
+                    if archive is None or marker_written:
+                        maintenance(archive)
+                    if archive is not None:
+                        self.assertTrue(archive.exists())
+                        raise OSError("maintenance disk full")
+
+                with patch.object(h, "_maintenance", side_effect=fail_backup_marker) as marker, \
+                        patch.object(h, "_command") as command, \
+                        patch.object(h, "_activate_files") as activate, \
+                        patch.object(h, "_recover") as recover, \
+                        patch.object(h, "_reserve_backend_port"), \
+                        patch.object(h, "create_backup", wraps=h.create_backup) as backup:
+                    with self.assertRaisesRegex(OSError, "maintenance disk full"):
+                        h._transition_to_ready(self.value, {**self.value, "version": "v0.26.3"}, bootstrap=False)
+
+                self.assertEqual(marker.call_count, 2)
+                backup.assert_called_once()
+                command.assert_called_once_with("systemctl", "start", h.SERVICE)
+                activate.assert_not_called()
+                recover.assert_not_called()
+                self.assertFalse((h.CONFIG / "maintenance").exists())
+                self.assertEqual(h.read_state(), self.value)
+                self.assertEqual((h.ROOT / "current").resolve(), h.release_path(self.value).parent)
+                self.assertEqual((self.data / "attachments/photo.txt").read_text(), "original attachment")
+
+    def test_stop_failure_cleans_preparation_without_restoring_data(self):
+        self.fixture_setup()
+        for was_active in (True, False):
+            with self.subTest(was_active=was_active), \
+                    patch.object(h, "_active", return_value=was_active), \
+                    patch.object(h, "_reserve_backend_port"), \
+                    patch.object(h, "_stop_service", side_effect=RuntimeError("stop failed")), \
+                    patch.object(h, "_command") as command, \
+                    patch.object(h, "create_backup") as backup, \
+                    patch.object(h, "_activate_files") as activate, \
+                    patch.object(h, "_recover") as recover:
+                with self.assertRaisesRegex(RuntimeError, "stop failed"):
+                    h._transition_to_ready(self.value, self.value, bootstrap=False)
+                self.assertEqual(command.call_count, int(was_active))
+                if was_active:
+                    command.assert_called_once_with("systemctl", "start", h.SERVICE)
+                backup.assert_not_called()
+                activate.assert_not_called()
+                recover.assert_not_called()
+                self.assertFalse((h.CONFIG / "maintenance").exists())
+
+    def test_activity_probe_failure_does_not_leave_maintenance(self):
+        self.fixture_setup()
+        with patch.object(h, "_reserve_backend_port"), \
+                patch.object(h, "_active", side_effect=OSError("probe failed")), \
+                patch.object(h, "_stop_service") as stop:
+            with self.assertRaisesRegex(OSError, "probe failed"):
+                h._transition_to_ready(self.value, self.value, bootstrap=False)
+        stop.assert_not_called()
+        self.assertFalse((h.CONFIG / "maintenance").exists())
+
+    def test_initial_marker_sync_failure_clears_maintenance_without_stopping(self):
+        self.fixture_setup()
+        maintenance = h._maintenance
+
+        def fail_marker_sync(archive):
+            maintenance(archive)
+            raise OSError("marker sync failed")
+
+        with patch.object(h, "_reserve_backend_port"), \
+                patch.object(h, "_maintenance", side_effect=fail_marker_sync), \
+                patch.object(h, "_stop_service") as stop, \
+                patch.object(h, "_activate_files") as activate, \
+                patch.object(h, "_recover") as recover:
+            with self.assertRaisesRegex(OSError, "marker sync failed"):
+                h._transition_to_ready(self.value, self.value, bootstrap=False)
+        stop.assert_not_called()
+        activate.assert_not_called()
+        recover.assert_not_called()
+        self.assertFalse((h.CONFIG / "maintenance").exists())
+
     def test_non_amd64_setup_stops_before_target_mutation(self):
         cfg = config()
         with patch.object(h, "can_manage_system_services", return_value=True), \
