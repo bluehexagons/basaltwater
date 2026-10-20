@@ -155,11 +155,15 @@ or activating it. A failed activation restores the prior verified release;
 if no verified rollback target exists, setup stops the service. Setup also
 refuses to replace an active release whose digest-qualified path disagrees
 with the saved state; repair or restore that root-owned state before retrying.
-If either release-link publication command fails, setup and the updater restore
-the previous link targets (or remove newly created links on first install), so
-a retry can use the unchanged saved state. A failed restoration reports both
-the publication and recovery errors, including the affected link path; inspect
-that path and the saved state before retrying.
+If either release-link publication command fails or is interrupted, setup and
+the updater restore the previous link targets (or remove newly created links
+on first install), then propagate the original failure or cancellation so a
+retry can use the unchanged saved state. Recovery attempts every changed link
+even if one restoration fails or is interrupted. A failed restoration reports
+both the publication and recovery errors, including the affected link path and
+its previous target. Cancellation remains a cancellation, with recovery details
+attached as exception notes; inspect those paths and the saved state before
+retrying. This interruption recovery covers release-link publication only.
 Setup and patch also run a SQLite quick check, verify that the `git` user can
 read and write each managed
 directory, reject CIFS/SMB live storage, and print the backing filesystem, free

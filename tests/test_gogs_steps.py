@@ -160,6 +160,117 @@ class TestFetchPreferredGogsRelease(unittest.TestCase):
 
 
 class TestInstallGogsRelease(unittest.TestCase):
+    def test_interrupted_publication_restores_links_and_preserves_cancellation(self):
+        for interruption_type in (KeyboardInterrupt, SystemExit):
+            for existing in (False, True):
+                for interrupted_link in ("current", "binary"):
+                    with (
+                        self.subTest(
+                            interruption=interruption_type,
+                            existing=existing,
+                            link=interrupted_link,
+                        ),
+                        tempfile.TemporaryDirectory() as directory,
+                    ):
+                        current = os.path.join(directory, "current")
+                        binary = os.path.join(directory, "binary")
+                        previous = {current: "old-release", binary: "old-binary"}
+                        if existing:
+                            for path, target in previous.items():
+                                os.symlink(target, path)
+                        interruption = interruption_type()
+                        interrupted_path = os.path.join(directory, interrupted_link)
+                        interrupted = False
+
+                        def run(command, **kwargs):
+                            nonlocal interrupted
+                            self.assertTrue(kwargs["check"])
+                            tokens = shlex.split(command)
+                            destination = tokens[-1]
+                            if os.path.lexists(destination):
+                                os.unlink(destination)
+                            if tokens[:2] == ["ln", "-sfn"]:
+                                os.symlink(tokens[-2], destination)
+                                if not interrupted and destination == interrupted_path:
+                                    interrupted = True
+                                    raise interruption
+                            elif tokens[:2] != ["rm", "-f"]:
+                                self.fail(f"Unexpected host command: {command}")
+
+                        with (
+                            patch.object(gogs_steps, "GOGS_CURRENT_DIR", current),
+                            patch.object(gogs_steps, "GOGS_BINARY_LINK", binary),
+                            patch.object(gogs_steps, "run", side_effect=run),
+                        ):
+                            with self.assertRaises(interruption_type) as error:
+                                gogs_steps._publish_gogs_release(os.path.join(directory, "release"))
+                        self.assertIs(error.exception, interruption)
+                        for path, target in previous.items():
+                            if existing:
+                                self.assertEqual(os.readlink(path), target)
+                            else:
+                                self.assertFalse(os.path.lexists(path))
+
+    def test_recovery_continues_after_interruption_and_reports_evidence(self):
+        for publication_type, recovery_type in (
+            (RuntimeError, KeyboardInterrupt),
+            (RuntimeError, SystemExit),
+            (KeyboardInterrupt, RuntimeError),
+            (SystemExit, KeyboardInterrupt),
+        ):
+            with (
+                self.subTest(publication=publication_type, recovery=recovery_type),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                current = os.path.join(directory, "current")
+                binary = os.path.join(directory, "binary")
+                os.symlink("old-release", current)
+                os.symlink("old-binary", binary)
+                publication_error = publication_type("publication interrupted")
+                recovery_error = recovery_type()
+                publication_failed = False
+                attempted = []
+
+                def run(command, **kwargs):
+                    nonlocal publication_failed
+                    self.assertTrue(kwargs["check"])
+                    tokens = shlex.split(command)
+                    self.assertEqual(tokens[:2], ["ln", "-sfn"])
+                    destination = tokens[-1]
+                    attempted.append(destination)
+                    if publication_failed and destination == binary:
+                        raise recovery_error
+                    os.unlink(destination)
+                    os.symlink(tokens[-2], destination)
+                    if destination == binary:
+                        publication_failed = True
+                        raise publication_error
+
+                expected = (
+                    publication_error
+                    if not isinstance(publication_error, Exception)
+                    else recovery_error
+                )
+                with (
+                    patch.object(gogs_steps, "GOGS_CURRENT_DIR", current),
+                    patch.object(gogs_steps, "GOGS_BINARY_LINK", binary),
+                    patch.object(gogs_steps, "run", side_effect=run),
+                ):
+                    with self.assertRaises(type(expected)) as error:
+                        gogs_steps._publish_gogs_release(os.path.join(directory, "release"))
+                self.assertIs(error.exception, expected)
+                self.assertEqual(attempted, [current, binary, binary, current])
+                self.assertEqual(os.readlink(current), "old-release")
+                self.assertEqual(os.readlink(binary), current + "/gogs")
+                evidence = "\n".join(error.exception.__notes__)
+                for detail in (
+                    "publication interrupted", publication_type.__name__,
+                    recovery_type.__name__, binary, "old-binary",
+                ):
+                    self.assertIn(detail, evidence)
+                if expected is recovery_error:
+                    self.assertIs(error.exception.__cause__, publication_error)
+
     def test_failed_first_publication_removes_only_new_links(self):
         with tempfile.TemporaryDirectory() as directory:
             current = os.path.join(directory, "current")
