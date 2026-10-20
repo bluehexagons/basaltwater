@@ -116,6 +116,11 @@ Live Windows 11/WSL registration, denied-job, queue, restart and build evidence
 remain required; see the Windows guide. Multi-repository source builds use
 workflow checkouts or locked dependencies, independently of runner registrations.
 
+The [Windows next-phase plan](windows-support.md) proposes removing the WSL
+dependency from native setup and policy evaluation, with explicit native
+account/lifecycle qualification. Current login-task behavior remains the
+implementation boundary until that work is delivered and qualified.
+
 ### Registration extensions
 
 Organization scope and deferred registration now extend the initial implementation
