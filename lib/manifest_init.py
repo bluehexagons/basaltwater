@@ -102,7 +102,7 @@ def _node_workflows(directory: Path, relative: str, package: dict) -> dict:
     scripts = package.get("scripts", {})
     result = {"install": [_step(install, relative)]}
     build = next((name for name in ("build", "compile") if name in scripts), None)
-    test = next((name for name in ("check", "test") if name in scripts), None)
+    test = next((name for name in ("check:ci", "check", "test") if name in scripts), None)
     if build:
         result["build"] = [_step([*runner, build], relative)]
     if test:

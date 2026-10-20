@@ -135,9 +135,12 @@ invoke a reviewed shell script explicitly when shell behavior is needed.
 
 An empty `components` array requires a CI workflow or publishing metadata and cannot be
 deployed as a website. The initializer honors npm/pnpm/yarn declarations and
-lockfiles, uses `build` or `compile`, and prefers `check` over `test`. Review
-whether a project's check already builds or whether its default test is
-interactive. Add the project's full validation gate when required.
+lockfiles, uses `build` or `compile`, and selects `check:ci`, `check`, then `test`
+in that order. An explicit `check:ci` lets projects keep browser-heavy or
+interactive checks outside their default CI gate. Review whether the selected
+check already builds or whether its default test is interactive. Remove a
+redundant CI build stage when the selected check produces all required output,
+and add any other required validation gates. Existing manifests stay unchanged.
 
 Generated deployment components also receive their own install/build hooks
 for direct deployment. CI uses the explicit `ci` stages, avoiding a second run

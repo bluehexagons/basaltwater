@@ -34,15 +34,22 @@ class ManifestInitTests(unittest.TestCase):
         (directory / "main.go").write_text("package main\nfunc main() {}\n")
 
     def test_node_package_is_ci_only(self):
-        self.package(scripts={"compile": "tsc", "check": "lint && test"})
-        with patch('subprocess.run', side_effect=AssertionError('Inference executed code')):
-            result = initialize_manifest(str(self.root))
-        self.assertEqual(result['kind'], 'node-package')
-        manifest = load_manifest(str(self.root))
-        self.assertEqual(manifest.components, [])
-        self.assertEqual(manifest.ci['install'][0].argv, ['npm', 'ci'])
-        self.assertEqual(manifest.ci['build'][0].argv, ['npm', 'run', 'compile'])
-        self.assertEqual(manifest.ci['test'][0].argv, ['npm', 'run', 'check'])
+        for scripts, selected in (
+            ({"compile": "tsc", "test": "test-tool"}, 'test'),
+            ({"compile": "tsc", "check": "lint && test", "test": "test-tool"}, 'check'),
+            ({"compile": "tsc", "check:ci": "lint && test", "check": "lint && browser-test",
+              "test": "interactive-test-tool"}, 'check:ci'),
+        ):
+            with self.subTest(selected=selected):
+                self.package(scripts=scripts)
+                with patch('subprocess.run', side_effect=AssertionError('Inference executed code')):
+                    result = propose_manifest(str(self.root))
+                self.assertEqual(result['kind'], 'node-package')
+                manifest = parse_manifest(result['manifest'])
+                self.assertEqual(manifest.components, [])
+                self.assertEqual(manifest.ci['install'][0].argv, ['npm', 'ci'])
+                self.assertEqual(manifest.ci['build'][0].argv, ['npm', 'run', 'compile'])
+                self.assertEqual(manifest.ci['test'][0].argv, ['npm', 'run', selected])
 
     def test_vite_output_and_dry_run(self):
         self.package(dependencies={'vite': '*'}, scripts={'build': 'vite build --outDir site'})
