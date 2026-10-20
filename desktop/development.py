@@ -458,7 +458,8 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
         raise ValueError("Unknown development task kind")
     path = _project(project)
     arguments = list(argv or [])
-    if arguments[:1] == ["--"]:
+    # The node parser already consumes its separator; remaining '--' is literal.
+    if kind != "node" and arguments[:1] == ["--"]:
         arguments = arguments[1:]
     if kind in ("import", "check") and arguments:
         raise ValueError("Import and check tasks do not accept extra command arguments")

@@ -240,6 +240,26 @@ class CachyOSRefreshTests(unittest.TestCase):
         ])
         self.preflight.assert_called_once()
 
+    def test_legacy_desktop_arguments_are_replayed_with_positionals_first(self):
+        refresh.save_successful_setup(self.config("--t3code-desktop", "--node"))
+        record = json.loads(self.record.read_text())
+        arguments = record["arguments"]
+        arguments.remove("--t3code-desktop")
+        arguments.insert(3, "--t3code-desktop")
+        self.record.write_text(json.dumps(record))
+        before = self.record.read_bytes()
+
+        for options in ((), ("--butler",)):
+            with self.subTest(options=options):
+                self.assertEqual(self.run_refresh(*options), 0)
+                replay = self.execute.call_args.args[1][2:]
+                self.assertEqual(replay[:4], ["setup", "agent_cachyos", "localhost", "human"])
+                restored = cachyos_config_from_args(self.parser.parse_args(replay))
+                self.assertTrue(restored.t3code_desktop)
+                self.assertTrue(restored.install_node)
+                self.assertEqual(restored.install_butler, bool(options))
+                self.assertEqual(self.record.read_bytes(), before)
+
     def test_upgrade_failure_never_runs_setup_or_replaces_record(self):
         refresh.save_successful_setup(self.config("--t3code-desktop"))
         before = self.record.read_bytes()

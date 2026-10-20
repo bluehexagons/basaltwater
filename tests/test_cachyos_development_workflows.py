@@ -215,6 +215,21 @@ class TestDevelopmentWorkflows(unittest.TestCase):
                 parser.parse_args(["develop", "node", *arguments])
             self.assertEqual(error.exception.code, 2)
 
+    def test_cli_node_preserves_leading_literal_separator_through_launch(self):
+        self.package()
+        parser = argparse.ArgumentParser()
+        development.add_development_parser(parser.add_subparsers(dest="command"))
+        literal = ["--", "--json", "$HOME", "two words", ""]
+        args = parser.parse_args(["develop", "node", "test", "--project", str(self.project),
+                                  "--dry-run", "--", *literal])
+        args.native = True
+        with redirect_stdout(output := StringIO()):
+            self.assertEqual(development.run_development_command(args), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["argv"][9:], ["test", "--", *literal])
+        self.probe.assert_not_called()
+        self.assertFalse((self.home / ".local").exists())
+
     def test_recipe_git_timeout_returns_cli_failure_without_launching(self):
         parser = argparse.ArgumentParser()
         development.add_development_parser(parser.add_subparsers(dest="command"))

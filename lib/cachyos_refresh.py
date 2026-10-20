@@ -71,7 +71,7 @@ def _merge_overrides(arguments: list[str], overrides: dict[str, list[str]]) -> t
     _parse_saved_arguments(arguments)
     parser = _SavedSetupParser(add_help=False, allow_abbrev=False)
     add_setup_arguments(parser, allow_steps=True, include_system_type=True)
-    saved = parser.parse_args(arguments[1:])
+    saved = parser.parse_intermixed_args(arguments[1:])
     tokens = [token for values in overrides.values() for token in values]
     additions = parser.parse_args(["agent_cachyos", "localhost", _account().pw_name, *tokens])
     if set(additions.agent_tools or []) & set(additions.no_agent_tools or []):
@@ -159,7 +159,8 @@ def _parse_execution_arguments(arguments: object) -> SetupConfig:
         raise ValueError("Invalid saved CachyOS setup arguments")
     parser = _SavedSetupParser(add_help=False, allow_abbrev=False)
     add_setup_arguments(parser, allow_steps=True, include_system_type=True)
-    config = cachyos_config_from_args(parser.parse_args(arguments[1:]))
+    # Older records placed --t3code-desktop before the optional username.
+    config = cachyos_config_from_args(parser.parse_intermixed_args(arguments[1:]))
     if config.username != _account().pw_name or config.dry_run:
         raise ValueError("Saved setup must belong to this desktop user and must not be a dry run")
     return config
@@ -254,6 +255,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         if not is_cachyos():
             raise ValueError("refresh currently supports only a saved local agent_cachyos setup")
         arguments, config = load_saved_setup()
+        arguments = _replay_arguments(config)
         overrides = getattr(args, "setup_overrides", None)
         if overrides:
             arguments, config = _merge_overrides(arguments, overrides)
