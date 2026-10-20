@@ -17,6 +17,10 @@ Read [diagnostics and support evidence](references/diagnostics.md) to select
 resource, service, graphics, container, or support checks. Avoid running every
 optional probe on an ordinary development request.
 
+For old session or project-data cleanup, read
+[the storage cleanup reference](references/storage-cleanup.md) before
+classifying or proposing retention.
+
 Separate host capacity from current pressure and T3 service health. Missing
 counters are unknown; historical peaks and exit codes alone do not prove leaks.
 Compare like service invocations and counter epochs before claiming improvement.
