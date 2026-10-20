@@ -29,6 +29,7 @@ CACHYOS_SKILLS = (
     "basaltwater-cachyos-workstation", "basaltwater-cachyos-workspace",
     "basaltwater-cachyos-desktop",
     "basaltwater-project-development",
+    "basaltwater-project-adoption",
     "basaltwater-frontend-design",
     "basaltwater-subagents",
 )

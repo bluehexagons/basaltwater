@@ -37,6 +37,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
     def test_installs_and_refreshes_the_base_managed_skill_set(self) -> None:
         expected = {
             "basaltwater-project-development",
+            "basaltwater-project-adoption",
             "basaltwater-frontend-design",
             "basaltwater-agent-operations",
             "basaltwater-agent-tasks",

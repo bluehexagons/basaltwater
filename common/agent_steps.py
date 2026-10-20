@@ -46,6 +46,7 @@ AGENT_CLI_SOURCE = os.path.abspath(
 AGENT_SKILLS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "agent_skills"))
 BASE_AGENT_SKILL_NAMES = (
     "basaltwater-project-development",
+    "basaltwater-project-adoption",
     "basaltwater-frontend-design",
     "basaltwater-agent-operations",
     "basaltwater-agent-tasks",
