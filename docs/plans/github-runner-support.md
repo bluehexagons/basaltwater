@@ -31,8 +31,9 @@ qualification remains open. See the [Windows runner guide](../workstations/windo
 ## Initial test environment
 
 - Use a manually provisioned Windows 11 x86-64 VM on Proxmox as the initial
-  agentic development and qualification host. Prepare it with the existing
-  [`server_wsl` setup and native T3 Code desktop](../workstations/windows-wsl.md).
+  Windows issue-reproduction and runner qualification host. Prepare it with
+  the existing [`server_wsl` setup](../workstations/windows-wsl.md); add the
+  native T3 Code desktop only if needed for the investigation workflow.
   Expose virtualization extensions to the guest so WSL 2 can run. Basaltwater
   supports configuring this guest but does not create or manage the Proxmox VM.
 - This single VM can be reused for Windows runner qualification in phase 2, so
@@ -41,9 +42,9 @@ qualification remains open. See the [Windows runner guide](../workstations/windo
   must run the runner as the interactive WSL owner, restrict it to manually
   dispatched, allowlisted trusted workflows and treat that account's
   credentials as accessible to job code.
-- The Windows host supports development and later Windows qualification; it
-  does not replace phase 1's native Debian runner qualification. Ubuntu in WSL
-  is not a Debian VM.
+- The Windows host supports focused debugging and project-specific Windows
+  checks; it does not replace phase 1's native Debian runner qualification.
+  Ubuntu in WSL is not a Debian VM.
 
 ## Phase 1 start gates
 
@@ -116,10 +117,12 @@ Live Windows 11/WSL registration, denied-job, queue, restart and build evidence
 remain required; see the Windows guide. Multi-repository source builds use
 workflow checkouts or locked dependencies, independently of runner registrations.
 
-The [Windows next-phase plan](windows-support.md) proposes removing the WSL
-dependency from native setup and policy evaluation, with explicit native
-account/lifecycle qualification. Current login-task behavior remains the
-implementation boundary until that work is delivered and qualified.
+The narrowed [Windows plan](windows-support.md) adds a minimal read-only runner
+web panel and focused setup/qualification for Windows issue reproduction and
+project checks. Retain WSL unless removing it requires only a small adapter;
+native-only operation and pre-login service mode are not acceptance requirements.
+Current panel and login-task limitations remain until changes are delivered and
+qualified.
 
 ### Registration extensions
 

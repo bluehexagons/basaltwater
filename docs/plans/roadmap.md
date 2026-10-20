@@ -100,12 +100,12 @@ provider contracts, retain packaging smoke checks, and consider focused lint,
 type, and coverage gates. New operating systems need explicit CI and live-test
 expectations.
 
-The [Windows next-phase plan](windows-support.md) scopes automated native
-development workstations and GitHub runners, optional WSL, and reproducible
-Proxmox deployment. It builds on the current Windows/WSL foundation without
-committing to a complete native port of Debian services. Resolve its setup,
-account, and toolchain decisions before implementation; Windows remains outside
-the current v2.0.0 stable-release gate.
+The [Windows plan](windows-support.md) is limited to tools for investigating
+Windows issues and checking a selected project's Windows behavior, the existing
+native GitHub runner, and a minimal runner web panel. Reuse the current WSL
+foundation unless native-only operation needs only a small change. General
+Windows workstation support and VM provisioning are excluded; Windows remains
+outside the current v2.0.0 stable-release gate.
 
 Game publishing is available through the VM-local panel and CLI, but provider
 account behavior and rendering remain unqualified. Steam default release stays
