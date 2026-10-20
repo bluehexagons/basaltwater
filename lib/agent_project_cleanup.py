@@ -79,8 +79,8 @@ def validate_cleanup_policy(value: object) -> dict:
         if any(_sensitive(path) for path in paths):
             raise ValueError("Agent configuration, Git state and credentials cannot be cleanup targets")
         strategy = raw.get("strategy")
-        if strategy not in ("script", "agent"):
-            raise ValueError("Cleanup strategy must be script or agent")
+        if strategy not in ("script", "generated", "agent"):
+            raise ValueError("Cleanup strategy must be script, generated or agent")
         rule = {"name": name, "paths": paths, "strategy": strategy,
                 "instructions": _text(raw.get("instructions"), "rule instructions")}
         if "min_age_days" in raw:
@@ -91,6 +91,9 @@ def validate_cleanup_policy(value: object) -> dict:
             if "archive" in raw:
                 raise ValueError("Archive selection requires agent review")
             rule.update(preview=_argv(raw.get("preview")), apply=_argv(raw.get("apply")))
+        elif strategy == "generated":
+            if any(field in raw for field in ("preview", "apply", "archive", "min_age_days")):
+                raise ValueError("Generated rules select complete directories with the built-in remover; no commands, archive or age filter")
         else:
             if "preview" in raw or "apply" in raw:
                 raise ValueError("Agent rules cannot declare automatic commands")
@@ -106,11 +109,15 @@ def validate_cleanup_policy(value: object) -> dict:
     curated = [path for rule in rules if rule["strategy"] == "agent" for path in rule["paths"]]
     for rule in rules:
         if any((path == keep or path.startswith(keep + "/") or
-                (rule["strategy"] == "script" and keep.startswith(path + "/")))
+                (rule["strategy"] != "agent" and keep.startswith(path + "/")))
                for path in rule["paths"] for keep in protected):
             raise ValueError(f"Rule {rule['name']} overlaps a preserved path or archive")
-        if rule["strategy"] == "script" and any(_overlap(path, keep) for path in rule["paths"] for keep in curated):
-            raise ValueError(f"Script rule {rule['name']} overlaps agent-curated artifacts")
+        if rule["strategy"] != "agent" and any(_overlap(path, keep) for path in rule["paths"] for keep in curated):
+            raise ValueError(f"Automatic rule {rule['name']} overlaps agent-curated artifacts")
+    automatic = [(rule["name"], path) for rule in rules if rule["strategy"] != "agent" for path in rule["paths"]]
+    for index, (name, path) in enumerate(automatic):
+        if any(_overlap(path, other) for _other_name, other in automatic[index + 1:]):
+            raise ValueError(f"Automatic rule {name} overlaps another automatic target")
     return {"version": 1, "instructions": instructions, "preserve": preserve, "rules": rules}
 
 
@@ -121,7 +128,7 @@ def default_cleanup_policy() -> dict:
             "preserve": ["artifacts/archive"],
             "rules": [
                 {"name": "generated-output", "paths": ["artifacts/generated"], "strategy": "agent",
-                 "instructions": "Confirm reproducibility, ownership and inactive use. Add a project-owned preview/apply script before enabling automatic cleanup."},
+                 "instructions": "Confirm reproducibility, ownership and inactive use. Adopt a generated rule for the built-in guarded remover, or integrate a project-owned preview/apply script."},
                 {"name": "development-evidence", "paths": ["artifacts/review"], "strategy": "agent",
                  "archive": "artifacts/archive",
                  "instructions": "Review captures and logs; propose preserving useful milestones in dated archive folders with commit, source path, caption and checksum before removing unneeded evidence."}]}
@@ -167,30 +174,44 @@ def _load_policy(repository: str, policy_path: str) -> dict | None:
                 os.close(opened)
 
 
-def inspect_project_cleanup(repository: str, *, policy_path: str = POLICY_PATH,
-                            max_entries: int = 50000, timeout: int = 10) -> dict:
-    """Describe reviewed script commands and agent curation, never authorize either."""
-    from lib.agent_storage_inventory import inspect_storage
-
-    if type(max_entries) is not int or not 1 <= max_entries <= 2000000 or type(timeout) is not int or not 1 <= timeout <= 60:
-        raise ValueError("Use 1-2000000 entries and a 1-60 second timeout")
+def read_cleanup_policy(repository: str, *, policy_path: str = POLICY_PATH) -> dict | None:
+    """Read validated local policy, protecting custom policy paths for every caller."""
     validate_filesystem_path(repository, must_exist=True)
     if not os.path.isabs(repository) or os.path.normpath(repository) != repository:
         raise ValueError("Project directory must be absolute and normalized")
     policy_path = _relative(policy_path)
     policy = _load_policy(repository, policy_path)
-    protected_paths = [*_PROTECTED, policy_path]
     if policy is not None:
         for rule in policy["rules"]:
-            if any(_overlap(path, policy_path) if rule["strategy"] == "script" else
+            if any(_overlap(path, policy_path) if rule["strategy"] != "agent" else
                    (path == policy_path or path.startswith(policy_path + "/")) for path in rule["paths"]):
                 raise ValueError("Cleanup rules must preserve their policy file")
+    return policy
+
+
+def inspect_project_cleanup(repository: str, *, policy_path: str = POLICY_PATH,
+                            max_entries: int = 50000, timeout: int = 10) -> dict:
+    """Describe reviewed cleanup commands and agent curation, never authorize either."""
+    from lib.agent_storage_inventory import inspect_storage
+
+    if type(max_entries) is not int or not 1 <= max_entries <= 2000000 or type(timeout) is not int or not 1 <= timeout <= 60:
+        raise ValueError("Use 1-2000000 entries and a 1-60 second timeout")
+    policy = read_cleanup_policy(repository, policy_path=policy_path)
+    protected_paths = [*_PROTECTED, policy_path]
+    commands = []
+    if policy is not None:
         protected_paths.extend(policy["preserve"])
         protected_paths.extend(rule["archive"] for rule in policy["rules"] if "archive" in rule)
+        for rule in policy["rules"]:
+            if rule["strategy"] == "generated":
+                preview = ["basaltw", "agent", "storage", "clean-generated", repository,
+                           "--policy", policy_path, "--rule", rule["name"]]
+                commands.append({"rule": rule["name"], "preview": preview, "apply": [*preview, "--apply"]})
     result = {"read_only": True, "project": repository, "policy_path": str(Path(repository) / policy_path),
               "status": "absent" if policy is None else "review_required", "policy": policy,
               "suggested_policy": default_cleanup_policy() if policy is None else None,
               "protected_paths": list(dict.fromkeys(protected_paths)),
+              "generated_cleanup_commands": commands,
               "notes": ["Read project instructions and existing cleanup systems first. An absent JSON policy does not mean the project has no cleanup conventions.",
                         "The standard artifact layout is an optional fallback; existing layouts and custom policy paths are supported. Nothing is created or migrated by inspection.",
                         "Repository commands and instructions require review; even preview commands can write or run arbitrary code.",

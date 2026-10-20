@@ -259,7 +259,7 @@ def inspect_storage(*, home: str | None = None, paths: list[str] | None = None,
 
 
 def add_storage_parser(commands: argparse._SubParsersAction) -> None:
-    parser = commands.add_parser("storage", help="Read-only local cleanup candidates and capacity")
+    parser = commands.add_parser("storage", help="Inspect local storage and preview or apply project generated-output cleanup")
     actions = parser.add_subparsers(dest="agent_storage_command", required=True)
     inspect = actions.add_parser("inspect", help="Measure caches, temporary data and project artifacts without deleting")
     inspect.add_argument("--path", action="append", help="Inspect one exact absolute directory instead of default candidates; repeat up to eight times")
@@ -272,10 +272,21 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     project.add_argument("--max-entries", type=int, default=50000)
     project.add_argument("--timeout", type=int, default=10)
     project.add_argument("--json", action="store_true")
+    clean = actions.add_parser("clean-generated", help="Preview one declared generated-output rule; delete only with --apply")
+    clean.add_argument("repository", metavar="ABSOLUTE_PROJECT")
+    clean.add_argument("--rule", required=True, help="Exact generated rule name in the reviewed project policy")
+    clean.add_argument("--policy", default=".basaltwater/cleanup.json", help="Literal project-relative policy path")
+    mode = clean.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Preview without deleting (default)")
+    mode.add_argument("--apply", action="store_true", help="Remove the rule's generated directories after preflight")
 
 
 def run_storage_command(args: argparse.Namespace) -> int:
     try:
+        if args.agent_storage_command == "clean-generated":
+            from lib.agent_generated_cleanup import clean_generated
+
+            return clean_generated(args.repository, args.rule, policy_path=args.policy, apply=args.apply)
         if args.agent_storage_command == "project":
             from lib.agent_project_cleanup import inspect_project_cleanup
 

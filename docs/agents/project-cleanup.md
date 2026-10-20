@@ -5,6 +5,9 @@ instructions. Read `AGENTS.md`, contributor guidance and native tooling first.
 An optional JSON policy makes script targets and agent curation rules visible
 to the storage inspector; it does not replace a project's own system. Use the
 managed `basaltwater-project-adoption` skill when converting a project.
+Follow the [project standards](project-standards.md): reuse shared infrastructure
+on Basaltwater, retain native project commands and document a manual route on
+other environments.
 
 ## A default for projects without a system
 
@@ -12,7 +15,7 @@ Use this layout only when the project lacks suitable conventions:
 
 | Location | Purpose | Cleanup |
 | --- | --- | --- |
-| `artifacts/generated/` | Reproducible builds, reports and temporary output | Project-owned script after reproducibility and active-use checks |
+| `artifacts/generated/` | Reproducible builds, reports and temporary output | Shared guarded remover or native cleanup after reproducibility and active-use checks |
 | `artifacts/review/` | Screenshots, videos and logs awaiting review | Agent selects useful evidence before proposing removal |
 | `artifacts/archive/YYYY-MM-DD--milestone/` | Selected development history | Preserve; maintain a small index and provenance |
 | `.basaltwater/cleanup.json` | Optional adapter describing rules | Track the policy; keep unrelated local control state ignored |
@@ -35,27 +38,33 @@ The default policy path is `.basaltwater/cleanup.json`; `--policy` selects a
 literal project-relative path. Inspection reads that bounded JSON file and
 filesystem metadata only. It never executes scripts, reads artifact contents,
 creates a policy, relocates files or authorizes cleanup. If absent, the result
-contains a suggested starter policy, with agent review rules until a real
-project-owned script is added. Check existing non-JSON systems before adopting
+contains a suggested starter policy, with agent review rules until exact generated
+targets or a project-owned script have been reviewed. Check existing non-JSON systems before adopting
 that suggestion.
 
 The policy is at most 65536 bytes, with `version: 1`, project `instructions`,
 optional `preserve` paths, and 1–16 `rules`. See this repository's
 [working policy](../../.basaltwater/cleanup.json), which preserves its existing
-layout and pairs a script with manual evidence review. Each rule declares:
+layout and pairs the shared generated-output remover with manual evidence review.
+Each rule declares:
 
 | Field | Contract |
 | --- | --- |
 | `name` | Unique lowercase identifier, digits and hyphens allowed |
 | `paths` | 1–16 literal relative directories; at most eight distinct inspection roots overall |
-| `strategy` | `script` for deterministic generated-output cleanup, or `agent` for review |
+| `strategy` | `generated` for the built-in guarded remover, `script` for project-owned cleanup commands, or `agent` for review |
 | `instructions` | Reproducibility, retention, active-use and verification requirements |
-| `preview`, `apply` | Required literal argv arrays for script rules; no automatic execution |
+| `preview`, `apply` | Required literal argv arrays for script rules; forbidden for generated/agent rules; no automatic execution |
 | `archive` | Optional protected destination for agent-selected evidence |
 | `min_age_days` | Optional minimum age, 1–36500 days; never sufficient authority to delete |
 
+Generated rules select whole directories and cannot use an age filter or archive.
+Choose small, disjoint generated subdirectories when a parent also holds retained
+files. For example, select `build/linux` and `build/web` to preserve a tracked
+`build/.gdignore`. Automatic targets cannot overlap each other.
+
 Paths cannot escape the repository, contain globs, or target known Git, agent
-control or credential locations. Scripts cannot overlap preserved paths,
+control or credential locations. Automatic targets cannot overlap preserved paths,
 archives or agent-curated roots. Agent review may cover a mixed directory containing
 preserved subtrees; those subtrees remain excluded from removal. Their measured
 bytes are still included, so the total is not a reclamation estimate. Custom
@@ -78,24 +87,47 @@ Check every target before removing any of them, recheck identities and use at
 removal, and return failure if a check or deletion fails. Stop builds and review
 jobs first: process checks are best effort and cannot establish future disuse.
 
-This repository's [generated-output script](../../scripts/clean_generated.py)
-previews only root `build/`, `dist/` and `htmlcov/`. `--apply` removes only those
-allowlisted directories after bounded inventory, Git, owner, link, mount and
-process checks, including open files for the account. It requires a user-owned
+For projects without a native cleanup tool, a `generated` rule reuses Basaltwater's
+guarded remover without copying deletion code into every repository:
+
+```bash
+basaltw agent storage clean-generated /absolute/repo --rule generated-output
+basaltw agent storage clean-generated /absolute/repo --rule generated-output --apply
+```
+
+Preview is the default; `--dry-run` is also accepted. The command only accepts an
+explicit named `generated` rule from the reviewed policy (`--policy` selects a
+custom path). It never executes policy commands or accepts arbitrary path targets.
+Read-only `storage project` inspection includes the concrete preview/apply argv.
+The policy belongs to the project, so review it before granting cleanup access.
+
+This repository's [policy](../../.basaltwater/cleanup.json) selects only root
+`build/`, `dist/` and `htmlcov/`. The [shared remover](../../lib/agent_generated_cleanup.py)
+checks every selected directory before deleting any: bounded inventory, Git,
+owner, link, mount and process checks, including open files for the account.
+It requires a user-owned
 checkout beneath an owner-only directory (such as a mode-0700 home); shared
 checkouts need coordinated project cleanup. It preserves `artifacts/`, `.venv/`,
 source and brand exports.
 
-Some non-dumpable account daemons hide their descriptors; the script reports
+Some non-dumpable account daemons hide their descriptors; the remover reports
 that coverage limit rather than treating every unrelated target as busy.
 Activity detection is best effort: stop project jobs before applying cleanup.
-Run its relative argv from the repository root. Apply needs write access to
-that root to isolate selected directories before disposal; account for parent
+Apply needs write access to each selected directory's parent to isolate
+directories before disposal; account for parent
 directory operations when preparing follow-up access, rather than granting only
 the removed directories or the whole home.
-It is specific to this repository; do not copy its targets into another project
-without reviewing what those directories contain. Failed disposal may retain
+Do not copy another project's targets without reviewing what those directories
+contain. Failed disposal may retain
 a private recovery directory; report it rather than retrying deletion blindly.
+
+The guarded remover uses Linux mount and process observations and is intended
+for Debian and CachyOS. Other environments can follow the same policy through
+native project tooling or manual review: stop project jobs, inspect the exact
+targets and Git tracking, preserve retained evidence, then remove only authorized
+generated directories using the platform's filesystem tools. Do not copy the
+shared remover into each project or make a full Basaltwater setup necessary for
+normal development. A policy remains useful documentation without the CLI.
 
 ## Agent curation and timeline evidence
 

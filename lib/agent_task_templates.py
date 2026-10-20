@@ -44,6 +44,8 @@ STORAGE_REVIEW_PROMPT = (
     "Follow project AGENTS.md and existing cleanup tooling/layout first. "
     "Run basaltw agent storage project /absolute/repo --json (--policy for a custom JSON path). "
     "The standard layout is a fallback only; inspect creates nothing. Review scripts, including previews, before requesting execution. "
+    "For reviewed generated rules use clean-generated /absolute/repo --rule NAME under basaltw agent storage; preview is the default. "
+    "Apply requires explicit cleanup authorization and --apply, with write access to the selected directories and their parents for isolation. "
     "Propose archiving useful screenshots/videos with date, commit, purpose and checksums before deleting other evidence. "
     "Never treat ignored files, old age, session archive status or file size as deletion permission. "
     "Preserve source, dirty/unmerged worktrees, credentials, resumable sessions, attachments, backups and active runtimes. "

@@ -40,3 +40,11 @@ review and archive layout only if the project lacks suitable conventions.
 Inspection creates nothing. See [project cleanup](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-cleanup.md)
 for policy and archive details. Treat inspection as an inventory aid, not
 approval or execution.
+
+A reviewed `generated` rule can use the shared preview command
+`basaltw agent storage clean-generated /absolute/repo --rule RULE_NAME`.
+It checks the exact declared directories without running project scripts;
+removal needs explicit `--apply` within authorized scope. Grant follow-up writes
+to the selected directories and their parents for guarded isolation, not the
+whole home. Stop project jobs first. Script and agent rules keep their own
+reviewed workflows; a generated rule cannot overlap protected or curated paths.

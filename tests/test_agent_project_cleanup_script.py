@@ -1,4 +1,4 @@
-"""The repository-owned generated-output cleanup stays narrowly scoped."""
+"""Project-declared generated-output cleanup stays narrowly scoped."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from io import StringIO
+import json
 from unittest.mock import patch
 
-from scripts import clean_generated
+from lib import agent_generated_cleanup as clean_generated
+from lib import agent_storage_inventory
 
 
 class GeneratedOutputCleanupScriptTests(unittest.TestCase):
@@ -34,9 +36,14 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         (self.root / "src" / "module.py").write_text("keep")
         (self.root / "docs" / "brand").mkdir(parents=True)
         (self.root / "docs" / "brand" / "logo.svg").write_text("keep")
+        (self.root / ".basaltwater").mkdir()
+        self.policy = {"version": 1, "instructions": "Preserve evidence.", "preserve": ["artifacts"],
+                       "rules": [{"name": "build", "strategy": "generated", "instructions": "Rebuildable output.",
+                                  "paths": ["build", "dist", "htmlcov"]}]}
+        self.write_policy()
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(patch.object(clean_generated, "repository_root", return_value=self.root))
+        self.stack.enter_context(patch.object(agent_storage_inventory, "_mounts", return_value={"/": "ext4"}))
         self.git = self.stack.enter_context(patch.object(
             clean_generated.subprocess, "run",
             return_value=subprocess.CompletedProcess([], 1),
@@ -47,6 +54,12 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.process_use = self.stack.enter_context(patch.object(
             clean_generated.cleanup_paths, "process_uses_path", return_value=False,
         ))
+
+    def write_policy(self):
+        (self.root / ".basaltwater/cleanup.json").write_text(json.dumps(self.policy))
+
+    def run_cleanup(self, *, apply=False, rule="build"):
+        return clean_generated.clean_generated(str(self.root), rule, apply=apply)
 
     def scan(self, *, home, paths, max_entries, timeout):
         self.assertEqual(home, str(self.root))
@@ -65,11 +78,10 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
                          "owner_uid": os.getuid(), "other_owner_entries": 0, "issues": []})
         return {"issues": [], "candidates": rows}
 
-    def test_default_and_explicit_dry_run_list_targets_without_deleting(self):
+    def test_preview_lists_targets_without_deleting(self):
         output = StringIO()
         with redirect_stdout(output):
-            self.assertEqual(clean_generated.main([]), 0)
-            self.assertEqual(clean_generated.main(["--dry-run"]), 0)
+            self.assertEqual(self.run_cleanup(), 0)
         for target in self.targets:
             self.assertTrue((target / "output.bin").exists())
             self.assertIn(str(target), output.getvalue())
@@ -77,14 +89,14 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.git.assert_called()
         command = self.git.call_args.args[0]
         self.assertIn("--error-unmatch", command)
-        self.assertEqual({call.args[0][-1] for call in self.git.call_args_list}, {"build/", "dist/", "htmlcov/"})
+        self.assertEqual({call.args[0][-1] for call in self.git.call_args_list}, {":(literal)build", ":(literal)dist", ":(literal)htmlcov"})
         self.assertEqual(self.git.call_args.kwargs["stdout"], subprocess.DEVNULL)
         self.assertEqual(self.git.call_args.kwargs["timeout"], 10)
         self.assertEqual(self.git.call_args.kwargs["env"]["GIT_OPTIONAL_LOCKS"], "0")
-        self.assertEqual(self.process_use.call_count, 6)
+        self.assertEqual(self.process_use.call_count, 3)
 
     def test_apply_removes_only_allowlisted_directories_and_retains_evidence(self):
-        self.assertEqual(clean_generated.main(["--apply"]), 0)
+        self.assertEqual(self.run_cleanup(apply=True), 0)
         for target in self.targets:
             self.assertFalse(target.exists())
         self.assertTrue((self.root / "artifacts" / "screenshot.png").exists())
@@ -97,7 +109,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.process_use.side_effect = lambda path, **kwargs: path.endswith("/dist")
         errors = StringIO()
         with redirect_stderr(errors):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
+            self.assertEqual(self.run_cleanup(apply=True), 1)
         self.assertIn("in use", errors.getvalue())
         self.assertTrue(all(target.exists() for target in self.targets))
 
@@ -108,7 +120,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
 
         self.process_use.side_effect = hidden
         with redirect_stderr(StringIO()) as errors, redirect_stdout(StringIO()):
-            self.assertEqual(clean_generated.main(["--dry-run"]), 0)
+            self.assertEqual(self.run_cleanup(), 0)
         self.assertEqual(errors.getvalue().count("Open-file inspection is incomplete"), 1)
         self.assertTrue(all(target.exists() for target in self.targets))
 
@@ -117,7 +129,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         fields = list(info)
         fields[0] = (info.st_mode & ~0o777) | 0o755
         with patch.object(Path, "lstat", return_value=os.stat_result(fields)), redirect_stderr(StringIO()):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
+            self.assertEqual(self.run_cleanup(apply=True), 1)
         self.inventory.assert_not_called()
         self.assertTrue(all(target.exists() for target in self.targets))
 
@@ -125,7 +137,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.git.return_value = subprocess.CompletedProcess([], 0)
         errors = StringIO()
         with redirect_stderr(errors):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
+            self.assertEqual(self.run_cleanup(apply=True), 1)
         self.assertIn("tracked files", errors.getvalue())
         self.assertTrue(all(target.exists() for target in self.targets))
         self.inventory.assert_not_called()
@@ -135,7 +147,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.targets[0].symlink_to(self.root / "saved-build", target_is_directory=True)
         errors = StringIO()
         with redirect_stderr(errors):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
+            self.assertEqual(self.run_cleanup(apply=True), 1)
         self.assertIn("symlink", errors.getvalue())
         self.assertTrue((self.root / "saved-build" / "output.bin").exists())
         self.targets[0].unlink()
@@ -153,7 +165,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
                 self.inventory.side_effect = incomplete
                 errors = StringIO()
                 with redirect_stderr(errors):
-                    self.assertEqual(clean_generated.main(["--apply"]), 1)
+                    self.assertEqual(self.run_cleanup(apply=True), 1)
                 self.assertIn(message, errors.getvalue())
                 self.assertTrue(all(target.exists() for target in self.targets))
 
@@ -163,7 +175,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.root.symlink_to(real_root, target_is_directory=True)
         errors = StringIO()
         with redirect_stderr(errors):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
+            self.assertEqual(self.run_cleanup(apply=True), 1)
         self.assertIn("symlink", errors.getvalue())
         self.assertTrue(all((real_root / target.name).exists() for target in self.targets))
 
@@ -171,7 +183,7 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         self.git.side_effect = FileNotFoundError("git missing")
         errors = StringIO()
         with redirect_stderr(errors):
-            self.assertEqual(clean_generated.main(["--apply"]), 1)
+            self.assertEqual(self.run_cleanup(apply=True), 1)
         self.assertIn("Git preflight failed", errors.getvalue())
         self.git.side_effect = None
         self.git.return_value = subprocess.CompletedProcess([], 1)
@@ -179,14 +191,30 @@ class GeneratedOutputCleanupScriptTests(unittest.TestCase):
         for failure in (OSError("disposal failed"), clean_generated.cleanup_paths.CleanupPathError("disposal failed", recovery)):
             with self.subTest(failure=type(failure).__name__), patch.object(clean_generated.cleanup_paths, "remove_checked_path", side_effect=failure):
                 with redirect_stderr(errors):
-                    self.assertEqual(clean_generated.main(["--apply"]), 1)
+                    self.assertEqual(self.run_cleanup(apply=True), 1)
         self.assertIn("disposal failed", errors.getvalue())
         self.assertIn(recovery, errors.getvalue())
         self.assertTrue(all(target.exists() for target in self.targets))
 
-    def test_apply_and_dry_run_are_mutually_exclusive(self):
-        with self.assertRaises(SystemExit):
-            clean_generated.main(["--apply", "--dry-run"])
+    def test_only_declared_generated_rules_can_be_applied(self):
+        with redirect_stderr(StringIO()):
+            self.assertEqual(self.run_cleanup(apply=True, rule="missing"), 1)
+            self.policy["rules"][0]["strategy"] = "agent"
+            self.write_policy()
+            self.assertEqual(self.run_cleanup(apply=True), 1)
+        self.inventory.assert_not_called()
+        self.assertTrue(all(target.exists() for target in self.targets))
+
+    def test_nested_targets_preserve_tracked_parent_marker(self):
+        (self.targets[0] / "linux").mkdir()
+        (self.targets[0] / "linux/game").write_text("generated")
+        (self.targets[0] / ".gdignore").write_text("keep")
+        self.policy["rules"][0]["paths"] = ["build/linux"]
+        self.write_policy()
+        self.targets = [self.root / "build/linux"]
+        self.assertEqual(self.run_cleanup(apply=True), 0)
+        self.assertTrue((self.root / "build/.gdignore").exists())
+        self.assertTrue((self.root / "build/output.bin").exists())
 
 
 if __name__ == "__main__":

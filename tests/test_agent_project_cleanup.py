@@ -62,6 +62,37 @@ class ProjectCleanupTests(unittest.TestCase):
         self.scan.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_generated_rules_offer_native_commands_without_running_them(self) -> None:
+        value = self.policy()
+        value["rules"][0] = {"name": "build", "paths": ["build/linux", "build/web"],
+                              "strategy": "generated", "instructions": "Keep the parent .gdignore."}
+        self.write_policy(value, "tools/cleanup.json")
+        result = cleanup.inspect_project_cleanup(str(self.root), policy_path="tools/cleanup.json")
+        command = result["generated_cleanup_commands"][0]
+        self.assertEqual(command["rule"], "build")
+        self.assertEqual(command["preview"], ["basaltw", "agent", "storage", "clean-generated", str(self.root),
+                                              "--policy", "tools/cleanup.json", "--rule", "build"])
+        self.assertEqual(command["apply"], [*command["preview"], "--apply"])
+        self.process.assert_not_called()
+        for changes in ({"paths": ["build", "build/web"]}, {"paths": ["evidence"]},
+                        {"paths": ["tools"]}, {"min_age_days": 30}, {"preview": ["anything"]}):
+            invalid = deepcopy(value)
+            invalid["rules"][0].update(changes)
+            self.write_policy(invalid, "tools/cleanup.json")
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                cleanup.read_cleanup_policy(str(self.root), policy_path="tools/cleanup.json")
+
+    def test_generated_cli_defaults_to_preview_and_requires_explicit_apply(self) -> None:
+        parser = argparse.ArgumentParser()
+        inventory.add_storage_parser(parser.add_subparsers())
+        command = ["storage", "clean-generated", str(self.root), "--rule", "build"]
+        for flag, apply in (([], False), (["--dry-run"], False), (["--apply"], True)):
+            with self.subTest(flag=flag), patch("lib.agent_generated_cleanup.clean_generated", return_value=0) as run:
+                self.assertEqual(inventory.run_storage_command(parser.parse_args(command + flag)), 0)
+                run.assert_called_once_with(str(self.root), "build", policy_path=cleanup.POLICY_PATH, apply=apply)
+        with redirect_stdout(StringIO()), patch("sys.stderr", StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(command + ["--apply", "--dry-run"])
+
     def test_remote_or_unknown_policy_locality_stops_before_open(self) -> None:
         for mounts in ({"/": "nfs4"}, {}):
             with self.subTest(mounts=mounts), patch.object(inventory, "_open_directory") as opened:

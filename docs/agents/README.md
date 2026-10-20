@@ -14,7 +14,7 @@ browser-approved privileged-action panel, start with
 | Need | Guide |
 | --- | --- |
 | General workflow for any coding project | [Project development skill](../../common/agent_skills/basaltwater-project-development/SKILL.md) and [subagent workflows](agent-subagents.md) |
-| Convert an existing project to Basaltwater standards | [Project adoption skill](../../common/agent_skills/basaltwater-project-adoption/SKILL.md) |
+| Adapt a project to the reference development environment | [Project standards](project-standards.md) and [adoption skill](../../common/agent_skills/basaltwater-project-adoption/SKILL.md) |
 | Design or substantially reshape a frontend | [Frontend design skill](../../common/agent_skills/basaltwater-frontend-design/SKILL.md) |
 | Choose a headless or graphical coding profile | [Agentic VMs](agentic-vms.md) |
 | Review isolation, sudo, prompt-injection, and supply-chain boundaries | [Agent security](agent-security.md) |

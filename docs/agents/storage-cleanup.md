@@ -56,6 +56,14 @@ layout is a fallback only; inspection creates nothing. See
 [project cleanup conventions](project-cleanup.md) for scripts, agent curation
 and preserving selected screenshots/videos as development history.
 
+For a reviewed `generated` rule, preview
+`basaltw agent storage clean-generated /absolute/repo --rule RULE_NAME`.
+The built-in remover accepts only that rule's disjoint directories and checks
+tracked files, ownership, mounts, links, inventory coverage and active use.
+Removal requires explicit `--apply` and separately authorized cleanup scope;
+inspection never invokes it. Include writes to each target's parent when
+preparing a follow-up, because disposal first isolates directories there.
+
 Use cheap Luna workers at high reasoning and standard service for bounded
 classification of selected file lists or redacted log excerpts when delegation
 is available. Set file/byte limits and request compact findings with paths or

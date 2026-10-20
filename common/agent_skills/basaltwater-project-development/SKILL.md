@@ -13,6 +13,15 @@ its local conventions and checks. Read the relevant instructions before acting;
 do not carry Basaltwater repository rules into another project. Follow higher
 priority session and user instructions as well.
 
+Basaltwater is the reference development environment, normally Debian; some
+projects also use CachyOS or Windows 11. Keep native build/test commands usable
+without it. Reuse shared environment tools and skills rather than duplicating
+them in project scripts, while retaining project-specific behavior and a
+documented manual setup route. The
+[project standards](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-standards.md)
+describe these boundaries. Each project's declared platforms and actual checks
+determine what is supported and verified.
+
 ## Start with the project
 
 - Identify the requested outcome, scope, constraints, and acceptance conditions.

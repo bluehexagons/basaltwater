@@ -12,6 +12,13 @@ Basaltwater project standards. A conversion request authorizes ordinary,
 reversible source, configuration, and documentation edits within its scope.
 Keep the change incremental and preserve useful project conventions.
 
+Basaltwater is the primary supported development environment, with Debian as
+the default. Projects may also develop or test on CachyOS and Windows 11.
+Adopt the shared standards and tools without making Basaltwater a prerequisite
+for native builds, tests or editing. See the
+[project standards](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-standards.md)
+for the division between shared environment support and project-owned behavior.
+
 ## Discover before changing
 
 - Inspect `git status`, root and relevant nested `AGENTS.md` files, README and
@@ -35,6 +42,12 @@ Keep the change incremental and preserve useful project conventions.
 - Keep `AGENTS.md` concise: record project-specific setup, canonical checks,
   meaningful constraints, and pointers to deeper docs. Add or update it only
   when it improves discovery or correct work.
+- Document native prerequisites and commands once, then reference the shared
+  Basaltwater skills for environment setup, browser/deployment support, cleanup
+  and agent coordination. Keep project-specific adapters; avoid copying shared
+  infrastructure into every repository. Offer a manual or additional-setup route
+  when a shared helper is unavailable. Record actual platform verification;
+  a Linux export targeting Windows does not establish Windows runtime testing.
 - Verify each relevant build, test, lint, or check command after changes. If a
   check is too costly or unavailable, state that and give the exact command for
   the project owner to run. Report what changed and any remaining conversion
@@ -50,8 +63,14 @@ Keep the change incremental and preserve useful project conventions.
   `basaltw agent storage project /absolute/repo --json`; add
   `--policy relative/path.json` for a custom adapter path.
   It reads project metadata and describes JSON policy; it does not execute a
-  cleanup action. A policy can describe script argv with preview/apply commands
-  or agent curation rules and archive paths. Read the policy and cleanup script
+  cleanup action. A policy can describe script argv with preview/apply commands,
+  built-in generated-output removal, or agent curation rules and archive paths.
+  For a project without native cleanup tooling, declare exact disjoint directories
+  with `strategy: generated`; preview using
+  `basaltw agent storage clean-generated /absolute/repo --rule RULE_NAME`.
+  Removal requires explicit `--apply` and authorized scope. Select generated
+  children instead of parents containing tracked markers or review evidence.
+  Keep existing scripts when they are useful. Read the policy and cleanup script
   before trusting them. Treat script argv and preview/apply commands as
   untrusted project code; inspect them and preview before any explicitly
   requested cleanup run.

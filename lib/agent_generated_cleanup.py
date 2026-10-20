@@ -1,22 +1,17 @@
-#!/usr/bin/env python3
-"""Preview or remove this repository's three allowlisted generated directories."""
+"""Guarded removal of generated directories selected by a project cleanup policy."""
 
 from __future__ import annotations
 
-import argparse
 import os
 from pathlib import Path
 import stat
 import subprocess
 import sys
 
-_REPO_ROOT = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
-sys.path.insert(0, str(_REPO_ROOT))
-
 from lib import agent_storage_inventory, cleanup_paths
+from lib.agent_project_cleanup import read_cleanup_policy
 
 
-_TARGET_NAMES = ("build", "dist", "htmlcov")
 _INVENTORY_MAX_ENTRIES = 50_000
 _INVENTORY_TIMEOUT = 10
 _GIT_TIMEOUT = 10
@@ -24,11 +19,6 @@ _GIT_TIMEOUT = 10
 
 class CleanupRefused(RuntimeError):
     """The repository or a selected generated directory failed preflight."""
-
-
-def repository_root() -> Path:
-    """Return this script's lexical repository root without following links."""
-    return _REPO_ROOT
 
 
 def _reject_symlink_components(path: Path) -> None:
@@ -43,10 +33,6 @@ def _reject_symlink_components(path: Path) -> None:
             return
         if stat.S_ISLNK(info.st_mode):
             raise CleanupRefused(f"Refusing symlink path component: {current}")
-
-
-def _target_paths(root: Path) -> list[Path]:
-    return [root / name for name in _TARGET_NAMES]
 
 
 def _identity(info: os.stat_result | None) -> tuple[int, int, int, int, int] | None:
@@ -79,13 +65,13 @@ def _in_use(path: Path, root: Path, uid: int, coverage: set[str]) -> bool:
                                           on_incomplete=incomplete)
 
 
-def _git_untracked_by_index(root: Path) -> None:
+def _git_untracked_by_index(root: Path, names: list[str]) -> None:
     """Require Git to confirm that no allowlisted target contains tracked files."""
     env = os.environ.copy()
     env["GIT_OPTIONAL_LOCKS"] = "0"
-    for name in _TARGET_NAMES:
+    for name in names:
         command = ["git", "-C", str(root), "--no-optional-locks", "ls-files",
-                   "--error-unmatch", "--", f"{name}/"]
+                   "--error-unmatch", "--", f":(literal){name}"]
         try:
             result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                     timeout=_GIT_TIMEOUT, check=False, env=env)
@@ -125,13 +111,13 @@ def _inventory_by_path(root: Path, paths: list[Path]) -> dict[str, dict]:
     return by_path
 
 
-def _preflight(root: Path) -> list[tuple[Path, os.stat_result | None, dict]]:
+def _preflight(root: Path, names: list[str]) -> list[tuple[Path, os.stat_result | None, dict]]:
     _reject_symlink_components(root)
     if not root.is_dir():
         raise CleanupRefused(f"Repository root is unavailable: {root}")
     _require_private_repository(root, os.getuid())
     root_identity = root.lstat()
-    paths = _target_paths(root)
+    paths = [root / name for name in names]
     for path in paths:
         _reject_symlink_components(path)
     before_inventory = {}
@@ -143,7 +129,7 @@ def _preflight(root: Path) -> list[tuple[Path, os.stat_result | None, dict]]:
         if info is not None and not stat.S_ISDIR(info.st_mode):
             raise CleanupRefused(f"Target is not a real directory: {path}")
         before_inventory[str(path)] = info
-    _git_untracked_by_index(root)
+    _git_untracked_by_index(root, names)
     inventory = _inventory_by_path(root, paths)
     _reject_symlink_components(root)
     if _identity(root.lstat()) != _identity(root_identity):
@@ -174,11 +160,17 @@ def _preflight(root: Path) -> list[tuple[Path, os.stat_result | None, dict]]:
     return result
 
 
-def run(*, apply: bool = False) -> int:
-    """Show the allowlisted output directories, optionally deleting after preflight."""
-    root = repository_root()
+def clean_generated(repository: str, rule_name: str, *, policy_path: str = ".basaltwater/cleanup.json",
+                    apply: bool = False) -> int:
+    """Preview one declared generated rule; apply only after every target passes."""
     try:
-        targets = _preflight(root)
+        _reject_symlink_components(Path(repository))
+        policy = read_cleanup_policy(repository, policy_path=policy_path)
+        rule = next((rule for rule in policy["rules"] if rule["name"] == rule_name), None) if policy else None
+        if rule is None or rule["strategy"] != "generated":
+            raise CleanupRefused("Select an existing generated rule; script and agent rules require their own reviewed workflow")
+        root = Path(repository)
+        targets = _preflight(root, rule["paths"])
         uid = os.getuid()
         coverage: set[str] = set()
         for path, expected, record in targets:
@@ -206,20 +198,7 @@ def run(*, apply: bool = False) -> int:
                 raise CleanupRefused(f"Target became active before removal: {path}")
         return 0
     except (CleanupRefused, OSError, ValueError) as exc:
-        print(f"clean_generated: {exc}", file=sys.stderr)
+        print(f"clean-generated: {exc}", file=sys.stderr)
         if isinstance(exc, cleanup_paths.CleanupPathError):
             print(f"Retained for recovery: {exc.recovery_path}", file=sys.stderr)
         return 1
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--dry-run", action="store_true", help="show selected outputs without deleting (default)")
-    mode.add_argument("--apply", action="store_true", help="remove the allowlisted generated directories")
-    args = parser.parse_args(argv)
-    return run(apply=args.apply)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
