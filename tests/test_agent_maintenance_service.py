@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 import basaltwater
 from common import maintenance_agent_steps as steps
 from lib import maintenance_agent as agent
+from lib import maintenance_systemd
 from lib.agent_tasks import codex_command, validate_task
 from lib.agent_probe import ProbeResult
 from lib.atomic_io import write_json_atomic
@@ -129,6 +130,23 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         with patch.object(agent, "collect_checks", return_value=issues):
             return agent.run_supervisor(config_path="unused", directory=str(self.root), now=now)
 
+    def managed_units(self) -> dict[str, dict]:
+        definitions = {}
+        with patch.object(maintenance_systemd, "is_dry_run", return_value=False), \
+                patch.object(maintenance_systemd, "replace_units") as replace:
+            for routine in agent._ROUTINES:
+                self.assertTrue(maintenance_systemd.configure_maintenance_timer(
+                    service_name=routine, service_desc=routine, timer_desc=routine,
+                    script_path=f"/opt/basaltwater/common/service_tools/{routine.replace('-', '_')}.py",
+                    schedule="daily", check_name=routine))
+                definitions[f"/etc/systemd/system/{routine}.service"] = {
+                    "uid": 0, "mode": 0o644, "content": replace.call_args.args[0][routine + ".service"]}
+        return definitions
+
+    def manual_cleanup(self) -> str:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "enabled": False, "routines": False, "daily_calls": 0})
+        return agent.request_check(directory=str(self.root / "control"), cleanup=True)
+
     def test_healthy_checks_skip_paid_calls_and_survive_restart(self) -> None:
         with patch.object(agent, "_review_as_user") as review:
             self.assertTrue(self.run_check(100000, []))
@@ -216,10 +234,7 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         path = self.root / "control/settings.json"
         write_json_atomic(str(path), {**self.policy, "enabled": False, "routines": False, "daily_calls": 0})
         original = path.read_bytes()
-        def definition(path: str) -> dict:
-            routine = Path(path).stem.replace("-", "_")
-            return {"uid": 0, "mode": 0o644, "content": f"ExecStart=/usr/bin/python3 /opt/basaltwater/common/service_tools/{routine}.py\n"}
-        with patch.object(agent, "snapshot_unit_file", side_effect=definition), \
+        with patch.object(agent, "snapshot_unit_file", side_effect=self.managed_units().get), \
                 patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
             agent.request_check(directory=str(self.root / "control"), cleanup=True)
             # A later ordinary check must retain already-authorized cleanup.
@@ -232,6 +247,124 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
         self.assertEqual([item["status"] for item in report["routines"]], ["requested", "requested"])
         self.assertIn("not verified complete", report["summary"])
+
+    def test_cleanup_rejects_extra_arguments_starts_and_unsafe_generated_units(self) -> None:
+        for change, mode in ((lambda content: content.replace('.py"', '.py" --extra'), 0o644),
+                             (lambda content: content + "ExecStart=/usr/bin/other-command\n", 0o644),
+                             (lambda content: content.replace('.py"', '.py'), 0o644),
+                             (lambda content: content, 0o666)):
+            units = self.managed_units()
+            for definition in units.values():
+                definition["content"] = change(definition["content"])
+                definition["mode"] = mode
+            self.manual_cleanup()
+            with patch.object(agent, "snapshot_unit_file", side_effect=units.get), patch.object(agent, "_command") as dispatch:
+                self.run_check(100000, [])
+            dispatch.assert_not_called()
+
+    def test_corrupt_state_preserves_queued_cleanup_request(self) -> None:
+        self.manual_cleanup()
+        marker = self.root / "control/wake.json"
+        original = marker.read_bytes()
+        (self.root / "state.json").write_text("invalid")
+        (self.root / "state.json").chmod(0o600)
+        with self.assertRaises(RuntimeError):
+            self.run_check(100000, [])
+        self.assertEqual(marker.read_bytes(), original)
+
+    def test_interrupted_probe_retains_claim_and_accepts_a_separate_queued_request(self) -> None:
+        identifier = self.manual_cleanup()
+        with patch.object(agent, "collect_checks", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            agent.run_supervisor(config_path="unused", directory=str(self.root), now=100000)
+        self.assertFalse((self.root / "control/wake.json").exists())
+        self.assertEqual(json.loads((self.root / "active-request.json").read_text())["id"], identifier)
+        queued = agent.request_check(directory=str(self.root / "control"))
+        with patch.object(agent, "snapshot_unit_file", side_effect=self.managed_units().get), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
+            self.assertTrue(self.run_check(100001, []))
+            self.assertTrue(self.run_check(100002, []))
+            self.assertFalse(self.run_check(100003, []))
+        self.assertEqual(dispatch.call_count, 2)
+        reports = agent.load_reports(str(self.root / "reports.json"))["reports"]
+        self.assertEqual([report["request_id"] for report in reports], [identifier, queued])
+        self.assertEqual(reports[-1]["routines"], [])
+        self.assertFalse((self.root / "active-request.json").exists())
+
+    def test_acceptance_persistence_failure_retains_claim_and_retries_cleanup(self) -> None:
+        identifier = self.manual_cleanup()
+        original_persist = agent._persist
+        def fail_acceptance(state, baseline, root):
+            if state["reports"]:
+                raise OSError("disk full")
+            original_persist(state, baseline, root)
+        with patch.object(agent, "_persist", side_effect=fail_acceptance), \
+                patch.object(agent, "_command") as dispatch, self.assertRaises(OSError):
+            self.run_check(100000, [])
+        dispatch.assert_not_called()
+        self.assertEqual(json.loads((self.root / "active-request.json").read_text())["id"], identifier)
+        with patch.object(agent, "snapshot_unit_file", side_effect=self.managed_units().get), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
+            self.assertTrue(self.run_check(100001, []))
+        self.assertEqual(dispatch.call_count, 2)
+
+    def test_interrupted_acknowledgement_resumes_durable_pending_jobs_once(self) -> None:
+        self.manual_cleanup()
+        with patch.object(agent, "remove_file_durable", side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            self.run_check(100000, [])
+        report = agent._load_state(str(self.root / "state.json"))["reports"][-1]
+        self.assertEqual([item["status"] for item in report["routines"]], ["pending", "pending"])
+        with patch.object(agent, "snapshot_unit_file", side_effect=self.managed_units().get), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
+            self.assertTrue(self.run_check(100001, []))
+            self.assertFalse(self.run_check(100002, []))
+        self.assertEqual(dispatch.call_count, 2)
+        self.assertEqual(len(agent.load_reports(str(self.root / "reports.json"))["reports"]), 1)
+        self.assertFalse((self.root / "active-request.json").exists())
+
+    def test_restart_only_dispatches_jobs_not_yet_attempted(self) -> None:
+        self.manual_cleanup()
+        units = self.managed_units()
+        original_persist = agent._persist
+        def interrupt_after_first(state, baseline, root):
+            original_persist(state, baseline, root)
+            if state["reports"] and [item["status"] for item in state["reports"][-1]["routines"]] == ["requested", "pending"]:
+                raise KeyboardInterrupt
+        with patch.object(agent, "snapshot_unit_file", side_effect=units.get), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
+            with patch.object(agent, "_persist", side_effect=interrupt_after_first), self.assertRaises(KeyboardInterrupt):
+                self.run_check(100000, [])
+            self.assertTrue(self.run_check(100001, []))
+            self.assertFalse(self.run_check(100002, []))
+        self.assertEqual([call.args[0][-1] for call in dispatch.call_args_list], [routine + ".service" for routine in agent._ROUTINES])
+
+    def test_uncertain_dispatch_is_reported_without_replay_and_other_jobs_resume(self) -> None:
+        self.manual_cleanup()
+        with patch.object(agent, "snapshot_unit_file", side_effect=self.managed_units().get), \
+                patch.object(agent, "_command", side_effect=[KeyboardInterrupt, SimpleNamespace(returncode=0)]) as dispatch:
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_check(100000, [])
+            self.assertTrue(self.run_check(100001, []))
+            self.assertFalse(self.run_check(100002, []))
+        self.assertEqual([call.args[0][-1] for call in dispatch.call_args_list], [routine + ".service" for routine in agent._ROUTINES])
+        report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
+        self.assertEqual([item["status"] for item in report["routines"]], ["interrupted", "requested"])
+        self.assertIn("outcome is unknown", report["summary"])
+
+    def test_disabled_automatic_schedule_cancels_unattempted_jobs_on_restart(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "routines": True, "daily_calls": 0})
+        original_persist = agent._persist
+        def interrupt_after_acceptance(state, baseline, root):
+            original_persist(state, baseline, root)
+            if state["reports"]:
+                raise KeyboardInterrupt
+        with patch.object(agent, "_persist", side_effect=interrupt_after_acceptance), self.assertRaises(KeyboardInterrupt):
+            self.run_check(100000, [])
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "enabled": False})
+        with patch.object(agent, "_command") as dispatch:
+            self.assertTrue(self.run_check(100001, []))
+        dispatch.assert_not_called()
+        report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
+        self.assertEqual([item["status"] for item in report["routines"]], ["blocked", "blocked"])
 
     def test_request_arriving_during_consumption_remains_queued(self) -> None:
         agent.request_check(directory=str(self.root / "control"))
@@ -257,7 +390,7 @@ class MaintenanceSupervisorTest(unittest.TestCase):
                 threads.append(thread)
                 thread.start()
                 self.assertTrue(started.wait(1))
-                self.assertFalse(finished.wait(0.05), "Writer must wait for consumer's read/unlink lock")
+                self.assertFalse(finished.wait(0.05), "Writer must wait for consumer's read/claim lock")
             return result
 
         try:
@@ -426,6 +559,8 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         original = json.loads(path.read_text())
         for values in ({"context": None}, {"review": {"status": []}}, {"routines": [42]},
                        {"issues": [{**ISSUE, "severity": []}]}, {"host_check": "yes"},
+                       {"cleanup_requested": "true"}, {"request_id": "invalid"},
+                       {"routines": [{"unit": "cleanup-maintenance", "status": "pending"}] * 2},
                        {"source": "other"}, {"policy": {"enabled": "true"}}, {"summary": []}):
             corrupted = json.loads(json.dumps(original))
             if "context" in values:

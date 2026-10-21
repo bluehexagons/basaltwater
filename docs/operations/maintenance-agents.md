@@ -40,6 +40,12 @@ includes APT autoremove of unused packages under the existing job policy. It wor
 with automatic maintenance off and preserves all saved schedule preferences.
 Missing or unverifiable job definitions are reported as blocked. The request
 contains a fixed cleanup flag, never a shell command or model-generated action.
+Requests are claimed durably before checking the host, then acknowledged only
+after their report and pending jobs are saved. A restart resumes jobs that have
+not been attempted, including an explicit cleanup with automatic maintenance
+off. An interrupted dispatch has an unknown outcome and is never replayed
+automatically; inspect Scheduled jobs and the named service before retrying.
+Disabling automatic housekeeping cancels its pending, unattempted jobs.
 
 Automatic host diagnostics and security audits have independent schedules:
 `--maintenance-agent-host-checks` uses the minute `interval`, while
@@ -257,6 +263,7 @@ used for root setups has no home and cannot expose another account's inbox.
 | `/etc/basaltwater/maintenance-agent.json` | Root-owned identity and non-secret setup context |
 | `/var/lib/basaltwater/maintenance-agent/control/settings.json` | Private operator policy |
 | `/var/lib/basaltwater/maintenance-agent/control/wake.json` | Coalesced check request; carries no command |
+| `/var/lib/basaltwater/maintenance-agent/active-request.json` | Durable private claim until request acceptance is recorded |
 | `/var/lib/basaltwater/maintenance-agent/state.json` | Root-only counters, audit findings and retained checks |
 | `/var/lib/basaltwater/maintenance-agent/reports.json` | Root-exported records readable by the panel group |
 | `basaltwater-maintenance-agent.timer` | Poll policy every 15 minutes |

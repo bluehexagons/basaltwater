@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from lib.atomic_io import read_json_file, write_json_atomic
+from lib.atomic_io import read_json_file, remove_file_durable, rename_path_durable, write_json_atomic
 from lib.agent_probe import run_probe
 from lib.maintenance_agent_config import (
     CONFIG_FILE, CONTROL_DIR, DATA_DIR, DEFAULTS, POLICY_FILE, REPORT_FILE,
@@ -148,13 +148,20 @@ def load_reports(path: str = REPORT_FILE) -> dict[str, Any]:
             raise RuntimeError(f"Invalid maintenance review: {path}")
         if len(report["routines"]) > len(_ROUTINES) or any(
             not isinstance(item, dict) or item.get("unit") not in _ROUTINES
-            or not isinstance(item.get("status"), str) or item["status"] not in {"blocked", "requested", "failed"}
+            or not isinstance(item.get("status"), str)
+            or item["status"] not in {"pending", "dispatching", "interrupted", "blocked", "requested", "failed"}
             for item in report["routines"]
         ):
             raise RuntimeError(f"Invalid maintenance housekeeping record: {path}")
+        if len({item["unit"] for item in report["routines"]}) != len(report["routines"]):
+            raise RuntimeError(f"Duplicate maintenance housekeeping record: {path}")
+        if "request_id" in report and (not isinstance(report["request_id"], str)
+                or len(report["request_id"]) != 32
+                or any(c not in "0123456789abcdef" for c in report["request_id"])):
+            raise RuntimeError(f"Invalid maintenance request ID: {path}")
         if "check_status" in report and report["check_status"] not in ("running", "completed", "interrupted"):
             raise RuntimeError(f"Invalid maintenance check status: {path}")
-        if (any(key in report and type(report[key]) is not bool for key in ("host_check", "security_audit"))
+        if (any(key in report and type(report[key]) is not bool for key in ("host_check", "security_audit", "cleanup_requested"))
                 or "source" in report and report["source"] not in ("manual", "automatic")):
             raise RuntimeError(f"Invalid maintenance check scope: {path}")
         if "policy" in report:
@@ -367,6 +374,48 @@ def _persist(state: dict[str, Any], baseline: dict[str, Any], directory: Path) -
                       mode=0o640, uid=0, gid=baseline["report_gid"])
 
 
+def _dispatch_routines(report: dict[str, Any], persist: Callable[[], None], *, authorized: bool) -> None:
+    """Resume unattempted jobs and retain uncertain attempts without replaying them."""
+    for item in report["routines"]:
+        routine = item["unit"]
+        message = ""
+        if item["status"] == "dispatching":
+            item["status"] = "interrupted"
+            message = ("Housekeeping dispatch outcome is unknown; inspect Scheduled jobs and "
+                       f"systemctl status {routine}.service before requesting another cleanup: {routine}")
+        elif item["status"] != "pending":
+            continue
+        elif not authorized:
+            item["status"] = "blocked"
+            message = "Pending automatic housekeeping cancelled because its schedule is disabled: " + routine
+        else:
+            unit = Path("/etc/systemd/system") / (routine + ".service")
+            try:
+                definition = snapshot_unit_file(str(unit))
+            except (OSError, ValueError):
+                definition = None
+            definition = definition or {}
+            script = f"/opt/basaltwater/common/service_tools/{routine.replace('-', '_')}.py"
+            starts = [line for line in definition.get("content", "").splitlines() if line.startswith("ExecStart=")]
+            # The installer quotes script paths. Accept only these two exact
+            # forms of the fixed command, with no extra arguments or starts.
+            allowed = ([f'ExecStart=/usr/bin/python3 "{script}"'], [f"ExecStart=/usr/bin/python3 {script}"])
+            if (definition.get("uid") != 0 or definition.get("mode", 0) & 0o022 or starts not in allowed):
+                item["status"] = "blocked"
+                message = "Managed housekeeping unit could not be verified: " + routine
+            else:
+                item["status"] = "dispatching"
+                persist()  # Reserve this attempt before handing it to systemd.
+                result = _command(["/usr/bin/systemctl", "start", "--no-block", routine + ".service"])
+                item["status"] = "requested" if not result.returncode else "failed"
+                if result.returncode:
+                    message = "Managed housekeeping could not start: " + routine
+        if message:
+            report["issues"].append({"key": "routine:" + routine, "severity": "warning", "message": message})
+        report["summary"] = report_summary(report)
+        persist()
+
+
 def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR, now: int | None = None) -> bool:
     """Run one supervised check. Privileged mutations are fixed housekeeping jobs."""
     if os.geteuid() != 0:
@@ -388,19 +437,36 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
             return False
         policy = load_policy(str(root / "control/settings.json"))
         marker = root / "control/wake.json"
-        cleanup_requested = False
-        with _request_lock(marker.parent):
-            forced = os.path.lexists(marker)
-            if forced:
-                cleanup_requested = _wake_request(marker).get("cleanup", False)
-                marker.unlink()
         state = _load_state(str(root / "state.json"))
+        resumed = False
         for previous in state["reports"]:
             if previous.get("check_status") == "running":
                 previous["check_status"] = "interrupted"
                 if previous["review"].get("status") == "running":
                     previous["review"].update(status="failed", output="Host supervisor stopped during this review; its attempt remains charged")
+                previous["summary"] = report_summary(previous)
         _persist(state, baseline, root)  # Also repairs a public export interrupted by a crash.
+        for previous in state["reports"]:
+            if any(item["status"] in {"pending", "dispatching"} for item in previous["routines"]):
+                authorized = previous.get("cleanup_requested", False) or bool(
+                    previous.get("source") == "automatic" and policy["enabled"] and policy["routines"])
+                _dispatch_routines(previous, lambda: _persist(state, baseline, root), authorized=authorized)
+                resumed = True
+        claim = root / "active-request.json"
+        request = None
+        with _request_lock(marker.parent):
+            if os.path.lexists(claim):
+                request = _wake_request(claim)
+                if any(previous.get("request_id") == request["id"] for previous in state["reports"]):
+                    remove_file_durable(str(claim))
+                    request = None
+            if request is None and os.path.lexists(marker):
+                request = _wake_request(marker)
+                # A private durable claim survives interruption before the
+                # acceptance report. Writers can now queue a separate request.
+                rename_path_durable(str(marker), str(claim))
+        forced = request is not None
+        cleanup_requested = bool(request and request.get("cleanup", False))
         current = int(time.time()) if now is None else now
         host = forced or bool(policy["enabled"] and policy["host_checks"]
                               and current - state["last_check"] >= policy["interval"] * 60)
@@ -409,7 +475,7 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
         routines = cleanup_requested or bool(not forced and policy["enabled"] and policy["routines"]
                                             and current - state["last_routines"] >= 86400)
         if not (host or audit or routines):
-            return False
+            return resumed
         issues = collect_checks(baseline["context"], security=audit, host=host)
         if host:
             state["last_check"] = current
@@ -422,35 +488,22 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
         elif policy["security"]:
             issues.extend(state["security_issues"])
         report: dict[str, Any] = {"checked_at": datetime.fromtimestamp(current, timezone.utc).isoformat(),
-                                  "issues": issues, "security_audit": audit, "routines": [],
+                                  "issues": issues, "security_audit": audit,
+                                  "routines": [{"unit": routine, "status": "pending"} for routine in _ROUTINES] if routines else [],
+                                  "cleanup_requested": cleanup_requested,
                                   "host_check": host, "source": "manual" if forced else "automatic", "policy": dict(policy),
                                   "check_status": "running",
                                   "review": {"status": "skipped", "reason": "No findings require a model review"}}
+        if request:
+            report["request_id"] = request["id"]
         state["reports"] = (state["reports"] + [report])[-MAX_REPORTS:]
-        _persist(state, baseline, root)
         if routines:
-            # Reserve before dispatch. Existing jobs enforce their own locks,
-            # retention and capability policy; no LLM output chooses a command.
             state["last_routines"] = current
-            _persist(state, baseline, root)
-            for routine in _ROUTINES:
-                unit = Path("/etc/systemd/system") / (routine + ".service")
-                try:
-                    definition = snapshot_unit_file(str(unit))
-                except (OSError, ValueError):
-                    definition = {}
-                definition = definition or {}
-                script = f"/opt/basaltwater/common/service_tools/{routine.replace('-', '_')}.py"
-                starts = [line for line in definition.get("content", "").splitlines() if line.startswith("ExecStart=")]
-                if (definition.get("uid") != 0 or definition.get("mode", 0) & 0o022
-                        or starts != [f"ExecStart=/usr/bin/python3 {script}"]):
-                    report["routines"].append({"unit": routine, "status": "blocked"})
-                    issues.append({"key": "routine:" + routine, "severity": "warning", "message": "Managed housekeeping unit could not be verified: " + routine})
-                    continue
-                result = _command(["/usr/bin/systemctl", "start", "--no-block", routine + ".service"])
-                report["routines"].append({"unit": routine, "status": "requested" if not result.returncode else "failed"})
-                if result.returncode:
-                    issues.append({"key": "routine:" + routine, "severity": "warning", "message": "Managed housekeeping could not start: " + routine})
+        _persist(state, baseline, root)
+        if request:
+            remove_file_durable(str(claim))  # Acceptance and pending jobs are durable first.
+        if routines:
+            _dispatch_routines(report, lambda: _persist(state, baseline, root), authorized=True)
         fingerprint = hashlib.sha256(json.dumps(sorted((issue["key"], issue["severity"]) for issue in issues)).encode()).hexdigest()
         changed = fingerprint != state["fingerprint"]
         state["repeated"] = 1 if changed else min(1000000, state["repeated"] + 1)
