@@ -343,12 +343,12 @@ class TestUserCacheHelpers(unittest.TestCase):
             self.assertTrue(os.path.exists(rotation))
             self.assertTrue(os.path.islink(linked_rotation))
 
-    def test_backup_policy_reports_dry_run_and_propagates_deferrals(self):
+    def test_backup_policy_reports_dry_run_and_propagates_failures(self):
         context = self._context("/fixture-home")
         for result, expected_event in (
             (CodexCleanupResult(found=("snapshot",), selected=("snapshot",)),
              "Would prune Codex update backups"),
-            (CodexCleanupResult(errors=("lock busy",)), "Codex backup cleanup deferred"),
+            (CodexCleanupResult(errors=("unsafe lock",)), "Failed to reconcile Codex update backups"),
         ):
             with self.subTest(event=expected_event), patch.object(
                 user_cache_maintenance, "reconcile_codex_update_backups", return_value=result,
@@ -357,6 +357,26 @@ class TestUserCacheHelpers(unittest.TestCase):
             self.assertEqual(failures, list(result.errors))
             reconcile.assert_called_once_with(context.home, context.uid, dry_run=True)
             self.assertIn(expected_event, [call.args[1] for call in log.call_args_list])
+
+    def test_codex_policies_log_safety_deferrals_without_failing_maintenance(self):
+        context = self._context("/fixture-home")
+        result = CodexCleanupResult(
+            found=("snapshot",), retained=("snapshot",),
+            errors=("cannot inventory user process executable (pid 123: PermissionError)",),
+            deferred=True,
+        )
+        for policy, reconcile in (
+            (user_cache_maintenance.cleanup_codex_update_backups, "reconcile_codex_update_backups"),
+            (user_cache_maintenance.cleanup_codex_standalone_releases, "reconcile_codex_standalone_releases"),
+        ):
+            for dry_run in (True, False):
+                with self.subTest(policy=policy.__name__, dry_run=dry_run), patch.object(
+                    user_cache_maintenance, reconcile, return_value=result,
+                ), patch.object(user_cache_maintenance, "log_event") as log:
+                    self.assertEqual(policy(context, dry_run=dry_run), [])
+                event = next(call for call in log.call_args_list if "retained for retry" in call.args[1])
+                self.assertEqual(event.kwargs["level"], user_cache_maintenance.INFO)
+                self.assertIn("pid 123", event.kwargs["error"])
 
 
 class TestUserCachePolicies(unittest.TestCase):
@@ -564,6 +584,30 @@ class TestUserCachePolicies(unittest.TestCase):
 
 
 class TestUserCacheMain(unittest.TestCase):
+    def test_safety_deferral_does_not_fail_setup_or_daily_job_but_other_failures_do(self):
+        context = user_cache_maintenance.UserContext("agent", "/fixture-home", 1000)
+        result = CodexCleanupResult(errors=("process inventory unavailable",), deferred=True)
+        for args in ([], ["--agent-storage-only"], ["--agent-storage-only", "--dry-run"]):
+            for other_errors in ([], ["T3 log removal failed"]):
+                with self.subTest(args=args, errors=other_errors), patch.object(
+                    user_cache_maintenance, "resolve_user_context", return_value=context,
+                ), patch.object(
+                    user_cache_maintenance, "run_user_cache_maintenance",
+                    side_effect=user_cache_maintenance.cleanup_agent_storage,
+                ), patch.object(
+                    user_cache_maintenance, "reconcile_codex_standalone_releases",
+                    return_value=CodexCleanupResult(),
+                ), patch.object(
+                    user_cache_maintenance, "reconcile_codex_update_backups", return_value=result,
+                ), patch.object(
+                    user_cache_maintenance, "cleanup_t3_rotated_logs", return_value=other_errors,
+                ) as logs, patch.object(
+                    user_cache_maintenance, "cleanup_t3_runtimes", return_value=[],
+                ) as runtimes:
+                    self.assertEqual(user_cache_maintenance.main(args), int(bool(other_errors)))
+                logs.assert_called_once_with(context, dry_run="--dry-run" in args)
+                runtimes.assert_called_once_with(context, dry_run="--dry-run" in args)
+
     @patch("common.service_tools.user_cache_maintenance.run_user_cache_maintenance")
     @patch("common.service_tools.user_cache_maintenance.resolve_user_context")
     def test_dry_run_is_forwarded_to_cache_policies(self, mock_context, mock_run):

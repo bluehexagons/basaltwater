@@ -99,6 +99,20 @@ class CodexLifecycleTests(unittest.TestCase):
         self.assertFalse(Path(first).exists())
         self.assertEqual(self.launcher.resolve(), self.root / "releases/2.0.0-x86_64-linux-musl/bin/codex")
 
+    def test_successful_update_still_records_process_visibility_deferral(self):
+        old = Path(agent_cli._backup_executable("codex", str(self.launcher), str(self.home)))
+        proc = self.home / "proc"
+        (proc / "123").mkdir(parents=True)
+        with patch(
+            "lib.agent_storage._active_codex_releases",
+            side_effect=lambda releases, uid, _root: scan_codex_processes(releases, uid, str(proc)),
+        ):
+            result = self.update()
+        self.assertEqual(result["status"], "updated")
+        self.assertTrue(result["backup_cleanup_deferred"])
+        self.assertTrue(old.exists())
+        self.assertTrue(Path(result["backup_path"]).exists())
+
     def test_backup_cleanup_retains_active_and_selected_snapshots(self):
         old = agent_cli._backup_executable("codex", str(self.launcher), str(self.home))
         current = agent_cli._backup_executable("codex", str(self.launcher), str(self.home))
@@ -215,6 +229,7 @@ class CodexLifecycleTests(unittest.TestCase):
             for dry_run in (True, False):
                 result = self.reconcile_backups(dry_run=dry_run)
                 self.assertIn("lock is busy", result.errors[0])
+                self.assertTrue(result.deferred)
                 self.assertFalse(result.removed)
                 self.assertTrue(obsolete.exists())
                 self.assertTrue(keep.exists())
@@ -249,6 +264,7 @@ class CodexLifecycleTests(unittest.TestCase):
                     self.state_path.write_text(content)
                 result = self.reconcile_backups()
                 self.assertTrue(result.errors)
+                self.assertFalse(result.deferred)
                 self.assertFalse(result.removed)
                 self.assertTrue(obsolete.exists())
                 self.assertTrue(keep.exists())
@@ -277,7 +293,13 @@ class CodexLifecycleTests(unittest.TestCase):
         obsolete, keep = self.prepare_backup_maintenance()
         process = self.proc / "123"
         process.mkdir()  # A remaining PID with no verifiable exe is not idle.
-        self.assertTrue(self.reconcile_backups().errors)
+        for dry_run in (True, False):
+            result = self.reconcile_backups(dry_run=dry_run)
+            self.assertTrue(result.errors)
+            self.assertTrue(result.deferred)
+            self.assertIn("123", result.errors[0])
+            self.assertFalse(result.removed)
+            self.assertEqual(result.retained, result.found)
         process.rmdir()
         self.proc.rmdir()
         self.assertTrue(self.reconcile_backups().errors)
@@ -286,6 +308,34 @@ class CodexLifecycleTests(unittest.TestCase):
         with patch("lib.agent_storage.os.readlink", side_effect=PermissionError):
             self.assertTrue(self.reconcile_backups().errors)
         self.assertTrue(obsolete.exists())
+        self.assertTrue(keep.exists())
+
+    def test_periodic_backup_cleanup_defers_if_process_visibility_is_lost_before_disposal(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        scans = 0
+
+        def inventory(releases, uid, proc_root):
+            nonlocal scans
+            scans += 1
+            if scans == 2:
+                (self.proc / "123").mkdir()  # Cannot verify this remaining PID.
+            return scan_codex_processes(releases, uid, proc_root)
+
+        with patch("lib.agent_storage._active_codex_releases", side_effect=inventory):
+            result = cleanup_codex_update_backups(
+                str(self.home), os.getuid(), dry_run=False, proc_root=str(self.proc),
+            )
+        self.assertTrue(result.deferred)
+        self.assertTrue(result.errors)
+        self.assertFalse(result.removed)
+        self.assertEqual(result.retained, result.found)
+        self.assertTrue(obsolete.exists())
+        self.assertTrue(keep.exists())
+        (self.proc / "123").rmdir()
+        retried = self.reconcile_backups()
+        self.assertFalse(retried.deferred)
+        self.assertFalse(retried.errors)
+        self.assertFalse(obsolete.exists())
         self.assertTrue(keep.exists())
 
     def test_periodic_backup_cleanup_needs_no_process_inventory_for_rollback_alone(self):
@@ -339,6 +389,7 @@ class CodexLifecycleTests(unittest.TestCase):
             result = self.reconcile_backups()
         self.assertFalse(result.removed)
         self.assertTrue(result.errors)
+        self.assertFalse(result.deferred)
         self.assertEqual((snapshot / "unfamiliar").read_text(), "preserve")
         self.assertTrue(keep.exists())
 

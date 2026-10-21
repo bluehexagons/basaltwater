@@ -389,7 +389,11 @@ bounded policies:
   only after their vendor manifest, entrypoint, ownership, and directory layout
   have been validated; unfamiliar entries are left unchanged.
   When extras could be removed, an unreadable process executable or incomplete
-  account process inventory defers removal and reports a maintenance failure.
+  account process inventory defers removal. This is an informational safety skip,
+  not a setup or scheduled-job failure: all unremoved candidates are retained
+  for retry, and the log identifies the blocking PID when available. Protected
+  account daemons can prevent inspection even when cleanup runs as their owner;
+  do not weaken process permissions or infer inactivity from process names.
   Current and rollback releases alone need no process scan. Process activity
   is checked again before each removal; a failed check preserves remaining
   candidates for a later retry.
@@ -404,10 +408,14 @@ bounded policies:
   selected launchers, running snapshots, and unfamiliar entries. It acquires
   the updater's existing `agent-update.lock` with a nonblocking exclusive flock
   throughout inspection and disposal; it never creates or replaces that lock.
-  A busy, missing, or unsafe lock, missing/corrupt/unfinished update state, an
-  unverifiable rollback, or incomplete process inventory when extra snapshots
-  exist defers backup cleanup and reports a maintenance failure for a later
-  retry. A verified rollback snapshot alone requires no process scan because
+  A busy update lock or incomplete process inventory when extra snapshots exist
+  produces the same informational deferral, preserving snapshots for retry.
+  Missing or unsafe locks, missing/corrupt/unfinished update state, unverifiable
+  rollback copies, and filesystem or disposal errors still report maintenance
+  failures. Readiness inspections and update records continue to expose
+  incomplete cleanup; a successful maintenance pass does not mean every
+  snapshot could be inspected or removed.
+  A verified rollback snapshot alone requires no process scan because
   nothing can be deleted. Dry runs use the same
   checks and report eligible snapshot counts without writing files. The legacy
   `codex.previous` recovery executable is retained: migration records do not

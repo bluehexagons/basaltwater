@@ -34,7 +34,12 @@ class CodexRelease:
 
 @dataclass(frozen=True)
 class CodexCleanupResult:
-    """Outcome of one Codex release or backup reconciliation."""
+    """Outcome of one Codex release or backup reconciliation.
+
+    ``errors`` always records incomplete work. ``deferred`` distinguishes an
+    expected safety skip from a maintenance failure; it never proves inactivity.
+    Readiness and update callers still inspect errors in either case.
+    """
 
     found: tuple[str, ...] = ()
     retained: tuple[str, ...] = ()
@@ -43,6 +48,11 @@ class CodexCleanupResult:
     removed: tuple[str, ...] = ()
     skipped: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    deferred: bool = False
+
+
+class _CodexProcessInventoryUnavailable(OSError):
+    """Process visibility cannot establish that a cleanup candidate is idle."""
 
 
 @dataclass(frozen=True)
@@ -260,6 +270,7 @@ def _reconcile_codex_update_backups(
     selected: list[str] = []
     active: set[str] = set()
     errors: list[str] = []
+    deferred = False
 
     def protected() -> set[str]:
         launcher = os.path.join(home, ".local", "bin", "codex")
@@ -296,11 +307,12 @@ def _reconcile_codex_update_backups(
         recovery = getattr(exc, "recovery_path", None)
         details = f"{exc}; recovery path: {recovery}" if recovery else str(exc)
         errors.append(f"Codex backup cleanup deferred: {details}")
+        deferred = isinstance(exc, _CodexProcessInventoryUnavailable)
         retained.update(set(releases) - set(removed))
     return CodexCleanupResult(
         found=found, retained=tuple(sorted(retained)), active=tuple(sorted(active)),
         selected=tuple(selected), removed=tuple(removed), skipped=tuple(sorted(skipped)),
-        errors=tuple(errors),
+        errors=tuple(errors), deferred=deferred,
     )
 
 
@@ -370,7 +382,10 @@ def cleanup_codex_update_backups(
             home, uid, keep, dry_run=dry_run, proc_root=proc_root,
         )
     except BlockingIOError:
-        return CodexCleanupResult(errors=("Codex backup cleanup deferred: agent update lock is busy",))
+        return CodexCleanupResult(
+            errors=("Codex backup cleanup deferred: agent update lock is busy",),
+            deferred=True,
+        )
     except (OSError, ValueError) as exc:
         return CodexCleanupResult(errors=(f"Codex backup cleanup deferred: {exc}",))
     finally:
@@ -385,7 +400,11 @@ def _active_codex_releases(
 ) -> set[str]:
     """Find running releases, refusing incomplete account process inventories."""
     active: set[str] = set()
-    with os.scandir(proc_root) as processes:
+    try:
+        processes = os.scandir(proc_root)
+    except OSError as exc:
+        raise _CodexProcessInventoryUnavailable("cannot inventory user processes") from exc
+    with processes:
         for process in processes:
             if not process.name.isdigit():
                 continue
@@ -395,10 +414,15 @@ def _active_codex_releases(
                 executable = os.path.realpath(os.readlink(os.path.join(process.path, "exe")))
             except (FileNotFoundError, ProcessLookupError):
                 if os.path.exists(process.path):
-                    raise OSError("cannot verify a remaining user process executable")
+                    raise _CodexProcessInventoryUnavailable(
+                        f"cannot verify executable for remaining user process {process.name}"
+                    ) from None
                 continue
-            except OSError:
-                raise OSError("cannot inventory user process executables") from None
+            except OSError as exc:
+                raise _CodexProcessInventoryUnavailable(
+                    f"cannot inventory user process executable (pid {process.name}: "
+                    f"{exc.strerror or type(exc).__name__})"
+                ) from None
             for name, release in releases.items():
                 try:
                     inside_release = (
@@ -467,6 +491,7 @@ def cleanup_codex_standalone_releases(
             retained=found,
             skipped=tuple(sorted(skipped)),
             errors=(f"Codex process inventory: {exc}",),
+            deferred=isinstance(exc, _CodexProcessInventoryUnavailable),
         )
 
     retained = {current, *active}
@@ -488,6 +513,7 @@ def cleanup_codex_standalone_releases(
         )
 
     removed: list[str] = []
+    deferred = False
     for name in selected:
         release = releases[name]
         try:
@@ -515,6 +541,7 @@ def cleanup_codex_standalone_releases(
             removed.append(name)
         except (OSError, ValueError) as exc:
             errors.append(f"{release.path}: {exc}")
+            deferred = isinstance(exc, _CodexProcessInventoryUnavailable)
             retained.update(set(releases) - set(removed))
             break
 
@@ -526,6 +553,7 @@ def cleanup_codex_standalone_releases(
         removed=tuple(sorted(removed)),
         skipped=tuple(sorted(skipped)),
         errors=tuple(errors),
+        deferred=deferred,
     )
 
 

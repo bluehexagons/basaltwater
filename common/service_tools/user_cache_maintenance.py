@@ -717,8 +717,9 @@ def cleanup_codex_standalone_releases(
     for failure in result.errors:
         log_event(
             logger,
-            "Failed to reconcile standalone Codex releases",
-            level=WARNING,
+            "Standalone Codex cleanup deferred; releases retained for retry"
+            if result.deferred else "Failed to reconcile standalone Codex releases",
+            level=INFO if result.deferred else WARNING,
             error=failure,
         )
     if result.skipped:
@@ -749,14 +750,20 @@ def cleanup_codex_standalone_releases(
             "Pruned standalone Codex releases",
             removed=", ".join(result.removed),
         )
-    return list(result.errors)
+    return [] if result.deferred else list(result.errors)
 
 
 def cleanup_codex_update_backups(context: UserContext, *, dry_run: bool) -> list[str]:
     """Retry retirement of obsolete package snapshots after their processes exit."""
     result = reconcile_codex_update_backups(context.home, context.uid, dry_run=dry_run)
     for failure in result.errors:
-        log_event(logger, "Codex backup cleanup deferred", level=WARNING, error=failure)
+        log_event(
+            logger,
+            "Codex backup cleanup deferred; snapshots retained for retry"
+            if result.deferred else "Failed to reconcile Codex update backups",
+            level=INFO if result.deferred else WARNING,
+            error=failure,
+        )
     log_event(
         logger, "Codex update backup inventory", found_count=len(result.found),
         retained_count=len(result.retained), active_count=len(result.active),
@@ -766,7 +773,7 @@ def cleanup_codex_update_backups(context: UserContext, *, dry_run: bool) -> list
         log_event(logger, "Would prune Codex update backups", selected_count=len(result.selected))
     if result.removed:
         log_event(logger, "Pruned Codex update backups", removed_count=len(result.removed))
-    return list(result.errors)
+    return [] if result.deferred else list(result.errors)
 
 
 def cleanup_pip_cache(context: UserContext, *, dry_run: bool) -> list[str]:

@@ -13,6 +13,7 @@ from unittest.mock import patch
 from common.agent_steps import reconcile_agent_storage
 from common.service_tools import user_cache_maintenance
 from lib.agent_storage import (
+    _CodexProcessInventoryUnavailable,
     cleanup_codex_standalone_releases,
     cleanup_t3_rotated_logs,
 )
@@ -145,6 +146,7 @@ class TestAgentStorage(unittest.TestCase):
 
             self.assertFalse(result.removed)
             self.assertTrue(result.errors)
+            self.assertFalse(result.deferred)
             self.assertTrue(all(os.path.isdir(path) for path in (first, second, third)))
 
     def test_unfamiliar_and_symlinked_releases_are_never_removed(self) -> None:
@@ -196,6 +198,7 @@ class TestAgentStorage(unittest.TestCase):
 
             self.assertFalse(result.removed)
             self.assertTrue(result.errors)
+            self.assertTrue(result.deferred)
             self.assertTrue(all(os.path.isdir(path) for path in releases))
 
     def test_unverifiable_remaining_process_preserves_every_release(self) -> None:
@@ -224,6 +227,8 @@ class TestAgentStorage(unittest.TestCase):
                             home, os.getuid(), dry_run=dry_run, proc_root=self.proc,
                         )
                     self.assertTrue(result.errors)
+                    self.assertTrue(result.deferred)
+                    self.assertIn("123", result.errors[0])
                     self.assertEqual(set(result.retained), set(result.found))
                     self.assertFalse(result.selected)
                     self.assertFalse(result.removed)
@@ -237,12 +242,13 @@ class TestAgentStorage(unittest.TestCase):
             ]
             self._set_current(home, releases[-1])
             with patch("lib.agent_storage._active_codex_releases", side_effect=[
-                set(), OSError("fixture process inventory became unavailable"),
+                set(), _CodexProcessInventoryUnavailable("fixture process inventory became unavailable"),
             ]):
                 result = cleanup_codex_standalone_releases(
                     home, os.getuid(), dry_run=False, proc_root=self.proc,
                 )
             self.assertTrue(result.errors)
+            self.assertTrue(result.deferred)
             self.assertFalse(result.removed)
             self.assertEqual(set(result.retained), set(result.found))
             self.assertTrue(all(os.path.isdir(path) for path in releases))
