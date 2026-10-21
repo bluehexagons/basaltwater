@@ -22,6 +22,9 @@ from plugins.common import extend_agent_steps
 
 
 class TestAgentStorage(unittest.TestCase):
+    def setUp(self) -> None:
+        self.proc = self.enterContext(tempfile.TemporaryDirectory())
+
     def _create_codex_release(
         self,
         home: str,
@@ -76,6 +79,7 @@ class TestAgentStorage(unittest.TestCase):
                 home,
                 os.getuid(),
                 dry_run=False,
+                proc_root=self.proc,
             )
 
             self.assertEqual(result.removed, (os.path.basename(oldest),))
@@ -95,6 +99,7 @@ class TestAgentStorage(unittest.TestCase):
                 home,
                 os.getuid(),
                 dry_run=True,
+                proc_root=self.proc,
             )
 
             self.assertEqual(result.selected, (os.path.basename(oldest),))
@@ -135,6 +140,7 @@ class TestAgentStorage(unittest.TestCase):
                 home,
                 os.getuid(),
                 dry_run=False,
+                proc_root=self.proc,
             )
 
             self.assertFalse(result.removed)
@@ -163,6 +169,7 @@ class TestAgentStorage(unittest.TestCase):
                 home,
                 os.getuid(),
                 dry_run=False,
+                proc_root=self.proc,
             )
 
             self.assertEqual(
@@ -190,6 +197,99 @@ class TestAgentStorage(unittest.TestCase):
             self.assertFalse(result.removed)
             self.assertTrue(result.errors)
             self.assertTrue(all(os.path.isdir(path) for path in releases))
+
+    def test_unverifiable_remaining_process_preserves_every_release(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            releases = [
+                self._create_codex_release(home, version, mtime=index)
+                for index, version in enumerate(("1.0.0", "1.1.0", "1.2.0"), 1)
+            ]
+            self._set_current(home, releases[-1])
+            process = os.path.join(self.proc, "123")
+            os.mkdir(process)
+            executable = os.path.join(process, "exe")
+            os.symlink(os.path.join(releases[0], "bin", "codex"), executable)
+            original_readlink = os.readlink
+            for failure in (PermissionError, FileNotFoundError):
+                def readlink(path, *args, **kwargs):
+                    if path == executable:
+                        raise failure("fixture process is unverifiable")
+                    return original_readlink(path, *args, **kwargs)
+
+                for dry_run in (True, False):
+                    with self.subTest(failure=failure, dry_run=dry_run), patch(
+                        "lib.agent_storage.os.readlink", side_effect=readlink,
+                    ):
+                        result = cleanup_codex_standalone_releases(
+                            home, os.getuid(), dry_run=dry_run, proc_root=self.proc,
+                        )
+                    self.assertTrue(result.errors)
+                    self.assertEqual(set(result.retained), set(result.found))
+                    self.assertFalse(result.selected)
+                    self.assertFalse(result.removed)
+                    self.assertTrue(all(os.path.isdir(path) for path in releases))
+
+    def test_process_inventory_failure_before_disposal_preserves_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            releases = [
+                self._create_codex_release(home, version, mtime=index)
+                for index, version in enumerate(("1.0.0", "1.1.0", "1.2.0"), 1)
+            ]
+            self._set_current(home, releases[-1])
+            with patch("lib.agent_storage._active_codex_releases", side_effect=[
+                set(), OSError("fixture process inventory became unavailable"),
+            ]):
+                result = cleanup_codex_standalone_releases(
+                    home, os.getuid(), dry_run=False, proc_root=self.proc,
+                )
+            self.assertTrue(result.errors)
+            self.assertFalse(result.removed)
+            self.assertEqual(set(result.retained), set(result.found))
+            self.assertTrue(all(os.path.isdir(path) for path in releases))
+
+    def test_process_exit_during_inventory_does_not_block_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            oldest = self._create_codex_release(home, "1.0.0", mtime=1)
+            self._create_codex_release(home, "1.1.0", mtime=2)
+            current = self._create_codex_release(home, "1.2.0", mtime=3)
+            self._set_current(home, current)
+            process = os.path.join(self.proc, "123")
+            os.mkdir(process)
+            executable = os.path.join(process, "exe")
+            original_readlink = os.readlink
+
+            def readlink(path, *args, **kwargs):
+                if path == executable:
+                    os.rmdir(process)
+                    raise ProcessLookupError("fixture process exited")
+                return original_readlink(path, *args, **kwargs)
+
+            with patch("lib.agent_storage.os.readlink", side_effect=readlink):
+                result = cleanup_codex_standalone_releases(
+                    home, os.getuid(), dry_run=False, proc_root=self.proc,
+                )
+            self.assertFalse(result.errors)
+            self.assertEqual(result.removed, (os.path.basename(oldest),))
+            self.assertFalse(os.path.exists(oldest))
+
+    def test_no_process_inventory_needed_within_configured_retention(self) -> None:
+        for count, rollback in ((1, 0), (2, 1), (3, 2)):
+            for dry_run in (True, False):
+                with self.subTest(count=count, rollback=rollback, dry_run=dry_run), \
+                        tempfile.TemporaryDirectory() as home:
+                    releases = [
+                        self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                        for index in range(count)
+                    ]
+                    self._set_current(home, releases[-1])
+                    result = cleanup_codex_standalone_releases(
+                        home, os.getuid(), dry_run=dry_run, keep_rollback=rollback,
+                        proc_root=os.path.join(home, "unavailable-proc"),
+                    )
+                    self.assertFalse(result.errors)
+                    self.assertEqual(result.retained, result.found)
+                    self.assertFalse(result.selected)
+                    self.assertFalse(result.removed)
 
     def test_t3_cleanup_selects_only_numbered_regular_rotations(self) -> None:
         with tempfile.TemporaryDirectory() as home:

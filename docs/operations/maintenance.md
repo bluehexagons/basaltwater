@@ -388,6 +388,11 @@ bounded policies:
   rollback, and every release currently executing. Older releases are removed
   only after their vendor manifest, entrypoint, ownership, and directory layout
   have been validated; unfamiliar entries are left unchanged.
+  When extras could be removed, an unreadable process executable or incomplete
+  account process inventory defers removal and reports a maintenance failure.
+  Current and rollback releases alone need no process scan. Process activity
+  is checked again before each removal; a failed check preserves remaining
+  candidates for a later retry.
   The host doctor checks this retention policy when more than two releases
   remain: active releases and rollback copies do not trigger an excess-release
   warning. Unused extras, unfamiliar entries, or failed inspection still warn;

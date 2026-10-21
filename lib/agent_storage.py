@@ -270,7 +270,7 @@ def _reconcile_codex_update_backups(
             os.path.realpath(launcher),
             os.path.realpath(os.path.join(home, ".codex", "packages", "standalone", "current", "bin", "codex")),
         }
-        active.update(_active_codex_releases(releases, uid, proc_root, strict=True))
+        active.update(_active_codex_releases(releases, uid, proc_root))
         return active | {
             name for name, release in releases.items()
             if os.path.join(release.path, "bin", "codex") in executables
@@ -382,10 +382,8 @@ def _active_codex_releases(
     releases: dict[str, CodexRelease],
     uid: int,
     proc_root: str,
-    *,
-    strict: bool = False,
 ) -> set[str]:
-    """Find validated releases currently executing for the target account."""
+    """Find running releases, refusing incomplete account process inventories."""
     active: set[str] = set()
     with os.scandir(proc_root) as processes:
         for process in processes:
@@ -396,14 +394,11 @@ def _active_codex_releases(
                     continue
                 executable = os.path.realpath(os.readlink(os.path.join(process.path, "exe")))
             except (FileNotFoundError, ProcessLookupError):
-                if strict and os.path.exists(process.path):
+                if os.path.exists(process.path):
                     raise OSError("cannot verify a remaining user process executable")
                 continue
             except OSError:
-                if strict:
-                    raise OSError("cannot inventory user process executables") from None
-                # Process exit races and inaccessible kernel tasks are expected.
-                continue
+                raise OSError("cannot inventory user process executables") from None
             for name, release in releases.items():
                 try:
                     inside_release = (
@@ -460,6 +455,10 @@ def cleanup_codex_standalone_releases(
             skipped=tuple(sorted(skipped)),
             errors=(f"Codex current release: {exc}",),
         )
+    # Current plus the configured rollback allowance already protects every
+    # release. Avoid requiring process access when deletion is impossible.
+    if len(releases) <= 1 + keep_rollback:
+        return CodexCleanupResult(found=found, retained=found, skipped=tuple(sorted(skipped)))
     try:
         active = _active_codex_releases(releases, uid, proc_root)
     except OSError as exc:
@@ -497,13 +496,13 @@ def cleanup_codex_standalone_releases(
                 latest_link_stat.st_dev != current_link_stat.st_dev
                 or latest_link_stat.st_ino != current_link_stat.st_ino
             ):
-                errors.append("Codex current release changed during cleanup")
-                break
+                raise OSError("Codex current release changed during cleanup")
             if _resolve_current_release(standalone_root, releases, uid) == name:
                 retained.add(name)
                 continue
             if name in _active_codex_releases({name: release}, uid, proc_root):
                 retained.add(name)
+                active.add(name)
                 continue
             current_stat = os.lstat(release.path)
             if (
@@ -516,6 +515,8 @@ def cleanup_codex_standalone_releases(
             removed.append(name)
         except (OSError, ValueError) as exc:
             errors.append(f"{release.path}: {exc}")
+            retained.update(set(releases) - set(removed))
+            break
 
     return CodexCleanupResult(
         found=found,
