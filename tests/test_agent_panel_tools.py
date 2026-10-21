@@ -200,9 +200,8 @@ class AgentPanelToolsTest(unittest.TestCase):
         cache = Path(self.home) / ".cache" / "test-tool"
         cache.mkdir(parents=True, mode=0o700)
         cache.parent.chmod(0o700)
-        (cache / "download").write_text("Retain until approved")
         summary = "Best candidate: test-tool cache, 1 GiB observed; rebuild needs downloads."
-        report = validate_report({"outcome": "complete", "summary": summary, "checkpoint": "Cache review finished",
+        report = validate_report({"outcome": "progress", "summary": summary, "checkpoint": "Cleanup awaits approval",
             "evidence": ["Exact cache path and retention reviewed"], "retry_after_minutes": None,
             "environment_feedback": "", "follow_up": {"title": "Clean the reviewed test-tool cache",
                 "reason": "Measured rebuildable cache is the best low-value candidate",
@@ -213,6 +212,7 @@ class AgentPanelToolsTest(unittest.TestCase):
         for settings in (tools.prepare_tool({"tool": "storage"}, self.home),
                          {**agents.PROMPT_TEMPLATES["storage"], "directory": self.home}):
             with self.subTest(title=settings["title"]):
+                (cache / "download").write_text("Retain until approved")
                 self.assertIn("basaltw agent storage inspect --json", settings["prompt"])
                 task_id = self.state.agent_tasks.create(settings, run_now=True)
                 with patch.object(agent_tasks, "execute_prompt", return_value={
@@ -226,7 +226,22 @@ class AgentPanelToolsTest(unittest.TestCase):
                 child = next(task for task in self.state.agent_tasks.snapshot()["tasks"] if task["id"] == child_id)
                 self.assertEqual(child["writable_directories"], [str(cache)])
                 self.assertEqual((child["workspace"], child["max_runs"], child["queued"]), ("run-directory", 1, True))
-                self.state.agent_tasks.action(child_id, "cancel")
+                self.assertEqual(child["mode"], "workspace")
+                def apply_cleanup(task, home, cancel):
+                    self.assertEqual(task["source_run_id"], run["id"])
+                    self.assertIn(report["follow_up"]["prompt"], task["prompt"])
+                    (cache / "download").unlink()
+                    return {"status": "completed", "message": "Done", "output": "Removed reviewed cache; available space verified",
+                            "outcome": "complete", "summary": "Removed reviewed cache; available space verified",
+                            "checkpoint": "Cleanup verified", "evidence": ["Only reviewed download removed"],
+                            "retry_after_minutes": None, "environment_feedback": "", "follow_up": None}
+                with patch.object(agent_tasks, "execute_prompt", side_effect=apply_cleanup):
+                    self.assertTrue(self.state.agent_tasks.tick())
+                self.assertFalse((cache / "download").exists())
+                result = self.state.agent_tasks.snapshot()["runs"][-1]
+                self.assertEqual(result["outcome"], "complete")
+                self.assertIsNone(result["follow_up"])
+                self.assertIn("available space verified", self.state.agent_tasks.contexts.receipt(child_id, result["id"])["summary"])
 
     def test_log_tool_prefers_installed_sources_and_retains_historical_links(self) -> None:
         with patch.object(self.state, "diagnostic_sources", return_value={"ssh.service": "SSH"}):

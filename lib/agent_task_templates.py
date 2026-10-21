@@ -1,28 +1,28 @@
-"""Shared execution defaults for account-level host review prompts."""
+"""Shared execution defaults and actionable outcomes for account-level tasks."""
 
 from __future__ import annotations
 
 
 HOST_REVIEW_SETTINGS = {"mode": "workspace", "workspace": "run-directory", "network": True}
+ACTIONABLE_RESULT_PROMPT = (
+    "Put substantive findings, changes, verification and next action in summary; 'review finished' is insufficient. "
+    "Perform authorized work. For repairs needing separate access/authorization, propose an executable follow_up. "
+    "Its standalone prompt must apply and verify the exact change without inheriting this review's no-change restriction. "
+)
 FOLLOW_UP_ACCESS_PROMPT = (
-    "For follow_up, mode=inspect requires workspace=existing, network=false, temporary_files=false, "
-    "and writable_directories=[]. Network access, temporary writes, or any managed workspace "
-    "requires mode=workspace, even when commands only inspect the host. "
-    "Workspace source and writable directories must be inside the account's home; additional write "
-    "grants must name specific directories and cannot include credentials, agent configuration, or control state. "
-    "operator_requirements is a checklist of concrete outside preparation for the operator to confirm. "
-    "Do not list review or approval of this proposal itself as a prerequisite; Approve once supplies that authorization. "
-    "service_restarts execute before launch. If a repair must precede a restart, propose the repair first, "
-    "then a separate restart-verification follow-up. Live service checks need network=true. "
-    "If no coherent proposal is possible, use follow_up=null and explain the prerequisite in environment_feedback. "
+    "follow_up inspect requires workspace=existing, network=false, temporary_files=false, writable_directories=[]. "
+    "Network, temp writes or managed workspaces require mode=workspace. Source/write grants must be inside the account home; "
+    "grant exact directories, excluding credentials, agent configuration and control state. "
+    "operator_requirements lists outside preparation, not approval of this proposal: Approve once authorizes it. "
+    "service_restarts execute before launch; propose repairs before dependent restarts in separate tasks. "
+    "Live service checks need network=true. If no valid proposal exists use follow_up=null and explain in environment_feedback. "
 )
 FOLLOW_UP_PROMPT = (
-    "If a blocked check or recommended repair needs different access or authorization, include a follow_up "
-    "request in the structured report with the evidence, exact actions, minimum permissions, verification, "
-    "and rollback plan. Name specific writable_directories, exact service_restarts and any operator_requirements. "
-    "Do not tell another unattended agent to configure its own permissions or approval. "
-    "Do not repeat an unchanged blocked request; report the missing prerequisite as environment_feedback. "
-    "The operator must approve or review the proposal; do not create or activate it yourself. "
+    "For blocked work/repairs needing different access or authorization, include a structured follow_up with evidence, "
+    "exact actions, minimum permissions, verification and rollback. Name writable_directories, service_restarts and "
+    "operator_requirements. Never tell an unattended agent to grant itself permissions/approval. "
+    "Do not repeat unchanged blocked proposals; report the prerequisite in environment_feedback. "
+    "Proposals need operator approval; never activate them yourself. "
     + FOLLOW_UP_ACCESS_PROMPT
 )
 HOST_REVIEW_PROMPT = (
@@ -36,20 +36,27 @@ HOST_REVIEW_PROMPT = (
 )
 
 STORAGE_REVIEW_PROMPT = (
-    "Read-only cleanup review: basaltw agent storage inspect --json; focus --path on large children. "
+    "Goal: reclaim storage with an approved cleanup follow_up. "
+    "First pass read-only: basaltw agent storage inspect --json; focus --path on large children. "
     "Metadata only; no private transcript, credential or database reads. Partial sizes are lower bounds. "
-    "Follow AGENTS.md/native cleanup rules and VM-triage storage-cleanup reference for retention/curation. "
-    "Use cheap Luna high/standard for bounded classification when available; compact paths/offsets, not bulk logs. "
-    "Inspect rules: basaltw agent storage project /absolute/repo --json (--policy for custom JSON). "
-    "Review scripts, even previews. Named generated rules: basaltw agent storage clean-generated /absolute/repo --rule NAME "
-    "previews; --apply needs authorization and target/parent writes. "
-    "Preserve source, dirty/unmerged worktrees, sessions, attachments, backups and active runtimes. "
-    "No deletion, moves, pruning, retention changes or database editing/vacuuming. Age, size, ignore rules and archiving "
-    "never authorize deletion. Rank up to five candidates by benefit, retention and rebuild cost in summary. "
-    "Evidence: exact paths, coverage, active use, commands/access. Propose one useful cleanup or targeted investigation follow_up. "
-    "Cleanup: mode=workspace, workspace=run-directory, exact writable_directories, never whole home. "
-    "Protected paths need managed/admin work. Archive useful original captures with known provenance/checksums; "
-    "verify copies and capacity. Same-disk moves free no space. Explain irreversible deletion; this review authorizes none. "
+    "Follow project instructions, native cleanup rules and VM-triage storage-cleanup guidance. "
+    "Inspect rules: basaltw agent storage project /absolute/repo --json. Review scripts before running even previews. "
+    "For a generated rule, basaltw agent storage clean-generated /absolute/repo --rule NAME previews exact targets; "
+    "approved removal uses --apply and target/parent write grants. "
+    "Resolve exact-child classification now where possible. Preserve mixed build/evidence roots when ambiguous; "
+    "choose a smaller proven disposable cache or generated target instead. "
+    "Preserve source, Git data, dirty/unmerged worktrees, sessions, attachments, backups and active runtimes. "
+    "Age, size, ignore rules and archiving alone never authorize deletion. No removal or retention changes in this pass. "
+    "In summary rank up to five exact candidates by bytes, retention, rebuild cost and coverage; "
+    "name the selected cleanup and benefit. Include measurements, not just a review-complete statement. "
+    "Prefer one cleanup follow_up that rechecks ownership, active use and retention, applies exact reviewed commands, "
+    "and reports removed targets, failures and filesystem available bytes before/after. Approval authorizes that cleanup; "
+    "do not write another review-only prompt or inherit this pass's no-removal restriction. "
+    "Use mode=workspace, workspace=run-directory, exact writable_directories, never the whole home. "
+    "If no safe target exists, name the exact missing retention decision in summary; a targeted investigation must "
+    "end with an apply-ready proposal or a specific operator decision, not another open-ended inventory. "
+    "Protected paths need managed/admin work. Verify archives/checksums/capacity; same-disk moves free no space. "
+    "Deletion is irreversible; this pass authorizes none. "
     + FOLLOW_UP_PROMPT
 )
 

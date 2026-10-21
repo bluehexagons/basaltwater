@@ -23,7 +23,7 @@ from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
 from lib.agent_task_followups import follow_up_requires_review, follow_up_state, prepare_follow_up
 from lib.agent_task_policy import task_policy_issues
-from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, STORAGE_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
+from lib.agent_task_templates import ACTIONABLE_RESULT_PROMPT, HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, STORAGE_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.agent_tasks import (
     AgentTasks, DEFAULT_FAILURE_LIMIT, DEFAULT_TIMEOUT_MINUTES, EFFORTS, MAX_FAILURE_LIMIT,
     MAX_PROMPT_BYTES, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES, WEB_SEARCH_MODES, codex_models, repeat_seconds, validate_task,
@@ -98,7 +98,7 @@ PROMPT_TEMPLATES = {
     },
     "storage": {
         "scope": "host", "title": "Review storage cleanup",
-        "description": "Rank measured cleanup candidates and prepare a bounded follow-up for approval.",
+        "description": "Select a safe cleanup, request approval to apply it, and verify reclaimed space.",
         "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 15,
         "prompt": STORAGE_REVIEW_PROMPT,
     },
@@ -198,6 +198,9 @@ PROMPT_TEMPLATES["daily-maintenance"] = {
     **PROMPT_TEMPLATES["maintenance"], "title": "Daily maintenance checks", "interval": "daily",
     "description": "Schedule a read-only host review every day; no automatic repairs.",
 }
+for _template in PROMPT_TEMPLATES.values():
+    _template["prompt"] += " " + ACTIONABLE_RESULT_PROMPT
+del _template
 
 _STYLE = """
 .agent-columns { display: grid; gap: 16px; max-width: 960px; margin: 18px 0; }

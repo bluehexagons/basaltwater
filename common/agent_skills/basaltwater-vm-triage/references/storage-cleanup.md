@@ -41,6 +41,15 @@ Inspection creates nothing. See [project cleanup](https://github.com/bluehexagon
 for policy and archive details. Treat inspection as an inventory aid, not
 approval or execution.
 
+When cleanup is the requested outcome, resolve bounded classification in the
+current pass and prepare an exact cleanup for approval. Preserve ambiguous mixed
+build/evidence roots and consider smaller proven disposable targets. Put ranked
+paths, measured bytes, retention decisions and the next action in the visible
+summary. An investigation follow-up must end with an apply-ready proposal or a
+specific missing operator decision. Once cleanup is approved, recheck targets,
+apply it and report available space before/after; do not inherit the initial
+review's no-removal restriction into the approved action.
+
 A reviewed `generated` rule can use the shared preview command
 `basaltw agent storage clean-generated /absolute/repo --rule RULE_NAME`.
 It checks the exact declared directories without running project scripts;

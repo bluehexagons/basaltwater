@@ -3,7 +3,9 @@
 Use **Agents → Agent tools → Review disk cleanup** or the **Review storage
 cleanup** task template for a one-time inspection. Both start with measured
 local candidates, rank the best opportunities in the visible summary, and
-request one useful follow-up when evidence supports it. Opening a template or
+request a follow-up that applies a selected safe cleanup and verifies reclaimed
+space. The summary must contain the actual candidates, measurements and retention
+decisions, rather than just saying that the review finished. Opening a template or
 running the review does not authorize deletion. Existing saved tasks keep their
 prompts; create a fresh review to use the updated guidance.
 
@@ -81,10 +83,17 @@ total should lead to a focused investigation of generated output, rather than
 deletion of the project. Preserve source, Git data, dirty or unmerged worktrees,
 credentials, sessions, attachments, backups and active runtime versions.
 
+Resolve bounded exact-child classification during the initial pass when possible.
+An ambiguous large build/evidence root should not prevent a smaller proven cache
+or generated-output cleanup. Preserve the ambiguous material and select the useful
+cleanup that can actually proceed. Do not repeatedly hand off the same inventory.
+
 One coherent cleanup proposal should name exact paths, commands, active-use
 checks, retention decisions, verification and the irreversible nature of
 deletion. If safety is uncertain, propose a targeted read-only investigation
-with a concrete decision to resolve. Large totals alone are insufficient.
+with a concrete decision to resolve. That investigation must produce an apply-ready
+cleanup proposal or name the specific retention decision needed from the operator.
+Large totals alone are insufficient.
 
 Select **Approve once**, **Review follow-up task**, or **Block** on the report.
 A cleanup task uses workspace mode, a private run directory, and only the exact
@@ -93,3 +102,8 @@ agent directories and system paths cannot receive ordinary task write grants;
 use managed retention or separately authorized administrator work. The review
 should explain such prerequisites rather than send another agent into the same
 blocked operation. See [follow-up access](agent-tasks.md#request-a-follow-up-with-different-access).
+
+The approved follow-up must recheck its targets, perform the approved removal,
+and report removed paths, failures, and available filesystem bytes before and
+after. Its self-contained prompt carries the selected retention and access
+constraints; it must not copy the initial review's prohibition on removal.
