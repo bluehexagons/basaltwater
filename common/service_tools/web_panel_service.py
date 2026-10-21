@@ -36,6 +36,8 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
+from common.service_tools.web_panel_storage_usage import parse_storage_query, render_storage_usage
+from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
 from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
@@ -762,6 +764,7 @@ class WebPanelState:
         self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
         self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home, features=self.features)
+        self.storage_diagnostics = StorageDiagnostics(self.agent_tasks.home)
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
@@ -2018,6 +2021,8 @@ def render_page(state: WebPanelState) -> str:
         if pressure_cards else ""
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
+    if filesystem_section:
+        filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
     trust = discover_certificate_trust()
     trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
@@ -2173,6 +2178,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if not self._feature_available(path):
             self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
             return
+        if path == "/storage":
+            try:
+                view = parse_storage_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid storage view\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_storage_usage(self.state, _PAGE_STYLE, view), "text/html")
+            return
         if path == "/maintenance-agent":
             if parsed.query:
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid maintenance query\n", "text/plain")
@@ -2308,7 +2321,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
         maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
-        if path != "/actions/t3-update" and path not in agent_paths | admin_paths | credential_paths | publishing_paths | maintenance_paths:
+        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2340,6 +2353,13 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values["csrf"][0].encode("utf-8"), self.state.csrf_token.encode("utf-8"),
         ):
             self._send(HTTPStatus.FORBIDDEN, "Invalid request\n", "text/plain")
+            return
+        if path == "/actions/storage-scan":
+            if set(values) != {"csrf"}:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid storage request\n", "text/plain")
+                return
+            self.state.storage_diagnostics.start()
+            self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/storage"})
             return
         if path in agent_paths:
             self._handle_agent_action(path, values)

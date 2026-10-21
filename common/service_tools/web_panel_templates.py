@@ -75,7 +75,7 @@ NAVIGATION_ICONS = {
     "Certificate trust": "certificate", "Maintenance": "maintenance",
     "GitHub runner": "jobs",
     "Local service status": "service-status", "Scheduled jobs": "jobs",
-    "Service diagnostics": "diagnostics",
+    "Service diagnostics": "diagnostics", "Storage": "storage",
 }
 ICON_TONES = {
     "agents": "workspace", "agent-tools": "workspace", "data": "workspace",
@@ -86,7 +86,7 @@ ICON_TONES = {
 PAGE_ICONS = {
     "dashboard": "dashboard", "agents": "agents", "agent-tools": "agent-tools",
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
-    "credentials": "access",
+    "credentials": "access", "storage": "storage",
     "publishing": "export",
     "github-runner": "jobs",
     "desktop": "web-services", "console": "diagnostics",
@@ -102,7 +102,7 @@ BRAND_TEXTURES = {
     "mineral": (64, 64, "M8 12l4-4 M40 44l4-4 M48 16h3 M16 48h3"),
 }
 PAGE_TEXTURES = {
-    "github-runner": "facets",
+    "github-runner": "facets", "storage": "facets",
     "agents": "contours", "agent-tools": "contours", "publishing": "contours",
     "admin": "facets", "maintenance-agent": "facets", "jobs": "facets",
     "credentials": "mineral", "agent-inbox": "mineral", "logs": "mineral",
@@ -281,7 +281,7 @@ def brand_styles() -> str:
 def panel_navigation(
     *,
     current: str | None = None,
-    available: frozenset[str] = frozenset({"dashboard", "services", "jobs", "logs"}),
+    available: frozenset[str] = frozenset({"dashboard", "services", "storage", "jobs", "logs"}),
 ) -> tuple[NavigationItem, ...]:
     """Keep destinations and ordering identical across every panel view."""
 
@@ -297,6 +297,7 @@ def panel_navigation(
     items.extend(
         (
             ("/services", "Local service status", "services"),
+            ("/storage", "Storage", "storage"),
             ("/jobs", "Scheduled jobs", "jobs"),
             ("/github-runner", "GitHub runner", "github-runner"),
             ("/logs", "Service diagnostics", "logs"),

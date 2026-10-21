@@ -650,6 +650,47 @@ test.describe('agent task workflow', () => {
   });
 });
 
+test.describe('storage dashboard', () => {
+  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('storage diagnostic, alternate views, partial coverage and responsive charts', async ({ page, developmentServer: dev }, info) => {
+    await page.goto(dev.url + '/storage');
+    await expect(page.getByRole('heading', { name: 'Storage', exact: true })).toBeVisible();
+    await expect(page.getByRole('status')).toContainText('Ready to inspect');
+    await expect(page.locator('.storage-ring')).toHaveCount(0);
+    const response = page.waitForResponse(response => response.url() === dev.url + '/actions/storage-scan');
+    await page.getByRole('button', { name: 'Run diagnostic', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    expect((await response).status()).toBe(303);
+    await expect(page.getByRole('status')).toContainText('Diagnostic complete');
+    await expect(page.getByRole('img', { name: /Root filesystem:/ })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Allocated', exact: true })).toBeVisible();
+    for (const [view, label] of [['Services', 'T3 Code'], ['Projects', 'infra-tools'], ['VM areas', 'Home directories']]) {
+      await page.getByRole('navigation', { name: 'Storage breakdown' }).getByRole('link', { name: view, exact: true }).click();
+      await expect(page.locator('.storage-table')).toContainText(label);
+    }
+    await page.screenshot({ path: info.outputPath('storage-desktop.png'), fullPage: true });
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      for (const width of [1440, 780, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${colorScheme}, ${width}px`).toBe(true);
+        await expect(page.getByRole('button', { name: 'Run again', exact: true })).toBeVisible();
+      }
+    }
+    await page.screenshot({ path: info.outputPath('storage-mobile-dark.png'), fullPage: true });
+    const toolbar = page.locator('#panel-development');
+    await toolbar.getByLabel('Scenario').selectOption('degraded');
+    await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
+    await page.goto(dev.url + '/storage');
+    await page.getByRole('button', { name: 'Run diagnostic', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Partial estimate');
+    await expect(page.locator('.storage-notes')).toContainText('Synthetic permission restriction');
+    await expect(page.locator('.storage-table')).toContainText('≥ 8.8 GiB');
+    await page.goto('about:blank');
+  });
+});
+
 for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) {
   const guacamole = ['desktop', 'console'].includes(surface);
   test.describe(`${surface} development`, () => {

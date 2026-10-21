@@ -37,7 +37,7 @@ class PanelFeatures:
 
     @property
     def pages(self) -> frozenset[str]:
-        pages = {"dashboard", "services", "jobs", "logs", "admin"}
+        pages = {"dashboard", "services", "storage", "jobs", "logs", "admin"}
         if self.agents:
             pages.update(("agents", "agent-inbox"))
         if self.prompts:

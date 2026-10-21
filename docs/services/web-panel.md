@@ -9,6 +9,7 @@ under the panel account; no T3 Code installation is required.
 | --- | --- | --- |
 | Check host health | Overview | Uptime, load average, memory, swap, resource pressure, kernel, reboot state, and update timers |
 | Check storage capacity | Mounted storage | Mounted local filesystems, available space, inode use, device/type, and read-only state |
+| Estimate disk usage | Storage | An on-demand diagnostic with visual capacity, ranked VM areas, services and projects, file counts and coverage notes |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Observe or control an agent desktop | Desktop | Optional browser access, mobile input, zoom and read-only readiness checks for the shared XRDP desktop |
 | Open a shell without starting a desktop | Console, or Desktop → Open browser console | Guacamole SSH terminal with the Unix password; Desktop also offers an SSH command for an existing client |
@@ -136,6 +137,34 @@ includes the next scheduled task and active-run timing at page load. Open a
 run link to view that report directly in Agents. Counts use private saved panel
 state without launching diagnostics or prompts; other terminal-agent sessions
 are not included. Missing task storage and scheduler errors remain explicit.
+
+## Storage usage diagnostic
+
+Open **Storage** in the Inspect menu and choose **Run diagnostic**. Collection
+runs in the background; use **Refresh status** to check progress. The previous
+result remains visible during a rerun. Opening the page does not scan the filesystem.
+Results remain in memory until the panel restarts.
+
+The capacity chart shows root filesystem usage, available space and reserves at
+scan time. **VM areas**, **Services** and **Projects** show ranked allocated
+space, logical file sizes and file counts. Services and projects are alternate
+attributions of files already included in VM areas; their totals must not be
+added together. Conventional service paths and project directories are used,
+so this does not discover every possible project location.
+
+The diagnostic reads metadata with the panel account's permissions and never
+reads file contents, deletes data, runs agent prompts or elevates privileges.
+It scans only the root filesystem, skips symlinks and nested mounts, and uses
+time and entry limits shown with the results. The time budget is checked between
+metadata operations; it cannot interrupt a blocked filesystem call. Separate home/data filesystems
+remain visible in **Mounted storage** but are outside this usage scan.
+Inaccessible paths and exhausted limits produce explicit partial estimates;
+unavailable locations are not reported as empty. Partial numbers are lower
+bounds. Sparse files, shared blocks, filesystem metadata and deleted files held
+open can make directory estimates differ from filesystem capacity usage.
+
+For UI development, the local panel's diagnostic returns synthetic results;
+the degraded scenario demonstrates incomplete coverage without inspecting the VM.
 
 ## Install and sign in
 

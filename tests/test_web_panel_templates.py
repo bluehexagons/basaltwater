@@ -56,12 +56,12 @@ class WebPanelTemplateTest(unittest.TestCase):
         menu = root.find('.//details[@class="nav-mobile"]')
         self.assertNotIn("open", menu.attrib)
         self.assertEqual("".join(menu.find("summary").itertext()), "Panel menuScheduled jobs")
-        self.assertEqual([link.attrib["href"] for link in menu.findall('.//a')], ["/", "/services", "/jobs", "/logs"])
+        self.assertEqual([link.attrib["href"] for link in menu.findall('.//a')], ["/", "/services", "/storage", "/jobs", "/logs"])
 
     def test_every_view_has_identical_navigation_destinations(self) -> None:
         available = features.PanelFeatures(tools=frozenset({"git", "codex", "butler"}), admin=True, maintenance=True).pages
         expected = [(href, label) for href, label, _ in panel_navigation(current="dashboard", available=available)]
-        for current in ("agents", "agent-tools", "credentials", "admin", "services", "jobs", "logs"):
+        for current in ("agents", "agent-tools", "credentials", "admin", "services", "storage", "jobs", "logs"):
             with self.subTest(current=current):
                 self.assertEqual([(href, label) for href, label, _ in panel_navigation(current=current, available=available)], expected)
 
@@ -209,7 +209,7 @@ class PanelFeatureTest(unittest.TestCase):
         with patch("subprocess.run") as run, patch("subprocess.Popen") as spawn:
             available = self.state.features()
             sidebar = render_sidebar(self.state.navigation("dashboard"))
-        self.assertEqual(available.pages, frozenset({"dashboard", "services", "jobs", "logs", "admin"}))
+        self.assertEqual(available.pages, frozenset({"dashboard", "services", "storage", "jobs", "logs", "admin"}))
         self.assertEqual(sidebar.count('aria-current="page"'), 2)
         self.assertNotIn('href="/#', sidebar)
         self.assertIn('href="/admin"', sidebar)

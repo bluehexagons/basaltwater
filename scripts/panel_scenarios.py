@@ -27,6 +27,7 @@ from lib.github_runner_config import VERSION as RUNNER_VERSION, validate_policy 
 from lib.maintenance_agent_config import DEFAULTS, validate_policy
 from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token, validate_runner_registration_token
 from scripts.panel_samples import job_rows
+from scripts.panel_storage_samples import storage_snapshot
 
 SCENARIOS = ("minimal", "full", "empty", "degraded")
 
@@ -97,6 +98,9 @@ class Scenario:
         self.replace(agents, "worker_status", return_value={"installed": False, "running": False})
         self.replace(state.agent_diagnostics, "snapshot", side_effect=self.agent_diagnostics)
         self.replace(state.agent_diagnostics, "trigger", side_effect=self.collect_agent_diagnostics)
+        self.replace(state.storage_diagnostics, "snapshot", side_effect=lambda: storage_snapshot(
+            loaded=bool(self.data.get("storage_loaded")), degraded=self.name == "degraded"))
+        self.replace(state.storage_diagnostics, "start", side_effect=self.collect_storage)
         self.replace(state.git_settings, "snapshot", side_effect=self.identity)
         self.replace(state.git_settings, "set_identity", side_effect=self.set_identity)
         self.replace(state.git_settings, "set_github_token", side_effect=self.set_token)
@@ -248,6 +252,12 @@ class Scenario:
     def collect_agent_diagnostics(self) -> bool:
         with self.lock:
             self.data["diagnostics"] = True
+            self.save()
+        return True
+
+    def collect_storage(self) -> bool:
+        with self.lock:
+            self.data["storage_loaded"] = True
             self.save()
         return True
 
