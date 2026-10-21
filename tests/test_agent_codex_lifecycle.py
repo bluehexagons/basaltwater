@@ -14,8 +14,15 @@ from unittest.mock import patch
 
 from common import cachyos_steps
 from lib import agent_cli
-from lib.agent_storage import codex_package_for_executable, codex_update_supported, prune_codex_update_backups
+from lib.agent_storage import (
+    _active_codex_releases as scan_codex_processes,
+    cleanup_codex_update_backups,
+    codex_package_for_executable,
+    codex_update_supported,
+    prune_codex_update_backups,
+)
 from lib.config import SetupConfig
+from lib.cleanup_paths import remove_checked_path
 
 
 class CodexLifecycleTests(unittest.TestCase):
@@ -101,7 +108,7 @@ class CodexLifecycleTests(unittest.TestCase):
         self.assertTrue(Path(old).exists())
         self.launcher.unlink()
         self.launcher.symlink_to(self.package / "bin/codex")
-        with patch("lib.agent_storage._active_codex_releases", return_value={self.package.name}):
+        with patch("lib.agent_storage._active_codex_releases", side_effect=lambda releases, *args, **kwargs: set(releases)):
             prune_codex_update_backups(str(self.home), current)
         self.assertTrue(Path(old).exists())
         prune_codex_update_backups(str(self.home), current)
@@ -124,6 +131,201 @@ class CodexLifecycleTests(unittest.TestCase):
             cachyos_steps.install_cachyos_agents(config)
         update.assert_not_called()
         self.assertEqual(self.launcher.resolve(), npm)
+
+    def prepare_backup_maintenance(self):
+        obsolete = Path(agent_cli._backup_executable("codex", str(self.launcher), str(self.home)))
+        keep = Path(agent_cli._backup_executable("codex", str(self.launcher), str(self.home)))
+        self.proc = self.home / "proc"
+        self.proc.mkdir()
+        self.state_path = Path(agent_cli._state_path(str(self.home)))
+        self.state = {"schema_version": 1, "tools": {"codex": {
+            "tool": "codex", "path": str(self.launcher), "status": "updated",
+            "backup_path": str(keep),
+        }}}
+        with agent_cli._agent_update_lock(str(self.home)):
+            agent_cli._save_update_state(str(self.state_path), self.state)
+        return obsolete, keep
+
+    def reconcile_backups(self, *, dry_run=False):
+        # Override the updater fixture's scanner mock with the real scanner
+        # against a disposable proc tree; never inspect this host's processes.
+        with patch("lib.agent_storage._active_codex_releases", side_effect=scan_codex_processes):
+            return cleanup_codex_update_backups(
+                str(self.home), os.getuid(), dry_run=dry_run, proc_root=str(self.proc),
+            )
+
+    def test_periodic_backup_cleanup_retires_snapshot_after_process_exit(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        process = self.proc / "123"
+        process.mkdir()
+        (process / "exe").symlink_to(obsolete)
+        result = self.reconcile_backups()
+        self.assertEqual(result.active, (obsolete.parents[2].name,))
+        self.assertFalse(result.removed)
+        self.assertFalse(result.errors)
+        self.assertTrue(obsolete.exists())
+        (process / "exe").unlink()
+        process.rmdir()
+        result = self.reconcile_backups()
+        self.assertEqual(result.removed, (obsolete.parents[2].name,))
+        self.assertFalse(obsolete.exists())
+        self.assertTrue(keep.exists())
+        self.assertFalse(result.errors)
+
+    def test_periodic_backup_cleanup_preserves_selected_and_unfamiliar_entries(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        root = keep.parents[2].parent
+        unfamiliar = root / "codex-package-manual"
+        unfamiliar.mkdir()
+        (unfamiliar / "notes").write_text("fixture")
+        linked = root / "codex-package-linked"
+        linked.symlink_to(obsolete.parents[2])
+        legacy = root / "codex.previous"
+        legacy.write_text("distinct recovery fixture")
+        for selector in (self.launcher, self.root / "current"):
+            with self.subTest(selector=selector.name):
+                original = os.readlink(selector)
+                selector.unlink()
+                selector.symlink_to(obsolete if selector == self.launcher else obsolete.parents[1])
+                result = self.reconcile_backups()
+                self.assertFalse(result.removed)
+                self.assertFalse(result.errors)
+                self.assertEqual(set(result.skipped), {unfamiliar.name, linked.name})
+                self.assertTrue(obsolete.exists())
+                self.assertTrue(keep.exists())
+                self.assertEqual(legacy.read_text(), "distinct recovery fixture")
+                selector.unlink()
+                selector.symlink_to(original)
+
+    def test_periodic_backup_dry_run_reports_without_writes(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        with patch("lib.agent_storage.remove_checked_path", wraps=remove_checked_path) as dispose, \
+                patch("lib.cleanup_paths.os.rename") as rename:
+            result = self.reconcile_backups(dry_run=True)
+        self.assertEqual(result.selected, (obsolete.parents[2].name,))
+        self.assertFalse(result.removed)
+        self.assertTrue(obsolete.exists())
+        self.assertTrue(keep.exists())
+        self.assertTrue(dispose.call_args.kwargs["dry_run"])
+        rename.assert_not_called()
+
+    def test_periodic_backup_cleanup_contends_with_real_updater_lock(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        with agent_cli._agent_update_lock(str(self.home)):
+            for dry_run in (True, False):
+                result = self.reconcile_backups(dry_run=dry_run)
+                self.assertIn("lock is busy", result.errors[0])
+                self.assertFalse(result.removed)
+                self.assertTrue(obsolete.exists())
+                self.assertTrue(keep.exists())
+        # Maintenance also owns the lock through the actual disposal boundary.
+        def dispose(*args, **kwargs):
+            with self.assertRaisesRegex(RuntimeError, "Another agent update"):
+                with agent_cli._agent_update_lock(str(self.home)):
+                    pass
+            return remove_checked_path(*args, **kwargs)
+
+        with patch("lib.agent_storage.remove_checked_path", side_effect=dispose):
+            result = self.reconcile_backups()
+        self.assertEqual(result.removed, (obsolete.parents[2].name,))
+
+    def test_periodic_backup_cleanup_defers_on_unverifiable_update_state(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        invalid_records = [None, "{", "{}", '{"schema_version": 2, "tools": {}}',
+                           '{"schema_version": 1, "tools": {}}']
+        for mutation in (
+            {"status": "in_progress"}, {"status": "planned"}, {"backup_path": None},
+            {"backup_path": str(self.package / "bin/codex")},
+            {"backup_path": str(keep.parent / "missing")}, {"path": None},
+        ):
+            state = json.loads(json.dumps(self.state))
+            state["tools"]["codex"].update(mutation)
+            invalid_records.append(json.dumps(state))
+        for content in invalid_records:
+            with self.subTest(content=content):
+                if content is None:
+                    self.state_path.unlink()
+                else:
+                    self.state_path.write_text(content)
+                result = self.reconcile_backups()
+                self.assertTrue(result.errors)
+                self.assertFalse(result.removed)
+                self.assertTrue(obsolete.exists())
+                self.assertTrue(keep.exists())
+                if content is not None:
+                    self.assertEqual(self.state_path.read_text(), content)
+
+    def test_periodic_backup_cleanup_defers_on_missing_or_linked_evidence(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        lock = self.state_path.parent / "agent-update.lock"
+        lock.unlink()
+        result = self.reconcile_backups(dry_run=True)
+        self.assertTrue(result.errors)
+        self.assertFalse(lock.exists())
+        lock.symlink_to(self.state_path)
+        self.assertTrue(self.reconcile_backups().errors)
+        lock.unlink()
+        with agent_cli._agent_update_lock(str(self.home)):
+            pass
+        self.state_path.unlink()
+        self.state_path.symlink_to(keep)
+        self.assertTrue(self.reconcile_backups().errors)
+        self.assertTrue(obsolete.exists())
+        self.assertTrue(keep.exists())
+
+    def test_periodic_backup_cleanup_defers_on_process_inventory_failure(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        process = self.proc / "123"
+        process.mkdir()  # A remaining PID with no verifiable exe is not idle.
+        self.assertTrue(self.reconcile_backups().errors)
+        process.rmdir()
+        self.proc.rmdir()
+        self.assertTrue(self.reconcile_backups().errors)
+        self.proc.mkdir()
+        process.mkdir()
+        with patch("lib.agent_storage.os.readlink", side_effect=PermissionError):
+            self.assertTrue(self.reconcile_backups().errors)
+        self.assertTrue(obsolete.exists())
+        self.assertTrue(keep.exists())
+
+    def test_periodic_backup_cleanup_rechecks_processes_before_disposal(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        scans = 0
+
+        def inventory(releases, uid, proc_root, **kwargs):
+            nonlocal scans
+            scans += 1
+            if scans == 2:
+                process = self.proc / "123"
+                process.mkdir()
+                (process / "exe").symlink_to(obsolete)
+            return scan_codex_processes(releases, uid, proc_root, **kwargs)
+
+        with patch("lib.agent_storage._active_codex_releases", side_effect=inventory):
+            result = cleanup_codex_update_backups(
+                str(self.home), os.getuid(), dry_run=False, proc_root=str(self.proc),
+            )
+        self.assertFalse(result.removed)
+        self.assertIn(obsolete.parents[2].name, result.active)
+        self.assertTrue(obsolete.exists())
+        self.assertTrue(keep.exists())
+
+    def test_periodic_backup_cleanup_rechecks_snapshot_identity(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        snapshot = obsolete.parents[2]
+
+        def dispose(path, metadata, **kwargs):
+            snapshot.rename(snapshot.with_name("manual-recovery"))
+            snapshot.mkdir()
+            (snapshot / "unfamiliar").write_text("preserve")
+            return remove_checked_path(path, metadata, **kwargs)
+
+        with patch("lib.agent_storage.remove_checked_path", side_effect=dispose):
+            result = self.reconcile_backups()
+        self.assertFalse(result.removed)
+        self.assertTrue(result.errors)
+        self.assertEqual((snapshot / "unfamiliar").read_text(), "preserve")
+        self.assertTrue(keep.exists())
 
     def test_failed_version_command_is_not_a_version(self):
         with patch.object(agent_cli.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "private error")):

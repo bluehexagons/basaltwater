@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from common.service_tools import user_cache_maintenance
+from lib.agent_storage import CodexCleanupResult
 
 
 class TestUserCacheHelpers(unittest.TestCase):
@@ -341,6 +342,21 @@ class TestUserCacheHelpers(unittest.TestCase):
             self.assertEqual(failures, [])
             self.assertTrue(os.path.exists(rotation))
             self.assertTrue(os.path.islink(linked_rotation))
+
+    def test_backup_policy_reports_dry_run_and_propagates_deferrals(self):
+        context = self._context("/fixture-home")
+        for result, expected_event in (
+            (CodexCleanupResult(found=("snapshot",), selected=("snapshot",)),
+             "Would prune Codex update backups"),
+            (CodexCleanupResult(errors=("lock busy",)), "Codex backup cleanup deferred"),
+        ):
+            with self.subTest(event=expected_event), patch.object(
+                user_cache_maintenance, "reconcile_codex_update_backups", return_value=result,
+            ) as reconcile, patch.object(user_cache_maintenance, "log_event") as log:
+                failures = user_cache_maintenance.cleanup_codex_update_backups(context, dry_run=True)
+            self.assertEqual(failures, list(result.errors))
+            reconcile.assert_called_once_with(context.home, context.uid, dry_run=True)
+            self.assertIn(expected_event, [call.args[1] for call in log.call_args_list])
 
 
 class TestUserCachePolicies(unittest.TestCase):

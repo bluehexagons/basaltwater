@@ -392,6 +392,19 @@ bounded policies:
   remain: active releases and rollback copies do not trigger an excess-release
   warning. Unused extras, unfamiliar entries, or failed inspection still warn;
   the doctor never removes files.
+- Codex package snapshots under `~/.local/state/basaltwater/agent-backups`
+  are reconciled during daily maintenance and setup's agent-storage pass. This
+  retries obsolete snapshots retained by an update while processes were running.
+  Cleanup preserves the rollback executable recorded in `agent-tools.json`,
+  selected launchers, running snapshots, and unfamiliar entries. It acquires
+  the updater's existing `agent-update.lock` with a nonblocking exclusive flock
+  throughout inspection and disposal; it never creates or replaces that lock.
+  A busy, missing, or unsafe lock, missing/corrupt/unfinished update state, an
+  unverifiable rollback, or incomplete process inventory defers backup cleanup
+  and reports a maintenance failure for a later retry. Dry runs use the same
+  checks and report eligible snapshot counts without writing files. The legacy
+  `codex.previous` recovery executable is retained: migration records do not
+  establish that its bytes duplicate a retained validated package.
 - T3 Code numbered provider and trace log rotations are retained up to 256 MiB
   and 14 days. Current logs, terminal logs, non-numbered files, and symbolic
   links are never selected by this policy. Agent setup reruns apply both the
