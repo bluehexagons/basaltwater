@@ -57,17 +57,33 @@ reruns; it does not populate the generic saved-host lifecycle above.
 ```bash
 basaltw agent diagnostics --service nginx.service
 basaltw agent diagnostics --service t3code.service --window boot --priority 7
+basaltw agent diagnostics --service nginx.service --summary --output ./nginx-evidence.json
 ```
 
-Run on the host being inspected. Output is always JSON containing `properties`,
+Run on the host being inspected. Default stdout is JSON containing `properties`,
 `events`, and `issues`, using the shared diagnostic collector's redaction.
 `--service` is required; all selectors accept only the fixed choices shown by
 `basaltw agent diagnostics --help`. The defaults are `--window 24h` and
-`--priority 4` (warnings and errors). There are no arbitrary unit or path inputs.
+`--priority 4` (warnings and errors). There are no arbitrary unit or journal path inputs.
 Collection is read-only, uses the invoking account's permissions without sudo,
 and limits each query to five seconds and 64 KiB, with at most 100 journal events
 and a fixed set of runtime properties. T3 Code uses the current user's service
 manager and journal; other services use the system scope.
+
+`--output PATH` saves that full redacted JSON with mode `0600` and keeps the
+default full stdout. Choose a new filename in an existing directory; relative
+paths are allowed. Existing files, symlinks in any path component, and `..`
+components are rejected. No parent directories are created and no files are
+overwritten. Review redacted evidence before sharing it.
+
+Add `--summary --output PATH` to omit journal events from stdout only after
+the full artifact has been saved successfully. The JSON summary retains all
+service properties and collection issues, selected service/window/priority,
+returned event count, counts by observed priority (`0`–`7`, or `unknown`),
+absolute evidence path, an explicit events-omitted flag, and collector limits.
+Counts describe the bounded returned events, not the whole journal.
+If saving fails, stdout includes the full events and a generic save issue;
+the command exits `1`. `--summary` without `--output` exits `2` before collection.
 
 Exit `1` indicates collection issues (including unavailable or incomplete
 evidence); exit `0` means no collection issues were reported. Neither exit `0`
