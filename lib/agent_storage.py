@@ -6,7 +6,6 @@ import fcntl
 import json
 import os
 import re
-import shutil
 import stat
 import time
 from dataclasses import dataclass
@@ -27,9 +26,7 @@ class CodexRelease:
 
     name: str
     path: str
-    mtime: float
-    device: int
-    inode: int
+    metadata: os.stat_result
 
 
 @dataclass(frozen=True)
@@ -150,9 +147,7 @@ def _validate_codex_release(entry: os.DirEntry[str], uid: int) -> CodexRelease:
     return CodexRelease(
         name=entry.name,
         path=entry.path,
-        mtime=entry_stat.st_mtime,
-        device=entry_stat.st_dev,
-        inode=entry_stat.st_ino,
+        metadata=entry_stat,
     )
 
 
@@ -200,6 +195,28 @@ def codex_package_for_executable(home: str, executable: str) -> str | None:
                     return _validate_codex_release(entry, uid).path
     except (OSError, ValueError):
         return None
+    return None
+
+
+def _selected_codex_release(
+    home: str, releases: dict[str, CodexRelease], uid: int,
+) -> str | None:
+    """Protect a release selected by the account launcher independently of current."""
+    launcher = os.path.join(home, ".local", "bin", "codex")
+    try:
+        info = os.lstat(launcher)
+    except FileNotFoundError:
+        return None
+    _validate_user_directory_chain(home, os.path.dirname(launcher), uid)
+    if info.st_uid != uid or not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)):
+        raise ValueError("unsafe selected Codex launcher")
+    resolved = os.path.realpath(launcher, strict=True)
+    target = os.stat(resolved)
+    if not stat.S_ISREG(target.st_mode) or not target.st_mode & 0o111:
+        raise ValueError("selected Codex executable cannot be verified")
+    for name, release in releases.items():
+        if os.path.commonpath((release.path, resolved)) == release.path:
+            return name
     return None
 
 
@@ -401,38 +418,39 @@ def _active_codex_releases(
     """Find running releases, refusing incomplete account process inventories."""
     active: set[str] = set()
     try:
-        processes = os.scandir(proc_root)
+        with os.scandir(proc_root) as processes:
+            for process in processes:
+                if not process.name.isdigit():
+                    continue
+                try:
+                    if process.stat(follow_symlinks=False).st_uid != uid:
+                        continue
+                    executable = os.path.realpath(os.readlink(os.path.join(process.path, "exe")))
+                except (FileNotFoundError, ProcessLookupError):
+                    if os.path.exists(process.path):
+                        raise _CodexProcessInventoryUnavailable(
+                            f"cannot verify executable for remaining user process {process.name}"
+                        ) from None
+                    continue
+                except OSError as exc:
+                    raise _CodexProcessInventoryUnavailable(
+                        f"cannot inventory user process executable (pid {process.name}: "
+                        f"{exc.strerror or type(exc).__name__})"
+                    ) from None
+                for name, release in releases.items():
+                    try:
+                        inside_release = (
+                            os.path.commonpath((release.path, executable)) == release.path
+                        )
+                    except ValueError:
+                        inside_release = False
+                    if inside_release:
+                        active.add(name)
+                        break
+    except _CodexProcessInventoryUnavailable:
+        raise
     except OSError as exc:
         raise _CodexProcessInventoryUnavailable("cannot inventory user processes") from exc
-    with processes:
-        for process in processes:
-            if not process.name.isdigit():
-                continue
-            try:
-                if process.stat(follow_symlinks=False).st_uid != uid:
-                    continue
-                executable = os.path.realpath(os.readlink(os.path.join(process.path, "exe")))
-            except (FileNotFoundError, ProcessLookupError):
-                if os.path.exists(process.path):
-                    raise _CodexProcessInventoryUnavailable(
-                        f"cannot verify executable for remaining user process {process.name}"
-                    ) from None
-                continue
-            except OSError as exc:
-                raise _CodexProcessInventoryUnavailable(
-                    f"cannot inventory user process executable (pid {process.name}: "
-                    f"{exc.strerror or type(exc).__name__})"
-                ) from None
-            for name, release in releases.items():
-                try:
-                    inside_release = (
-                        os.path.commonpath((release.path, executable)) == release.path
-                    )
-                except ValueError:
-                    inside_release = False
-                if inside_release:
-                    active.add(name)
-                    break
     return active
 
 
@@ -483,6 +501,18 @@ def cleanup_codex_standalone_releases(
     # release. Avoid requiring process access when deletion is impossible.
     if len(releases) <= 1 + keep_rollback:
         return CodexCleanupResult(found=found, retained=found, skipped=tuple(sorted(skipped)))
+    retained = {current}
+    try:
+        launcher_release = _selected_codex_release(home, releases, uid)
+        if launcher_release is not None:
+            retained.add(launcher_release)
+    except (OSError, ValueError) as exc:
+        return CodexCleanupResult(
+            found=found, retained=found, skipped=tuple(sorted(skipped)),
+            errors=(f"Codex launcher selection: {exc}",),
+        )
+    if len(set(releases) - retained) <= keep_rollback:
+        return CodexCleanupResult(found=found, retained=found, skipped=tuple(sorted(skipped)))
     try:
         active = _active_codex_releases(releases, uid, proc_root)
     except OSError as exc:
@@ -494,10 +524,10 @@ def cleanup_codex_standalone_releases(
             deferred=isinstance(exc, _CodexProcessInventoryUnavailable),
         )
 
-    retained = {current, *active}
+    retained.update(active)
     rollback_candidates = sorted(
         (release for release in releases.values() if release.name not in retained),
-        key=lambda release: (release.mtime, release.name),
+        key=lambda release: (release.metadata.st_mtime, release.name),
         reverse=True,
     )
     retained.update(release.name for release in rollback_candidates[:keep_rollback])
@@ -517,30 +547,31 @@ def cleanup_codex_standalone_releases(
     for name in selected:
         release = releases[name]
         try:
-            latest_link_stat = os.lstat(os.path.join(standalone_root, "current"))
-            if (
-                latest_link_stat.st_dev != current_link_stat.st_dev
-                or latest_link_stat.st_ino != current_link_stat.st_ino
-            ):
-                raise OSError("Codex current release changed during cleanup")
-            if _resolve_current_release(standalone_root, releases, uid) == name:
-                retained.add(name)
-                continue
-            if name in _active_codex_releases({name: release}, uid, proc_root):
-                retained.add(name)
-                active.add(name)
-                continue
-            current_stat = os.lstat(release.path)
-            if (
-                not stat.S_ISDIR(current_stat.st_mode)
-                or current_stat.st_dev != release.device
-                or current_stat.st_ino != release.inode
-            ):
-                raise OSError("release changed during cleanup")
-            shutil.rmtree(release.path)
-            removed.append(name)
+            def in_use() -> bool:
+                latest_link_stat = os.lstat(os.path.join(standalone_root, "current"))
+                if (
+                    latest_link_stat.st_dev != current_link_stat.st_dev
+                    or latest_link_stat.st_ino != current_link_stat.st_ino
+                ):
+                    raise OSError("Codex current release changed during cleanup")
+                if name in (
+                    _resolve_current_release(standalone_root, releases, uid),
+                    _selected_codex_release(home, releases, uid),
+                ):
+                    retained.add(name)
+                    return True
+                if name in _active_codex_releases({name: release}, uid, proc_root):
+                    retained.add(name)
+                    active.add(name)
+                    return True
+                return False
+
+            if remove_checked_path(release.path, release.metadata, uid=uid, in_use=in_use):
+                removed.append(name)
         except (OSError, ValueError) as exc:
-            errors.append(f"{release.path}: {exc}")
+            recovery = getattr(exc, "recovery_path", None)
+            details = f"{exc}; recovery path: {recovery}" if recovery else str(exc)
+            errors.append(f"{release.path}: {details}")
             deferred = isinstance(exc, _CodexProcessInventoryUnavailable)
             retained.update(set(releases) - set(removed))
             break

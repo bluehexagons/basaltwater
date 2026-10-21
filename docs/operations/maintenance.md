@@ -385,7 +385,10 @@ bounded policies:
   cache may also be removed after 90 days without activity. Codex temporary
   entries older than seven days are removed individually. Standalone Codex
   installations retain the current release, the newest prior release for
-  rollback, and every release currently executing. Older releases are removed
+  rollback, the release selected by `~/.local/bin/codex` (which can differ from
+  vendor `current` after a rollback), and every release currently executing.
+  An existing launcher that cannot be verified prevents removal; a missing
+  launcher selects no additional release. Older releases are removed
   only after their vendor manifest, entrypoint, ownership, and directory layout
   have been validated; unfamiliar entries are left unchanged.
   When extras could be removed, an unreadable process executable or incomplete
@@ -395,8 +398,9 @@ bounded policies:
   account daemons can prevent inspection even when cleanup runs as their owner;
   do not weaken process permissions or infer inactivity from process names.
   Current and rollback releases alone need no process scan. Process activity
-  is checked again before each removal; a failed check preserves remaining
-  candidates for a later retry.
+  and launcher selection are checked again before each removal; a failed check
+  preserves remaining candidates for a later retry. Failure during process
+  directory enumeration is also an informational visibility deferral.
   The host doctor checks this retention policy when more than two releases
   remain: active releases and rollback copies do not trigger an excess-release
   warning. Unused extras, unfamiliar entries, or failed inspection still warn;
@@ -463,7 +467,8 @@ memories, credentials, plugins, and unrecognized package layouts are persistent
 state and are not cleanup targets. Root-only setups retain system cleanup but
 intentionally skip the user-cache timer.
 
-Generic rebuildable-cache, stale-tool-temp, named Basaltwater-temp and crash-file
+Standalone Codex release, generic rebuildable-cache, stale-tool-temp,
+named Basaltwater-temp and crash-file
 disposal rechecks device/inode, ownership, type, modification time and observable
 active use immediately before acting. Parent directories are opened without
 following links. Selected entries move into a private `0700` sibling disposal

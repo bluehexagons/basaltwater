@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import tempfile
@@ -18,6 +19,7 @@ from lib.agent_storage import (
     cleanup_t3_rotated_logs,
 )
 from lib.config import SetupConfig
+from lib.cleanup_paths import remove_checked_path
 from lib.plugin_registry import resolve_custom_step
 from plugins.common import extend_agent_steps
 
@@ -68,6 +70,129 @@ class TestAgentStorage(unittest.TestCase):
     def _set_current(self, home: str, release: str) -> None:
         current = os.path.join(home, ".codex", "packages", "standalone", "current")
         os.symlink(release, current)
+
+    def _set_launcher(self, home: str, release: str) -> str:
+        launcher = os.path.join(home, ".local", "bin", "codex")
+        os.makedirs(os.path.dirname(launcher), exist_ok=True)
+        if os.path.lexists(launcher):
+            os.unlink(launcher)
+        os.symlink(os.path.join(release, "bin", "codex"), launcher)
+        return launcher
+
+    def test_launcher_selection_preserves_old_release_and_separate_rollback(self) -> None:
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run), tempfile.TemporaryDirectory() as home:
+                chosen, obsolete, rollback, current = [
+                    self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                    for index in range(4)
+                ]
+                self._set_current(home, current)
+                launcher = self._set_launcher(home, chosen)
+                result = cleanup_codex_standalone_releases(
+                    home, os.getuid(), dry_run=dry_run, proc_root=self.proc,
+                )
+                self.assertFalse(result.errors)
+                self.assertEqual(result.selected, (os.path.basename(obsolete),))
+                self.assertEqual(set(result.retained), {
+                    os.path.basename(path) for path in (chosen, rollback, current)
+                })
+                self.assertTrue(os.path.isfile(launcher))
+                self.assertEqual(os.path.exists(obsolete), dry_run)
+
+    def test_rechecks_launcher_selection_at_disposal(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            chosen, _rollback, current = [
+                self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                for index in range(3)
+            ]
+            self._set_current(home, current)
+            launcher = self._set_launcher(home, current)
+
+            def dispose(*args, **kwargs):
+                self._set_launcher(home, chosen)
+                return remove_checked_path(*args, **kwargs)
+
+            with patch("lib.agent_storage.remove_checked_path", side_effect=dispose):
+                result = cleanup_codex_standalone_releases(
+                    home, os.getuid(), dry_run=False, proc_root=self.proc,
+                )
+            self.assertFalse(result.errors)
+            self.assertFalse(result.removed)
+            self.assertIn(os.path.basename(chosen), result.retained)
+            self.assertTrue(os.path.isfile(launcher))
+
+    def test_unverifiable_launcher_preserves_all_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            releases = [
+                self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                for index in range(3)
+            ]
+            self._set_current(home, releases[-1])
+            self._set_launcher(home, os.path.join(home, "missing"))
+            result = cleanup_codex_standalone_releases(
+                home, os.getuid(), dry_run=False, proc_root=self.proc,
+            )
+            self.assertTrue(result.errors)
+            self.assertFalse(result.deferred)
+            self.assertEqual(result.retained, result.found)
+            self.assertFalse(result.removed)
+            self.assertTrue(all(os.path.isdir(path) for path in releases))
+
+    def test_release_replaced_during_isolation_is_retained_for_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            oldest, _rollback, current = [
+                self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                for index in range(3)
+            ]
+            self._set_current(home, current)
+            original = os.path.join(home, "retained-original")
+            rename = os.rename
+
+            def substitute(source, target, **kwargs):
+                if source == os.path.basename(oldest) and target == "entry":
+                    rename(oldest, original)
+                    os.mkdir(oldest)
+                    with open(os.path.join(oldest, "unfamiliar"), "w", encoding="utf-8") as stream:
+                        stream.write("preserve replacement")
+                return rename(source, target, **kwargs)
+
+            with patch("lib.cleanup_paths.os.rename", side_effect=substitute):
+                result = cleanup_codex_standalone_releases(
+                    home, os.getuid(), dry_run=False, proc_root=self.proc,
+                )
+            self.assertFalse(result.removed)
+            self.assertTrue(result.errors)
+            self.assertFalse(result.deferred)
+            recovery = result.errors[0].split("recovery path: ", 1)[1]
+            with open(os.path.join(recovery, "unfamiliar"), encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "preserve replacement")
+            self.assertTrue(os.path.isfile(os.path.join(original, "bin", "codex")))
+
+    def test_recreated_original_path_survives_release_disposal(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            oldest, _rollback, current = [
+                self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                for index in range(3)
+            ]
+            self._set_current(home, current)
+            rename = os.rename
+
+            def recreate(source, target, **kwargs):
+                result = rename(source, target, **kwargs)
+                if source == os.path.basename(oldest) and target == "entry":
+                    os.mkdir(oldest)
+                    with open(os.path.join(oldest, "unfamiliar"), "w", encoding="utf-8") as stream:
+                        stream.write("preserve new path")
+                return result
+
+            with patch("lib.cleanup_paths.os.rename", side_effect=recreate):
+                result = cleanup_codex_standalone_releases(
+                    home, os.getuid(), dry_run=False, proc_root=self.proc,
+                )
+            self.assertFalse(result.errors)
+            self.assertEqual(result.removed, (os.path.basename(oldest),))
+            with open(os.path.join(oldest, "unfamiliar"), encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "preserve new path")
 
     def test_prunes_only_oldest_validated_release(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -252,6 +377,42 @@ class TestAgentStorage(unittest.TestCase):
             self.assertFalse(result.removed)
             self.assertEqual(set(result.retained), set(result.found))
             self.assertTrue(all(os.path.isdir(path) for path in releases))
+
+    def test_process_enumeration_failure_is_a_safety_deferral(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            releases = [
+                self._create_codex_release(home, f"1.{index}.0", mtime=index)
+                for index in range(3)
+            ]
+            self._set_current(home, releases[-1])
+            process = os.path.join(self.proc, "123")
+            os.mkdir(process)
+            os.symlink(os.path.join(releases[0], "bin", "codex"), os.path.join(process, "exe"))
+            scandir = os.scandir
+
+            @contextmanager
+            def denied_listing():
+                with scandir(self.proc) as entries:
+                    def fail_after_entries():
+                        yield from entries
+                        raise PermissionError("fixture listing became unreadable")
+                    yield fail_after_entries()
+
+            def enumerate_path(path):
+                return denied_listing() if path == self.proc else scandir(path)
+
+            for dry_run in (True, False):
+                with self.subTest(dry_run=dry_run), patch(
+                    "lib.agent_storage.os.scandir", side_effect=enumerate_path,
+                ):
+                    result = cleanup_codex_standalone_releases(
+                        home, os.getuid(), dry_run=dry_run, proc_root=self.proc,
+                    )
+                self.assertTrue(result.deferred)
+                self.assertTrue(result.errors)
+                self.assertEqual(result.retained, result.found)
+                self.assertFalse(result.removed)
+                self.assertTrue(all(os.path.isdir(path) for path in releases))
 
     def test_process_exit_during_inventory_does_not_block_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as home:
