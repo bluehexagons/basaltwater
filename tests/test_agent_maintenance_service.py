@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import unittest
 import warnings
 from pathlib import Path
@@ -211,6 +212,96 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         self.assertEqual(report["policy"], policy)
         self.assertEqual(report["review"]["status"], "skipped")
 
+    def test_explicit_cleanup_runs_verified_jobs_once_without_enabling_schedules(self) -> None:
+        path = self.root / "control/settings.json"
+        write_json_atomic(str(path), {**self.policy, "enabled": False, "routines": False, "daily_calls": 0})
+        original = path.read_bytes()
+        def definition(path: str) -> dict:
+            routine = Path(path).stem.replace("-", "_")
+            return {"uid": 0, "mode": 0o644, "content": f"ExecStart=/usr/bin/python3 /opt/basaltwater/common/service_tools/{routine}.py\n"}
+        with patch.object(agent, "snapshot_unit_file", side_effect=definition), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
+            agent.request_check(directory=str(self.root / "control"), cleanup=True)
+            # A later ordinary check must retain already-authorized cleanup.
+            agent.request_check(directory=str(self.root / "control"))
+            self.assertTrue(self.run_check(100000, []))
+            self.assertFalse(self.run_check(100001, []))
+        self.assertEqual([call.args[0] for call in dispatch.call_args_list], [
+            ["/usr/bin/systemctl", "start", "--no-block", routine + ".service"] for routine in agent._ROUTINES])
+        self.assertEqual(path.read_bytes(), original)
+        report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
+        self.assertEqual([item["status"] for item in report["routines"]], ["requested", "requested"])
+        self.assertIn("not verified complete", report["summary"])
+
+    def test_request_arriving_during_consumption_remains_queued(self) -> None:
+        agent.request_check(directory=str(self.root / "control"))
+        marker = self.root / "control/wake.json"
+        original_read = agent._read
+        started, finished = threading.Event(), threading.Event()
+        failures = []
+        threads = []
+
+        def enqueue_cleanup() -> None:
+            started.set()
+            try:
+                agent.request_check(directory=str(self.root / "control"), cleanup=True)
+            except Exception as exc:
+                failures.append(exc)
+            finally:
+                finished.set()
+
+        def read(path: str, **kwargs):
+            result = original_read(path, **kwargs)
+            if path == str(marker) and not threads:
+                thread = threading.Thread(target=enqueue_cleanup, daemon=True)
+                threads.append(thread)
+                thread.start()
+                self.assertTrue(started.wait(1))
+                self.assertFalse(finished.wait(0.05), "Writer must wait for consumer's read/unlink lock")
+            return result
+
+        try:
+            with patch.object(agent, "_read", side_effect=read):
+                self.assertTrue(self.run_check(100000, []))
+        finally:
+            for thread in threads:
+                thread.join(timeout=2)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(failures, [])
+        self.assertTrue(json.loads(marker.read_text())["cleanup"])
+        report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
+        self.assertEqual(report["routines"], [])
+
+    def test_unsafe_request_lock_does_not_consume_pending_authorization(self) -> None:
+        agent.request_check(directory=str(self.root / "control"), cleanup=True)
+        marker = self.root / "control/wake.json"
+        original = marker.read_bytes()
+        (self.root / "control/settings.lock").chmod(0o644)
+        with self.assertRaisesRegex(RuntimeError, "Unsafe maintenance settings lock"):
+            self.run_check(100000, [])
+        self.assertEqual(marker.read_bytes(), original)
+
+    def test_wake_marker_rejects_commands_and_non_boolean_cleanup(self) -> None:
+        marker = self.root / "control/wake.json"
+        for extra in ({"cleanup": "true"}, {"cleanup": 1}, {"command": "anything"}):
+            write_json_atomic(str(marker), {"id": "a" * 32, **extra})
+            before = marker.read_bytes()
+            with self.subTest(extra=extra), self.assertRaisesRegex(RuntimeError, "Invalid maintenance wake"):
+                self.run_check(100000, [])
+            self.assertEqual(marker.read_bytes(), before)
+
+    def test_findings_keep_actionable_summary_when_model_budget_is_zero(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "daily_calls": 0})
+        issues = [{"key": "root-disk", "message": "Root is 89% used; 700 bytes available", "severity": "warning"},
+                  {"key": "gateway-forward:agent:preview-agent-8080", "message": "Preview upstream refused connections", "severity": "warning"}]
+        with patch.object(agent, "_review_as_user") as review:
+            self.run_check(100000, issues)
+        review.assert_not_called()
+        report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
+        self.assertEqual(report["review"]["status"], "skipped")
+        for text in ("89%", "700 bytes", "apply-and-verify", "current use", "maintenance-agent clean"):
+            self.assertIn(text, report["summary"])
+
     def test_security_only_schedule_does_not_run_host_checks(self) -> None:
         write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "host_checks": False, "security": True, "audit_days": 1})
         with patch.object(agent, "collect_checks", return_value=[]) as collect:
@@ -327,7 +418,7 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         dispatch.assert_not_called()
         report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
         self.assertEqual(report["check_status"], "completed")
-        self.assertEqual(report["routines"], [{"unit": "cleanup-maintenance", "status": "blocked"}])
+        self.assertEqual(report["routines"], [{"unit": routine, "status": "blocked"} for routine in agent._ROUTINES])
 
     def test_corrupt_export_fields_are_refused_without_overwriting_evidence(self) -> None:
         self.run_check(100000, [])
@@ -335,7 +426,7 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         original = json.loads(path.read_text())
         for values in ({"context": None}, {"review": {"status": []}}, {"routines": [42]},
                        {"issues": [{**ISSUE, "severity": []}]}, {"host_check": "yes"},
-                       {"source": "other"}, {"policy": {"enabled": "true"}}):
+                       {"source": "other"}, {"policy": {"enabled": "true"}}, {"summary": []}):
             corrupted = json.loads(json.dumps(original))
             if "context" in values:
                 corrupted.update(values)
@@ -379,6 +470,23 @@ class MaintenanceExecutionTest(unittest.TestCase):
             command = codex_command(validate_task(execute.call_args.args[0], home), "/test/codex")
             self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
             self.assertIn("--ephemeral", command)
+
+    def test_large_review_evidence_remains_valid_json_and_discloses_omissions(self) -> None:
+        with tempfile.TemporaryDirectory() as home, \
+                patch.object(agent.os, "geteuid", return_value=1000), \
+                patch.object(agent.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=home)), \
+                patch("lib.agent_tasks.execute_prompt", return_value={"status": "completed", "output": "done"}) as execute:
+            issues = [{**ISSUE, "key": str(index), "message": "🛠" * 2000} for index in range(100)]
+            issues[-1].update(severity="error", key="critical")
+            agent.run_review({"home": home, "policy": DEFAULTS,
+                              "context": {"units": ["🛠" * 300] * 30, "description": "x" * 20000},
+                              "issues": issues, "selection": {"model": "test-mini", "effort": "high"}})
+        prompt = execute.call_args.args[0]["prompt"]
+        self.assertLessEqual(len(prompt.encode("utf-8")), 3900)
+        evidence = json.loads(prompt.split("\n", 1)[1])
+        self.assertGreater(evidence["omitted_findings"], 0)
+        self.assertEqual(evidence["findings"][0]["key"], "critical")
+        self.assertEqual(len(evidence["findings"]) + evidence["omitted_findings"], len(issues))
 
     def test_setup_dry_run_and_oci_never_mutate_host(self) -> None:
         config = SetupConfig("example.test", "root", "server_web", machine_type="vm", maintenance_agent=True)
@@ -594,6 +702,11 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
 
 
 class MaintenanceChecksTest(unittest.TestCase):
+    def setUp(self) -> None:
+        gateway = patch("lib.maintenance_gateway.os.path.isfile", return_value=False)
+        gateway.start()
+        self.addCleanup(gateway.stop)
+
     def test_disk_thresholds_include_reserved_blocks_unavailable_to_users(self) -> None:
         for used, free, severity in ((84, 16, None), (84, 14, "warning"), (85, 15, "warning"),
                                      (89, 11, "warning"), (94, 6, "warning"), (95, 5, "error"),

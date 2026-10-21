@@ -16,7 +16,7 @@ from lib.agent_maintenance import (
     DEFAULT_HOLD_HOURS, MAX_HOLD_HOURS, hold_agent_maintenance,
     inspect_agent_maintenance, release_agent_maintenance,
 )
-from lib.maintenance_agent import configure_policy, load_policy, load_reports, request_check
+from lib.maintenance_agent import configure_policy, load_policy, load_reports, report_summary, request_check
 from lib.maintenance_agent_config import DEFAULTS, EFFORTS, LIMITS
 
 
@@ -69,6 +69,9 @@ def maintenance_action(values: dict[str, str]) -> None:
         return
     if action == "run" and set(values) == {"submit"}:
         request_check()
+        return
+    if action == "cleanup" and set(values) == {"submit"}:
+        request_check(cleanup=True)
         return
     if action != "save" or set(values) - {"submit", "custom_model", "custom_escalation_model", *DEFAULTS}:
         raise ValueError("Invalid maintenance action")
@@ -149,7 +152,9 @@ def render_maintenance(state: Any, style: str, *, error: str = "", submitted: di
 <section class="maintenance-status" aria-label="Saved maintenance status"><strong>{'Automatic maintenance enabled' if policy['enabled'] else 'Manual checks only'}</strong>
 <p>Automatic host checks: {'every ' + str(policy['interval']) + ' minutes' if policy['enabled'] and policy['host_checks'] else 'off'} · security audits: {'every ' + str(policy['audit_days']) + ' days' if policy['enabled'] and policy['security'] else 'off'} · daily housekeeping: {'on' if policy['enabled'] and policy['routines'] else 'off'}.</p>
 <div class="maintenance-actions"><form method="post" action="/actions/maintenance-agent"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><button name="submit" value="run">Check once now</button></form><a class="refresh-link" href="/maintenance-agent">Refresh status</a></div>
-<p class="event-meta">A one-time check works with automatic maintenance off. It checks the host and includes a fresh security audit when selected below; it never runs housekeeping. Requests wait for an active check to finish. Checks continue independently of this panel.</p></section>'''
+<p class="event-meta">A one-time check works with automatic maintenance off. It checks the host and includes a fresh security audit when selected below; it never runs housekeeping. Requests wait for an active check to finish. Checks continue independently of this panel.</p>
+<details><summary>Run cleanup once</summary><p>Request the installed package, log, temporary-file and user-cache cleanup jobs under their existing retention and active-use rules. This includes APT autoremove of unused packages where configured. Inspect Scheduled jobs for completion, then check available space. This leaves automatic schedules unchanged.</p>
+<form method="post" action="/actions/maintenance-agent"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><button name="submit" value="cleanup">Run managed cleanup once</button></form></details></section>'''
         settings = f'''<section><details id="maintenance-settings" class="maintenance-settings"{' open' if editing else ''}><summary>Settings · {_escape(policy['model'])} · {policy['daily_calls']} AI attempts/day</summary>
 <form id="maintenance-settings-form" class="maintenance-form" method="post" action="/actions/maintenance-agent">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}">
@@ -168,7 +173,19 @@ def render_maintenance(state: Any, style: str, *, error: str = "", submitted: di
             review = report["review"]
             output = _redact_log_message(str(review.get("output", "")))
             complete = report.get("check_status") == "completed"
+            actions = ""
+            if state.features().prompts:
+                keys = [issue["key"] for issue in report["issues"]]
+                templates = []
+                if any(key in {"root-disk", "root-inodes"} for key in keys):
+                    templates.append(("storage", "Prepare storage cleanup"))
+                if any(key.startswith("gateway-") for key in keys):
+                    templates.append(("web-hosting", "Prepare gateway repair or retirement"))
+                if keys and not templates:
+                    templates.append(("maintenance", "Prepare a maintenance repair"))
+                actions = '<p class="catalog-nav">' + ' '.join(f'<a href="/agents?template={key}">{label}</a>' for key, label in templates) + '</p>' if templates else ''
             rows.append(f'''<li class="event"><details{' open' if index == 0 and (count or not complete) else ''}><summary><strong>{_escape(report['checked_at'])}</strong> <span class="badge {tone}">{'Incomplete check · ' if not complete else ''}{count} finding{'s' if count != 1 else ''}</span> <span class="event-meta">{_escape(report.get('source', 'scheduled/legacy'))} · AI {_escape(review.get('status', 'unknown'))}</span></summary>
+<p>{_escape(report_summary(report))}</p>{actions}
 {'<ul>' + findings + '</ul>' if findings else '<p>No findings in the checks performed.</p>' if complete else '<p>No findings recorded; this check did not complete.</p>'}
 <p class="event-meta">Check {_escape(report.get('check_status', 'unknown'))} · Host checks {'performed' if report.get('host_check', True) else 'not due or disabled'} · Security audit {'performed' if report.get('security_audit') else 'not due or disabled'} · AI {_escape(review.get('status', 'unknown'))} · {_escape(review.get('model', ''))} {_escape(review.get('effort', ''))}</p>
 <p>{_escape(review.get('reason', ''))}</p>{'<details><summary>AI review</summary><pre>' + _escape(output) + '</pre></details>' if output else ''}
@@ -178,7 +195,7 @@ def render_maintenance(state: Any, style: str, *, error: str = "", submitted: di
         if state.features().prompts:
             links = ' '.join(f'<a href="/agents?template={key}">{label}</a>' for key, label in (
                 ('updates', 'Updates and reboot'), ('backups', 'Backup coverage'), ('network', 'Network and DNS'),
-                ('storage', 'Storage pressure'), ('certificates', 'Certificates')))
+                ('storage', 'Storage pressure'), ('web-hosting', 'Gateway and preview sites'), ('certificates', 'Certificates')))
             content += '<section>' + render_heading("Optional one-time reviews", "agent-tools") + '<p class="catalog-nav">' + links + '</p><p class="event-meta">Open a prepared prompt to review its scope before running. These reviews do not enable a schedule.</p></section>'
         content += '<section aria-labelledby="maintenance-records-heading">' + render_heading("Maintenance records", "maintenance", heading_id="maintenance-records-heading") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else '<p class="empty">No checks recorded yet. Select Check once now to request one.</p>') + '</section>'
     content += hold_html

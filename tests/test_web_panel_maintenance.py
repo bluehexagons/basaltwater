@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import json
 import os
 import tempfile
 import threading
@@ -38,7 +39,7 @@ class WebPanelMaintenanceTest(unittest.TestCase):
             patch.object(view, "load_policy", side_effect=lambda: agent.load_policy(self.policy)),
             patch.object(view, "load_reports", side_effect=lambda: agent.load_reports(self.reports)),
             patch.object(view, "configure_policy", side_effect=lambda values: agent.configure_policy(values, path=self.policy)),
-            patch.object(view, "request_check", side_effect=lambda: agent.request_check(directory=str(self.control))),
+            patch.object(view, "request_check", side_effect=lambda **kwargs: agent.request_check(directory=str(self.control), **kwargs)),
             patch.object(view, "inspect_agent_maintenance", side_effect=lambda: holds.inspect_agent_maintenance(self.home)),
             patch.object(view, "hold_agent_maintenance", side_effect=lambda hours: holds.hold_agent_maintenance(hours, home=self.home)),
             patch.object(view, "release_agent_maintenance", side_effect=lambda: holds.release_agent_maintenance(home=self.home)),
@@ -93,6 +94,30 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         values.update(csrf=self.state.csrf_token, submit="save", enabled="1", model="bad\nvalue")
         self.assertEqual(self.request("/actions/maintenance-agent", values)[0], 422)
         self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
+
+    def test_cleanup_once_is_explicit_and_preserves_disabled_schedule(self) -> None:
+        body = self.request("/maintenance-agent")[1]
+        self.assertIn("Run managed cleanup once", body)
+        self.assertIn("APT autoremove", body)
+        values = {"csrf": self.state.csrf_token, "submit": "cleanup"}
+        self.assertEqual(self.request("/actions/maintenance-agent", values | {"command": "anything"})[0], 422)
+        self.assertFalse((self.control / "wake.json").exists())
+        self.assertEqual(self.request("/actions/maintenance-agent", values | {"csrf": "wrong"})[0], 403)
+        with patch("subprocess.run") as command:
+            self.assertEqual(self.request("/actions/maintenance-agent", values)[0], 303)
+        command.assert_not_called()
+        self.assertTrue(json.loads((self.control / "wake.json").read_text())["cleanup"])
+        self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
+
+    def test_findings_offer_cleanup_and_gateway_followups_without_ai(self) -> None:
+        report = {"checked_at": "now", "check_status": "completed", "issues": [
+            {"key": "root-disk", "message": "89% used; 700 bytes available", "severity": "warning"},
+            {"key": "gateway-forward:agent:old", "message": "Gateway old is unreachable", "severity": "warning"}],
+            "routines": [], "review": {"status": "skipped", "reason": "Daily limit"}}
+        write_json_atomic(self.reports, {"version": 1, "context": {}, "reports": [report]})
+        body = self.request("/maintenance-agent")[1]
+        for text in ("700 bytes available", "Prepare storage cleanup", "Prepare gateway repair or retirement", "Daily limit"):
+            self.assertIn(text, body)
 
     def test_manual_check_and_master_toggle_preserve_independent_preferences(self) -> None:
         body = self.request("/maintenance-agent")[1]

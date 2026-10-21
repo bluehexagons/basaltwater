@@ -22,6 +22,8 @@ basaltw agent maintenance-agent status --json
 basaltw agent maintenance-agent configure --maintenance-agent \
   --maintenance-agent-daily-calls 2 --maintenance-agent-timeout 10
 basaltw agent maintenance-agent run --json
+# Explicitly request installed managed housekeeping once:
+basaltw agent maintenance-agent clean --json
 ```
 
 For manual-only operation, save `--no-maintenance-agent`. This pauses all
@@ -31,6 +33,13 @@ enables automatic maintenance or dispatches cleanup. It checks host diagnostics
 and, when `security` is selected, refreshes security evidence regardless of the
 audit interval. Manual reviews share the same daily attempt and timeout limits
 as automatic reviews; a request does not guarantee an AI call.
+
+**Run managed cleanup once**, or `clean`, separately authorizes one dispatch of
+the installed package, log, temporary-file and user-cache cleanup jobs. This
+includes APT autoremove of unused packages under the existing job policy. It works
+with automatic maintenance off and preserves all saved schedule preferences.
+Missing or unverifiable job definitions are reported as blocked. The request
+contains a fixed cleanup flag, never a shell command or model-generated action.
 
 Automatic host diagnostics and security audits have independent schedules:
 `--maintenance-agent-host-checks` uses the minute `interval`, while
@@ -102,6 +111,25 @@ hide pressure from the non-root account. When findings remain unchanged between
 model reviews, the record says that review is deferred; it does not report the
 host as healthy.
 
+When the HTTPS gateway is installed, bounded host checks also inspect ordinary
+forwards and managed previews. This catches legacy preview sites registered as
+ordinary forwards. Up to ten entries from each inventory are checked; omitted,
+unavailable or malformed inventory is reported explicitly. Inactive previews and
+unreachable TCP upstreams produce owner-scoped findings with exact repair or
+retirement guidance. TCP readiness does not establish HTTP or public health.
+Retirement still requires a current-use and ownership recheck and approval;
+one failed probe, a name or age does not authorize automatic removal. Managed
+previews use their lifecycle command rather than removing their forward alone.
+Retiring a route does not remove retained project files or prove storage savings.
+
+Every completed check includes a deterministic summary of measured findings and
+next actions, even when AI is unavailable, deferred or out of budget. Storage
+findings link to a cleanup task whose approved follow-up applies and verifies
+the selected cleanup. Gateway findings link to a web-hosting repair or retirement
+task. AI reviews receive bounded valid JSON evidence with explicit omitted counts;
+they add prioritization and concrete apply/verify steps rather than another
+generic review recommendation.
+
 Periodic security checks inspect effective SSH root/empty-password policy and
 permissions on `/etc/shadow`, `/etc/gshadow` and the main SSH configuration.
 These bounded checks are not a full vulnerability scan or dependency-advisory
@@ -117,7 +145,8 @@ schedules, cleanup permission, model selection and attempt/runtime limits.
 Routine maintenance is opt-in. The fixed root supervisor may request the
 existing verified `cleanup-maintenance.service` and
 `user-cache-maintenance.service` once daily, independently of diagnostic
-intervals. Manual checks never request these jobs. Those jobs retain their own
+intervals. Manual checks never request these jobs; the separate `clean` action
+requests them once. Those jobs retain their own
 account, lock, retention and capability rules. A request is reported separately
 from job completion; inspect **Scheduled jobs** for the outcome. No AI output
 is executed, and no general root command, package upgrade, restart, deployment
@@ -236,7 +265,10 @@ used for root setups has no home and cannot expose another account's inbox.
 
 Inspect the service journal when records stop updating. A disabled policy does
 not disable the timer/path units; they remain available for later enabling.
-Check requests coalesce while a run is active. Inspect interrupted reviews before
+Check requests coalesce while a run is active. A later check preserves pending
+cleanup authorization; requests arriving during consumption remain queued for
+the next run. Writers and the consumer share the policy/controller lock.
+Inspect interrupted reviews before
 retrying. Preserve malformed state and correct its underlying permissions or
 schema; deleting budget state can permit more calls than intended.
 
