@@ -288,6 +288,21 @@ class CodexLifecycleTests(unittest.TestCase):
         self.assertTrue(obsolete.exists())
         self.assertTrue(keep.exists())
 
+    def test_periodic_backup_cleanup_needs_no_process_inventory_for_rollback_alone(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        self.reconcile_backups()  # Retire the obsolete fixture with full evidence.
+        self.assertFalse(obsolete.exists())
+        self.proc.rmdir()  # Process inventory is now unavailable.
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                result = self.reconcile_backups(dry_run=dry_run)
+                self.assertFalse(result.errors)
+                self.assertEqual(result.found, (keep.parents[2].name,))
+                self.assertEqual(result.retained, result.found)
+                self.assertFalse(result.selected)
+                self.assertFalse(result.removed)
+                self.assertTrue(keep.exists())
+
     def test_periodic_backup_cleanup_rechecks_processes_before_disposal(self):
         obsolete, keep = self.prepare_backup_maintenance()
         scans = 0

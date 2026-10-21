@@ -250,6 +250,12 @@ def _reconcile_codex_update_backups(
         name for name, release in releases.items()
         if release.path == os.path.dirname(os.path.dirname(os.path.realpath(keep)))
     }
+    if not set(releases) - retained:
+        # A verified rollback alone needs no inactivity proof: nothing can be
+        # deleted, even when unrelated process executables are inaccessible.
+        return CodexCleanupResult(
+            found=found, retained=tuple(sorted(retained)), skipped=tuple(sorted(skipped)),
+        )
     removed: list[str] = []
     selected: list[str] = []
     active: set[str] = set()

@@ -400,8 +400,10 @@ bounded policies:
   the updater's existing `agent-update.lock` with a nonblocking exclusive flock
   throughout inspection and disposal; it never creates or replaces that lock.
   A busy, missing, or unsafe lock, missing/corrupt/unfinished update state, an
-  unverifiable rollback, or incomplete process inventory defers backup cleanup
-  and reports a maintenance failure for a later retry. Dry runs use the same
+  unverifiable rollback, or incomplete process inventory when extra snapshots
+  exist defers backup cleanup and reports a maintenance failure for a later
+  retry. A verified rollback snapshot alone requires no process scan because
+  nothing can be deleted. Dry runs use the same
   checks and report eligible snapshot counts without writing files. The legacy
   `codex.previous` recovery executable is retained: migration records do not
   establish that its bytes duplicate a retained validated package.
