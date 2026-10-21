@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from io import StringIO
 import json
 import os
@@ -12,7 +12,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from lib import agent_storage_inventory as inventory
 from lib.agent_cli import add_agent_subparser, run_agent_command
@@ -21,6 +21,7 @@ from lib.agent_cli import add_agent_subparser, run_agent_command
 class StorageInventoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        self.enterContext(patch.object(inventory.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(self.home))))
         self.mounts = self.enterContext(patch.object(inventory, "_mounts", return_value={"/": "ext4"}))
         self.enterContext(patch.object(inventory, "_ROOTS", tuple(row for row in inventory._ROOTS if not row[0].startswith("/"))))
         self.enterContext(patch.object(inventory.shutil, "disk_usage", return_value=SimpleNamespace(total=1000000, used=900000, free=100000)))
@@ -112,6 +113,85 @@ class StorageInventoryTests(unittest.TestCase):
             self.assertTrue(row["retention"])
         self.assertLessEqual(report["limits"]["entries_examined"], 64)
         self.assertNotIn("private payload", json.dumps(report))
+
+    def test_session_state_entry_failures_continue_with_ordered_metadata_only_listing(self) -> None:
+        directory = self.home / ".t3/userdata"
+        directory.mkdir(parents=True)
+        database = directory / "state.sqlite"
+        database.write_text("private fixture payload")
+        entries = [
+            SimpleNamespace(name="state.sqlite-wal", stat=Mock(side_effect=FileNotFoundError)),
+            SimpleNamespace(name="state.sqlite-shm", stat=Mock(side_effect=PermissionError)),
+            SimpleNamespace(name=database.name, stat=Mock(return_value=database.stat())),
+        ]
+        descriptor = inventory._open_directory(str(directory))
+        with patch.object(inventory, "_open_directory", side_effect=[FileNotFoundError(), descriptor]), \
+                patch.object(inventory.os, "scandir", return_value=nullcontext(iter(entries))), \
+                patch("builtins.open", side_effect=AssertionError("No database content reads")):
+            result = inventory._session_state_files(str(self.home), {"/": "ext4"})
+        self.assertEqual([row["path"] for row in result["files"]], [str(database)])
+        self.assertEqual(result["issues"], ["session_state_metadata_unavailable"])
+        self.assertNotIn("private fixture payload", json.dumps(result))
+        for entry in entries:
+            entry.stat.assert_called_once_with(follow_symlinks=False)
+        with self.assertRaises(OSError):
+            os.fstat(descriptor)
+
+    def test_session_state_only_missing_root_open_is_silent(self) -> None:
+        for failure, expected in ((FileNotFoundError, []),
+                                  (PermissionError, ["session_state_metadata_unavailable"])):
+            with self.subTest(failure=failure), patch.object(
+                inventory, "_open_directory", side_effect=failure,
+            ), patch.object(inventory.os, "scandir") as listing:
+                result = inventory._session_state_files(str(self.home), {"/": "ext4"})
+            self.assertEqual(result, {"files": [], "issues": expected})
+            listing.assert_not_called()
+
+    def test_session_state_listing_failure_is_reported_even_when_not_found(self) -> None:
+        for failure in (FileNotFoundError, PermissionError):
+            descriptor = inventory._open_directory(str(self.home))
+            with self.subTest(failure=failure), patch.object(
+                inventory, "_open_directory", side_effect=[FileNotFoundError(), descriptor],
+            ), patch.object(inventory.os, "scandir", side_effect=failure):
+                result = inventory._session_state_files(str(self.home), {"/": "ext4"})
+            self.assertEqual(result, {"files": [], "issues": ["session_state_metadata_unavailable"]})
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+
+    def test_cli_unavailable_selection_fails_without_changing_other_scan_statuses(self) -> None:
+        cache = self.home / ".cache"
+        cache.mkdir()
+        for name in ("first", "second"):
+            (cache / name).write_bytes(b"x" * 4096)
+        missing = self.home / "missing"
+        measured = self.home / "measured"
+        measured.mkdir()
+        parser = argparse.ArgumentParser()
+        add_agent_subparser(parser.add_subparsers())
+        real_open = inventory._open_directory
+        cases = (
+            ([], True, cache, "unavailable", 0),
+            (["--path", str(cache)], True, cache, "unavailable", 1),
+            (["--path", str(measured), "--path", str(cache)], True, cache, "unavailable", 1),
+            (["--path", str(cache), "--max-entries", "1"], False, cache, "partial", 0),
+            (["--path", str(missing)], False, missing, "absent", 0),
+        )
+        for summary in (False, True):
+            for options, denied, target, status, exit_code in cases:
+                def open_directory(path):
+                    if denied and path == str(cache):
+                        raise PermissionError("fixture directory is unreadable")
+                    return real_open(path)
+
+                args = parser.parse_args(["agent", "storage", "inspect", "--json", *options,
+                                          *(["--summary"] if summary else [])])
+                with self.subTest(summary=summary, options=options), patch.object(
+                    inventory, "_open_directory", side_effect=open_directory,
+                ), redirect_stdout(StringIO()) as output:
+                    self.assertEqual(run_agent_command(args), exit_code)
+                report = json.loads(output.getvalue())
+                row = next(row for row in report["candidates"] if row["path"] == str(target))
+                self.assertEqual(row["status"], status)
 
     def test_summary_keeps_failures_partial_coverage_and_state_without_mutating_inventory(self) -> None:
         cache = self.home / ".cache"
@@ -253,7 +333,7 @@ class StorageInventoryTests(unittest.TestCase):
         parser = argparse.ArgumentParser()
         add_agent_subparser(parser.add_subparsers())
         args = parser.parse_args(["agent", "storage", "inspect", "--path", str(self.home), "--max-entries", "12", "--timeout", "3", "--json"])
-        with patch.object(inventory, "inspect_storage", return_value={"read_only": True, "issues": []}) as scan, redirect_stdout(StringIO()) as output:
+        with patch.object(inventory, "inspect_storage", return_value={"read_only": True, "issues": [], "candidates": []}) as scan, redirect_stdout(StringIO()) as output:
             self.assertEqual(run_agent_command(args), 0)
         scan.assert_called_once_with(paths=[str(self.home)], max_entries=12, timeout=3)
         self.assertTrue(json.loads(output.getvalue())["read_only"])

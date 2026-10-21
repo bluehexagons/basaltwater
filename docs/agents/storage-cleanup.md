@@ -54,7 +54,15 @@ filesystem capacity, scan limits and database file metadata. Omission counts
 describe presentation only, not complete filesystem coverage. The default full
 JSON is unchanged in detail. Drill into selected `--path` roots without
 `--summary` for ownership, age, hardlink and other metadata before proposing
-cleanup. Neither view sums overlapping roots into a reclamation estimate.
+cleanup. Both views exit nonzero when an explicitly selected `--path` is
+unavailable. Missing selected paths remain reported as absent; bounded partial
+scans and unavailable default roots retain their existing success status unless
+a top-level collection issue occurred. Neither view sums overlapping roots into
+a reclamation estimate.
+
+Session-state metadata collection continues after a disappearing or unreadable
+database/WAL entry and reports incomplete coverage. A missing session root is
+silently absent; a failed directory listing remains a reported collection issue.
 
 The default budget is 250000 entries across all candidates, up to 50000 per
 default root, 20 seconds cooperatively checked between entries, and depth 24.

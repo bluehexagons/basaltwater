@@ -123,34 +123,45 @@ class _LimitReached(Exception):
 def _session_state_files(home: str, mounts: dict[str, str]) -> dict:
     """Stat a bounded directory listing; never open session databases or WALs."""
     result = {"files": [], "issues": []}
+
+    def issue(code: str) -> None:
+        if code not in result["issues"]:
+            result["issues"].append(code)
+
     for relative in (".codex", ".t3/userdata"):
         directory = os.path.join(home, relative)
         if not _local(directory, mounts):
-            result["issues"].append("session_state_filesystem_unavailable")
+            issue("session_state_filesystem_unavailable")
             continue
-        descriptor = -1
         try:
             descriptor = _open_directory(directory)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            issue("session_state_metadata_unavailable")
+            continue
+        try:
             with os.scandir(descriptor) as entries:
                 for index, entry in enumerate(entries):
                     if index >= 1024:
-                        result["issues"].append("session_state_listing_limit")
+                        issue("session_state_listing_limit")
                         break
                     if not entry.name.endswith((".sqlite", ".sqlite-wal", ".sqlite-shm")):
                         continue
-                    info = entry.stat(follow_symlinks=False)
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        issue("session_state_metadata_unavailable")
+                        continue
                     if stat.S_ISREG(info.st_mode):
                         result["files"].append({"path": os.path.join(directory, entry.name),
                             "allocated_bytes": info.st_blocks * 512, "apparent_bytes": info.st_size,
                             "owner_uid": info.st_uid, "mtime": info.st_mtime,
                             "retention": "Protected app state; age and size do not authorize deletion, SQL edits, truncation or vacuum."})
-        except FileNotFoundError:
-            pass
         except OSError:
-            result["issues"].append("session_state_metadata_unavailable")
+            issue("session_state_metadata_unavailable")
         finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+            os.close(descriptor)
     result["files"].sort(key=lambda row: (-row["allocated_bytes"], row["path"]))
     return result
 
@@ -366,10 +377,14 @@ def run_storage_command(args: argparse.Namespace) -> int:
             print(json.dumps(result, indent=2))
             return 1 if result["evidence"] and result["evidence"]["issues"] else 0
         result = inspect_storage(paths=args.path, max_entries=args.max_entries, timeout=args.timeout)
+        unavailable_selection = any(
+            row["category"] == "selected" and row["status"] == "unavailable"
+            for row in result["candidates"]
+        )
         if getattr(args, "summary", False):
             result = _summarize_inventory(result)
         print(json.dumps(result, separators=(",", ":")) if getattr(args, "summary", False) else json.dumps(result, indent=2))
-        return 1 if result["issues"] else 0
+        return 1 if result["issues"] or unavailable_selection else 0
     except (OSError, ValueError) as exc:
         print(json.dumps({"read_only": True, "error": str(exc)}))
         return 1
