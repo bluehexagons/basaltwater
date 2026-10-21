@@ -58,6 +58,20 @@ active agent's skill list and enabled settings separately. See
 Desktop skill guidance links relevant local entrypoints from either provider
 catalog, including Claude-only installations.
 
+`basaltw agent manifest . --capability skills --json` includes
+`instruction_footprint` per skill, per catalog, and across catalogs. It separates
+the installed `SKILL.md` entrypoint from known Markdown `references/` resources,
+with exact UTF-8 byte and Unicode code-point counts and measured file counts.
+Aggregates sum measured files only, counting each installed copy. Completeness
+is explicit: unsafe or personal bundles are unmeasured; missing or invalid UTF-8
+files and obsolete recorded references can leave incomplete totals. Unmeasured
+groups have null sizes, and empty catalogs do not imply complete zero sizes.
+The measurement reuses known bundle reads without scanning personal resources,
+configuration, credentials, or session files. It includes no per-reference
+contents or paths and estimates no tokens or actual session-loaded context.
+See the [footprint contract](agent-skills.md#access-from-different-sessions)
+for count, scope, and completeness details.
+
 Installed desktop applications appear with supported workflows and a link to
 the [desktop development guide](../workstations/desktop-development.md). Blender also includes
 a background-render recipe and guidance on argument order and capture settings.

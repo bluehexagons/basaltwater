@@ -68,6 +68,34 @@ configuration or credentials. Use the active skill list (`/skills` in interactiv
 Codex) to verify discovery, and respect disabled skills. Large Codex catalogs
 can omit metadata from initial context; pass the relevant skill name and path.
 
+For an exact installed instruction footprint, use
+`basaltw agent manifest . --capability skills --json`. Each skill's
+`instruction_footprint` separates `entrypoint` (`SKILL.md`) from `references`
+(known Markdown files under `references/`, including nested files and `.MD`).
+Each group reports `measured_files`, `utf8_bytes`, and `code_points`. Counts
+use the installed bytes decoded strictly as UTF-8, without newline or Unicode
+normalization; a multibyte character or combining sequence can make the two
+counts differ. Scripts, assets, agent configuration, ownership inventories,
+and unrelated personal files are excluded. No reference contents or individual
+reference paths are returned.
+
+Footprint and group `status` values are `complete`, `incomplete`, or `unmeasured`,
+independent of source freshness: a safely readable locally edited bundle can
+have a complete footprint and `different` freshness. Personal or unsafe bundles
+are unmeasured. Missing instruction files, invalid UTF-8, or obsolete recorded
+references outside the current known source reads make the relevant measurement incomplete.
+Missing entrypoints leave references unmeasured. No additional files are opened
+to fill those gaps. Groups with no measured files use null counts unless a
+complete measurement establishes that the group has no reference files; that
+case reports zero. Empty catalogs are unmeasured, not complete zero inventories.
+
+Each catalog and the overall `skills` object also expose `instruction_footprint`
+with sums of measured files only. Partial sums remain incomplete; absent optional
+catalogs do not make the overall sum incomplete. Copies installed in both catalogs
+are counted separately. These are on-disk instruction sizes, not token counts,
+metadata discovery costs, or evidence of context loaded by an actual session.
+There is no tokenizer dependency; `session_access` remains `unverified`.
+
 Choose platform guidance first, then session-specific references. Keep a single
 capability-selected catalog per account rather than replacing it whenever an
 agent launches. T3 preview, native desktop grants, and unattended permissions
