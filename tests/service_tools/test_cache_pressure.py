@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from common.service_tools import user_cache_maintenance as maintenance
+from lib.cleanup_paths import remove_checked_path
 from lib.types import BYTES_PER_GB
 
 
@@ -130,6 +131,49 @@ class TestPressureCleanup(unittest.TestCase):
         self.assertTrue(unknown.exists())
         self.assertTrue(linked.is_symlink())
 
+    def test_electron_replacement_is_retained_for_recovery(self):
+        root = self.home / ".cache" / "electron" / "hash"
+        root.mkdir(parents=True)
+        archive = root / "electron-v40.0.0-linux-x64.zip"
+        archive.write_text("inventoried download")
+        old = time.time() - 31 * 86400
+        os.utime(archive, (old, old))
+        original = self.home / "retained-original"
+        rename = os.rename
+
+        def substitute(source, target, **kwargs):
+            if source == archive.name and target == "entry":
+                rename(archive, original)
+                archive.mkdir()
+                replacement = archive / "electron-v39.0.0-linux-x64.zip"
+                replacement.write_text("preserve replacement")
+                os.utime(replacement, (old, old))
+            return rename(source, target, **kwargs)
+
+        with patch("lib.cleanup_paths.os.rename", side_effect=substitute):
+            failures = maintenance.cleanup_electron_downloads(self.context, dry_run=False)
+        self.assertEqual(len(failures), 1)
+        recovery = Path(failures[0].split("recovery path: ", 1)[1])
+        self.assertEqual(maintenance.cleanup_electron_downloads(self.context, dry_run=False), [])
+        self.assertEqual((recovery / "electron-v39.0.0-linux-x64.zip").read_text(), "preserve replacement")
+        self.assertEqual(original.read_text(), "inventoried download")
+
+    def test_electron_download_starting_at_disposal_is_preserved(self):
+        root = self.home / ".cache" / "electron" / "hash"
+        root.mkdir(parents=True)
+        archive = root / "electron-v40.0.0-linux-x64.zip"
+        archive.write_text("download")
+        old = time.time() - 31 * 86400
+        os.utime(archive, (old, old))
+
+        def dispose(*args, **kwargs):
+            with patch.object(maintenance, "tool_is_active", return_value=True):
+                return remove_checked_path(*args, **kwargs)
+
+        with patch.object(maintenance, "remove_checked_path", side_effect=dispose):
+            self.assertEqual(maintenance.cleanup_electron_downloads(self.context, dry_run=False), [])
+        self.assertEqual(archive.read_text(), "download")
+
 
 class TestT3RuntimeRetention(unittest.TestCase):
     def setUp(self):
@@ -170,6 +214,44 @@ class TestT3RuntimeRetention(unittest.TestCase):
     def test_dry_run_preserves_every_version(self):
         self.assertEqual(maintenance.cleanup_t3_runtimes(self.context, dry_run=True), [])
         self.assertEqual(len(self.remaining()), 6)
+
+    def test_runtime_replacement_is_retained_for_recovery(self):
+        candidate = self.versions / "0.0.1"
+        original = self.home / "retained-original"
+        rename = os.rename
+
+        def substitute(source, target, **kwargs):
+            if source == candidate.name and target == "entry":
+                rename(candidate, original)
+                candidate.mkdir()
+                (candidate / "unfamiliar").write_text("preserve replacement")
+            return rename(source, target, **kwargs)
+
+        with patch("lib.cleanup_paths.os.rename", side_effect=substitute):
+            failures = maintenance.cleanup_t3_runtimes(self.context, dry_run=False)
+        self.assertEqual(len(failures), 1)
+        recovery = Path(failures[0].split("recovery path: ", 1)[1])
+        self.assertEqual((recovery / "unfamiliar").read_text(), "preserve replacement")
+        self.assertTrue((original / ".install-complete").is_file())
+        self.assertTrue((self.versions / "0.0.2").is_dir())
+
+    def test_state_and_processes_are_rechecked_at_disposal(self):
+        for change in ("state", "process", "updater"):
+            with self.subTest(change=change):
+                self.write_state()
+
+                def dispose(*args, **kwargs):
+                    if change == "state":
+                        self.write_state(activeVersion="0.0.6")
+                        return remove_checked_path(*args, **kwargs)
+                    check = "process_uses_path" if change == "process" else "tool_is_active"
+                    with patch.object(maintenance, check, return_value=True):
+                        return remove_checked_path(*args, **kwargs)
+
+                with patch.object(maintenance, "remove_checked_path", side_effect=dispose):
+                    failures = maintenance.cleanup_t3_runtimes(self.context, dry_run=False)
+                self.assertEqual(bool(failures), change == "state")
+                self.assertEqual(len(self.remaining()), 6)
 
     def test_current_native_active_runtime_is_validated(self):
         active = self.versions / "0.0.5"

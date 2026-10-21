@@ -467,10 +467,13 @@ memories, credentials, plugins, and unrecognized package layouts are persistent
 state and are not cleanup targets. Root-only setups retain system cleanup but
 intentionally skip the user-cache timer.
 
-Standalone Codex release, generic rebuildable-cache, stale-tool-temp,
-named Basaltwater-temp and crash-file
-disposal rechecks device/inode, ownership, type, modification time and observable
-active use immediately before acting. Parent directories are opened without
+Standalone Codex release, T3 runtime, numbered T3 log rotation, Electron download,
+generic rebuildable-cache, stale-tool-temp, named Basaltwater-temp and crash-file
+disposal rechecks device/inode, ownership, type and modification time immediately
+before acting, along with each policy's state and active-use checks. T3 runtime
+disposal rechecks service state and updater/process activity; numbered log
+rotations retain their age/size policy without a process scan.
+Parent directories are opened without
 following links. Selected entries move into a private `0700` sibling disposal
 directory before deletion, so a recreated original pathname is preserved. Dry
 runs validate without moving or removing data. A changed entry is refused; a

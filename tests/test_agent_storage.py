@@ -512,6 +512,67 @@ class TestAgentStorage(unittest.TestCase):
             self.assertEqual(result.selected, (rotation,))
             self.assertTrue(os.path.isfile(rotation))
 
+    def test_t3_rotation_replacement_is_retained_for_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            logs = os.path.join(home, ".t3", "userdata", "logs")
+            os.makedirs(logs)
+            rotation = os.path.join(logs, "trace.ndjson.1")
+            with open(rotation, "w", encoding="utf-8") as stream:
+                stream.write("inventoried rotation")
+            original = os.path.join(home, "retained-original")
+            rename = os.rename
+
+            def substitute(source, target, **kwargs):
+                if source == os.path.basename(rotation) and target == "entry":
+                    rename(rotation, original)
+                    os.mkdir(rotation)
+                    with open(os.path.join(rotation, "unfamiliar.log.1"), "w", encoding="utf-8") as stream:
+                        stream.write("preserve replacement")
+                return rename(source, target, **kwargs)
+
+            with patch("lib.cleanup_paths.os.rename", side_effect=substitute):
+                result = cleanup_t3_rotated_logs(
+                    home, os.getuid(), dry_run=False, max_bytes=0, max_age_days=14,
+                )
+            self.assertFalse(result.removed)
+            self.assertEqual(result.removed_bytes, 0)
+            self.assertTrue(result.errors)
+            recovery = result.errors[0].split("recovery path: ", 1)[1]
+            second = cleanup_t3_rotated_logs(
+                home, os.getuid(), dry_run=False, max_bytes=0, max_age_days=14,
+            )
+            self.assertFalse(second.errors)
+            self.assertFalse(second.found_count)
+            self.assertFalse(second.removed)
+            with open(os.path.join(recovery, "unfamiliar.log.1"), encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "preserve replacement")
+            with open(original, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "inventoried rotation")
+
+    def test_t3_rotation_modified_after_inventory_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            logs = os.path.join(home, ".t3", "userdata", "logs")
+            os.makedirs(logs)
+            rotation = os.path.join(logs, "provider.log.1")
+            with open(rotation, "wb") as stream:
+                stream.write(b"old")
+
+            def modify(path, *args, **kwargs):
+                with open(path, "ab") as stream:
+                    stream.write(b"new evidence")
+                changed = os.lstat(path).st_mtime_ns + 1_000_000_000
+                os.utime(path, ns=(changed, changed))
+                return remove_checked_path(path, *args, **kwargs)
+
+            with patch("lib.agent_storage.remove_checked_path", side_effect=modify):
+                result = cleanup_t3_rotated_logs(
+                    home, os.getuid(), dry_run=False, max_bytes=0, max_age_days=14,
+                )
+            self.assertFalse(result.removed)
+            self.assertTrue(result.errors)
+            with open(rotation, "rb") as stream:
+                self.assertEqual(stream.read(), b"oldnew evidence")
+
     def test_agent_setups_reconcile_after_installing_t3(self) -> None:
         config = SetupConfig(
             host="target",

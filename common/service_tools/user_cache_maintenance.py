@@ -921,35 +921,39 @@ def cleanup_electron_downloads(context: UserContext, *, dry_run: bool) -> list[s
     pattern = re.compile(r"electron-v[0-9]+\.[0-9]+\.[0-9]+-linux-(?:x64|arm64|armv7l)\.zip")
     failures: list[str] = []
     try:
-        candidates: list[tuple[float, str]] = []
+        candidates: list[tuple[str, os.stat_result]] = []
         for directory, children, files in os.walk(root):
-            children[:] = [name for name in children if not os.path.islink(os.path.join(directory, name))]
+            children[:] = [
+                name for name in children
+                if not name.startswith(".basaltwater-dispose-")
+                and not os.path.islink(os.path.join(directory, name))
+            ]
             for name in files:
                 if pattern.fullmatch(name):
                     path = os.path.join(directory, name)
                     info = os.lstat(path)
                     if stat.S_ISREG(info.st_mode) and info.st_uid == context.uid:
-                        candidates.append((info.st_mtime, path))
-        for _mtime, path in sorted(candidates):
+                        candidates.append((path, info))
+        for path, info in sorted(candidates, key=lambda candidate: (candidate[1].st_mtime, candidate[0])):
             if not is_safe_managed_path(context, path, "Electron download"):
-                continue
-            info = os.lstat(path)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != context.uid:
                 continue
             age_days = (time.time() - info.st_mtime) / 86400
             # Even under pressure, leave newly downloaded/in-progress artifacts alone.
             if age_days < 1 or (age_days < 30 and not storage_pressure(path)):
                 continue
-            if defer_active_cache(path, ("npm", "npx", "pnpm", "yarn", "electron")):
+            if not remove_checked_path(
+                path, info, uid=context.uid, dry_run=dry_run,
+                in_use=lambda: defer_active_cache(path, ("npm", "npx", "pnpm", "yarn", "electron")),
+            ):
                 continue
-            if not dry_run:
-                os.unlink(path)
             log_event(
                 logger, "Would remove Electron download" if dry_run else "Removed Electron download",
                 path=path, size_mb=round(info.st_size / BYTES_PER_MB, 1),
             )
-    except OSError as exc:
-        failures.append(f"Electron download cleanup: {exc}")
+    except (OSError, ValueError) as exc:
+        recovery = getattr(exc, "recovery_path", None)
+        details = f"{exc}; recovery path: {recovery}" if recovery else str(exc)
+        failures.append(f"Electron download cleanup: {details}")
     return failures
 
 
@@ -1102,22 +1106,24 @@ def cleanup_t3_runtimes(context: UserContext, *, dry_run: bool) -> list[str]:
             usage = cache_usage(path)
             if usage.newest_mtime is None or time.time() - usage.newest_mtime < 7 * 86400:
                 continue
-            if process_uses_path(path):
+            def in_use() -> bool:
+                if _t3_state(context, state_path) != state:
+                    raise ValueError("T3 state changed during cleanup")
+                return tool_is_active(("npm", "npx", "pnpm", "yarn")) or process_uses_path(path)
+
+            if not remove_checked_path(
+                path, candidates[name], uid=context.uid, in_use=in_use, dry_run=dry_run,
+            ):
                 log_event(logger, "T3 runtime retained while in use", version=name)
                 continue
-            if _t3_state(context, state_path) != state:
-                raise ValueError("T3 state changed during cleanup")
-            current = os.lstat(path)
-            if (current.st_dev, current.st_ino) != (candidates[name].st_dev, candidates[name].st_ino):
-                raise ValueError("T3 runtime changed during cleanup")
-            if not dry_run:
-                shutil.rmtree(path)
             log_event(
                 logger, "Would remove old T3 runtime" if dry_run else "Removed old T3 runtime",
                 version=name, size_mb=round(usage.size_bytes / BYTES_PER_MB, 1),
             )
     except (OSError, ValueError) as exc:
-        return [f"T3 runtime cleanup: {exc}"]
+        recovery = getattr(exc, "recovery_path", None)
+        details = f"{exc}; recovery path: {recovery}" if recovery else str(exc)
+        return [f"T3 runtime cleanup: {details}"]
     return []
 
 

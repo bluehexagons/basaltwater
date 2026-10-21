@@ -57,10 +57,7 @@ class RotatedLog:
     """One regular numbered log rotation eligible for bounded cleanup."""
 
     path: str
-    size_bytes: int
-    mtime: float
-    device: int
-    inode: int
+    metadata: os.stat_result
 
 
 @dataclass(frozen=True)
@@ -604,7 +601,8 @@ def _inventory_t3_rotated_logs(home: str, uid: int, base_dir: str | None) -> lis
         directories[:] = [
             name
             for name in directories
-            if not os.path.islink(os.path.join(current_root, name))
+            if not name.startswith(".basaltwater-dispose-")
+            and not os.path.islink(os.path.join(current_root, name))
         ]
         for filename in filenames:
             if not _T3_ROTATED_LOG_PATTERN.fullmatch(filename):
@@ -613,15 +611,7 @@ def _inventory_t3_rotated_logs(home: str, uid: int, base_dir: str | None) -> lis
             path_stat = os.lstat(path)
             if not stat.S_ISREG(path_stat.st_mode) or path_stat.st_uid != uid:
                 continue
-            logs.append(
-                RotatedLog(
-                    path=path,
-                    size_bytes=path_stat.st_size,
-                    mtime=path_stat.st_mtime,
-                    device=path_stat.st_dev,
-                    inode=path_stat.st_ino,
-                )
-            )
+            logs.append(RotatedLog(path=path, metadata=path_stat))
     return logs
 
 
@@ -643,27 +633,27 @@ def cleanup_t3_rotated_logs(
         return T3LogCleanupResult()
 
     cutoff = time.time() - (max_age_days * 24 * 60 * 60)
-    selected_paths = {entry.path for entry in logs if entry.mtime < cutoff}
+    selected_paths = {entry.path for entry in logs if entry.metadata.st_mtime < cutoff}
     retained_bytes = sum(
-        entry.size_bytes for entry in logs if entry.path not in selected_paths
+        entry.metadata.st_size for entry in logs if entry.path not in selected_paths
     )
     if retained_bytes > max_bytes:
-        for entry in sorted(logs, key=lambda candidate: candidate.mtime):
+        for entry in sorted(logs, key=lambda candidate: candidate.metadata.st_mtime):
             if entry.path in selected_paths:
                 continue
             selected_paths.add(entry.path)
-            retained_bytes -= entry.size_bytes
+            retained_bytes -= entry.metadata.st_size
             if retained_bytes <= max_bytes:
                 break
 
     selected = tuple(entry.path for entry in logs if entry.path in selected_paths)
     selected_bytes = sum(
-        entry.size_bytes for entry in logs if entry.path in selected_paths
+        entry.metadata.st_size for entry in logs if entry.path in selected_paths
     )
     if dry_run:
         return T3LogCleanupResult(
             found_count=len(logs),
-            found_bytes=sum(entry.size_bytes for entry in logs),
+            found_bytes=sum(entry.metadata.st_size for entry in logs),
             selected=selected,
             selected_bytes=selected_bytes,
         )
@@ -675,23 +665,17 @@ def cleanup_t3_rotated_logs(
         if entry.path not in selected_paths:
             continue
         try:
-            current_stat = os.lstat(entry.path)
-            if (
-                not stat.S_ISREG(current_stat.st_mode)
-                or current_stat.st_uid != uid
-                or current_stat.st_dev != entry.device
-                or current_stat.st_ino != entry.inode
-            ):
-                raise OSError("rotated log changed during cleanup")
-            os.unlink(entry.path)
-            removed.append(entry.path)
-            removed_bytes += entry.size_bytes
-        except OSError as exc:
-            errors.append(f"{entry.path}: {exc}")
+            if remove_checked_path(entry.path, entry.metadata, uid=uid, in_use=lambda: False):
+                removed.append(entry.path)
+                removed_bytes += entry.metadata.st_size
+        except (OSError, ValueError) as exc:
+            recovery = getattr(exc, "recovery_path", None)
+            details = f"{exc}; recovery path: {recovery}" if recovery else str(exc)
+            errors.append(f"{entry.path}: {details}")
 
     return T3LogCleanupResult(
         found_count=len(logs),
-        found_bytes=sum(entry.size_bytes for entry in logs),
+        found_bytes=sum(entry.metadata.st_size for entry in logs),
         selected=selected,
         selected_bytes=selected_bytes,
         removed=tuple(removed),
