@@ -44,6 +44,7 @@ REQUIRED_WHEEL_PATHS = (
     "plugins/wsl.py",
     "common/agent_skills/basaltwater-subagents/assets/agent-models.json",
     "common/agent_skills/basaltwater-t3code/references/updates.md",
+    "common/agent_skills/basaltwater-t3code/references/operations.md",
     "common/agent_skills/basaltwater-t3code/references/thread-migration.md",
     "common/cachyos_steps.py",
     "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
@@ -77,10 +78,22 @@ SOURCE_COPY_IGNORE = shutil.ignore_patterns(
 )
 
 
+def _run_quietly(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
+    """Keep successful build/install chatter out of check output; replay failures."""
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+        try:
+            subprocess.run(command, check=True, cwd=cwd, env=env,
+                           stdout=output, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError:
+            output.seek(0)
+            shutil.copyfileobj(output, sys.stderr)
+            raise
+
+
 def _build_wheel(output_dir: Path) -> Path:
     source_dir = output_dir.parent / "source"
     shutil.copytree(ROOT, source_dir, ignore=SOURCE_COPY_IGNORE, symlinks=True)
-    subprocess.run(
+    _run_quietly(
         [
             sys.executable,
             "-m",
@@ -90,7 +103,6 @@ def _build_wheel(output_dir: Path) -> Path:
             str(output_dir),
             str(source_dir),
         ],
-        check=True,
         cwd=source_dir,
     )
     wheels = list(output_dir.glob("*.whl"))
@@ -139,9 +151,8 @@ def _smoke_installed_wheel(
 
 
 
-    subprocess.run(
+    _run_quietly(
         [str(pip), "install", "--no-deps", str(wheel)],
-        check=True,
         cwd=work_dir,
         env=environment,
     )

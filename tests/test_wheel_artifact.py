@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import os
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -35,6 +38,7 @@ class WheelArtifactTest(unittest.TestCase):
     def test_rejects_missing_workflow_resources(self) -> None:
         resources = (
             "common/agent_skills/basaltwater-project-development/SKILL.md",
+            "common/agent_skills/basaltwater-t3code/references/operations.md",
             "common/agent_skills/basaltwater-project-adoption/SKILL.md",
             "common/agent_skills/basaltwater-frontend-design/SKILL.md",
             "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
@@ -60,6 +64,30 @@ class WheelArtifactTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "missing required runtime files") as error:
                     check_wheel_artifact._check_wheel_contents(wheel)
                 self.assertIn(missing, str(error.exception))
+
+    def test_build_output_is_quiet_on_success_and_replayed_on_failure(self) -> None:
+        for code in (0, 7):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                captured_out, captured_err = io.StringIO(), io.StringIO()
+
+                def run(command, **kwargs):
+                    self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
+                    kwargs["stdout"].write("compiler evidence\n")
+                    if code:
+                        raise subprocess.CalledProcessError(code, command)
+
+                with (
+                    patch.object(check_wheel_artifact.subprocess, "run", side_effect=run),
+                    redirect_stdout(captured_out), redirect_stderr(captured_err),
+                ):
+                    if code:
+                        with self.assertRaises(subprocess.CalledProcessError) as error:
+                            check_wheel_artifact._run_quietly(["mock-build"], cwd=Path(directory))
+                        self.assertEqual(error.exception.returncode, code)
+                    else:
+                        check_wheel_artifact._run_quietly(["mock-build"], cwd=Path(directory))
+                self.assertEqual(captured_out.getvalue(), "")
+                self.assertEqual(captured_err.getvalue(), "compiler evidence\n" if code else "")
 
     def test_build_uses_clean_temporary_source_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
