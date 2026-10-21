@@ -366,6 +366,22 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         report = agent.load_reports(str(self.root / "reports.json"))["reports"][-1]
         self.assertEqual([item["status"] for item in report["routines"]], ["blocked", "blocked"])
 
+    def test_delayed_restart_resumes_cleanup_without_also_dispatching_new_daily_jobs(self) -> None:
+        write_json_atomic(str(self.root / "control/settings.json"), {**self.policy, "routines": True, "daily_calls": 0})
+        original_persist = agent._persist
+        def interrupt_after_acceptance(state, baseline, root):
+            original_persist(state, baseline, root)
+            if state["reports"]:
+                raise KeyboardInterrupt
+        with patch.object(agent, "_persist", side_effect=interrupt_after_acceptance), self.assertRaises(KeyboardInterrupt):
+            self.run_check(100000, [])
+        with patch.object(agent, "snapshot_unit_file", side_effect=self.managed_units().get), \
+                patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0)) as dispatch:
+            self.assertTrue(self.run_check(186400, []))
+            self.assertFalse(self.run_check(186401, []))
+        self.assertEqual(dispatch.call_count, 2)
+        self.assertEqual(agent._load_state(str(self.root / "state.json"))["last_routines"], 186400)
+
     def test_request_arriving_during_consumption_remains_queued(self) -> None:
         agent.request_check(directory=str(self.root / "control"))
         marker = self.root / "control/wake.json"

@@ -438,6 +438,7 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
         policy = load_policy(str(root / "control/settings.json"))
         marker = root / "control/wake.json"
         state = _load_state(str(root / "state.json"))
+        current = int(time.time()) if now is None else now
         resumed = False
         for previous in state["reports"]:
             if previous.get("check_status") == "running":
@@ -450,6 +451,9 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
             if any(item["status"] in {"pending", "dispatching"} for item in previous["routines"]):
                 authorized = previous.get("cleanup_requested", False) or bool(
                     previous.get("source") == "automatic" and policy["enabled"] and policy["routines"])
+                if authorized and any(item["status"] == "pending" for item in previous["routines"]):
+                    state["last_routines"] = current
+                    _persist(state, baseline, root)
                 _dispatch_routines(previous, lambda: _persist(state, baseline, root), authorized=authorized)
                 resumed = True
         claim = root / "active-request.json"
@@ -467,7 +471,6 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
                 rename_path_durable(str(marker), str(claim))
         forced = request is not None
         cleanup_requested = bool(request and request.get("cleanup", False))
-        current = int(time.time()) if now is None else now
         host = forced or bool(policy["enabled"] and policy["host_checks"]
                               and current - state["last_check"] >= policy["interval"] * 60)
         audit = bool(policy["security"] and (forced or policy["enabled"]
