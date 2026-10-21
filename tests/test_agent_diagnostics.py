@@ -239,6 +239,82 @@ class AgentDiagnosticsTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
     @patch("lib.agent_diagnostics.collect_diagnostics")
+    def test_writable_or_unowned_directory_keeps_full_stdout_evidence(self, collect):
+        evidence = {"properties": {}, "events": [{"message": "Retain this", "priority": "3"}], "issues": []}
+        collect.return_value = evidence
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for mode in (0o770, 0o707, 0o1777):
+                with self.subTest(mode=oct(mode)):
+                    root.chmod(mode)
+                    code, result = self.invoke("--service", "nginx.service", "--summary", "--output", str(root / "new.json"))
+                    self.assertEqual(code, 1)
+                    self.assertEqual(result["events"], evidence["events"])
+                    self.assertEqual(list(root.iterdir()), [])
+            root.chmod(0o700)
+            with patch("lib.agent_diagnostics.os.geteuid", return_value=root.stat().st_uid + 1):
+                code, result = self.invoke("--service", "nginx.service", "--summary", "--output", str(root / "new.json"))
+            self.assertEqual(code, 1)
+            self.assertEqual(result["events"], evidence["events"])
+            self.assertEqual(list(root.iterdir()), [])
+
+    @patch("lib.agent_diagnostics.collect_diagnostics")
+    def test_shared_ancestor_cannot_make_reported_artifact_path_disappear(self, collect):
+        evidence = {"properties": {}, "events": [{"message": "Retain this", "priority": "3"}], "issues": []}
+        collect.return_value = evidence
+        link = os.link
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shared = root / "shared"
+            private = shared / "private"
+            private.mkdir(parents=True, mode=0o700)
+
+            def rename_before_link(*args, **kwargs):
+                private.rename(shared / "renamed")
+                return link(*args, **kwargs)
+
+            for mode in (0o777, 0o770):
+                shared.chmod(mode)
+                with self.subTest(mode=oct(mode)), patch("lib.agent_diagnostics.os.link", side_effect=rename_before_link) as publish:
+                    code, result = self.invoke("--service", "nginx.service", "--summary", "--output", str(private / "new.json"))
+                self.assertEqual(code, 1)
+                self.assertEqual(result["events"], evidence["events"])
+                self.assertNotIn("evidence_path", result)
+                publish.assert_not_called()
+            shared.chmod(0o1777)
+            code, result = self.invoke("--service", "nginx.service", "--summary", "--output", str(private / "new.json"))
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(Path(result["evidence_path"]).read_text()), evidence)
+
+    @patch("lib.agent_diagnostics.collect_diagnostics")
+    def test_temporary_path_substitution_never_hides_collected_evidence(self, collect):
+        evidence = {"properties": {}, "events": [{"message": "Retain this", "priority": "3"}], "issues": []}
+        collect.return_value = evidence
+        link = os.link
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unrelated = root / "unrelated.json"
+            unrelated.write_text("unrelated evidence")
+
+            for kind in ("symlink", "regular"):
+                def substitute_before_link(source, destination, **kwargs):
+                    os.unlink(source, dir_fd=kwargs["src_dir_fd"])
+                    if kind == "symlink":
+                        os.symlink(str(unrelated), source, dir_fd=kwargs["src_dir_fd"])
+                    else:
+                        link(str(unrelated), source, dst_dir_fd=kwargs["src_dir_fd"], follow_symlinks=False)
+                    return link(source, destination, **kwargs)
+
+                with self.subTest(kind=kind), patch("lib.agent_diagnostics.os.link", side_effect=substitute_before_link):
+                    code, result = self.invoke("--service", "nginx.service", "--summary", "--output", str(root / f"{kind}.json"))
+                self.assertEqual(code, 1)
+                self.assertEqual(result["events"], evidence["events"])
+                self.assertNotIn("events_omitted_from_stdout", result)
+                self.assertNotIn("evidence_path", result)
+                self.assertEqual(unrelated.read_text(), "unrelated evidence")
+                self.assertFalse(list(root.glob(".diagnostics-*")))
+
+    @patch("lib.agent_diagnostics.collect_diagnostics")
     def test_dispatch_revalidates_selectors_before_collection(self, collect):
         output = io.StringIO()
         with redirect_stdout(output):

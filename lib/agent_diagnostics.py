@@ -6,7 +6,9 @@ import argparse
 import json
 import os
 import secrets
+import stat
 import subprocess
+from pathlib import Path
 
 from common.service_tools.web_panel_diagnostics import (
     PRIORITIES,
@@ -29,7 +31,20 @@ def add_diagnostics_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--window", default="24h", choices=WINDOWS)
     parser.add_argument("--priority", default="4", choices=PRIORITIES)
     parser.add_argument("--summary", action="store_true", help="Omit events from stdout; requires --output")
-    parser.add_argument("--output", metavar="PATH", help="Save full JSON to a new private file in an existing directory")
+    parser.add_argument("--output", metavar="PATH", help="Save full JSON to a new file in an owned directory without group/other write access")
+
+
+def _check_evidence_ancestors(directory: str) -> None:
+    """Prevent other accounts from renaming the path to the pinned directory."""
+    path = Path(directory)
+    # Trust root and this account only. Sticky shared ancestors (such as /tmp)
+    # protect the root/account-owned child checked on the following iteration.
+    for ancestor in (*reversed(path.parents), path):
+        with directory_fd(str(ancestor)) as descriptor:
+            state = os.fstat(descriptor)
+            if (state.st_uid not in (0, os.geteuid())
+                    or (state.st_mode & 0o022 and not state.st_mode & stat.S_ISVTX)):
+                raise ValueError("Evidence path has an untrusted ancestor")
 
 
 def _write_evidence(result: JSONDict, output: str) -> str:
@@ -40,7 +55,11 @@ def _write_evidence(result: JSONDict, output: str) -> str:
         raise ValueError("Evidence path must not contain '..'")
     path = os.path.abspath(output)
     content = json.dumps(result, indent=2) + "\n"
+    _check_evidence_ancestors(os.path.dirname(path))
     with directory_fd(os.path.dirname(path)) as parent:
+        parent_stat = os.fstat(parent)
+        if parent_stat.st_uid != os.geteuid() or parent_stat.st_mode & 0o022:
+            raise ValueError("Evidence directory must be owned and not writable by others")
         temporary = ".diagnostics-" + secrets.token_hex(16)
         descriptor = os.open(
             temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -52,11 +71,16 @@ def _write_evidence(result: JSONDict, output: str) -> str:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            # Atomic publication with no replacement; write_json_atomic replaces
-            # existing files and therefore cannot implement this contract.
-            os.link(temporary, os.path.basename(path), src_dir_fd=parent, dst_dir_fd=parent,
-                    follow_symlinks=False)
-            os.fsync(parent)
+                written = os.fstat(stream.fileno())
+                # Keep the inode pinned through publication and verify that a
+                # substituted pathname cannot be reported as saved evidence.
+                os.link(temporary, os.path.basename(path), src_dir_fd=parent, dst_dir_fd=parent,
+                        follow_symlinks=False)
+                published = os.stat(os.path.basename(path), dir_fd=parent, follow_symlinks=False)
+                if (not stat.S_ISREG(published.st_mode)
+                        or (published.st_dev, published.st_ino) != (written.st_dev, written.st_ino)):
+                    raise ValueError("Evidence file changed during publication")
+                os.fsync(parent)
         finally:
             os.unlink(temporary, dir_fd=parent)
     return path

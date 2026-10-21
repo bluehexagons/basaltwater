@@ -71,10 +71,14 @@ and a fixed set of runtime properties. T3 Code uses the current user's service
 manager and journal; other services use the system scope.
 
 `--output PATH` saves that full redacted JSON with mode `0600` and keeps the
-default full stdout. Choose a new filename in an existing directory; relative
-paths are allowed. Existing files, symlinks in any path component, and `..`
+default full stdout. Choose a new filename in an existing directory owned by
+the invoking account without group or other write access; relative paths are
+allowed. Existing files, symlinks in any path component, and `..`
 components are rejected. No parent directories are created and no files are
 overwritten. Review redacted evidence before sharing it.
+Ancestors must belong to root or the invoking account, with no group/other
+write access unless sticky permissions protect their owned children (as in
+`/tmp`). This prevents another account from replacing the reported file path.
 
 Add `--summary --output PATH` to omit journal events from stdout only after
 the full artifact has been saved successfully. The JSON summary retains all
