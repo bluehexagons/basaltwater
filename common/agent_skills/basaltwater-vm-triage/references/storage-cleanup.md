@@ -8,6 +8,13 @@ for metadata-only size, age, and owner evidence, then read the full
 
 ## Bounded classification
 
+Use the inventory's `cleanup_convention` labels and referenced checks for Go,
+Playwright and project toolchain caches. Read the
+[shared cache conventions](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/storage-cleanup.md#shared-cache-conventions)
+when relevant. Keep current testing browsers and older revisions required by
+installed projects or managed tooling. Toolchain archives need installer/lock
+and checksum checks; preserve required installed tools and export templates.
+
 Classify only a selected, bounded file list or a few relevant log excerpts.
 Prefer metadata, counters, and app-owned inventories before content. Where
 delegation is supported, use a low-cost Luna model at high reasoning and

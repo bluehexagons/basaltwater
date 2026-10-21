@@ -39,6 +39,38 @@ _ROOTS = (
     ("/var/log/journal", "journal", "Evidence retention requires an operator decision; do not truncate active logs."),
 )
 
+_CACHE_REVIEWS = {
+    "go-build": {
+        "check": "Confirm go env GOCACHE matches this path and no builds are active; use go clean -cache within approved cleanup scope.",
+        "preserve": "Keep module downloads, source and running programs; do not add -modcache.",
+        "cost": "Later builds recompile.",
+    },
+    "playwright-browsers": {
+        "check": "Match .links package registrations and their browsers.json revisions to installed payloads and active browser/MCP references before owner-native unused-version cleanup.",
+        "preserve": "Keep the latest testing browsers AND older revisions required by installed projects or managed tooling; revision age alone is insufficient.",
+        "cost": "Removed browser payloads require downloads; different Playwright packages can require different revisions.",
+    },
+    "project-toolchain": {
+        "check": "The directory name suggests a toolchain cache. Read its project's installer and version/checksum lock; distinguish downloaded archives, installed executables/templates and retained evidence.",
+        "preserve": "Keep required installed tools and templates. Before removing duplicate archives, verify checksums, active use, a retained copy and the installer's restore behavior.",
+        "cost": "Installers may download missing archives again even when extracted tools remain; equal sizes do not prove duplicate content.",
+    },
+}
+
+
+def _cache_convention(path: str, home: str) -> str | None:
+    """Recognize conventional cache roots, not deletion eligibility or versions."""
+    target = Path(path)
+    if target.parent != Path(home) / ".cache":
+        return None
+    if target.name == "go-build":
+        return "go-build"
+    if target.name == "ms-playwright":
+        return "playwright-browsers"
+    if target.name.endswith("-toolchain"):
+        return "project-toolchain"
+    return None
+
 
 def _mounts() -> dict[str, str]:
     """Read only mount paths/types; never publish mount sources or options."""
@@ -224,7 +256,7 @@ def inspect_storage(*, home: str | None = None, paths: list[str] | None = None,
             validate_filesystem_path(path)
             if not os.path.isabs(path) or os.path.normpath(path) != path:
                 raise ValueError("Storage paths must be absolute and normalized")
-    result = {"read_only": True, "candidates": [], "filesystems": [], "issues": [],
+    result = {"read_only": True, "candidates": [], "filesystems": [], "issues": [], "cleanup_conventions": {},
               "limits": {"max_entries": max_entries, "timeout_seconds": timeout},
               "notes": ["Allocated bytes are observed usage, not guaranteed reclaimable space.",
                         "Partial sizes are lower bounds; missing evidence is not zero usage.",
@@ -252,6 +284,12 @@ def inspect_storage(*, home: str | None = None, paths: list[str] | None = None,
     for path, category, caution in targets:
         record = _scan(path, mounts, budget, entry_limit=max_entries if paths else min(max_entries, 50000), now=now)
         record.update(category=category, retention=caution)
+        if record["status"] in ("measured", "partial"):
+            for item in (record, *record["largest_children"]):
+                convention = _cache_convention(item["path"], home)
+                if convention:
+                    item["cleanup_convention"] = convention
+                    result["cleanup_conventions"][convention] = _CACHE_REVIEWS[convention].copy()
         result["candidates"].append(record)
     result["candidates"].sort(key=lambda row: (-row["allocated_bytes"], row["path"]))
     result["limits"]["entries_examined"] = max_entries - budget["entries"]

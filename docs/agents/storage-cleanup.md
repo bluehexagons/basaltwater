@@ -47,6 +47,27 @@ in their parent. Hardlinks are counted once per root; overlapping requests and
 shared/reflink extents must not be added as independent savings. Compare free
 space on the affected filesystem before and after an approved cleanup.
 
+## Shared cache conventions
+
+The inventory labels recognized `~/.cache` roots with `cleanup_convention` and
+includes only the referenced checks in `cleanup_conventions`. This applies to
+selected roots and already measured largest children; it adds no scans or file
+reads. The largest-child list is bounded to eight, so an absent label is not a
+complete cache inventory. Partial coverage and skipped paths remain explicit.
+Labels identify review guidance, never deletion eligibility or verified disuse.
+
+| Convention | Checks and retention |
+| --- | --- |
+| `go-build` | Confirm `go env GOCACHE` and no active builds before approved `go clean -cache`. Keep module downloads and source; later builds recompile. |
+| `playwright-browsers` (`ms-playwright`) | Match `.links` package registrations, their `browsers.json` revisions and live browser/MCP references. Keep latest testing browsers and older revisions still required by projects or managed tools. Use owner-native unused-version cleanup only after checking dependencies; sorting revision numbers or modification times is insufficient. |
+| `project-toolchain` (`*-toolchain`) | A name-based review hint for project caches such as build/release toolchain pairs. Read project installers and version/checksum locks; separate download archives from installed editors, SDKs, export templates and evidence. Confirm duplicate content by checksum and active use before choosing exact archive removals. Preserve required installed tools and a verified archive copy; installers may download missing archives again. |
+
+These checks travel with Basaltwater rather than recording one VM's sizes,
+browser revisions or project release. Recheck current dependencies on each
+system. Custom cache locations can still be inspected with `--path`; unrecognized
+paths retain generic review guidance. Do not infer disposability from a cache
+name, equal sizes or an old timestamp.
+
 ## Inspect project conventions economically
 
 Read each project's `AGENTS.md` and existing cleanup tooling before choosing

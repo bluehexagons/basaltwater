@@ -84,6 +84,49 @@ class StorageInventoryTests(unittest.TestCase):
                          {"codex-sessions", "archived-sessions", "session-attachments"},
                          {"codex-sessions", "archived-sessions", "session-attachments"})
 
+    def test_cache_conventions_cover_default_children_and_exact_selected_roots_without_reads(self) -> None:
+        expected = {"go-build": "go-build", "ms-playwright": "playwright-browsers",
+                    "libretabs-toolchain": "project-toolchain", "other-release-toolchain": "project-toolchain"}
+        for name in (*expected, "unrecognized"):
+            root = self.home / ".cache" / name
+            root.mkdir(parents=True)
+            (root / "payload").write_bytes(b"x" * 4096)
+        with patch("builtins.open", side_effect=AssertionError("Guidance must not read contents")):
+            report = self.inspect()
+        cache = next(row for row in report["candidates"] if row["category"] == "tool-caches")
+        self.assertEqual({Path(row["path"]).name: row["cleanup_convention"]
+                          for row in cache["largest_children"] if "cleanup_convention" in row}, expected)
+        self.assertEqual(set(report["cleanup_conventions"]), set(expected.values()))
+        for name, convention in expected.items():
+            report = self.inspect(self.home / ".cache" / name)
+            self.assertEqual(report["candidates"][0]["cleanup_convention"], convention)
+            self.assertEqual(set(report["cleanup_conventions"]), {convention})
+        self.assertEqual(self.inspect(self.home / ".cache" / "unrecognized")["cleanup_conventions"], {})
+
+    def test_cache_conventions_do_not_label_missing_linked_or_unrelated_paths(self) -> None:
+        missing = self.home / ".cache" / "go-build"
+        linked = self.home / ".cache" / "ms-playwright"
+        unrelated = self.home / "project" / ".cache" / "go-build"
+        unrelated.mkdir(parents=True)
+        linked.parent.mkdir()
+        linked.symlink_to(unrelated, target_is_directory=True)
+        for path in (missing, linked, unrelated):
+            report = self.inspect(path)
+            self.assertNotIn("cleanup_convention", report["candidates"][0])
+            self.assertEqual(report["cleanup_conventions"], {})
+
+    def test_cache_convention_keeps_partial_measurement_and_shared_scan_limits(self) -> None:
+        cache = self.home / ".cache" / "ms-playwright"
+        cache.mkdir(parents=True)
+        for name in ("first", "second"):
+            (cache / name).write_bytes(b"x" * 4096)
+        report = self.inspect(cache, max_entries=1)
+        row = report["candidates"][0]
+        self.assertEqual(row["status"], "partial")
+        self.assertEqual(row["cleanup_convention"], "playwright-browsers")
+        self.assertIn("scan_limit_reached", row["issues"])
+        self.assertEqual(report["limits"]["entries_examined"], 1)
+
     def test_entry_and_time_limits_report_partial_evidence(self) -> None:
         for index in range(4):
             (self.home / str(index)).write_bytes(b"x" * 4096)
