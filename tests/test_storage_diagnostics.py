@@ -194,6 +194,139 @@ class StorageCollectorTests(unittest.TestCase):
         self.assertFalse(diagnostics._complete(report))
         self.assertLessEqual(report["entries_scanned"], 65)
 
+    def test_large_locations_share_entry_budget_and_resume_with_spare_budget(self) -> None:
+        for index in range(80):
+            self.file(f"home/agent/repos/large/file-{index}", 1)
+            self.file(f"home/agent/.local/share/basaltwater/large/file-{index}", 1)
+        self.file("home/agent/repos/small/source")
+        self.file("home/agent/.t3/userdata/session")
+        self.file("home/agent/.codex/sessions/session")
+        bounded = self.collect(entry_limit=65)
+        self.assertEqual(bounded["entries_scanned"], 65)
+        for facet, identifier in (("services", "t3"), ("services", "codex"), ("projects", "project:small")):
+            with self.subTest(identifier=identifier):
+                row = self.row(bounded, facet, identifier)
+                self.assertTrue(row["complete"])
+                self.assertEqual(row["files"], 1)
+        for facet, identifier in (("services", "basaltwater-data"), ("projects", "project:large")):
+            row = self.row(bounded, facet, identifier)
+            self.assertFalse(row["complete"])
+            self.assertLess(row["files"], 80)
+        self.assertTrue(any("share reached" in issue for issue in bounded["issues"]))
+        resumed = self.collect(entry_limit=300)
+        self.assertTrue(diagnostics._complete(resumed))
+        self.assertEqual(resumed["files_scanned"], 163)
+        self.assertEqual(self.row(resumed, "projects", "project:large")["files"], 80)
+        self.assertEqual(self.row(resumed, "services", "basaltwater-data")["files"], 80)
+        self.assertFalse(any("share reached" in issue for issue in resumed["issues"]))
+        self.assertEqual(sum(row["allocated_bytes"] for row in resumed["areas"]),
+                         resumed["scanned_allocated_bytes"])
+
+    def test_large_project_shares_time_budget_with_services_and_other_projects(self) -> None:
+        for index in range(12):
+            self.file(f"home/agent/repos/large/file-{index}", 1)
+        self.file("home/agent/repos/small/source")
+        self.file("home/agent/.t3/userdata/session")
+        self.file("home/agent/.codex/sessions/session")
+        now = 0.0
+        self.clock.side_effect = lambda: now
+        real_stat = os.stat
+
+        def timed_stat(path: str, **kwargs: object) -> object:
+            nonlocal now
+            info = real_stat(path, **kwargs)
+            if str(path).startswith("file-"):
+                now += 0.2
+            return info
+
+        with patch.object(diagnostics.os, "stat", side_effect=timed_stat):
+            report = self.collect(duration_seconds=1)
+        self.assertGreaterEqual(report["duration_seconds"], 1)
+        self.assertLessEqual(report["duration_seconds"], 1.2)
+        self.assertFalse(self.row(report, "projects", "project:large")["complete"])
+        for facet, identifier in (("services", "t3"), ("services", "codex"), ("projects", "project:small")):
+            row = self.row(report, facet, identifier)
+            self.assertTrue(row["complete"])
+            self.assertEqual(row["files"], 1)
+
+    def test_project_discovery_is_bounded_before_services(self) -> None:
+        self.file("home/agent/.t3/userdata/session")
+        real_scandir = os.scandir
+
+        class LargeDirectory:
+            def __enter__(self):
+                # Simulate a huge directory using repeated metadata observations.
+                # No files, mounts or large fixture payloads are needed.
+                return iter(SimpleNamespace(name=f"absent-project-{index}") for index in range(10000))
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+        (self.home / "repos").mkdir()
+        repos_inode = (self.home / "repos").stat().st_ino
+        calls = 0
+
+        def listing(descriptor: int) -> object:
+            nonlocal calls
+            if os.fstat(descriptor).st_ino == repos_inode:
+                calls += 1
+                if calls == 1:
+                    return LargeDirectory()
+            return real_scandir(descriptor)
+
+        with patch.object(diagnostics.os, "scandir", side_effect=listing):
+            report = self.collect(entry_limit=80)
+        self.assertLessEqual(report["entries_scanned"], 80)
+        self.assertTrue(self.row(report, "services", "t3")["complete"])
+        self.assertEqual(self.row(report, "services", "t3")["files"], 1)
+        self.assertFalse(any("Project discovery share" in issue for issue in report["issues"]))
+
+    def test_resumed_project_discovery_clears_transient_limit(self) -> None:
+        for index in range(120):
+            self.file(f"home/agent/repos/plain-file-{index}", 1)
+        self.file("home/agent/repos/project/source")
+        report = self.collect(entry_limit=260)
+        self.assertEqual(report["files_scanned"], 121)
+        self.assertTrue(self.row(report, "projects", "project:project")["complete"])
+        self.assertTrue(diagnostics._complete(report))
+        self.assertFalse(any("discovery share" in issue for issue in report["issues"]))
+
+    def test_nested_service_cannot_consume_parent_location_share(self) -> None:
+        self.home = self.root / "var/lib/docker"
+        for index in range(80):
+            self.file(f"var/lib/docker/.codex/file-{index}", 1)
+        self.file("var/lib/docker/own-layer")
+        self.file("var/lib/docker/.t3/session")
+        self.file("var/lib/docker/repos/project/source")
+        bounded = self.collect(entry_limit=100)
+        self.assertEqual(self.row(bounded, "services", "docker")["files"], 2)
+        self.assertFalse(self.row(bounded, "services", "codex")["complete"])
+        resumed = self.collect(entry_limit=200)
+        self.assertTrue(diagnostics._complete(resumed))
+        self.assertEqual(resumed["files_scanned"], 83)
+        self.assertEqual(sum(row["files"] for row in resumed["services"]), 83)
+
+    def test_previously_observed_directory_cannot_become_absent_zero(self) -> None:
+        self.file("home/agent/.codex/session")
+        real_stat = os.stat
+        calls = 0
+
+        def disappear(path: str, **kwargs: object) -> object:
+            nonlocal calls
+            if path == ".codex":
+                calls += 1
+                if calls == 2:
+                    raise FileNotFoundError("private fixture detail")
+            return real_stat(path, **kwargs)
+
+        with patch.object(diagnostics.os, "stat", side_effect=disappear):
+            report = self.collect()
+        row = self.row(report, "services", "codex")
+        self.assertFalse(row["complete"])
+        self.assertFalse(any("Not present" in issue for issue in row["issues"]))
+        self.assertIn("Previously observed directory disappeared during scan.", row["issues"])
+        self.assertNotIn("private fixture detail", json.dumps(report))
+
     def test_nested_service_prefixes_attribute_bytes_to_one_service(self) -> None:
         self.home = self.root / "var/lib/docker"
         self.file("var/lib/docker/repos/project/source")

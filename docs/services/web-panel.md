@@ -147,8 +147,9 @@ Results remain in memory until the panel restarts.
 
 The capacity chart shows root filesystem usage, available space and reserves at
 scan time. **VM areas**, **Services** and **Projects** show ranked allocated
-space, logical file sizes and file counts. Services and projects are alternate
-attributions of files already included in VM areas; their totals must not be
+space, logical sizes (file lengths and directory metadata) and file counts.
+Services and projects are alternate attributions of files already included in
+VM areas; their totals must not be
 added together. Conventional service paths and project directories are used,
 so this does not discover every possible project location.
 
@@ -158,6 +159,12 @@ It scans only the root filesystem, skips symlinks and nested mounts, and uses
 time and entry limits shown with the results. The time budget is checked between
 metadata operations; it cannot interrupt a blocked filesystem call. Separate home/data filesystems
 remain visible in **Mounted storage** but are outside this usage scan.
+Known service locations and discovered projects each receive a share of the
+remaining time and entry budgets before the rest of the VM is scanned. Large
+locations can resume afterward with spare budget, so a single large checkout
+or package store cannot monopolize the initial scan. Project discovery itself
+is bounded; omitted projects and unfinished locations remain explicit in the
+coverage notes.
 Inaccessible paths and exhausted limits produce explicit partial estimates;
 unavailable locations are not reported as empty. Partial numbers are lower
 bounds. Sparse files, shared blocks, filesystem metadata and deleted files held

@@ -150,7 +150,7 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
         limits = report["limits"]
         content += f'''<details class="storage-notes"{" open" if issues else ""}><summary>Coverage &amp; measurement notes{f" · {len(report.get('issues', []))} notices" if issues else ""}</summary>
 <p>Scan recorded at <time>{_escape(report["generated_at"])}</time>. Limits: {limits["duration_seconds"]:g} seconds and {limits["entry_limit"]:,} entries.</p>
-<ul>{issues}<li>Allocated size uses filesystem blocks; logical size is the length of file contents. Sparse files, shared blocks, filesystem metadata and deleted files still held open can make these estimates differ from capacity usage.</li>
+<ul>{issues}<li>Allocated size uses filesystem blocks; logical size includes file lengths and directory metadata. Sparse files, shared blocks, filesystem metadata and deleted files still held open can make these estimates differ from capacity usage.</li>
 <li>The diagnostic uses the panel account’s access. Symlinks and nested mounts are skipped. Other filesystems, including shared storage, are outside this scan.</li>
 <li>Service attribution uses conventional paths. Project estimates cover recognized project directories, not every possible checkout on the VM.</li></ul></details>'''
     else:

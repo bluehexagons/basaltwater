@@ -123,6 +123,10 @@ class _LimitReached(Exception):
     pass
 
 
+class _LocationLimitReached(Exception):
+    pass
+
+
 class _Scan:
     def __init__(self, home: str, report: dict, deadline: float, mounts: dict[str, str]) -> None:
         self.home, self.report, self.deadline, self.mounts = home, report, deadline, mounts
@@ -132,10 +136,19 @@ class _Scan:
         self.uncertain: set[str] = set()
         self.skipped: set[str] = set()
         self.project_paths: set[str] = set()
+        self.available_roots: set[str] = set()
+        self.probed_directories: set[str] = set()
+        self.pending_limits: set[str] = set()
+        self.deferred_paths: set[str] = set()
+        self.discovery_limited = False
+        self.location_path: str | None = None
+        self.location_deadline = deadline
+        self.location_entry_limit = report["limits"]["entry_limit"]
         self.device = 0
-        # Prefer fixed projects and service roots before walking the rest of home/OS.
+        # Probe fixed roots before sharing the remaining budget among locations.
         preferred = [os.path.join(home, "repos"), *[row["path"] for row in report["services"]]]
-        self.full_roots = set(preferred)
+        self.conventional_roots = set(preferred)
+        self.full_roots = {row["path"] for row in report["services"]}
         targets = [*preferred, home, *[row["path"] for row in report["areas"]]]
         self.priority: dict[str, list[str]] = {}
         for target in targets:
@@ -149,9 +162,24 @@ class _Scan:
                 current = os.path.join(current, component)
 
     def budget(self) -> None:
+        now = time.monotonic()
         if (self.report["entries_scanned"] >= self.report["limits"]["entry_limit"]
-                or time.monotonic() >= self.deadline):
+                or now >= self.deadline):
             raise _LimitReached
+        if (self.report["entries_scanned"] >= self.location_entry_limit
+                or now >= self.location_deadline):
+            raise _LocationLimitReached
+
+    def share(self, remaining: int) -> None:
+        """Reserve a fair portion for this location; unused budget stays shared."""
+        now = time.monotonic()
+        self.location_deadline = now + max(0.0, self.deadline - now) / remaining
+        self.location_entry_limit = self.report["entries_scanned"] + max(
+            1, (self.report["limits"]["entry_limit"] - self.report["entries_scanned"]) // remaining)
+
+    def reset_share(self) -> None:
+        self.location_deadline = self.deadline
+        self.location_entry_limit = self.report["limits"]["entry_limit"]
 
     def issue(self, message: str) -> None:
         if message not in self.report["issues"]:
@@ -177,12 +205,19 @@ class _Scan:
                 row["issues"].append(message)
 
     def absent(self, path: str) -> None:
+        if path in self.probed_directories:
+            self.problem(path, "Previously observed directory disappeared during scan.")
+            return
         for row in self.rows:
             if _within(row["path"], path) and row["id"] not in self.uncertain:
                 row.update(complete=True, issues=[_ABSENT])
                 self.done.add(row["id"])
 
     def finish(self, path: str) -> None:
+        self.pending_limits.discard(path)
+        self.deferred_paths.discard(path)
+        if path == os.path.join(self.home, "repos"):
+            self.discovery_limited = False
         for row in self.rows:
             if row["path"] == path:
                 row["complete"] = row["id"] not in self.uncertain
@@ -216,6 +251,7 @@ class _Scan:
             row = _row("project:" + name, name, path)
             self.report["projects"].append(row)
             self.rows.append(row)
+            self.full_roots.add(path)
         else:
             self.issue(_INCOMPLETE + "Project discovery limit reached; additional project rows omitted.")
 
@@ -225,8 +261,19 @@ class _Scan:
             self.issue(_INCOMPLETE + "Home is on a nested mount or another device; its bytes are omitted.")
 
     def visit(self, descriptor: int, name: str, path: str, depth: int, *,
-              listed: bool = False, priority_only: bool = False) -> None:
+              listed: bool = False, priority_only: bool = False, target: str | None = None) -> None:
         if path in self.skipped:
+            return
+        if (self.location_path is not None and path != self.location_path
+                and path in self.full_roots and _within(path, self.location_path)):
+            # Another location owns this subtree's initial share. Keep its
+            # ancestors resumable instead of spending the parent's share here.
+            ancestor = os.path.dirname(path)
+            while _within(ancestor, self.location_path):
+                self.deferred_paths.add(ancestor)
+                if ancestor == self.location_path:
+                    break
+                ancestor = os.path.dirname(ancestor)
             return
         self.budget()
         self.report["entries_scanned"] += 1
@@ -258,12 +305,12 @@ class _Scan:
             return
         if stat.S_ISLNK(info.st_mode) or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
             self.skipped.add(path)
-            if path in self.full_roots or path in self.priority or any(_within(row["path"], path) for row in self.rows):
+            if path in self.conventional_roots or path in self.priority or any(_within(row["path"], path) for row in self.rows):
                 self.problem(path, "Conventional directory is a symlink or special file; unavailable.")
             return
         if stat.S_ISREG(info.st_mode):
             self.skipped.add(path)
-            if path in self.full_roots or path in self.priority or any(_within(row["path"], path) for row in self.rows):
+            if path in self.conventional_roots or path in self.priority or any(_within(row["path"], path) for row in self.rows):
                 self.problem(path, "Conventional directory is a regular file; directory coverage unavailable.")
             self.account(path, info)
             return
@@ -276,26 +323,74 @@ class _Scan:
                     self.problem(path, "Directory changed during scan.")
                     return
                 self.account(path, opened)
+                if priority_only:
+                    self.probed_directories.add(path)
+                if path in self.full_roots:
+                    self.available_roots.add(path)
                 if depth >= _MAX_DEPTH:
                     self.skipped.add(path)
                     self.problem(path, "Directory depth limit reached.")
                 else:
-                    self.walk(child, path, depth, priority_only=priority_only)
+                    if target is not None and path != target:
+                        self.walk_to(child, path, depth, target)
+                    else:
+                        self.walk(child, path, depth, priority_only=priority_only)
             finally:
                 os.close(child)
         except OSError:
             self.skipped.add(path)
             self.problem(path, "Directory unreadable or changed during scan.")
 
+    def walk_to(self, descriptor: int, path: str, depth: int, target: str) -> None:
+        """Reopen a fixed target through checked, anchored ancestors."""
+        name = os.path.relpath(target, path).split(os.sep)[0]
+        self.visit(descriptor, name, os.path.join(path, name), depth + 1, target=target)
+
+    def discover_projects(self, descriptor: int, path: str, depth: int) -> None:
+        # A directory with many children must not consume the service budget.
+        self.share(4)
+        self.location_entry_limit = min(self.location_entry_limit, self.report["entries_scanned"] + 1024)
+        try:
+            with os.scandir(descriptor) as entries:
+                for entry in entries:
+                    self.budget()
+                    self.visit(descriptor, entry.name, os.path.join(path, entry.name), depth + 1,
+                               listed=True, priority_only=True)
+                    if len(self.project_paths) > _MAX_PROJECTS:
+                        break
+        except _LocationLimitReached:
+            self.discovery_limited = True
+        finally:
+            self.reset_share()
+
+    def locations(self, descriptor: int) -> None:
+        # Descendants precede their containing scopes, so finished nested service
+        # roots are skipped when a broader location is scanned afterward.
+        roots = sorted(self.available_roots - self.skipped, key=lambda path: (-path.count(os.sep), path))
+        for index, path in enumerate(roots):
+            self.share(len(roots) - index)
+            self.location_path = path
+            try:
+                self.walk_to(descriptor, _ROOT, 0, path)
+            except _LocationLimitReached:
+                # The general pass can resume unfinished directories after every
+                # known location has had a share. Do not discard that opportunity
+                # or permanently mark a row partial if it subsequently finishes.
+                self.pending_limits.add(path)
+            finally:
+                self.location_path = None
+                self.reset_share()
+
     def walk(self, descriptor: int, path: str, depth: int, *, priority_only: bool = False) -> None:
-        # First visit only fixed ancestor chains, scanning projects/services in full.
-        # Then revisit their anchors for the general walk, skipping finished subtrees.
-        priority_only = priority_only and path not in self.full_roots
+        # Probe fixed ancestor chains first, then scan each discovered location
+        # with a budget share, and finally cover the remaining home/OS directories.
         names = self.priority.get(path, ())
         try:
             for name in names:
                 self.visit(descriptor, name, os.path.join(path, name), depth + 1, priority_only=priority_only)
             if priority_only:
+                if path == os.path.join(self.home, "repos"):
+                    self.discover_projects(descriptor, path, depth)
                 return
             with os.scandir(descriptor) as entries:
                 for entry in entries:
@@ -309,8 +404,9 @@ class _Scan:
             self.skipped.add(path)
             self.problem(path, "Directory listing unavailable or changed during scan.")
         else:
-            self.skipped.add(path)
-            self.finish(path)
+            if self.location_path is None or path not in self.deferred_paths:
+                self.skipped.add(path)
+                self.finish(path)
 
 
 def collect_storage_usage(home: str, *, duration_seconds: float = 15.0,
@@ -321,9 +417,10 @@ def collect_storage_usage(home: str, *, duration_seconds: float = 15.0,
     budget is cooperative between local metadata calls; it cannot cancel a
     blocked kernel syscall. Mounts are from this process's namespace, so service
     sandbox mounts are deliberately omitted too. Ancestor metadata may be observed
-    again between priority and general traversal; entries count these observations,
-    including absent fixed names. Bytes/inodes are counted once. No privileges
-    are needed.
+    again between probing, location and general traversal; entries count these
+    observations, including absent fixed names. Known service roots and discovered
+    projects share the remaining budget before the general pass resumes unfinished
+    locations. Bytes/inodes are counted once. No privileges are needed.
     """
     home = _validated_home(home)
     if (type(duration_seconds) not in (int, float) or not 0 < duration_seconds <= 60
@@ -343,6 +440,7 @@ def collect_storage_usage(home: str, *, duration_seconds: float = 15.0,
                   "Global device/inode deduplication attributes hardlinks to their first observed path; shared/reflink extents may still overlap.",
                   "Directory estimates need not match df: deleted-open files, sparse files, filesystem metadata, unreadable paths and concurrent changes affect coverage.",
                   "Incomplete rows are lower bounds, not true zero; complete absent paths are explicitly labelled.",
+                  "Known services and discovered projects receive time/entry shares before remaining directories; unfinished locations may resume with spare budget.",
               ], "limits": {"duration_seconds": float(duration_seconds), "entry_limit": entry_limit}}
     try:
         mounts = _mounts()
@@ -369,9 +467,14 @@ def collect_storage_usage(home: str, *, duration_seconds: float = 15.0,
             scan.account(_ROOT, os.fstat(descriptor))
             try:
                 scan.walk(descriptor, _ROOT, 0, priority_only=True)
+                scan.locations(descriptor)
                 scan.walk(descriptor, _ROOT, 0)
             except _LimitReached:
-                pass
+                scan.problem(_ROOT, "Shared time or entry limit reached; sizes are lower bounds.")
+            for path in scan.pending_limits:
+                scan.problem(path, "Location time or entry share reached; sizes are lower bounds.")
+            if scan.discovery_limited:
+                scan.issue(_INCOMPLETE + "Project discovery share reached; additional project rows may be omitted.")
         finally:
             os.close(descriptor)
         report["projects"].sort(key=lambda row: (-row["allocated_bytes"], row["path"]))
