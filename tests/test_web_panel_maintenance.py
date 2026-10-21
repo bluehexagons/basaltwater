@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import http.client
+import html
 import json
 import os
+import re
 import tempfile
 import threading
 import unittest
@@ -14,12 +16,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from common.service_tools import web_panel_maintenance as view
+from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_templates import panel_navigation
 from lib import maintenance_agent as agent
 from lib import agent_maintenance as holds
 from lib.agent_inbox import AgentInbox
+from lib.agent_tasks import MAX_PROMPT_BYTES, validate_task
 from lib.atomic_io import write_json_atomic
 from lib.maintenance_agent_config import DEFAULTS
 
@@ -118,6 +122,73 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         body = self.request("/maintenance-agent")[1]
         for text in ("700 bytes available", "Prepare storage cleanup", "Prepare gateway repair or retirement", "Daily limit"):
             self.assertIn(text, body)
+
+    def prepare_gateway_page(self, target: str) -> tuple[int, str, str | None]:
+        self.state.manifest.update(username="agent", services=[{"label": "Web server"}])
+        self.state.agent_tasks = SimpleNamespace(
+            home=self.home, snapshot=lambda: {"tasks": [], "runs": []}, available=lambda: True, error="")
+        with patch.object(agents, "_tool_path", return_value="/mock/codex"), \
+                patch.object(agents, "codex_models", return_value=[]), \
+                patch.object(agents, "worker_status", return_value={"installed": True, "running": True}):
+            return self.request(target)
+
+    def test_gateway_link_preserves_foreign_owner_route_and_evidence_without_launching(self) -> None:
+        report = {"checked_at": "2026-10-21T10:00:00+00:00", "check_status": "completed", "issues": [
+            {"key": "gateway-forward:otheruser:orphanroute", "message": "Loopback upstream refused connections", "severity": "warning"}],
+            "routines": [], "review": {"status": "skipped"}}
+        write_json_atomic(self.reports, {"version": 1, "context": {}, "reports": [report]})
+        body = self.request("/maintenance-agent")[1]
+        target = html.unescape(re.search(r'href="(/agents\?template=web-hosting&amp;maintenance=[^"]+)"', body).group(1))
+        original = Path(self.reports).read_bytes()
+        with patch("subprocess.run") as command, patch("subprocess.Popen") as spawn:
+            status, body, _ = self.prepare_gateway_page(target)
+        self.assertEqual(status, 200)
+        prompt = html.unescape(re.search(r'<textarea name="prompt"[^>]*>(.*?)</textarea>', body, re.DOTALL).group(1))
+        task = validate_task({**agents.PROMPT_TEMPLATES["web-hosting"], "directory": self.home, "prompt": prompt}, self.home)
+        evidence = json.loads(prompt.rsplit("\n", 1)[1])
+        self.assertEqual((evidence["owner"], evidence["route"]), ("otheruser", "orphanroute"))
+        self.assertEqual(evidence["message"], report["issues"][0]["message"])
+        self.assertIn("absence here does not clear another owner's route", prompt)
+        self.assertIn("give that owner/admin exact inspection", prompt)
+        self.assertIn("No task has been saved or queued", body)
+        self.assertEqual((task["mode"], task["workspace"], task["interval"]), ("workspace", "run-directory", "once"))
+        self.assertEqual(Path(self.reports).read_bytes(), original)
+        command.assert_not_called()
+        spawn.assert_not_called()
+
+    def test_expired_or_mismatched_finding_cannot_silently_prepare_generic_work(self) -> None:
+        report = {"checked_at": "now", "issues": [
+            {"key": "root-disk", "message": "89% used", "severity": "warning"}],
+            "routines": [], "review": {"status": "skipped"}}
+        write_json_atomic(self.reports, {"version": 1, "context": {}, "reports": [report]})
+        for reference in ("a" * 64 + ".0", view.maintenance_record_id(report) + ".1", view.maintenance_record_id(report) + ".0"):
+            status, body, _ = self.prepare_gateway_page("/agents?template=web-hosting&maintenance=" + reference)
+            self.assertEqual(status, 200)
+            self.assertIn("Maintenance finding unavailable", body)
+            self.assertRegex(body, r'<textarea name="prompt"[^>]*></textarea>')
+
+    def test_finding_references_reject_duplicates_extra_fields_and_wrong_templates(self) -> None:
+        reference = "a" * 64 + ".0"
+        valid = "template=web-hosting&maintenance=" + reference
+        self.assertEqual(agents.parse_agent_query(valid), {"template": "web-hosting", "maintenance": reference})
+        for query in (valid + "&extra=1", "maintenance=" + reference,
+                      valid.replace("web-hosting", "storage"), valid.replace(".0", ".100"),
+                      valid.replace(".0", ".-1"), valid.replace(".0", ".01"),
+                      "template=web-hosting&template=web-hosting", valid.replace(reference, "../private")):
+            with self.subTest(query=query), self.assertRaises(ValueError):
+                agents.parse_agent_query(query)
+
+    def test_large_finding_keeps_valid_bounded_evidence_and_exact_gateway_target(self) -> None:
+        owner, route = "a" * 32, "b" * 63
+        report = {"checked_at": "2026-10-21T10:00:00+00:00", "issues": [
+            {"key": f"gateway-preview:{owner}:{route}", "message": '🛠\\"\n' * 2000, "severity": "warning"}],
+            "routines": [], "review": {"status": "skipped"}}
+        write_json_atomic(self.reports, {"version": 1, "context": {}, "reports": [report]})
+        prompt = view.prepare_gateway_finding(agents.PROMPT_TEMPLATES["web-hosting"]["prompt"], view.maintenance_record_id(report) + ".0")
+        self.assertLessEqual(len(prompt.encode("utf-8")), MAX_PROMPT_BYTES)
+        evidence = json.loads(prompt.rsplit("\n", 1)[1])
+        self.assertEqual((evidence["owner"], evidence["route"]), (owner, route))
+        self.assertTrue(evidence["message_abbreviated"])
 
     def test_manual_check_and_master_toggle_preserve_independent_preferences(self) -> None:
         body = self.request("/maintenance-agent")[1]

@@ -428,9 +428,16 @@ class AgentDiagnostics:
 def parse_agent_query(raw: str) -> dict[str, str]:
     if len(raw) > 128:
         raise ValueError("Invalid agent view")
-    query = urllib.parse.parse_qs(raw, keep_blank_values=True, max_num_fields=1)
+    query = urllib.parse.parse_qs(raw, keep_blank_values=True, max_num_fields=2)
     if not query:
         return {}
+    if any(len(values) != 1 for values in query.values()):
+        raise ValueError("Invalid agent view")
+    if set(query) == {"template", "maintenance"} and query["template"][0] == "web-hosting":
+        from common.service_tools.web_panel_maintenance import parse_maintenance_reference
+
+        parse_maintenance_reference(query["maintenance"][0])
+        return {key: values[0] for key, values in query.items()}
     if set(query) == {"view"} and query["view"][0] in {"new", "templates", "dashboard", "tasks", "history", "diagnostics"}:
         return {"view": query["view"][0]}
     if set(query) == {"template"} and query["template"][0] in PROMPT_TEMPLATES:
@@ -608,6 +615,15 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             defaults.update(template)
             if template["scope"] == "repository":
                 defaults["directory"] = ""
+            if "maintenance" in query:
+                from common.service_tools.web_panel_maintenance import prepare_gateway_finding
+
+                try:
+                    defaults["prompt"] = prepare_gateway_finding(defaults["prompt"], query["maintenance"])
+                    source_note = "Prepared from a recorded maintenance finding. Review its owner, route, evidence and current use before submitting. No task has been saved or queued."
+                except (OSError, ValueError, RuntimeError) as exc:
+                    defaults["prompt"] = ""
+                    error = error or f"Maintenance finding unavailable: {exc}"
     if "edit" in query:
         task = next((task for task in tasks if task["id"] == query["edit"]), None)
         if task is None:

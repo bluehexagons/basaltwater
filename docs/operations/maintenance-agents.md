@@ -131,8 +131,13 @@ Retiring a route does not remove retained project files or prove storage savings
 Every completed check includes a deterministic summary of measured findings and
 next actions, even when AI is unavailable, deferred or out of budget. Storage
 findings link to a cleanup task whose approved follow-up applies and verifies
-the selected cleanup. Gateway findings link to a web-hosting repair or retirement
-task. AI reviews receive bounded valid JSON evidence with explicit omitted counts;
+the selected cleanup. Each gateway finding opens a web-hosting task with its
+recorded route, owner and bounded evidence. Inventory is scoped to the executing
+account; an absent route does not clear a finding owned by another account.
+When owner access is unavailable, the task gives the named owner or administrator
+exact inspection, repair or retirement steps and verification. Changed or expired
+records must be reopened before preparation. AI reviews receive bounded valid
+JSON evidence with explicit omitted counts;
 they add prioritization and concrete apply/verify steps rather than another
 generic review recommendation.
 
