@@ -964,13 +964,13 @@ class DeploymentOrchestrator:
             if result.returncode != 0:
                 raise RuntimeError(f"Could not assign staging tree to build user {build_user}")
 
-            self._prepare_build_toolchain(staging_path, build_user)
+            self._prepare_build_toolchain(staging_path, build_user, manifest.build_runtimes)
 
             # Build every component before touching the active release.
             for component in manifest.components:
                 component_domain = self._component_domain(component, domain)
                 print(f"  Component '{component.name}' ({component.type}) → {component_domain}{component.path}")
-                self._run_component_build(component, staging_path, build_user)
+                self._run_component_build(component, staging_path, build_user, manifest.build_runtimes)
 
             self._validate_manifest_artifacts(manifest, staging_path)
 
@@ -1199,11 +1199,11 @@ class DeploymentOrchestrator:
         component: Component,
         dest_path: str,
         build_user: Optional[str] = None,
+        build_runtimes: Optional[list[str]] = None,
     ) -> None:
         """Run build commands as the application-specific build account."""
         if not component.build:
             return
-        env_prefix = "".join(f"{key}={shlex.quote(value)} " for key, value in component.env.items())
         for command in component.build:
             print(f"    build: {command}")
             build_home = self._build_home(build_user or self.deploy_user)
@@ -1213,15 +1213,17 @@ class DeploymentOrchestrator:
             ]
             nvm_dir = os.path.join(build_home, ".nvm")
             nvm_script = os.path.join(nvm_dir, "nvm.sh")
-            if os.path.isfile(nvm_script):
+            use_node = build_runtimes is None or "node" in build_runtimes
+            if use_node and os.path.isfile(nvm_script):
                 shell_parts.extend((
                     f"export NVM_DIR={shlex.quote(nvm_dir)}",
                     f". {shlex.quote(nvm_script)}",
                 ))
             shell_parts.append(f"cd {shlex.quote(dest_path)}")
-            if os.path.isfile(nvm_script) and os.path.isfile(os.path.join(dest_path, '.nvmrc')):
+            if use_node and os.path.isfile(nvm_script) and os.path.isfile(os.path.join(dest_path, '.nvmrc')):
                 shell_parts.append('nvm use')
-            shell_parts.append(f"{env_prefix}{command}")
+            shell_parts.extend(f"export {key}={shlex.quote(value)}" for key, value in component.env.items())
+            shell_parts.append(command)
             build_shell = " && ".join(shell_parts)
             result = run(
                 f"runuser -u {shlex.quote(build_user or self.deploy_user)} -- "
@@ -1234,10 +1236,17 @@ class DeploymentOrchestrator:
                 error = self._get_command_error(result, "build command failed")
                 raise RuntimeError(f"Component '{component.name}' build failed: {error}")
 
-    def _prepare_build_toolchain(self, source_path: str, build_user: str) -> None:
+    def _prepare_build_toolchain(
+        self, source_path: str, build_user: str,
+        build_runtimes: Optional[list[str]] = None,
+    ) -> None:
         """Provision repository-declared user-scoped build tools once per app."""
         build_home = self._build_home(build_user)
-        if self._source_has_marker(source_path, {"package.json"}):
+        needs_node = (
+            self._source_has_marker(source_path, {"package.json"})
+            if build_runtimes is None else "node" in build_runtimes
+        )
+        if needs_node:
             nvm_script = os.path.join(build_home, ".nvm", "nvm.sh")
             if not os.path.isfile(nvm_script):
                 from common.common_steps import install_node_for_user
@@ -1275,10 +1284,11 @@ class DeploymentOrchestrator:
                     error = self._get_command_error(result, "nvm install failed")
                     raise RuntimeError(f"Node.js version setup failed for {build_user} in {project_path}: {error}")
 
-        if self._source_has_marker(
+        needs_python = self._source_has_marker(
             source_path,
             {"pyproject.toml", "requirements.txt", "uv.lock"},
-        ):
+        ) if build_runtimes is None else "python" in build_runtimes
+        if needs_python:
             uv_path = os.path.join(build_home, ".local", "bin", "uv")
             if not os.path.isfile(uv_path):
                 from common.common_steps import install_or_update_uv

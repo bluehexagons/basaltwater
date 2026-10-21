@@ -66,6 +66,20 @@ Separate runtime flags are therefore unnecessary for ordinary deployments.
 Explicit flags remain useful when a repository generates those files later or
 uses a non-standard layout.
 
+Set the optional top-level `build_runtimes` array in `basaltwater.json` to
+replace source-marker detection for deployment. Supported entries are `"go"`,
+`"node"`, and `"python"`, without duplicates. For example, `"build_runtimes":
+["go"]` skips Node and Python setup even when the repository has development-only
+`package.json` or Python tooling. An empty array disables automatic runtime setup;
+omitting the field retains detection, including monorepo children. The list
+applies to every component, both target setup and the isolated build account,
+including Node activation from `.nvmrc`. Explicit setup flags such as `--node`
+still install the requested host tools, and requirements from other deployed
+repositories are combined. Go version selection still reads the selected
+repository's `go.mod` files. Other tools must be provisioned separately.
+Update the controller's Basaltwater installation before using this field;
+older versions reject unknown manifest fields during preflight.
+
 Ruby/Rails deployment support has been discontinued. `v2.0.0` detects common
 project markers and refuses deployment during controller preflight, before
 setup files are uploaded or the target is changed. Basaltwater no longer builds,

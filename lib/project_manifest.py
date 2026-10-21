@@ -166,6 +166,8 @@ class Manifest:
     components: list[Component]
     ci: dict[str, list[WorkflowStep]] = field(default_factory=dict)
     publishing: dict = field(default_factory=dict)
+    # None keeps marker-based detection; an explicit list replaces it.
+    build_runtimes: Optional[StrList] = None
 
 
 def load_manifest(repo_path: str) -> Optional[Manifest]:
@@ -265,7 +267,7 @@ def parse_manifest(data: object) -> Manifest:
     if not isinstance(data, dict):
         raise ValueError(f"{MANIFEST_FILENAME} must be a JSON object")
 
-    _reject_unknown_keys(data, {"version", "components", "ci", "publishing"}, MANIFEST_FILENAME)
+    _reject_unknown_keys(data, {"version", "components", "ci", "publishing", "build_runtimes"}, MANIFEST_FILENAME)
 
     version = data.get("version")
     if type(version) is not int or version != SUPPORTED_VERSION:
@@ -275,6 +277,7 @@ def parse_manifest(data: object) -> Manifest:
 
     ci = _parse_ci(data.get("ci", {}))
     publishing = parse_publishing(data["publishing"]) if "publishing" in data else {}
+    build_runtimes = _parse_build_runtimes(data["build_runtimes"]) if "build_runtimes" in data else None
     components_raw = data.get("components")
     if not isinstance(components_raw, list) or (not components_raw and not ci and not publishing):
         raise ValueError("'components' must be a non-empty array unless CI or publishing is declared")
@@ -290,7 +293,21 @@ def parse_manifest(data: object) -> Manifest:
         seen.add(component.name)
         components.append(component)
 
-    return Manifest(version=version, components=components, ci=ci, publishing=publishing)
+    return Manifest(version=version, components=components, ci=ci, publishing=publishing,
+                    build_runtimes=build_runtimes)
+
+
+def _parse_build_runtimes(value: object) -> StrList:
+    if not isinstance(value, list) or len(value) > 3:
+        raise ValueError("build_runtimes must be an array of go, node, or python")
+    runtimes: StrList = []
+    for runtime in value:
+        if not isinstance(runtime, str) or runtime not in {"go", "node", "python"}:
+            raise ValueError("build_runtimes entries must be go, node, or python")
+        if runtime in runtimes:
+            raise ValueError(f"duplicate build_runtimes entry: {runtime!r}")
+        runtimes.append(runtime)
+    return runtimes
 
 
 def _parse_ci(data: object) -> dict[str, list[WorkflowStep]]:

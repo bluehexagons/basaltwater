@@ -49,6 +49,7 @@ from lib.validation import (
 )
 from lib.validators import validate_username
 from lib.progress import progress_bar
+from lib.project_manifest import load_manifest
 from lib.system_types import get_steps_for_system_type
 from lib.deploy_utils import extract_repo_name, repository_stage_name
 from typing import Optional
@@ -296,16 +297,22 @@ def enable_detected_build_runtimes(config: SetupConfig) -> None:
         repo_name = extract_repo_name(git_url)
         repo_path = os.path.join("/opt/basaltwater/deployments", repository_stage_name(git_url))
         project_files = _find_project_runtime_files(repo_path)
-        if project_files["node"] and not config.install_node:
+        manifest = load_manifest(repo_path)
+        required = (
+            set(manifest.build_runtimes)
+            if manifest is not None and manifest.build_runtimes is not None
+            else {runtime for runtime, files in project_files.items() if files}
+        )
+        if "node" in required and not config.install_node:
             config.install_node = True
-            print(f"Detected Node.js project in {repo_name}; enabling target Node.js runtime")
-        if project_files["python"] and not config.install_python:
+            print(f"Build requires Node.js in {repo_name}; enabling target Node.js runtime")
+        if "python" in required and not config.install_python:
             config.install_python = True
-            print(f"Detected Python project in {repo_name}; enabling target Python runtime")
-        if project_files["go"]:
+            print(f"Build requires Python in {repo_name}; enabling target Python runtime")
+        if "go" in required:
             if not config.install_go:
                 config.install_go = True
-                print(f"Detected Go module in {repo_name}; enabling target Go runtime")
+                print(f"Build requires Go in {repo_name}; enabling target Go runtime")
             for go_mod in project_files["go"]:
                 try:
                     with open(go_mod, "r", encoding="utf-8") as handle:

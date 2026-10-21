@@ -53,6 +53,13 @@ def _manifest(*components: dict, version: object = 1) -> dict:
 
 
 class TestValidParse(unittest.TestCase):
+    def test_build_runtime_selection_distinguishes_detection_and_opt_out(self):
+        self.assertIsNone(parse_manifest(_manifest(_static())).build_runtimes)
+        for runtimes in ([], ["go"], ["node", "python", "go"]):
+            with self.subTest(runtimes=runtimes):
+                data = {**_manifest(_static()), "build_runtimes": runtimes}
+                self.assertEqual(parse_manifest(data).build_runtimes, runtimes)
+
     def test_public_udp_with_optional_dns_hostname(self):
         component = parse_manifest(_manifest(_service(public_udp=[
             {"port": 3478, "hostname": "stun.example.com"}, {"port": 4000}
@@ -155,6 +162,13 @@ class TestValidParse(unittest.TestCase):
 
 
 class TestRejects(unittest.TestCase):
+    def test_build_runtimes_reject_invalid_or_duplicate_entries(self):
+        for runtimes in (None, "go", {}, True, [True], [[]], ["Go"], ["ruby"],
+                         ["go", "go"], ["node"] * 4):
+            with self.subTest(runtimes=runtimes):
+                self._assert_rejected({**_manifest(_static()), "build_runtimes": runtimes},
+                                      "build_runtimes")
+
     def test_public_udp_rejects_unsafe_or_ambiguous_declarations(self):
         for value in (None, {}, [3478], [{"port": True}], [{"port": "3478"}],
                       [{"port": 80}], [{"port": 65536}], [{"port": 3478, "hostname": "bad;host"}],
