@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -10,6 +11,8 @@ import stat
 import time
 from dataclasses import dataclass
 
+from lib.atomic_io import read_json_file
+from lib.cleanup_paths import remove_checked_path
 from lib.validation import validate_filesystem_path
 
 
@@ -31,7 +34,7 @@ class CodexRelease:
 
 @dataclass(frozen=True)
 class CodexCleanupResult:
-    """Outcome of one standalone Codex release reconciliation."""
+    """Outcome of one Codex release or backup reconciliation."""
 
     found: tuple[str, ...] = ()
     retained: tuple[str, ...] = ()
@@ -206,35 +209,175 @@ def codex_update_supported(home: str, executable: str) -> bool:
 
 
 def prune_codex_update_backups(home: str, keep: str, *, proc_root: str = "/proc") -> None:
-    """Retain the latest package snapshot, the selected CLI, and running copies."""
+    """Prune under the caller's update lock, preserving its new rollback copy."""
+    result = _reconcile_codex_update_backups(
+        home, os.stat(home).st_uid, keep, dry_run=False, proc_root=proc_root,
+    )
+    if result.errors:
+        raise OSError("; ".join(result.errors))
+
+
+def _reconcile_codex_update_backups(
+    home: str, uid: int, keep: str, *, dry_run: bool, proc_root: str,
+) -> CodexCleanupResult:
+    """Reconcile recognized snapshots while the account update lock is held."""
     root = os.path.join(home, ".local", "state", "basaltwater", "agent-backups")
-    uid = os.stat(home).st_uid
     _validate_user_directory_chain(home, root, uid)
-    selected = os.path.realpath(os.path.join(home, ".local", "bin", "codex"))
+    snapshots: dict[str, tuple[CodexRelease, os.stat_result]] = {}
+    skipped: list[str] = []
     with os.scandir(root) as entries:
         for entry in entries:
-            if not entry.name.startswith("codex-package-") or entry.is_symlink():
+            if not entry.name.startswith("codex-package-"):
                 continue
-            if not entry.is_dir(follow_symlinks=False):
+            try:
+                _validate_user_directory_chain(home, entry.path, uid)
+                metadata = entry.stat(follow_symlinks=False)
+                with os.scandir(entry.path) as contents:
+                    children = list(contents)
+                if len(children) != 1:
+                    raise ValueError("snapshot does not contain exactly one package")
+                release = _validate_codex_release(children[0], uid)
+            except (OSError, ValueError):
+                skipped.append(entry.name)
                 continue
-            with os.scandir(entry.path) as contents:
-                children = list(contents)
-            if len(children) != 1:
-                continue
-            binary = os.path.join(children[0].path, "bin", "codex")
-            package = codex_package_for_executable(home, binary)
-            if package is None or package == os.path.dirname(os.path.dirname(keep)) or selected == binary:
-                continue
-            release = _validate_codex_release(children[0], uid)
-            if _active_codex_releases({release.name: release}, uid, proc_root):
-                continue
-            shutil.rmtree(entry.path)
+            snapshots[entry.name] = (release, metadata)
+
+    releases = {name: release for name, (release, _info) in snapshots.items()}
+    found = tuple(sorted(releases))
+    if not found:
+        return CodexCleanupResult(skipped=tuple(sorted(skipped)))
+    retained = {
+        name for name, release in releases.items()
+        if release.path == os.path.dirname(os.path.dirname(os.path.realpath(keep)))
+    }
+    removed: list[str] = []
+    selected: list[str] = []
+    active: set[str] = set()
+    errors: list[str] = []
+
+    def protected() -> set[str]:
+        launcher = os.path.join(home, ".local", "bin", "codex")
+        info = os.stat(launcher)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or not info.st_mode & 0o111:
+            raise ValueError("selected Codex executable cannot be verified")
+        executables = {
+            os.path.realpath(launcher),
+            os.path.realpath(os.path.join(home, ".codex", "packages", "standalone", "current", "bin", "codex")),
+        }
+        active.update(_active_codex_releases(releases, uid, proc_root, strict=True))
+        return active | {
+            name for name, release in releases.items()
+            if os.path.join(release.path, "bin", "codex") in executables
+        }
+
+    try:
+        retained.update(protected())
+        for name in sorted(set(releases) - retained):
+            path = os.path.join(root, name)
+
+            def in_use() -> bool:
+                retained.update(protected())
+                return name in retained
+
+            if remove_checked_path(
+                path, snapshots[name][1], uid=uid, dry_run=dry_run, in_use=in_use,
+            ):
+                selected.append(name)
+                if not dry_run:
+                    removed.append(name)
+    except (OSError, ValueError) as exc:
+        # Partial or unverifiable process inventories never establish inactivity.
+        recovery = getattr(exc, "recovery_path", None)
+        details = f"{exc}; recovery path: {recovery}" if recovery else str(exc)
+        errors.append(f"Codex backup cleanup deferred: {details}")
+        retained.update(set(releases) - set(removed))
+    return CodexCleanupResult(
+        found=found, retained=tuple(sorted(retained)), active=tuple(sorted(active)),
+        selected=tuple(selected), removed=tuple(removed), skipped=tuple(sorted(skipped)),
+        errors=tuple(errors),
+    )
+
+
+def cleanup_codex_update_backups(
+    home: str, uid: int, *, dry_run: bool, proc_root: str = "/proc",
+) -> CodexCleanupResult:
+    """Retire deferred snapshots using completed update state and its real lock.
+
+    Open only the existing lock: the updater creates and never replaces it.
+    Linux flock on a read-only descriptor shares the updater's exclusive lock
+    without creating files, including during dry runs. Missing evidence defers.
+    """
+    directory = os.path.join(home, ".local", "state", "basaltwater")
+    root = os.path.join(directory, "agent-backups")
+    if not os.path.lexists(root):
+        return CodexCleanupResult()
+    descriptor = -1
+    try:
+        _validate_user_directory_chain(home, root, uid)
+        with os.scandir(root) as entries:
+            if not any(entry.name.startswith("codex-package-") for entry in entries):
+                return CodexCleanupResult()
+        lock_path = os.path.join(directory, "agent-update.lock")
+        descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        lock_info = os.fstat(descriptor)
+        if not stat.S_ISREG(lock_info.st_mode) or lock_info.st_uid != uid:
+            raise ValueError("unsafe agent update lock")
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        linked_info = os.lstat(lock_path)
+        if (linked_info.st_dev, linked_info.st_ino) != (lock_info.st_dev, lock_info.st_ino):
+            raise ValueError("agent update lock changed")
+        state_path = os.path.join(directory, "agent-tools.json")
+        info = os.lstat(state_path)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != uid:
+            raise ValueError("unsafe agent update state")
+        state = read_json_file(state_path)
+        if (
+            not isinstance(state, dict) or type(state.get("schema_version")) is not int
+            or state["schema_version"] != 1 or not isinstance(state.get("tools"), dict)
+        ):
+            raise ValueError("unsupported agent update state")
+        record = state["tools"].get("codex")
+        if (
+            not isinstance(record, dict) or record.get("tool") != "codex"
+            or record.get("status") not in ("updated", "current", "failed")
+            or record.get("path") != os.path.join(home, ".local", "bin", "codex")
+            or not isinstance(record.get("backup_path"), str)
+        ):
+            raise ValueError("missing or incomplete Codex update record")
+        keep = record["backup_path"]
+        validate_filesystem_path(keep, must_exist=True)
+        package = codex_package_for_executable(home, keep)
+        if package is not None:
+            if (
+                keep != os.path.join(package, "bin", "codex")
+                or os.path.dirname(os.path.dirname(package)) != root
+            ):
+                raise ValueError("unrecognized Codex rollback path")
+        elif keep == os.path.join(root, "codex.previous"):
+            _validate_user_directory_chain(home, root, uid)
+            info = os.lstat(keep)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or not info.st_mode & 0o111:
+                raise ValueError("unsafe legacy Codex rollback")
+        else:
+            raise ValueError("unverifiable Codex rollback package")
+        return _reconcile_codex_update_backups(
+            home, uid, keep, dry_run=dry_run, proc_root=proc_root,
+        )
+    except BlockingIOError:
+        return CodexCleanupResult(errors=("Codex backup cleanup deferred: agent update lock is busy",))
+    except (OSError, ValueError) as exc:
+        return CodexCleanupResult(errors=(f"Codex backup cleanup deferred: {exc}",))
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _active_codex_releases(
     releases: dict[str, CodexRelease],
     uid: int,
     proc_root: str,
+    *,
+    strict: bool = False,
 ) -> set[str]:
     """Find validated releases currently executing for the target account."""
     active: set[str] = set()
@@ -246,10 +389,16 @@ def _active_codex_releases(
                 if process.stat(follow_symlinks=False).st_uid != uid:
                     continue
                 executable = os.path.realpath(os.readlink(os.path.join(process.path, "exe")))
+            except (FileNotFoundError, ProcessLookupError):
+                if strict and os.path.exists(process.path):
+                    raise OSError("cannot verify a remaining user process executable")
+                continue
             except OSError:
+                if strict:
+                    raise OSError("cannot inventory user process executables") from None
                 # Process exit races and inaccessible kernel tasks are expected.
                 continue
-            for release in releases.values():
+            for name, release in releases.items():
                 try:
                     inside_release = (
                         os.path.commonpath((release.path, executable)) == release.path
@@ -257,7 +406,7 @@ def _active_codex_releases(
                 except ValueError:
                     inside_release = False
                 if inside_release:
-                    active.add(release.name)
+                    active.add(name)
                     break
     return active
 

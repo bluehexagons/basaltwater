@@ -284,7 +284,7 @@ class TestAgentStorage(unittest.TestCase):
         self.assertFalse(run_as_user.call_args.kwargs["check"])
         self.assertTrue(run_as_user.call_args.kwargs["capture_output"])
 
-    def test_agent_storage_only_policy_combines_codex_and_t3(self) -> None:
+    def test_agent_storage_only_policy_combines_codex_backups_and_t3(self) -> None:
         context = user_cache_maintenance.UserContext("agent", "/home/agent", 1000)
         with (
             patch(
@@ -293,17 +293,26 @@ class TestAgentStorage(unittest.TestCase):
                 return_value=["codex failure"],
             ) as codex_cleanup,
             patch(
+                "common.service_tools.user_cache_maintenance.cleanup_codex_update_backups",
+                return_value=["backup failure"],
+            ) as backup_cleanup,
+            patch(
                 "common.service_tools.user_cache_maintenance.cleanup_t3_rotated_logs",
                 return_value=["t3 failure"],
             ) as t3_cleanup,
+            patch(
+                "common.service_tools.user_cache_maintenance.cleanup_t3_runtimes",
+                return_value=[],
+            ),
         ):
             failures = user_cache_maintenance.cleanup_agent_storage(
                 context,
                 dry_run=True,
             )
 
-        self.assertEqual(failures, ["codex failure", "t3 failure"])
+        self.assertEqual(failures, ["codex failure", "backup failure", "t3 failure"])
         codex_cleanup.assert_called_once_with(context, dry_run=True)
+        backup_cleanup.assert_called_once_with(context, dry_run=True)
         t3_cleanup.assert_called_once_with(context, dry_run=True)
 
     def test_agent_storage_only_cli_skips_general_cache_policies(self) -> None:

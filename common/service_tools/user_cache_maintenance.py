@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from lib.agent_storage import (
     cleanup_codex_standalone_releases as reconcile_codex_standalone_releases,
+    cleanup_codex_update_backups as reconcile_codex_update_backups,
     cleanup_t3_rotated_logs as reconcile_t3_rotated_logs,
 )
 from lib.cleanup_paths import process_uses_path, remove_checked_path
@@ -86,7 +87,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--agent-storage-only",
         action="store_true",
-        help="Reconcile only standalone agent releases and bounded log rotations",
+        help="Reconcile agent releases, update backups, and bounded log rotations",
     )
     return parser.parse_args(argv)
 
@@ -751,6 +752,23 @@ def cleanup_codex_standalone_releases(
     return list(result.errors)
 
 
+def cleanup_codex_update_backups(context: UserContext, *, dry_run: bool) -> list[str]:
+    """Retry retirement of obsolete package snapshots after their processes exit."""
+    result = reconcile_codex_update_backups(context.home, context.uid, dry_run=dry_run)
+    for failure in result.errors:
+        log_event(logger, "Codex backup cleanup deferred", level=WARNING, error=failure)
+    log_event(
+        logger, "Codex update backup inventory", found_count=len(result.found),
+        retained_count=len(result.retained), active_count=len(result.active),
+        selected_count=len(result.selected), skipped_count=len(result.skipped),
+    )
+    if dry_run and result.selected:
+        log_event(logger, "Would prune Codex update backups", selected_count=len(result.selected))
+    if result.removed:
+        log_event(logger, "Pruned Codex update backups", removed_count=len(result.removed))
+    return list(result.errors)
+
+
 def cleanup_pip_cache(context: UserContext, *, dry_run: bool) -> list[str]:
     """Purge pip's cache when oversized or its filesystem needs headroom."""
     path, executable, failure = query_cache_path(
@@ -1097,8 +1115,9 @@ def cleanup_t3_runtimes(context: UserContext, *, dry_run: bool) -> list[str]:
 
 
 def cleanup_agent_storage(context: UserContext, *, dry_run: bool) -> list[str]:
-    """Reconcile validated agent releases and numbered T3 log rotations."""
+    """Reconcile validated agent releases, update backups, and T3 rotations."""
     failures = cleanup_codex_standalone_releases(context, dry_run=dry_run)
+    failures.extend(cleanup_codex_update_backups(context, dry_run=dry_run))
     failures.extend(cleanup_t3_rotated_logs(context, dry_run=dry_run))
     failures.extend(cleanup_t3_runtimes(context, dry_run=dry_run))
     return failures
