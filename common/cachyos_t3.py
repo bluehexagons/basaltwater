@@ -26,6 +26,7 @@ from lib.config import SetupConfig
 from common import cachyos_aur as aur
 from common import cachyos_t3_desktop as desktop
 from lib.remote_utils import is_dry_run, run
+from lib.t3code_runtime import is_t3_service_version, t3_native_probe_command
 from lib.validation import validate_filesystem_path
 
 
@@ -255,12 +256,32 @@ def _check_binary(binary: Path, prefix: Path) -> None:
 def _check_runtime(prefix: Path, home: Path) -> str:
     binary = prefix / "bin/t3"
     _check_binary(binary, prefix)
-    result = _user_run([str(binary), "--version"], home, capture_output=True, timeout=30)
+    # The npm launcher downloads its executable into T3CODE_HOME even for
+    # --version. Keep that download in this candidate, away from desktop state
+    # and the working web runtime. --base-dir alone does not scope the launcher.
+    result = _user_run(["env", f"T3CODE_HOME={prefix}", str(binary), "--version"], home,
+                       capture_output=True, timeout=300)
     output = (result.stdout or result.stderr or "").strip()
     match = re.fullmatch(r"(?:t3 )?v?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)", output)
-    if not match:
+    if not match or not is_t3_service_version(match.group(1)):
         raise RuntimeError("T3 runtime did not report a valid version")
     version = match.group(1)
+    launcher = prefix / "lib/node_modules/t3/bin/t3.mjs"
+    standalone = prefix / "runtime/versions" / version / "t3"
+    if binary.resolve() == launcher or binary.resolve() == standalone:
+        _check_binary(standalone, prefix)
+        # The addon belongs to the archive's embedded Node, not host Node.
+        command = t3_native_probe_command(str(standalone), None)
+        if command is None:
+            raise RuntimeError("T3 standalone runtime cannot be validated")
+        _user_run(command, home, capture_output=True, timeout=15)
+        if binary.resolve() == launcher:
+            # Activate the validated archive directly. A relative link survives
+            # candidate renaming and keeps subsequent CLI calls offline and
+            # independent of the desktop's ~/.t3 runtime cache.
+            binary.unlink()
+            binary.symlink_to(os.path.relpath(standalone, binary.parent))
+        return version
     # Version output alone does not load the native terminal addon. Older T3
     # releases place node-pty under t3, while newer releases bundle it under
     # the platform-specific CLI package. Exercise a disposable shell without

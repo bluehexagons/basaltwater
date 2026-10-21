@@ -34,6 +34,7 @@ class T3InstallTests(unittest.TestCase):
         self.active = False
         self.enabled = False
         self.failure = None
+        self.launcher_layout = False
         self.desktop_version = "0.0.42-1"
         stack.enter_context(patch.object(t3, "_home", return_value=self.home))
         self.user_run = stack.enter_context(patch.object(t3, "_user_run", side_effect=self.user_command))
@@ -69,10 +70,30 @@ class T3InstallTests(unittest.TestCase):
             candidate = Path(argv[argv.index("--prefix") + 1])
             self.assertNotEqual(candidate, self.prefix)
             self.assertTrue(candidate.is_relative_to(self.prefix / "releases"))
-            self.runtime(candidate)
-        if argv[:2] == ["node", "-e"] and self.failure == "native":
+            if self.launcher_layout:
+                target = candidate / "lib/node_modules/t3/bin/t3.mjs"
+                target.parent.mkdir(parents=True)
+                target.write_text("#!/usr/bin/env node\n")
+                target.chmod(0o755)
+                (candidate / "bin").mkdir()
+                (candidate / "bin/t3").symlink_to("../lib/node_modules/t3/bin/t3.mjs")
+            else:
+                self.runtime(candidate)
+        if argv[:1] == ["env"] and argv[1].startswith("T3CODE_HOME=") and self.launcher_layout:
+            candidate = Path(argv[1].split("=", 1)[1])
+            if (candidate / "bin/t3").resolve() == candidate / "lib/node_modules/t3/bin/t3.mjs":
+                native = candidate / "runtime/versions/0.1.1/t3"
+                native.parent.mkdir(parents=True, exist_ok=True)
+                native.write_text("#!/bin/sh\nexit 0\n")
+                native.chmod(0o755)
+        native_probe = argv[:2] == ["node", "-e"] or (
+            argv[:1] == ["/usr/bin/env"] and argv[1].startswith("NODE_OPTIONS=")
+        )
+        if native_probe and self.failure == "native":
             raise RuntimeError("native fixture failure")
-        output = "v24.10.0\n" if argv[:2] == ["node", "--version"] else "t3 v0.0.40\n"
+        output = "v24.10.0\n" if argv[:2] == ["node", "--version"] else (
+            "t3 v0.1.1\n" if self.launcher_layout else "t3 v0.0.40\n"
+        )
         return subprocess.CompletedProcess(argv, 0, output, "")
 
     def system_command(self, argv, **kwargs):
@@ -154,6 +175,65 @@ class T3InstallTests(unittest.TestCase):
         self.assertTrue(second.exists())
         self.assertTrue(target.exists())  # Legacy npm data is never pruned.
         self.assertTrue((unrelated / "keep.txt").exists())
+
+    def test_launcher_download_stays_in_candidate_and_survives_activation_rename(self):
+        self.launcher_layout = True
+        desktop_runtime = self.home / ".t3/runtime/versions/0.1.1/t3"
+        desktop_runtime.parent.mkdir(parents=True)
+        desktop_runtime.write_text("desktop runtime retained")
+        for _ in range(2):
+            self.events.clear()
+            t3.install(self.config)
+            native = self.binary.resolve()
+            self.assertTrue(native.is_relative_to(self.prefix / "releases"))
+            self.assertEqual(native.relative_to(native.parents[3]), Path("runtime/versions/0.1.1/t3"))
+            self.assertFalse(os.path.isabs(os.readlink(native.parents[3] / "bin/t3")))
+            self.assertIn(str(native.parents[3] / "bin/t3"), self.unit.read_text())
+            self.assertEqual(desktop_runtime.read_text(), "desktop runtime retained")
+            version_calls = [cmd for _, cmd in self.events if cmd[:1] == ["env"]]
+            self.assertEqual(len(version_calls), 2)
+            for cmd in version_calls:
+                self.assertEqual(cmd[1], "T3CODE_HOME=" + str(Path(cmd[2]).parent.parent))
+            probes = [i for i, (_, cmd) in enumerate(self.events) if cmd[:1] == ["/usr/bin/env"]]
+            verify = next(i for i, (_, cmd) in enumerate(self.events) if cmd[0] == "systemd-analyze")
+            self.assertEqual(len(probes), 2)
+            self.assertTrue(all(i < verify for i in probes))
+            self.assertFalse(any(cmd[:2] == ["node", "-e"] for _, cmd in self.events))
+
+    def test_launcher_native_failure_keeps_previous_service_and_desktop_runtime(self):
+        target, content = self.legacy()
+        self.launcher_layout = True
+        self.failure = "native"
+        with self.assertRaisesRegex(RuntimeError, "native fixture failure"):
+            t3.install(self.config)
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertTrue(self.active)
+        self.assertFalse(any("stop" in cmd for _, cmd in self.events))
+        self.assertEqual(list((self.prefix / "releases").iterdir()), [])
+        self.assertFalse((self.home / ".t3").exists())
+
+    def test_launcher_rejects_missing_or_external_download_without_repointing_cli(self):
+        launcher = self.prefix / "lib/node_modules/t3/bin/t3.mjs"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("#!/usr/bin/env node\n")
+        self.binary.parent.mkdir(parents=True)
+        self.binary.symlink_to("../lib/node_modules/t3/bin/t3.mjs")
+        native = self.prefix / "runtime/versions/0.1.1/t3"
+        native.parent.mkdir(parents=True)
+        outside = self.home / "personal-t3"
+        outside.write_text("retained")
+        for external in (False, True):
+            with self.subTest(external=external):
+                if external:
+                    native.symlink_to(outside)
+                with patch.object(t3, "_user_run", return_value=subprocess.CompletedProcess(
+                    [], 0, "t3 v0.1.1\n", ""
+                )) as command, self.assertRaisesRegex(ValueError, "unsafe T3 runtime"):
+                    t3._check_runtime(self.prefix, self.home)
+                command.assert_called_once()
+                self.assertEqual(self.binary.resolve(), launcher)
+                self.assertEqual(outside.read_text(), "retained")
 
     def test_staging_failures_never_change_or_stop_the_old_service(self):
         target, content = self.legacy()

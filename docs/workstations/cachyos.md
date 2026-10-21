@@ -445,8 +445,13 @@ systemctl --user status basaltwater-cachyos-t3.service
 The runtime is under `~/.local/share/basaltwater/cachyos-t3/releases`, and the
 unit is `~/.config/systemd/user/basaltwater-cachyos-t3.service`. The stable
 `~/.local/share/basaltwater/cachyos-t3/bin/t3` link selects the current release
-for pairing and Connect commands. Setup validates the CLI, a disposable native
-PTY shell, the generated unit, and HTTP UI reachability. Provider login and a
+for pairing and Connect commands. T3 0.1.1's npm package downloads a standalone
+archive on first use. Setup confines that download to the candidate release,
+checks its native terminal addon with the archive's embedded Node, then points
+the release's CLI directly at that executable. The relative link survives
+activation and keeps later CLI calls independent of the desktop runtime cache.
+Older npm layouts retain the disposable native PTY shell check. Setup also
+validates the generated unit and HTTP UI reachability. Provider login and a
 real coding thread still need verification. Service output passes through a
 credential filter before systemd records it in the journal, so headless startup
 tokens, pairing URLs, and QR rows are not persisted. HTTP 200 alone is not
