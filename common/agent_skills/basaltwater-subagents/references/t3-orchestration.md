@@ -1,139 +1,92 @@
-# T3 Code native orchestration
+# T3 Code orchestration beyond the session instructions
 
-Use this reference inside T3 Code when delegation or thread coordination is
-authorized. It follows stable 0.1.1; inspect the active tool schemas for the
-connected environment. Tool names may have a harness-specific MCP prefix.
-Terminal agents do not gain these tools merely because T3 is installed.
+Follow T3's injected orchestration instructions and active tool schemas first.
+This reference adds Basaltwater workspace, cost, and context boundaries; use
+only the section needed. The baseline is stable 0.1.1. Terminal agents do not
+gain T3 tools merely because T3 is installed.
 
-## Discover and choose workers
+## Discovery and delegation fallback
 
-Call `orchestrator_capabilities` for the live provider instances, model IDs,
-custom models, options, readiness, and child-task support. A native subagent
-tool's model list is not the whole T3 catalog. If tools load lazily, make one
-bounded direct capabilities call before reporting them absent. For ACP agents
-that lack exposed MCP tools, use T3's injected `acp-mcp-call` transport only
-when `T3_ACP_MCP_NODE` is present; follow the session's supplied invocation.
+If session guidance is absent: `orchestrator_capabilities` supplies live
+provider instances, model IDs (including custom models), options, readiness,
+and child-task support. A native worker's model list is not the whole catalog.
+Make one bounded direct call when tools load lazily. ACP agents lacking exposed
+MCP tools may use the injected `acp-mcp-call` transport only when
+`T3_ACP_MCP_NODE` is present.
 
-Prefer native same-provider subagents when they support the selected model.
-Use `delegate_task` for unsupported native selections, cross-provider work,
-or explicitly T3-owned children. Choose a ready provider instance and explicit
-supported model/options. Apply the model-selection reference's cost policy;
-do not inherit fast service, `max`, or `ultra` without the user's selection.
-Do not install unselected providers just to make catalog entries ready.
+Use native same-provider workers only when they support the selected model and
+no model options are requested or inherited. Otherwise use `delegate_task`
+with a ready provider and supported `target.options`. For the same provider
+instance and model, omitted options inherit; explicit entries override individual
+values, and `{}` clears inheritance. Check the returned selection. Codex
+`priority` is fast service. Follow the entrypoint's cost policy; do not install
+an unselected provider to make its catalog entry ready.
 
-Switching providers mid-thread transfers a budgeted selection of messages,
-omitting prior reasoning, tool calls/results, and attachments. Prefer delegation
-for another harness's help. Changing models within a provider usually retains
-its native session; inspect the actual selected settings and session state.
+Children receive the task brief and optional role, not the parent's conversation.
+Retain `taskId` and backing `childThreadId`; every review round needs a fresh
+`delegate_task`, distinct retry-stable `clientRequestId`, original brief,
+prior findings, responses, and unresolved objections. Do not send another
+review to the backing thread.
 
-## Delegate and collect results
+Async completion wakes the parent. Read the result with `task_status` and
+inspect commits/checks; one provider turn ending may leave descendants active.
+A wait timeout does not cancel work. Use `task_cancel` for abandoned tasks;
+cancellation does not undo filesystem/external changes. After interruption,
+inspect state and edits before retrying. A child question is not permission.
 
-Give each child a self-contained brief: objective, relevant findings and paths,
-project/skill instructions, allowed files, workspace, access and cost limits,
-acceptance checks, and required handoff. Children receive the task prompt and
-optional role, not the parent's conversation. Do not assume inherited browser
-attachments or loaded skills.
+## Workspace ownership and retention
 
-Use a distinct `clientRequestId` for each task, stable across retries of that
-same request. Retain its `taskId` and `childThreadId`. Every independent review
-round needs a new `delegate_task` with the original brief, prior findings,
-responses, and unresolved objections. Do not use `t3_thread_send` on the backing
-`childThreadId` for another delegated review round.
+T3 editors and writing checks need `isolation: "worktree"` before launch.
+Preparation starts from the parent's local commit, not uncommitted edits,
+and can run project setup and recursive submodule initialization. Worktrees
+still share services, ports, caches, and the host account.
 
-For `mode: "async"`, continue independent work or end the turn; completion wakes
-the parent. Do not repeatedly poll while awaiting that wake. A bounded wait can
-time out without cancelling the child. Use `task_status` to distinguish active
-work, waiting for descendants, and an available result; one provider turn ending
-does not prove the whole nested task finished. Read the published summary and
-inspect commits and validation before integration. Use pending-question tools
-to list/read/respond to child questions when exposed. Answering a question does
-not approve a permission request.
+T3 owns these bindings and cleanup. Do not adopt or remove them incidentally
+with `basaltw agent workspace`. Basaltwater's ownership and ancestry rules
+apply to its own worktrees. Inspect the diff and branch before integration.
 
-Use `task_cancel` for abandoned work; it stops the delegated task and descendants
-and holds queued work. Cancellation does not undo filesystem changes or external
-actions. After interruption or restart, inspect recorded task state and retained
-edits before retrying; do not duplicate still-active work.
+For explicitly requested top-level conversations, select the workspace in
+`t3_thread_launch`, not a shell command in its prompt. Omission selects root,
+not the caller's worktree. A local stack uses its intended `baseRef` and
+`startFromOrigin:false`; inspect existing paths with `t3_worktree_list`.
+Launch has no idempotency key: inspect threads before retrying an uncertain
+launch. `create_threads` shares the caller's checkout. `t3_worktree_handoff`
+moves only the calling root-bound thread, ends its turn, and cannot move a
+thread already attached to a worktree. Conversation fork/merge does not merge Git.
 
-## Bind workspaces before editing
+Inspect project overrides, environment settings, then tracked `t3.json` before
+relying on built-in defaults. Preserve setup and branch policies. Automatic
+T3 cleanup is opt-in, covers T3-managed paths, and may delete ignored files
+such as `.env` or build output. Preserve needed artifacts before removal.
 
-`delegate_task` defaults to a shared checkout. Read-only reviewers may share it;
-editors and checks that write files need `isolation: "worktree"`. T3 creates the
-checkout from the parent's local commit and runs project setup. Uncommitted
-edits are not copied. Commit or explicitly hand off required changes first.
-Worktrees still share services, ports, caches, and the host account.
+## Context, queues, and recurring work
 
-T3 owns those worktree bindings and lifecycle. Do not adopt or remove them with
-`basaltw agent workspace` as incidental cleanup. Basaltwater ownership records
-apply to worktrees created or deliberately adopted through Basaltwater. Inspect
-the actual diff and branch before authorized integration with either owner.
+Switching providers transfers a budgeted message selection without prior
+reasoning, tool results, or attachments. Prefer delegation for another
+harness's help. Within-provider model changes usually retain the native
+session; inspect actual settings/state.
 
-Use `t3_thread_launch` only when the user requests a separate/new/top-level
-conversation. Put work in `message` and choose `workspaceStrategy` explicitly:
+Read bounded `t3_thread_read` pages/cursors; retrieve long text only as needed.
+Select fields before emitting tool results. Inspect pending queues before
+sending work twice and choose queue versus steer explicitly. Queues survive
+restarts but wait for user resume; interrupted-turn continuation is a separate
+setting. Inspect live state rather than assuming delivery. Respect usage
+limits; do not bypass them with duplicate threads, schedules, or provider switches.
 
-- `{"type":"worktree","baseRef":"feature/base","branch":"feature/next","startFromOrigin":false}`
-  starts from local commits; use `true` only when fetching from origin is intended.
-- `{"type":"existing_worktree","worktreePath":"/absolute/worktree","branch":"feature/next"}`
-  binds an inspected existing checkout, including a Basaltwater-owned one.
-- `{"type":"root"}` uses the project root. Omission also selects root; it does
-  not inherit the caller's worktree.
+For recurring work, read [scheduling](t3-scheduling.md) and use one owner with
+verified provider settings and thread/workspace binding.
 
-Inspect existing paths with `t3_worktree_list`. A shell `cd` or `git worktree add`
-in the launch prompt does not update T3's binding. `create_threads` is only for
-requested batches intentionally sharing the caller's checkout; it has no
-workspace override. `t3_thread_launch` has no idempotency key: save the returned
-thread ID, inspect preparation via read/wait, and check `t3_thread_list` before
-retrying an uncertain launch.
+## Pull requests and guides
 
-To move the current root-bound thread, inspect `t3_worktree_status`, then use
-`t3_worktree_handoff` as the last call with a continuation prompt. It ends the
-turn and moves this thread; it cannot move another thread or a thread already
-attached to a worktree. Fork/merge-back transfers conversation context, not Git
-changes. Review and integrate code separately.
+Register each task PR and stack layer with `link_pull_request`; reconcile
+`list_thread_pull_requests`. Report linking failures. For requested monitoring,
+the parent uses `watch_pull_request` then ends its turn; children cannot own a
+watch. Handle existing comments first, since only new ones wake it. Call
+`unwatch_pull_request` before handing back. Watching grants no merge authority.
 
-Inspect project overrides, environment settings, and tracked `t3.json` before
-relying on defaults; that is their precedence order, followed by built-in
-defaults. Project setup/actions and recursive submodule initialization can run
-while preparing worktrees. Preserve the project's setup policy and branch
-naming rules; do not add a second bootstrap script or overwrite overrides
-incidentally. Automatic T3 cleanup is opt-in and only covers T3-managed paths.
-Its local-file policy can allow deletion of ignored files such as `.env` and
-build output. Inspect retention and preserve needed artifacts before settlement
-or removal; Basaltwater's ancestry-based cleanup rules are separate.
+When exposed, PR guide tools supply an asynchronous reading aid. Read the
+finished guide and its staleness before citing it; retain actual diff/check
+evidence and unresolved findings.
 
-## Queues and context
-
-Use bounded `t3_thread_read` pages and cursors for omitted messages or activity.
-Retrieve long text only as needed. Check pending queue entries before sending
-duplicate work. Choose explicit queue versus steer behavior; automatic follow-up
-behavior is configurable. Queue tools can inspect, edit, cancel, reorder, or
-promote a message to steering. Persistent queues survive restarts but wait for
-user resume. Interrupted-turn continuation is a separate General setting;
-inspect live state instead of treating either feature as a delivery guarantee.
-Usage-limited work can wait for reset; avoid bypassing limits with duplicate
-threads, schedules, or provider switches.
-
-For recurring thread work, read [T3 scheduling](t3-scheduling.md). Use a single
-scheduling owner and verify the selected provider settings and target binding.
-
-## Pull requests and review guides
-
-Register every PR created or worked on with `link_pull_request`, including each
-stack layer, and reconcile `list_thread_pull_requests` before finishing. CLI Git
-or `gh` commands do not make this association. Do not link unrelated background
-PRs. Report a failed linking call rather than claiming success.
-
-When asked to monitor a PR, the parent uses `watch_pull_request` and ends the
-turn; children cannot own a watch. Handle existing comments first, since only
-new comments wake the watcher. T3 wakes the parent for checks, comments, or
-conflicts; do not run a separate polling loop. Call `unwatch_pull_request`
-before handing the work back to the user.
-Watching does not grant merge or publication authority.
-
-When `write_pull_request_guides` and `read_pull_request_guide` are exposed, use
-them for a concise reading path through the relevant changes. Writing starts
-asynchronous work; read its result and staleness before citing a guide.
-A guide neither verifies behavior nor supplies approval; retain the
-actual diff, check results, and unresolved findings in the handoff.
-
-Upstream baseline: [0.1.1 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
+Upstream: [0.1.1 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
 and [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.1/docs/orchestration-v2/orchestrator-mcp-server.md).

@@ -6,12 +6,20 @@ model-selection, session-context, and T3 orchestration references.
 Their workspace skills retain each platform's account and setup boundaries.
 Detailed guidance needs neither a Basaltwater checkout nor a GitHub connection.
 
+Read the skill entrypoint first and follow only the route needed for the task.
+Routine T3 delegation uses the session's injected orchestration instructions
+and live schemas; it does not require reading the model-policy, cross-account,
+and worktree lifecycle references together. Read those when maintaining model
+records, changing session context, or managing the relevant worktree owner.
+Request bounded worker evidence rather than full logs or repeated inventories.
+
 Inside T3 Code, follow the shipped
 [native orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
 for live provider/model discovery, child tasks, asynchronous results, worktree
 binding, queues, forks, and PR watches. Native workers are appropriate for
-same-provider work when they support the selected model; use T3 `delegate_task`
-otherwise, including cross-provider work. Top-level conversations need an
+same-provider work when they support the selected model and no model options
+are requested or inherited; use T3 `delegate_task` otherwise, including
+cross-provider work. Top-level conversations need an
 explicit user request for separate threads. Each independent delegated review
 round is a fresh task with its own ID and explicit prior findings.
 
