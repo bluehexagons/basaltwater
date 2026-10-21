@@ -21,6 +21,16 @@ _ROOTS = (
     (".cache", "tool-caches", "Rebuildable caches; inspect the largest child and check active tools before choosing a native cleanup command."),
     (".npm", "npm-cache", "Downloaded packages, npx installs and logs; cleaning costs future downloads. Preserve npm configuration."),
     (".local/share/pnpm/store", "pnpm-store", "Shared package store; use the installed package manager and account for active installs and offline dependencies."),
+    (".local/share/basaltwater/worktrees", "managed-worktrees", "Basaltwater-owned worktrees: inspect workspace status and preview workspace remove; preserve dirty/unmerged/unowned work and ignored evidence. T3 owns its separate worktrees."),
+    (".local/state/basaltwater/agent-backups", "agent-backups", "Recovery snapshots: use managed agent maintenance and preserve the selected rollback and running executables; age alone does not establish redundancy."),
+    (".nvm/versions/node", "node-runtimes", "Check active processes, nvm aliases, project .nvmrc/.node-version/package engines and per-version global packages before approved nvm uninstall of an exact unused version."),
+    (".nvm/.cache", "node-downloads", "Downloaded Node archives, separate from installed versions; native nvm cache clear costs future downloads and must not race an installation."),
+    ("go/pkg/mod", "go-modules", "Module downloads can include active Go toolchains. Check go env GOMODCACHE/GOTOOLCHAIN and project/offline dependencies; build-cache cleanup does not authorize go clean -modcache."),
+    (".local/share/containers/storage", "container-storage", "Use the container engine's image/container/volume inventory and explicit native cleanup. Preserve running/stopped project containers and volumes; never remove overlay storage directly."),
+    (".local/share/godot/export_templates", "godot-templates", "Preserve versions required by project toolchain locks and exports; these are installed templates, not redundant download archives."),
+    (".local/share/basaltwater/t3code", "t3-launcher", "Managed T3 launcher dependencies; preserve active process/service references and use managed updates rather than deleting node_modules."),
+    (".local/share/basaltwater/evidence", "development-evidence", "Review and curate project evidence with provenance before selecting removals; preserve milestone captures and verification records."),
+    (".local/state/basaltwater/playwright-mcp", "browser-evidence", "Browser captures can document project history; inspect retention and active browser output paths before curating exact old evidence."),
     (".local/share/Trash/files", "trash", "User-discarded files may still be valuable; review retention before permanently deleting selected old items."),
     (".codex/packages/standalone/releases", "codex-releases", "Preserve the active release and rollback; use managed retention, never delete the whole Codex directory."),
     (".codex/cache", "codex-cache", "Protected agent directory: use managed maintenance; ordinary task write grants cannot include it."),
@@ -296,6 +306,28 @@ def inspect_storage(*, home: str | None = None, paths: list[str] | None = None,
     return result
 
 
+def _summarize_inventory(result: dict) -> dict:
+    """Reduce presentation only, retaining incomplete coverage and retention guidance."""
+    summary = {**result, "view": "summary", "candidates": []}
+    summary["absent_candidates_omitted"] = sum(row["status"] == "absent" and row["category"] != "selected" for row in result["candidates"])
+    fields = ("path", "category", "status", "allocated_bytes", "issues", "retention", "cleanup_convention")
+    for row in result["candidates"]:
+        if row["status"] == "absent" and row["category"] != "selected":
+            continue
+        item = {key: row[key] for key in fields if key in row}
+        children = row["largest_children"]
+        item["largest_children"] = children[:3]
+        item["ranked_children_omitted"] = max(0, len(children) - 3)
+        summary["candidates"].append(item)
+    if "session_state" in result:
+        state = result["session_state"]
+        summary["session_state"] = {**state,
+            "files": [{key: value for key, value in row.items() if key != "retention"} for row in state["files"]],
+            "retention": sorted({row["retention"] for row in state["files"]}),
+        }
+    return summary
+
+
 def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("storage", help="Inspect local storage and preview or apply project generated-output cleanup")
     actions = parser.add_subparsers(dest="agent_storage_command", required=True)
@@ -303,6 +335,7 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     inspect.add_argument("--path", action="append", help="Inspect one exact absolute directory instead of default candidates; repeat up to eight times")
     inspect.add_argument("--max-entries", type=int, default=250000)
     inspect.add_argument("--timeout", type=int, default=20, help="Shared scan budget in seconds (1-60)")
+    inspect.add_argument("--summary", action="store_true", help="Omit absent default roots and detailed file metrics; retain selected paths, issues, retention and three ranked children per root")
     inspect.add_argument("--json", action="store_true")
     project = actions.add_parser("project", help="Inspect project cleanup rules and artifacts without running scripts")
     project.add_argument("repository", metavar="ABSOLUTE_PROJECT")
@@ -333,7 +366,9 @@ def run_storage_command(args: argparse.Namespace) -> int:
             print(json.dumps(result, indent=2))
             return 1 if result["evidence"] and result["evidence"]["issues"] else 0
         result = inspect_storage(paths=args.path, max_entries=args.max_entries, timeout=args.timeout)
-        print(json.dumps(result, indent=2))
+        if getattr(args, "summary", False):
+            result = _summarize_inventory(result)
+        print(json.dumps(result, separators=(",", ":")) if getattr(args, "summary", False) else json.dumps(result, indent=2))
         return 1 if result["issues"] else 0
     except (OSError, ValueError) as exc:
         print(json.dumps({"read_only": True, "error": str(exc)}))

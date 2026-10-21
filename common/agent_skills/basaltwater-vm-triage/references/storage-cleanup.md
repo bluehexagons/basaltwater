@@ -5,6 +5,8 @@ logs, screenshots, videos, or project outputs. Start with
 [`basaltw agent storage inspect`](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/storage-cleanup.md)
 for metadata-only size, age, and owner evidence, then read the full
 [session retention workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/session-retention.md).
+Use `--summary --json` for the initial inventory, then inspect selected `--path`
+roots without `--summary` for ownership and other details before cleanup.
 
 ## Bounded classification
 

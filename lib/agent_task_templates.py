@@ -37,7 +37,7 @@ HOST_REVIEW_PROMPT = (
 
 STORAGE_REVIEW_PROMPT = (
     "Goal: reclaim storage with an approved cleanup follow_up. "
-    "First pass read-only: basaltw agent storage inspect --json; focus --path on large children. "
+    "First pass read-only: basaltw agent storage inspect --json --summary; focus --path without --summary on large children. "
     "Metadata only; no private transcript, credential or database reads. Partial sizes are lower bounds. "
     "Follow project instructions, native cleanup rules and VM-triage storage-cleanup guidance. "
     "Inspect rules: basaltw agent storage project /absolute/repo --json. Review scripts before running even previews. "

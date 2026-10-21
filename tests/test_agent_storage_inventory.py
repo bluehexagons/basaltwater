@@ -84,6 +84,84 @@ class StorageInventoryTests(unittest.TestCase):
                          {"codex-sessions", "archived-sessions", "session-attachments"},
                          {"codex-sessions", "archived-sessions", "session-attachments"})
 
+    def test_default_inventory_measures_managed_workspaces_and_shared_tool_data(self) -> None:
+        roots = {
+            ".local/share/basaltwater/worktrees": "managed-worktrees",
+            ".local/state/basaltwater/agent-backups": "agent-backups",
+            ".nvm/versions/node": "node-runtimes",
+            ".nvm/.cache": "node-downloads",
+            "go/pkg/mod": "go-modules",
+            ".local/share/containers/storage": "container-storage",
+            ".local/share/godot/export_templates": "godot-templates",
+            ".local/share/basaltwater/t3code": "t3-launcher",
+            ".local/share/basaltwater/evidence": "development-evidence",
+            ".local/state/basaltwater/playwright-mcp": "browser-evidence",
+        }
+        for relative in roots:
+            directory = self.home / relative
+            directory.mkdir(parents=True)
+            (directory / "payload").write_bytes(b"private payload" * 512)
+        with patch("builtins.open", side_effect=AssertionError("Metadata only")):
+            report = self.inspect(max_entries=64)
+        rows = {row["category"]: row for row in report["candidates"]}
+        for relative, category in roots.items():
+            row = rows[category]
+            self.assertEqual(row["path"], str(self.home / relative))
+            self.assertEqual((row["status"], row["files"]), ("measured", 1))
+            self.assertGreater(row["allocated_bytes"], 0)
+            self.assertTrue(row["retention"])
+        self.assertLessEqual(report["limits"]["entries_examined"], 64)
+        self.assertNotIn("private payload", json.dumps(report))
+
+    def test_summary_keeps_failures_partial_coverage_and_state_without_mutating_inventory(self) -> None:
+        cache = self.home / ".cache"
+        cache.mkdir()
+        for index in range(9):
+            child = cache / str(index)
+            child.mkdir()
+            (child / "payload").write_bytes(b"x" * 4096)
+        state = self.home / ".t3/userdata"
+        state.mkdir(parents=True)
+        (state / "state.sqlite").write_bytes(b"x" * 4096)
+        report = self.inspect()
+        row = next(row for row in report["candidates"] if row["category"] == "tool-caches")
+        row["status"] = "partial"
+        row["issues"] = ["scan_limit_reached"]
+        unavailable = next(row for row in report["candidates"] if row["category"] == "node-runtimes")
+        unavailable.update(status="unavailable", issues=["unreadable_or_symlink_path"])
+        before = json.dumps(report)
+        summary = inventory._summarize_inventory(report)
+        self.assertEqual(json.dumps(report), before)
+        self.assertEqual(summary["absent_candidates_omitted"], sum(row["status"] == "absent" for row in report["candidates"]))
+        selected = next(row for row in summary["candidates"] if row["category"] == "tool-caches")
+        self.assertEqual((selected["status"], selected["issues"]), ("partial", ["scan_limit_reached"]))
+        self.assertEqual(selected["retention"], row["retention"])
+        self.assertEqual((len(selected["largest_children"]), selected["ranked_children_omitted"]), (3, 5))
+        self.assertIn(unavailable["issues"], [row["issues"] for row in summary["candidates"]])
+        self.assertEqual(summary["limits"], report["limits"])
+        self.assertEqual(summary["session_state"]["issues"], report["session_state"]["issues"])
+        self.assertEqual(summary["session_state"]["files"][0]["allocated_bytes"], report["session_state"]["files"][0]["allocated_bytes"])
+        self.assertEqual(summary["session_state"]["retention"], [report["session_state"]["files"][0]["retention"]])
+
+    def test_cli_summary_keeps_collection_failure_exit_status(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_agent_subparser(parser.add_subparsers())
+        args = parser.parse_args(["agent", "storage", "inspect", "--summary", "--json"])
+        self.mounts.side_effect = PermissionError
+        with redirect_stdout(StringIO()) as output:
+            self.assertEqual(run_agent_command(args), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["view"], "summary")
+        self.assertEqual(result["issues"], ["mount_inventory_unavailable"])
+        self.assertEqual(result["candidates"], [])
+
+    def test_summary_preserves_explicitly_selected_missing_paths(self) -> None:
+        missing = self.home / "missing"
+        result = inventory._summarize_inventory(self.inspect(missing))
+        self.assertEqual(result["absent_candidates_omitted"], 0)
+        self.assertEqual(result["candidates"][0]["path"], str(missing))
+        self.assertEqual(result["candidates"][0]["status"], "absent")
+
     def test_cache_conventions_cover_default_children_and_exact_selected_roots_without_reads(self) -> None:
         expected = {"go-build": "go-build", "ms-playwright": "playwright-browsers",
                     "libretabs-toolchain": "project-toolchain", "other-release-toolchain": "project-toolchain"}
