@@ -419,8 +419,22 @@ def cache_needs_eviction(path: str, usage: CacheUsage, max_bytes: int) -> bool:
 
 
 def defer_active_cache(path: str, process_names: tuple[str, ...]) -> bool:
-    """Preserve caches referenced by a running tool or process path."""
-    if tool_is_active(process_names) or process_uses_path(path):
+    """Preserve referenced caches and defer when open-file coverage is incomplete."""
+    if tool_is_active(process_names):
+        log_event(logger, "User cache cleanup deferred while in use", path=path)
+        return True
+
+    incomplete = False
+
+    def record_incomplete() -> None:
+        nonlocal incomplete
+        incomplete = True
+
+    active = process_uses_path(path, include_open_files=True, on_incomplete=record_incomplete)
+    if incomplete:
+        log_event(logger, "User cache cleanup deferred because open-file inspection is incomplete", path=path)
+        return True
+    if active:
         log_event(logger, "User cache cleanup deferred while in use", path=path)
         return True
     return False
@@ -532,7 +546,7 @@ def cleanup_stale_children(
         return [f"{label} inventory: {exc}"]
 
     for entry in entries:
-        if entry.is_symlink():
+        if entry.name.startswith(".basaltwater-dispose-") or entry.is_symlink():
             continue
         try:
             expected = entry.stat(follow_symlinks=False)

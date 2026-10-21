@@ -461,7 +461,10 @@ On a 32 GiB desktop, keep only a few small projects locally and check
 [hardware sizing tiers](../../README.md#hardware-sizing) for larger workloads.
 
 Cache eviction is deferred while a matching tool or referencing process is
-running. Symbolic links and paths outside the configured user's home are never followed or
+running, including processes that reference the cache only through an open file.
+Descriptor inspection is bounded; unavailable coverage, including protected
+account processes, produces an informational deferral rather than authorizing
+eviction or failing maintenance. Symbolic links and paths outside the configured user's home are never followed or
 removed. OpenCode data under `.local/share/opencode` and Codex sessions,
 memories, credentials, plugins, and unrecognized package layouts are persistent
 state and are not cleanup targets. Root-only setups retain system cleanup but
@@ -479,7 +482,8 @@ directory before deletion, so a recreated original pathname is preserved. Dry
 runs validate without moving or removing data. A changed entry is refused; a
 race during isolation or failed/interrupted deletion retains remaining data
 privately, with the recovery location in local maintenance logs. Disposal
-directories are excluded from automatic retention and require explicit recovery;
+directories are excluded from automatic retention, including stale-tool-temp
+scans regardless of age, and require explicit recovery;
 inspect their owner/identity and any recreated original before restoring data.
 Never overwrite a new original path or treat a retained disposal as proof of
 successful cleanup. Project reports, captures and SDK/image caches do not become

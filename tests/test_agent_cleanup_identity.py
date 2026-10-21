@@ -120,6 +120,45 @@ class CleanupIdentityTests(unittest.TestCase):
         self.assertEqual(active.call_count, 2)
         self.assertTrue((self.path / "payload").exists())
 
+    def test_generic_cache_preserves_open_files_and_incomplete_descriptor_coverage(self):
+        proc = self.root / "proc"
+        process = proc / "123"
+        descriptors = process / "fd"
+        descriptors.mkdir(parents=True)
+        (process / "cmdline").write_bytes(b"node\0worker.js\0")
+        (process / "cwd").symlink_to(self.root)
+        (process / "exe").symlink_to("/usr/bin/node")
+        (descriptors / "4").symlink_to(self.path / "payload")
+        context = user_cleanup.UserContext("fixture", str(self.root), os.getuid())
+        scanner = cleanup_paths.process_uses_path
+        scandir = os.scandir
+
+        def scan(path, **kwargs):
+            return scanner(path, str(proc), **kwargs)
+
+        def denied(path):
+            if str(path) == str(descriptors):
+                raise PermissionError("fixture descriptor inspection denied")
+            return scandir(path)
+
+        def clean():
+            return user_cleanup.cleanup_managed_directory(
+                context, label="Fixture", path=str(self.path), max_bytes=1,
+                max_age_days=7, process_names=("fixture",), dry_run=False)
+
+        with patch.object(user_cleanup, "tool_is_active", return_value=False), \
+                patch.object(user_cleanup, "process_uses_path", side_effect=scan):
+            self.assertEqual(clean(), [])
+            self.assertTrue((self.path / "payload").is_file())
+            with patch.object(cleanup_paths.os, "scandir", side_effect=denied), \
+                    patch.object(user_cleanup, "log_event") as log:
+                self.assertEqual(clean(), [])
+            self.assertTrue((self.path / "payload").is_file())
+            self.assertTrue(any("inspection is incomplete" in call.args[1] for call in log.call_args_list))
+            (descriptors / "4").unlink()
+            self.assertEqual(clean(), [])
+            self.assertFalse(self.path.exists())
+
     def test_stale_children_preserve_a_replacement_after_inventory(self):
         child = self.path / "stale"
         child.mkdir()
@@ -142,6 +181,37 @@ class CleanupIdentityTests(unittest.TestCase):
         self.assertTrue(failures)
         self.assertIn("changed since inventory", failures[0])
         self.assertTrue((child / "report").exists())
+
+    def test_stale_child_recovery_survives_later_retention_passes(self):
+        temporary = self.root / ".codex" / "tmp"
+        child = temporary / "stale"
+        child.mkdir(parents=True)
+        (child / "payload").write_text("retained recovery data")
+        now = time.time()
+        old = now - 9 * 86400
+        for path in (child / "payload", child):
+            os.utime(path, (old, old))
+        context = user_cleanup.UserContext("fixture", str(self.root), os.getuid())
+        options = dict(label="Fixture", path=str(temporary), max_age_days=7,
+                       process_names=("fixture",))
+        with patch.object(user_cleanup, "tool_is_active", return_value=False), \
+                patch.object(user_cleanup, "process_uses_path", return_value=False):
+            with patch.object(cleanup_paths.shutil, "rmtree", side_effect=OSError("busy")) as delete, \
+                    patch.object(user_cleanup, "log_event") as log:
+                failures = user_cleanup.cleanup_stale_children(context, dry_run=False, **options)
+            self.assertEqual(len(failures), 1)
+            delete.assert_called_once()
+            recovery = next(Path(call.kwargs["recovery_path"]) for call in log.call_args_list
+                            if call.kwargs.get("recovery_path"))
+            ordinary = temporary / "ordinary"
+            ordinary.write_text("disposable temporary data")
+            with patch.object(user_cleanup.time, "time", return_value=now + 8 * 86400):
+                for dry_run in (True, False):
+                    with self.subTest(dry_run=dry_run):
+                        self.assertEqual(user_cleanup.cleanup_stale_children(
+                            context, dry_run=dry_run, **options), [])
+                        self.assertEqual(ordinary.exists(), dry_run)
+                        self.assertEqual((recovery / "payload").read_text(), "retained recovery data")
 
     def test_privileged_temp_cleanup_preserves_owner_active_paths_and_unrelated_evidence(self):
         old = time.time() - 8 * 86400
