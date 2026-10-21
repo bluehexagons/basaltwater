@@ -157,7 +157,9 @@ def collect_checks(context: dict[str, Any], *, security: bool, host: bool = True
 def _collect_host_checks(context: dict[str, Any], add: Callable[..., None]) -> None:
     try:
         disk = shutil.disk_usage("/")
-        used = disk.used * 100 / disk.total
+        # Match df: reserved blocks are unavailable to the accounts doing work.
+        # Dividing by total capacity hides pressure on filesystems with reserves.
+        used = disk.used * 100 / (disk.used + disk.free)
         if used >= 85:
             add("root-disk", f"Root filesystem is {used:.0f}% used", "error" if used >= 95 else "warning")
         inode = os.statvfs("/")
@@ -384,6 +386,8 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
             state.update(day=day, calls=0, escalations=0)
         needs_review = bool(issues and (changed or current - state["last_review"] >= 86400
                                        or state["repeated"] == 3 and policy["escalation_model"]))
+        if issues and not needs_review:
+            report["review"]["reason"] = "Unresolved findings remain; unchanged findings are reviewed at most daily"
         if needs_review:
             from lib.agent_tasks import codex_models
 

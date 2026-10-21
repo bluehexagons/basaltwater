@@ -145,6 +145,8 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         self.assertEqual(review.call_args_list[0].args[-1]["role"], "routine")
         self.assertEqual(review.call_args_list[1].args[-1]["role"], "escalation")
         self.assertEqual(self.notify.call_count, 1)
+        deferred = agent.load_reports(str(self.root / "reports.json"))["reports"][1]
+        self.assertIn("Unresolved findings remain", deferred["review"]["reason"])
         state = agent._load_state(str(self.root / "state.json"))
         self.assertEqual((state["calls"], state["escalations"]), (2, 1))
 
@@ -592,6 +594,19 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
 
 
 class MaintenanceChecksTest(unittest.TestCase):
+    def test_disk_thresholds_include_reserved_blocks_unavailable_to_users(self) -> None:
+        for used, free, severity in ((84, 16, None), (84, 14, "warning"), (85, 15, "warning"),
+                                     (89, 11, "warning"), (94, 6, "warning"), (95, 5, "error"),
+                                     (96, 0, "error")):
+            with (self.subTest(used=used, free=free),
+                  patch.object(agent.shutil, "disk_usage", return_value=SimpleNamespace(total=100, used=used, free=free)),
+                  patch.object(agent.os, "statvfs", return_value=SimpleNamespace(f_files=100, f_favail=90)),
+                  patch.object(agent.os.path, "exists", return_value=False),
+                  patch.object(agent, "_command", return_value=SimpleNamespace(returncode=0, stdout=""))):
+                issues = agent.collect_checks({"units": []}, security=False)
+            self.assertEqual([issue["severity"] for issue in issues if issue["key"] == "root-disk"],
+                             [] if severity is None else [severity])
+
     def test_security_only_collection_avoids_host_probes(self) -> None:
         with patch.object(agent.shutil, "disk_usage") as disk, patch.object(agent.os, "statvfs") as inodes, \
                 patch.object(agent.os, "stat", return_value=SimpleNamespace(st_mode=0o100600)), \
@@ -619,7 +634,7 @@ class MaintenanceChecksTest(unittest.TestCase):
             else:
                 output = "permitrootlogin yes\npermitemptypasswords yes\n"
             return SimpleNamespace(returncode=0, stdout=output)
-        with patch.object(agent.shutil, "disk_usage", return_value=SimpleNamespace(total=100, used=96)), patch.object(agent.os, "statvfs", return_value=SimpleNamespace(f_files=100, f_favail=5)), patch.object(agent.os.path, "exists", return_value=True), patch.object(agent.os, "stat", return_value=SimpleNamespace(st_mode=0o100666)), patch.object(agent, "_command", side_effect=command) as run:
+        with patch.object(agent.shutil, "disk_usage", return_value=SimpleNamespace(total=100, used=96, free=4)), patch.object(agent.os, "statvfs", return_value=SimpleNamespace(f_files=100, f_favail=5)), patch.object(agent.os.path, "exists", return_value=True), patch.object(agent.os, "stat", return_value=SimpleNamespace(st_mode=0o100666)), patch.object(agent, "_command", side_effect=command) as run:
             issues = agent.collect_checks({"units": ["nginx.service"]}, security=True)
         keys = {issue["key"] for issue in issues}
         self.assertTrue({"root-disk", "root-inodes", "failed:broken.service", "inactive:nginx.service", "reboot-pending", "ssh-root-login", "ssh-empty-passwords", "permissions:/etc/shadow"} <= keys)

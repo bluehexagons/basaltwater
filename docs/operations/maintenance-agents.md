@@ -96,6 +96,12 @@ non-secret context includes the profile, machine type, selected agent tools,
 and whether storage, sync, scrub and backup workloads are declared. Declared
 backup support does not establish backup freshness or restore readiness.
 
+Space warnings start at 85% and errors at 95% of used plus available space,
+matching `df`'s treatment of reserved filesystem blocks. Reserved space cannot
+hide pressure from the non-root account. When findings remain unchanged between
+model reviews, the record says that review is deferred; it does not report the
+host as healthy.
+
 Periodic security checks inspect effective SSH root/empty-password policy and
 permissions on `/etc/shadow`, `/etc/gshadow` and the main SSH configuration.
 These bounded checks are not a full vulnerability scan or dependency-advisory
