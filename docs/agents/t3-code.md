@@ -98,10 +98,12 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-10-18**, GitHub's latest stable release and npm's `t3@latest`
-are **0.1.0**, released October 15. It makes Orchestrator V2 stable. Keep the
+As checked on **2026-10-21**, GitHub's latest stable release and npm's `t3@latest`
+are **0.1.1**, released October 21. It retains the stable Orchestrator V2
+introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release and migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
+and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's minimum provider versions are Codex **0.159+**, Claude Code
 **2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **0.80.5+**
@@ -128,7 +130,7 @@ The shared installed skills now route T3 agents to its native orchestration:
 | Editing isolation | Select `delegate_task` worktree isolation or an explicit top-level thread workspace before starting work. T3 owns its worktree binding and cleanup; Basaltwater commands manage their own ownership records. A shell `cd` does not rebind a thread. |
 | Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches omit reasoning, tool results, and attachments; prefer delegation for help from another harness. Read omitted history in bounded pages. |
 | Queues and recovery | Choose queue versus steering explicitly and inspect pending messages before retrying. Persistent queues wait for user resume after restart; interrupted-turn auto-continuation and usage-reset resume have separate controls. |
-| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. Inspect timezone, inherited model/options, target binding, and stop controls. Use one scheduler per job. |
+| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. Inspect timezone, model/options, target binding, and stop controls. Bound runs follow the thread's current provider settings; stored task settings seed fresh threads only. Use one scheduler per job. |
 | Pull requests | Register PRs through `link_pull_request`. For requested monitoring, use `watch_pull_request`, yield for wakeups, then unwatch before user handoff. Review guides supplement diff review and checks. |
 
 The shipped [T3 orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
@@ -157,11 +159,11 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.0 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.1 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Workspace/context | Child worktree starts from committed local base, project setup completes, uncommitted edits stay in parent, explicit launch/handoff binding works, context fork/merge-back leaves Git integration explicit, and cleanup preserves unrelated work. |
 | Queues and limits | Queue order and attachments survive restart, queue awaits user resume, steering reaches the intended turn, auto-continuation is controlled, and usage-limit/reset recovery does not duplicate edits. |
-| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, pause/resume/delete, run-now result, and restart recovery. For webhooks, signature rejection, private secret entry, selected placeholders, stale/duplicate delivery, and absent Connect URL handling. |
+| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, pause/resume/delete, run-now result, and restart recovery. Change a bound thread's model/options and confirm the next run follows them; verify fresh threads use stored task settings. For webhooks, signature rejection, private secret entry, selected placeholders, stale/duplicate delivery, and absent Connect URL handling. |
 | PR workflow | Link all stack layers, receive checks/comment/conflict wakeups without polling, unwatch on handoff, and read review-guide results/staleness. Do not merge as a side effect of monitoring. |
 | Client and gateway | Update/reboot readiness, direct/private and Connect access, gateway TLS, preview attachment and recording transfer, and optional offline webhook storage only when deliberately selected. |
 

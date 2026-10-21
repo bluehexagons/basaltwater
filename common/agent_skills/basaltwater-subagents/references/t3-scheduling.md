@@ -1,7 +1,7 @@
 # T3 Code scheduling
 
 Use this reference when authorized deferred or recurring work should run through
-T3 Code. Stable 0.1.0 provides native scheduled tasks; inspect the connected
+T3 Code. This reference follows stable 0.1.1; inspect the connected
 environment's live tools before acting. No scheduler grants additional scope,
 publication authority, or permission to exceed the user's cost limits.
 
@@ -45,12 +45,18 @@ By default, runs bind to the current thread when the selected project matches.
 This suits orchestration: each trigger returns here for deduplication and child
 delegation. Set `bindToCurrentThread: false` only when the user wants a fresh
 top-level thread for each run. Inspect the resulting project and thread binding.
-The selected provider/model/runtime can inherit from the current thread; inspect
-and set supported options so unapproved fast service, `max`, or `ultra` are not
-carried into unattended runs. Do not broaden permission modes.
+In 0.1.1, a bound run follows the thread's current provider, model, options, and
+runtime/interaction modes when dispatched. The task's stored settings seed
+fresh threads only; they do not pin a bound thread's execution settings.
+Inspect both the binding and the current thread settings. Before changing that
+thread to fast service, `max`, `ultra`, or broader permission modes, pause its
+unattended schedules or ensure the change stays within the user's authorization.
+For fresh-thread runs, inspect and set the task's supported options within those
+same limits.
 
 Use `list_scheduled_tasks` and `update_scheduled_task` to verify the ID, enabled
-state, cadence, next run, target project/thread, and actual provider settings.
+state, cadence, next run, target project/thread, and stored provider settings.
+For bound tasks, inspect the current thread separately for execution settings.
 Report the ID, cadence, next run with timezone, and purpose. Use `enabled: false` to pause a
 recurring task, or `delete_scheduled_task` when removal is requested.
 A `run_scheduled_task_now` response confirms dispatch/bookkeeping, not completed
@@ -84,5 +90,6 @@ storage is a separate Connect choice with its own data-retention implications;
 do not enable it incidentally. Inspect and remove authorized external hooks
 when retiring a workflow, rather than leaving senders targeting a deleted task.
 
-Upstream baseline: [0.1.0 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
+Upstream baseline: [0.1.1 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
+and [tagged scheduling implementation](https://github.com/pingdotgg/t3code/blob/v0.1.1/apps/server/src/scheduledTasks/ScheduledTaskService.ts).
 The active T3 tool schemas govern available schedule and signature fields.

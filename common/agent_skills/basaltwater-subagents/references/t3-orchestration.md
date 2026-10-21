@@ -1,7 +1,7 @@
 # T3 Code native orchestration
 
 Use this reference inside T3 Code when delegation or thread coordination is
-authorized. It follows stable 0.1.0; inspect the active tool schemas for the
+authorized. It follows stable 0.1.1; inspect the active tool schemas for the
 connected environment. Tool names may have a harness-specific MCP prefix.
 Terminal agents do not gain these tools merely because T3 is installed.
 
@@ -135,5 +135,5 @@ asynchronous work; read its result and staleness before citing a guide.
 A guide neither verifies behavior nor supplies approval; retain the
 actual diff, check results, and unresolved findings in the handoff.
 
-Upstream baseline: [0.1.0 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0)
-and [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/orchestration-v2/orchestrator-mcp-server.md).
+Upstream baseline: [0.1.1 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
+and [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.1/docs/orchestration-v2/orchestrator-mcp-server.md).
