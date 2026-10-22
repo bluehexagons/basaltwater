@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from common.browser_automation_steps import PLAYWRIGHT_VERSION
-from lib.agent_browser import _environment, _runtime
+from lib.agent_browser import _environment, _runtime, browser_node
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.guacamole_config import RELEASE
 from lib.remote_utils import run
@@ -135,9 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         for executable in ("openssl", "certutil"):
             if not shutil.which(executable):
                 raise ValueError(f"{executable} is required; install developer prerequisites explicitly")
-        node = "/usr/bin/node" if args.context == "managed" else shutil.which("node")
-        if not node:
-            raise ValueError("Node.js is required")
+        node = browser_node(args.context, args.project)
         asset = args.guacamole_assets or Path(RELEASE) / "share/all.js"
         validate_filesystem_path(str(asset), must_exist=False)
         if not asset.is_file():
@@ -171,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                             raise RuntimeError(f"Fixture startup failed; inspect {output / 'fixtures.log'}")
                         time.sleep(0.1)
                     environment = _environment(args.context)
+                    environment["PATH"] = os.pathsep.join((str(Path(node).parent), environment.get("PATH", os.defpath)))
                     environment.update({"BASALTW_BROWSER_FIXTURE": str(metadata), "BASALTW_BROWSER_OUTPUT": str(output),
                                         "BASALTW_PLAYWRIGHT_MODULE": runtime["module"], "NODE_EXTRA_CA_CERTS": str(directory / "ca.crt"),
                                         "BASALTW_BROWSER_HEADED": "1" if args.headed else "0",

@@ -152,12 +152,23 @@ and a failed self-update prevents the tool-upgrade phase from running.
 
 Node.js and uv use a conservative default policy:
 
-- Node.js follows the LTS track by default. Updating an already-installed
-  latest track requires `BASALTWATER_NODE_UPDATE_LATEST=1` in the Node updater's
+- Node.js selection, explicit installation, setup and maintenance require
+  `^24.22.1 || ^26.12.1`. Setup and maintenance select the newest allowed LTS
+  release from the bounded official Node release index and pin NVM's default
+  to that exact installed version. Discovery failure stops before runtime,
+  alias, package or cleanup changes; an upstream odd or future major does not
+  hide updates on the allowed lines. Explicit aliases and partial pins resolve
+  to an exact allowed release intersecting project engines before installation.
+  Updating an already-installed eligible Current track requires
+  `BASALTWATER_NODE_UPDATE_LATEST=1` in the Node updater's
   service environment; a project's newer installed major never opts the host
-  into that track. Global npm package versions are preserved when the runtime
-  changes. Cleanup and rollback may remove only runtimes created and marked by
-  automatic maintenance. Preexisting versions, missing or invalid ownership
+  into that track. Only supported installed sources on the target's major
+  qualify, and maintenance refuses to downgrade a newer installed source.
+  When all allowed majors are LTS there is no separate Current track.
+  Global npm package versions are preserved when a supported runtime on the
+  same major changes. Legacy runtimes on other lines are retained without
+  migrating their global tools. Cleanup and rollback may remove only runtimes
+  created and marked by automatic maintenance. Preexisting versions, missing or invalid ownership
   records, and project runtimes protected by `basaltw node install` are retained.
   If package migration fails (including failed npm inventory commands or
   malformed inventory), the updater restores the previous default and removes
@@ -168,12 +179,21 @@ Node.js and uv use a conservative default policy:
   Maintenance loads nvm without activating the default runtime, so an LTS
   alias pointing to a newly released, not-yet-installed version cannot block
   installation or rollback. Opted-in global upgrades explicitly select the
-  default runtime. Nonzero nvm commands follow the updater's error reporting
-  and rollback paths rather than aborting with an uncaught command exception.
+  validated exact LTS target under the ownership lock; project and preexisting
+  targets retain their tools even with that opt-in. Nonzero nvm commands follow
+  the updater's error reporting and rollback paths rather than aborting with an
+  uncaught command exception.
   A later setup rerun verifies the promised
   Node/npm/PNPM baseline by running each version command and repairs it if a
   manual change left one unavailable or unusable. Setup fails visibly when the
   repaired baseline still cannot run instead of leaving a false-success state.
+  Setup verifies exact runtime activation before alias or npm changes.
+  Deployment preparation and build execution use the shared Node CLI as the
+  existing build user; old or odd pins fail before project code runs. Host
+  development diagnosis checks the observed active/default Node version and
+  reports unsupported defaults as unhealthy even when another installed
+  runtime satisfies policy. Ownership inventory still recognizes older
+  releases so they remain protected.
 - uv updates the uv executable itself, but uv-managed tools are upgraded only
   when ecosystem upgrades are enabled.
 - Gogs validates a downloaded release before activation and rolls back the

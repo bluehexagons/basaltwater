@@ -22,19 +22,19 @@ class AutoUpdateHomeBoxTests(unittest.TestCase):
         self.addCleanup(self.record_patcher.stop)
 
     @patch("common.service_tools.auto_update_homebox.send_notification_safe")
-    @patch("common.service_tools.auto_update_homebox.update_homebox_to_latest", return_value=("v0.26.3", False))
+    @patch("common.service_tools.auto_update_homebox.update_homebox_to_latest", return_value=("v0.27.1", False))
     @patch("common.service_tools.auto_update_homebox.load_notification_configs_from_state", return_value=[])
     def test_current_release_is_recorded_without_a_notification(self, _configs, _update, notify):
         self.assertEqual(auto_update_homebox.main(), 0)
-        self.record_update.assert_called_once_with(0, "v0.26.3", False)
+        self.record_update.assert_called_once_with(0, "v0.27.1", False)
         notify.assert_not_called()
 
     @patch("common.service_tools.auto_update_homebox.send_notification_safe")
-    @patch("common.service_tools.auto_update_homebox.update_homebox_to_latest", return_value=("v0.26.3", True))
+    @patch("common.service_tools.auto_update_homebox.update_homebox_to_latest", return_value=("v0.27.1", True))
     @patch("common.service_tools.auto_update_homebox.load_notification_configs_from_state", return_value=["notification"])
     def test_successful_update_notifies_and_records_version(self, _configs, _update, notify):
         self.assertEqual(auto_update_homebox.main(), 0)
-        self.record_update.assert_called_once_with(0, "v0.26.3", True)
+        self.record_update.assert_called_once_with(0, "v0.27.1", True)
         self.assertIn("HomeBox updated", notify.call_args.kwargs["subject"])
         self.assertEqual(notify.call_args.kwargs["status"], "good")
 
@@ -56,12 +56,12 @@ class AutoUpdateHomeBoxTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_path = os.path.join(directory, "homebox_update.json")
             with patch.object(auto_update_homebox, "UPDATE_STATE", state_path):
-                self.record_update_function(0, "v0.26.3", True)
+                self.record_update_function(0, "v0.27.1", True)
             with open(state_path, encoding="utf-8") as source:
                 state = json.load(source)
 
         self.assertEqual(state["schema_version"], 1)
-        self.assertEqual(state["version"], "v0.26.3")
+        self.assertEqual(state["version"], "v0.27.1")
         self.assertTrue(state["successful"])
         self.assertTrue(state["changed"])
         self.assertTrue(state["checked_at"].endswith("+00:00"))

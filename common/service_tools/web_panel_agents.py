@@ -229,7 +229,7 @@ _STYLE = """
 .agent-panel > .agent-help { margin-bottom: 12px; }
 .agent-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .agent-buttons form { margin: 0; }
-.agent-buttons button { min-height: 44px; font-size: .8rem; }
+.agent-buttons button { max-width: 100%; min-height: 44px; font-size: .8rem; white-space: normal; }
 .agent-buttons button:disabled { cursor: not-allowed; }
 .agent-buttons a { color: var(--accent); min-height: 44px; display: inline-flex; align-items: center; }
 .agent-secondary { background: var(--accent-soft); color: var(--accent); }

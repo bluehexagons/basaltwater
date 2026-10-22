@@ -17,7 +17,7 @@ import tempfile
 
 from lib.atomic_io import read_json_file
 from lib.agent_probe import run_probe
-from lib.node_runtime_ownership import mark_runtime, runtime_owner
+from lib.node_runtime_ownership import mark_runtime, runtime_directory, runtime_owner
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -28,6 +28,9 @@ _TOKEN = re.compile(r"(>=|<=|>|<|=|\^|~)?\s*(v?\d+(?:\.(?:\d+|[xX*])){0,2}|[xX*]
 MAX_RUNTIME_ENTRIES = 256
 _SUPPORTED_NODE_FLOORS = ((24, 22, 1), (26, 12, 1))
 SUPPORTED_NODE_RANGE = " || ".join("^" + ".".join(map(str, floor)) for floor in _SUPPORTED_NODE_FLOORS)
+NODE_RELEASE_INDEX = "https://nodejs.org/dist/index.json"
+MAX_RELEASE_INDEX_BYTES = 4 * 1024 * 1024
+MAX_RELEASE_ENTRIES = 4096
 
 
 def is_supported_node(version: str) -> bool:
@@ -40,7 +43,7 @@ def is_supported_node(version: str) -> bool:
 
 
 class NodeSelectionUnavailable(ValueError):
-    """Valid project requirements could not be resolved to an installed runtime."""
+    """Valid project requirements could not be resolved to an eligible runtime."""
 
     def __init__(self, message: str, *, issue: str = "project_node_unavailable") -> None:
         super().__init__(message)
@@ -130,6 +133,92 @@ def satisfies(version: Version, requirement: str) -> bool:
     return any(alternatives)
 
 
+def fetch_node_releases() -> list[dict]:
+    """Read the official stable release index with bounded time and output."""
+    result = run_probe([
+        sys.executable, "-I", "-c",
+        "import sys, urllib.request\n"
+        "class NoRedirect(urllib.request.HTTPRedirectHandler):\n"
+        " def redirect_request(self, *args, **kwargs):\n"
+        "  raise ValueError('Node release index redirects are not allowed')\n"
+        "opener = urllib.request.build_opener(NoRedirect)\n"
+        "with opener.open(sys.argv[1], timeout=20) as response:\n"
+        " sys.stdout.buffer.write(response.read(int(sys.argv[2]) + 1))\n",
+        NODE_RELEASE_INDEX, str(MAX_RELEASE_INDEX_BYTES),
+    ], cwd="/", env={"PATH": os.defpath, "LC_ALL": "C"},
+       timeout=35, max_bytes=MAX_RELEASE_INDEX_BYTES)
+    if result.issue:
+        raise ValueError(f"Official Node release discovery failed: {result.issue}; no runtime changes made")
+    try:
+        payload = json.loads(result.output)
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("Official Node release index contains invalid JSON") from exc
+    _validate_node_releases(payload)
+    return payload
+
+
+def _validate_node_releases(payload: object) -> None:
+    if not isinstance(payload, list) or not payload or len(payload) > MAX_RELEASE_ENTRIES:
+        raise ValueError("Official Node release index must be a bounded nonempty array")
+    for release in payload:
+        if not isinstance(release, dict) or not isinstance(release.get("version"), str):
+            raise ValueError("Invalid release in official Node index")
+        _version(release["version"])
+        lts = release.get("lts")
+        if lts is not False and (not isinstance(lts, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", lts)):
+            raise ValueError("Invalid LTS metadata in official Node index")
+
+
+def choose_node_release(releases: list[dict], specification: str, *, engines: str | None = None) -> str:
+    """Pure policy/request/engine intersection; local NVM aliases are not authority."""
+    _validate_node_releases(releases)
+    lts = specification.removeprefix("lts/") if specification.startswith("lts/") else None
+    if lts is not None:
+        if not re.fullmatch(r"[a-z][a-z0-9-]*|\*", lts):
+            raise ValueError("Invalid NVM LTS alias")
+        requirement = "*"
+    else:
+        requirement = "*" if specification in {"node", "stable"} else specification
+    satisfies((0, 0, 0), requirement)
+    if engines:
+        satisfies((0, 0, 0), engines)
+    candidates = []
+    for release in releases:
+        actual = _version(release["version"])
+        if (is_supported_node(release["version"]) and satisfies(actual, requirement)
+                and (not engines or satisfies(actual, engines))
+                and (lts is None or (release["lts"] is not False
+                                     and (lts == "*" or release["lts"].lower() == lts)))):
+            candidates.append(actual)
+    if not candidates:
+        raise NodeSelectionUnavailable(
+            f"No official Node release matches {specification!r}"
+            + (f" and engines {engines!r}" if engines else "")
+            + f" within managed policy {SUPPORTED_NODE_RANGE}"
+        )
+    return "v" + ".".join(map(str, max(candidates)))
+
+
+def resolve_node_release(specification: str, *, engines: str | None = None,
+                         releases: list[dict] | None = None) -> str:
+    """Resolve an explicit install request before bootstrap or runtime mutations."""
+    if not re.fullmatch(r"v?\d+(?:\.\d+){0,2}|node|stable|lts/(?:[a-z][a-z0-9-]*|\*)", specification):
+        raise ValueError("Install requires a stable exact/major/minor version, node, stable, or lts/NAME")
+    if engines:
+        satisfies((0, 0, 0), engines)
+    if re.fullmatch(r"v?\d+(?:\.\d+){0,2}", specification):
+        lower, _upper, count = _bounds(specification)
+        if not any(max(lower, floor)[0] == floor[0] and satisfies(max(lower, floor), specification)
+                   for floor in _SUPPORTED_NODE_FLOORS):
+            raise ValueError(f"Managed Node requires {SUPPORTED_NODE_RANGE}; requested {specification!r}")
+        if count == 3:
+            if engines and not satisfies(lower, engines):
+                raise ValueError(f"Requested Node {specification!r} does not satisfy project engines {engines!r}")
+            return "v" + ".".join(map(str, lower))
+    return choose_node_release(fetch_node_releases() if releases is None else releases,
+                               specification, engines=engines)
+
+
 def _read_pin(path: Path) -> str | None:
     if not os.path.lexists(path):
         return None
@@ -193,7 +282,7 @@ def _resolve_alias(specification: str, nvm_dir: Path) -> str:
             specification = alias
         else:
             return specification
-    raise ValueError("Node alias cycle")
+    raise NodeSelectionUnavailable("Node alias cycle; repair the NVM alias explicitly")
 
 
 @dataclass(frozen=True)
@@ -273,7 +362,8 @@ def select_node(project: str = ".", *, version: str | None = None,
             candidate = _version(path.parent.parent.name)
         except ValueError:
             continue
-        if satisfies(candidate, requirement) and (not engines or satisfies(candidate, engines)):
+        if (is_supported_node(path.parent.parent.name) and satisfies(candidate, requirement)
+                and (not engines or satisfies(candidate, engines))):
             candidates.append((candidate, str(path)))
     if candidates:
         actual, executable = max(candidates)
@@ -285,11 +375,13 @@ def select_node(project: str = ".", *, version: str | None = None,
                 observed = _probe_version(executable, cwd=probe, environment=_probe_environment(probe))
             if observed is not None:
                 actual = _version(observed)
-        if actual is None or not satisfies(actual, requirement) or (engines and not satisfies(actual, engines)):
+        if (actual is None or not is_supported_node(".".join(map(str, actual)))
+                or not satisfies(actual, requirement) or (engines and not satisfies(actual, engines))):
             raise NodeSelectionUnavailable(
                 f"No installed Node matches {specification!r}"
                 + (f" and engines {engines!r}" if engines else "")
-                + f". Run basaltw node install --version {shlex.quote(version or pin or 'VERSION')} "
+                + f" within managed policy {SUPPORTED_NODE_RANGE}. "
+                + f"Run basaltw node install --version {shlex.quote(version or pin or 'VERSION')} "
                 "or install a compatible runtime through your host's package manager."
             )
     selected_by = "--version" if version else source or ("package.json engines" if engines else "PATH" if path_default else "NVM default")
@@ -334,6 +426,8 @@ def inspect_project_node(project: str, *, version: str | None = None) -> dict[st
                 issues.append("project_" + name + "_unusable")
     if tools["node"] and tools["node"] != selection.version:
         issues.append("project_node_version_mismatch")
+    if tools["node"] and not is_supported_node(tools["node"]):
+        issues.append("project_node_unsupported")
     if tools["npm"] and npm_requirement and not satisfies(_version(tools["npm"]), npm_requirement):
         issues.append("project_npm_engine_mismatch")
     return {
@@ -361,17 +455,18 @@ def inspect_project_node_context(project: str) -> dict[str, object]:
 def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("node", help="Select and run project-specific Node runtimes")
     commands = parser.add_subparsers(dest="node_command", required=True)
-    for name in ("status", "doctor", "env", "exec", "install"):
+    for name in ("status", "doctor", "env", "exec", "resolve", "install"):
         command = commands.add_parser(name, help={
             "status": "Inspect the runtime selected for a project",
             "doctor": "Probe the project's selected Node/npm outside repository configuration",
             "env": "Print shell exports for the selected runtime",
             "exec": "Run a command with the selected runtime",
             "install": "Install an explicit project runtime through managed NVM",
+            "resolve": "Resolve a policy-allowed exact install target without changing runtimes",
         }[name])
         command.add_argument("--project", default=".")
         command.add_argument("--version", help=(
-            "Install a stable version, major/minor pin, node, or lts/*" if name == "install"
+            "Resolve a stable version, major/minor pin, node, stable, or lts/NAME" if name in {"install", "resolve"}
             else "Override the project pin with a version or range"
         ))
         if name in {"status", "doctor"}:
@@ -391,24 +486,19 @@ def run_node_command(args: argparse.Namespace) -> int:
                   f"Project Node {report['selection']['version']}: "
                   + ("healthy" if report["healthy"] else ", ".join(report["issues"])))
             return 0 if report["healthy"] else 1
-        if args.node_command == "install":
+        if args.node_command in {"install", "resolve"}:
             pin, _, engines = project_requirements(args.project)
             version = args.version or pin
-            if not version or not re.fullmatch(r"v?\d+(?:\.\d+){0,2}|node|lts/[a-z*]+", version):
-                raise ValueError("Install requires --version with a stable version, major/minor pin, node, or lts/*")
-            if engines:
-                satisfies((0, 0, 0), engines)
-                if _VERSION.fullmatch(version) and not satisfies(_version(version), engines):
-                    raise ValueError(f"Requested Node {version!r} does not satisfy project engines {engines!r}")
-            if re.fullmatch(r"v?\d+(?:\.\d+){0,2}", version):
-                lower, _upper, _count = _bounds(version)
-                if not any(max(lower, floor)[0] == floor[0] and satisfies(max(lower, floor), version)
-                           for floor in _SUPPORTED_NODE_FLOORS):
-                    raise ValueError(f"Managed Node requires {SUPPORTED_NODE_RANGE}; requested {version!r}")
+            if args.node_command == "resolve":
+                print(resolve_node_release(version or ("node" if engines else "lts/*"), engines=engines))
+                return 0
+            if not version:
+                raise ValueError("Install requires --version or a project pin")
             managers = args.package_manager
             for manager in managers:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):
                     raise ValueError("Package managers require an exact npm@VERSION, pnpm@VERSION, or yarn@VERSION")
+            target = resolve_node_release(version, engines=engines)
             nvm = Path(os.environ.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
             validate_filesystem_path(str(nvm))
             if not nvm.is_file():
@@ -421,16 +511,12 @@ def run_node_command(args: argparse.Namespace) -> int:
                 nvm = prepare_project_node_versions()
             # An existing maintenance install becomes a project runtime before
             # NVM or package-manager work can race with automatic cleanup.
-            try:
-                existing = select_node(args.project, version=version, nvm_dir=str(nvm.parent))
-            except ValueError:
-                existing = None
-            if existing and Path(existing.executable).is_relative_to(nvm.parent.absolute() / "versions/node"):
-                mark_runtime(nvm.parent, existing.version, owner="project")
+            if runtime_directory(nvm.parent, target).exists():
+                mark_runtime(nvm.parent, target, owner="project")
             result = subprocess.run([
                 "/bin/bash", "--noprofile", "--norc", "-c",
                 '. "$1" --no-use && nvm install "$2" >&2 && nvm current',
-                "basaltwater-node-install", str(nvm), version,
+                "basaltwater-node-install", str(nvm), target,
             ], check=False, capture_output=True, text=True)
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
@@ -442,10 +528,10 @@ def run_node_command(args: argparse.Namespace) -> int:
             installed_version = ".".join(map(str, installed))
             if not is_supported_node(installed_version):
                 raise ValueError(f"Managed Node requires {SUPPORTED_NODE_RANGE}; installed {installed_version}")
-            requirement = _resolve_alias(version, nvm.parent)
-            if not satisfies(installed, requirement) or (engines and not satisfies(installed, engines)):
+            if installed != _version(target) or (engines and not satisfies(installed, engines)):
                 raise ValueError(
                     f"Installed Node {installed_version} does not satisfy request {version!r}"
+                    + f" resolved to {target}"
                     + (f" and project engines {engines!r}" if engines else "")
                 )
             executable = nvm.parent.resolve() / "versions/node" / ("v" + installed_version) / "bin/node"
@@ -456,7 +542,7 @@ def run_node_command(args: argparse.Namespace) -> int:
             if observed != installed_version:
                 raise ValueError(f"Installed Node {installed_version} failed version verification")
             selection = NodeSelection(str(executable), installed_version, "--version" if args.version else "project pin",
-                                      requirement, engines, str(nvm.parent.resolve()), "nvm")
+                                      target, engines, str(nvm.parent.resolve()), "nvm")
             mark_runtime(nvm.parent, selection.version, owner="project")
             if managers:
                 environment = selection.environment()

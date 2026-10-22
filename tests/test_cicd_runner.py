@@ -18,10 +18,14 @@ class DebianCITests(unittest.TestCase):
         self.python = self.cache / "Python" / "bin" / "python"
         self.python.parent.mkdir(parents=True)
         self.python.touch()
+        self.node = self.cache / "node" / "bin" / "node"
+        self.node.parent.mkdir(parents=True)
+        self.node.touch()
+        self.probe = self.enterContext(patch.object(ci, "run_probe", return_value=Mock(issue=None, output="v24.22.1")))
         self.enterContext(patch.object(ci, "ROOT", root))
 
     def run_ci(self, **kwargs):
-        return ci.run_debian_ci(str(self.python), str(self.cache), **kwargs)
+        return ci.run_debian_ci(str(self.python), str(self.cache), node=str(self.node), **kwargs)
 
     def test_registry_failure_and_timeout_fall_back_then_run_checks_once(self):
         for failure in (Mock(returncode=1), subprocess.TimeoutExpired("docker pull", 120)):
@@ -33,6 +37,8 @@ class DebianCITests(unittest.TestCase):
             argv = calls[2].args[0]
             self.assertIn(ci.IMAGES[1], argv)
             self.assertIn(f"type=bind,source={self.cache},target={self.cache},readonly", argv)
+            self.assertIn(f"BASALTWATER_CI_NODE_DIR={self.node.parent}", argv)
+            self.assertNotIn("make nodejs", argv[-1])
             self.assertEqual(argv[-1].splitlines()[-1], "make check-ci")
             self.assertNotIn("make check\n", argv[-1])
             self.assertNotIn("make coverage\n", argv[-1])
@@ -74,5 +80,20 @@ class DebianCITests(unittest.TestCase):
                 Path(python).touch()
             with self.subTest(python=python, cache=cache), patch.object(ci.subprocess, "run") as run:
                 with self.assertRaises(ValueError):
-                    ci.run_debian_ci(python, cache)
+                    ci.run_debian_ci(python, cache, node=str(self.node))
                 run.assert_not_called()
+
+    def test_unsupported_node_fails_before_any_container_mutation(self):
+        for version in ("v20.19.2", "v24.22.0", "v26.12.0", "v27.0.0", "invalid"):
+            with self.subTest(version=version), patch.object(ci.subprocess, "run") as run:
+                self.probe.return_value.output = version
+                with self.assertRaisesRegex(ValueError, "CI Node requires"):
+                    self.run_ci()
+                run.assert_not_called()
+
+    def test_node_outside_mounted_cache_is_rejected_before_probe(self):
+        outside = ci.ROOT / "outside-node"
+        outside.touch()
+        with self.assertRaisesRegex(ValueError, "CI Node must"):
+            ci.run_debian_ci(str(self.python), str(self.cache), node=str(outside))
+        self.probe.assert_not_called()

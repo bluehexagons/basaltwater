@@ -74,8 +74,10 @@ runner. It tries Docker's official Debian image from
 [Docker Hub cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images),
 then Docker Hub, with a two-minute bound per pull. This keeps registry fallback
 inside a runnable step; job-container initialization would fail before fallback.
-The selected `actions/setup-python` interpreter is mounted read-only and creates
-a private container venv; checks still run in Debian. Only image pulls fall back:
+The selected `actions/setup-python` interpreter and supported `actions/setup-node`
+runtime are mounted read-only from the runner tool cache. Python creates a private
+container venv; checks still run in Debian. Branch CI covers Node 24.22.1 and
+26.12.1. Only image pulls fall back:
 failed package installation, checks and coverage are never replayed. Cleanup
 removes only that invocation's named container. An all-registry failure means
 checks did not start. Inspect the failed step before changing application code.
@@ -106,8 +108,9 @@ Register new test modules in the appropriate `TEST_SUITE_PATTERNS` entry in
 `run_tests.py`; the default suite checks that every discovered module belongs
 to a domain suite.
 Generated OpenCode context hooks also have offline behavioral tests using
-Node.js. Keep Node.js available when running those tests locally; the Debian CI
-container installs it so this coverage is exercised there.
+Node.js. Keep a supported Node.js available when running those tests locally;
+the Debian CI container uses the explicitly selected runner runtime so this
+coverage is exercised there.
 
 First-party Chromium/Firefox application checks are a separate developer-machine
 command: `make browser-test`. They are never dependencies of `check-ci` and do

@@ -43,6 +43,7 @@ class BrowserHarnessSafeguards(unittest.TestCase):
             (Path(directory) / "package.json").write_text('{"name":"playwright"}')
             with patch.dict(os.environ, {"CI": ""}), \
                     patch.object(run_browser_tests, "_runtime", return_value={"version": run_browser_tests.PLAYWRIGHT_VERSION, "module": directory}), \
+                    patch.object(run_browser_tests, "browser_node", return_value="/tools/node"), \
                     patch.object(run_browser_tests.shutil, "which", return_value="/tools/existing"), \
                     patch.object(run_browser_tests.subprocess, "Popen") as process, redirect_stderr(StringIO()):
                 self.assertEqual(run_browser_tests.main(["--guacamole-assets", str(asset)]), 1)

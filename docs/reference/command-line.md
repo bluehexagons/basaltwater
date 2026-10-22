@@ -72,6 +72,7 @@ basaltw manifest validate [REPOSITORY] [--json]
 basaltw node status [--project PATH] [--version VERSION_OR_RANGE] [--json]
 basaltw node env [--project PATH] [--version VERSION_OR_RANGE]
 basaltw node exec [--project PATH] [--version VERSION_OR_RANGE] -- COMMAND...
+basaltw node resolve [--project PATH] [--version VERSION]
 basaltw node install [--project PATH] [--version VERSION] [--package-manager NAME@VERSION]...
 basaltw publish <command> ... [--json]
 basaltw desktop <command> ...
@@ -231,6 +232,13 @@ quoted PATH export for shell activation. Selection honors an explicit
 requirements. `node exec` runs the command after `--` with that runtime while
 retaining the current working directory; `--project` selects metadata rather
 than changing directories. These commands do not download a missing runtime.
+Selection requires `^24.22.1 || ^26.12.1`; unsupported pins and system runtimes
+fail with guidance rather than running a project command.
+
+`node resolve` prints an exact supported target for the project's pin and Node
+engines, using the official release index for rolling aliases and partial pins.
+It changes no runtime or NVM configuration. Deployment preparation uses it to
+validate every project target before installing any toolchain.
 
 `node install` explicitly installs the requested version or project pin through
 managed NVM. On CachyOS it prepares missing user-local NVM on demand, without
@@ -1789,7 +1797,7 @@ updates, and recovery. One native systemd instance is supported per server.
 | `--homebox DOMAIN[:PORT] [DATA_PATH]` | HTTPS hostname (frontend default 443; requires `--ssl`), or `:PORT` for SSH-tunnel access; data defaults to `/var/lib/homebox` |
 | `--homebox-port PORT` | Hostname mode's loopback backend port, default 7745 |
 | `--homebox-admin EMAIL` | Initial owner email, default `admin@homebox.local`; target generates the password |
-| `--homebox-version TAG` | Explicit stable release for an immediate upgrade, minimum/default `v0.26.2`; ordinary reruns retain the installed release while the managed timer checks newer stable releases weekly |
+| `--homebox-version TAG` | Explicit stable release for an immediate upgrade, minimum/default `v0.27.0`; ordinary reruns retain the installed release while the managed timer checks newer stable releases weekly |
 | `--no-homebox` | Disable service and remove its ingress while retaining data, secrets, releases, and backups |
 
 Health, backup, and restore accept `--username`, `--key`, `--workspace`, and
@@ -1801,7 +1809,8 @@ unhealthy or incomplete installation and probes HTTPS locally, so it does not
 verify external DNS or routing. Enabled HomeBox services also receive a weekly
 automatic stable-release check through the recovery-aware update timer;
 `--homebox-version` remains available for a deliberate immediate upgrade.
-Cloudflare ingress is not supported.
+Tags before `v0.27.0` are rejected in requests, installed state, and backup
+metadata. Cloudflare ingress is not supported.
 
 ## Storage and data movement
 

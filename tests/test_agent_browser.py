@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -23,10 +24,15 @@ class TestAgentBrowser(unittest.TestCase):
         self.project = self.root / "project"
         self.project.mkdir()
         self.managed = self.root / "managed"
-        self.enterContext(patch.object(agent_browser, "PLAYWRIGHT_ROOT", str(self.managed)))
+        self.mcp = self.root / "mcp"
+        self.enterContext(patch.object(agent_browser, "PLAYWRIGHT_STABLE_ROOT", str(self.managed)))
+        self.enterContext(patch.object(agent_browser, "PLAYWRIGHT_ROOT", str(self.mcp)))
         self.node = self.root / "node"
         self.node.write_text("node placeholder")
         self.node.chmod(0o755)
+        self.enterContext(patch.object(agent_browser, "SERVICE_NODE", str(self.node)))
+        self.enterContext(patch.object(agent_browser, "verify_service_node"))
+        self.enterContext(patch.object(agent_browser, "select_node", return_value=SimpleNamespace(executable=str(self.node))))
         self.which = self.enterContext(patch.object(agent_browser.shutil, "which", side_effect=lambda name: str(self.node) if name == "node" else None))
         self.execute = self.enterContext(patch.object(agent_browser, "run_command"))
         self.enterContext(patch.object(agent_browser, "browser_registrations", return_value={"codex": False, "opencode": False}))
@@ -137,14 +143,34 @@ class TestAgentBrowser(unittest.TestCase):
         self.execute.assert_not_called()
 
     def test_unknown_registration_is_preserved_in_inventory_and_doctor(self) -> None:
-        self.package(self.managed, agent_browser.PLAYWRIGHT_VERSION)
+        self.package(self.mcp, agent_browser.PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION)
         self.execute.return_value = self.smoke()
         with patch.object(agent_browser, "browser_registrations", return_value={"codex": None, "opencode": False}):
             inventory = agent_browser.browser_context_inventory(str(self.project))
-            result = agent_browser.check_browser("firefox", "managed", None)
+            result = agent_browser.check_browser("firefox", "managed-mcp", None)
         self.assertTrue(result["healthy"])
         self.assertIsNone(result["mcp_registered"])
-        self.assertTrue(all(item["mcp_registered"] is None for item in inventory if item["context"] == "managed"))
+        self.assertTrue(all(item["mcp_registered"] is None for item in inventory if item["context"] == "managed-mcp"))
+
+    def test_stable_and_mcp_checks_use_distinct_modules_and_versions(self) -> None:
+        stable = self.package(self.managed, agent_browser.PLAYWRIGHT_VERSION)
+        mcp = self.package(self.mcp, agent_browser.PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION)
+        self.execute.return_value = self.smoke()
+        for context, module, prerelease in (("managed", stable, False), ("managed-mcp", mcp, True)):
+            with self.subTest(context=context):
+                result = agent_browser.check_browser("firefox", context, None)
+                self.assertTrue(result["healthy"])
+                self.assertEqual(result["prerelease_dependency"], prerelease)
+                self.assertEqual(self.execute.call_args.args[0][-2], str(module))
+        (stable / "package.json").write_text(json.dumps({"name": "playwright", "version": agent_browser.PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION}))
+        self.assertEqual(agent_browser.check_browser("firefox", "managed", None)["issue"], "runtime_version_mismatch")
+
+    def test_unusable_node_prevents_payload_install_and_launch(self) -> None:
+        self.package(self.managed, agent_browser.PLAYWRIGHT_VERSION)
+        with patch.object(agent_browser, "verify_service_node", side_effect=RuntimeError("untrusted Node")):
+            result = agent_browser.check_browser("firefox", "managed", None, install=True)
+        self.assertEqual(result["issue"], "node_unavailable")
+        self.execute.assert_not_called()
 
     def test_failed_install_returns_failure_without_attempting_smoke(self) -> None:
         self.package(self.project, "1.57.2")
@@ -211,6 +237,8 @@ class TestAgentBrowser(unittest.TestCase):
         for values, expected in (
             ({"engine": "chromium", "context": "managed", "network_origin": "host"},
              {"engine": "chromium", "context": "managed", "network_origin": "host"}),
+            ({"engine": "chromium", "context": "managed-mcp", "network_origin": "host"},
+             {"engine": "chromium", "context": "managed-mcp", "network_origin": "host"}),
             ({"engine": "/private/source", "context": "secret context", "network_origin": "https://private/"},
              {"engine": None, "context": None, "network_origin": None}),
             ({}, {"engine": None, "context": None, "network_origin": None}),

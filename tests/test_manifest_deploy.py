@@ -553,11 +553,11 @@ class TestManifestBuildToolchains(unittest.TestCase):
     def test_prepares_detected_toolchains_once(
         self, mock_install_node, mock_install_uv, mock_run
     ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.return_value = MagicMock(returncode=0, stdout="v24.22.1", stderr="")
         with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as build_home:
             for filename in ("package.json", "pyproject.toml", ".nvmrc"):
                 with open(os.path.join(source, filename), "w", encoding="utf-8") as handle:
-                    handle.write("{}" if filename != ".nvmrc" else "22\n")
+                    handle.write("{}" if filename != ".nvmrc" else "24.22.1\n")
 
             def install_node(_user: str, home: str) -> None:
                 os.makedirs(os.path.join(home, ".nvm"), exist_ok=True)
@@ -580,7 +580,7 @@ class TestManifestBuildToolchains(unittest.TestCase):
         mock_install_node.assert_called_once_with("build-example", build_home)
         mock_install_uv.assert_called_once_with(build_home, username="build-example")
         self.assertEqual(
-            sum("nvm install" in call.args[0] for call in mock_run.call_args_list),
+            sum("node install" in call.args[0] for call in mock_run.call_args_list),
             2,
         )
 

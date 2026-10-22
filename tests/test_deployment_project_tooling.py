@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +20,7 @@ from lib.config import SetupConfig
 from lib.deployment import DeploymentOrchestrator
 from lib.project_manifest import Component, Manifest, WorkflowStep, parse_manifest
 from lib.setup_common import prepare_deployments
+from lib.node_toolchain import add_node_subparser, run_node_command
 
 
 class BuildUserHomeTests(unittest.TestCase):
@@ -123,6 +128,135 @@ class BuildUserHomeTests(unittest.TestCase):
 
 
 class DeploymentProjectToolingTests(unittest.TestCase):
+    @staticmethod
+    def run_shared_node_cli(command, **_options):
+        """Exercise the actual Node CLI behind the mocked build-user boundary."""
+        arguments = shlex.split(command)
+        parser = argparse.ArgumentParser()
+        add_node_subparser(parser.add_subparsers(dest='command'))
+        args = parser.parse_args(arguments[arguments.index('node'):])
+        environment = dict(argument.split('=', 1) for argument in arguments if argument.startswith(('HOME=', 'NVM_DIR=')))
+        output, error = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, environment), redirect_stdout(output), redirect_stderr(error):
+            code = run_node_command(args)
+        return subprocess.CompletedProcess(command, code, output.getvalue(), error.getvalue())
+
+    def test_unsupported_direct_and_nested_pins_precede_tool_installation(self):
+        for nested in (False, True):
+            for pin in ('22', '27', '24.22.0', '26.12.0'):
+                with self.subTest(nested=nested, pin=pin), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / '.git').mkdir()
+                    (root / 'package.json').write_text('{}')
+                    (root / '.node-version').write_text('24.22.1' if nested else pin)
+                    (root / '.nvmrc').write_text('24')
+                    if nested:
+                        frontend = root / 'frontend'
+                        frontend.mkdir()
+                        (frontend / 'package.json').write_text('{}')
+                        (frontend / '.node-version').write_text(pin)
+                        (frontend / '.nvmrc').write_text('24')
+                    home = root / 'build-home'
+                    home.mkdir()
+                    orchestrator = DeploymentOrchestrator()
+                    with patch.object(orchestrator, '_build_home', return_value=str(home)), \
+                            patch('lib.deployment.run', side_effect=self.run_shared_node_cli) as run, \
+                            patch('common.common_steps.install_node_for_user') as install, \
+                            patch('lib.node_toolchain.fetch_node_releases') as fetch, \
+                            patch('lib.node_toolchain.subprocess.run') as mutation, \
+                            self.assertRaisesRegex(RuntimeError, 'Node.js version resolution failed'):
+                        orchestrator._prepare_build_toolchain(directory, 'build-example', ['node'])
+                    install.assert_not_called()
+                    fetch.assert_not_called()
+                    mutation.assert_not_called()
+                    self.assertTrue(all('node resolve' in call.args[0] for call in run.call_args_list))
+                    self.assertTrue(all('runuser -u build-example -- env ' in call.args[0] for call in run.call_args_list))
+
+    def test_direct_build_cannot_execute_project_code_with_an_unsupported_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / '.git').mkdir()
+            (root / '.node-version').write_text('27')
+            home = root / 'home'
+            home.mkdir()
+            component = Component('site', 'static', 'example.com', build=['touch forbidden'], output='dist')
+
+            def execute_cli(command, **_options):
+                # The build shell contains a literal shared Node exec command.
+                outer = shlex.split(command)
+                shell = outer[-1]
+                start = shell.index('/usr/bin/python3 -I ')
+                return self.run_shared_node_cli(shell[start:])
+
+            orchestrator = DeploymentOrchestrator()
+            with patch.object(orchestrator, '_build_home', return_value=str(home)), \
+                    patch.dict(os.environ, {'NVM_DIR': str(home / '.nvm')}), \
+                    patch('lib.deployment.run', side_effect=execute_cli), \
+                    patch('lib.node_toolchain.shutil.which', return_value=None), \
+                    patch('lib.node_toolchain.subprocess.run') as execute, \
+                    self.assertRaisesRegex(RuntimeError, "Component 'site' build failed"):
+                orchestrator._run_component_build(component, directory, 'build-example', ['node'])
+            execute.assert_not_called()
+            self.assertFalse((root / 'forbidden').exists())
+
+    def test_nested_nvm_use_routes_through_policy_and_node_version_precedence(self):
+        for nested_pin in ('24.22.1', '27'):
+            with self.subTest(nested_pin=nested_pin), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / '.git').mkdir()
+                (root / '.nvmrc').write_text('26.12.1')
+                frontend = root / 'frontend'
+                frontend.mkdir()
+                (frontend / '.node-version').write_text(nested_pin)
+                (frontend / '.nvmrc').write_text('27')
+                home = root / 'build-home'
+                for version in ('24.22.1', '26.12.1'):
+                    binary = home / '.nvm' / 'versions' / 'node' / ('v' + version) / 'bin' / 'node'
+                    binary.parent.mkdir(parents=True)
+                    binary.write_text('#!/bin/sh\nprintf "v' + version + '\\n"\n')
+                    binary.chmod(0o755)
+                alias = home / '.nvm' / 'alias' / 'default'
+                alias.parent.mkdir()
+                alias.write_text('26.12.1')
+                # Invoke the actual selector, without loading the unrelated full
+                # application CLI or requiring its system Python dependencies.
+                cli = root / 'node-cli.py'
+                cli.write_text(
+                    'import argparse, sys\n'
+                    f'sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r})\n'
+                    'from lib.node_toolchain import add_node_subparser, run_node_command\n'
+                    'parser = argparse.ArgumentParser()\n'
+                    'add_node_subparser(parser.add_subparsers(dest="command"))\n'
+                    'sys.exit(run_node_command(parser.parse_args()))\n'
+                )
+                component = Component('site', 'static', 'example.com', build=[
+                    'node --version && cd frontend && '
+                    'if command -v nvm >/dev/null 2>&1; then nvm use; fi && '
+                    'node --version && touch built',
+                ], output='dist')
+                results = []
+
+                def execute_payload(command, **_options):
+                    arguments = shlex.split(command)
+                    self.assertEqual(arguments[:4], ['runuser', '-u', 'build-example', '--'])
+                    result = subprocess.run(arguments[4:], cwd=home, capture_output=True,
+                                            text=True, check=False, timeout=10)
+                    results.append(result)
+                    return result
+
+                orchestrator = DeploymentOrchestrator()
+                with patch.object(orchestrator, '_build_home', return_value=str(home)), \
+                        patch.object(orchestrator, '_node_cli', return_value=[sys.executable, '-I', str(cli), 'node']), \
+                        patch('lib.deployment.run', side_effect=execute_payload):
+                    if nested_pin == '27':
+                        with self.assertRaisesRegex(RuntimeError, "Component 'site' build failed"):
+                            orchestrator._run_component_build(component, directory, 'build-example', ['node'])
+                    else:
+                        orchestrator._run_component_build(component, directory, 'build-example', ['node'])
+                self.assertEqual(results[0].stdout.splitlines(),
+                                 ['v26.12.1', 'v24.22.1'] if nested_pin != '27' else ['v26.12.1'])
+                self.assertEqual((frontend / 'built').exists(), nested_pin != '27')
+
     def test_explicit_go_build_skips_tools_and_existing_nvm_activation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -167,11 +301,12 @@ class DeploymentProjectToolingTests(unittest.TestCase):
             (root / '.nvmrc').write_text('24', encoding='utf-8')
             orchestrator = DeploymentOrchestrator()
             with patch.object(orchestrator, '_build_home', return_value=str(home)), patch(
-                'lib.deployment.run', return_value=subprocess.CompletedProcess([], 0),
+                'lib.deployment.run', return_value=subprocess.CompletedProcess([], 0, 'v24.22.1', ''),
             ) as run, patch('common.common_steps.install_or_update_uv', return_value=True) as uv:
                 orchestrator._prepare_build_toolchain(directory, 'build-example', ['node', 'python'])
-            self.assertEqual(run.call_count, 1)
-            self.assertIn('nvm install', run.call_args.args[0])
+            self.assertEqual(run.call_count, 2)
+            self.assertIn('node install', run.call_args.args[0])
+            self.assertIn('--version v24.22.1', run.call_args.args[0])
             uv.assert_called_once_with(str(home), username='build-example')
 
     def test_build_and_toolchain_shells_discard_the_callers_environment(self):
@@ -180,14 +315,10 @@ class DeploymentProjectToolingTests(unittest.TestCase):
             frontend = root / 'frontend'
             frontend.mkdir()
             (frontend / 'package.json').write_text('{}', encoding='utf-8')
-            (frontend / '.nvmrc').write_text('22', encoding='utf-8')
+            (frontend / '.nvmrc').write_text('24', encoding='utf-8')
             home = root / 'build home'
             (home / '.nvm').mkdir(parents=True)
-            (home / '.nvm/nvm.sh').write_text(
-                'nvm() { [ "$NVM_DIR" = "$HOME/.nvm" ] && '
-                '[ -z "${NVM_BIN-}${NVM_INC-}${BASH_ENV-}${ENV-}" ] && '
-                "printf 'own build environment\\n'; }\n", encoding='utf-8',
-            )
+            (home / '.nvm/nvm.sh').write_text('echo shell-loading-bypass >&2; exit 99\n', encoding='utf-8')
             hook = Path(caller_home) / 'shell-env.sh'
             hook.write_text("printf 'foreign shell hook was loaded\\n' >&2\n", encoding='utf-8')
             hook.chmod(0o000)
@@ -206,17 +337,25 @@ class DeploymentProjectToolingTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stderr, '')
-                self.assertEqual(result.stdout, 'own build environment\n')
                 return result
 
-            component = Component('site', 'static', 'example.com', build=['nvm'], output='dist')
+            checker = (
+                'import os, sys, subprocess; '
+                'assert os.environ["NVM_DIR"] == os.environ["HOME"] + "/.nvm"; '
+                'assert not any(os.environ.get(key) for key in ("NVM_BIN", "NVM_INC", "BASH_ENV", "ENV")); '
+                'mode = sys.argv[1]; '
+                'print("v24.22.1") if mode == "resolve" else '
+                'sys.exit(subprocess.run(sys.argv[sys.argv.index("--") + 1:]).returncode) if mode == "exec" else None'
+            )
+            component = Component('site', 'static', 'example.com',
+                                  build=['printf "own build environment\\n"'], output='dist')
             orchestrator = DeploymentOrchestrator()
             with patch.object(orchestrator, '_build_home', return_value=str(home)), patch(
                 'lib.deployment.run', side_effect=execute_payload,
-            ) as run:
+            ) as run, patch.object(orchestrator, '_node_cli', return_value=[sys.executable, '-I', '-c', checker]):
                 orchestrator._run_component_build(component, directory, 'build-example')
                 orchestrator._prepare_build_toolchain(directory, 'build-example')
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_count, 5)
             self.assertEqual(hook.stat().st_mode & 0o777, 0o000)
 
     def test_publishing_metadata_survives_port_resolution_and_cannot_deploy_alone(self):
@@ -254,7 +393,7 @@ class DeploymentProjectToolingTests(unittest.TestCase):
     def test_direct_component_build_activates_root_pin(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / '.nvmrc').write_text('26.10.0')
+            (root / '.nvmrc').write_text('26.12.1')
             home = root / 'build-home'
             (home / '.nvm').mkdir(parents=True)
             (home / '.nvm/nvm.sh').write_text('# managed NVM')
@@ -264,8 +403,9 @@ class DeploymentProjectToolingTests(unittest.TestCase):
             ) as run:
                 DeploymentOrchestrator()._run_component_build(component, directory, 'build-example')
             command = run.call_args.args[0]
-            self.assertIn('nvm use', command)
-            self.assertLess(command.index('nvm use'), command.index('npm run build'))
+            self.assertIn('node exec --project', command)
+            self.assertLess(command.index('node exec'), command.index('npm run build'))
+            self.assertIn('node env', command)
 
     def test_direct_toolchain_provisions_nested_frontend_pin(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -273,17 +413,17 @@ class DeploymentProjectToolingTests(unittest.TestCase):
             frontend = root / 'frontend'
             frontend.mkdir()
             (frontend / 'package.json').write_text('{}')
-            (frontend / '.nvmrc').write_text('22')
+            (frontend / '.nvmrc').write_text('24')
             home = root / 'build-home'
             (home / '.nvm').mkdir(parents=True)
             (home / '.nvm/nvm.sh').write_text('# managed NVM')
             with patch.object(DeploymentOrchestrator, '_build_home', return_value=str(home)), patch(
-                'lib.deployment.run', return_value=subprocess.CompletedProcess([], 0)
+                'lib.deployment.run', return_value=subprocess.CompletedProcess([], 0, 'v24.22.1', '')
             ) as run:
                 DeploymentOrchestrator()._prepare_build_toolchain(directory, 'build-example')
-            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_count, 4)
             self.assertIn(str(frontend), run.call_args.args[0])
-            self.assertIn('nvm install', run.call_args.args[0])
+            self.assertIn('node install', run.call_args.args[0])
 
 
 class DeclaredBuildRuntimeTests(unittest.TestCase):

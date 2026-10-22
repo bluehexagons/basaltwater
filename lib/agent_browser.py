@@ -10,10 +10,14 @@ import re
 import shutil
 import sys
 
-from common.browser_automation_steps import PLAYWRIGHT_ROOT, PLAYWRIGHT_VERSION
+from common.browser_automation_steps import (
+    PLAYWRIGHT_ROOT, PLAYWRIGHT_STABLE_ROOT, PLAYWRIGHT_VERSION, PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION,
+)
 from lib.atomic_io import read_json_file
 from lib.browser_registration import browser_registrations, register_browser_agent, registration_status
 from lib.remote_utils import CommandTimeoutError, run as run_command
+from lib.node_toolchain import select_node
+from lib.service_node import SERVICE_NODE, verify_service_node
 from lib.validation import validate_filesystem_path
 
 
@@ -39,12 +43,12 @@ const [modulePath, engine] = process.argv.slice(1);
 
 
 def _runtime(context: str, project: str | None) -> dict[str, str] | None:
-    if context not in ("managed", "project"):
-        raise ValueError("Browser context must be managed or project")
-    if context == "managed":
+    if context not in ("managed", "managed-mcp", "project"):
+        raise ValueError("Browser context must be managed, managed-mcp or project")
+    if context in ("managed", "managed-mcp"):
         if project is not None:
             raise ValueError("--project requires --context project")
-        root = PLAYWRIGHT_ROOT
+        root = PLAYWRIGHT_STABLE_ROOT if context == "managed" else PLAYWRIGHT_ROOT
     else:
         if not project:
             raise ValueError("--context project requires --project DIRECTORY")
@@ -68,18 +72,30 @@ def _runtime(context: str, project: str | None) -> dict[str, str] | None:
     return None
 
 
+def browser_node(context: str, project: str | None) -> str:
+    """Select the verified service interpreter or the project's supported Node."""
+    if context in ("managed", "managed-mcp"):
+        with redirect_stdout(sys.stderr):
+            verify_service_node()
+        return SERVICE_NODE
+    return select_node(project or ".").executable
+
+
 def browser_context_inventory(project: str) -> list[dict[str, object]]:
     """Report prerequisites without launching browsers or asserting test coverage."""
     managed = _runtime("managed", None)
+    mcp = _runtime("managed-mcp", None)
     local = _runtime("project", project)
     contexts = [{"engine": "unknown", "context": "collaborative-preview", "browser_version": None,
                  "network_origin": "connected-client", "readiness": "session-dependent",
                  "discovered": None, "launchable": None, "mcp_registered": None, "application_tested": False}]
     for context, runtime, engines in (("managed", managed, ("chromium", "firefox")),
+                                      ("managed-mcp", mcp, ("chromium", "firefox")),
                                       ("project", local, ("chromium", "firefox"))):
         for engine in engines:
             readiness = "unverified" if runtime else "runtime-missing"
-            if context == "managed" and runtime and runtime["version"] != PLAYWRIGHT_VERSION:
+            expected = PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION if context == "managed-mcp" else PLAYWRIGHT_VERSION
+            if context != "project" and runtime and runtime["version"] != expected:
                 readiness = "runtime-version-mismatch"
             command = ["basaltw", "agent", "browser", "doctor", "--context", context, "--engine", engine]
             if context == "project":
@@ -88,7 +104,8 @@ def browser_context_inventory(project: str) -> list[dict[str, object]]:
             contexts.append({"engine": engine, "context": context, "headless": True,
                              "network_origin": "host", "readiness": readiness,
                              "discovered": runtime is not None, "launchable": None,
-                             "mcp_registered": registration_status(browser_registrations(engine)) if context == "managed" else None,
+                             "mcp_registered": registration_status(browser_registrations(engine)) if context == "managed-mcp" else False,
+                             "prerelease_dependency": context == "managed-mcp",
                              "application_tested": False, "browser_version": None,
                              "playwright_version": runtime["version"] if runtime else None,
                              "verification_argv": command})
@@ -135,7 +152,7 @@ def desktop_firefox_inventory() -> list[dict[str, object]]:
 
 def _environment(context: str) -> dict[str, str]:
     environment = {key: value for key, value in os.environ.items() if key not in ("NODE_OPTIONS", "NODE_PATH")}
-    if context == "managed":
+    if context in ("managed", "managed-mcp"):
         environment["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser("~/.cache/ms-playwright")
     # An optional engine installation must not garbage-collect other projects'
     # payloads. Retain the project's explicit browser-cache selection.
@@ -151,19 +168,26 @@ def check_browser(engine: str, context: str, project: str | None, *, install: bo
     result = {"engine": engine, "context": context, "network_origin": "host", "headless": True,
               "healthy": False, "ok": False, "playwright_version": runtime["version"] if runtime else None,
               "discovered": runtime is not None, "launchable": None,
-              "registrations": browser_registrations(engine) if context == "managed" else {},
+              "registrations": browser_registrations(engine) if context == "managed-mcp" else {},
+              "prerelease_dependency": context == "managed-mcp",
               "application_tested": False,
               "rendering_verified": False, "application_verified": False}
-    result["mcp_registered"] = registration_status(result["registrations"]) if context == "managed" else None
+    result["mcp_registered"] = registration_status(result["registrations"]) if context == "managed-mcp" else False
     if runtime is None:
-        return {**result, "issue": "runtime_missing", "remediation": "rerun_setup_with_browser_automation" if context == "managed" else "install_project_dependencies_from_its_lockfile"}
-    if context == "managed" and runtime["version"] != PLAYWRIGHT_VERSION:
-        return {**result, "issue": "runtime_version_mismatch", "expected_playwright_version": PLAYWRIGHT_VERSION,
+        return {**result, "issue": "runtime_missing", "remediation": "rerun_setup_with_browser_automation" if context != "project" else "install_project_dependencies_from_its_lockfile"}
+    expected = PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION if context == "managed-mcp" else PLAYWRIGHT_VERSION
+    if context != "project" and runtime["version"] != expected:
+        return {**result, "issue": "runtime_version_mismatch", "expected_playwright_version": expected,
                 "remediation": "rerun_setup_with_browser_automation"}
-    node = "/usr/bin/node" if context == "managed" else shutil.which("node")
-    if not node or not os.path.isfile(node) or not os.access(node, os.X_OK):
-        return {**result, "issue": "node_missing", "remediation": "select_installed_project_node_runtime" if context == "project" else "rerun_setup_with_browser_automation"}
+    try:
+        node = browser_node(context, project)
+        if not os.path.isfile(node) or not os.access(node, os.X_OK):
+            raise ValueError("Selected Node executable is missing or not executable")
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {**result, "issue": "node_unavailable", "error": str(exc),
+                "remediation": "select_installed_project_node_runtime" if context == "project" else "rerun_setup_with_browser_automation"}
     environment = _environment(context)
+    environment["PATH"] = os.pathsep.join((os.path.dirname(node), environment.get("PATH", os.defpath)))
     try:
         if install:
             if not os.path.isfile(runtime["cli"]):
@@ -202,7 +226,7 @@ def add_browser_parser(commands: argparse._SubParsersAction) -> None:
     for name in ("doctor", "install", "register"):
         action = actions.add_parser(name)
         action.add_argument("--engine", choices=("chromium", "firefox"), default="chromium")
-        action.add_argument("--context", choices=("managed", "project"), default="managed")
+        action.add_argument("--context", choices=("managed", "managed-mcp", "project"), default="managed")
         action.add_argument("--project")
         action.add_argument("--json", action="store_true")
         if name == "register":
@@ -212,9 +236,12 @@ def add_browser_parser(commands: argparse._SubParsersAction) -> None:
 def run_browser_command(args: argparse.Namespace) -> int:
     result = None
     try:
-        if args.browser_command == "register" and args.context != "managed":
-            raise ValueError("MCP registration requires --context managed")
-        result = check_browser(args.engine, args.context, args.project, install=args.browser_command == "install")
+        context = args.context
+        if args.browser_command == "register":
+            if context == "project":
+                raise ValueError("MCP registration requires a managed context")
+            context = "managed-mcp"
+        result = check_browser(args.engine, context, args.project, install=args.browser_command == "install")
         if args.browser_command == "register" and result["ok"]:
             from lib.agent_cli import _browser_launchers_secure
             from common.browser_automation_steps import PLAYWRIGHT_MCP_WRAPPER

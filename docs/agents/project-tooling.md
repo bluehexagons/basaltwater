@@ -200,14 +200,14 @@ or `.nvmrc` (the former wins in the same directory), otherwise `package.json`
 Node engines, otherwise the managed NVM default or system Node. Lookup stops
 at the nearest Git checkout boundary, so a frontend can have a different pin
 from its server. Pins and engine requirements must both match. Within a major
-or range, the highest matching installed stable release is selected.
+or range, the highest policy-allowed matching installed stable release is selected.
 
 Stable major/minor/exact pins, npm comparators, caret/tilde ranges, wildcards,
 hyphen ranges, and `||` alternatives are supported. NVM `node`, `stable`,
 `default`, and available `lts/*` aliases are accepted. Prerelease versions and
 unsupported syntax fail with guidance; no runtime is downloaded implicitly.
 Commit a stable pin for reproducible builds. A rolling `node` pin deliberately
-selects the newest installed release and can differ from reviewed packaging
+selects the newest policy-allowed installed release and can differ from reviewed packaging
 metadata. A development major and a reviewed packaged runtime are separate
 contracts: projects such as Antistatic select development Node independently
 and obtain their verified packaged runtime during packaging.
@@ -219,28 +219,48 @@ basaltw node exec --project frontend -- npm run check --prefix frontend
 eval "$(basaltw node env --project frontend)"
 # Install the project pin explicitly through managed NVM.
 basaltw node install
+# Resolve the exact supported target without installing it.
+basaltw node resolve
 # Check the selected Node/npm and the project's npm engine requirement.
 basaltw node doctor --project frontend --json
 # Global tools belong to each Node installation; install exact reviewed versions.
 basaltw node install --version 26.12.1 --package-manager npm@12.2.1
 ```
 
-Managed Node installation, the Debian setup baseline, and T3 web setup require
+Project selection, managed Node installation, the Debian setup baseline, and T3 web setup require
 `^24.22.1 || ^26.12.1`. The baseline continues to install LTS by default;
 automatic Current-track updates still require their explicit policy opt-in.
-Unsupported numeric install requests fail before preparing NVM. Aliases are
-checked after NVM resolves the installed version, before package-manager work.
-Existing project runtimes are retained. Generic project selection and range
-parsing still support older inputs; selection alone does not assert this
-managed-runtime policy.
+Unsupported requests fail before preparing NVM. Aliases and partial version pins resolve to
+an exact supported stable release before installation and package-manager work.
+Existing project runtimes remain on disk for inspection and ownership protection,
+but unsupported versions cannot be selected by managed commands. Generic semver
+parsing still accepts older versions when checking package-manager requirements.
 
-The privileged browser service remains an exception: its verified launchers
-use distribution-owned `/usr/bin/node` (Node 20 on Debian Trixie). Moving them
-to supported Node requires an isolated, verified service runtime; a writable
-user NVM installation is not a replacement. The pinned Playwright MCP package
-also requires prerelease Playwright. Latest MCP 0.0.83 still requires an alpha
-runtime, so a stable-only update needs separate browser/test and MCP runtimes
-and browser qualification. These dependencies remain held pending that work.
+`node resolve` prints the exact install target without changing NVM, runtime
+ownership or package managers. With no explicit version or project pin, it
+intersects Node engines with the newest allowed stable release, or selects
+the newest allowed LTS when no engines are declared. Exact stable pins are
+checked offline. Major/minor pins and node/stable/LTS aliases use the bounded
+official Node release index and intersect policy plus project engines before
+any NVM preparation or installation; discovery failure does not fall back to
+a cached alias. Local aliases serve installed-runtime selection only.
+Explicit installation protects the resolved exact cached target before NVM
+runs and verifies both the activated exact version and its executable before
+optional package-manager work. Setup and scheduled maintenance pin the default
+to their exact validated LTS target.
+
+Deployment preparation and builds use this shared selector under the existing
+build identity, including nested frontend pins and `.node-version` precedence.
+Host readiness rejects an observed unsupported active/default runtime even when
+another supported version is installed.
+
+Privileged browser provisioning uses checksum-pinned, root-owned Node 24.22.1
+under `/opt/basaltwater-node`; it never borrows a user-writable NVM runtime.
+Stable browser testing uses Playwright 1.64.1 independently of MCP 0.0.83's exact
+alpha Playwright dependency. That prerelease remains an explicit exception only
+in `managed-mcp`. See [browser contexts](browser-automation.md#installed-components-and-agent-configuration).
+Debian CI receives an explicitly selected, verified Node from its read-only
+tool cache; it does not install distro Node 20.
 
 Go setup uses the newest stable release from the current official download
 feed (Go has no LTS), including on ordinary reruns. It reuses an installed Go
@@ -256,8 +276,9 @@ as well as NVM. `node exec` retains the current working directory; `--project`
 only selects metadata. Selection does not alter NVM's default alias. Installation
 runs NVM in a child shell; an existing default alias remains NVM-managed.
 An exact version that conflicts with project Node engines is rejected before
-NVM preparation or installation. Major/minor pins and aliases are checked
-against the engines using the exact version active in the NVM install shell.
+NVM preparation or installation. Major/minor pins and aliases are resolved
+against the engines before installation and checked again against the exact
+version active in the NVM install shell.
 An older compatible installed runtime cannot hide an incompatible resolution.
 The resolved executable must also report that version before optional global
 package managers are installed; a failure leaves the runtime available for inspection.

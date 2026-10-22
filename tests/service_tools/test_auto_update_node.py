@@ -25,6 +25,10 @@ class TestAutoUpdateNode(unittest.TestCase):
         self.nvm = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         stack.enter_context(patch.object(auto_update_node, "get_nvm_dir", return_value=str(self.nvm)))
         stack.enter_context(patch.dict(os.environ, {LATEST_UPDATE_ENV: "0"}))
+        stack.enter_context(patch.object(auto_update_node, "fetch_node_releases", return_value=[
+            {"version": "v24.22.1", "lts": "Krypton"},
+            {"version": "v26.12.2", "lts": False},
+        ]))
 
         def installed_marker(nvm_dir, version, *, owner):
             # Mocked NVM success supplies the files a real install would create.
@@ -58,21 +62,21 @@ class TestAutoUpdateNode(unittest.TestCase):
 
                 mock_run.side_effect = run_command
                 success, details = auto_update_node.install_target_version(
-                    "lts", "v20.12.3", "v20.12.2",
+                    "lts", "v24.22.2", "v24.22.1",
                 )
                 self.assertFalse(success)
                 self.assertIn("restored the previous Node.js runtime", details or "")
                 commands = [call.args[0] for call in mock_run.call_args_list]
-                self.assertIn(["nvm", "alias", "default", "v20.12.2"], commands)
-                self.assertIn(["nvm", "uninstall", "v20.12.3"], commands)
-                self.assertNotIn(["nvm", "uninstall", "v20.12.2"], commands)
+                self.assertIn(["nvm", "alias", "default", "v24.22.1"], commands)
+                self.assertIn(["nvm", "uninstall", "v24.22.2"], commands)
+                self.assertNotIn(["nvm", "uninstall", "v24.22.1"], commands)
                 self.assertFalse(any("npm" in command and "install" in command for command in commands))
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_empty_valid_package_inventory_needs_no_migration(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess([], 0, '{}', '')
         self.assertEqual(
-            auto_update_node.reinstall_global_packages("v20.12.2", "v20.12.3"),
+            auto_update_node.reinstall_global_packages("v24.22.1", "v24.22.2"),
             (True, None),
         )
         mock_run.assert_called_once()
@@ -82,38 +86,38 @@ class TestAutoUpdateNode(unittest.TestCase):
         mock_run.return_value = subprocess.CompletedProcess(
             [],
             0,
-            'Running node v20.12.2 (npm v10.5.0)\n{"dependencies":{"pnpm":{"version":"9.1.0"}}}\n',
+            'Running node v24.22.1 (npm v10.5.0)\n{"dependencies":{"pnpm":{"version":"9.1.0"}}}\n',
             "",
         )
 
         self.assertEqual(
-            auto_update_node.reinstall_global_packages("v20.12.2", "v20.12.3"),
+            auto_update_node.reinstall_global_packages("v24.22.1", "v24.22.2"),
             (True, None),
         )
         self.assertEqual(mock_run.call_count, 2)
         self.assertEqual(
             mock_run.call_args_list[1].args[0],
-            ["nvm", "exec", "v20.12.3", "npm", "install", "-g", "pnpm@9.1.0"],
+            ["nvm", "exec", "v24.22.2", "npm", "install", "-g", "pnpm@9.1.0"],
         )
 
     def test_select_installed_latest_track_from_versions_newer_than_lts(self):
         self.assertEqual(
             auto_update_node.select_installed_latest_track_version(
-                ["v20.12.2", "v22.1.0", "v22.2.0"],
-                "v20.12.2",
-                "v22.3.0",
+                ["v24.22.1", "v26.12.1", "v26.12.2"],
+                "v24.22.1",
+                "v26.12.3",
             ),
-            "v22.2.0",
+            "v26.12.2",
         )
 
     def test_select_installed_latest_track_when_remote_latest_unknown(self):
         self.assertEqual(
             auto_update_node.select_installed_latest_track_version(
-                ["v20.12.2", "v22.1.0"],
-                "v20.12.2",
+                ["v24.22.1", "v26.12.1"],
+                "v24.22.1",
                 "",
             ),
-            "v22.1.0",
+            "",
         )
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
@@ -122,21 +126,29 @@ class TestAutoUpdateNode(unittest.TestCase):
             args=[],
             returncode=0,
             stdout="""
-->     v20.12.2
-default -> lts/* (-> v20.12.2)
-node -> stable (-> v22.3.0) (default)
-stable -> 22.3 (-> v22.3.0) (default)
+->     v24.22.1
+default -> lts/* (-> v24.22.1)
+node -> stable (-> v26.12.3) (default)
+stable -> 22.3 (-> v26.12.3) (default)
+       v24.22.1-rc.1
+       v26.12.2extra
 """,
             stderr="",
         )
 
-        self.assertEqual(auto_update_node.get_installed_versions(), ["v20.12.2"])
+        self.assertEqual(auto_update_node.get_installed_versions(), ["v24.22.1"])
+
+    def test_prerelease_or_malformed_default_is_not_a_stable_installed_source(self):
+        for value in ('v24.22.1-rc.1', 'v26.12.1extra', 'N/A', 'default -> v24.22.1'):
+            with self.subTest(value=value), patch.object(auto_update_node, 'run_nvm_command',
+                    return_value=subprocess.CompletedProcess([], 0, value, '')):
+                self.assertEqual(auto_update_node.get_current_version(), '')
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_global_package_updates_skip_by_default(self, mock_run_nvm):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertLogs(auto_update_node.logger, level="INFO") as logs:
-                success, details = auto_update_node.update_global_packages()
+                success, details = auto_update_node.update_global_packages("v24.22.1")
 
         self.assertTrue(success)
         self.assertIsNone(details)
@@ -146,15 +158,19 @@ stable -> 22.3 (-> v22.3.0) (default)
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_global_package_updates_can_be_enabled(self, mock_run_nvm):
         mock_run_nvm.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        directory = auto_update_node.runtime_directory(self.nvm, "v24.22.1")
+        (directory / "bin").mkdir(parents=True)
+        (directory / "bin/node").write_text("fixture")
+        mark_runtime(self.nvm, "v24.22.1", owner="automatic")
 
         with patch.dict(os.environ, {ECOSYSTEM_AUTO_UPGRADE_ENV: "1", DEPENDENCY_MIN_AGE_DAYS_ENV: "2"}):
-            success, details = auto_update_node.update_global_packages()
+            success, details = auto_update_node.update_global_packages("v24.22.1")
 
         self.assertTrue(success)
         self.assertIsNone(details)
         self.assertEqual(mock_run_nvm.call_count, 3)
         for call_args in mock_run_nvm.call_args_list:
-            self.assertEqual(call_args.args[0][:4], ["nvm", "exec", "default", "npm"])
+            self.assertEqual(call_args.args[0][:4], ["nvm", "exec", "v24.22.1", "npm"])
             self.assertTrue(any(arg.startswith("--before=") for arg in call_args.args[0]))
 
     @patch("web.service_tools.auto_update_node.run_command")
@@ -188,7 +204,7 @@ stable -> 22.3 (-> v22.3.0) (default)
         mock_popen.return_value.communicate.return_value = ("", "download failed")
         mock_popen.return_value.returncode = 1
 
-        success, details = auto_update_node.install_target_version("lts", "v20.12.3", "v20.12.2")
+        success, details = auto_update_node.install_target_version("lts", "v24.22.2", "v24.22.1")
 
         self.assertFalse(success)
         self.assertEqual(details, "download failed")
@@ -198,11 +214,11 @@ stable -> 22.3 (-> v22.3.0) (default)
     @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")
     def test_run_nvm_command_converts_timeout_to_failed_result(self, _nvm_dir, mock_run):
         mock_run.side_effect = auto_update_node.CommandTimeoutError(
-            "nvm install v20.12.3",
+            "nvm install v24.22.2",
             auto_update_node._NVM_COMMAND_TIMEOUT_SECONDS,
         )
 
-        result = auto_update_node.run_nvm_command(["nvm", "install", "v20.12.3"])
+        result = auto_update_node.run_nvm_command(["nvm", "install", "v24.22.2"])
 
         self.assertEqual(result.returncode, 124)
         self.assertIn("timed out", result.stderr)
@@ -212,10 +228,10 @@ stable -> 22.3 (-> v22.3.0) (default)
     @patch("web.service_tools.auto_update_node.update_global_packages", return_value=(True, ""))
     @patch("web.service_tools.auto_update_node.set_default_lts_alias", return_value=True)
     @patch("web.service_tools.auto_update_node.install_target_version", return_value=(True, None))
-    @patch("web.service_tools.auto_update_node.get_installed_versions", return_value=["v20.12.2", "v22.1.0"])
-    @patch("web.service_tools.auto_update_node.get_current_version", return_value="v20.12.2")
-    @patch("web.service_tools.auto_update_node.get_latest_version", return_value="v22.2.0")
-    @patch("web.service_tools.auto_update_node.get_current_lts_version", return_value="v20.12.2")
+    @patch("web.service_tools.auto_update_node.get_installed_versions", return_value=["v24.22.1", "v26.12.1"])
+    @patch("web.service_tools.auto_update_node.get_current_version", return_value="v24.22.1")
+    @patch("web.service_tools.auto_update_node.get_latest_version", return_value="v26.12.2")
+    @patch("web.service_tools.auto_update_node.get_current_lts_version", return_value="v24.22.1")
     @patch("web.service_tools.auto_update_node.load_notification_configs_from_state", return_value=[])
     @patch("web.service_tools.auto_update_node.os.path.exists", return_value=True)
     @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")
@@ -237,9 +253,9 @@ stable -> 22.3 (-> v22.3.0) (default)
         with patch.dict(os.environ, {LATEST_UPDATE_ENV: "1"}):
             result = auto_update_node.main()
         self.assertEqual(result, 0)
-        mock_install.assert_called_once_with("latest", "v22.2.0", "v22.1.0")
-        mock_set_default.assert_called_once()
-        mock_update_packages.assert_called_once()
+        mock_install.assert_called_once_with("latest", "v26.12.2", "v26.12.1")
+        mock_set_default.assert_called_once_with("v24.22.1")
+        mock_update_packages.assert_called_once_with("v24.22.1")
         mock_notify.assert_called_once()
         self.assertIn("Success", mock_notify.call_args.kwargs["subject"])
 
@@ -283,21 +299,21 @@ stable -> 22.3 (-> v22.3.0) (default)
             run.assert_not_called()
 
     def test_preexisting_target_keeps_its_global_tools_during_automatic_installation(self):
-        directory = auto_update_node.runtime_directory(self.nvm, "v24.21.0")
+        directory = auto_update_node.runtime_directory(self.nvm, "v24.22.2")
         (directory / "bin").mkdir(parents=True)
         (directory / "bin/node").write_text("fixture")
         for owner in (None, "project"):
             with self.subTest(owner=owner):
                 if owner:
-                    mark_runtime(self.nvm, "v24.21.0", owner=owner)
+                    mark_runtime(self.nvm, "v24.22.2", owner=owner)
                 with patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run, \
                         patch.object(auto_update_node, "reinstall_global_packages") as migrate:
-                    success, details = auto_update_node.install_target_version("lts", "v24.21.0", "v24.20.0")
+                    success, details = auto_update_node.install_target_version("lts", "v24.22.2", "v24.22.1")
                 self.assertFalse(success)
                 self.assertIn("skipped global package migration", details)
-                self.assertEqual(runtime_owner(self.nvm, "v24.21.0"), owner)
+                self.assertEqual(runtime_owner(self.nvm, "v24.22.2"), owner)
                 migrate.assert_not_called()
-                self.assertIn(["nvm", "alias", "default", "v24.20.0"], [call.args[0] for call in run.call_args_list])
+                self.assertIn(["nvm", "alias", "default", "v24.22.1"], [call.args[0] for call in run.call_args_list])
                 self.assertFalse(any("uninstall" in call.args[0] for call in run.call_args_list))
 
     @patch("web.service_tools.auto_update_node.cleanup_old_versions", return_value=(True, None))
@@ -308,10 +324,10 @@ stable -> 22.3 (-> v22.3.0) (default)
     )
     @patch("web.service_tools.auto_update_node.set_default_lts_alias", return_value=True)
     @patch("web.service_tools.auto_update_node.install_target_version", return_value=(True, None))
-    @patch("web.service_tools.auto_update_node.get_installed_versions", return_value=["v20.12.2"])
-    @patch("web.service_tools.auto_update_node.get_current_version", return_value="v20.12.2")
-    @patch("web.service_tools.auto_update_node.get_latest_version", return_value="v22.1.0")
-    @patch("web.service_tools.auto_update_node.get_current_lts_version", return_value="v20.12.2")
+    @patch("web.service_tools.auto_update_node.get_installed_versions", return_value=["v24.22.1"])
+    @patch("web.service_tools.auto_update_node.get_current_version", return_value="v24.22.1")
+    @patch("web.service_tools.auto_update_node.get_latest_version", return_value="v26.12.1")
+    @patch("web.service_tools.auto_update_node.get_current_lts_version", return_value="v24.22.1")
     @patch("web.service_tools.auto_update_node.load_notification_configs_from_state", return_value=["cfg"])
     @patch("web.service_tools.auto_update_node.os.path.exists", return_value=True)
     @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")
@@ -341,10 +357,10 @@ stable -> 22.3 (-> v22.3.0) (default)
     @patch("web.service_tools.auto_update_node.update_global_packages", return_value=(True, ""))
     @patch("web.service_tools.auto_update_node.set_default_lts_alias", return_value=True)
     @patch("web.service_tools.auto_update_node.install_target_version", return_value=(True, None))
-    @patch("web.service_tools.auto_update_node.get_installed_versions", return_value=["v20.12.2"])
-    @patch("web.service_tools.auto_update_node.get_current_version", return_value="v20.12.2")
-    @patch("web.service_tools.auto_update_node.get_latest_version", return_value="v22.1.0")
-    @patch("web.service_tools.auto_update_node.get_current_lts_version", return_value="v20.12.2")
+    @patch("web.service_tools.auto_update_node.get_installed_versions", return_value=["v24.22.1"])
+    @patch("web.service_tools.auto_update_node.get_current_version", return_value="v24.22.1")
+    @patch("web.service_tools.auto_update_node.get_latest_version", return_value="v26.12.1")
+    @patch("web.service_tools.auto_update_node.get_current_lts_version", return_value="v24.22.1")
     @patch("web.service_tools.auto_update_node.load_notification_configs_from_state", return_value=[])
     @patch("web.service_tools.auto_update_node.os.path.exists", return_value=True)
     @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")
@@ -371,14 +387,14 @@ stable -> 22.3 (-> v22.3.0) (default)
         mock_notify.assert_called_once()
         joined = "\n".join(logs.output)
         self.assertIn("Node.js LTS already up to date |", joined)
-        self.assertIn("current_version='v20.12.2'", joined)
-        self.assertIn("target_version='v20.12.2'", joined)
+        self.assertIn("current_version='v24.22.1'", joined)
+        self.assertIn("target_version='v24.22.1'", joined)
         self.assertIn("update_track='LTS'", joined)
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_install_target_preserves_exact_global_package_versions(self, mock_run_nvm):
         def run_command(args):
-            if args[:6] == ["nvm", "exec", "v20.12.2", "npm", "list", "-g"]:
+            if args[:6] == ["nvm", "exec", "v24.22.1", "npm", "list", "-g"]:
                 return subprocess.CompletedProcess(
                     args=args,
                     returncode=0,
@@ -389,14 +405,14 @@ stable -> 22.3 (-> v22.3.0) (default)
 
         mock_run_nvm.side_effect = run_command
 
-        success, details = auto_update_node.install_target_version("lts", "v20.12.3", "v20.12.2")
+        success, details = auto_update_node.install_target_version("lts", "v24.22.2", "v24.22.1")
 
         self.assertTrue(success)
         self.assertIsNone(details)
         commands = [call_args.args[0] for call_args in mock_run_nvm.call_args_list]
-        self.assertIn(["nvm", "alias", "default", "lts/*"], commands)
-        self.assertIn(["nvm", "install", "v20.12.3"], commands)
-        reinstall_commands = [command for command in commands if command[:6] == ["nvm", "exec", "v20.12.3", "npm", "install", "-g"]]
+        self.assertIn(["nvm", "alias", "default", "v24.22.2"], commands)
+        self.assertIn(["nvm", "install", "v24.22.2"], commands)
+        reinstall_commands = [command for command in commands if command[:6] == ["nvm", "exec", "v24.22.2", "npm", "install", "-g"]]
         self.assertEqual(len(reinstall_commands), 1)
         self.assertIn("pnpm@9.1.0", reinstall_commands[0])
         self.assertIn("typescript@5.4.5", reinstall_commands[0])
@@ -405,14 +421,14 @@ stable -> 22.3 (-> v22.3.0) (default)
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_install_target_rolls_back_failed_package_migration(self, mock_run_nvm):
         def run_command(args):
-            if args[:6] == ["nvm", "exec", "v20.12.2", "npm", "list", "-g"]:
+            if args[:6] == ["nvm", "exec", "v24.22.1", "npm", "list", "-g"]:
                 return subprocess.CompletedProcess(
                     args=args,
                     returncode=0,
                     stdout='{"dependencies":{"pnpm":{"version":"9.1.0"}}}',
                     stderr="",
                 )
-            if args[:6] == ["nvm", "exec", "v20.12.3", "npm", "install", "-g"]:
+            if args[:6] == ["nvm", "exec", "v24.22.2", "npm", "install", "-g"]:
                 return subprocess.CompletedProcess(
                     args=args,
                     returncode=1,
@@ -430,15 +446,15 @@ stable -> 22.3 (-> v22.3.0) (default)
 
         success, details = auto_update_node.install_target_version(
             "lts",
-            "v20.12.3",
-            "v20.12.2",
+            "v24.22.2",
+            "v24.22.1",
         )
 
         self.assertFalse(success)
         self.assertIn("restored the previous Node.js runtime", details or "")
         commands = [call_args.args[0] for call_args in mock_run_nvm.call_args_list]
-        self.assertIn(["nvm", "alias", "default", "v20.12.2"], commands)
-        self.assertIn(["nvm", "uninstall", "v20.12.3"], commands)
+        self.assertIn(["nvm", "alias", "default", "v24.22.1"], commands)
+        self.assertIn(["nvm", "uninstall", "v24.22.2"], commands)
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_rollback_retains_target_when_default_cannot_be_restored(
@@ -454,22 +470,22 @@ stable -> 22.3 (-> v22.3.0) (default)
 
         success, details = auto_update_node.rollback_target_version(
             "lts",
-            "v20.12.3",
-            "v20.12.2",
+            "v24.22.2",
+            "v24.22.1",
         )
 
         self.assertFalse(success)
-        self.assertIn("retained v20.12.3", details or "")
+        self.assertIn("retained v24.22.2", details or "")
         mock_run_nvm.assert_called_once_with(
-            ["nvm", "alias", "default", "v20.12.2"]
+            ["nvm", "alias", "default", "v24.22.1"]
         )
 
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_rollback_refuses_to_remove_source_version(self, mock_run_nvm):
         success, details = auto_update_node.rollback_target_version(
             "lts",
-            "v20.12.2",
-            "v20.12.2",
+            "v24.22.1",
+            "v24.22.1",
         )
 
         self.assertFalse(success)
@@ -485,7 +501,7 @@ stable -> 22.3 (-> v22.3.0) (default)
             stderr="",
         )
 
-        success, details = auto_update_node.reinstall_global_packages("v20.12.2", "v20.12.3")
+        success, details = auto_update_node.reinstall_global_packages("v24.22.1", "v24.22.2")
 
         self.assertFalse(success)
         self.assertIn("missing safe version metadata", details or "")
@@ -507,6 +523,134 @@ stable -> 22.3 (-> v22.3.0) (default)
         self.assertEqual(result, 1)
         mock_notify.assert_called_once()
         self.assertIn("nvm directory not found | nvm_dir='/home/user/.nvm'", "\n".join(logs.output))
+
+
+    def test_official_discovery_ignores_unsupported_newer_tracks(self):
+        releases = [
+            {"version": "v24.22.0", "lts": "Krypton"},
+            {"version": "v24.22.2", "lts": "Krypton"},
+            {"version": "v26.12.0", "lts": False},
+            {"version": "v26.12.2", "lts": False},
+            {"version": "v27.0.0", "lts": False},
+            {"version": "v28.0.0", "lts": "Future"},
+        ]
+        self.assertEqual(auto_update_node.get_current_lts_version(releases), "v24.22.2")
+        self.assertEqual(auto_update_node.get_latest_version(releases), "v26.12.2")
+        installed = ["v22.23.2", "v24.22.0", "v24.22.1", "v26.12.0", "v26.12.1", "v27.0.0"]
+        self.assertEqual(auto_update_node.select_installed_lts_version(installed, "v24.22.2"), "v24.22.1")
+        self.assertEqual(auto_update_node.select_installed_latest_track_version(
+            installed, "v24.22.2", "v26.12.2"), "v26.12.1")
+        self.assertEqual(auto_update_node.select_installed_latest_track_version(
+            installed, "v26.12.2", "v26.12.2"), "")
+        self.assertEqual(auto_update_node.select_installed_lts_version(["v24.22.0"], "v24.22.2"), "")
+        self.assertEqual(auto_update_node.select_installed_latest_track_version(
+            ["v27.0.0", "v26.12.0"], "v24.22.2", "v26.12.2"), "")
+        self.assertEqual(auto_update_node.select_installed_latest_track_version(
+            ["v26.12.3"], "v24.22.2", "v26.12.2"), "")
+
+    def test_direct_install_rejections_do_not_mutate_nvm_or_ownership(self):
+        for track, target, source in (
+            ("lts", "v22.23.2", ""), ("lts", "v24.22.0", ""),
+            ("lts", "v26.12.0", ""), ("latest", "v27.0.0", ""),
+            ("unknown", "v24.22.1", ""), ("lts", "lts/*", ""),
+            ("lts", "v24.22.1-rc.1", ""), ("lts", "v24.22.1", "v24.22.2"),
+            ("lts", "v24.22.2", "v26.12.1"), ("lts", "v24.22.2", "v24.22.0"),
+            ("latest", "v26.12.2", "v26.12.1"),
+        ):
+            with self.subTest(track=track, target=target, source=source), \
+                    patch.object(auto_update_node, "run_nvm_command") as run, \
+                    patch.object(auto_update_node, "mark_runtime") as mark, \
+                    patch.object(auto_update_node, "runtime_directory") as directory:
+                success, details = auto_update_node.install_target_version(track, target, source)
+                self.assertFalse(success)
+                self.assertTrue(details)
+                run.assert_not_called()
+                mark.assert_not_called()
+                directory.assert_not_called()
+
+    def test_enabled_current_install_uses_only_its_validated_exact_track(self):
+        with patch.dict(os.environ, {LATEST_UPDATE_ENV: "1"}), patch.object(
+            auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0, '{}', ''),
+        ) as run:
+            self.assertEqual(auto_update_node.install_target_version('latest', 'v26.12.2', 'v26.12.1'), (True, None))
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(['nvm', 'install', 'v26.12.2'], commands)
+        self.assertFalse(any('alias' in command for command in commands))
+        self.assertEqual(runtime_owner(self.nvm, 'v26.12.2'), 'automatic')
+
+    def test_all_allowed_lines_lts_means_no_separate_current_update(self):
+        with patch.dict(os.environ, {LATEST_UPDATE_ENV: "1"}), ExitStack() as stack:
+            fetch = stack.enter_context(patch.object(auto_update_node, 'fetch_node_releases', return_value=[
+                {'version': 'v24.22.2', 'lts': 'Krypton'},
+                {'version': 'v26.12.2', 'lts': 'FutureLTS'},
+                {'version': 'v27.0.0', 'lts': False},
+            ]))
+            stack.enter_context(patch.object(auto_update_node, 'get_current_version', return_value='v26.12.2'))
+            stack.enter_context(patch.object(auto_update_node, 'get_installed_versions', return_value=['v26.12.2', 'v27.0.0']))
+            stack.enter_context(patch.object(auto_update_node, 'load_notification_configs_from_state', return_value=[]))
+            stack.enter_context(patch.object(auto_update_node, 'send_notification_safe'))
+            install = stack.enter_context(patch.object(auto_update_node, 'install_target_version'))
+            alias = stack.enter_context(patch.object(auto_update_node, 'set_default_lts_alias', return_value=True))
+            stack.enter_context(patch.object(auto_update_node, 'cleanup_old_versions', return_value=(True, None)))
+            stack.enter_context(patch.object(auto_update_node, 'update_global_packages', return_value=(True, None)))
+            self.assertEqual(auto_update_node.main(), 0)
+            fetch.assert_called_once_with()
+            install.assert_not_called()
+            alias.assert_called_once_with('v26.12.2')
+
+    def test_default_alias_requires_exact_policy_target(self):
+        with patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run:
+            for target in ("lts/*", "24", "v24.22.0", "v27.0.0", "v26.12.1-rc.1"):
+                with self.subTest(target=target):
+                    self.assertFalse(auto_update_node.set_default_lts_alias(target))
+            run.assert_not_called()
+            self.assertTrue(auto_update_node.set_default_lts_alias("v24.22.1"))
+            run.assert_called_once_with(["nvm", "alias", "default", "v24.22.1"])
+
+    def test_global_upgrades_retain_explicit_preexisting_and_unsupported_targets(self):
+        with patch.dict(os.environ, {ECOSYSTEM_AUTO_UPGRADE_ENV: "1"}), \
+                patch.object(auto_update_node, "run_nvm_command") as run:
+            for target in ("default", "v22.23.2", "v24.22.0", "v27.0.0"):
+                with self.subTest(target=target):
+                    self.assertFalse(auto_update_node.update_global_packages(target)[0])
+            for owner in (None, "project"):
+                with self.subTest(owner=owner), patch.object(auto_update_node, "runtime_owner", return_value=owner):
+                    self.assertEqual(auto_update_node.update_global_packages("v24.22.1"), (True, None))
+            run.assert_not_called()
+
+    def test_direct_package_migration_rejects_unsupported_and_cross_major_pairs(self):
+        with patch.object(auto_update_node, 'run_nvm_command') as run:
+            for source, target in (('v22.23.2', 'v24.22.1'), ('v24.22.1', 'v24.22.0'),
+                                   ('v24.22.1', 'v26.12.1'), ('v24.22.2', 'v24.22.1')):
+                with self.subTest(source=source, target=target):
+                    success, details = auto_update_node.reinstall_global_packages(source, target)
+                    self.assertFalse(success)
+                    self.assertTrue(details)
+            run.assert_not_called()
+
+    def test_discovery_failures_and_newer_sources_precede_every_mutation(self):
+        for discovery, versions in (
+            (ValueError("discovery failed"), ["v24.22.1"]),
+            ([{"version": "v27.0.0", "lts": False}], ["v24.22.1"]),
+            ([{"version": "N/A", "lts": "Invalid"}], ["v24.22.1"]),
+            ([{"version": "v24.22.1", "lts": "Krypton"}], ["v24.22.2"]),
+        ):
+            with self.subTest(discovery=discovery), ExitStack() as stack:
+                stack.enter_context(patch.object(auto_update_node, "fetch_node_releases",
+                                                **({"side_effect": discovery} if isinstance(discovery, Exception)
+                                                   else {"return_value": discovery})))
+                stack.enter_context(patch.object(auto_update_node, "get_current_version", return_value="v24.22.1"))
+                stack.enter_context(patch.object(auto_update_node, "get_installed_versions", return_value=versions))
+                stack.enter_context(patch.object(auto_update_node, "load_notification_configs_from_state", return_value=[]))
+                notify = stack.enter_context(patch.object(auto_update_node, "send_notification_safe"))
+                mutations = [stack.enter_context(patch.object(auto_update_node, name)) for name in (
+                    "run_nvm_command", "install_target_version", "set_default_lts_alias", "mark_runtime",
+                    "reinstall_global_packages", "cleanup_old_versions", "update_global_packages",
+                )]
+                self.assertEqual(auto_update_node.main(), 1)
+                notify.assert_called_once()
+                for operation in mutations:
+                    operation.assert_not_called()
 
 
 if __name__ == "__main__":

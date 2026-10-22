@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Optional
 from lib.config import GODOT_WEB_HTTPS_PORT, SetupConfig
+from lib.homebox_config import DEFAULT_VERSION as HOMEBOX_DEFAULT_VERSION
 from lib.notifications import (
     normalize_notification_level,
     notification_target_summary,
@@ -601,7 +602,8 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         print(f"Gogs: {' '.join(config.gogs)}")
     if config.homebox:
         print(f"HomeBox: {' '.join(config.homebox)}")
-        print(f"  Version: {config.homebox_version or 'retain installed version; v0.26.2 on first setup'}")
+        version = config.homebox_version or f"retain installed version; {HOMEBOX_DEFAULT_VERSION} on first setup"
+        print(f"  Version: {version}")
     elif config.homebox == []:
         print("HomeBox: remove service and proxy, retain inventory")
     

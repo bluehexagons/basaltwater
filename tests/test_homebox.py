@@ -27,6 +27,7 @@ from lib.config import SetupConfig
 from lib.homebox_cli import run_homebox_command
 from lib.homebox_config import (
     homebox_settings, parse_homebox_spec, validate_homebox_settings,
+    validate_homebox_version,
 )
 from web import homebox_steps as h
 
@@ -37,7 +38,8 @@ def config(**kwargs):
 
 
 def state(**kwargs):
-    value = {"schema": 1, "version": "v0.26.2", "archive_sha256": "a" * 64,
+    # v0.27.1 is synthetic ordering data for upgrade and rollback coverage.
+    value = {"schema": 1, "version": "v0.27.0", "archive_sha256": "a" * 64,
              "binary_sha256": hashlib.sha256(b"binary").hexdigest(), "domain": "", "port": 7745,
              "public_port": 7745, "data_path": "/srv/homebox", "email": "admin@homebox.local",
              "sources": [], "status": "ready", "mount": {"target": "/", "source": "/dev/test", "fstype": "ext4"}}
@@ -54,10 +56,13 @@ class HomeBoxConfigTests(unittest.TestCase):
             ("workstation_dev", [":7745"], [], "server setup profile"),
             ("server_lite", [":7745"], ["--web-panel", "7745"], "conflicts"),
             ("server_lite", [":65536"], [], "port"),
+            ("server_lite", [":7745"], ["--homebox-version", "v0.26.2"], "before v0.27.0"),
+            ("server_lite", [":7745"], ["--homebox-version", "v0.26.3"], "before v0.27.0"),
+            ("server_lite", [":7745"], ["--homebox-version", "v0.26.99"], "before v0.27.0"),
         )
         for profile, spec, options, error in cases:
             for hosted in (False, True):
-                with self.subTest(profile=profile, spec=spec, hosted=hosted), \
+                with self.subTest(profile=profile, spec=spec, options=options, hosted=hosted), \
                         tempfile.TemporaryDirectory() as workspace, contextlib.ExitStack() as stack:
                     argv = ["setup", "192.0.2.10", "operator", "--timezone", "UTC",
                             "--workspace", workspace,
@@ -87,6 +92,17 @@ class HomeBoxConfigTests(unittest.TestCase):
         self.assertEqual(parse_homebox_spec("Inventory.example.com"), ("inventory.example.com", 443))
         self.assertEqual(homebox_settings(config())["data_path"], "/var/lib/homebox")
 
+    def test_supported_versions_require_stable_tags_at_or_above_the_floor(self):
+        for version in ("v0.27.0", "v0.27.1"):
+            with self.subTest(version=version):
+                self.assertEqual(validate_homebox_version(version), version)
+        for version in ("v0.26.2", "v0.26.3", "v0.26.99"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "before v0.27.0"):
+                validate_homebox_version(version)
+        for version in ("v0.27.0-rc.1", "v0.27.0+build", "0.27.0", "latest", "v0.27", "v0.27.0\n", None):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "stable tag"):
+                validate_homebox_version(version)
+
     def test_invalid_input_before_mutation(self):
         for spec in ("", "7745", ":80", ":443", ":0", ":65536", "a.test:4x", "a.test:４４３",
                      "a.test:443\n", "https://a.test", "127.0.0.1", "a.test;id", "a.test/thing"):
@@ -114,7 +130,7 @@ class HomeBoxConfigTests(unittest.TestCase):
         parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args(["setup", "server_lite", "inventory.example.com", "operator", "--homebox",
                                   "items.example.com:9443", "/srv/items", "--homebox-port", "7746", "--ssl",
-                                  "--homebox-admin", "owner@example.com", "--homebox-version", "v0.26.2"])
+                                  "--homebox-admin", "owner@example.com", "--homebox-version", "v0.27.0"])
         original = SetupConfig.from_args(args, args.system_type)
         validate_homebox_settings(original)
         cached = SetupConfig.from_dict(original.host, original.system_type, original.to_dict())
@@ -125,11 +141,11 @@ class HomeBoxConfigTests(unittest.TestCase):
         self.assertEqual(remote_args.homebox_port, 7746)
         rebuilt = parser.parse_args(shlex.split(" ".join(cached.to_setup_command()))[1:])
         self.assertEqual(rebuilt.homebox, original.homebox)
-        patch_args = parser.parse_args(["patch", original.host, "--homebox-version", "v0.26.3"])
+        patch_args = parser.parse_args(["patch", original.host, "--homebox-version", "v0.27.1"])
         merged = merge_setup_configs(cached, SetupConfig.from_args(patch_args, cached.system_type),
                                      preserve_keys=_patch_preserve_keys(patch_args))
         validate_homebox_settings(merged)
-        self.assertEqual(merged.homebox_version, "v0.26.3")
+        self.assertEqual(merged.homebox_version, "v0.27.1")
         self.assertEqual(merged.homebox_admin, "owner@example.com")
         disable_args = parser.parse_args(["patch", original.host, "--no-homebox"])
         disabled = merge_setup_configs(cached, SetupConfig.from_args(disable_args, cached.system_type),
@@ -253,26 +269,6 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
             h.create_backup(self.value, archive)
         self.assertFalse(archive.exists())
 
-    def test_stopped_backup_repairs_legacy_root_owned_sidecars(self):
-        sidecars = [self.data / "homebox.db-wal", self.data / "homebox.db-shm"]
-        for path in sidecars:
-            path.touch()
-        original_stat = Path.stat
-        owner = (self.data / "homebox.db").stat()
-        def observed_stat(path, *args, **kwargs):
-            info = original_stat(path, *args, **kwargs)
-            fields = list(info)
-            if path in sidecars:
-                fields[4] = 0
-            elif path == self.data / "homebox.db":
-                fields[4] = 1234
-            return os.stat_result(fields)
-        with patch.object(Path, "stat", observed_stat), patch.object(h.os, "chown") as chown, \
-                patch.object(h, "_database", return_value={"users": 1, "integrity": "ok"}):
-            h.create_backup(self.value, h.BACKUPS / "repaired.tar.gz")
-        self.assertEqual([call.args for call in chown.call_args_list],
-                         [(path, 1234, owner.st_gid) for path in sidecars])
-
     def test_hardlinked_attachments_produce_restorable_regular_members(self):
         os.link(self.data / "attachments/photo.txt", self.data / "attachments/copy.txt")
         archive = h.BACKUPS / "hardlinks.tar.gz"
@@ -312,38 +308,42 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
             bundle.addfile(member, io.BytesIO(b"binary"))
         digest = h._digest(source)
         filename = "x86_64"
-        url = f"https://github.com/sysadminsmedia/homebox/releases/download/v0.26.2/homebox_Linux_{filename}.tar.gz"
-        metadata = {"tag_name": "v0.26.2", "assets": [{"name": f"homebox_Linux_{filename}.tar.gz",
+        url = f"https://github.com/sysadminsmedia/homebox/releases/download/v0.27.0/homebox_Linux_{filename}.tar.gz"
+        metadata = {"tag_name": "v0.27.0", "assets": [{"name": f"homebox_Linux_{filename}.tar.gz",
                     "digest": "sha256:" + digest, "browser_download_url": url}]}
         def download(*args):
             Path(args[args.index("--output") + 1]).write_bytes(source.read_bytes())
         with patch.object(h, "detect_release_arch", return_value="amd64"), \
                 patch.object(h, "_request_json", return_value=metadata), patch.object(h, "_command", side_effect=download):
-            verified = h.stage_release("v0.26.2")
+            verified = h.stage_release("v0.27.0")
             self.assertEqual(verified["archive_sha256"], digest)
             self.assertEqual(h.release_path(verified).read_bytes(), b"binary")
             metadata["assets"][0]["digest"] = "sha256:" + "f" * 64
             with self.assertRaisesRegex(RuntimeError, "checksum"):
-                h.stage_release("v0.26.2")
+                h.stage_release("v0.27.0")
             metadata["assets"][0]["digest"] = None
             with self.assertRaises((ValueError, RuntimeError)):
-                h.stage_release("v0.26.2")
+                h.stage_release("v0.27.0")
         with patch.object(h, "detect_release_arch", return_value="arm64"), \
                 patch.object(h, "_request_json") as request:
             with self.assertRaisesRegex(RuntimeError, "only on amd64"):
-                h.stage_release("v0.26.2")
+                h.stage_release("v0.27.0")
         request.assert_not_called()
 
     def test_latest_release_rejects_prereleases_and_invalid_tags(self):
-        with patch.object(h, "_request_json", return_value={"tag_name": "v0.26.3"}):
-            self.assertEqual(h.latest_homebox_version(), "v0.26.3")
+        with patch.object(h, "_request_json", return_value={"tag_name": "v0.27.1"}):
+            self.assertEqual(h.latest_homebox_version(), "v0.27.1")
         for response in (
-            {"tag_name": "v0.26.3", "prerelease": True},
+            {"tag_name": "v0.27.1", "prerelease": True},
             {"tag_name": "latest"},
             [],
         ):
             with self.subTest(response=response), patch.object(h, "_request_json", return_value=response):
                 with self.assertRaises(RuntimeError):
+                    h.latest_homebox_version()
+        for version in ("v0.26.2", "v0.26.3", "v0.26.99"):
+            with self.subTest(version=version), patch.object(h, "_request_json", return_value={"tag_name": version}):
+                with self.assertRaisesRegex(RuntimeError, "unsupported tag"):
                     h.latest_homebox_version()
 
     def test_prune_keeps_recent_automatic_recovery_archives(self):
@@ -398,10 +398,13 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
 
     def test_unit_and_proxy_isolation(self):
         value = state(domain="inventory.example.com", public_port=443, sources=["192.168.1.0/24"])
-        env = h.render_environment(value, self.secret)
-        self.assertIn('HBOX_OPTIONS_ALLOW_REGISTRATION="false"', env)
-        self.assertIn('HBOX_WEB_HOST="127.0.0.1"', env)
-        self.assertIn("HBOX_DATABASE_SQLITE_PATH", env)
+        for endpoint in (self.value, value):
+            with self.subTest(domain=endpoint["domain"]):
+                env = h.render_environment(endpoint, self.secret)
+                self.assertIn('HBOX_OPTIONS_ALLOW_REGISTRATION="false"', env)
+                self.assertIn('HBOX_WEB_HOST="127.0.0.1"', env)
+                self.assertIn("HBOX_DATABASE_SQLITE_PATH", env)
+                self.assertIn('HBOX_SEARCH_DRIVER="database"', env)
         unit = h.render_unit(value)
         for setting in ("User=homebox", "ProtectSystem=strict", "ReadWritePaths=/srv/homebox", "RequiresMountsFor=/srv/homebox"):
             self.assertIn(setting, unit)
@@ -502,6 +505,38 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "without rotating"):
             h._secrets()
 
+    def test_old_state_is_rejected_and_preserved(self):
+        for version in ("v0.26.2", "v0.26.3", "v0.26.99"):
+            with self.subTest(version=version):
+                contents = json.dumps({**self.value, "version": version})
+                h.STATE.write_text(contents)
+                with self.assertRaisesRegex(RuntimeError, "state is corrupt") as error:
+                    h.read_state()
+                self.assertIn("before v0.27.0", str(error.exception.__cause__))
+                self.assertEqual(h.STATE.read_text(), contents)
+
+    def test_restore_rejects_old_backup_metadata_before_live_mutation(self):
+        for version in ("v0.26.2", "v0.26.3", "v0.26.99"):
+            with self.subTest(version=version):
+                archive = h.BACKUPS / f"{version}.tar.gz"
+                with tarfile.open(archive, "w:gz") as bundle:
+                    h._archive_add(bundle, "state.json", {**self.value, "version": version})
+                    h._archive_add(bundle, "secrets.json", self.secret)
+                    bundle.add(h.release_path(self.value), arcname="homebox")
+                    bundle.add(self.data, arcname="data")
+                archive.chmod(0o600)
+                with patch.object(h, "_check_storage"), patch.object(h, "_private_dir"), \
+                        patch.object(h, "_maintenance") as maintenance, \
+                        patch.object(h, "_stop_service") as stop, \
+                        patch.object(h, "_restore_unpacked") as restore:
+                    with self.assertRaisesRegex(ValueError, "before v0.27.0"):
+                        h.operate_homebox("restore", str(archive), yes=True)
+                maintenance.assert_not_called()
+                stop.assert_not_called()
+                restore.assert_not_called()
+                self.assertEqual(h.read_state(), self.value)
+                self.assertEqual((self.data / "attachments/photo.txt").read_text(), "original attachment")
+
     def test_maintenance_requires_explicit_recovery(self):
         h._maintenance(h.BACKUPS / "recovery.tar.gz")
         with self.assertRaisesRegex(RuntimeError, "interrupted"):
@@ -519,15 +554,15 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
         command.assert_not_called()
 
     def test_readiness_checks_actual_homebox_contract(self):
-        with patch.object(h, "_request_json", return_value={"health": True, "allowRegistration": False, "build": {"version": "0.26.2"}}):
-            h.wait_ready(7745, "v0.26.2")
+        with patch.object(h, "_request_json", return_value={"health": True, "allowRegistration": False, "build": {"version": "0.27.0"}}):
+            h.wait_ready(7745, "v0.27.0")
         with patch.object(h, "_request_json", return_value={"healthy": True}), patch.object(h.time, "sleep"):
             with self.assertRaises(RuntimeError):
-                h.wait_ready(7745, "v0.26.2")
+                h.wait_ready(7745, "v0.27.0")
 
     def test_health_does_not_expose_credentials(self):
         with patch.object(h, "_active", return_value=True), patch.object(h, "_check_storage"), \
-                patch.object(h, "_status", return_value={"health": True, "allowRegistration": False, "build": {"version": "0.26.2"}}), \
+                patch.object(h, "_status", return_value={"health": True, "allowRegistration": False, "build": {"version": "0.27.0"}}), \
                 patch.object(h, "_frontend_ready"), \
                 patch.object(h, "_automatic_update_health", return_value={"healthy": True}):
             health = h.health_homebox()
@@ -560,7 +595,7 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
 
 class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
     def fixture_setup(self, failure=None):
-        desired_config = config(homebox=[":7745", self.value["data_path"]], homebox_version="v0.26.3")
+        desired_config = config(homebox=[":7745", self.value["data_path"]], homebox_version="v0.27.1")
         self.stack.enter_context(patch.object(h, "validate_homebox_settings"))
         self.stack.enter_context(patch.object(h, "can_manage_system_services", return_value=True))
         self.stack.enter_context(patch.object(h, "require_amd64"))
@@ -574,13 +609,39 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         self.stack.enter_context(patch.object(h, "_command"))
         self.stack.enter_context(patch.object(h, "_stop_service"))
         self.stack.enter_context(patch.object(h, "_remove_acme_rule"))
-        self.stack.enter_context(patch.object(h, "stage_release", return_value={k: {**self.value, "version": "v0.26.3"}[k] for k in ("version", "archive_sha256", "binary_sha256")}))
+        self.stack.enter_context(patch.object(h, "stage_release", return_value={k: {**self.value, "version": "v0.27.1"}[k] for k in ("version", "archive_sha256", "binary_sha256")}))
         self.stack.enter_context(patch.object(h, "_activate_files"))
         self.stack.enter_context(patch.object(h, "_write_site"))
         self.stack.enter_context(patch.object(h, "wait_ready", side_effect=failure))
         self.stack.enter_context(patch.object(h, "_frontend_ready"))
         h.UNIT.write_text(h.MARKER)
         return desired_config
+
+    def test_fresh_setup_without_version_stages_the_default_and_bootstraps(self):
+        cfg = self.fixture_setup()
+        cfg.homebox_version = None
+        h.STATE.unlink()
+        h.UNIT.unlink()
+        (h.ROOT / "current").unlink()
+        (h.CONFIG / "secrets.json").unlink()
+        shutil.rmtree(self.data)
+        self.assertIsNone(h.read_state())
+        release = {key: self.value[key] for key in ("version", "archive_sha256", "binary_sha256")}
+        with patch.object(h, "_active", return_value=False), patch.object(h, "_reserve_backend_port"), \
+                patch.object(h, "can_manage_firewall", return_value=False), \
+                patch.object(h, "stage_release", return_value=release) as stage, \
+                patch.object(h, "latest_homebox_version") as latest, \
+                patch.object(h, "_bootstrap") as bootstrap, \
+                patch.object(h, "_database", return_value={"users": 1}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            h.setup_homebox(cfg)
+        stage.assert_called_once_with("v0.27.0")
+        latest.assert_not_called()
+        bootstrap.assert_called_once()
+        self.assertEqual(bootstrap.call_args.args[0]["version"], "v0.27.0")
+        installed = h.read_state()
+        self.assertEqual(installed["version"], "v0.27.0")
+        self.assertEqual(installed["status"], "ready")
 
     def test_failed_activation_restores_full_snapshot_before_clearing_marker(self):
         cfg = self.fixture_setup(RuntimeError("bad migration"))
@@ -594,7 +655,7 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
                 h.setup_homebox(cfg)
         self.assertEqual(events, ["recover"])
         self.assertFalse((h.CONFIG / "maintenance").exists())
-        self.assertEqual(h.read_state()["version"], "v0.26.2")
+        self.assertEqual(h.read_state()["version"], "v0.27.0")
 
     def test_failed_recovery_retains_marker_and_archive(self):
         cfg = self.fixture_setup(RuntimeError("bad migration"))
@@ -611,7 +672,7 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "TLS probe failed"):
                 h.setup_homebox(cfg)
         recover.assert_not_called()
-        self.assertEqual(h.read_state()["version"], "v0.26.3")
+        self.assertEqual(h.read_state()["version"], "v0.27.1")
 
     def test_failed_tls_before_ingress_restores_snapshot(self):
         cfg = self.fixture_setup()
@@ -620,22 +681,28 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "invalid certificate"):
                 h.setup_homebox(cfg)
         recover.assert_called_once()
-        self.assertEqual(h.read_state()["version"], "v0.26.2")
+        self.assertEqual(h.read_state()["version"], "v0.27.0")
 
     def test_healthy_rerun_retains_version_without_release_lookup(self):
         cfg = self.fixture_setup()
         cfg.homebox_version = None
+        installed = {**self.value, "version": "v0.27.1"}
+        binary = h.release_path(installed)
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"binary")
+        h._save_state(installed)
         with patch.object(h, "_files_match", return_value=True), patch.object(h, "stage_release") as stage, \
                 patch.object(h, "create_backup") as backup, contextlib.redirect_stdout(io.StringIO()):
             h.setup_homebox(cfg)
         stage.assert_not_called()
         backup.assert_not_called()
         self.assertEqual(h._secrets(), self.secret)
+        self.assertEqual(h.read_state()["version"], "v0.27.1")
 
     def test_downgrade_requires_full_restore(self):
         cfg = self.fixture_setup()
-        h._save_state({**self.value, "version": "v0.26.3"})
-        cfg.homebox_version = "v0.26.2"
+        h._save_state({**self.value, "version": "v0.27.1"})
+        cfg.homebox_version = "v0.27.0"
         with patch.object(h, "stage_release") as stage, self.assertRaisesRegex(ValueError, "downgrades"):
             h.setup_homebox(cfg)
         stage.assert_not_called()
@@ -643,20 +710,20 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
     def test_scheduled_update_uses_the_release_transition_transaction(self):
         self.fixture_setup()
         with patch.object(h, "_transition_to_ready") as transition:
-            version, changed = h.update_homebox("v0.26.3")
-        self.assertEqual((version, changed), ("v0.26.3", True))
+            version, changed = h.update_homebox("v0.27.1")
+        self.assertEqual((version, changed), ("v0.27.1", True))
         previous, desired = transition.call_args.args
-        self.assertEqual(previous["version"], "v0.26.2")
-        self.assertEqual(desired["version"], "v0.26.3")
+        self.assertEqual(previous["version"], "v0.27.0")
+        self.assertEqual(desired["version"], "v0.27.1")
         self.assertFalse(transition.call_args.kwargs["bootstrap"])
 
     def test_scheduled_update_skips_disabled_and_current_services(self):
         self.fixture_setup()
         h._save_state({**self.value, "status": "disabled"})
-        self.assertEqual(h.update_homebox("v0.26.3"), ("", False))
+        self.assertEqual(h.update_homebox("v0.27.1"), ("", False))
         h._save_state(self.value)
         with patch.object(h, "stage_release") as stage:
-            self.assertEqual(h.update_homebox("v0.26.2"), ("v0.26.2", False))
+            self.assertEqual(h.update_homebox("v0.27.0"), ("v0.27.0", False))
         stage.assert_not_called()
 
     def test_scheduled_update_checks_current_binary_before_stopping_service(self):
@@ -665,7 +732,7 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         with patch.object(h, "stage_release") as stage, \
                 patch.object(h, "_transition_to_ready") as transition:
             with self.assertRaisesRegex(RuntimeError, "binary has changed"):
-                h.update_homebox("v0.26.3")
+                h.update_homebox("v0.27.1")
         stage.assert_not_called()
         transition.assert_not_called()
 
@@ -736,7 +803,7 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
                         patch.object(h, "_reserve_backend_port"), \
                         patch.object(h, "create_backup", wraps=h.create_backup) as backup:
                     with self.assertRaisesRegex(OSError, "maintenance disk full"):
-                        h._transition_to_ready(self.value, {**self.value, "version": "v0.26.3"}, bootstrap=False)
+                        h._transition_to_ready(self.value, {**self.value, "version": "v0.27.1"}, bootstrap=False)
 
                 self.assertEqual(marker.call_count, 2)
                 backup.assert_called_once()

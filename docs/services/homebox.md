@@ -3,7 +3,8 @@
 Install one native [HomeBox](https://github.com/sysadminsmedia/homebox) instance
 per Debian server. It uses a dedicated `homebox` system account, systemd,
 SQLite, and local attachments. Initial installations use the verified
-`v0.26.2` release; amd64 hosts are supported.
+`v0.27.0` release; amd64 hosts are supported. Stable tags before `v0.27.0`
+are unsupported in explicit requests, installed state, and backup metadata.
 
 ## Set up and sign in
 
@@ -80,6 +81,41 @@ to those generated files are reconciled on setup. Keep the API-key pepper:
 changing it invalidates existing API keys. Neither it nor the initial password
 is stored in controller setup records or printed by health commands.
 
+## Search and reminder notifiers
+
+Basaltwater explicitly selects `HBOX_SEARCH_DRIVER=database`, using the
+existing SQLite database without another daemon or port. In
+[v0.27.0 database search](https://github.com/sysadminsmedia/homebox/blob/v0.27.0/docs/src/content/docs/en/quick-start/configure/search.mdx),
+every query word must match somewhere on an item. Double quotes match phrases,
+`#` selects an asset ID, and matching ignores case and accents. Upstream's
+optional Meilisearch backend requires a separate endpoint, key, and readiness;
+it is outside this native integration.
+
+HomeBox's inventory-reminder notifiers inherit these
+[v0.27.0 upstream defaults](https://github.com/sysadminsmedia/homebox/blob/v0.27.0/backend/internal/sys/config/conf_notifier.go):
+
+```text
+HBOX_NOTIFIER_BLOCK_LOCALHOST=true
+HBOX_NOTIFIER_BLOCK_LOCAL_NETS=false
+HBOX_NOTIFIER_BLOCK_BOGON_NETS=true
+HBOX_NOTIFIER_BLOCK_CLOUD_METADATA=true
+```
+
+Loopback, bogon/reserved, and cloud-metadata destinations are blocked;
+RFC1918 LAN destinations remain allowed. The policy applies to notifier URLs
+with a user-selected destination, including redirects and connected addresses;
+fixed vendor integrations are treated separately. DNS64 addresses also have
+their embedded IPv4 destination checked. A nonempty upstream
+`HBOX_NOTIFIER_ALLOW_NETS` is a semicolon-separated exclusive allowlist that
+overrides block rules. See the
+[tagged notifier guide](https://github.com/sysadminsmedia/homebox/blob/v0.27.0/docs/src/content/docs/en/user-guide/notifiers.mdx).
+
+`--access-source` and `--lan-access` control inbound access; they do not set
+notifier destinations. HomeBox reminder delivery is separate from Basaltwater's
+`--notify` updater notifications. This integration exposes no persistent
+notifier-policy override: the managed environment is regenerated on setup, so
+manual edits are not a supported persistent configuration mechanism.
+
 ## Health and updates
 
 ```bash
@@ -98,15 +134,15 @@ registration policy, generated configuration and environment permissions, and
 the configured HTTPS frontend. When installed, it also reports the updater
 timer and its last check (`pending` before the first run). SQLite probes run as
 the database owner so they cannot leave root-owned WAL files that prevent a
-restart. Rerun setup to reconcile drift; a stopped-service backup also repairs
-sidecars left by earlier probes. The HTTPS probe verifies the target locally,
-not public DNS, external firewall reachability, or an authenticated session.
+restart. Rerun setup to reconcile drift. The HTTPS probe verifies the target
+locally, not public DNS, external firewall reachability, or an authenticated
+session.
 
 Select a reviewed stable release explicitly:
 
 ```bash
-basaltw patch inventory-host --homebox-version v0.26.2 --dry-run
-basaltw patch inventory-host --homebox-version v0.26.2
+basaltw patch inventory-host --homebox-version v0.27.0 --dry-run
+basaltw patch inventory-host --homebox-version v0.27.0
 ```
 
 Replace the example tag with the desired newer stable release. Releases are
@@ -115,8 +151,9 @@ the installed version, while `auto-update-homebox.timer` checks the latest
 stable release every Sunday around 06:00 with a randomized delay. The timer
 uses the same recovery transaction as an explicit upgrade and sends configured
 maintenance notifications only for a successful update or a failure. Disable
-HomeBox to disable the timer. Downgrading requires restoring the matching
-complete backup because startup can migrate SQLite.
+HomeBox to disable the timer. Downgrading between supported versions requires
+restoring the matching complete backup because startup can migrate SQLite.
+Archives recording versions before `v0.27.0` are rejected.
 
 Setup blocks public inventory requests, stops the service, snapshots its full
 state, and verifies the new API and HTTPS route before reopening requests.
@@ -212,7 +249,7 @@ If initial onboarding had not completed before disabling, re-enabling still
 performs the private bootstrap. Shared Nginx/Certbot packages and certificates
 remain installed. Permanent deletion is a separate manual task.
 
-This support excludes Cloudflare, containers, PostgreSQL, external object
-storage, multiple instances, OIDC, and adoption of unmanaged installs. Complete
+This support excludes Cloudflare, containers, PostgreSQL, Meilisearch, external
+object storage, multiple instances, OIDC, and adoption of unmanaged installs. Complete
 APP-01 in the [release qualification matrix](../release-qualification.md#stable-qualification-matrix)
 before treating live VM recovery as qualified.

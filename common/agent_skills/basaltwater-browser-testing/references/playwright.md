@@ -8,17 +8,18 @@ When the task explicitly needs Firefox, use `basaltw agent browser doctor
 --engine firefox --context project --project REPOSITORY --json` with the project's
 existing dependencies. An authorized `browser install` with the same arguments
 downloads only the matching engine, preserving packages and lockfiles.
-Use `--context managed` without `--project` for the managed pinned package.
+Use `--context managed` without `--project` for the stable test package, or
+`--context managed-mcp` for MCP's separate pinned alpha dependency and payload.
 Neither command changes MCP's Chromium selection or the session browser policy.
 See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-automation.md#engine-and-context-coverage)
 for dependency and coverage limits.
 
 Firefox automation can be explicitly registered as the separate
 `basaltwater-playwright-firefox` MCP server with `basaltw agent browser register
---engine firefox --agent-tool codex --json` (or `opencode`), after its payload
+--engine firefox --agent-tool codex --json` (or `opencode`), after its `managed-mcp` payload
 doctor succeeds and the saved setup has refreshed the managed launcher. This
 does not replace Chromium or expose tools to an already running session.
-Before using that server, require a healthy managed Firefox engine doctor and
+Before using that server, require a healthy `managed-mcp` Firefox engine doctor and
 verify that its own tools are exposed. Registration, runtime launch and
 application coverage are separate states. Native ESR and Flatpak Firefox remain
 desktop contexts with their own profiles and trust.

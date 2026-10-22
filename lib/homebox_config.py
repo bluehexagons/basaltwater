@@ -12,7 +12,7 @@ from lib.validators import validate_host
 if TYPE_CHECKING:
     from lib.config import SetupConfig
 
-DEFAULT_VERSION = "v0.26.2"
+DEFAULT_VERSION = "v0.27.0"
 DEFAULT_PORT = 7745
 DEFAULT_DATA = "/var/lib/homebox"
 
@@ -39,9 +39,9 @@ def parse_homebox_spec(spec: str) -> tuple[str, int]:
 
 def validate_homebox_version(version: str) -> str:
     if not isinstance(version, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version):
-        raise ValueError("HomeBox version must be a stable tag such as v0.26.2")
-    if tuple(map(int, version[1:].split("."))) < (0, 26, 2):
-        raise ValueError("HomeBox versions before v0.26.2 are not supported")
+        raise ValueError("HomeBox version must be a stable tag such as v0.27.0")
+    if tuple(map(int, version[1:].split("."))) < (0, 27, 0):
+        raise ValueError("HomeBox versions before v0.27.0 are not supported")
     return version
 
 

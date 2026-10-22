@@ -6,11 +6,13 @@ import json
 import os
 import shlex
 import stat
+import tempfile
 from typing import cast
 
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import is_dry_run, run
+from lib.service_node import SERVICE_NODE, SERVICE_NPM_CLI, install_service_node, node_environment, verify_service_node
 from lib.types import JSONDict
 
 from .agent_steps import (
@@ -24,23 +26,37 @@ from .agent_steps import (
 from .common_steps import _run_as_login_user
 
 
-PLAYWRIGHT_MCP_VERSION = "0.0.79"
+PLAYWRIGHT_MCP_VERSION = "0.0.83"
 PLAYWRIGHT_MCP_SERVER_NAME = "basaltwater-playwright"
 PLAYWRIGHT_MCP_INTEGRITY = (
-    "sha512-VpqD4a3vFyGQMY9sh3UJiO6wjcurggkljKfAyCHL0QWGY5m6Ehr3MNsAAHPDHO//"
-    "n13g0PCjpHatAOiulrqdZQ=="
+    "sha512-oNcl+Ae2/IAjhfPeP46BfIkSakfmprY+aOtkv5MjrQ4lPav4/yNtPhL0iq8SlIM90o"
+    "ApWgBDUxaNKvktazUKOg=="
 )
-PLAYWRIGHT_VERSION = "1.63.0-alpha-2026-08-05"
+PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION = "1.64.0-alpha-1790635538000"
+PLAYWRIGHT_MCP_PLAYWRIGHT_INTEGRITY = (
+    "sha512-/5XDUMxpOd/9AojJtWDFIRV3EJZNQ0AwvK69wgt3CPzy8wTgiBG9pX45VfxtqtvIR"
+    "GwfWzMhrvawNKreG69Snw=="
+)
+PLAYWRIGHT_MCP_CORE_INTEGRITY = (
+    "sha512-pNwaXirhXMRLaRQs4NQ18EpTdtDoFwyPH9FOaaDC7YXG4hpwE2xmwCic/1srbuEx"
+    "VQC7zT9LJSJpDBAru+Vo9A=="
+)
+PLAYWRIGHT_VERSION = "1.64.1"
 PLAYWRIGHT_INTEGRITY = (
-    "sha512-zbGZUK+JYkoDV3cUgfvh2czTBJL34Gmz5gHVI25xiIpvYSR17Q1M7TS8hnwECUe+"
-    "IkKaeXbKrSyJTyogm2DVWw=="
+    "sha512-HCrVhHr5QQuwYoswEUGTb7gGp522yflbv/ST8nF4sFWGuLjQCt17Q/EubpGGSNKYn"
+    "1tsTCPZxqHhHCfVURu7UA=="
 )
 PLAYWRIGHT_CORE_INTEGRITY = (
-    "sha512-YussvUybTfBtyYbGXWh43f+5kNP03wg98M6mu4DphYET7PSbNVajsdLGjWE1xrsj"
-    "qOw32i2wFlRP7U5mcOpMZg=="
+    "sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9"
+    "l21b6LfYosScPL6M3xxyDQ=="
+)
+PLAYWRIGHT_TEST_INTEGRITY = (
+    "sha512-IaYGml/nSOiZWROfPtuIL7neuu9qDOZ3TNvNljUIrhDMxiGTgPjzj/g9p9RxpS2t"
+    "SepPDRY+UwAaEeiKtUvIAg=="
 )
 
 PLAYWRIGHT_ROOT = "/opt/basaltwater-playwright"
+PLAYWRIGHT_STABLE_ROOT = "/opt/basaltwater-playwright-stable"
 PLAYWRIGHT_MCP_CLI = os.path.join(
     PLAYWRIGHT_ROOT,
     "node_modules",
@@ -63,15 +79,12 @@ PLAYWRIGHT_SMOKE_SCRIPT = os.path.join(PLAYWRIGHT_ROOT, "browser-smoke.js")
 PLAYWRIGHT_MCP_CONFIG = os.path.join(PLAYWRIGHT_ROOT, "mcp-config.json")
 PLAYWRIGHT_MCP_WRAPPER = "/usr/local/bin/basaltwater-playwright-mcp"
 PLAYWRIGHT_DOCTOR_WRAPPER = "/usr/local/bin/basaltwater-playwright-doctor"
-SYSTEM_NODE = "/usr/bin/node"
+SYSTEM_NODE = SERVICE_NODE
 SYSTEM_TIMEOUT = "/usr/bin/timeout"
 PLAYWRIGHT_SMOKE_ACTION_TIMEOUT_MS = 120_000
 PLAYWRIGHT_SMOKE_PROCESS_TIMEOUT_SECONDS = 180
 PLAYWRIGHT_MCP_OUTPUT_MAX_BYTES = 256 * 1024 * 1024
 PLAYWRIGHT_MCP_SETTLE_TIMEOUT_MS = 1_000
-PLAYWRIGHT_DEPS_MARKER = (
-    f"/var/lib/basaltwater/state/playwright-deps-{PLAYWRIGHT_VERSION}"
-)
 
 _BROWSER_EXECUTABLE_SCRIPT = (
     f'const {{ chromium }} = require("{PLAYWRIGHT_MODULE}"); '
@@ -92,6 +105,7 @@ _MCP_WRAPPER_CONTENT = (
     "umask 077\n"
     "unset NODE_OPTIONS NODE_PATH\n"
     'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"\n'
+    'export PLAYWRIGHT_SKIP_BROWSER_GC=1\n'
     'engine="chromium"\n'
     'if [ "${1-}" = "--engine" ]; then\n'
     '  engine="${2-}"\n'
@@ -295,65 +309,64 @@ def _ensure_safe_root_path(path: str) -> None:
             raise RuntimeError(f"Refusing symlinked browser automation path: {current}")
 
 
-def _install_runtime_package(*, refresh: bool = False) -> bool:
-    """Install and verify the pinned MCP package without lifecycle scripts."""
-    _ensure_safe_root_path(PLAYWRIGHT_ROOT)
-    run("apt-get -o DPkg::Lock::Timeout=60 install -y -qq ca-certificates nodejs npm")
-    run(f"install -d -m 0755 -o root -g root {shlex.quote(PLAYWRIGHT_ROOT)}")
-    node_result = run(f"{SYSTEM_NODE} --version", capture_output=True)
-    raw_node_version = node_result.stdout.strip().removeprefix("v")
-    try:
-        node_major = int(raw_node_version.split(".", 1)[0])
-    except (ValueError, IndexError) as exc:
-        raise RuntimeError(f"Could not determine Node.js version: {raw_node_version}") from exc
-    if node_major < 20:
-        raise RuntimeError("Pinned Playwright requires Node.js 20 or newer")
+def _install_runtime_package(*, refresh: bool = False, stable: bool = False) -> bool:
+    """Keep the stable test runner separate from MCP's required alpha runtime."""
+    root = PLAYWRIGHT_STABLE_ROOT if stable else PLAYWRIGHT_ROOT
+    _ensure_safe_root_path(root)
+    verify_service_node()
+    run(f"install -d -m 0755 -o root -g root {shlex.quote(root)}")
 
     package_path = os.path.join(
-        PLAYWRIGHT_ROOT,
+        root,
         "node_modules",
         "@playwright",
-        "mcp",
+        "test" if stable else "mcp",
         "package.json",
     )
-    lock_path = os.path.join(PLAYWRIGHT_ROOT, "package-lock.json")
+    lock_path = os.path.join(root, "package-lock.json")
     try:
-        _verify_runtime_package(package_path, lock_path)
+        _verify_runtime_package(package_path, lock_path, stable=stable)
     except RuntimeError:
         pass
     else:
         if not refresh:
-            print("  ✓ Playwright MCP runtime already verified; skipping npm install")
+            print(f"  ✓ Playwright {'stable' if stable else 'MCP'} runtime already verified; skipping npm install")
             return False
     if refresh:
-        print("  Refreshing the pinned Playwright MCP runtime")
+        print(f"  Refreshing the pinned Playwright {'stable' if stable else 'MCP'} runtime")
     if not refresh:
-        print("  Repairing the missing or invalid Playwright MCP runtime")
+        print(f"  Repairing the missing or invalid Playwright {'stable' if stable else 'MCP'} runtime")
 
-    run(
-        "npm install --ignore-scripts --no-audit --no-fund --save-exact "
-        f"--prefix {shlex.quote(PLAYWRIGHT_ROOT)} "
-        f"@playwright/mcp@{PLAYWRIGHT_MCP_VERSION}"
-    )
+    package = f"@playwright/test@{PLAYWRIGHT_VERSION}" if stable else f"@playwright/mcp@{PLAYWRIGHT_MCP_VERSION}"
+    with tempfile.TemporaryDirectory(prefix="basaltwater-browser-npm-") as temporary:
+        environment = node_environment()
+        for kind in ("user", "global"):
+            config_path = os.path.join(temporary, kind + ".npmrc")
+            write_text_atomic(config_path, "", mode=0o600)
+            environment[f"NPM_CONFIG_{kind.upper()}CONFIG"] = config_path
+        run([SYSTEM_NODE, SERVICE_NPM_CLI, "install", "--ignore-scripts", "--no-audit", "--no-fund",
+             "--save-exact", "--prefix", root, "--registry=https://registry.npmjs.org", package],
+            env=environment, cwd=temporary)
 
-    _verify_runtime_package(package_path, lock_path)
+    _verify_runtime_package(package_path, lock_path, stable=stable)
 
-    run(f"chown -R root:root {shlex.quote(PLAYWRIGHT_ROOT)}")
-    run(f"chmod -R go-w {shlex.quote(PLAYWRIGHT_ROOT)}")
+    run(f"chown -R root:root {shlex.quote(root)}")
+    run(f"chmod -R go-w {shlex.quote(root)}")
     return True
 
 
-def _verify_runtime_package(package_path: str, lock_path: str) -> None:
+def _verify_runtime_package(package_path: str, lock_path: str, *, stable: bool = False) -> None:
     """Verify every npm package whose code is executed during provisioning."""
+    version = PLAYWRIGHT_VERSION if stable else PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION
+    expected_package_version = PLAYWRIGHT_VERSION if stable else PLAYWRIGHT_MCP_VERSION
     expected_lock_entries = {
-        "node_modules/@playwright/mcp": (
-            PLAYWRIGHT_MCP_VERSION,
-            PLAYWRIGHT_MCP_INTEGRITY,
+        "node_modules/@playwright/" + ("test" if stable else "mcp"): (
+            expected_package_version, PLAYWRIGHT_TEST_INTEGRITY if stable else PLAYWRIGHT_MCP_INTEGRITY,
         ),
-        "node_modules/playwright": (PLAYWRIGHT_VERSION, PLAYWRIGHT_INTEGRITY),
+        "node_modules/playwright": (version, PLAYWRIGHT_INTEGRITY if stable else PLAYWRIGHT_MCP_PLAYWRIGHT_INTEGRITY),
         "node_modules/playwright-core": (
-            PLAYWRIGHT_VERSION,
-            PLAYWRIGHT_CORE_INTEGRITY,
+            version,
+            PLAYWRIGHT_CORE_INTEGRITY if stable else PLAYWRIGHT_MCP_CORE_INTEGRITY,
         ),
     }
     try:
@@ -364,7 +377,7 @@ def _verify_runtime_package(package_path: str, lock_path: str) -> None:
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("Could not verify the installed Playwright MCP package") from exc
 
-    if not isinstance(package, dict) or package.get("version") != PLAYWRIGHT_MCP_VERSION:
+    if not isinstance(package, dict) or package.get("version") != expected_package_version:
         raise RuntimeError("Installed Playwright MCP package failed version verification")
     lock_packages = package_lock.get("packages") if isinstance(package_lock, dict) else None
     if not isinstance(lock_packages, dict):
@@ -426,34 +439,50 @@ def reconcile_existing_browser_automation(config: SetupConfig) -> None:
         print("  ✓ No complete existing Playwright browser installation to reconcile")
         return
 
+    try:
+        verify_service_node()
+        _verify_runtime_package(os.path.join(PLAYWRIGHT_ROOT, "node_modules/@playwright/mcp/package.json"),
+                                os.path.join(PLAYWRIGHT_ROOT, "package-lock.json"))
+        _verify_runtime_package(os.path.join(PLAYWRIGHT_STABLE_ROOT, "node_modules/@playwright/test/package.json"),
+                                os.path.join(PLAYWRIGHT_STABLE_ROOT, "package-lock.json"), stable=True)
+    except (OSError, RuntimeError, ValueError):
+        print("  Browser runtime migration required; rerun saved setup with --browser-automation playwright")
+        return
     _write_launchers()
     print("  ✓ Existing Playwright browser launchers reconciled")
 
 
-def _install_browser(config: SetupConfig) -> bool:
+def _install_browser(config: SetupConfig, *, stable: bool = False) -> bool:
     """Install OS dependencies and a user-owned Chromium browser payload."""
     user_home = _user_home(config)
-    deps_changed = config.refresh_packages or not os.path.exists(PLAYWRIGHT_DEPS_MARKER)
+    version = PLAYWRIGHT_VERSION if stable else PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION
+    root = PLAYWRIGHT_STABLE_ROOT if stable else PLAYWRIGHT_ROOT
+    cli = os.path.join(root, "node_modules/playwright/cli.js")
+    script = f'const {{ chromium }} = require("{root}/node_modules/playwright"); process.stdout.write(chromium.executablePath());'
+    executable_command = f"{SYSTEM_NODE} -e {shlex.quote(script)}"
+    deps_marker = f"/var/lib/basaltwater/state/playwright-deps-{version}"
+    deps_changed = config.refresh_packages or not os.path.exists(deps_marker)
     if deps_changed:
-        run(f"{SYSTEM_NODE} {shlex.quote(PLAYWRIGHT_CLI)} install-deps chromium")
-        os.makedirs(os.path.dirname(PLAYWRIGHT_DEPS_MARKER), mode=0o755, exist_ok=True)
-        with open(PLAYWRIGHT_DEPS_MARKER, "w", encoding="utf-8") as marker:
+        run(f"{SYSTEM_NODE} {shlex.quote(cli)} install-deps chromium", env=node_environment())
+        os.makedirs(os.path.dirname(deps_marker), mode=0o755, exist_ok=True)
+        with open(deps_marker, "w", encoding="utf-8") as marker:
             marker.write("basaltwater Playwright OS dependencies installed\n")
-        os.chmod(PLAYWRIGHT_DEPS_MARKER, 0o644)
+        os.chmod(deps_marker, 0o644)
     else:
         print("  ✓ Playwright OS dependencies already installed; skipping apt transaction")
 
     browser_marker = (
         f"$HOME/.cache/ms-playwright/.basaltwater-chromium-"
-        f"{PLAYWRIGHT_VERSION}.installed"
+        f"{version}.installed"
     )
     browser_ready = not config.refresh_packages and _run_as_login_user(
         config.username,
         user_home,
         'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright" && '
+        'export PLAYWRIGHT_SKIP_BROWSER_GC=1 && unset NODE_OPTIONS NODE_PATH && '
         f'test -f "{browser_marker}" && '
-        f'test -f "$({_BROWSER_EXECUTABLE_COMMAND})" && '
-        f'test -x "$({_BROWSER_EXECUTABLE_COMMAND})"',
+        f'test -f "$({executable_command})" && '
+        f'test -x "$({executable_command})"',
         check=False,
     ).returncode == 0
     if browser_ready:
@@ -464,11 +493,12 @@ def _install_browser(config: SetupConfig) -> bool:
         config.username,
         user_home,
         "export PLAYWRIGHT_BROWSERS_PATH=\"$HOME/.cache/ms-playwright\" && "
-        f"{SYSTEM_NODE} {shlex.quote(PLAYWRIGHT_CLI)} install chromium && "
-        f'test -f "$({_BROWSER_EXECUTABLE_COMMAND})" && '
-        f'test -x "$({_BROWSER_EXECUTABLE_COMMAND})" && '
+        'export PLAYWRIGHT_SKIP_BROWSER_GC=1 && unset NODE_OPTIONS NODE_PATH && '
+        f"{SYSTEM_NODE} {shlex.quote(cli)} install chromium && "
+        f'test -f "$({executable_command})" && '
+        f'test -x "$({executable_command})" && '
         f"mkdir -p \"$HOME/.cache/ms-playwright\" && "
-        f"printf '%s\\n' {shlex.quote(PLAYWRIGHT_VERSION)} > \"{browser_marker}\"",
+        f"printf '%s\\n' {shlex.quote(version)} > \"{browser_marker}\"",
     )
     return True
 
@@ -562,16 +592,16 @@ def install_browser_automation(config: SetupConfig) -> None:
     if config.browser_automation != "playwright":
         raise RuntimeError(f"Unsupported browser automation provider: {config.browser_automation}")
     if is_dry_run():
-        print("  [DRY-RUN] Would install pinned Playwright MCP and Chromium")
+        print("  [DRY-RUN] Would install verified service Node, stable Playwright tests, MCP and Chromium")
         print("  [DRY-RUN] Would register browser automation for selected agents")
         return
 
-    if config.refresh_packages:
-        _install_runtime_package(refresh=True)
-    else:
-        _install_runtime_package()
+    install_service_node()
+    _install_runtime_package(refresh=config.refresh_packages)
+    _install_runtime_package(refresh=config.refresh_packages, stable=True)
     _write_launchers()
     _install_browser(config)
+    _install_browser(config, stable=True)
     reconcile_agent_workflow_skills(config)
 
     selected_tools = set(config.selected_agent_tools())

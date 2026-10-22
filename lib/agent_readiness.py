@@ -34,6 +34,7 @@ _BROWSER_LAUNCHER_FEATURES = (
     "bounded_evidence",
     "coordinate_input",
     "webgl_settle_delay",
+    "service_node",
 )
 _BROWSER_WORKFLOW_SKILLS = frozenset(
     (
@@ -74,6 +75,7 @@ _DEVELOPMENT_ISSUES = frozenset(
         "gofmt_missing",
         "go_c_compiler_missing",
         "node_default_missing",
+        "node_default_unsupported",
         "node_npm_missing",
         "node_pnpm_missing",
         "native_selection_unsafe",
@@ -242,8 +244,9 @@ def sanitize_development_readiness(record: JSONDict) -> JSONDict:
 
 def sanitize_browser_context(record: JSONDict) -> JSONDict:
     """Retain only the known managed-Chromium integration doctor's context."""
-    return {field: expected if record.get(field) == expected else None
-            for field, expected in (("engine", "chromium"), ("context", "managed"), ("network_origin", "host"))}
+    return {field: record.get(field) if record.get(field) in allowed else None
+            for field, allowed in (("engine", ("chromium",)), ("context", ("managed", "managed-mcp")),
+                                   ("network_origin", ("host",)))}
 
 
 def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:

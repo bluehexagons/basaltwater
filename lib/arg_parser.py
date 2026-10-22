@@ -16,6 +16,7 @@ from lib.config import (
     MACHINE_TYPES,
     WEB_INTERFACES,
 )
+from lib.homebox_config import DEFAULT_VERSION as HOMEBOX_DEFAULT_VERSION
 from lib.notifications import NOTIFICATION_LEVELS
 from lib.publishing_config import PUBLISHING_TOOLS
 
@@ -1598,7 +1599,8 @@ def add_setup_arguments(
                               help="Install native HomeBox: DOMAIN[:PORT] [DATA_PATH]; hostname requires --ssl, :PORT is loopback-only")
     homebox_group.add_argument("--no-homebox", dest="homebox", action="store_const", const=[],
                               help="Remove the managed HomeBox unit and proxy, preserving inventory, secrets, and releases")
-    parser.add_argument("--homebox-version", metavar="TAG", help="Explicit HomeBox version (new installs: v0.26.2; reruns retain installed version)")
+    parser.add_argument("--homebox-version", metavar="TAG",
+                        help=f"Explicit stable HomeBox version (minimum/new installs: {HOMEBOX_DEFAULT_VERSION}; reruns retain installed version)")
     parser.add_argument("--homebox-admin", metavar="EMAIL", help="Initial HomeBox account email (default: admin@homebox.local); password generated on target")
     parser.add_argument("--homebox-port", type=int, metavar="PORT", help="Loopback backend port for hostname-based HomeBox (default: 7745)")
 

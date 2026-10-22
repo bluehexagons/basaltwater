@@ -14,8 +14,12 @@ import unittest
 from unittest.mock import patch
 
 from lib.agent_probe import ProbeResult
-from lib.node_toolchain import inspect_project_node, inspect_project_node_context, run_node_command, select_node, satisfies
-from lib.node_runtime_ownership import runtime_owner
+from lib.node_toolchain import (
+    MAX_RELEASE_INDEX_BYTES, NODE_RELEASE_INDEX, NodeSelectionUnavailable,
+    choose_node_release, fetch_node_releases, inspect_project_node, inspect_project_node_context,
+    resolve_node_release, run_node_command, select_node, satisfies,
+)
+from lib.node_runtime_ownership import mark_runtime, runtime_owner
 
 
 class NodeToolchainTests(unittest.TestCase):
@@ -27,35 +31,48 @@ class NodeToolchainTests(unittest.TestCase):
         self.project.mkdir()
         (self.project / '.git').mkdir()
         self.nvm = self.root / 'nvm'
-        for version in ('20.20.2', '22.23.2', '24.21.0', '26.10.0', '24.22.2', '26.12.1'):
+        for version in ('20.20.2', '22.23.2', '24.21.0', '26.10.0', '24.22.0',
+                        '24.22.1', '24.22.2', '26.12.0', '26.12.1', '27.0.0'):
             binary = self.nvm / 'versions/node' / ('v' + version) / 'bin/node'
             binary.parent.mkdir(parents=True)
             binary.write_text('fake node')
             binary.chmod(0o755)
         (self.nvm / 'alias').mkdir()
         (self.nvm / 'alias/default').write_text('24')
+        self.releases = [
+            {'version': 'v20.20.2', 'lts': 'Iron'},
+            {'version': 'v24.22.0', 'lts': 'Krypton'},
+            {'version': 'v24.22.1', 'lts': 'Krypton'},
+            {'version': 'v24.22.2', 'lts': 'Krypton'},
+            {'version': 'v26.12.0', 'lts': False},
+            {'version': 'v26.12.1', 'lts': False},
+            {'version': 'v27.0.0', 'lts': False},
+        ]
+        discovery = patch('lib.node_toolchain.fetch_node_releases', return_value=self.releases)
+        self.discovery = discovery.start()
+        self.addCleanup(discovery.stop)
 
     def select(self, **kwargs):
         return select_node(str(self.project), nvm_dir=str(self.nvm), **kwargs)
 
     def test_pin_beats_newer_installed_runtime(self):
-        (self.project / '.nvmrc').write_text('22')
+        (self.project / '.nvmrc').write_text('24')
         selection = self.select()
-        self.assertEqual(selection.version, '22.23.2')
+        self.assertEqual(selection.version, '24.22.2')
         self.assertEqual(selection.runtime_source, 'nvm')
         self.assertTrue(selection.source.endswith('.nvmrc'))
-        (self.project / '.node-version').write_text('20.20.2')
-        self.assertEqual(self.select().version, '20.20.2')
-        self.assertEqual(self.select(version='26.10.0').version, '26.10.0')
+        (self.project / '.node-version').write_text('24.22.1')
+        self.assertEqual(self.select().version, '24.22.1')
+        self.assertEqual(self.select(version='26.12.1').version, '26.12.1')
 
     def test_nested_engines_and_nearest_pin(self):
         (self.project / '.nvmrc').write_text('20')
         child = self.project / 'frontend'
         child.mkdir()
-        (child / '.node-version').write_text('22')
-        (child / 'package.json').write_text(json.dumps({'engines': {'node': '^20.19.0 || >=22.12.0'}}))
+        (child / '.node-version').write_text('24')
+        (child / 'package.json').write_text(json.dumps({'engines': {'node': '^24.22.1 || >=26'}}))
         selection = select_node(str(child), nvm_dir=str(self.nvm))
-        self.assertEqual(selection.version, '22.23.2')
+        self.assertEqual(selection.version, '24.22.2')
 
     def test_pin_must_also_satisfy_engines(self):
         (self.project / '.node-version').write_text('20')
@@ -68,9 +85,9 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertEqual(self.select().version, '24.22.2')
         (self.nvm / 'alias/default').unlink()
         with patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), patch(
-            'lib.node_toolchain.run_probe', return_value=ProbeResult('v22.23.2\n')
+            'lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.1\n')
         ):
-            self.assertEqual(self.select().version, '22.23.2')
+            self.assertEqual(self.select().version, '24.22.1')
 
     def test_path_does_not_leak_tools_from_other_node_versions(self):
         selected = self.select(version='26')
@@ -81,11 +98,11 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertEqual(environment['VALUE'], 'kept')
 
     def test_missing_nvm_pin_reports_compatible_path_origin_and_pin_separately(self):
-        (self.project / '.nvmrc').write_text('27')
-        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=27'}}))
+        (self.project / '.nvmrc').write_text('26.13')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=26'}}))
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                 patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
-                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v27.1.0\n')):
+                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v26.13.0\n')):
             selection = self.select()
             self.assertEqual(selection.runtime_source, 'path')
             self.assertEqual(selection.source, str(self.project / '.nvmrc'))
@@ -133,15 +150,15 @@ class NodeToolchainTests(unittest.TestCase):
                 bootstrap.assert_not_called()
                 run.assert_not_called()
 
-    def test_alias_resolution_outside_managed_policy_never_installs_package_managers(self):
+    def test_named_old_lts_fails_before_runtime_or_package_installs(self):
         (self.nvm / "nvm.sh").write_text("# managed NVM")
-        args = argparse.Namespace(node_command="install", project=str(self.project), version="node",
+        args = argparse.Namespace(node_command="install", project=str(self.project), version="lts/iron",
                                   package_manager=["pnpm@12.6.0"])
         with patch.dict(os.environ, {"NVM_DIR": str(self.nvm)}), \
                 patch("lib.node_toolchain.subprocess.run", return_value=subprocess.CompletedProcess(
                     [], 0, "v27.0.0", "")) as run, patch("lib.node_toolchain.run_probe") as probe:
             self.assertEqual(run_node_command(args), 1)
-            self.assertEqual(run.call_count, 1)
+            run.assert_not_called()
             probe.assert_not_called()
 
     def test_install_package_managers_use_selected_runtime_and_validate_before_mutation(self):
@@ -186,13 +203,13 @@ class NodeToolchainTests(unittest.TestCase):
                 patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.2')):
             self.assertEqual(run_node_command(args), 0)
         bootstrap.assert_called_once_with()
-        self.assertEqual(run.call_args.args[0][-2:], [str(self.nvm / 'nvm.sh'), '24'])
+        self.assertEqual(run.call_args.args[0][-2:], [str(self.nvm / 'nvm.sh'), 'v24.22.2'])
         self.assertEqual(runtime_owner(self.nvm, '24.22.2'), 'project')
 
     def test_install_checks_resolved_runtime_instead_of_older_compatible_inventory(self):
         (self.nvm / 'nvm.sh').write_text('# managed NVM')
         old = self.nvm / 'versions/node/v24.22.1/bin/node'
-        old.parent.mkdir(parents=True)
+        old.parent.mkdir(parents=True, exist_ok=True)
         old.write_text('old node')
         old.chmod(0o755)
         (self.project / '.nvmrc').write_text('24')
@@ -231,13 +248,16 @@ class NodeToolchainTests(unittest.TestCase):
         (self.nvm / 'alias/lts').mkdir()
         (self.nvm / 'alias/lts/*').write_text('24')
         binary = self.nvm / 'versions/node/v24.22.1/bin/node'
-        binary.parent.mkdir(parents=True)
+        binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text('resolved node')
         binary.chmod(0o755)
         for version in ('24', '24.22', 'lts/*', 'node'):
             args = argparse.Namespace(node_command='install', project=str(self.project), version=version,
                                       package_manager=['pnpm@10.0.0'])
             with self.subTest(version=version), patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                    patch('lib.node_toolchain.fetch_node_releases', return_value=[
+                        {'version': 'v24.22.1', 'lts': 'Krypton'},
+                    ]), \
                     patch('lib.node_toolchain.subprocess.run', side_effect=[
                         subprocess.CompletedProcess([], 0, 'v24.22.1\n'),
                         subprocess.CompletedProcess([], 0, '10.0.0'),
@@ -245,6 +265,7 @@ class NodeToolchainTests(unittest.TestCase):
                         subprocess.CompletedProcess([], 0, '10.0.0'),
                     ]) as run, patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.1')) as probe:
                 self.assertEqual(run_node_command(args), 0)
+                self.assertEqual(run.call_args_list[0].args[0][-1], 'v24.22.1')
                 self.assertEqual(probe.call_args.args[0], [str(binary), '--version'])
                 self.assertEqual(run.call_args_list[2].args[0][0], str(binary.with_name('npm')))
                 self.assertEqual(runtime_owner(self.nvm, '24.22.1'), 'project')
@@ -320,7 +341,7 @@ class NodeToolchainTests(unittest.TestCase):
             bootstrap.assert_not_called()
 
     def test_project_doctor_uses_selected_tools_without_inherited_code_or_project_policy(self):
-        (self.project / '.nvmrc').write_text('22')
+        (self.project / '.nvmrc').write_text('24')
         (self.project / 'package.json').write_text(json.dumps({'engines': {'npm': '>=11.18.0'}}))
         probes = []
 
@@ -328,7 +349,7 @@ class NodeToolchainTests(unittest.TestCase):
             probes.append(options['cwd'])
             self.assertTrue(Path(options['cwd']).is_dir())
             self.assertNotEqual(options['cwd'], str(self.project))
-            self.assertIn('v22.23.2/bin', command[0])
+            self.assertIn('v24.22.2/bin', command[0])
             self.assertEqual(command[1:], ['--version'])
             self.assertEqual(options['timeout'], 10)
             self.assertEqual(options['max_bytes'], 4096)
@@ -343,19 +364,19 @@ class NodeToolchainTests(unittest.TestCase):
             self.assertEqual(options['env']['NPM_CONFIG_UPDATE_NOTIFIER'], 'false')
             self.assertNotIn('NODE_OPTIONS', options['env'])
             self.assertNotIn('PRIVATE_TOKEN', options['env'])
-            return ProbeResult('v22.23.2' if Path(command[0]).name == 'node' else '11.19.0')
+            return ProbeResult('v24.22.2' if Path(command[0]).name == 'node' else '11.19.0')
 
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'NODE_OPTIONS': '--require=./project-code.js', 'PRIVATE_TOKEN': 'secret'}), \
                 patch('lib.node_toolchain.run_probe', side_effect=probe) as run:
             result = inspect_project_node(str(self.project))
         self.assertTrue(result['healthy'])
-        self.assertEqual(result['selection']['version'], '22.23.2')
+        self.assertEqual(result['selection']['version'], '24.22.2')
         self.assertEqual(result['npm_requirement'], '>=11.18.0')
         self.assertEqual(run.call_count, 2)
         self.assertTrue(all(not Path(directory).exists() for directory in probes))
 
     def test_project_doctor_detects_wrong_binary_npm_engines_and_failed_probes(self):
-        (self.project / '.nvmrc').write_text('22')
+        (self.project / '.nvmrc').write_text('24')
         (self.project / 'package.json').write_text(json.dumps({'engines': {'npm': '>=11.18.0'}}))
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), patch(
             'lib.node_toolchain.run_probe', side_effect=[
@@ -364,7 +385,8 @@ class NodeToolchainTests(unittest.TestCase):
         ):
             result = inspect_project_node(str(self.project))
         self.assertFalse(result['healthy'])
-        self.assertEqual(result['issues'], ['project_node_version_mismatch', 'project_npm_engine_mismatch'])
+        self.assertEqual(result['issues'], ['project_node_version_mismatch', 'project_node_unsupported',
+                                            'project_npm_engine_mismatch'])
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), patch(
             'lib.node_toolchain.run_probe', return_value=ProbeResult(issue='probe_unavailable')
         ):
@@ -379,7 +401,7 @@ class NodeToolchainTests(unittest.TestCase):
             self.assertTrue(Path(options['cwd']).is_dir())
             self.assertNotIn('NODE_OPTIONS', options['env'])
             self.assertNotIn('LD_PRELOAD', options['env'])
-            return ProbeResult('v22.23.2' if command[0].endswith('/node') else '11.19.0')
+            return ProbeResult('v24.22.1' if command[0].endswith('/node') else '11.19.0')
 
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'NODE_OPTIONS': '--require=project.js', 'LD_PRELOAD': '/private'}), \
                 patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
@@ -426,7 +448,7 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertEqual((self.nvm / 'alias/default').read_text(), '24')
 
     def test_runtime_inventory_limit_and_failed_version_probes_remain_unqualified(self):
-        (self.project / '.nvmrc').write_text('22')
+        (self.project / '.nvmrc').write_text('24')
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                 patch('lib.node_toolchain.MAX_RUNTIME_ENTRIES', 2), \
                 patch('lib.node_toolchain.run_probe') as probe:
@@ -441,6 +463,126 @@ class NodeToolchainTests(unittest.TestCase):
             self.assertFalse(result['healthy'])
             self.assertEqual(result['issues'], ['project_node_unusable', 'project_npm_unusable'])
             self.assertEqual(result['tools'], {'node': None, 'npm': None})
+
+
+    def test_every_selection_path_filters_policy_without_rewriting_generic_ranges(self):
+        with patch('lib.node_toolchain.shutil.which', return_value=None):
+            for request in ('*', 'node', 'stable', '>=20', '^22 || >=24'):
+                with self.subTest(request=request):
+                    self.assertEqual(self.select(version=request).version, '26.12.1')
+            for request in ('22', '25', '27', '24.22.0', '26.12.0'):
+                with self.subTest(request=request), self.assertRaisesRegex(NodeSelectionUnavailable, 'managed policy'):
+                    self.select(version=request)
+        (self.nvm / 'alias/default').write_text('22')
+        with patch('lib.node_toolchain.shutil.which', return_value=None), self.assertRaises(NodeSelectionUnavailable):
+            self.select()
+
+    def test_unsupported_path_pin_cannot_status_env_exec_or_doctor(self):
+        for request, observed in (('22', 'v22.23.2'), ('27', 'v27.0.0'), ('24.22.0', 'v24.22.0')):
+            (self.project / '.nvmrc').write_text(request)
+            for command in ('status', 'env', 'exec', 'doctor'):
+                args = argparse.Namespace(node_command=command, project=str(self.project), version=None,
+                                          json=True, argv=['--', 'node', 'project-code.js'])
+                with self.subTest(request=request, command=command), \
+                        patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                        patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
+                        patch('lib.node_toolchain.run_probe', return_value=ProbeResult(observed)), \
+                        patch('lib.node_toolchain.subprocess.run') as run:
+                    self.assertEqual(run_node_command(args), 1)
+                    run.assert_not_called()
+
+    def test_alias_chains_cycles_and_missing_aliases_are_read_only(self):
+        aliases = self.nvm / 'alias/lts'
+        aliases.mkdir()
+        (self.nvm / 'alias/default').write_text('lts/krypton')
+        (aliases / 'krypton').write_text('24')
+        self.assertEqual(self.select().version, '24.22.2')
+        for value in ('lts/missing', 'default'):
+            (aliases / 'krypton').write_text(value)
+            with self.subTest(value=value), self.assertRaises(NodeSelectionUnavailable):
+                self.select()
+        (aliases / 'krypton').write_text('22')
+        with patch('lib.node_toolchain.shutil.which', return_value=None), self.assertRaises(NodeSelectionUnavailable):
+            self.select()
+
+    def test_release_choice_intersects_policy_metadata_and_engines(self):
+        with patch('lib.node_toolchain.fetch_node_releases', side_effect=AssertionError('exact pins are offline')):
+            self.assertEqual(resolve_node_release('26.12.1', engines='>=26'), 'v26.12.1')
+        releases = self.releases + [{'version': 'v28.0.0', 'lts': 'Future'}]
+        for request, engines, expected in (
+            ('node', None, 'v26.12.1'), ('stable', None, 'v26.12.1'),
+            ('lts/*', None, 'v24.22.2'), ('lts/krypton', None, 'v24.22.2'),
+            ('24.22', '<24.22.2', 'v24.22.1'),
+        ):
+            with self.subTest(request=request, engines=engines):
+                self.assertEqual(choose_node_release(releases, request, engines=engines), expected)
+        for request, engines in (('lts/iron', None), ('24', '>=26'), ('24', '<24.22.1')):
+            with self.subTest(request=request, engines=engines), self.assertRaises(NodeSelectionUnavailable):
+                choose_node_release(releases, request, engines=engines)
+
+    def test_failed_resolution_cannot_bootstrap_install_or_claim_cached_targets(self):
+        mark_runtime(self.nvm, '24.22.1', owner='automatic')
+        for request, engines, releases in (
+            ('lts/iron', None, self.releases), ('24', '>=26', self.releases),
+            ('node', None, [{'version': 'v27.0.0', 'lts': False}]),
+            ('node', None, [{'version': 'v24.22.1-rc.1', 'lts': False}]),
+            ('node', None, [{'version': 'N/A', 'lts': False}]),
+        ):
+            (self.project / 'package.json').write_text(json.dumps({'engines': {'node': engines} if engines else {}}))
+            args = argparse.Namespace(node_command='install', project=str(self.project), version=request,
+                                      package_manager=['pnpm@12.6.0'])
+            with self.subTest(request=request, engines=engines, releases=releases), \
+                    patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                    patch('lib.node_toolchain.fetch_node_releases', return_value=releases), \
+                    patch('common.cachyos_development.prepare_project_node_versions') as bootstrap, \
+                    patch('lib.node_toolchain.subprocess.run') as run:
+                self.assertEqual(run_node_command(args), 1)
+                bootstrap.assert_not_called()
+                run.assert_not_called()
+                self.assertEqual(runtime_owner(self.nvm, '24.22.1'), 'automatic')
+                self.assertTrue((self.nvm / 'versions/node/v22.23.2/bin/node').is_file())
+
+    def test_exact_resolved_cached_target_is_protected_before_nvm_mutation(self):
+        (self.nvm / 'nvm.sh').write_text('# managed NVM')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '<24.22.2'}}))
+        for version in ('24.22.1', '24.22.2'):
+            mark_runtime(self.nvm, version, owner='automatic')
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='24', package_manager=[])
+
+        def install(argv, **_options):
+            self.assertEqual(argv[-1], 'v24.22.1')
+            self.assertEqual(runtime_owner(self.nvm, '24.22.1'), 'project')
+            self.assertEqual(runtime_owner(self.nvm, '24.22.2'), 'automatic')
+            return subprocess.CompletedProcess(argv, 0, 'v24.22.1', '')
+
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('lib.node_toolchain.subprocess.run', side_effect=install), \
+                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.1')):
+            self.assertEqual(run_node_command(args), 0)
+
+    def test_official_discovery_has_time_output_and_redirect_bounds(self):
+        with patch('lib.node_toolchain.run_probe', return_value=ProbeResult(json.dumps(self.releases))) as probe:
+            self.assertEqual(fetch_node_releases(), self.releases)
+        self.assertIn(NODE_RELEASE_INDEX, probe.call_args.args[0])
+        self.assertEqual(probe.call_args.kwargs['max_bytes'], MAX_RELEASE_INDEX_BYTES)
+        self.assertEqual(probe.call_args.kwargs['timeout'], 35)
+        self.assertEqual(probe.call_args.kwargs['cwd'], '/')
+        for result in (ProbeResult(issue='probe_timeout'), ProbeResult(issue='probe_output_limit'),
+                       ProbeResult('invalid'), ProbeResult('[]')):
+            with self.subTest(result=result), patch('lib.node_toolchain.run_probe', return_value=result), \
+                    self.assertRaises(ValueError):
+                fetch_node_releases()
+
+    def test_resolve_command_reports_exact_target_without_nvm_or_runtime_changes(self):
+        (self.project / '.node-version').write_text('24')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '<24.22.2'}}))
+        args = argparse.Namespace(node_command='resolve', project=str(self.project), version=None)
+        with patch('lib.node_toolchain.subprocess.run') as run, \
+                patch('lib.node_toolchain.mark_runtime') as mark, patch('sys.stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(run_node_command(args), 0)
+        self.assertEqual(output.getvalue(), 'v24.22.1\n')
+        run.assert_not_called()
+        mark.assert_not_called()
 
 
 if __name__ == '__main__':

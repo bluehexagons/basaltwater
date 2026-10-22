@@ -403,7 +403,7 @@ class TestAgentEnvironment(unittest.TestCase):
         (root / ".nvmrc").write_text("26")
         (root / "package.json").write_text('{"engines":{"node":">=26.4.0","npm":">=12"}}')
         nvm = root / "nvm"
-        node = nvm / "versions/node/v26.10.0/bin/node"
+        node = nvm / "versions/node/v26.12.1/bin/node"
         node.parent.mkdir(parents=True)
         node.write_text("never executed")
         node.chmod(0o700)
@@ -414,7 +414,7 @@ class TestAgentEnvironment(unittest.TestCase):
             patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/usr/bin/" + name if name in ("node", "npm") else None),
             patch.dict(os.environ, {"NVM_DIR": str(nvm)}),
             patch("lib.node_toolchain.run_probe", side_effect=lambda argv, **kwargs:
-                  ProbeResult("v26.10.0" if Path(argv[0]).name == "node" else "12.1.0")) as probe,
+                  ProbeResult("v26.12.1" if Path(argv[0]).name == "node" else "12.1.0")) as probe,
             patch("lib.node_toolchain.subprocess.run") as execute,
         ):
             passive = agent_environment.inspect_environment(self.directory)
@@ -426,7 +426,7 @@ class TestAgentEnvironment(unittest.TestCase):
         runtime = result["project_runtime"]
         self.assertTrue(runtime["healthy"])
         self.assertEqual(runtime["selection"]["executable"], str(node))
-        self.assertEqual(runtime["tools"], {"node": "26.10.0", "npm": "12.1.0"})
+        self.assertEqual(runtime["tools"], {"node": "26.12.1", "npm": "12.1.0"})
         self.assertEqual(runtime["metadata"]["pin_source"], str(root / ".nvmrc"))
         self.assertEqual(agent_environment.scoped_environment(result, ["development"])["project_runtime"], runtime)
         self.assertEqual(probe.call_count, 2)
@@ -435,28 +435,30 @@ class TestAgentEnvironment(unittest.TestCase):
     def test_cli_missing_project_runtime_is_reported_without_losing_manifest(self) -> None:
         root = Path(self.directory)
         (root / ".git").mkdir()
-        (root / ".nvmrc").write_text("99")
-        parser = argparse.ArgumentParser()
-        agent_cli.add_agent_subparser(parser.add_subparsers(dest="command"))
-        args = parser.parse_args(["agent", "manifest", self.directory, "--project-runtime",
-                                  "--capability", "development", "--json"])
-        with (
-            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
-            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
-            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
-            patch.object(agent_environment.shutil, "which", return_value=None),
-            patch.dict(os.environ, {"NVM_DIR": str(root / "missing-nvm")}),
-            patch("lib.node_toolchain.run_probe") as probe,
-            redirect_stdout(output := StringIO()),
-        ):
-            self.assertEqual(agent_cli.run_agent_command(args), 0)
-        result = json.loads(output.getvalue())
-        runtime = result["project_runtime"]
-        self.assertEqual(runtime["issues"], ["project_node_unavailable"])
-        self.assertIsNone(runtime["selection"])
-        self.assertEqual(runtime["metadata"]["pin"], "99")
-        self.assertIn("basaltwater", result)
-        probe.assert_not_called()
+        for pin in ("99", "22", "27"):
+            with self.subTest(pin=pin):
+                (root / ".nvmrc").write_text(pin)
+                parser = argparse.ArgumentParser()
+                agent_cli.add_agent_subparser(parser.add_subparsers(dest="command"))
+                args = parser.parse_args(["agent", "manifest", self.directory, "--project-runtime",
+                                          "--capability", "development", "--json"])
+                with (
+                    patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+                    patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+                    patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
+                    patch.object(agent_environment.shutil, "which", return_value=None),
+                    patch.dict(os.environ, {"NVM_DIR": str(root / "missing-nvm")}),
+                    patch("lib.node_toolchain.run_probe") as probe,
+                    redirect_stdout(output := StringIO()),
+                ):
+                    self.assertEqual(agent_cli.run_agent_command(args), 0)
+                result = json.loads(output.getvalue())
+                runtime = result["project_runtime"]
+                self.assertEqual(runtime["issues"], ["project_node_unavailable"])
+                self.assertIsNone(runtime["selection"])
+                self.assertEqual(runtime["metadata"]["pin"], pin)
+                self.assertIn("basaltwater", result)
+                probe.assert_not_called()
 
     def test_explicit_managed_source_implies_context_without_replacing_invoked_identity(self) -> None:
         parser = argparse.ArgumentParser()

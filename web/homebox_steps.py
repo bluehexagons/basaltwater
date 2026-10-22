@@ -367,6 +367,7 @@ def render_environment(value: dict, secret: dict) -> str:
     settings = {
         "HBOX_MODE": "production", "HBOX_WEB_HOST": "127.0.0.1", "HBOX_WEB_PORT": str(value["port"]),
         "HBOX_DATABASE_DRIVER": "sqlite3",
+        "HBOX_SEARCH_DRIVER": "database",
         "HBOX_DATABASE_SQLITE_PATH": f"{data}/homebox.db?_pragma=busy_timeout=999&_pragma=journal_mode=WAL&_fk=1&_time_format=sqlite",
         "HBOX_STORAGE_CONN_STRING": f"file://{data}/", "HBOX_STORAGE_PREFIX_PATH": "attachments",
         "HBOX_OPTIONS_ALLOW_REGISTRATION": "false", "HBOX_OPTIONS_ALLOW_LOCAL_LOGIN": "true",
@@ -630,20 +631,6 @@ def create_backup(value: dict, destination: Path) -> None:
     secret = _secrets()
     if _digest(release_path(value)) != value["binary_sha256"]:
         raise RuntimeError("Cannot back up a damaged HomeBox executable")
-    database = Path(value["data_path"]) / "homebox.db"
-    _safe_path(database)
-    if database.exists():
-        owner = database.stat()
-        for suffix in ("-wal", "-shm"):
-            sidecar = database.with_name(database.name + suffix)
-            _safe_path(sidecar)
-            if sidecar.exists() and sidecar.stat().st_uid == 0 and owner.st_uid != 0:
-                # Repair sidecars left by older root-run health probes, only
-                # while the service is stopped under the operation lock.
-                if not sidecar.is_file():
-                    raise RuntimeError("Invalid HomeBox SQLite sidecar")
-                os.chown(sidecar, owner.st_uid, owner.st_gid)
-                sidecar.chmod(0o600)
     if not _needs_bootstrap(value) and _database(value)["users"] < 1:
         raise RuntimeError("Cannot back up HomeBox without an initialized user database")
     data = Path(value["data_path"])

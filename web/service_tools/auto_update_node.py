@@ -37,6 +37,7 @@ from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_runtime_ownership import (
     LATEST_UPDATE_ENV, mark_runtime, runtime_directory, runtime_lock, runtime_owner,
 )
+from lib.node_toolchain import SUPPORTED_NODE_RANGE, choose_node_release, fetch_node_releases, is_supported_node
 
 # Initialize centralized logger
 logger = get_service_logger('auto_update_node', 'web', use_syslog=True)
@@ -109,27 +110,21 @@ def node_major(version: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def get_current_lts_version() -> str:
-    """Get the latest LTS version available."""
-    result = run_nvm_command(["nvm", "version-remote", "--lts"])
-    if result.returncode == 0:
-        return normalize_node_version(result.stdout)
-    return ""
+def get_current_lts_version(releases: list[dict] | None = None) -> str:
+    """Get the newest policy-allowed LTS from official release metadata."""
+    return choose_node_release(fetch_node_releases() if releases is None else releases, "lts/*")
 
 
-def get_latest_version() -> str:
-    """Get the latest non-LTS stable version available."""
-    result = run_nvm_command(["nvm", "version-remote", "node"])
-    if result.returncode == 0:
-        return normalize_node_version(result.stdout)
-    return ""
+def get_latest_version(releases: list[dict] | None = None) -> str:
+    """Get the newest policy-allowed stable release, even if upstream is newer."""
+    return choose_node_release(fetch_node_releases() if releases is None else releases, "node")
 
 
 def get_current_version() -> str:
     """Get the currently installed default version."""
     result = run_nvm_command(["nvm", "version", "default"])
-    if result.returncode == 0:
-        return normalize_node_version(result.stdout)
+    if result.returncode == 0 and _NODE_VERSION_RE.fullmatch(result.stdout.strip()):
+        return result.stdout.strip()
     return ""
 
 
@@ -145,7 +140,7 @@ def get_installed_versions() -> list[str]:
         stripped = line.strip()
         if "->" in stripped and not stripped.startswith("->"):
             continue
-        match = re.match(r"(?:->\s*)?(v\d+\.\d+\.\d+)", stripped)
+        match = re.match(r"(?:->\s*)?(v\d+\.\d+\.\d+)(?:\s|$)", stripped)
         if not match:
             continue
         normalized = match.group(1)
@@ -158,9 +153,11 @@ def get_installed_versions() -> list[str]:
 def select_installed_lts_version(installed_versions: list[str], current_lts: str) -> str:
     """Return the newest installed version on the current LTS major."""
     lts_major = node_major(current_lts)
-    if lts_major is None:
+    if lts_major is None or not is_supported_node(current_lts):
         return ""
-    candidates = [version for version in installed_versions if node_major(version) == lts_major]
+    candidates = [version for version in installed_versions
+                  if node_major(version) == lts_major and is_supported_node(version)
+                  and node_version_key(version) <= node_version_key(current_lts)]
     return max(candidates, key=node_version_key, default="")
 
 
@@ -172,19 +169,28 @@ def select_installed_latest_track_version(
     """Return the newest installed non-LTS version when a latest track exists."""
     lts_major = node_major(current_lts)
     latest_major = node_major(latest_version)
-    if lts_major is None:
+    if (lts_major is None or latest_major is None or not is_supported_node(current_lts)
+            or not is_supported_node(latest_version)):
         return ""
-    if latest_major is not None and latest_major <= lts_major:
+    if latest_major <= lts_major:
         return ""
 
-    candidates = [version for version in installed_versions if (node_major(version) or 0) > lts_major]
+    candidates = [version for version in installed_versions
+                  if node_major(version) == latest_major and is_supported_node(version)
+                  and node_version_key(version) <= node_version_key(latest_version)]
     return max(candidates, key=node_version_key, default="")
 
 
-def set_default_lts_alias() -> bool:
-    """Ensure nvm defaults interactive shells to the LTS track."""
-    result = run_nvm_command(["nvm", "alias", "default", "lts/*"])
+def set_default_lts_alias(target_version: str) -> bool:
+    """Pin default to the exact validated LTS target for this maintenance run."""
+    if not _allowed_target(target_version):
+        return False
+    result = run_nvm_command(["nvm", "alias", "default", target_version])
     return log_subprocess_result(logger, "Set Node.js default alias to LTS", result, failure_level=ERROR)
+
+
+def _allowed_target(version: str) -> bool:
+    return bool(_NODE_VERSION_RE.fullmatch(version) and is_supported_node(version))
 
 
 def get_global_package_specs(source_version: str) -> tuple[bool, list[str], MaybeStr]:
@@ -255,6 +261,10 @@ def get_global_package_specs(source_version: str) -> tuple[bool, list[str], Mayb
 
 def reinstall_global_packages(source_version: str, target_version: str) -> tuple[bool, MaybeStr]:
     """Preserve exact global package versions across a Node.js update."""
+    if (not _allowed_target(source_version) or not _allowed_target(target_version)
+            or node_major(source_version) != node_major(target_version)
+            or node_version_key(source_version) > node_version_key(target_version)):
+        return False, "Global package migration requires supported exact runtimes on the same major without downgrading"
     package_listed, package_specs, package_error = get_global_package_specs(source_version)
     if not package_listed:
         return False, package_error
@@ -336,6 +346,16 @@ def install_target_version(
     source_version: str = "",
 ) -> tuple[bool, MaybeStr]:
     """Install the latest Node.js version for a track and migrate global packages."""
+    if update_track not in {"lts", "latest"} or not _allowed_target(target_version):
+        return False, f"Invalid Node update target/track; managed policy is {SUPPORTED_NODE_RANGE}"
+    if update_track == "latest" and (
+        os.environ.get(LATEST_UPDATE_ENV, "0").lower() not in {"1", "true", "yes"} or not source_version
+    ):
+        return False, "Current-track updates require an explicit opt-in and an installed supported source"
+    if source_version and (not _allowed_target(source_version)
+                           or node_major(source_version) != node_major(target_version)
+                           or node_version_key(source_version) > node_version_key(target_version)):
+        return False, "Node update source must be supported, on the target major, and no newer than the target"
     try:
         existed = runtime_directory(get_nvm_dir(), target_version).exists()
     except (OSError, ValueError) as exc:
@@ -351,7 +371,7 @@ def install_target_version(
         except (OSError, ValueError) as exc:
             return False, f"Failed to record Node runtime ownership; runtime retained: {exc}"
 
-    if update_track == "lts" and not set_default_lts_alias():
+    if update_track == "lts" and not set_default_lts_alias(target_version):
         rolled_back, rollback_error = rollback_target_version(
             update_track,
             target_version,
@@ -414,7 +434,7 @@ def cleanup_old_versions(candidates: list[str], keep_versions: set[str]) -> tupl
     return True, None
 
 
-def update_global_packages() -> tuple[bool, MaybeStr]:
+def update_global_packages(target_version: str) -> tuple[bool, MaybeStr]:
     """Update npm itself and global npm packages."""
     if not ecosystem_auto_upgrade_enabled():
         log_event(
@@ -424,6 +444,20 @@ def update_global_packages() -> tuple[bool, MaybeStr]:
         )
         return True, None
 
+    if not _allowed_target(target_version):
+        return False, f"Global package upgrades require an exact Node target within {SUPPORTED_NODE_RANGE}"
+    try:
+        # Explicit/preexisting runtimes retain their tools even with the opt-in.
+        with runtime_lock(get_nvm_dir()):
+            if runtime_owner(get_nvm_dir(), target_version) != "automatic":
+                log_event(logger, "Retained project/preexisting Node global tools", version=target_version)
+                return True, None
+            return _update_global_packages_locked(target_version)
+    except (OSError, ValueError) as exc:
+        return False, f"Global package upgrades deferred: {exc}"
+
+
+def _update_global_packages_locked(target_version: str) -> tuple[bool, MaybeStr]:
     commands = (
         ("Updated npm", ["npm", "install", "-g", "npm@latest"] + npm_freshness_args()),
         ("Updated global npm packages", ["npm", "update", "-g"] + npm_freshness_args()),
@@ -432,7 +466,7 @@ def update_global_packages() -> tuple[bool, MaybeStr]:
     failures: list[str] = []
 
     for action, command in commands:
-        result = run_nvm_command(["nvm", "exec", "default", *command])
+        result = run_nvm_command(["nvm", "exec", target_version, *command])
         if not log_subprocess_result(logger, action, result):
             details = result.stderr.strip() or result.stdout.strip() or command
             failures.append(f"{action}: {details}")
@@ -463,25 +497,37 @@ def main() -> int:
         )
         return 1
     
-    current_lts = get_current_lts_version()
     latest_enabled = os.environ.get(LATEST_UPDATE_ENV, "0").lower() in {"1", "true", "yes"}
-    latest_version = get_latest_version() if latest_enabled else ""
+    try:
+        releases = fetch_node_releases()
+        current_lts = get_current_lts_version(releases)
+        latest_version = get_latest_version(releases) if latest_enabled else ""
+        if not _allowed_target(current_lts) or (latest_enabled and not _allowed_target(latest_version)):
+            raise ValueError(f"No eligible Node target within {SUPPORTED_NODE_RANGE}")
+        if latest_version and node_major(latest_version) <= node_major(current_lts):
+            latest_version = ""  # All allowed lines are LTS; no separate Current track.
+    except (OSError, ValueError) as exc:
+        log_event(logger, "Failed to discover supported Node releases", level=ERROR)
+        send_notification_safe(
+            notification_configs, subject="Error: Node.js update failed", job="auto_update_node",
+            status="error", message="Failed to discover supported Node releases", details=str(exc), logger=logger,
+        )
+        return 1
     current_version = get_current_version()
     installed_versions = get_installed_versions()
     if current_version and current_version not in installed_versions:
         installed_versions.append(current_version)
 
-    if not current_lts:
-        log_event(logger, "Failed to get latest LTS version", level=ERROR)
-        send_notification_safe(
-            notification_configs,
-            subject="Error: Node.js update failed",
-            job="auto_update_node",
-            status="error",
-            message="Failed to get latest LTS version",
-            logger=logger
-        )
-        return 1
+    for target in (current_lts, latest_version):
+        if target and any(is_supported_node(version) and node_major(version) == node_major(target)
+                          and node_version_key(version) > node_version_key(target)
+                          for version in installed_versions):
+            send_notification_safe(
+                notification_configs, subject="Error: Node.js update failed", job="auto_update_node",
+                status="error", message=f"Refusing Node downgrade to {target}; installed runtime is newer",
+                logger=logger,
+            )
+            return 1
 
     installed_lts = select_installed_lts_version(installed_versions, current_lts)
     installed_latest = (select_installed_latest_track_version(installed_versions, current_lts, latest_version)
@@ -490,7 +536,7 @@ def main() -> int:
     keep_versions = {current_lts}
     latest_status = "not installed" if latest_enabled else "disabled by policy"
 
-    lts_source = installed_lts or current_version
+    lts_source = installed_lts
     if installed_lts == current_lts:
         log_event(
             logger,
@@ -499,7 +545,7 @@ def main() -> int:
             target_version=current_lts,
             update_track="LTS",
         )
-        if not set_default_lts_alias():
+        if not set_default_lts_alias(current_lts):
             send_notification_safe(
                 notification_configs,
                 subject="Error: Node.js update failed",
@@ -541,17 +587,6 @@ def main() -> int:
             cleanup_candidates.append(lts_source)
 
     if installed_latest:
-        if not latest_version:
-            log_event(logger, "Failed to get latest Node.js version", level=ERROR, update_track="latest")
-            send_notification_safe(
-                notification_configs,
-                subject="Error: Node.js update failed",
-                job="auto_update_node",
-                status="error",
-                message="Failed to get latest Node.js version",
-                logger=logger,
-            )
-            return 1
         keep_versions.add(latest_version)
         if installed_latest == latest_version:
             latest_status = f"already up to date ({latest_version})"
@@ -609,7 +644,7 @@ def main() -> int:
         )
         return 1
 
-    packages_updated, package_error = update_global_packages()
+    packages_updated, package_error = update_global_packages(current_lts)
     if not packages_updated:
         log_event(
             logger,

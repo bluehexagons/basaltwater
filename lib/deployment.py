@@ -35,6 +35,7 @@ from lib.systemd_service import cleanup_service, create_managed_service
 from lib.project_manifest import Component, Manifest, has_placeholder, load_manifest, render_template
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
+from lib.node_toolchain import is_supported_node
 
 
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
@@ -1212,18 +1213,35 @@ class DeploymentOrchestrator:
                 f"export PATH={shlex.quote(':'.join(path_entries))}:$PATH",
             ]
             nvm_dir = os.path.join(build_home, ".nvm")
-            nvm_script = os.path.join(nvm_dir, "nvm.sh")
-            use_node = build_runtimes is None or "node" in build_runtimes
-            if use_node and os.path.isfile(nvm_script):
-                shell_parts.extend((
-                    f"export NVM_DIR={shlex.quote(nvm_dir)}",
-                    f". {shlex.quote(nvm_script)}",
-                ))
+            use_node = ("node" in build_runtimes if build_runtimes is not None else
+                        os.path.isfile(os.path.join(nvm_dir, "nvm.sh"))
+                        or self._source_has_marker(dest_path, {"package.json", ".node-version", ".nvmrc"}))
             shell_parts.append(f"cd {shlex.quote(dest_path)}")
-            if use_node and os.path.isfile(nvm_script) and os.path.isfile(os.path.join(dest_path, '.nvmrc')):
-                shell_parts.append('nvm use')
             shell_parts.extend(f"export {key}={shlex.quote(value)}" for key, value in component.env.items())
-            shell_parts.append(command)
+            if use_node:
+                shell_parts.append(f"export NVM_DIR={shlex.quote(nvm_dir)}")
+                # Existing generated builds call `nvm use` after cd frontend.
+                # Keep that activation syntax, with policy and .node-version
+                # precedence supplied by the shared selector in the new cwd.
+                node_env = shlex.join([*self._node_cli(), "env"])
+                node_command = (
+                    'nvm() {\n'
+                    '  [ "${1-}" = use ] || return 2\n'
+                    '  shift\n'
+                    '  if [ "$#" -eq 0 ]; then\n'
+                    f'    node_exports=$({node_env} --project "$PWD") || return\n'
+                    '  elif [ "$#" -eq 1 ]; then\n'
+                    f'    node_exports=$({node_env} --project "$PWD" --version "$1") || return\n'
+                    '  else return 2; fi\n'
+                    '  eval "$node_exports"\n'
+                    '}\n' + command
+                )
+                shell_parts.append(shlex.join([
+                    *self._node_cli(), "exec", "--project", dest_path, "--",
+                    "/bin/bash", "--noprofile", "--norc", "-c", node_command,
+                ]))
+            else:
+                shell_parts.append(command)
             build_shell = " && ".join(shell_parts)
             result = run(
                 f"runuser -u {shlex.quote(build_user or self.deploy_user)} -- "
@@ -1236,6 +1254,21 @@ class DeploymentOrchestrator:
                 error = self._get_command_error(result, "build command failed")
                 raise RuntimeError(f"Component '{component.name}' build failed: {error}")
 
+    @staticmethod
+    def _node_cli() -> list[str]:
+        """Use the trusted installed CLI, independent of the project's Python path."""
+        return ["/usr/bin/python3", "-I", str(Path(__file__).resolve().parents[1] / "basaltwater.py"), "node"]
+
+    def _run_build_node_cli(self, build_user: str, arguments: list[str]):
+        build_home = self._build_home(build_user)
+        return run(
+            f"runuser -u {shlex.quote(build_user)} -- "
+            f"env {shlex.join(USER_SHELL_ENV_OPTIONS)} "
+            f"HOME={shlex.quote(build_home)} NVM_DIR={shlex.quote(os.path.join(build_home, '.nvm'))} "
+            + shlex.join([*self._node_cli(), *arguments]),
+            check=False, capture_output=True, cwd=build_home,
+        )
+
     def _prepare_build_toolchain(
         self, source_path: str, build_user: str,
         build_runtimes: Optional[list[str]] = None,
@@ -1247,13 +1280,6 @@ class DeploymentOrchestrator:
             if build_runtimes is None else "node" in build_runtimes
         )
         if needs_node:
-            nvm_script = os.path.join(build_home, ".nvm", "nvm.sh")
-            if not os.path.isfile(nvm_script):
-                from common.common_steps import install_node_for_user
-
-                install_node_for_user(build_user, build_home)
-            if not os.path.isfile(nvm_script):
-                raise RuntimeError(f"Node.js toolchain setup failed for {build_user}")
             # The initializer recognizes these conventional frontend layouts.
             # Provision their pins too, rather than silently using the API's
             # runtime or failing later when a nested hook selects its version.
@@ -1263,25 +1289,28 @@ class DeploymentOrchestrator:
                 for name in ('frontend', 'client', 'web')
                 if os.path.isfile(os.path.join(source_path, name, 'package.json'))
             )
+            targets = []
             for project_path in node_projects:
-                if not os.path.isfile(os.path.join(project_path, '.nvmrc')):
-                    continue
-                nvm_dir = os.path.join(build_home, ".nvm")
-                script = " && ".join((
-                    f"export NVM_DIR={shlex.quote(nvm_dir)}",
-                    f". {shlex.quote(nvm_script)}",
-                    f"cd {shlex.quote(project_path)}",
-                    "nvm install",
-                ))
-                result = run(
-                    f"runuser -u {shlex.quote(build_user)} -- "
-                    f"env {shlex.join(USER_SHELL_ENV_OPTIONS)} "
-                    f"HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(script)}",
-                    check=False,
-                    capture_output=True,
-                )
+                result = self._run_build_node_cli(build_user, ["resolve", "--project", project_path])
+                target = (result.stdout or "").strip()
+                if result.returncode != 0 or not is_supported_node(target):
+                    error = self._get_command_error(result, "no policy-allowed exact Node target")
+                    raise RuntimeError(f"Node.js version resolution failed for {build_user} in {project_path}: {error}")
+                targets.append((project_path, target))
+            # All project pins/engines are checked before any tool installation.
+            nvm_script = os.path.join(build_home, ".nvm", "nvm.sh")
+            if not os.path.isfile(nvm_script):
+                from common.common_steps import install_node_for_user
+
+                install_node_for_user(build_user, build_home)
+            if not os.path.isfile(nvm_script):
+                raise RuntimeError(f"Node.js toolchain setup failed for {build_user}")
+            for project_path, target in targets:
+                result = self._run_build_node_cli(build_user, [
+                    "install", "--project", project_path, "--version", target,
+                ])
                 if result.returncode != 0:
-                    error = self._get_command_error(result, "nvm install failed")
+                    error = self._get_command_error(result, "managed Node install failed")
                     raise RuntimeError(f"Node.js version setup failed for {build_user} in {project_path}: {error}")
 
         needs_python = self._source_has_marker(

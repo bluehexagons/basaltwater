@@ -209,17 +209,13 @@ test('panel navigation, keyboard focus, layout, theme and disclosures', async ({
   await expect(page.getByText('Synthetic service', { exact: true })).toBeVisible();
 });
 
-test('panel form redirect, forged CSRF rejection and CA download', async ({ page, diagnostics }, info) => {
+test('panel forged CSRF rejection and CA download', async ({ page, diagnostics }, info) => {
   await page.goto(urls.panel);
   const before = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
-  const response = page.waitForResponse(response => response.url() === urls.panel + '/actions/t3-update');
-  await page.getByRole('button', { name: 'Update to latest' }).click();
-  expect((await response).status()).toBe(303);
-  await expect(page).toHaveURL(urls.panel + '/');
-  const after = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
-  expect(after.updates).toBe(before.updates + 1);
   diagnostics.allowed.add(urls.panel + '/actions/t3-update');
   expect((await postForm(page, '/actions/t3-update', { csrf: 'forged' })).status).toBe(403);
+  const after = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
+  expect(after.updates).toBe(before.updates);
   await page.goto(urls.panel);
   await page.locator('.trust-disclosure > summary').click();
   const downloadEvent = page.waitForEvent('download');
@@ -381,13 +377,26 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
       await expect.poll(generation, { timeout: 20000 }).not.toBe(previous);
     };
     await page.goto(settings.url);
-    await page.goto(settings.url + '/agents');
-    await page.getByRole('button', { name: 'Run once', exact: true }).first().click();
+    await page.goto(settings.url + '/agents?view=tasks');
+    const sample = page.getByRole('article', { name: 'Example inspection', exact: true });
+    await sample.getByRole('button', { name: 'Run once', exact: true }).click();
+    await page.waitForLoadState('load');
     await expect.poll(async () => {
       await page.reload();
-      return page.getByText('Synthetic execution; no provider was contacted', { exact: true }).count();
+      return sample.getByRole('link', { name: 'View latest result', exact: true }).count();
     }).toBe(1);
-    for (const route of ['/agents', '/agent-tools', '/agent-inbox', '/maintenance-agent', '/admin', '/publishing',
+    await sample.getByRole('link', { name: 'View latest result', exact: true }).click();
+    await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
+    // The full development fixture exposes Agents and its real update form;
+    // the TLS fixture above intentionally has no installed agent features.
+    await page.goto(settings.url + '/agents?view=diagnostics');
+    const updated = page.waitForResponse(response => response.url() === settings.url + '/actions/t3-update'
+      && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Update T3 Code', exact: true }).click();
+    expect((await updated).status()).toBe(303);
+    await expect(page).toHaveURL(settings.url + '/agents?view=diagnostics');
+    await expect(page.getByRole('region', { name: 'T3 Code maintenance', exact: true })).toContainText('Synthetic update completed');
+    for (const route of ['/agents', '/agents?view=tasks', '/agent-tools', '/agent-inbox', '/maintenance-agent', '/admin', '/publishing',
                          '/services?load=1', '/jobs?load=1', '/logs?load=1', '/credentials']) {
       const response = await page.goto(settings.url + route);
       expect(response.status(), route).toBe(200);
@@ -422,6 +431,7 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
     const toolbar = page.locator('#panel-development');
     previous = await generation();
     await toolbar.getByRole('button', { name: 'Reset sample data' }).click();
+    await page.waitForLoadState('load');
     await waitForRestart(previous);
     await page.goto(settings.url + '/credentials');
     await expect(page.getByLabel('Author name', { exact: true })).toHaveValue('Development Operator');
@@ -429,6 +439,7 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
       previous = await generation();
       await toolbar.getByLabel('Scenario').selectOption(scenario);
       await toolbar.getByRole('button', { name: 'Switch scenario' }).click();
+      await page.waitForLoadState('load');
       await waitForRestart(previous);
       await page.goto(settings.url);
       await expect(toolbar.getByLabel('Scenario')).toHaveValue(scenario);
@@ -464,8 +475,9 @@ test.describe('agent task workflow', () => {
     await menu.locator('summary').focus();
     await page.keyboard.press('Enter');
     await expect(menu).toHaveAttribute('open', '');
-    for (const label of ['Dashboard', 'Agents', 'Maintenance agent', 'Agent inbox', 'Agent tools',
-                         'Git & credentials', 'Publishing', 'Admin controls', 'Local service status', 'Scheduled jobs', 'Service diagnostics'])
+    for (const label of ['Dashboard', 'Agents',
+                         'Git & credentials', 'Publishing', 'Admin controls', 'Local service status', 'Storage',
+                         'Scheduled jobs', 'GitHub runner', 'Service diagnostics'])
       await expect(navigation.getByRole('link', { name: label, exact: true })).toBeVisible();
     await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
@@ -476,33 +488,77 @@ test.describe('agent task workflow', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(menu).not.toBeVisible();
     await expect(navigation.getByRole('link', { name: 'Service diagnostics', exact: true })).toHaveAttribute('aria-current', 'page');
+    await navigation.getByRole('link', { name: 'Agents', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Agents dashboard', exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 900 });
+    const tabs = page.getByRole('navigation', { name: 'Agents', exact: true });
+    for (const [label, route, heading] of [
+      ['Tasks', '/agents?view=tasks', 'Prompt tasks'],
+      ['Run history', '/agents?view=history', 'Run history'],
+      ['Agent tools', '/agent-tools', 'Agent tools'],
+      ['Inbox', '/agent-inbox', 'Agent inbox'],
+      ['Maintenance', '/maintenance-agent', 'Maintenance agent'],
+      ['Readiness', '/agents?view=diagnostics', 'Agent readiness'],
+      ['Dashboard', '/agents', 'Agents dashboard'],
+    ]) {
+      await tabs.getByRole('link', { name: label, exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page).toHaveURL(dev.url + route);
+      await expect(page.getByRole('heading', { name: heading, level: 1, exact: true })).toBeVisible();
+      await expect(tabs.getByRole('link', { name: label, exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(menu.locator('summary')).toContainText('Agents');
+      await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), label).toBe(true);
+    }
     await page.goto('about:blank');
   });
 
   test('maintenance records and settings stay usable after validation errors', async ({ page, developmentServer: dev, diagnostics }, info) => {
     await page.goto(dev.url + '/maintenance-agent');
-    await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('Maintenance enabled');
+    const savedStatus = page.getByRole('region', { name: 'Saved maintenance status' });
+    await expect(savedStatus).toContainText('Automatic maintenance enabled');
     await expect(page.getByLabel('Routine model', { exact: true })).not.toBeVisible();
-    await page.getByRole('button', { name: 'Check now', exact: true }).click();
+    await page.getByRole('button', { name: 'Check once now', exact: true }).click();
     const records = page.getByRole('region', { name: 'Maintenance records', exact: true });
     await expect(records).toContainText('Synthetic development check');
     await page.getByRole('navigation', { name: 'Maintenance sections' }).getByRole('link', { name: 'Settings', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await page.getByLabel('Check interval (minutes)', { exact: true }).fill('120');
-    await page.getByLabel('Routine model', { exact: true }).fill('bad model');
+    if (await page.locator('#maintenance-settings').getAttribute('open') === null) {
+      await page.locator('#maintenance-settings > summary').focus();
+      await page.keyboard.press('Enter');
+    }
+    await page.getByLabel('Host check interval (minutes)', { exact: true }).fill('120');
+    await expect(page.getByRole('combobox', { name: 'Routine model', exact: true })).toHaveValue('auto');
+    await page.getByText('Custom model IDs', { exact: true }).click();
+    await page.getByLabel('Custom routine model', { exact: true }).fill('bad model');
     await page.getByLabel('Run managed housekeeping daily', { exact: true }).check();
     diagnostics.allowed.add(dev.url + '/actions/maintenance-agent');
     await page.getByRole('button', { name: 'Save maintenance settings', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText('Invalid model');
-    await expect(page.getByLabel('Routine model', { exact: true })).toHaveValue('bad model');
-    await expect(page.getByLabel('Check interval (minutes)', { exact: true })).toHaveValue('120');
+    await expect(page.getByLabel('Custom routine model', { exact: true })).toHaveValue('bad model');
+    await expect(page.getByLabel('Host check interval (minutes)', { exact: true })).toHaveValue('120');
     await expect(page.getByLabel('Run managed housekeeping daily', { exact: true })).toBeChecked();
-    await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('60 minutes · housekeeping off');
-    await page.getByLabel('Routine model', { exact: true }).fill('auto');
-    await page.getByLabel('Enable maintenance agent', { exact: true }).uncheck();
+    await expect(savedStatus).toContainText('Automatic host checks: every 60 minutes');
+    await expect(savedStatus).toContainText('security audits: every 7 days · daily housekeeping: off');
+    await page.getByText('Custom model IDs', { exact: true }).click();
+    await page.getByLabel('Custom routine model', { exact: true }).fill('');
+    await page.getByRole('combobox', { name: 'Routine model', exact: true }).selectOption('auto');
+    await page.getByLabel('Run automatic maintenance', { exact: true }).uncheck();
     await page.getByRole('button', { name: 'Save maintenance settings', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Check now', exact: true })).toBeDisabled();
-    await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('120 minutes · housekeeping on');
+    await expect(savedStatus).toContainText('Manual checks only');
+    await expect(savedStatus).toContainText('Automatic host checks: off · security audits: off · daily housekeeping: off');
+    await expect(page.getByRole('button', { name: 'Check once now', exact: true })).toBeEnabled();
+    const manualCheck = page.waitForResponse(response => response.url() === dev.url + '/actions/maintenance-agent'
+      && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Check once now', exact: true }).click();
+    expect((await manualCheck).status()).toBe(303);
+    await expect(records).toContainText('Synthetic development check');
+    await page.locator('#maintenance-settings > summary').click();
+    await expect(page.getByLabel('Run automatic maintenance', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Host check interval (minutes)', { exact: true })).toHaveValue('120');
+    await expect(page.getByLabel('Run managed housekeeping daily', { exact: true })).toBeChecked();
+    await expect(page.getByLabel('Schedule routine host checks', { exact: true })).toBeChecked();
+    await expect(page.getByLabel('Schedule security audits', { exact: true })).toBeChecked();
     await page.getByText('Manage restart hold', { exact: true }).click();
     await page.getByLabel('Hold duration (hours)', { exact: true }).fill('2');
     await page.getByRole('button', { name: 'Hold automatic restarts', exact: true }).click();
@@ -536,21 +592,37 @@ test.describe('agent task workflow', () => {
     await expect(page).toHaveURL(dev.url + '/agent-inbox?mailbox=reviewer');
     await expect(page.getByRole('region', { name: 'Unread messages', exact: true })).toContainText('Synthetic review complete.');
     await page.reload();
-    await expect(page.getByRole('button', { name: 'Mark read', exact: true })).toBeVisible();
+    const unread = page.getByRole('region', { name: 'Unread messages', exact: true });
+    const archived = page.getByRole('region', { name: 'Archived/read messages', exact: true });
+    await expect(unread).toContainText('Synthetic review complete.');
+    await expect(unread.getByRole('button', { name: 'Archive', exact: true })).toBeVisible();
     await page.screenshot({ path: info.outputPath('inbox-desktop.png'), fullPage: true });
-    await page.getByRole('button', { name: 'Mark read', exact: true }).click();
+    await unread.getByRole('button', { name: 'Archive', exact: true }).click();
     await expect(page.getByText('No unread messages.', { exact: true })).toBeVisible();
+    await expect(archived).toContainText('Synthetic review complete.');
+    await page.reload();
+    await expect(unread.getByRole('button', { name: 'Archive', exact: true })).toHaveCount(0);
+    await archived.getByRole('button', { name: 'Restore', exact: true }).click();
+    await expect(unread).toContainText('Synthetic review complete.');
+    await expect(unread.getByRole('button', { name: 'Archive', exact: true })).toBeVisible();
+    await expect(archived.getByRole('button', { name: 'Restore', exact: true })).toHaveCount(0);
     await page.goto('about:blank');
   });
 
   test('guided tasks hand off to review and agent support pages fit enlarged mobile text', async ({ page, developmentServer: dev }, info) => {
     await page.goto(dev.url + '/agent-tools');
     await page.getByRole('link', { name: 'Set up task: Review service logs', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: 'Service', exact: true })).toHaveValue('nginx.service');
+    // The fixture exposes only Nginx as installed. Contextual links can still
+    // prepare a review of a removed service's historical logs.
+    await page.goto(dev.url + '/agent-tools?tool=logs&service=t3code.service');
     await page.getByRole('combobox', { name: 'Service', exact: true }).selectOption('t3code.service');
     await page.getByRole('combobox', { name: 'Time window', exact: true }).selectOption('boot');
+    await page.getByRole('combobox', { name: 'Severity', exact: true }).selectOption('3');
     await page.getByRole('button', { name: 'Prepare prompt for review', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Review prepared task', exact: true })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue(/journalctl --user --unit=t3code.service/);
+    await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue(/basaltw agent diagnostics --service t3code\.service --window boot --priority 3/);
+    await expect(page.getByRole('combobox', { name: 'Workspace', exact: true })).toHaveValue('run-directory');
     await expect(page.getByRole('link', { name: 'View latest result', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Save draft', exact: true }).click();
     await expect(page.getByRole('article', { name: 'Review service logs: T3 Code (current user)', exact: true })).toContainText('Draft');
@@ -573,6 +645,9 @@ test.describe('agent task workflow', () => {
   test('agent tasks are discoverable and usable without JavaScript on narrow screens', async ({ page, developmentServer: dev, diagnostics }, info) => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/agents');
+    await expect(page.getByRole('heading', { name: 'Agents dashboard', exact: true })).toBeVisible();
+    await page.getByRole('navigation', { name: 'Agents', exact: true }).getByRole('link', { name: 'Tasks', exact: true }).click();
+    await expect(page).toHaveURL(dev.url + '/agents?view=tasks');
     const sample = page.getByRole('article', { name: 'Example inspection', exact: true });
     await expect(sample.getByRole('button', { name: 'Run once', exact: true })).toBeVisible();
     await expect(sample.getByRole('button', { name: 'Remove', exact: true })).not.toBeVisible();
@@ -615,6 +690,7 @@ test.describe('agent task workflow', () => {
     await expect(page.getByRole('combobox', { name: 'Context persistence', exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Back to tasks', exact: true }).click();
     await sample.getByRole('button', { name: 'Run once', exact: true }).click();
+    await page.waitForLoadState('load');
     await expect.poll(async () => {
       await page.reload();
       return sample.getByRole('link', { name: 'View latest result', exact: true }).count();
@@ -625,7 +701,8 @@ test.describe('agent task workflow', () => {
     await page.getByRole('link', { name: 'Refresh status', exact: true }).click();
     await expect(page).toHaveURL(selectedRun);
     await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
-    await page.getByRole('navigation', { name: 'Agent workflow' }).getByRole('link', { name: 'Templates', exact: true }).click();
+    await page.locator('header').getByRole('link', { name: 'Templates', exact: true }).click();
+    await page.getByText(/^Repository work · \d+ templates$/).click();
     await page.getByRole('link', { name: /^Repair failing checks/ }).click();
     await expect(page.getByLabel('Working directory', { exact: true })).toHaveValue('');
     await expect(page.getByRole('combobox', { name: 'Execution mode', exact: true })).toHaveValue('workspace');
@@ -633,7 +710,7 @@ test.describe('agent task workflow', () => {
 
     for (const colorScheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme });
-      for (const route of ['/agents', '/agents?view=new', '/agents?view=templates', '/agents?template=backups']) {
+      for (const route of ['/agents', '/agents?view=tasks', '/agents?view=new', '/agents?view=templates', '/agents?template=backups']) {
         await page.goto(dev.url + route);
         await page.setViewportSize({ width: 320, height: 900 });
         await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
@@ -644,7 +721,7 @@ test.describe('agent task workflow', () => {
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(dev.url + '/agents');
+    await page.goto(dev.url + '/agents?view=tasks');
     await page.screenshot({ path: info.outputPath('agents-desktop-dark.png'), fullPage: true });
     await page.goto('about:blank');
   });
@@ -721,6 +798,7 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
       const scenario = async name => {
         await toolbar.getByLabel('Scenario').selectOption(name);
         await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
+        await page.waitForLoadState('load');
         await page.goto(entry);
         await expect(toolbar.getByLabel('Scenario')).toHaveValue(name);
       };
@@ -770,6 +848,7 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
         await expect(page.getByText('Authorization completed', { exact: true })).toBeVisible();
       } else if (surface === 'pairing') {
         await page.getByRole('button', { name: 'Pair another T3 Code client' }).click();
+        await page.waitForLoadState('load');
         await expect(page.getByRole('heading', { name: 'Continue in T3 Code' })).toBeVisible();
         await page.getByRole('link', { name: 'Open pairing link' }).click();
         await expect(page).toHaveURL(dev.url + '/pair#token=synthetic-only');
@@ -833,6 +912,7 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
         await reload();
       }
       await dev.restart(() => toolbar.getByRole('button', { name: 'Reset sample data' }).click());
+      await page.waitForLoadState('load');
       await page.goto(entry);
       if (surface === 'connect') await expect(page.getByText('Authorization completed', { exact: true })).toHaveCount(0);
       if (surface === 'approval') {

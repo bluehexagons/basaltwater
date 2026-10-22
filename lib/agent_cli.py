@@ -56,6 +56,7 @@ from lib.t3code_runtime import (
 from lib.validation import validate_filesystem_path, validate_package_name
 from lib.validators import validate_host, validate_username
 from lib.remote_utils import CommandTimeoutError, run as run_command
+from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 
 
 AGENT_DOCTOR_TOOLS = ("gh", "codex", "claude", "opencode")
@@ -77,6 +78,7 @@ _BROWSER_DOCTOR_WRAPPER = "/usr/local/bin/basaltwater-playwright-doctor"
 _BROWSER_MCP_CLI = (
     "/opt/basaltwater-playwright/node_modules/@playwright/mcp/cli.js"
 )
+_BROWSER_SMOKE_SCRIPT = "/opt/basaltwater-playwright/browser-smoke.js"
 _BROWSER_OUTPUT_MAX_BYTES = 256 * BYTES_PER_MB
 _BROWSER_DOCTOR_TIMEOUT_SECONDS = 210
 _REMOTE_DOCTOR_TIMEOUT_SECONDS = _BROWSER_DOCTOR_TIMEOUT_SECONDS + 90
@@ -1010,13 +1012,22 @@ def _opencode_browser_registration(home: str) -> bool:
 
 def _browser_launcher_features(path: Optional[str] = None) -> JSONDict:
     """Report whether the launcher has the current safe browser defaults."""
-    launcher_path = path or _BROWSER_MCP_WRAPPER
-    try:
-        with open(launcher_path, encoding="utf-8") as file_obj:
-            content = file_obj.read()
-    except OSError:
-        content = ""
+    from lib.service_node import SERVICE_NODE
+
+    def read_launcher(launcher_path: str) -> str:
+        try:
+            with open(launcher_path, encoding="utf-8") as file_obj:
+                return file_obj.read()
+        except OSError:
+            return ""
+
+    content = read_launcher(path or _BROWSER_MCP_WRAPPER)
+    doctor = read_launcher(_BROWSER_DOCTOR_WRAPPER)
     return {
+        "service_node": f"exec {SERVICE_NODE} {_BROWSER_MCP_CLI}" in content
+        and "unset NODE_OPTIONS NODE_PATH" in content
+        and f"{SERVICE_NODE} {_BROWSER_SMOKE_SCRIPT}" in doctor
+        and "unset NODE_OPTIONS NODE_PATH" in doctor,
         "browser_selection": (
             'browser_path="$(' in content
             and "chromium.executablePath()" in content
@@ -1106,6 +1117,8 @@ def _browser_process_has_managed_defaults(
     home: str,
 ) -> bool:
     """Return whether one active MCP process has the current safe arguments."""
+    from lib.service_node import SERVICE_NODE
+
     capabilities = (_browser_argument_value(arguments, "--caps") or "").split(",")
     engine = _browser_argument_value(arguments, "--browser") or "chromium"
     output = os.path.join(home, ".local", "state", "basaltwater", "playwright-mcp")
@@ -1127,7 +1140,8 @@ def _browser_process_has_managed_defaults(
     except ValueError:
         managed_executable = False
     return bool(
-        "--headless" in arguments
+        arguments and arguments[0] == SERVICE_NODE
+        and "--headless" in arguments
         and "--isolated" in arguments
         and managed_executable
         and "vision" in capabilities
@@ -1272,10 +1286,14 @@ def inspect_browser_automation(
         registrations["opencode"] = _opencode_browser_registration(user_home)
 
     smoke_test: bool | None = None
-    if launchers_installed and launchers_secure is True and run_smoke:
+    if (launchers_installed and launchers_secure is True and run_smoke
+            and launcher_features.get("service_node") is True):
         environment = os.environ.copy()
         environment["HOME"] = user_home
         try:
+            from lib.service_node import verify_service_node
+
+            verify_service_node()
             result = subprocess.run(
                 [_BROWSER_DOCTOR_WRAPPER],
                 check=False,
@@ -1286,7 +1304,7 @@ def inspect_browser_automation(
                 cwd=user_home,
             )
             smoke_test = result.returncode == 0 and result.stdout.strip() == "browser-ready"
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
             smoke_test = False
 
     registrations_ready = bool(
@@ -1349,7 +1367,7 @@ def inspect_browser_automation(
     return {
         "capability": "browser",
         "engine": "chromium",
-        "context": "managed",
+        "context": "managed-mcp",
         "network_origin": "host",
         "discovered": launchers_installed,
         "launchable": smoke_test,
@@ -1826,40 +1844,20 @@ def _nvm_node_bin(home: str) -> Optional[str]:
         except ValueError:
             pass
 
-    alias_path = os.path.join(home, ".nvm", "alias", "default")
-    try:
-        with open(alias_path, encoding="utf-8") as file_obj:
-            alias = file_obj.read(128).strip()
-        if alias == "lts/*":
-            with open(
-                os.path.join(home, ".nvm", "alias", "lts", "*"),
-                encoding="utf-8",
-            ) as file_obj:
-                alias = file_obj.read(128).strip()
-    except OSError:
-        alias = ""
-    if re.fullmatch(r"v\d+\.\d+\.\d+", alias):
-        candidate = os.path.join(versions_root, alias, "bin")
-        if os.path.isfile(os.path.join(candidate, "node")):
-            return candidate
+    from lib.node_toolchain import _installed_nodes, _resolve_alias, _version, satisfies
 
-    versions: list[tuple[tuple[int, int, int], str]] = []
+    nvm_root = Path(home) / ".nvm"
+    # Resolve the actual default even when it is unsupported. Filtering here
+    # would hide an unhealthy default behind another installed supported Node.
     try:
-        entries = os.scandir(versions_root)
-    except OSError:
+        requirement = _resolve_alias("default", nvm_root) if os.path.lexists(nvm_root / "alias/default") else "*"
+        satisfies((0, 0, 0), requirement)
+        versions = [(_version(path.parent.parent.name), str(path.parent))
+                    for path in _installed_nodes(nvm_root)
+                    if path.is_file() and satisfies(_version(path.parent.parent.name), requirement)]
+    except (OSError, ValueError):
         return None
-    with entries:
-        for entry in entries:
-            match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", entry.name)
-            if match and entry.is_dir(follow_symlinks=False):
-                versions.append(
-                    (tuple(int(part) for part in match.groups()), entry.path)
-                )
-    if not versions:
-        return None
-    _version, version_root = max(versions)
-    candidate = os.path.join(version_root, "bin")
-    return candidate if os.path.isfile(os.path.join(candidate, "node")) else None
+    return max(versions)[1] if versions else None
 
 
 def _inspect_node_development(home: str) -> JSONDict:
@@ -1895,6 +1893,8 @@ def _inspect_node_development(home: str) -> JSONDict:
     corepack_version = version(corepack_path)
     if node_version is None:
         issues.append("node_default_missing")
+    elif not is_supported_node(node_version):
+        issues.append("node_default_unsupported")
     if npm_version is None:
         issues.append("node_npm_missing")
     if pnpm_version is None:
@@ -1906,6 +1906,7 @@ def _inspect_node_development(home: str) -> JSONDict:
         "npm": npm_version,
         "pnpm": pnpm_version,
         "corepack": corepack_version,
+        "supported_range": SUPPORTED_NODE_RANGE,
         "issues": issues,
     }
 

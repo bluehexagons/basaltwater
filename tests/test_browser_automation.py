@@ -140,6 +140,8 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         with (
             patch.object(browser_automation_steps, "is_dry_run", return_value=False),
             patch.object(browser_automation_steps.os.path, "isfile", return_value=True),
+            patch.object(browser_automation_steps, "verify_service_node"),
+            patch.object(browser_automation_steps, "_verify_runtime_package"),
             patch.object(browser_automation_steps, "_write_launchers") as write_launchers,
             patch.object(browser_automation_steps, "_install_runtime_package") as runtime,
             patch.object(browser_automation_steps, "_install_browser") as browser,
@@ -177,12 +179,12 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                         "integrity": browser_automation_steps.PLAYWRIGHT_MCP_INTEGRITY,
                     },
                     "node_modules/playwright": {
-                        "version": browser_automation_steps.PLAYWRIGHT_VERSION,
-                        "integrity": browser_automation_steps.PLAYWRIGHT_INTEGRITY,
+                        "version": browser_automation_steps.PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION,
+                        "integrity": browser_automation_steps.PLAYWRIGHT_MCP_PLAYWRIGHT_INTEGRITY,
                     },
                     "node_modules/playwright-core": {
-                        "version": browser_automation_steps.PLAYWRIGHT_VERSION,
-                        "integrity": browser_automation_steps.PLAYWRIGHT_CORE_INTEGRITY,
+                        "version": browser_automation_steps.PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION,
+                        "integrity": browser_automation_steps.PLAYWRIGHT_MCP_CORE_INTEGRITY,
                     },
                 }
             }
@@ -202,20 +204,41 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                 )
 
     def test_runtime_rejects_unsupported_node_before_installing_or_reusing_packages(self) -> None:
-        for version in ("v18.20.8", "v19.9.0", "invalid"):
-            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory, \
+        for issue in ("unsupported Node", "untrusted path", "invalid version"):
+            with self.subTest(issue=issue), tempfile.TemporaryDirectory() as directory, \
                     patch.object(browser_automation_steps, "PLAYWRIGHT_ROOT", directory), \
-                    patch.object(browser_automation_steps, "run", return_value=SimpleNamespace(stdout=version)) as run, \
+                    patch.object(browser_automation_steps, "verify_service_node", side_effect=RuntimeError(issue)), \
+                    patch.object(browser_automation_steps, "run") as run, \
                     patch.object(browser_automation_steps, "_verify_runtime_package") as verify:
-                with self.assertRaisesRegex(RuntimeError, "Node.js version|Node.js 20"):
+                with self.assertRaisesRegex(RuntimeError, issue):
                     browser_automation_steps._install_runtime_package()
                 verify.assert_not_called()
                 self.assertFalse(any("npm install" in call.args[0] for call in run.call_args_list))
 
+    def test_stable_integrity_inventory_rejects_mcp_alpha_substitution(self) -> None:
+        b = browser_automation_steps
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / 'package.json'
+            lock = Path(directory) / 'package-lock.json'
+            package.write_text(json.dumps({'version': b.PLAYWRIGHT_VERSION}))
+            inventory = {'packages': {
+                'node_modules/@playwright/test': {'version': b.PLAYWRIGHT_VERSION, 'integrity': b.PLAYWRIGHT_TEST_INTEGRITY},
+                'node_modules/playwright': {'version': b.PLAYWRIGHT_VERSION, 'integrity': b.PLAYWRIGHT_INTEGRITY},
+                'node_modules/playwright-core': {'version': b.PLAYWRIGHT_VERSION, 'integrity': b.PLAYWRIGHT_CORE_INTEGRITY},
+            }}
+            lock.write_text(json.dumps(inventory))
+            b._verify_runtime_package(str(package), str(lock), stable=True)
+            inventory['packages']['node_modules/playwright'].update(
+                version=b.PLAYWRIGHT_MCP_PLAYWRIGHT_VERSION, integrity=b.PLAYWRIGHT_MCP_PLAYWRIGHT_INTEGRITY)
+            lock.write_text(json.dumps(inventory))
+            with self.assertRaisesRegex(RuntimeError, 'node_modules/playwright'):
+                b._verify_runtime_package(str(package), str(lock), stable=True)
+
     def test_verified_runtime_can_be_reused_with_supported_node(self) -> None:
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(browser_automation_steps, "PLAYWRIGHT_ROOT", directory), \
-                patch.object(browser_automation_steps, "run", return_value=SimpleNamespace(stdout="v20.19.2")) as run, \
+                patch.object(browser_automation_steps, "verify_service_node"), \
+                patch.object(browser_automation_steps, "run") as run, \
                 patch.object(browser_automation_steps, "_verify_runtime_package") as verify:
             self.assertFalse(browser_automation_steps._install_runtime_package())
         verify.assert_called_once()
@@ -234,6 +257,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         )
         with (
             patch.object(browser_automation_steps, "is_dry_run", return_value=False),
+            patch.object(browser_automation_steps, "install_service_node") as node,
             patch.object(browser_automation_steps, targets[0]) as runtime,
             patch.object(browser_automation_steps, targets[1]) as launchers,
             patch.object(browser_automation_steps, targets[2]) as browser,
@@ -244,9 +268,10 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         ):
             browser_automation_steps.install_browser_automation(config)
 
-        runtime.assert_called_once_with()
+        node.assert_called_once_with()
+        self.assertEqual(runtime.call_args_list, [unittest.mock.call(refresh=False), unittest.mock.call(refresh=False, stable=True)])
         launchers.assert_called_once_with()
-        browser.assert_called_once_with(config)
+        self.assertEqual(browser.call_args_list, [unittest.mock.call(config), unittest.mock.call(config, stable=True)])
         skills.assert_called_once_with(config)
         codex.assert_called_once_with(config)
         opencode.assert_not_called()
@@ -270,8 +295,8 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         run_as_user.assert_called_once()
         probe = run_as_user.call_args.args[2]
         self.assertIn('test -f "$HOME/.cache/ms-playwright/.basaltwater-chromium-', probe)
-        self.assertIn('test -f "$(/usr/bin/node -e ', probe)
-        self.assertIn('test -x "$(/usr/bin/node -e ', probe)
+        self.assertIn(f'test -f "$({browser_automation_steps.SYSTEM_NODE} -e ', probe)
+        self.assertIn(f'test -x "$({browser_automation_steps.SYSTEM_NODE} -e ', probe)
 
     def test_browser_install_verifies_executable_before_recording_marker(self) -> None:
         config = _config("codex")
@@ -292,11 +317,11 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         self.assertEqual(run_as_user.call_count, 2)
         install_command = run_as_user.call_args_list[1].args[2]
         self.assertIn(
-            'test -f "$(/usr/bin/node -e ',
+            f'test -f "$({browser_automation_steps.SYSTEM_NODE} -e ',
             install_command,
         )
         self.assertIn(
-            'test -x "$(/usr/bin/node -e ',
+            f'test -x "$({browser_automation_steps.SYSTEM_NODE} -e ',
             install_command,
         )
         self.assertIn("printf '%s\\n'", install_command)
@@ -541,7 +566,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                             f'  echo "{browser}"\nelse\n  printf "%s\\n" "$@"\nfi\n')
             node.chmod(0o700)
             wrapper = root / "mcp"
-            wrapper.write_text(browser_automation_steps._MCP_WRAPPER_CONTENT.replace("/usr/bin/node", str(node)))
+            wrapper.write_text(browser_automation_steps._MCP_WRAPPER_CONTENT.replace(browser_automation_steps.SYSTEM_NODE, str(node)))
             for engine, arguments, suffix in (("chromium", [], ""), ("firefox", ["--engine", "firefox"], "/firefox")):
                 result = subprocess.run(["sh", str(wrapper), *arguments], env={"HOME": directory,
                                         "NODE_OPTIONS": "--require=/unrelated/preload", "NODE_PATH": "/unrelated/modules",
@@ -554,7 +579,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                 self.assertEqual(argv[argv.index("--output-dir") + 1], str(evidence))
                 self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
             doctor = root / "doctor"
-            doctor.write_text(browser_automation_steps._DOCTOR_WRAPPER_CONTENT.replace("/usr/bin/node", str(node)))
+            doctor.write_text(browser_automation_steps._DOCTOR_WRAPPER_CONTENT.replace(browser_automation_steps.SYSTEM_NODE, str(node)))
             result = subprocess.run(["sh", str(doctor)], env={"HOME": directory, "NODE_OPTIONS": "--invalid",
                                     "NODE_PATH": "/unrelated/modules", "NODE_EXTRA_CA_CERTS": "/fixture/ca.pem"},
                                     text=True, capture_output=True, timeout=5, check=False)
@@ -581,6 +606,9 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
 
 
 class BrowserAutomationDoctorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("lib.service_node.verify_service_node"))
+
     def test_agent_doctor_only_runs_smoke_with_verified_launchers(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="browser-ready\n", stderr="")
         with (
@@ -606,6 +634,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                     "bounded_evidence": True,
                     "coordinate_input": True,
                     "webgl_settle_delay": True,
+                    "service_node": True,
                 },
             ),
             patch.object(
@@ -671,6 +700,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                     "bounded_evidence": True,
                     "coordinate_input": True,
                     "webgl_settle_delay": True,
+                    "service_node": True,
                 },
             ),
             patch.object(
@@ -707,17 +737,18 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             mcp_wrapper.write_text(
                 "#!/bin/sh\n"
                 "umask 077\n"
+                "unset NODE_OPTIONS NODE_PATH\n"
                 'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"\n'
                 'browser_path="$(printf \'%s\' '
                 '"$HOME/.cache/ms-playwright/chromium/chrome")" '
                 "# chromium.executablePath()\n"
-                "exec playwright-mcp --caps vision "
+                f"exec {browser_automation_steps.SYSTEM_NODE} {agent_cli._BROWSER_MCP_CLI} --caps vision "
                 '--executable-path "$browser_path" '
                 '--output-dir "$output_dir" --timeout-settle 1000 '
                 f"--output-max-size {agent_cli._BROWSER_OUTPUT_MAX_BYTES}\n",
                 encoding="utf-8",
             )
-            doctor_wrapper.write_text("#!/bin/sh\necho browser-ready\n", encoding="utf-8")
+            doctor_wrapper.write_text(browser_automation_steps._DOCTOR_WRAPPER_CONTENT, encoding="utf-8")
             os.chmod(mcp_wrapper, 0o755)
             os.chmod(doctor_wrapper, 0o755)
             codex_dir = home / ".codex"
@@ -747,6 +778,8 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                 patch.object(agent_cli, "_BROWSER_MCP_WRAPPER", str(mcp_wrapper)),
                 patch.object(agent_cli, "_BROWSER_DOCTOR_WRAPPER", str(doctor_wrapper)),
                 patch.object(agent_cli, "_browser_launchers_secure", return_value=True),
+                patch.object(agent_cli.subprocess, "run", return_value=SimpleNamespace(
+                    returncode=0, stdout="browser-ready\n", stderr="")),
                 patch.object(
                     agent_cli,
                     "_browser_running_processes",
@@ -793,6 +826,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                     "bounded_evidence": True,
                     "coordinate_input": True,
                     "webgl_settle_delay": True,
+                    "service_node": True,
                 },
             ),
             patch.object(
@@ -840,6 +874,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                     "bounded_evidence": True,
                     "coordinate_input": True,
                     "webgl_settle_delay": True,
+                    "service_node": True,
                 },
             ),
             patch.object(
@@ -900,7 +935,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             browser_path.write_text("browser", encoding="utf-8")
             os.chmod(browser_path, 0o755)
             current_arguments = [
-                "/usr/bin/node",
+                browser_automation_steps.SYSTEM_NODE,
                 agent_cli._BROWSER_MCP_CLI,
                 "--headless",
                 "--isolated",
@@ -936,11 +971,16 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                 + b"\0"
             )
 
+            obsolete = proc / "400"
+            obsolete.mkdir()
+            obsolete_arguments = ["/usr/bin/node", *current_arguments[1:]]
+            (obsolete / "cmdline").write_bytes(b"\0".join(argument.encode() for argument in obsolete_arguments) + b"\0")
+
             result = agent_cli._browser_running_processes(str(home), str(proc))
 
         self.assertEqual(
             result,
-            {"total": 3, "stale": 1, "inspected": True},
+            {"total": 4, "stale": 2, "inspected": True},
         )
 
     def test_doctor_rejects_stale_launcher_defaults(self) -> None:
@@ -961,6 +1001,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                 "bounded_evidence": False,
                 "coordinate_input": False,
                 "webgl_settle_delay": False,
+                "service_node": False,
             },
         )
 

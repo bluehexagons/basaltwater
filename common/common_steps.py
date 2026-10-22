@@ -16,7 +16,7 @@ from typing import Optional
 from lib.atomic_io import write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import newer_installed_kernel
-from lib.node_toolchain import is_supported_node
+from lib.node_toolchain import is_supported_node, resolve_node_release
 from lib.apt_sources import ensure_debian_package_sources
 from lib.config import SetupConfig
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
@@ -1085,9 +1085,8 @@ def install_node_for_user(
         _ensure_nvm_shell_init(username, user_home)
         nvm_env = (
             f"export NVM_DIR={safe_nvm_dir} && "
-            '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
+            '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use'
         )
-        nvm_default_env = f"{nvm_env} && nvm use default"
         verify_result = _run_as_login_user(
             username,
             user_home,
@@ -1105,17 +1104,20 @@ def install_node_for_user(
                 return
 
             print("  Repairing Node.js LTS, npm, and pnpm baseline")
+            target = resolve_node_release("lts/*")
+            nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
             _run_as_login_user(
                 username,
                 user_home,
-                f"{nvm_env} && nvm install --lts && nvm alias default 'lts/*'",
+                f'{nvm_env} && nvm install {target} && nvm use {target} && '
+                f'[ "$(node --version)" = {shlex.quote(target)} ] && nvm alias default {target}',
             )
             npm_freshness = shlex.join(npm_freshness_args())
             npm_freshness_suffix = f" {npm_freshness}" if npm_freshness else ""
             _run_as_login_user(
                 username,
                 user_home,
-                f"{nvm_default_env} && npm install -g pnpm{npm_freshness_suffix}",
+                f"{nvm_target_env} && npm install -g pnpm{npm_freshness_suffix}",
             )
             _chown_existing_paths(username, _user_tool_paths(user_home))
             if not _node_baseline_is_usable(username, user_home, nvm_env):
@@ -1125,22 +1127,25 @@ def install_node_for_user(
             print("  ✓ Node.js LTS + NPM + PNPM baseline repaired for user")
             return
         print("  Refreshing Node.js LTS, npm, and pnpm")
+        target = resolve_node_release("lts/*")
+        nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
         _run_as_login_user(
             username,
             user_home,
-            f"{nvm_env} && nvm install --lts && nvm alias default 'lts/*'",
+            f'{nvm_env} && nvm install {target} && nvm use {target} && '
+            f'[ "$(node --version)" = {shlex.quote(target)} ] && nvm alias default {target}',
         )
         npm_freshness = shlex.join(npm_freshness_args())
         npm_freshness_suffix = f" {npm_freshness}" if npm_freshness else ""
         _run_as_login_user(
             username,
             user_home,
-            f"{nvm_default_env} && npm install -g npm@latest{npm_freshness_suffix}",
+            f"{nvm_target_env} && npm install -g npm@latest{npm_freshness_suffix}",
         )
         _run_as_login_user(
             username,
             user_home,
-            f"{nvm_default_env} && npm install -g pnpm{npm_freshness_suffix}",
+            f"{nvm_target_env} && npm install -g pnpm{npm_freshness_suffix}",
         )
         _chown_existing_paths(username, _user_tool_paths(user_home))
         if not _node_baseline_is_usable(username, user_home, nvm_env):
@@ -1150,6 +1155,7 @@ def install_node_for_user(
         print("  ✓ Node.js LTS + NPM (latest) + PNPM refreshed for user")
         return
     
+    target = resolve_node_release("lts/*")
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(f"{_APT_GET} install -y -qq curl")
 
@@ -1167,12 +1173,13 @@ def install_node_for_user(
         raise RuntimeError("nvm installation failed")
     
     # Install Node.js LTS
-    nvm_env = f"export NVM_DIR={safe_nvm_dir} && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\""
-    nvm_default_env = f"{nvm_env} && nvm use default"
+    nvm_env = f"export NVM_DIR={safe_nvm_dir} && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" --no-use"
+    nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
     _run_as_login_user(
         username,
         user_home,
-        f"{nvm_env} && nvm install --lts && nvm alias default 'lts/*'",
+        f'{nvm_env} && nvm install {target} && nvm use {target} && '
+        f'[ "$(node --version)" = {shlex.quote(target)} ] && nvm alias default {target}',
     )
     
     # Update npm and install pnpm
@@ -1181,12 +1188,12 @@ def install_node_for_user(
     _run_as_login_user(
         username,
         user_home,
-        f"{nvm_default_env} && npm install -g npm@latest{npm_freshness_suffix}",
+        f"{nvm_target_env} && npm install -g npm@latest{npm_freshness_suffix}",
     )
     _run_as_login_user(
         username,
         user_home,
-        f"{nvm_default_env} && npm install -g pnpm{npm_freshness_suffix}",
+        f"{nvm_target_env} && npm install -g pnpm{npm_freshness_suffix}",
     )
     
     _ensure_nvm_shell_init(username, user_home)

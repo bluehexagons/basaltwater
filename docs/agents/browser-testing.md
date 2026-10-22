@@ -144,7 +144,8 @@ records from `scripts/panel_samples.py`; interactive changes never alter exports
 ## Run the local suite
 
 Use a development machine with the Python development extra installed, Node.js
-20 or newer, OpenSSL, NSS `certutil` (Debian's `libnss3-tools`), and the selected browsers'
+24.22.1+ (24 LTS) or 26.12.1+ (26 Current), OpenSSL, NSS `certutil`
+(Debian's `libnss3-tools`), and the selected browsers'
 existing OS dependencies. The command never installs packages or downloads
 browser payloads. On a managed development VM with the pinned runtime:
 
@@ -154,6 +155,11 @@ basaltw agent browser doctor --engine chromium --context managed --json
 basaltw agent browser doctor --engine firefox --context managed --json
 make browser-test
 ```
+
+`managed` uses stable Playwright 1.64.1 under
+`/opt/basaltwater-playwright-stable`. MCP's separate alpha dependency is never
+used by this application suite. Both managed contexts use the checksum-pinned,
+root-owned Node 24.22.1 interpreter under `/opt/basaltwater-node`.
 
 If Firefox's matching payload is absent, explicitly provision it first with
 `basaltw agent browser install --engine firefox --context managed --json`.

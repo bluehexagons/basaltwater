@@ -31,16 +31,18 @@ or `--agent-tool opencode`. It registers the managed
 `basaltwater-playwright` MCP server
 only for the compatible tools selected by that setup. GitHub CLI, Claude Code,
 and T3 Code do not receive a browser integration. The browser capability owns
-its system Node.js dependency, so `--node` is not required unless projects on
+its root-owned Node.js dependency, so `--node` is not required unless projects on
 the VM also need the user-managed Node.js development environment.
 
 The interactive setup flow offers the same choice after agent selection. A
 saved setup command retains the provider choice, so a later full setup restores
 the browser capability without retaining any browser or website credentials.
-An agent setup that omits the option also refreshes launchers for a complete
-existing managed browser installation; this keeps safety defaults current when
+An agent setup that omits the option also refreshes launchers for a complete,
+current managed browser installation; this keeps safety defaults current when
 the controller updates the target source independently of optional capability
 selection. An explicit `--no-browser-automation` suppresses that reconciliation.
+An older installation reports that migration is required. Rerun the saved setup
+with `--browser-automation playwright` to provision both runtimes and Node.
 For an explicit `--steps` setup, include `install_browser_automation` after
 installing the selected compatible agent; it is available as a registered
 custom step as well.
@@ -53,13 +55,24 @@ see [Managed agent workflow skills](agent-skills.md).
 
 ## Installed components and agent configuration
 
-Setup installs the exact Playwright MCP version declared by Basaltwater under
-`/opt/basaltwater-playwright`, verifies the npm package version and registry
-integrity metadata, installs native browser dependencies, and downloads the
-matching Chromium build into the target user's Playwright cache. npm lifecycle
-scripts are disabled during the root-owned package install.
-The pinned Playwright runtime requires Node.js 20 or newer; setup checks the
-system Node version before installing or reusing its packages.
+Setup installs two independently verified packages:
+
+- Stable `@playwright/test` 1.64.1 under `/opt/basaltwater-playwright-stable`
+  for engine doctors and Basaltwater's application suite (`--context managed`).
+- `@playwright/mcp` 0.0.83 under `/opt/basaltwater-playwright` for MCP clients
+  (`--context managed-mcp`). Its exact Playwright dependency is
+  `1.64.0-alpha-1790635538000`, an explicit upstream prerelease exception.
+
+Setup verifies package versions and registry integrity metadata, installs native
+browser dependencies, and downloads each runtime's matching Chromium build into
+the target user's Playwright cache. Browser garbage collection is disabled to
+preserve the other runtime's payloads. npm lifecycle scripts are disabled during
+the root-owned package installs, which use isolated npm configuration.
+Both use Node 24.22.1 from `/opt/basaltwater-node/v24.22.1`, downloaded from the
+official release with pinned SHA-256 checksums for Linux x86_64 and aarch64.
+Setup verifies root ownership, permissions and the interpreter version before
+installing or reusing browser packages. The distro interpreter is left to the
+distribution; writable user NVM installations never run these privileged tasks.
 The setup marker is written only after the resolved pinned Chromium executable is
 present and executable, so a stale marker cannot suppress a required browser
 download.
@@ -548,8 +561,8 @@ Use small, read-only discovery before selecting engine coverage:
 basaltw agent manifest /home/agent/repos/example --capability browser --json
 ```
 
-The `browser.contexts` entries distinguish managed headless Chromium and
-optional Firefox, project-installed Playwright Firefox, interactive desktop
+The `browser.contexts` entries distinguish stable managed headless Chromium and
+optional Firefox, the separate managed MCP context, project-installed Playwright Firefox, interactive desktop
 Firefox/Firefox ESR, and the connected client's collaborative preview.
 Discovery reports runtime presence and leaves launch/rendering readiness
 unverified; browser-cache directories do not prove that an engine works.
@@ -582,7 +595,8 @@ basaltw agent browser install --engine firefox --context project \
 
 These commands use the existing package under that directory's `node_modules`
 (`playwright`, `@playwright/test`, or `playwright-core`), including pnpm package
-links, and the selected Node executable on PATH. Use the owning package directory
+links, and the project's supported Node executable selected by `basaltw node`.
+Use the owning package directory
 for a monorepo. They do not run npm/npx, add packages, change a lockfile, upgrade
 Playwright, or install OS dependencies. Project `PLAYWRIGHT_BROWSERS_PATH` and
 custom CA settings are retained; Node preload/module overrides are omitted.
@@ -593,7 +607,8 @@ payloads remain available. Missing project dependencies require the project's
 normal lockfile installation first.
 
 On a Debian VM with managed Playwright, `--context managed` uses the pinned
-managed package and its fixed user cache instead. Optional Firefox provisioning
+stable package and its fixed user cache instead. `--context managed-mcp` checks
+MCP's separate alpha package and matching payload. Optional Firefox provisioning
 leaves the default MCP registration on Chromium. Project context also works on
 CachyOS and Ubuntu WSL without assuming a Debian managed browser stack.
 An unexpected managed package version reports `runtime_version_mismatch`
@@ -617,10 +632,10 @@ After updating the managed launchers through the saved setup, run as the setup
 user (without sudo):
 
 ```bash
-basaltw agent browser install --engine firefox --context managed --json
+basaltw agent browser install --engine firefox --context managed-mcp --json
 basaltw agent browser register --engine firefox --agent-tool codex --json
 # Or select --agent-tool opencode; repeat to register both clients.
-basaltw agent browser doctor --engine firefox --context managed --json
+basaltw agent browser doctor --engine firefox --context managed-mcp --json
 ```
 
 Installation downloads only the pinned Firefox payload. It never installs OS
@@ -631,14 +646,15 @@ preserves `basaltwater-playwright` as Chromium and unrelated settings. Start a
 new agent session to discover the Firefox tools; registration alone does not
 expose tools to a running session.
 
-Both servers use the same pinned Playwright package, headless isolated profiles,
+Both MCP servers use the same pinned alpha Playwright package, headless isolated profiles,
 explicit matching executables, certificate verification, and bounded private
 evidence. Firefox evidence lives under `playwright-mcp/firefox`; its separate
 configuration omits Chromium launch flags. Engine doctors report runtime
 launch/render results and registrations separately and always leave
 `application_tested` false. Use application tests to establish that coverage.
-Both browser doctors require the configured server to be enabled and select
-the expected engine. An unavailable configuration parser leaves registration
+Registration always qualifies `managed-mcp`, even when the default context is
+omitted. A stable engine doctor does not qualify an MCP browser payload or its
+registration. An unavailable configuration parser leaves registration
 unknown. If registration fails after a successful runtime check, the command
 returns nonzero with `browser_registration_failed` and retains the engine,
 version, and rendering results for diagnosis.

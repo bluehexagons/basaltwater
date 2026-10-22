@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import mock_open, patch
@@ -20,6 +23,11 @@ from web import dev_tools_steps
 
 
 class TestNodeSetup(unittest.TestCase):
+    def setUp(self):
+        resolution = patch.object(common_steps, "resolve_node_release", return_value="v24.22.1")
+        self.resolve = resolution.start()
+        self.addCleanup(resolution.stop)
+
     def test_baseline_rejects_unsupported_defaults_even_when_tools_run(self):
         for version, accepted in (
             ("v24.22.1", True), ("v26.12.1", True), ("v24.23.0", True),
@@ -51,8 +59,9 @@ class TestNodeSetup(unittest.TestCase):
                 patch.object(common_steps, "_run_as_login_user", side_effect=command) as run:
             common_steps.install_node_for_user("user", "/home/user")
         commands = [call.args[2] for call in run.call_args_list]
-        self.assertTrue(any("nvm install --lts" in command for command in commands))
-        self.assertTrue(any("nvm alias default 'lts/*'" in command for command in commands))
+        self.assertTrue(any("nvm install v24.22.1" in command for command in commands))
+        self.assertTrue(any("nvm alias default v24.22.1" in command for command in commands))
+        self.resolve.assert_called_once_with("lts/*")
         self.assertFalse(any("nvm uninstall" in command or "rm " in command for command in commands))
 
     def test_t3_node_directory_checks_the_selected_executable_version(self):
@@ -198,7 +207,7 @@ class TestNodeSetup(unittest.TestCase):
             common_steps.install_node(config)
 
         commands = [args[0] for args, _ in mock_run.call_args_list]
-        self.assertTrue(any("nvm install --lts" in command for command in commands))
+        self.assertTrue(any("nvm install v24.22.1" in command for command in commands))
         self.assertTrue(any("npm install -g pnpm" in command for command in commands))
         self.assertEqual(baseline_checks["count"], 2)
         self.assertFalse(any("command -v pnpm" in command for command in commands))
@@ -270,6 +279,56 @@ class TestNodeSetup(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "could not be loaded"),
         ):
             common_steps.install_node(config)
+
+
+    def test_discovery_failure_never_bootstraps_nvm_or_installs_packages(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing), \
+                    patch.object(common_steps.os.path, "exists", return_value=existing), \
+                    patch.object(common_steps, "_chown_existing_paths"), \
+                    patch.object(common_steps, "_ensure_nvm_shell_init"), \
+                    patch.object(common_steps, "_node_baseline_is_usable", return_value=False), \
+                    patch.object(common_steps, "resolve_node_release", side_effect=ValueError("no supported LTS")), \
+                    patch.object(common_steps, "_run_as_login_user", return_value=SimpleNamespace(returncode=0)) as user_run, \
+                    patch.object(common_steps, "run") as host_run, self.assertRaisesRegex(ValueError, "no supported LTS"):
+                common_steps.install_node_for_user("user", "/home/user", refresh=True)
+            host_run.assert_not_called()
+            self.assertTrue(all("nvm --version" in call.args[2] for call in user_run.call_args_list))
+
+    def test_exact_baseline_activation_is_verified_before_alias_or_package_changes(self):
+        for observed in ('v24.22.1', 'v24.22.2', 'v27.0.0'):
+            with self.subTest(observed=observed), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                nvm = home / '.nvm'
+                nvm.mkdir()
+                (nvm / 'nvm.sh').write_text(
+                    'nvm() { printf "nvm %s\\n" "$*" >> "$HOME/calls"; }\n'
+                    f'node() {{ printf "{observed}\\n"; }}\n'
+                    'npm() { printf "npm %s\\n" "$*" >> "$HOME/calls"; }\n'
+                )
+
+                def execute(_username, user_home, command, **options):
+                    return subprocess.run(['/bin/bash', '--noprofile', '--norc', '-c', command],
+                                          env={**os.environ, 'HOME': user_home}, text=True,
+                                          capture_output=True, check=options.get('check', True), timeout=10)
+
+                with patch.object(common_steps, '_chown_existing_paths'), \
+                        patch.object(common_steps, '_ensure_nvm_shell_init'), \
+                        patch.object(common_steps, '_node_baseline_is_usable', return_value=True), \
+                        patch.object(common_steps, '_run_as_login_user', side_effect=execute):
+                    if observed == 'v24.22.1':
+                        common_steps.install_node_for_user('user', directory, refresh=True)
+                    else:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            common_steps.install_node_for_user('user', directory, refresh=True)
+                commands = (home / 'calls').read_text().splitlines()
+                self.assertIn('nvm install v24.22.1', commands)
+                self.assertIn('nvm use v24.22.1', commands)
+                if observed == 'v24.22.1':
+                    self.assertIn('nvm alias default v24.22.1', commands)
+                    self.assertTrue(any(command.startswith('npm install -g ') for command in commands))
+                else:
+                    self.assertFalse(any(command.startswith(('nvm alias', 'npm ')) for command in commands))
 
 
 if __name__ == "__main__":
