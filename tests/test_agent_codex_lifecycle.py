@@ -186,6 +186,31 @@ class CodexLifecycleTests(unittest.TestCase):
         self.assertTrue(keep.exists())
         self.assertFalse(result.errors)
 
+    def test_privileged_observer_preserves_active_backup_then_retires_after_exit(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        with patch("lib.agent_storage._active_codex_releases", side_effect=scan_codex_processes), \
+                patch("lib.agent_storage.observed_executables", return_value=(str(obsolete),)) as observe:
+            result = cleanup_codex_update_backups(str(self.home), os.getuid(), dry_run=False)
+            self.assertFalse(result.errors)
+            self.assertFalse(result.removed)
+            self.assertTrue(obsolete.is_file())
+            observe.return_value = ()
+            result = cleanup_codex_update_backups(str(self.home), os.getuid(), dry_run=False)
+            self.assertFalse(result.errors)
+            self.assertEqual(len(result.removed), 1)
+            self.assertFalse(obsolete.exists())
+            self.assertTrue(keep.is_file())
+
+    def test_privileged_backup_observer_failure_at_disposal_retains_snapshots(self):
+        obsolete, keep = self.prepare_backup_maintenance()
+        with patch("lib.agent_storage._active_codex_releases", side_effect=scan_codex_processes), \
+                patch("lib.agent_storage.observed_executables", side_effect=[(), OSError("fixture visibility lost")]):
+            result = cleanup_codex_update_backups(str(self.home), os.getuid(), dry_run=False)
+        self.assertTrue(result.deferred)
+        self.assertFalse(result.removed)
+        self.assertTrue(obsolete.is_file())
+        self.assertTrue(keep.is_file())
+
     def test_periodic_backup_cleanup_preserves_selected_and_unfamiliar_entries(self):
         obsolete, keep = self.prepare_backup_maintenance()
         root = keep.parents[2].parent

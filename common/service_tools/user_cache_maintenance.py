@@ -25,6 +25,7 @@ from lib.agent_storage import (
     cleanup_t3_rotated_logs as reconcile_t3_rotated_logs,
 )
 from lib.cleanup_paths import process_uses_path, remove_checked_path
+from lib.cleanup_process_observer import use_process_observer
 from lib.logging_utils import get_service_logger, log_event
 from lib.t3code_runtime import (
     is_known_t3_service_protocol,
@@ -89,6 +90,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Reconcile agent releases, update backups, and bounded log rotations",
     )
+    parser.add_argument("--process-observer-fd", type=int, help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -1186,6 +1188,16 @@ def run_user_cache_maintenance(context: UserContext, *, dry_run: bool) -> list[s
 def main(argv: list[str] | None = None) -> int:
     """Run bounded user cache maintenance."""
     args = parse_args(argv)
+    try:
+        with use_process_observer(args.process_observer_fd):
+            return _run_maintenance(args)
+    except OSError as exc:
+        log_event(logger, "Could not connect to maintenance process observer", level=WARNING, error=str(exc))
+        return 1
+
+
+def _run_maintenance(args: argparse.Namespace) -> int:
+    """Execute policies only after authenticating an optional launcher channel."""
     operation = (
         "agent storage reconciliation"
         if args.agent_storage_only

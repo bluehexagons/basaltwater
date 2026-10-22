@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from lib.atomic_io import read_json_file
 from lib.cleanup_paths import remove_checked_path
+from lib.cleanup_process_observer import observed_executables
 from lib.validation import validate_filesystem_path
 
 
@@ -414,6 +415,16 @@ def _active_codex_releases(
 ) -> set[str]:
     """Find running releases, refusing incomplete account process inventories."""
     active: set[str] = set()
+    if proc_root == "/proc":
+        try:
+            observed = observed_executables(uid)
+        except OSError as exc:
+            raise _CodexProcessInventoryUnavailable(str(exc)) from exc
+        if observed is not None:
+            return {
+                name for name, release in releases.items()
+                if any(os.path.commonpath((release.path, executable)) == release.path for executable in observed)
+            }
     try:
         with os.scandir(proc_root) as processes:
             for process in processes:

@@ -326,6 +326,37 @@ class TestAgentStorage(unittest.TestCase):
             self.assertTrue(result.deferred)
             self.assertTrue(all(os.path.isdir(path) for path in releases))
 
+    def test_privileged_observation_rechecks_new_activity_before_disposal(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            oldest = self._create_codex_release(home, "1.0.0", mtime=1)
+            self._create_codex_release(home, "1.1.0", mtime=2)
+            current = self._create_codex_release(home, "1.2.0", mtime=3)
+            self._set_current(home, current)
+            with patch("lib.agent_storage.observed_executables", side_effect=[
+                (), (os.path.join(oldest, "bin/codex"),),
+            ]) as observe:
+                result = cleanup_codex_standalone_releases(home, os.getuid(), dry_run=False)
+            self.assertEqual(observe.call_count, 2)
+            self.assertFalse(result.errors)
+            self.assertFalse(result.removed)
+            self.assertIn(os.path.basename(oldest), result.active)
+            self.assertTrue(os.path.isdir(oldest))
+
+    def test_privileged_observation_loss_never_falls_back_to_partial_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            oldest = self._create_codex_release(home, "1.0.0", mtime=1)
+            self._create_codex_release(home, "1.1.0", mtime=2)
+            current = self._create_codex_release(home, "1.2.0", mtime=3)
+            self._set_current(home, current)
+            with patch("lib.agent_storage.observed_executables", side_effect=[
+                (), OSError("fixture observer disconnected"),
+            ]):
+                result = cleanup_codex_standalone_releases(home, os.getuid(), dry_run=False)
+            self.assertTrue(result.deferred)
+            self.assertTrue(result.errors)
+            self.assertFalse(result.removed)
+            self.assertTrue(os.path.isdir(oldest))
+
     def test_unverifiable_remaining_process_preserves_every_release(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             releases = [
@@ -598,6 +629,7 @@ class TestAgentStorage(unittest.TestCase):
         completed = SimpleNamespace(returncode=0, stdout="inventory complete\n", stderr="")
         config = SimpleNamespace(username="agent")
         with (
+            patch("common.agent_steps.os.geteuid", return_value=1000),
             patch("common.agent_steps._user_home", return_value="/home/agent"),
             patch("common.agent_steps.is_dry_run", return_value=False),
             patch(

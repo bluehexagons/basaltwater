@@ -185,6 +185,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/service_tools/test_storage_ops.py",
         "tests/service_tools/test_sync_rsync.py",
         "tests/service_tools/test_user_cache_maintenance.py",
+        "tests/service_tools/test_user_cache_launcher.py",
         "tests/test_backup_config.py",
         "tests/test_disk_utils.py",
         "tests/test_scrub_par2.py",
