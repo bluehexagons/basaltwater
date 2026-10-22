@@ -165,6 +165,8 @@ class StorageDashboardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             collector = stack.enter_context(patch("lib.storage_diagnostics.collect_storage_usage", side_effect=AssertionError("Host scan")))
             state = WebPanelState({"host": "development.example.test", "username": "operator", "services": [], "features": {}}, agent_home=directory)
+            # Scenario seeding uses this disposable store even under root CI.
+            stack.enter_context(patch.object(state.agent_tasks, "available", return_value=True))
             scenario = Scenario(state, "degraded", stack)
             self.assertEqual(state.storage_diagnostics.snapshot()["state"], "idle")
             state.storage_diagnostics.start(mode="extended")
