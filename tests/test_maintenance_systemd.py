@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.config import SetupConfig
+from lib import user_rename
 from common import common_steps
 from security import security_steps
 
@@ -169,6 +170,60 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
         self.assertIn(
             'ReadWritePaths="-/home/literal%%h/with space/and\'quote\\\\data"\n', content,
         )
+
+    def test_isolated_python_and_script_arguments_are_literal_words(self):
+        with patch("lib.maintenance_systemd.replace_units") as replace:
+            self.assertTrue(configure_maintenance_timer(
+                service_name="literal-arguments", service_desc="Literal arguments",
+                timer_desc="Literal arguments daily", schedule="daily", check_name="Literal",
+                script_path="/opt/basaltwater/check.py", isolated_python=True,
+                script_args=("--user", "agent", 'space $HOME %h \\"quote"'),
+            ))
+        content = replace.call_args.args[0]["literal-arguments.service"]
+        self.assertIn(
+            'ExecStart=/usr/bin/python3 -I "/opt/basaltwater/check.py" "--user" "agent" '
+            '"space $$HOME %%h \\\\\\"quote\\""\n', content,
+        )
+
+    def test_rejects_invalid_arguments_before_replacing_units(self):
+        for settings in (
+            {"script_args": "--user agent"}, {"script_args": ["--user", "agent"]},
+            *({"script_args": (value,)} for value in (None, 12, "", "a\nb", "a\rb", "a\0b", "a\tb", "a\x7fb")),
+            {"isolated_python": "true"},
+        ):
+            with self.subTest(settings=settings), patch("lib.maintenance_systemd.replace_units") as replace:
+                with self.assertRaises(ValueError):
+                    configure_maintenance_timer(
+                        service_name="bad-arguments", service_desc="Arguments",
+                        timer_desc="Daily", schedule="daily", check_name="Arguments",
+                        script_path="/opt/basaltwater/check.py", **settings,
+                    )
+                replace.assert_not_called()
+
+    def test_account_rename_updates_explicit_launcher_user_and_timer_companion(self):
+        with tempfile.TemporaryDirectory() as unit_dir, patch(
+            "lib.maintenance_systemd.replace_units"
+        ) as replace:
+            configure_maintenance_timer(
+                service_name="user-cache-maintenance", service_desc="User cache",
+                timer_desc="User cache daily", schedule="daily", check_name="User cache",
+                script_path="/opt/basaltwater/common/service_tools/user_cache_launcher.py",
+                script_args=("--user", "olduser"), isolated_python=True,
+            )
+            for name, content in replace.call_args.args[0].items():
+                with open(os.path.join(unit_dir, name), "w", encoding="utf-8") as stream:
+                    stream.write(content)
+            with patch.object(user_rename, "SYSTEMD_DIR", unit_dir), patch.object(user_rename.os, "chown"):
+                managed, unmanaged = user_rename._managed_unit_files("olduser", "/home/olduser")
+                self.assertEqual(unmanaged, [])
+                self.assertEqual(len(managed), 2)
+                manifest = {"old_username": "olduser", "new_username": "newuser",
+                            "managed_units": [{"path": path} for path in managed]}
+                user_rename._rewrite_managed_units(manifest, "/home/olduser", "/home/newuser")
+            with open(os.path.join(unit_dir, "user-cache-maintenance.service"), encoding="utf-8") as stream:
+                content = stream.read()
+        self.assertIn('"--user" "newuser"', content)
+        self.assertNotIn("olduser", content)
 
 
 class TestMaintenanceTimerCallers(unittest.TestCase):

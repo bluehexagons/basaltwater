@@ -367,8 +367,24 @@ reserves an obsolete kernel. Failed inventory, retention inspection, package
 simulation, or metadata updates stop package removal and are reported through
 the cleanup job's failure notification.
 
-`user-cache-maintenance` runs as the configured non-root account instead of
-root, daily after the scheduled update windows. It inventories tool-reported
+`user-cache-maintenance` starts a root observer and a permanently demoted worker
+for the configured non-root account, daily after the scheduled update windows.
+Its fixed command is `/usr/bin/python3 -I
+/opt/basaltwater/common/service_tools/user_cache_launcher.py --user USER`.
+Root setup invokes the same launcher directly, including setup's
+`--agent-storage-only` pass. The launcher validates the target account and uses
+`setpriv` to clear supplementary groups and capabilities and enable
+`no-new-privs` before starting the worker. All cache inspection and deletion
+remain unprivileged.
+
+The worker inherits a private observer socket. The privileged parent reads only
+fixed `/proc` executable metadata for that account, freshly collected for each
+inventory and disposal check; worker requests cannot select paths, PIDs, or
+UIDs. This lets release retention inspect protected account daemons without
+weakening ptrace permissions or trusting a process-name (`comm`) allowlist.
+An unavailable or incomplete observation still defers removal.
+
+The worker inventories tool-reported
 cache paths before acting. Tool commands receive the account's home-scoped
 environment without loading interactive login profiles, and apply these
 bounded policies:
@@ -395,13 +411,14 @@ bounded policies:
   account process inventory defers removal. This is an informational safety skip,
   not a setup or scheduled-job failure: all unremoved candidates are retained
   for retry, and the log identifies the blocking PID when available. Protected
-  account daemons can prevent inspection even when cleanup runs as their owner;
-  do not weaken process permissions or infer inactivity from process names.
+  account daemons can prevent inspection in the direct-user fallback; the
+  managed root observer supplies the bounded executable inventory for release
+  retention. Do not weaken process permissions or infer inactivity from names.
   Release and backup inventory logs use `known_active_count` for confirmed
   running matches and `cleanup_deferred` for safety skips. Zero confirmed
   matches does not establish inactivity when inspection was skipped or
-  incomplete. Retries can keep retaining extra snapshots while a long-lived
-  protected daemon remains uninspectable.
+  incomplete. Direct-user retries can keep retaining extra snapshots while a
+  long-lived protected daemon remains uninspectable.
   Current and rollback releases alone need no process scan. Process activity
   and launcher selection are checked again before each removal; a failed check
   preserves remaining candidates for a later retry. Failure during process
@@ -433,8 +450,8 @@ bounded policies:
   and 14 days. Current logs, terminal logs, non-numbered files, and symbolic
   links are never selected by this policy. Agent setup reruns apply both the
   Codex release policy and T3 rotation policy immediately, in addition to the
-  daily maintenance job. Setup invokes this reconciliation as the target
-  account rather than with its own root privileges.
+  daily maintenance job. Setup starts the root launcher directly; its demoted
+  worker performs reconciliation as the target account.
 - T3 versioned application runtimes retain the active version, the immediately
   preceding installed version, all newer candidates, and versions referenced
   by service update/recovery state or running processes. Other validated older
@@ -502,13 +519,19 @@ installed-version checks remain separate from generic user-cache disposal.
 Preview the user job without changing files:
 
 ```bash
-sudo -u USER /usr/bin/python3 \
-  /opt/basaltwater/common/service_tools/user_cache_maintenance.py --dry-run
+sudo /usr/bin/python3 -I \
+  /opt/basaltwater/common/service_tools/user_cache_launcher.py --user USER --dry-run
 ```
 
 Replace `USER` with the setup account. Omit `--dry-run` to run cleanup now.
 Rerun setup to install this helper and daily timer on an existing host;
 updating the controller checkout alone does not change the target's timer.
+Unprivileged setup and direct-user invocations retain
+`user_cache_maintenance.py` as their fallback. They keep the same conservative
+deferral when protected `/proc` metadata cannot be inspected and do not gain
+observer privileges. The host supervisor verifies the exact launcher command
+and binds `--user` to its trusted baseline account before dispatch; only the
+fixed legacy worker commands remain accepted during migration.
 
 Cleanup never removes installed language runtime versions, Proxmox backups,
 templates, ISOs, guest volumes, container/image stores, crash-report

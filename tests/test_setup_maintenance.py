@@ -6,9 +6,9 @@ import subprocess
 import io
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from common import setup_maintenance
+from common import agent_steps, setup_maintenance
 from lib.config import SetupConfig
 from lib.remote_utils import CommandTimeoutError
 
@@ -41,19 +41,19 @@ class TestSetupMaintenance(unittest.TestCase):
         ):
             setup_maintenance.run_setup_maintenance(self.config)
 
-        run.assert_called_once_with(
-            ["/usr/bin/python3", setup_maintenance._SYSTEM_CLEANUP_SCRIPT],
-            check=False,
-            capture_output=True,
-            timeout=setup_maintenance._MAINTENANCE_TIMEOUT_SECONDS,
-        )
-        run_as_user.assert_called_once_with(
-            "agent",
-            "/home/agent",
-            f"/usr/bin/python3 {setup_maintenance._USER_CACHE_SCRIPT}",
-            check=False,
-            capture_output=True,
-        )
+        self.assertEqual(run.call_args_list, [
+            call(
+                ["/usr/bin/python3", setup_maintenance._SYSTEM_CLEANUP_SCRIPT],
+                check=False, capture_output=True,
+                timeout=setup_maintenance._MAINTENANCE_TIMEOUT_SECONDS,
+            ),
+            call(
+                ["/usr/bin/python3", "-I", setup_maintenance._USER_CACHE_LAUNCHER, "--user", "agent"],
+                check=False, capture_output=True,
+                timeout=setup_maintenance._MAINTENANCE_TIMEOUT_SECONDS,
+            ),
+        ])
+        run_as_user.assert_not_called()
 
     def test_user_job_runs_directly_when_setup_is_the_target_user(self) -> None:
         with (
@@ -105,7 +105,7 @@ class TestSetupMaintenance(unittest.TestCase):
             patch.object(setup_maintenance, "get_user_home", return_value="/home/agent"),
             patch.object(setup_maintenance.os, "geteuid", return_value=0),
             patch.object(setup_maintenance, "_validated_script", return_value="/fixture/cleanup.py"),
-            patch.object(setup_maintenance, "_run_as_login_user", return_value=subprocess.CompletedProcess([], 1, "", "cleanup failed")),
+            patch.object(setup_maintenance, "run", return_value=subprocess.CompletedProcess([], 1, "", "cleanup failed")),
             patch("sys.stdout", new_callable=io.StringIO) as output,
         ):
             self.assertFalse(setup_maintenance.run_user_cache_maintenance(self.config))
@@ -156,6 +156,35 @@ class TestSetupMaintenance(unittest.TestCase):
         validate.assert_not_called()
         run.assert_not_called()
         run_as_user.assert_not_called()
+
+
+class TestAgentStorageSetupCommand(unittest.TestCase):
+    def test_root_launches_observer_directly_and_unprivileged_keeps_user_fallback(self) -> None:
+        config = SetupConfig(host="host", username="agent", system_type="agent_vm")
+        for uid, dry_run in ((0, False), (0, True), (1000, False)):
+            with (
+                self.subTest(uid=uid, dry_run=dry_run),
+                patch.object(agent_steps.os, "geteuid", return_value=uid),
+                patch.object(agent_steps, "_user_home", return_value="/home/agent"),
+                patch.object(agent_steps, "is_dry_run", return_value=dry_run),
+                patch.object(agent_steps, "validate_filesystem_path"),
+                patch.object(agent_steps.os.path, "islink", return_value=False),
+                patch.object(agent_steps.os.path, "isfile", return_value=True),
+                patch.object(agent_steps, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run,
+                patch.object(agent_steps, "_run_as_login_user", return_value=subprocess.CompletedProcess([], 0, "", "")) as user,
+            ):
+                agent_steps.reconcile_agent_storage(config)
+            if uid == 0:
+                user.assert_not_called()
+                arguments = run.call_args.args[0]
+                self.assertEqual(arguments[:2], ["/usr/bin/python3", "-I"])
+                self.assertTrue(arguments[2].endswith("/user_cache_launcher.py"))
+                self.assertEqual(arguments[3:], ["--user", "agent", "--agent-storage-only"] + (["--dry-run"] if dry_run else []))
+                self.assertEqual(run.call_args.kwargs["timeout"], 3600)
+            else:
+                run.assert_not_called()
+                self.assertEqual(user.call_args.args[:2], ("agent", "/home/agent"))
+                self.assertTrue(user.call_args.args[2].endswith("/user_cache_maintenance.py --agent-storage-only"))
 
 
 if __name__ == "__main__":

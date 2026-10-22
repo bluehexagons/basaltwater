@@ -374,8 +374,11 @@ def _persist(state: dict[str, Any], baseline: dict[str, Any], directory: Path) -
                       mode=0o640, uid=0, gid=baseline["report_gid"])
 
 
-def _dispatch_routines(report: dict[str, Any], persist: Callable[[], None], *, authorized: bool) -> None:
+def _dispatch_routines(report: dict[str, Any], persist: Callable[[], None], *,
+                       authorized: bool, username: str) -> None:
     """Resume unattempted jobs and retain uncertain attempts without replaying them."""
+    if not validate_username(username) or username == "root":
+        raise ValueError("Housekeeping requires a trusted non-root baseline username")
     for item in report["routines"]:
         routine = item["unit"]
         message = ""
@@ -397,9 +400,15 @@ def _dispatch_routines(report: dict[str, Any], persist: Callable[[], None], *, a
             definition = definition or {}
             script = f"/opt/basaltwater/common/service_tools/{routine.replace('-', '_')}.py"
             starts = [line for line in definition.get("content", "").splitlines() if line.startswith("ExecStart=")]
-            # The installer quotes script paths. Accept only these two exact
-            # forms of the fixed command, with no extra arguments or starts.
+            # Retain the fixed legacy commands during migration. The root
+            # launcher accepts only the account from the trusted baseline.
             allowed = ([f'ExecStart=/usr/bin/python3 "{script}"'], [f"ExecStart=/usr/bin/python3 {script}"])
+            if routine == "user-cache-maintenance":
+                launcher = "/opt/basaltwater/common/service_tools/user_cache_launcher.py"
+                allowed += (
+                    [f'ExecStart=/usr/bin/python3 -I "{launcher}" "--user" "{username}"'],
+                    [f"ExecStart=/usr/bin/python3 -I {launcher} --user {username}"],
+                )
             if (definition.get("uid") != 0 or definition.get("mode", 0) & 0o022 or starts not in allowed):
                 item["status"] = "blocked"
                 message = "Managed housekeeping unit could not be verified: " + routine
@@ -454,7 +463,8 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
                 if authorized and any(item["status"] == "pending" for item in previous["routines"]):
                     state["last_routines"] = current
                     _persist(state, baseline, root)
-                _dispatch_routines(previous, lambda: _persist(state, baseline, root), authorized=authorized)
+                _dispatch_routines(previous, lambda: _persist(state, baseline, root),
+                                   authorized=authorized, username=baseline["username"])
                 resumed = True
         claim = root / "active-request.json"
         request = None
@@ -506,7 +516,8 @@ def run_supervisor(*, config_path: str = CONFIG_FILE, directory: str = DATA_DIR,
         if request:
             remove_file_durable(str(claim))  # Acceptance and pending jobs are durable first.
         if routines:
-            _dispatch_routines(report, lambda: _persist(state, baseline, root), authorized=True)
+            _dispatch_routines(report, lambda: _persist(state, baseline, root),
+                               authorized=True, username=baseline["username"])
         fingerprint = hashlib.sha256(json.dumps(sorted((issue["key"], issue["severity"]) for issue in issues)).encode()).hexdigest()
         changed = fingerprint != state["fingerprint"]
         state["repeated"] = 1 if changed else min(1000000, state["repeated"] + 1)

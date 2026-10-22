@@ -34,6 +34,8 @@ def configure_maintenance_timer(
     service_desc: str,
     timer_desc: str,
     script_path: str,
+    script_args: tuple[str, ...] = (),
+    isolated_python: bool = False,
     schedule: Optional[str],
     check_name: str,
     check_path: Optional[str] = None,
@@ -58,6 +60,14 @@ def configure_maintenance_timer(
     validate_filesystem_path(script_path, must_exist=False)
     if not os.path.isabs(script_path):
         raise ValueError(f"Maintenance script path must be absolute: {script_path}")
+    if not isinstance(script_args, tuple):
+        raise ValueError("Maintenance script arguments must be a tuple of strings")
+    for argument in script_args:
+        if (not isinstance(argument, str) or not argument
+                or any(ord(character) < 32 or ord(character) == 127 for character in argument)):
+            raise ValueError("Maintenance script arguments must be non-empty strings without control characters")
+    if type(isolated_python) is not bool:
+        raise ValueError("Isolated Python selection must be a boolean")
 
     for value, name in (
         (service_desc, "service description"),
@@ -133,7 +143,11 @@ def configure_maintenance_timer(
         _validate_unit_value(value, f"environment variable {name}")
         environment_lines += f"Environment={_quote_unit_value(f'{name}={value}')}\n"
 
-    script_argument = _quote_unit_value(script_path).replace("$", "$$")
+    script_arguments = " ".join(
+        _quote_unit_value(argument).replace("$", "$$")
+        for argument in (script_path, *script_args)
+    )
+    python_command = "/usr/bin/python3 -I" if isolated_python else "/usr/bin/python3"
 
     network_lines = "Wants=network-online.target\nAfter=network-online.target\n" if network_online else ""
     service_content = f"""[Unit]
@@ -143,7 +157,7 @@ Documentation=man:systemd.service(5)
 
 [Service]
 Type=oneshot
-{user_line}{environment_lines}{sandbox_lines}ExecStart=/usr/bin/python3 {script_argument}
+{user_line}{environment_lines}{sandbox_lines}ExecStart={python_command} {script_arguments}
 TimeoutStartSec={timeout}
 StandardOutput=journal
 StandardError=journal

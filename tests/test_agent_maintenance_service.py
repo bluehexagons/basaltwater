@@ -135,9 +135,13 @@ class MaintenanceSupervisorTest(unittest.TestCase):
         with patch.object(maintenance_systemd, "is_dry_run", return_value=False), \
                 patch.object(maintenance_systemd, "replace_units") as replace:
             for routine in agent._ROUTINES:
+                user_cache = routine == "user-cache-maintenance"
                 self.assertTrue(maintenance_systemd.configure_maintenance_timer(
                     service_name=routine, service_desc=routine, timer_desc=routine,
-                    script_path=f"/opt/basaltwater/common/service_tools/{routine.replace('-', '_')}.py",
+                    script_path=("/opt/basaltwater/common/service_tools/user_cache_launcher.py" if user_cache else
+                                 "/opt/basaltwater/common/service_tools/cleanup_maintenance.py"),
+                    script_args=("--user", self.baseline["username"]) if user_cache else (),
+                    isolated_python=user_cache,
                     schedule="daily", check_name=routine))
                 definitions[f"/etc/systemd/system/{routine}.service"] = {
                     "uid": 0, "mode": 0o644, "content": replace.call_args.args[0][routine + ".service"]}
@@ -591,6 +595,32 @@ class MaintenanceSupervisorTest(unittest.TestCase):
 
 
 class MaintenanceExecutionTest(unittest.TestCase):
+    def test_dispatch_accepts_only_fixed_launcher_bound_to_trusted_username_and_legacy_commands(self) -> None:
+        launcher = "/opt/basaltwater/common/service_tools/user_cache_launcher.py"
+        legacy = "/opt/basaltwater/common/service_tools/user_cache_maintenance.py"
+        fixed = f'ExecStart=/usr/bin/python3 -I "{launcher}" "--user" "agent"'
+        accepted = (
+            fixed, f"ExecStart=/usr/bin/python3 -I {launcher} --user agent",
+            f'ExecStart=/usr/bin/python3 "{legacy}"', f"ExecStart=/usr/bin/python3 {legacy}",
+        )
+        rejected = (
+            fixed.replace('"agent"', '"other"'), fixed.replace('"agent"', '"root"'),
+            fixed.replace('"agent"', '"agent" "--dry-run"'), fixed + ' "--agent-storage-only"',
+            fixed.replace(" -I ", " "), fixed.replace(' "--user" "agent"', ""),
+            fixed + "\nExecStart=/bin/true", fixed.replace("user_cache_launcher", "other_launcher"),
+        )
+        for start in (*accepted, *rejected):
+            with self.subTest(start=start):
+                report = {"checked_at": "now", "issues": [], "review": {"status": "skipped"},
+                          "username": "other", "routines": [{"unit": "user-cache-maintenance", "status": "pending"}]}
+                definition = {"uid": 0, "mode": 0o644, "content": "[Service]\n" + start + "\n"}
+                with patch.object(agent, "snapshot_unit_file", return_value=definition), patch.object(
+                    agent, "_command", return_value=SimpleNamespace(returncode=0)
+                ) as dispatch:
+                    agent._dispatch_routines(report, lambda: None, authorized=True, username="agent")
+                self.assertEqual(dispatch.call_count, int(start in accepted))
+                self.assertEqual(report["routines"][0]["status"], "requested" if start in accepted else "blocked")
+
     def test_review_is_dropped_to_named_account_without_a_shell_or_inherited_environment(self) -> None:
         owner = SimpleNamespace(pw_name="agent", pw_dir="/home/agent")
         selection = {"model": "test-mini", "effort": "low"}

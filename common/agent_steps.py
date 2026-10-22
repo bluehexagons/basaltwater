@@ -1465,11 +1465,14 @@ def clone_agent_repositories(config: SetupConfig) -> None:
 
 def reconcile_agent_storage(config: SetupConfig) -> None:
     """Apply conservative retention to existing coding-agent installations."""
+    if not validate_username(config.username):
+        raise ValueError(f"Invalid agent storage username: {config.username}")
+    privileged = os.geteuid() == 0
     user_home = _user_home(config)
     maintenance_script = os.path.join(
         os.path.dirname(__file__),
         "service_tools",
-        "user_cache_maintenance.py",
+        "user_cache_launcher.py" if privileged else "user_cache_maintenance.py",
     )
     validate_filesystem_path(maintenance_script, must_exist=True)
     if os.path.islink(maintenance_script) or not os.path.isfile(maintenance_script):
@@ -1477,20 +1480,25 @@ def reconcile_agent_storage(config: SetupConfig) -> None:
             f"Agent storage maintenance source is not a regular file: {maintenance_script}"
         )
 
-    command = [
-        "/usr/bin/python3",
-        maintenance_script,
-        "--agent-storage-only",
-    ]
+    command = ["/usr/bin/python3"]
+    if privileged:
+        command.append("-I")
+    command.append(maintenance_script)
+    if privileged:
+        command.extend(("--user", config.username))
+    command.append("--agent-storage-only")
     if is_dry_run():
         command.append("--dry-run")
-    result = _run_as_login_user(
-        config.username,
-        user_home,
-        shlex.join(command),
-        check=False,
-        capture_output=True,
-    )
+    if privileged:
+        result = run(command, check=False, capture_output=True, timeout=60 * 60)
+    else:
+        result = _run_as_login_user(
+            config.username,
+            user_home,
+            shlex.join(command),
+            check=False,
+            capture_output=True,
+        )
     output_parts = (result.stdout,) if result.returncode == 0 else (
         result.stdout,
         result.stderr,
