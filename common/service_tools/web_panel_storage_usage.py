@@ -6,12 +6,15 @@ import html
 from urllib.parse import parse_qs
 
 from common.service_tools.web_panel_templates import render_document
+from lib.storage_diagnostics import SCAN_LIMITS
 
 
 VIEWS = {"areas": "VM areas", "services": "Services", "projects": "Projects"}
 STYLE = """
 .storage-heading,.storage-actions {display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.storage-actions form {margin:0}.storage-actions button {margin:0;min-height:44px}
+.storage-actions form {margin:0;display:flex;align-items:end;gap:12px;flex-wrap:wrap;min-width:0}
+.storage-actions label {display:grid;gap:6px;font-size:.85rem;min-width:0}
+.storage-actions select {max-width:100%;min-height:44px}.storage-actions button {margin:0;min-height:44px}
 .storage-actions a {min-height:44px;display:inline-flex;align-items:center;color:var(--accent)}
 .storage-status {padding:14px 18px;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;margin:20px 0}
 .storage-status p {margin:4px 0}.storage-status.partial,.storage-status.failed {border-left-color:var(--warning)}
@@ -59,6 +62,16 @@ def parse_storage_query(query: str) -> str:
     if set(values) - {"view"} or view not in VIEWS:
         raise ValueError("Invalid storage view")
     return view
+
+
+def parse_storage_scan(values: dict[str, list[str]]) -> str:
+    """Accept a fixed scan mode, never caller-provided paths or budgets."""
+    if set(values) - {"csrf", "mode"} or any(len(entries) != 1 for entries in values.values()):
+        raise ValueError("Invalid storage request")
+    mode = values.get("mode", ["quick"])[0]
+    if mode not in SCAN_LIMITS:
+        raise ValueError("Invalid storage request")
+    return mode
 
 
 def _escape(value: object) -> str:
@@ -132,11 +145,18 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
     running = status == "running"
     title = {"idle": "Ready to inspect", "running": "Diagnostic running", "complete": "Diagnostic complete", "partial": "Partial estimate", "failed": "Diagnostic could not finish"}[status]
     button = "Diagnostic running…" if running else "Run again" if report else "Run diagnostic"
-    actions = f'''<div class="storage-actions"><a href="/storage?view={view}">Refresh status</a><form method="post" action="/actions/storage-scan"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><button type="submit"{" disabled" if running else ""}>{button}</button></form></div>'''
+    mode = snapshot.get("scan_mode", "quick")
+    options = "".join(f'<option value="{key}"{" selected" if key == mode else ""}>{key.capitalize()} · {limits["duration_seconds"]:g}s / {limits["entry_limit"]:,} entries</option>' for key, limits in SCAN_LIMITS.items())
+    actions = f'''<div class="storage-actions"><a href="/storage?view={view}">Refresh status</a><form method="post" action="/actions/storage-scan"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><label>Scan depth<select name="mode"{" disabled" if running else ""}>{options}</select></label><button type="submit"{" disabled" if running else ""}>{button}</button></form></div>'''
     content = f'''<div class="storage-heading"><div><p class="eyebrow">On-demand diagnostic</p><h2>Understand this VM’s storage</h2></div>{actions}</div>
 <div class="storage-status {status}" role="status"><strong>{title}</strong><p>{_escape(snapshot.get("message", ""))}</p>{'<p>Use Refresh status to check progress. Previous results remain visible below.</p>' if running and report else '<p>Use Refresh status to check progress.</p>' if running else ''}</div>'''
     if report:
         content += f'<p class="storage-footnote">Showing scan recorded at <time>{_escape(report["generated_at"])}</time>.</p>'
+        limits = report["limits"]
+        if (limits == SCAN_LIMITS["quick"] and
+                (report["entries_scanned"] >= limits["entry_limit"]
+                 or report["duration_seconds"] >= limits["duration_seconds"])):
+            content += '<p class="storage-footnote"><strong>Quick scan limit reached.</strong> Choose Extended and run again for a larger time and entry budget. Permission restrictions and excluded filesystems still apply.</p>'
         capacity = report.get("root_filesystem") or {}
         observed = report["scanned_allocated_bytes"]
         content += '<div class="storage-metrics">' + "".join((
@@ -147,11 +167,10 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
         )) + '</div>'
         content += _capacity(report) + _breakdown(report, view)
         issues = "".join(f'<li>{_escape(issue)}</li>' for issue in report.get("issues", []))
-        limits = report["limits"]
         content += f'''<details class="storage-notes"{" open" if issues else ""}><summary>Coverage &amp; measurement notes{f" · {len(report.get('issues', []))} notices" if issues else ""}</summary>
 <p>Scan recorded at <time>{_escape(report["generated_at"])}</time>. Limits: {limits["duration_seconds"]:g} seconds and {limits["entry_limit"]:,} entries.</p>
 <ul>{issues}<li>Allocated size uses filesystem blocks; logical size includes file lengths and directory metadata. Sparse files, shared blocks, filesystem metadata and deleted files still held open can make these estimates differ from capacity usage.</li>
-<li>The diagnostic uses the panel account’s access. Symlinks and nested mounts are skipped. Other filesystems, including shared storage, are outside this scan.</li>
+<li>The diagnostic uses the panel account’s access. Permission-denied paths remain partial even with an extended scan. Symlinks and nested mounts are skipped, except verified same-path projections of the root filesystem used by service isolation. Other filesystems, including shared storage, are outside this scan.</li>
 <li>Service attribution uses conventional paths. Project estimates cover recognized project directories, not every possible checkout on the VM.</li></ul></details>'''
     else:
         content += '''<section class="storage-empty"><h2>A clear view of your disk</h2><p>Run a diagnostic to estimate storage used by VM areas, known service data and project directories. You’ll get ranked usage, allocated and logical sizes, and coverage notes.</p><p>The scan reads file metadata using this account’s access. It does not read file contents or remove data. Results stay in memory until the panel restarts.</p></section>'''

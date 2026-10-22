@@ -11,7 +11,7 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 from lib import storage_diagnostics as diagnostics
 
@@ -23,6 +23,7 @@ class StorageCollectorTests(unittest.TestCase):
         self.home = self.root / "home/agent"
         self.home.mkdir(parents=True)
         self.enterContext(patch.object(diagnostics, "_ROOT", str(self.root)))
+        self.read_mounts = diagnostics._mounts
         self.mounts = self.enterContext(patch.object(diagnostics, "_mounts", return_value={str(self.root): "ext4"}))
         self.enterContext(patch.object(diagnostics, "_open_root", side_effect=lambda: os.open(self.root, diagnostics._OPEN_DIRECTORY)))
         self.capacity = self.enterContext(patch.object(diagnostics.os, "fstatvfs", return_value=SimpleNamespace(
@@ -140,6 +141,36 @@ class StorageCollectorTests(unittest.TestCase):
         self.assertFalse(self.row(report, "areas", "area:home")["complete"])
         self.assertTrue(any("Home is on" in issue for issue in report["issues"]))
         self.assertEqual(report["root_filesystem"]["total_bytes"], 1024000)
+
+    def test_sandbox_identity_mounts_are_measured_but_nested_remaps_are_not_touched(self) -> None:
+        for path in ("usr/visible", "etc/visible", "boot/visible", "usr/remapped/secret"):
+            self.file(path)
+        content = f"1 0 8:1 / {self.root} rw - ext4 /dev/fixture rw\n"
+        for index, path in enumerate(("usr", "etc", "boot"), 2):
+            content += f"{index} 1 8:1 /{path} {self.root}/{path} ro - ext4 /dev/fixture ro\n"
+        content += f"5 2 8:1 /private {self.root}/usr/remapped ro - ext4 /dev/fixture ro\n"
+        with patch("builtins.open", mock_open(read_data=content)):
+            self.mounts.return_value = self.read_mounts()
+        real_stat, real_open = os.stat, os.open
+
+        def guarded_stat(path: str, **kwargs: object) -> object:
+            self.assertNotEqual(path, "remapped")
+            return real_stat(path, **kwargs)
+
+        def guarded_open(path: str, flags: int, **kwargs: object) -> int:
+            self.assertNotEqual(path, "remapped")
+            return real_open(path, flags, **kwargs)
+
+        with patch.object(diagnostics.os, "stat", side_effect=guarded_stat), \
+                patch.object(diagnostics.os, "open", side_effect=guarded_open):
+            report = self.collect()
+        self.assertEqual(report["files_scanned"], 3)
+        for area in ("usr", "etc", "boot"):
+            self.assertEqual(self.row(report, "areas", "area:" + area)["files"], 1)
+        self.assertTrue(self.row(report, "areas", "area:etc")["complete"])
+        self.assertFalse(self.row(report, "areas", "area:usr")["complete"])
+        self.assertFalse(diagnostics._complete(report))
+        self.assertEqual(sum(row["allocated_bytes"] for row in report["areas"]), report["scanned_allocated_bytes"])
 
     def test_unlisted_device_boundary_is_also_omitted(self) -> None:
         self.file("home/agent/repos/project/file")
@@ -374,8 +405,24 @@ class StorageCollectorTests(unittest.TestCase):
         blocked = self.row(report, "projects", "project:blocked")
         self.assertFalse(blocked["complete"])
         self.assertEqual(blocked["allocated_bytes"], 0)
-        self.assertTrue(any("unreadable" in issue for issue in blocked["issues"]))
+        self.assertIn(diagnostics._PERMISSION, blocked["issues"])
         self.assertNotIn("private token", json.dumps(report))
+
+    def test_permission_denied_metadata_is_identified_without_exception_details(self) -> None:
+        self.file("home/agent/.codex/session")
+        real_stat = os.stat
+
+        def deny(path: str, **kwargs: object) -> object:
+            if path == ".codex":
+                raise PermissionError("private metadata detail")
+            return real_stat(path, **kwargs)
+
+        with patch.object(diagnostics.os, "stat", side_effect=deny):
+            report = self.collect()
+        codex = self.row(report, "services", "codex")
+        self.assertFalse(codex["complete"])
+        self.assertIn(diagnostics._PERMISSION, codex["issues"])
+        self.assertNotIn("private metadata detail", json.dumps(report))
 
     def test_disappearing_listed_entry_is_partial(self) -> None:
         self.file("home/agent/repos/project/vanished")
@@ -428,6 +475,7 @@ class StorageCollectorTests(unittest.TestCase):
             unreadable = self.collect()
         self.assertEqual(len(unreadable["projects"]), 1)
         self.assertFalse(unreadable["projects"][0]["complete"])
+        self.assertIn(diagnostics._PERMISSION, unreadable["projects"][0]["issues"])
         self.assertNotIn("private listing exception", json.dumps(unreadable))
 
     def test_absent_zero_differs_from_unavailable_and_empty_directory(self) -> None:
@@ -495,6 +543,49 @@ class StorageCollectorTests(unittest.TestCase):
 
 
 class StorageMountTests(unittest.TestCase):
+    def mounts(self, content: str) -> dict:
+        with patch("builtins.open", mock_open(read_data=content)):
+            return diagnostics._mounts()
+
+    def test_identity_projections_include_subvolume_roots_and_decoded_paths(self) -> None:
+        for root in ("/", "/@"):
+            with self.subTest(root=root):
+                content = f"1 0 8:1 {root} / rw - ext4 /dev/fixture rw\n"
+                for index, path in enumerate(("usr", "etc", "boot", r"space\040here", r"slash\134040"), 2):
+                    prefix = root.rstrip("/")
+                    content += f"{index} 1 8:1 {prefix}/{path} /{path} ro - ext4 /dev/fixture ro\n"
+                self.assertEqual(self.mounts(content), {"/": "ext4"})
+
+    def test_remaps_aliases_other_devices_types_and_nested_mounts_remain_boundaries(self) -> None:
+        content = "1 0 8:1 /@ / rw - ext4 /dev/fixture rw\n2 1 8:1 /@/usr /usr ro - ext4 /dev/fixture ro\n"
+        cases = (("/var/tmp", "8:1", "/@/var/tmp/private", "ext4"),
+                 ("/alias", "8:1", "/@/home", "ext4"),
+                 ("/usr/other", "8:2", "/@/usr/other", "ext4"),
+                 ("/usr/fuse", "8:1", "/@/usr/fuse", "fuse.sshfs"),
+                 ("/usr/nfs", "0:9", "/", "nfs"),
+                 ("/tmp", "0:7", "/", "tmpfs"))
+        for index, (path, device, root, kind) in enumerate(cases, 3):
+            content += f"{index} 1 {device} {root} {path} rw - {kind} source rw\n"
+        self.assertEqual(self.mounts(content), {"/": "ext4", **{case[0]: case[3] for case in cases}})
+
+    def test_duplicate_nested_mounts_are_excluded_in_either_order(self) -> None:
+        root = "1 0 8:1 / / rw - ext4 source rw\n"
+        identity = "2 1 8:1 /usr /usr ro - ext4 source ro\n"
+        fuse = "3 1 0:8 / /usr rw - fuse.sshfs source rw\n"
+        for records in ((identity, fuse), (fuse, identity), (identity, identity)):
+            self.assertEqual(self.mounts(root + "".join(records)), {"/": "ext4", "/usr": "ambiguous"})
+        for records in ((root, root), (root, "4 0 0:9 / / rw - nfs source rw\n")):
+            with self.assertRaises(ValueError):
+                self.mounts("".join(records))
+
+    def test_malformed_metadata_cannot_become_trusted_by_normalization(self) -> None:
+        root = "1 0 8:1 / / rw - ext4 source rw\n"
+        for device, mount_root, path in (("invalid", "/usr", "/usr"), ("8:1", "relative", "/usr"),
+                                         ("8:1", "/usr/../usr", "/usr"), ("8:1", "/usr", "//usr"),
+                                         ("8:1", "/usr", "/usr/"), ("8:1", "/usr", r"/usr\041")):
+            with self.subTest(device=device, root=mount_root, path=path), self.assertRaises(ValueError):
+                self.mounts(root + f"2 1 {device} {mount_root} {path} ro - ext4 source ro\n")
+
     def test_mount_table_is_bounded_decoded_and_sanitized(self) -> None:
         content = "1 0 1:1 / / rw - ext4 /dev/private rw\n2 1 1:2 / /space\\040here rw - nfs secret:/remote rw\n"
         stream = Mock()
@@ -551,7 +642,7 @@ class StorageManagerTests(unittest.TestCase):
         manager = diagnostics.StorageDiagnostics("/home/fixture", collector=collector)
         snapshot = manager.snapshot()
         self.assertEqual(snapshot, {"state": "idle", "started_at": None, "finished_at": None,
-                                    "message": "Ready. Diagnostics run only when requested.", "report": None})
+                                    "message": "Ready. Diagnostics run only when requested.", "report": None, "scan_mode": "quick"})
         snapshot["state"] = "failed"
         self.assertEqual(manager.snapshot()["state"], "idle")
         collector.assert_not_called()
@@ -559,8 +650,9 @@ class StorageManagerTests(unittest.TestCase):
     def test_concurrent_starts_launch_exactly_one_daemon(self) -> None:
         entered, release = threading.Event(), threading.Event()
 
-        def blocked(home: str) -> dict:
+        def blocked(home: str, **limits: object) -> dict:
             self.assertEqual(home, "/home/fixture")
+            self.assertEqual(limits, diagnostics.SCAN_LIMITS["quick"])
             entered.set()
             self.assertTrue(release.wait(3))
             return self.report()
@@ -584,7 +676,9 @@ class StorageManagerTests(unittest.TestCase):
             self.assertIsNone(running["finished_at"])
             self.assertTrue(manager._test_thread.daemon)
             datetime.fromisoformat(running["started_at"])
-            collector.assert_called_once_with("/home/fixture")
+            collector.assert_called_once_with("/home/fixture", **diagnostics.SCAN_LIMITS["quick"])
+            self.assertFalse(manager.start(mode="extended"))
+            self.assertEqual(manager.snapshot()["scan_mode"], "quick")
         finally:
             release.set()
         complete = self.finish(manager)
@@ -603,7 +697,7 @@ class StorageManagerTests(unittest.TestCase):
         self.assertTrue(manager.snapshot()["report"]["areas"][0]["complete"])
         release, entered = threading.Event(), threading.Event()
 
-        def fail(home: str) -> dict:
+        def fail(home: str, **limits: object) -> dict:
             entered.set()
             self.assertTrue(release.wait(3))
             raise RuntimeError("private token, raw exception dump")
@@ -624,6 +718,18 @@ class StorageManagerTests(unittest.TestCase):
         collector.return_value = self.report(complete=False)
         self.assertTrue(manager.start())
         self.assertEqual(self.finish(manager)["state"], "partial")
+
+    def test_extended_scan_uses_fixed_limits_and_unknown_modes_do_not_launch(self) -> None:
+        collector = Mock(return_value=self.report())
+        manager = self.tracked_manager(collector)
+        for mode in ("", "deep", "/root", 60, None, []):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                manager.start(mode=mode)
+        collector.assert_not_called()
+        self.assertEqual(manager.snapshot()["state"], "idle")
+        self.assertTrue(manager.start(mode="extended"))
+        self.assertEqual(self.finish(manager)["scan_mode"], "extended")
+        collector.assert_called_once_with("/home/fixture", **diagnostics.SCAN_LIMITS["extended"])
 
     def test_global_coverage_issue_and_missing_capacity_are_partial(self) -> None:
         report = self.report()

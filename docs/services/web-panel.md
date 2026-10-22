@@ -145,6 +145,12 @@ runs in the background; use **Refresh status** to check progress. The previous
 result remains visible during a rerun. Opening the page does not scan the filesystem.
 Results remain in memory until the panel restarts.
 
+Choose a **Scan depth** before starting: **Quick** allows 15 seconds and 200,000
+entry observations; **Extended** allows 60 seconds and 2,000,000. A quick scan
+that reaches either limit suggests an extended rerun. Only one scan runs at a
+time. Extended scans can cover larger package stores and checkouts, but retain
+the same filesystem and permission boundaries.
+
 The capacity chart shows root filesystem usage, available space and reserves at
 scan time. **VM areas**, **Services** and **Projects** show ranked allocated
 space, logical sizes (file lengths and directory metadata) and file counts.
@@ -159,6 +165,11 @@ It scans only the root filesystem, skips symlinks and nested mounts, and uses
 time and entry limits shown with the results. The time budget is checked between
 metadata operations; it cannot interrupt a blocked filesystem call. Separate home/data filesystems
 remain visible in **Mounted storage** but are outside this usage scan.
+Verified same-path projections of the root filesystem, including the panel
+service's read-only `/usr`, `/etc` and `/boot` binds, remain measurable. Bind
+aliases, PrivateTmp remappings, other filesystems and ambiguous mount records
+are excluded. Permission-denied paths are identified explicitly; increasing
+scan depth does not grant access to them.
 Known service locations and discovered projects each receive a share of the
 remaining time and entry budgets before the rest of the VM is scanned. Large
 locations can resume afterward with spare budget, so a single large checkout

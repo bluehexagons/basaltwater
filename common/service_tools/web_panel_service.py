@@ -36,7 +36,7 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
-from common.service_tools.web_panel_storage_usage import parse_storage_query, render_storage_usage
+from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -2355,10 +2355,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.FORBIDDEN, "Invalid request\n", "text/plain")
             return
         if path == "/actions/storage-scan":
-            if set(values) != {"csrf"}:
+            try:
+                mode = parse_storage_scan(values)
+            except ValueError:
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid storage request\n", "text/plain")
                 return
-            self.state.storage_diagnostics.start()
+            self.state.storage_diagnostics.start(mode=mode)
             self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/storage"})
             return
         if path in agent_paths:

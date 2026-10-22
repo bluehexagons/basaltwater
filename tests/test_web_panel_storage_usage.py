@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import WebPanelHandler, WebPanelState, _PAGE_STYLE
-from common.service_tools.web_panel_storage_usage import parse_storage_query, render_storage_usage
+from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
 from common.service_tools.web_panel_templates import panel_navigation
 from scripts.panel_scenarios import Scenario
 from scripts.panel_storage_samples import storage_snapshot
@@ -69,6 +69,9 @@ class StorageDashboardTests(unittest.TestCase):
                                       ("/actions/storage-scan", {"csrf": "wrong"}, 403),
                                       ("/actions/storage-scan", {"csrf": ["test-csrf", "test-csrf"]}, 403),
                                       ("/actions/storage-scan", {"csrf": "test-csrf", "path": "/"}, 400),
+                                      ("/actions/storage-scan", {"csrf": "test-csrf", "mode": "all"}, 400),
+                                      ("/actions/storage-scan", {"csrf": "test-csrf", "mode": ["quick", "extended"]}, 400),
+                                      ("/actions/storage-scan", {"csrf": "test-csrf", "entry_limit": "5000000"}, 400),
                                       ("/actions/storage-scan?view=areas", {"csrf": "test-csrf"}, 400)):
             handler = self.handler(path, fields)
             handler.do_GET() if fields is None else handler.do_POST()
@@ -82,6 +85,35 @@ class StorageDashboardTests(unittest.TestCase):
             handler.do_POST()
             handler._send.assert_called_once_with(303, "", "text/plain", headers={"Location": "/storage"})
         self.assertEqual(self.manager.start.call_count, 2)
+        self.manager.start.assert_called_with(mode="quick")
+
+    def test_extended_mode_is_validated_and_selected_through_reruns(self) -> None:
+        self.assertEqual(parse_storage_scan({"csrf": ["test-csrf"]}), "quick")
+        for fields in ({"mode": []}, {"mode": [""]}):
+            with self.assertRaises(ValueError):
+                parse_storage_scan(fields)
+        handler = self.handler("/actions/storage-scan", {"csrf": "test-csrf", "mode": "extended"})
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 303)
+        self.manager.start.assert_called_once_with(mode="extended")
+        self.snapshot = storage_snapshot(loaded=True, mode="extended")
+        self.snapshot["state"] = "running"
+        document = self.render()
+        self.assertIn('<option value="extended" selected>', document)
+        self.assertIn('name="mode" disabled', document)
+        self.assertIn("60 seconds and 2,000,000 entries", document)
+
+    def test_quick_limit_notice_distinguishes_budget_from_permissions(self) -> None:
+        self.snapshot = storage_snapshot(loaded=True, degraded=True)
+        self.assertNotIn("Quick scan limit reached", self.render())
+        self.snapshot["report"]["entries_scanned"] = 200000
+        document = self.render()
+        self.assertIn("Quick scan limit reached", document)
+        self.assertIn("Choose Extended", document)
+        self.assertIn("Permission-denied paths remain partial", document)
+        self.snapshot = storage_snapshot(loaded=True, mode="extended")
+        self.snapshot["report"]["entries_scanned"] = 2000000
+        self.assertNotIn("Quick scan limit reached", self.render())
 
     def test_running_keeps_last_report_and_refresh_requires_user_action(self) -> None:
         self.snapshot = storage_snapshot(loaded=True)
@@ -135,10 +167,12 @@ class StorageDashboardTests(unittest.TestCase):
             state = WebPanelState({"host": "development.example.test", "username": "operator", "services": [], "features": {}}, agent_home=directory)
             scenario = Scenario(state, "degraded", stack)
             self.assertEqual(state.storage_diagnostics.snapshot()["state"], "idle")
-            state.storage_diagnostics.start()
+            state.storage_diagnostics.start(mode="extended")
             snapshot = state.storage_diagnostics.snapshot()
             self.assertEqual(snapshot["state"], "partial")
             self.assertIn("Synthetic", snapshot["message"])
+            self.assertEqual(snapshot["scan_mode"], "extended")
+            self.assertEqual(snapshot["report"]["limits"]["entry_limit"], 2000000)
             with ExitStack() as reloaded:
                 Scenario(state, "degraded", reloaded)
                 self.assertEqual(state.storage_diagnostics.snapshot()["state"], "partial")

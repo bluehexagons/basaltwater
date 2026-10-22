@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from lib.storage_diagnostics import SCAN_LIMITS
 
-def storage_snapshot(*, loaded: bool, degraded: bool = False) -> dict:
+
+def storage_snapshot(*, loaded: bool, degraded: bool = False, mode: str = "quick") -> dict:
     """Return a fresh fixture without inspecting any host paths."""
     if not loaded:
-        return {"state": "idle", "started_at": None, "finished_at": None,
+        return {"state": "idle", "started_at": None, "finished_at": None, "scan_mode": mode,
                 "message": "Run a diagnostic to estimate storage usage.", "report": None}
     gib = 1024 ** 3
 
@@ -30,7 +32,7 @@ def storage_snapshot(*, loaded: bool, degraded: bool = False) -> dict:
                      row("sample-game", "/home/operator/repos/sample-game", 3.2, 8640),
                      row("client-portal", "/home/operator/repos/client-portal", 1.4, 3402)],
         "issues": ["Synthetic permission restriction: some system data could not be inspected."] if degraded else [],
-        "limits": {"duration_seconds": 15.0, "entry_limit": 200000},
+        "limits": dict(SCAN_LIMITS[mode]),
     }
-    return {"state": "partial" if degraded else "complete", "started_at": "2026-01-01T08:59:56+00:00",
+    return {"state": "partial" if degraded else "complete", "started_at": "2026-01-01T08:59:56+00:00", "scan_mode": mode,
             "finished_at": report["generated_at"], "message": "Synthetic diagnostic only; no host paths were inspected.", "report": report}

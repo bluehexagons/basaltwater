@@ -99,7 +99,8 @@ class Scenario:
         self.replace(state.agent_diagnostics, "snapshot", side_effect=self.agent_diagnostics)
         self.replace(state.agent_diagnostics, "trigger", side_effect=self.collect_agent_diagnostics)
         self.replace(state.storage_diagnostics, "snapshot", side_effect=lambda: storage_snapshot(
-            loaded=bool(self.data.get("storage_loaded")), degraded=self.name == "degraded"))
+            loaded=bool(self.data.get("storage_loaded")), degraded=self.name == "degraded",
+            mode=self.data.get("storage_mode", "quick")))
         self.replace(state.storage_diagnostics, "start", side_effect=self.collect_storage)
         self.replace(state.git_settings, "snapshot", side_effect=self.identity)
         self.replace(state.git_settings, "set_identity", side_effect=self.set_identity)
@@ -255,9 +256,10 @@ class Scenario:
             self.save()
         return True
 
-    def collect_storage(self) -> bool:
+    def collect_storage(self, *, mode: str = "quick") -> bool:
         with self.lock:
             self.data["storage_loaded"] = True
+            self.data["storage_mode"] = mode
             self.save()
         return True
 

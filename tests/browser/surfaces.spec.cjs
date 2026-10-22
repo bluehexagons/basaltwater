@@ -664,6 +664,16 @@ test.describe('storage dashboard', () => {
     await expect(page.getByRole('status')).toContainText('Diagnostic complete');
     await expect(page.getByRole('img', { name: /Root filesystem:/ })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Allocated', exact: true })).toBeVisible();
+    const depth = page.getByRole('combobox', { name: 'Scan depth', exact: true });
+    await expect(depth).toHaveValue('quick');
+    await depth.selectOption('extended');
+    const extended = page.waitForResponse(response => response.url() === dev.url + '/actions/storage-scan');
+    await page.getByRole('button', { name: 'Run again', exact: true }).click();
+    const extendedResponse = await extended;
+    expect(extendedResponse.status()).toBe(303);
+    expect(new URLSearchParams(extendedResponse.request().postData()).get('mode')).toBe('extended');
+    await expect(depth).toHaveValue('extended');
+    await expect(page.locator('.storage-notes')).toContainText('60 seconds and 2,000,000 entries');
     for (const [view, label] of [['Services', 'T3 Code'], ['Projects', 'infra-tools'], ['VM areas', 'Home directories']]) {
       await page.getByRole('navigation', { name: 'Storage breakdown' }).getByRole('link', { name: view, exact: true }).click();
       await expect(page.locator('.storage-table')).toContainText(label);
@@ -676,6 +686,8 @@ test.describe('storage dashboard', () => {
         await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${colorScheme}, ${width}px`).toBe(true);
         await expect(page.getByRole('button', { name: 'Run again', exact: true })).toBeVisible();
+        await expect(depth).toBeVisible();
+        expect(await depth.evaluate(element => element.getBoundingClientRect().right <= innerWidth + 1)).toBe(true);
       }
     }
     await page.screenshot({ path: info.outputPath('storage-mobile-dark.png'), fullPage: true });

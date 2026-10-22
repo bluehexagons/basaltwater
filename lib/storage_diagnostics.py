@@ -32,6 +32,9 @@ _INCOMPLETE = "Coverage incomplete: "
 _ABSENT = "Not present; measured as zero."
 _UNSCANNED = "Unavailable: this path has not been scanned."
 _AREA_PATHS = ("home", "root", "var/tmp", "var", "opt", "usr", "tmp", "srv", "etc", "boot")
+SCAN_LIMITS = {"quick": {"duration_seconds": 15.0, "entry_limit": 200000},
+               "extended": {"duration_seconds": 60.0, "entry_limit": 2000000}}
+_PERMISSION = "Permission denied; the panel account cannot inspect this path completely."
 
 
 def _iso_now() -> str:
@@ -54,18 +57,48 @@ def _validated_home(home: str) -> str:
 
 
 def _mounts() -> dict[str, str]:
-    """Read bounded kernel mount metadata, exposing neither sources nor options."""
+    """Return root type and excluded boundaries from bounded kernel metadata.
+
+    Same-path projections of the root filesystem (such as ProtectSystem's
+    read-only /usr bind) are traversable. Aliases, remappings, other filesystems
+    and ambiguous mountpoints remain boundaries, without statting their paths.
+    """
     with open("/proc/self/mountinfo", encoding="utf-8") as stream:
         data = stream.read(1024 * 1024 + 1)
     if len(data) > 1024 * 1024:
         raise ValueError("Mount inventory exceeds limit")
-    mounts = {}
+    records: dict[str, list[tuple[str, str, str]]] = {}
+
+    def decoded_path(raw: str) -> str:
+        if re.search(r"\\(?!040|011|012|134)", raw):
+            raise ValueError("Malformed mount path escape")
+        path = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), raw)
+        if (not os.path.isabs(path) or os.path.normpath(path) != path
+                or path.startswith("//") or "\0" in path):
+            raise ValueError("Malformed mount path")
+        return path
+
     for line in data.splitlines():
         fields = line.split()
         separator = fields.index("-")
-        path = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[4])
-        mounts[path] = fields[separator + 1]
-    return mounts
+        if separator < 6 or len(fields) < separator + 4 or not re.fullmatch(r"[0-9]+:[0-9]+", fields[2]):
+            raise ValueError("Malformed mount metadata")
+        root, path = decoded_path(fields[3]), decoded_path(fields[4])
+        records.setdefault(path, []).append((fields[2], root, fields[separator + 1]))
+    roots = records.get(_ROOT, [])
+    if len(roots) != 1:
+        raise ValueError("Root mount metadata is missing or ambiguous")
+    device, root, kind = roots[0]
+    boundaries = {_ROOT: kind}
+    for path, entries in records.items():
+        if path == _ROOT:
+            continue
+        expected_root = os.path.normpath(os.path.join(root, os.path.relpath(path, _ROOT)))
+        if (len(entries) == 1 and _within(path, _ROOT)
+                and entries[0] == (device, expected_root, kind)):
+            continue
+        boundaries[path] = entries[0][2] if len(entries) == 1 else "ambiguous"
+    return boundaries
 
 
 def _open_root() -> int:
@@ -277,7 +310,7 @@ class _Scan:
             return
         self.budget()
         self.report["entries_scanned"] += 1
-        # Do not even stat known mountpoints: a remote/FUSE stat can block.
+        # Do not even stat excluded mountpoints: a remote/FUSE stat can block.
         if path in self.mounts:
             self.skipped.add(path)
             self.project(path, name)
@@ -292,6 +325,10 @@ class _Scan:
                 self.problem(path, "Entry disappeared during scan.")
             else:
                 self.absent(path)
+            return
+        except PermissionError:
+            self.skipped.add(path)
+            self.problem(path, _PERMISSION)
             return
         except OSError:
             self.skipped.add(path)
@@ -337,6 +374,9 @@ class _Scan:
                         self.walk(child, path, depth, priority_only=priority_only)
             finally:
                 os.close(child)
+        except PermissionError:
+            self.skipped.add(path)
+            self.problem(path, _PERMISSION)
         except OSError:
             self.skipped.add(path)
             self.problem(path, "Directory unreadable or changed during scan.")
@@ -400,6 +440,9 @@ class _Scan:
         except _LimitReached:
             self.problem(path, "Shared time or entry limit reached; sizes are lower bounds.")
             raise
+        except PermissionError:
+            self.skipped.add(path)
+            self.problem(path, _PERMISSION)
         except OSError:
             self.skipped.add(path)
             self.problem(path, "Directory listing unavailable or changed during scan.")
@@ -415,8 +458,9 @@ def collect_storage_usage(home: str, *, duration_seconds: float = 15.0,
 
     Duration must be finite and in (0, 60], entries in [1, 2000000]. The time
     budget is cooperative between local metadata calls; it cannot cancel a
-    blocked kernel syscall. Mounts are from this process's namespace, so service
-    sandbox mounts are deliberately omitted too. Ancestor metadata may be observed
+    blocked kernel syscall. Mounts are from this process's namespace; verified
+    same-path projections of the root filesystem are included, while remappings
+    and other nested mounts are omitted. Ancestor metadata may be observed
     again between probing, location and general traversal; entries count these
     observations, including absent fixed names. Known service roots and discovered
     projects share the remaining budget before the general pass resumes unfinished
@@ -435,7 +479,7 @@ def collect_storage_usage(home: str, *, duration_seconds: float = 15.0,
               "scanned_allocated_bytes": 0, "scanned_apparent_bytes": 0,
               "root_filesystem": None, "areas": areas, "services": _service_rows(home),
               "projects": [], "issues": [
-                  "Scope: regular files and directory metadata on the root device only; nested mounts, symlinks and special files are excluded.",
+                  "Scope: regular files and directory metadata on the root device, including verified same-path sandbox mounts; other nested mounts, symlinks and special files are excluded.",
                   "Areas are disjoint; services and projects overlap those areas and must not be added to them.",
                   "Global device/inode deduplication attributes hardlinks to their first observed path; shared/reflink extents may still overlap.",
                   "Directory estimates need not match df: deleted-open files, sparse files, filesystem metadata, unreadable paths and concurrent changes affect coverage.",
@@ -500,16 +544,17 @@ def _complete(report: dict) -> bool:
 class StorageDiagnostics:
     """One daemon worker per manager; construction and snapshots never scan.
 
-    The injected collector is called with ``home`` as its sole argument. A new
+    The injected collector receives ``home`` and the selected fixed time/entry
+    limits as keyword arguments. A new
     start is allowed immediately after completion (no cooldown). Reruns retain
     the last report, including after a failed attempt. Snapshots are detached.
     """
 
-    def __init__(self, home: str, *, collector: Callable[[str], dict] | None = None) -> None:
+    def __init__(self, home: str, *, collector: Callable[..., dict] | None = None) -> None:
         self._home = _validated_home(home)
         self._collector = collector if collector is not None else collect_storage_usage
         self._lock = threading.Lock()
-        self._snapshot = {"state": "idle", "started_at": None, "finished_at": None,
+        self._snapshot = {"state": "idle", "started_at": None, "finished_at": None, "scan_mode": "quick",
                           "message": "Ready. Diagnostics run only when requested.", "report": None}
 
     def snapshot(self) -> dict:
@@ -517,24 +562,26 @@ class StorageDiagnostics:
         with self._lock:
             return deepcopy(self._snapshot)
 
-    def start(self) -> bool:
+    def start(self, *, mode: str = "quick") -> bool:
         """Atomically start one background scan; return false while it runs."""
+        if not isinstance(mode, str) or mode not in SCAN_LIMITS:
+            raise ValueError("Choose a quick or extended storage scan")
         with self._lock:
             if self._snapshot["state"] == "running":
                 return False
-            self._snapshot.update(state="running", started_at=_iso_now(), finished_at=None,
+            self._snapshot.update(state="running", started_at=_iso_now(), finished_at=None, scan_mode=mode,
                                   message="Scanning root-filesystem metadata; the previous report remains available.")
             try:
-                threading.Thread(target=self._run, name="storage-diagnostics", daemon=True).start()
+                threading.Thread(target=self._run, args=(mode,), name="storage-diagnostics", daemon=True).start()
             except Exception:
                 self._snapshot.update(state="failed", finished_at=_iso_now(),
                                       message="Storage diagnostics could not start. Try again.")
                 return False
             return True
 
-    def _run(self) -> None:
+    def _run(self, mode: str) -> None:
         try:
-            report = deepcopy(self._collector(self._home))
+            report = deepcopy(self._collector(self._home, **SCAN_LIMITS[mode]))
             complete = _complete(report)
         except Exception:
             with self._lock:
