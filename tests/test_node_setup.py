@@ -56,12 +56,14 @@ class TestNodeSetup(unittest.TestCase):
         with patch.object(common_steps.os.path, "exists", return_value=True), \
                 patch.object(common_steps, "_chown_existing_paths"), \
                 patch.object(common_steps, "_ensure_nvm_shell_init"), \
+                patch.object(common_steps, "run") as host_run, \
                 patch.object(common_steps, "_run_as_login_user", side_effect=command) as run:
             common_steps.install_node_for_user("user", "/home/user")
         commands = [call.args[2] for call in run.call_args_list]
         self.assertTrue(any("nvm install v24.22.1" in command for command in commands))
         self.assertTrue(any("nvm alias default v24.22.1" in command for command in commands))
         self.resolve.assert_called_once_with("lts/*")
+        self.assertIn("libstdc++6 libatomic1", host_run.call_args.args[0])
         self.assertFalse(any("nvm uninstall" in command or "rm " in command for command in commands))
 
     def test_t3_node_directory_checks_the_selected_executable_version(self):
@@ -315,6 +317,7 @@ class TestNodeSetup(unittest.TestCase):
                 with patch.object(common_steps, '_chown_existing_paths'), \
                         patch.object(common_steps, '_ensure_nvm_shell_init'), \
                         patch.object(common_steps, '_node_baseline_is_usable', return_value=True), \
+                        patch.object(common_steps, 'run'), \
                         patch.object(common_steps, '_run_as_login_user', side_effect=execute):
                     if observed == 'v24.22.1':
                         common_steps.install_node_for_user('user', directory, refresh=True)

@@ -230,6 +230,9 @@ basaltw node install --version 26.12.1 --package-manager npm@12.2.1
 Project selection, managed Node installation, the Debian setup baseline, and T3 web setup require
 `^24.22.1 || ^26.12.1`. The baseline continues to install LTS by default;
 automatic Current-track updates still require their explicit policy opt-in.
+Debian setup supplies `libstdc++6` and `libatomic1` for the official binaries;
+Node 26 requires `libatomic.so.1` even for a version probe. Existing installations
+missing these libraries need setup repair before the affected runtime can run.
 Unsupported requests fail before preparing NVM. Aliases and partial version pins resolve to
 an exact supported stable release before installation and package-manager work.
 Existing project runtimes remain on disk for inspection and ownership protection,

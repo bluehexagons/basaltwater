@@ -1105,6 +1105,7 @@ def install_node_for_user(
 
             print("  Repairing Node.js LTS, npm, and pnpm baseline")
             target = resolve_node_release("lts/*")
+            run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1")
             nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
             _run_as_login_user(
                 username,
@@ -1128,6 +1129,7 @@ def install_node_for_user(
             return
         print("  Refreshing Node.js LTS, npm, and pnpm")
         target = resolve_node_release("lts/*")
+        run(f"{_APT_GET} install -y -qq libstdc++6 libatomic1")
         nvm_target_env = f"{nvm_env} && nvm use {shlex.quote(target)}"
         _run_as_login_user(
             username,
@@ -1157,7 +1159,7 @@ def install_node_for_user(
     
     target = resolve_node_release("lts/*")
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run(f"{_APT_GET} install -y -qq curl")
+    run(f"{_APT_GET} install -y -qq curl libstdc++6 libatomic1")
 
     # Install nvm as the user, explicitly setting NVM_DIR to avoid picking up
     # any system-wide NVM_DIR (e.g. /opt/nvm) from the environment

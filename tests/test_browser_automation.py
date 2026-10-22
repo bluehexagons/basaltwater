@@ -257,6 +257,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         )
         with (
             patch.object(browser_automation_steps, "is_dry_run", return_value=False),
+            patch.object(browser_automation_steps, "run") as packages,
             patch.object(browser_automation_steps, "install_service_node") as node,
             patch.object(browser_automation_steps, targets[0]) as runtime,
             patch.object(browser_automation_steps, targets[1]) as launchers,
@@ -266,6 +267,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
             patch.object(browser_automation_steps, targets[5]) as opencode,
             patch.object(browser_automation_steps, targets[6]) as smoke,
         ):
+            node.side_effect = lambda: self.assertIn("libstdc++6 libatomic1", packages.call_args.args[0])
             browser_automation_steps.install_browser_automation(config)
 
         node.assert_called_once_with()

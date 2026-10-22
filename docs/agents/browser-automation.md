@@ -70,6 +70,7 @@ preserve the other runtime's payloads. npm lifecycle scripts are disabled during
 the root-owned package installs, which use isolated npm configuration.
 Both use Node 24.22.1 from `/opt/basaltwater-node/v24.22.1`, downloaded from the
 official release with pinned SHA-256 checksums for Linux x86_64 and aarch64.
+Setup installs the Debian runtime libraries before executing that interpreter.
 Setup verifies root ownership, permissions and the interpreter version before
 installing or reusing browser packages. The distro interpreter is left to the
 distribution; writable user NVM installations never run these privileged tasks.

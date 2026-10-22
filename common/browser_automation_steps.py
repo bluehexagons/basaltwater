@@ -596,6 +596,7 @@ def install_browser_automation(config: SetupConfig) -> None:
         print("  [DRY-RUN] Would register browser automation for selected agents")
         return
 
+    run("apt-get -o DPkg::Lock::Timeout=60 install -y -qq ca-certificates libstdc++6 libatomic1")
     install_service_node()
     _install_runtime_package(refresh=config.refresh_packages)
     _install_runtime_package(refresh=config.refresh_packages, stable=True)
