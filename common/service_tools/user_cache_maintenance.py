@@ -749,7 +749,8 @@ def cleanup_codex_standalone_releases(
             "Standalone Codex release inventory",
             found_count=len(result.found),
             retained_count=len(result.retained),
-            active_count=len(result.active),
+            known_active_count=len(result.active),
+            cleanup_deferred=result.deferred,
             selected_count=len(result.selected),
         )
     if dry_run and result.selected:
@@ -780,7 +781,8 @@ def cleanup_codex_update_backups(context: UserContext, *, dry_run: bool) -> list
         )
     log_event(
         logger, "Codex update backup inventory", found_count=len(result.found),
-        retained_count=len(result.retained), active_count=len(result.active),
+        retained_count=len(result.retained), known_active_count=len(result.active),
+        cleanup_deferred=result.deferred,
         selected_count=len(result.selected), skipped_count=len(result.skipped),
     )
     if dry_run and result.selected:

@@ -346,7 +346,8 @@ class TestUserCacheHelpers(unittest.TestCase):
     def test_backup_policy_reports_dry_run_and_propagates_failures(self):
         context = self._context("/fixture-home")
         for result, expected_event in (
-            (CodexCleanupResult(found=("snapshot",), selected=("snapshot",)),
+            (CodexCleanupResult(found=("active", "snapshot"), retained=("active",),
+                                active=("active",), selected=("snapshot",)),
              "Would prune Codex update backups"),
             (CodexCleanupResult(errors=("unsafe lock",)), "Failed to reconcile Codex update backups"),
         ):
@@ -357,6 +358,10 @@ class TestUserCacheHelpers(unittest.TestCase):
             self.assertEqual(failures, list(result.errors))
             reconcile.assert_called_once_with(context.home, context.uid, dry_run=True)
             self.assertIn(expected_event, [call.args[1] for call in log.call_args_list])
+            inventory = next(call for call in log.call_args_list if call.args[1] == "Codex update backup inventory")
+            self.assertEqual(inventory.kwargs["known_active_count"], len(result.active))
+            self.assertFalse(inventory.kwargs["cleanup_deferred"])
+            self.assertNotIn("active_count", inventory.kwargs)
 
     def test_codex_policies_log_safety_deferrals_without_failing_maintenance(self):
         context = self._context("/fixture-home")
@@ -377,6 +382,10 @@ class TestUserCacheHelpers(unittest.TestCase):
                 event = next(call for call in log.call_args_list if "retained for retry" in call.args[1])
                 self.assertEqual(event.kwargs["level"], user_cache_maintenance.INFO)
                 self.assertIn("pid 123", event.kwargs["error"])
+                inventory = next(call for call in log.call_args_list if "known_active_count" in call.kwargs)
+                self.assertEqual(inventory.kwargs["known_active_count"], 0)
+                self.assertTrue(inventory.kwargs["cleanup_deferred"])
+                self.assertNotIn("active_count", inventory.kwargs)
 
 
 class TestUserCachePolicies(unittest.TestCase):

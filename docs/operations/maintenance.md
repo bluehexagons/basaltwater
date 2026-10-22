@@ -397,6 +397,11 @@ bounded policies:
   for retry, and the log identifies the blocking PID when available. Protected
   account daemons can prevent inspection even when cleanup runs as their owner;
   do not weaken process permissions or infer inactivity from process names.
+  Release and backup inventory logs use `known_active_count` for confirmed
+  running matches and `cleanup_deferred` for safety skips. Zero confirmed
+  matches does not establish inactivity when inspection was skipped or
+  incomplete. Retries can keep retaining extra snapshots while a long-lived
+  protected daemon remains uninspectable.
   Current and rollback releases alone need no process scan. Process activity
   and launcher selection are checked again before each removal; a failed check
   preserves remaining candidates for a later retry. Failure during process
