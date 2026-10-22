@@ -1596,6 +1596,8 @@ def configure_auto_restart(config: SetupConfig) -> None:
 
 def configure_cleanup_maintenance(config: SetupConfig) -> None:
     """Configure separate system and user-scoped recurring cleanup jobs."""
+    if not validate_username(config.username):
+        raise ValueError(f"Invalid user cache username: {config.username}")
     if is_dry_run():
         print("  [DRY-RUN] Would configure cleanup maintenance")
         return
@@ -1636,10 +1638,11 @@ RuntimeMaxUse={JOURNAL_MAX_USE}
         service_name="user-cache-maintenance",
         service_desc="Prune configured user developer-tool caches",
         timer_desc="Prune configured user developer-tool caches (daily)",
-        script_path="/opt/basaltwater/common/service_tools/user_cache_maintenance.py",
+        script_path="/opt/basaltwater/common/service_tools/user_cache_launcher.py",
+        script_args=("--user", config.username),
+        isolated_python=True,
         schedule="*-*-* 07:00:00",
         check_name="User cache maintenance",
-        user=config.username,
         randomized_delay="30min",
         timeout="1h",
         network_online=False,

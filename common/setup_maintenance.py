@@ -10,6 +10,7 @@ from typing import Final
 from lib.config import SetupConfig
 from lib.remote_utils import CommandTimeoutError, get_user_home, is_dry_run, run
 from lib.validation import validate_filesystem_path
+from lib.validators import validate_username
 
 from .common_steps import _run_as_login_user
 
@@ -23,6 +24,9 @@ _SYSTEM_CLEANUP_SCRIPT: Final[str] = os.path.join(
 )
 _USER_CACHE_SCRIPT: Final[str] = os.path.join(
     _SERVICE_TOOLS_DIR, "user_cache_maintenance.py"
+)
+_USER_CACHE_LAUNCHER: Final[str] = os.path.join(
+    _SERVICE_TOOLS_DIR, "user_cache_launcher.py"
 )
 _MAINTENANCE_TIMEOUT_SECONDS: Final[int] = 60 * 60
 _MAX_FAILURE_DETAIL: Final[int] = 2000
@@ -90,21 +94,25 @@ def _run_user_cache_cleanup(config: SetupConfig, *, scheduled_retry: bool) -> bo
     if config.username == "root":
         return True
 
-    script = _validated_script(_USER_CACHE_SCRIPT, "User cache maintenance script")
+    if not validate_username(config.username):
+        raise ValueError(f"Invalid user cache username: {config.username}")
+    effective_uid = os.geteuid()
+    script = _validated_script(
+        _USER_CACHE_LAUNCHER if effective_uid == 0 else _USER_CACHE_SCRIPT,
+        "User cache maintenance script",
+    )
     user_home = get_user_home(config.username)
     command = shlex.join([_PYTHON, script])
     print("  Running user cache cleanup now (this may take a while)...")
-    effective_uid = os.geteuid()
     retry = ("the scheduled job will retry" if scheduled_retry else
              "resolve the error and rerun setup; no automatic retry is scheduled")
     try:
         if effective_uid == 0:
-            result = _run_as_login_user(
-                config.username,
-                user_home,
-                command,
+            result = run(
+                [_PYTHON, "-I", script, "--user", config.username],
                 check=False,
                 capture_output=True,
+                timeout=_MAINTENANCE_TIMEOUT_SECONDS,
             )
         elif effective_uid == pwd.getpwnam(config.username).pw_uid:
             result = run(
