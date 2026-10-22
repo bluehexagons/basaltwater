@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import stat
+import time
 from urllib.parse import quote
 
 from lib.atomic_io import write_text_atomic
@@ -685,7 +686,7 @@ def _validate_ssh_config(sshd_path: str) -> None:
 
 
 def _activate_ssh_service(*, changed: bool) -> None:
-    """Reload a running SSH unit, or start one that is inactive or failed."""
+    """Reload or start SSH and wait for its service state to settle."""
     for unit in ("ssh.service", "sshd.service"):
         loaded = run(
             f"systemctl show {unit} --property=LoadState --value",
@@ -701,12 +702,28 @@ def _activate_ssh_service(*, changed: bool) -> None:
     else:
         raise RuntimeError("OpenSSH is installed but neither ssh.service nor sshd.service is available")
 
-    def state() -> str:
-        result = run(f"systemctl is-active {unit}", check=False, capture_output=True, timeout=30)
+    def state(*, timeout: float = 30) -> str:
+        result = run(f"systemctl is-active {unit}", check=False, capture_output=True, timeout=timeout)
         value = (result.stdout or "").strip()
         if value not in {"active", "reloading", "activating", "inactive", "failed"}:
             raise RuntimeError(f"Cannot determine SSH service state: {value or result.stderr or 'unknown'}")
         return value
+
+    def settled_state() -> str:
+        # A successful reload command can return before sshd's asynchronous
+        # SIGHUP/re-exec finishes. Do not mistake that transition for failure.
+        deadline = time.monotonic() + 30
+        current = state()
+        while current in {"reloading", "activating"}:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.2, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            current = state(timeout=remaining)
+        return current
 
     current = state()
     if current in {"active", "reloading"} and not changed:
@@ -721,13 +738,13 @@ def _activate_ssh_service(*, changed: bool) -> None:
             return
     action = "reload" if current in {"active", "reloading"} else "start"
     result = run(f"systemctl {action} {unit}", check=False, capture_output=True, timeout=60)
-    current = state()
+    current = settled_state()
     # A failed HUP can leave the listening daemon stopped while established
     # sessions survive. Recover that unit rather than retrying its alias.
     if action == "reload" and current in {"inactive", "failed"}:
         print(f"  ⚠ SSH reload left {unit} stopped; attempting a start")
         result = run(f"systemctl start {unit}", check=False, capture_output=True, timeout=60)
-        current = state()
+        current = settled_state()
     if result.returncode != 0 or current != "active":
         detail = (result.stderr or result.stdout or f"service is {current}").strip()
         try:

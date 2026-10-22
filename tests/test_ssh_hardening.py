@@ -192,6 +192,13 @@ def _result(stdout="", returncode=0, stderr=""):
 class TestSSHServiceActivation(unittest.TestCase):
     def setUp(self):
         self.run = self.enterContext(patch.object(ssh, "run"))
+        self.clock = self.enterContext(patch.object(ssh, "time"))
+        self.now = 0.0
+        self.clock.monotonic.side_effect = lambda: self.now
+        self.clock.sleep.side_effect = self.advance_clock
+
+    def advance_clock(self, seconds):
+        self.now += seconds
 
     def commands(self):
         return [call.args[0] for call in self.run.call_args_list]
@@ -201,6 +208,49 @@ class TestSSHServiceActivation(unittest.TestCase):
         ssh._activate_ssh_service(changed=True)
         self.assertIn("systemctl reload ssh.service", self.commands())
         self.assertFalse(any("sshd.service" in command or "restart" in command for command in self.commands()))
+
+    def test_reload_and_start_wait_for_transitional_states_to_become_active(self):
+        for initial, transition, action in (
+            ("active", "reloading", "reload"),
+            ("failed", "activating", "start"),
+        ):
+            with self.subTest(action=action):
+                self.run.reset_mock()
+                self.clock.sleep.reset_mock()
+                self.run.side_effect = [
+                    _result("loaded"), _result(initial), _result(),
+                    _result(transition), _result(transition), _result("active"),
+                ]
+                ssh._activate_ssh_service(changed=True)
+                mutations = [command for command in self.commands()
+                             if command.startswith(("systemctl reload ", "systemctl start ", "systemctl restart "))]
+                self.assertEqual(mutations, [f"systemctl {action} ssh.service"])
+                self.assertNotIn("journalctl -u ssh.service -n 20 --no-pager", self.commands())
+                self.assertEqual(self.clock.sleep.call_count, 2)
+
+    def test_persistent_transition_times_out_with_service_diagnostics(self):
+        for transition in ("reloading", "activating"):
+            with self.subTest(transition=transition):
+                self.now = 0.0
+                self.run.reset_mock()
+                initial_results = iter([_result("loaded"), _result("active"), _result()])
+
+                def run(command, **kwargs):
+                    if command == "systemctl is-active ssh.service" and self.now > 0:
+                        self.assertGreater(kwargs["timeout"], 0)
+                        self.assertLessEqual(kwargs["timeout"], 30 - self.now)
+                        return _result(transition)
+                    if command.startswith("journalctl "):
+                        return _result("journal details")
+                    return next(initial_results, _result(transition))
+
+                self.run.side_effect = run
+                with self.assertRaisesRegex(RuntimeError, f"service is {transition}"):
+                    ssh._activate_ssh_service(changed=True)
+                self.assertEqual(self.now, 30)
+                self.assertIn("journalctl -u ssh.service -n 20 --no-pager", self.commands())
+                self.assertFalse(any("systemctl start " in command or "restart" in command
+                                     for command in self.commands()))
 
     def test_unchanged_active_service_is_not_reloaded(self):
         self.run.side_effect = [_result("loaded"), _result("active")]
@@ -237,7 +287,8 @@ class TestSSHServiceActivation(unittest.TestCase):
     def test_failed_reload_that_stops_daemon_recovers_with_start(self):
         self.run.side_effect = [
             _result("loaded"), _result("active"), _result(returncode=1, stderr="reload failed"),
-            _result("failed", 3), _result(), _result("active"),
+            _result("reloading"), _result("failed", 3), _result(),
+            _result("activating", 3), _result("active"),
         ]
         ssh._activate_ssh_service(changed=True)
         self.assertEqual([command for command in self.commands() if command.startswith("systemctl start")],
@@ -247,7 +298,7 @@ class TestSSHServiceActivation(unittest.TestCase):
     def test_failed_reload_of_still_running_service_is_reported_without_restart(self):
         self.run.side_effect = [
             _result("loaded"), _result("active"), _result(returncode=1, stderr="reload failed"),
-            _result("active"), _result("journal details"),
+            _result("reloading"), _result("active"), _result("journal details"),
         ]
         with self.assertRaisesRegex(RuntimeError, "reload failed"):
             ssh._activate_ssh_service(changed=True)

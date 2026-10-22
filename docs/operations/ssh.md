@@ -195,6 +195,10 @@ activating its managed drop-in. It selects the installed `ssh.service` or
 `sshd.service`, reloads an active daemon when configuration changes, and starts
 an inactive or failed service. An idle service with an active SSH socket is
 left socket-activated. An unchanged rerun still checks service state.
+After a reload or start, setup waits up to 30 seconds for transient `reloading`
+or `activating` states to settle before checking the result. This also applies
+to service recovery after a rollback. A state that does not settle still fails
+setup and includes recent service journal entries when available.
 If a reload leaves the listener stopped, setup attempts a start on the same
 unit. It preserves existing unit enablement and socket activation choices.
 OCI containers validate the configuration without invoking systemd.
@@ -207,10 +211,12 @@ with the restored configuration. It still reports the original failure and
 shows recent service journal entries when available. Masked units and failures
 of an active service require operator review.
 
-If an earlier setup stopped at `ssh.service is not active, cannot reload`,
-update Basaltwater on the controller and rerun the same setup command. If SSH
-cannot accept a new connection, use the container or host console to inspect
-the service first:
+If an earlier setup stopped at `service is reloading` or
+`ssh.service is not active, cannot reload`, update Basaltwater on the controller
+and rerun the same setup command. A `service is reloading` error immediately
+after a successful reload can be an activation-check race even when SSH has
+resumed listening. If SSH cannot accept a new connection, use the container or
+host console to inspect the service first:
 
 ```bash
 sudo /usr/sbin/sshd -t
