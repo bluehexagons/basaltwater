@@ -16,6 +16,11 @@ Playwright and project toolchain caches. Read the
 when relevant. Keep current testing browsers and older revisions required by
 installed projects or managed tooling. Toolchain archives need installer/lock
 and checksum checks; preserve required installed tools and export templates.
+For Go build-cache cleanup, preview `basaltw agent storage clean-go-build --json`
+and add `--apply` within approved scope. Its shared activity check distinguishes
+verified waiting `go run` wrappers from builds; follow reported deferrals rather
+than treating every Go process as a build or bypassing the guard. Module-cache
+cleanup remains separate.
 
 Classify only a selected, bounded file list or a few relevant log excerpts.
 Prefer metadata, counters, and app-owned inventories before content. Where

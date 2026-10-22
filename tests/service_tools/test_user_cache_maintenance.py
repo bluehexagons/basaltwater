@@ -529,16 +529,10 @@ class TestUserCachePolicies(unittest.TestCase):
         self.assertEqual(failures, [])
         mock_cleanup.assert_not_called()
 
-    @patch("common.service_tools.user_cache_maintenance.run_cleanup_command", return_value=None)
-    @patch("common.service_tools.user_cache_maintenance.inventory_cache")
-    @patch("common.service_tools.user_cache_maintenance.query_cache_path")
-    def test_go_cache_cleans_only_above_limit(self, mock_query, mock_inventory, mock_cleanup):
-        mock_query.return_value = ("/home/agent/.cache/go-build", "go", None)
-        mock_inventory.return_value = (
-            user_cache_maintenance.CacheUsage(101, time.time()),
-            None,
-        )
-
+    @patch("common.service_tools.user_cache_maintenance.clean_go_build_cache")
+    def test_go_build_uses_shared_guard_and_existing_pressure_policy(self, mock_cleanup):
+        mock_cleanup.return_value = {"status": "preview", "path": "/fixture/cache",
+                                     "activity": None, "before": None, "after": None, "errors": []}
         failures = user_cache_maintenance.cleanup_go_cache(
             self.context,
             cache_name="Go build cache",
@@ -547,15 +541,45 @@ class TestUserCachePolicies(unittest.TestCase):
             clean_args=["-cache", "-testcache", "-fuzzcache"],
             dry_run=False,
         )
-
         self.assertEqual(failures, [])
-        mock_cleanup.assert_called_once_with(
-            self.context,
-            ["go", "clean", "-cache", "-testcache", "-fuzzcache"],
-            "Go build cache eviction",
-            dry_run=False,
-            cache_path="/home/agent/.cache/go-build",
+        self.assertTrue(mock_cleanup.call_args.kwargs["apply"])
+        self.assertEqual(mock_cleanup.call_args.kwargs["expected_home"], self.context.home)
+        self.assertIn("/usr/local/go/bin", mock_cleanup.call_args.kwargs["search_path"].split(os.pathsep))
+        decision = mock_cleanup.call_args.kwargs["needs_cleanup"]
+        self.assertTrue(decision("/fixture/cache", 101))
+        self.assertFalse(decision("/fixture/cache", 99))
+        size = user_cache_maintenance.USER_CACHE_PRESSURE_MIN_BYTES
+        user_cache_maintenance.cleanup_go_cache(
+            self.context, cache_name="Go build", go_env_name="GOCACHE", max_bytes=size * 2,
+            clean_args=["-cache"], dry_run=True,
         )
+        decision = mock_cleanup.call_args.kwargs["needs_cleanup"]
+        self.assertFalse(decision("/fixture/cache", size))
+        with patch.object(user_cache_maintenance, "storage_pressure", return_value=True):
+            self.assertTrue(decision("/fixture/cache", size))
+            self.assertFalse(decision("/fixture/cache", size - 1))
+
+    @patch("common.service_tools.user_cache_maintenance.defer_active_cache", return_value=True)
+    @patch("common.service_tools.user_cache_maintenance.query_cache_path")
+    @patch("common.service_tools.user_cache_maintenance.clean_go_build_cache")
+    def test_go_module_cache_keeps_the_conservative_guard(self, shared, query, guard):
+        query.return_value = ("/fixture/go/pkg/mod", "go", None)
+        self.assertEqual(user_cache_maintenance.cleanup_go_cache(
+            self.context, cache_name="Go modules", go_env_name="GOMODCACHE", max_bytes=1,
+            clean_args=["-modcache"], dry_run=False,
+        ), [])
+        guard.assert_called_once_with("/fixture/go/pkg/mod", ("go", "compile", "link", "gopls"))
+        shared.assert_not_called()
+
+    @patch("common.service_tools.user_cache_maintenance.clean_go_build_cache")
+    def test_go_build_preview_and_real_errors_are_preserved(self, cleanup):
+        cleanup.return_value = {"status": "failed", "path": None, "activity": None,
+                                "before": None, "after": None, "errors": ["cache validation failed"]}
+        self.assertEqual(user_cache_maintenance.cleanup_go_cache(
+            self.context, cache_name="Go build", go_env_name="GOCACHE", max_bytes=1,
+            clean_args=["-cache"], dry_run=True,
+        ), ["cache validation failed"])
+        self.assertFalse(cleanup.call_args.kwargs["apply"])
 
     @patch(
         "common.service_tools.user_cache_maintenance.cleanup_codex_standalone_releases",

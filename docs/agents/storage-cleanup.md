@@ -90,7 +90,7 @@ Labels identify review guidance, never deletion eligibility or verified disuse.
 
 | Convention | Checks and retention |
 | --- | --- |
-| `go-build` | Confirm `go env GOCACHE` and no active builds before approved `go clean -cache`. Keep module downloads and source; later builds recompile. |
+| `go-build` | Preview `basaltw agent storage clean-go-build --json`; use `--apply` within approved scope. The shared guard distinguishes completed `go run` wrappers from builds. Keep modules and source; later builds recompile. |
 | `playwright-browsers` (`ms-playwright`) | Match `.links` package registrations, their `browsers.json` revisions and live browser/MCP references. Keep latest testing browsers and older revisions still required by projects or managed tools. Use owner-native unused-version cleanup only after checking dependencies; sorting revision numbers or modification times is insufficient. |
 | `project-toolchain` (`*-toolchain`) | A name-based review hint for project caches such as build/release toolchain pairs. Read project installers and version/checksum locks; separate download archives from installed editors, SDKs, export templates and evidence. Confirm duplicate content by checksum and active use before choosing exact archive removals. Preserve required installed tools and a verified archive copy; installers may download missing archives again. |
 
@@ -99,6 +99,54 @@ browser revisions or project release. Recheck current dependencies on each
 system. Custom cache locations can still be inspected with `--path`; unrecognized
 paths retain generic review guidance. Do not infer disposability from a cache
 name, equal sizes or an old timestamp.
+
+## Go build cache cleanup
+
+Run as the non-root cache owner:
+
+```bash
+basaltw agent storage clean-go-build --json
+basaltw agent storage clean-go-build --apply --json
+```
+
+The default previews; `--apply` requires existing cleanup authorization. The
+command queries the selected Go installation's `GOCACHE`, validates a local,
+owned directory below the current home without symlinks or shared write access,
+and measures it with the bounded storage inventory. It invokes exactly native
+`go clean -cache`, with the validated cache pinned and configuration hooks and
+automatic toolchain downloads disabled. Module downloads, downloaded toolchains,
+project source and temporary running programs remain outside this operation.
+Daily maintenance uses the same helper with its existing size/space thresholds;
+the module-cache policy retains its conservative active-Go guard.
+
+A long-lived `go run` is not necessarily compiling. The shared guard exempts
+only a plain invocation with no build flags or application arguments, backed by
+a verified installed Go executable and one stable, directly parented native
+program under the standard temporary `go-build…/b…/exe/` layout. It examines
+children across every wrapper thread. The child's complete argument vector must
+contain only its own executable: execution/build hooks receive additional
+arguments. This establishes completed program execution, without reconstructing
+historic `GOFLAGS`. Other Go commands, compiler/linker/language-server activity,
+unrecognized layouts, cache-resident executable children and incomplete process
+observations still defer. Only relevant process arguments are inspected privately;
+raw arguments and environments are never returned.
+
+This native cache operation does not inspect every unrelated process's file
+descriptors, so a protected login daemon does not itself block it. Generic raw
+cache/directory removal retains its stronger open-file guards. The Go observer
+assumes ordinary tool process identities; deliberately renamed tools or hooks
+that rewrite their identity are outside that boundary. Observation is a fresh
+snapshot immediately before cleanup, not coordination against new builds
+starting afterwards. Arrange a quiet build window when needed:
+[concurrent cache cleaning and compilation can fail](https://github.com/golang/go/issues/31948).
+
+JSON reports `preview`, `cleaned`, `absent`, `below_limits`, `unavailable`,
+`deferred_active`, `deferred_unknown` or `failed`, along with bounded measurements,
+blocking/waiting PIDs and available filesystem bytes before/after an applied
+cleanup. The CLI exits zero for preview, successful cleanup or an absent cache;
+deferral, unavailable tooling and failures exit nonzero. `cleanup_executed`
+records a successful native command even if subsequent verification fails.
+Cache bytes and free-space changes can differ because other jobs share the VM.
 
 ## Inspect project conventions economically
 

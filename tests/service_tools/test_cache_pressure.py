@@ -28,6 +28,11 @@ class TestPressureCleanup(unittest.TestCase):
             patcher = patch.object(maintenance, name, return_value=False)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # Go uses a dedicated native helper. A stale generic command mock must
+        # never let a pressure test invoke it against the developer's account.
+        guard = patch.object(maintenance, "clean_go_build_cache", side_effect=AssertionError("Mock Go cleanup explicitly"))
+        guard.start()
+        self.addCleanup(guard.stop)
 
     def test_free_space_target_scales_and_is_capped(self):
         for total, free, pressure in (
@@ -53,25 +58,17 @@ class TestPressureCleanup(unittest.TestCase):
         with patch.object(maintenance.shutil, "disk_usage", side_effect=OSError("unavailable")):
             self.assertFalse(maintenance.storage_pressure(str(self.home)))
 
-    def test_pressure_cleans_below_limit_pip_and_go_but_defers_active_tools(self):
+    def test_pressure_cleans_below_limit_pip_but_defers_active_tools(self):
         usage = maintenance.CacheUsage(maintenance.USER_CACHE_PRESSURE_MIN_BYTES, time.time())
-        for tool in ("pip3", "go"):
-            for active in (False, True):
-                with self.subTest(tool=tool, active=active), \
-                     patch.object(maintenance, "query_cache_path", return_value=(str(self.home / "cache"), tool, None)), \
-                     patch.object(maintenance, "inventory_cache", return_value=(usage, None)), \
-                     patch.object(maintenance, "storage_pressure", return_value=True), \
-                     patch.object(maintenance, "tool_is_active", return_value=active), \
-                     patch.object(maintenance, "run_cleanup_command", return_value=None) as clean:
-                    if tool == "go":
-                        result = maintenance.cleanup_go_cache(
-                            self.context, cache_name="Go build", go_env_name="GOCACHE",
-                            max_bytes=BYTES_PER_GB, clean_args=["-cache"], dry_run=False,
-                        )
-                    else:
-                        result = maintenance.cleanup_pip_cache(self.context, dry_run=False)
-                    self.assertEqual(result, [])
-                    self.assertEqual(clean.call_count, 0 if active else 1)
+        for active in (False, True):
+            with self.subTest(active=active), \
+                 patch.object(maintenance, "query_cache_path", return_value=(str(self.home / "cache"), "pip3", None)), \
+                 patch.object(maintenance, "inventory_cache", return_value=(usage, None)), \
+                 patch.object(maintenance, "storage_pressure", return_value=True), \
+                 patch.object(maintenance, "tool_is_active", return_value=active), \
+                 patch.object(maintenance, "run_cleanup_command", return_value=None) as clean:
+                self.assertEqual(maintenance.cleanup_pip_cache(self.context, dry_run=False), [])
+                self.assertEqual(clean.call_count, 0 if active else 1)
 
     def test_npm_pressure_is_rechecked_after_verify(self):
         usage = maintenance.CacheUsage(maintenance.USER_CACHE_PRESSURE_MIN_BYTES, time.time())

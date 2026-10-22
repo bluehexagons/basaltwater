@@ -51,7 +51,7 @@ _ROOTS = (
 
 _CACHE_REVIEWS = {
     "go-build": {
-        "check": "Confirm go env GOCACHE matches this path and no builds are active; use go clean -cache within approved cleanup scope.",
+        "check": "Preview basaltw agent storage clean-go-build --json; within approved cleanup scope add --apply. It checks builds and distinguishes verified waiting go run wrappers.",
         "preserve": "Keep module downloads, source and running programs; do not add -modcache.",
         "cost": "Later builds recompile.",
     },
@@ -340,7 +340,7 @@ def _summarize_inventory(result: dict) -> dict:
 
 
 def add_storage_parser(commands: argparse._SubParsersAction) -> None:
-    parser = commands.add_parser("storage", help="Inspect local storage and preview or apply project generated-output cleanup")
+    parser = commands.add_parser("storage", help="Inspect storage and preview or apply bounded cache/generated-output cleanup")
     actions = parser.add_subparsers(dest="agent_storage_command", required=True)
     inspect = actions.add_parser("inspect", help="Measure caches, temporary data and project artifacts without deleting")
     inspect.add_argument("--path", action="append", help="Inspect one exact absolute directory instead of default candidates; repeat up to eight times")
@@ -361,10 +361,19 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     mode = clean.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without deleting (default)")
     mode.add_argument("--apply", action="store_true", help="Remove the rule's generated directories after preflight")
+    go = actions.add_parser("clean-go-build", help="Preview native Go build-cache cleanup with active-build checks")
+    go.add_argument("--apply", action="store_true", help="Execute go clean -cache within authorized cleanup scope")
+    go.add_argument("--json", action="store_true")
 
 
 def run_storage_command(args: argparse.Namespace) -> int:
     try:
+        if args.agent_storage_command == "clean-go-build":
+            from lib.go_cache_cleanup import clean_go_build_cache
+
+            result = clean_go_build_cache(apply=args.apply)
+            print(json.dumps(result, indent=2))
+            return 0 if result["status"] in ("preview", "cleaned", "absent") else 1
         if args.agent_storage_command == "clean-generated":
             from lib.agent_generated_cleanup import clean_generated
 

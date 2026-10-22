@@ -26,6 +26,7 @@ from lib.agent_storage import (
 )
 from lib.cleanup_paths import process_uses_path, remove_checked_path
 from lib.cleanup_process_observer import use_process_observer
+from lib.go_cache_cleanup import clean_go_build_cache
 from lib.logging_utils import get_service_logger, log_event
 from lib.t3code_runtime import (
     is_known_t3_service_protocol,
@@ -862,6 +863,17 @@ def cleanup_go_cache(
     dry_run: bool,
 ) -> list[str]:
     """Evict one idle Go cache when oversized or short of filesystem space."""
+    if go_env_name == "GOCACHE":
+        result = clean_go_build_cache(
+            apply=not dry_run,
+            expected_home=context.home,
+            search_path=_tool_environment(context)["PATH"],
+            needs_cleanup=lambda path, size: cache_needs_eviction(path, CacheUsage(size, None), max_bytes),
+        )
+        log_event(logger, "Go build cache reconciliation", status=result["status"],
+                  path=result["path"], activity=result["activity"],
+                  before=result["before"], after=result["after"])
+        return list(result["errors"])
     path, executable, failure = query_cache_path(
         context,
         (["go", "env", go_env_name],),
