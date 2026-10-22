@@ -23,6 +23,7 @@ from common.cachyos_steps import (
 )
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
+from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 from common import cachyos_aur as aur
 from common import cachyos_t3_desktop as desktop
 from lib.remote_utils import is_dry_run, run
@@ -363,13 +364,8 @@ def install(config: SetupConfig) -> None:
     prefix, unit = _check_managed_paths(home)
     _check_service_ownership(unit)
     version = _user_run(["node", "--version"], home, capture_output=True, timeout=30).stdout.strip()
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version)
-    if not match:
-        raise RuntimeError("Cannot determine Node version")
-    major, minor, _patch = map(int, match.groups())
-    if not ((major == 22 and minor >= 16) or (major == 23 and minor >= 11)
-            or (major == 24 and minor >= 10) or major > 24):
-        raise RuntimeError("T3 requires Node 22.16+, 23.11+, or 24.10+; update your Node runtime and rerun")
+    if not is_supported_node(version):
+        raise RuntimeError(f"T3 requires managed Node {SUPPORTED_NODE_RANGE}; update your Node runtime and rerun")
 
     _directory(unit.parent)
     _directory(prefix)

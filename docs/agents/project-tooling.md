@@ -222,8 +222,34 @@ basaltw node install
 # Check the selected Node/npm and the project's npm engine requirement.
 basaltw node doctor --project frontend --json
 # Global tools belong to each Node installation; install exact reviewed versions.
-basaltw node install --version 26.10.0 --package-manager npm@12.1.0
+basaltw node install --version 26.12.1 --package-manager npm@12.2.1
 ```
+
+Managed Node installation, the Debian setup baseline, and T3 web setup require
+`^24.22.1 || ^26.12.1`. The baseline continues to install LTS by default;
+automatic Current-track updates still require their explicit policy opt-in.
+Unsupported numeric install requests fail before preparing NVM. Aliases are
+checked after NVM resolves the installed version, before package-manager work.
+Existing project runtimes are retained. Generic project selection and range
+parsing still support older inputs; selection alone does not assert this
+managed-runtime policy.
+
+The privileged browser service remains an exception: its verified launchers
+use distribution-owned `/usr/bin/node` (Node 20 on Debian Trixie). Moving them
+to supported Node requires an isolated, verified service runtime; a writable
+user NVM installation is not a replacement. The pinned Playwright MCP package
+also requires prerelease Playwright. Latest MCP 0.0.83 still requires an alpha
+runtime, so a stable-only update needs separate browser/test and MCP runtimes
+and browser qualification. These dependencies remain held pending that work.
+
+Go setup uses the newest stable release from the current official download
+feed (Go has no LTS), including on ordinary reruns. It reuses an installed Go
+only when its version equals that release. `BASALTWATER_GO_VERSION` and detected
+go.mod directives are minimum versions, so an older module minimum selects the
+newest stable Go rather than reinstalling an unsupported minor line. Setup
+fails if the latest stable release cannot satisfy the minimum or lacks a valid
+archive for the native architecture. Feed retrieval must succeed to establish
+whether an installed version can be reused.
 
 `node status` and `node exec` work with compatible system Node installations
 as well as NVM. `node exec` retains the current working directory; `--project`

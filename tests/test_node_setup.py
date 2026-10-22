@@ -20,6 +20,57 @@ from web import dev_tools_steps
 
 
 class TestNodeSetup(unittest.TestCase):
+    def test_baseline_rejects_unsupported_defaults_even_when_tools_run(self):
+        for version, accepted in (
+            ("v24.22.1", True), ("v26.12.1", True), ("v24.23.0", True),
+            ("v20.20.2", False), ("v22.23.4", False), ("v23.11.0", False),
+            ("v24.22.0", False), ("v25.0.0", False), ("v26.12.0", False),
+            ("v27.0.0", False), ("v26.12.1-rc.1", False), ("", False),
+        ):
+            result = SimpleNamespace(returncode=0, stdout=version + "\n")
+            with self.subTest(version=version), patch.object(
+                common_steps, "_run_as_login_user", return_value=result,
+            ) as run:
+                self.assertEqual(common_steps._node_baseline_is_usable("user", "/home/user", "nvm-env"), accepted)
+                self.assertTrue(run.call_args.kwargs["capture_output"])
+        with patch.object(common_steps, "_run_as_login_user", return_value=SimpleNamespace(
+            returncode=1, stdout="v24.22.1",
+        )):
+            self.assertFalse(common_steps._node_baseline_is_usable("user", "/home/user", "nvm-env"))
+
+    def test_ordinary_rerun_repairs_runnable_unsupported_default_without_removing_runtimes(self):
+        baseline_versions = iter(("v22.23.4", "v24.22.1"))
+
+        def command(_username, _home, script, **kwargs):
+            version = next(baseline_versions) if "pnpm --version" in script else ""
+            return SimpleNamespace(returncode=0, stdout=version, stderr="")
+
+        with patch.object(common_steps.os.path, "exists", return_value=True), \
+                patch.object(common_steps, "_chown_existing_paths"), \
+                patch.object(common_steps, "_ensure_nvm_shell_init"), \
+                patch.object(common_steps, "_run_as_login_user", side_effect=command) as run:
+            common_steps.install_node_for_user("user", "/home/user")
+        commands = [call.args[2] for call in run.call_args_list]
+        self.assertTrue(any("nvm install --lts" in command for command in commands))
+        self.assertTrue(any("nvm alias default 'lts/*'" in command for command in commands))
+        self.assertFalse(any("nvm uninstall" in command or "rm " in command for command in commands))
+
+    def test_t3_node_directory_checks_the_selected_executable_version(self):
+        from common import t3code_steps
+
+        for version, accepted in (("v24.22.1", True), ("v26.12.1", True),
+                                  ("v24.22.0", False), ("v26.12.0", False), ("v25.1.0", False)):
+            with self.subTest(version=version), patch.object(t3code_steps, "_run_as_login_user", side_effect=[
+                SimpleNamespace(returncode=0, stdout="/fixture/node-bin\n"),
+                SimpleNamespace(returncode=0, stdout=version + "\n"),
+            ]) as run, patch.object(t3code_steps, "validate_filesystem_path"):
+                if accepted:
+                    self.assertEqual(t3code_steps._node_bin_directory("user", "/home/user"), "/fixture/node-bin")
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "requires managed Node"):
+                        t3code_steps._node_bin_directory("user", "/home/user")
+                self.assertEqual(run.call_args.args[2], "/fixture/node-bin/node --version")
+
     @patch("web.dev_tools_steps.configure_maintenance_timer")
     @patch("web.dev_tools_steps.get_user_home", return_value="/srv/users/user")
     def test_configure_auto_update_node_disables_risky_auto_upgrades(self, _get_home, mock_configure):
@@ -55,7 +106,7 @@ class TestNodeSetup(unittest.TestCase):
         def run_command(command: str, *args, **kwargs):
             if "vendor_installer.py nvm --accept-vendor-channel" in command:
                 nvm_installed["value"] = True
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="v24.22.1\n", stderr="")
 
         mock_exists.side_effect = exists
         mock_run.side_effect = run_command
@@ -88,7 +139,7 @@ class TestNodeSetup(unittest.TestCase):
             }
 
         mock_exists.side_effect = exists
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="v24.22.1\n", stderr="")
         config = SetupConfig(host="host", username="user", system_type="server_web", install_node=True)
 
         with patch.object(
@@ -129,10 +180,10 @@ class TestNodeSetup(unittest.TestCase):
                 baseline_checks["count"] += 1
                 return SimpleNamespace(
                     returncode=1 if baseline_checks["count"] == 1 else 0,
-                    stdout="",
+                    stdout="v24.22.1\n",
                     stderr="",
                 )
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="v24.22.1\n", stderr="")
 
         mock_exists.side_effect = exists
         mock_run.side_effect = run_command

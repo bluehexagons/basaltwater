@@ -31,6 +31,7 @@ from lib.auth_failure_bans import (
 )
 from lib.config import SetupConfig
 from lib.local_http import open_loopback
+from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.t3code_runtime import (
     T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL,
@@ -680,6 +681,12 @@ def _node_bin_directory(username: str, home: str) -> str:
     if result.returncode != 0 or not os.path.isabs(path):
         raise RuntimeError("T3 Code requires Node.js in the target-user login environment")
     validate_filesystem_path(path, must_exist=True)
+    version = _run_as_login_user(
+        username, home, f"{shlex.quote(os.path.join(path, 'node'))} --version",
+        check=False, capture_output=True, timeout=30,
+    )
+    if version.returncode != 0 or not is_supported_node((version.stdout or "").strip()):
+        raise RuntimeError(f"T3 Code requires managed Node {SUPPORTED_NODE_RANGE} in the target-user login environment")
     return path
 
 

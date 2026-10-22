@@ -13,7 +13,7 @@ and update options.
 | Claude | `https://claude.ai/install.sh` | Vendor rolling |
 | OpenCode | `https://opencode.ai/install` | Vendor rolling |
 | uv | `https://astral.sh/uv/install.sh` | Vendor rolling |
-| nvm / Node.js | `https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.6/install.sh` | Tagged nvm installer; vendor rolling Node LTS |
+| nvm / Node.js | `https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh` | Tagged nvm installer; vendor rolling Node LTS |
 
 The policy applies to Debian and CachyOS agent setup, Python/Node setup, and
 explicit agent updates. The shared installer entry point requires

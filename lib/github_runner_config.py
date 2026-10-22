@@ -23,9 +23,9 @@ GATE = "/opt/basaltwater/common/service_tools/github_runner_gate.py"
 OUTCOMES = DATA + "/telemetry/outcomes.json"
 PAYLOAD_NAME = "github_runner_payload"
 TOKEN_FILE = "/opt/basaltwater/" + PAYLOAD_NAME + "/token"
-# Official linux-x64 release asset and its published SHA-256, 2026-10-18.
-VERSION = "2.338.0"
-SHA256 = "af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32"
+# Official linux-x64 release asset and its published SHA-256, 2026-10-22.
+VERSION = "2.338.1"
+SHA256 = "08e9ccb3604d2462c24b5e33604dc30810296ca15cc65f23cffd4317eb144c37"
 EVENTS = ("push", "workflow_dispatch", "pull_request")
 MAX_OUTCOMES = 100
 CREDENTIAL_FILES = (".runner", ".credentials", ".credentials_rsaparams")

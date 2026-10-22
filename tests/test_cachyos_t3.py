@@ -91,7 +91,7 @@ class T3InstallTests(unittest.TestCase):
         )
         if native_probe and self.failure == "native":
             raise RuntimeError("native fixture failure")
-        output = "v24.10.0\n" if argv[:2] == ["node", "--version"] else (
+        output = "v24.22.1\n" if argv[:2] == ["node", "--version"] else (
             "t3 v0.1.1\n" if self.launcher_layout else "t3 v0.0.40\n"
         )
         return subprocess.CompletedProcess(argv, 0, output, "")
@@ -140,6 +140,32 @@ class T3InstallTests(unittest.TestCase):
         if "is-enabled" in argv:
             output = "enabled\n" if self.enabled else "disabled\n"
         return subprocess.CompletedProcess(argv, code, output, "")
+
+    def test_node_policy_rejects_before_staging_or_stopping_previous_service(self):
+        target, content = self.legacy()
+        for version in ("v20.20.2", "v22.23.4", "v23.11.0", "v24.22.0", "v25.0.0", "v26.12.0", "v27.0.0"):
+            with self.subTest(version=version), patch.object(t3, "_user_run", return_value=
+                    subprocess.CompletedProcess([], 0, version, "")) as run:
+                with self.assertRaisesRegex(RuntimeError, "requires managed Node"):
+                    t3.install(self.config)
+                run.assert_called_once()
+                self.assertEqual(self.binary.resolve(), target)
+                self.assertEqual(self.unit.read_text(), content)
+                self.assertTrue(self.active)
+                self.assertFalse((self.prefix / "releases").exists())
+
+    def test_current_node_floor_is_accepted_before_staging(self):
+        original = self.user_command
+
+        def command(argv, home, **kwargs):
+            if argv == ["node", "--version"]:
+                return subprocess.CompletedProcess(argv, 0, "v26.12.1\n", "")
+            return original(argv, home, **kwargs)
+
+        self.user_run.side_effect = command
+        t3.install(self.config)
+        self.assertTrue(self.binary.exists())
+        self.ui.assert_called_once()
 
     def test_initial_install_validates_before_activation_and_keeps_cli_path(self):
         t3.install(self.config)

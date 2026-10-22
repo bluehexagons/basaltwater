@@ -16,6 +16,7 @@ from typing import Optional
 from lib.atomic_io import write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import newer_installed_kernel
+from lib.node_toolchain import is_supported_node
 from lib.apt_sources import ensure_debian_package_sources
 from lib.config import SetupConfig
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
@@ -139,30 +140,26 @@ def _select_go_download(
         raise RuntimeError("Go release feed did not return an array")
     requested_parts = None
     if requested_version:
-        try:
-            requested_parts = tuple(int(part) for part in requested_version.split("."))
-        except ValueError as exc:
-            raise RuntimeError(f"Invalid requested Go version: {requested_version}") from exc
-        if len(requested_parts) != 3:
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", requested_version):
             raise RuntimeError(f"Invalid requested Go version: {requested_version}")
+        requested_parts = tuple(int(part) for part in requested_version.split("."))
 
-    candidates: list[tuple[tuple[int, int, int], str, str, str]] = []
+    # Go has no LTS. Only the newest stable release is a managed candidate;
+    # go.mod directives and BASALTWATER_GO_VERSION specify a minimum, not a line.
+    releases = []
     for release in payload:
-        if not isinstance(release, dict) or not release.get("stable"):
+        if not isinstance(release, dict) or release.get("stable") is not True:
             continue
         version = release.get("version")
-        if not isinstance(version, str) or not version.startswith("go"):
+        if not isinstance(version, str) or not re.fullmatch(r"go[0-9]+\.[0-9]+\.[0-9]+", version):
             continue
-        try:
-            version_parts = tuple(int(part) for part in version[2:].split("."))
-        except ValueError:
+        releases.append((tuple(int(part) for part in version[2:].split(".")), release))
+    latest = max((parts for parts, _release in releases), default=None)
+    candidates: list[tuple[tuple[int, int, int], str, str, str]] = []
+    for version_parts, release in releases:
+        if version_parts != latest or (requested_parts and version_parts < requested_parts):
             continue
-        if len(version_parts) != 3:
-            continue
-        if requested_parts and version_parts[:2] != requested_parts[:2]:
-            continue
-        if requested_parts and version_parts < requested_parts:
-            continue
+        version = release["version"]
         for file_info in release.get("files", []):
             if not isinstance(file_info, dict):
                 continue
@@ -987,26 +984,11 @@ def install_go(config: SetupConfig) -> None:
         if found_go:
             go_binary = found_go
 
-    if os.path.exists(go_binary) and not config.refresh_packages and not requested_version:
-        installed_result = run(
-            f"{shlex.quote(go_binary)} version",
-            check=False,
-            capture_output=True,
-        )
-        if installed_result.returncode == 0:
-            version_parts = installed_result.stdout.strip().split()
-            installed_version = version_parts[2] if len(version_parts) >= 3 else "unknown"
-            print(
-                f"  ✓ Go already installed ({installed_version}); skipping release check "
-                "(use --refresh-packages to check for updates)"
-            )
-            return
-
     go_arch = _go_release_arch()
     if go_arch is None:
         raise RuntimeError(f"Unsupported Go architecture: {platform.machine()}")
     result = run(
-        "curl -fsSL 'https://go.dev/dl/?mode=json&include=all'",
+        "curl -fsSL 'https://go.dev/dl/?mode=json'",
         check=False,
         capture_output=True,
     )
@@ -1069,16 +1051,17 @@ def _node_baseline_is_usable(
     user_home: str,
     nvm_env: str,
 ) -> bool:
-    """Return whether the nvm default Node, npm, and pnpm commands run."""
-    nvm_default_env = f"{nvm_env} && nvm use default"
+    """Require a maintained nvm default and working npm/pnpm commands."""
+    nvm_default_env = f"{nvm_env} && nvm use default >/dev/null"
     result = _run_as_login_user(
         username,
         user_home,
-        f"{nvm_default_env} && node --version >/dev/null 2>&1 && "
+        f"{nvm_default_env} && node --version && "
         "npm --version >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1",
         check=False,
+        capture_output=True,
     )
-    return result.returncode == 0
+    return result.returncode == 0 and is_supported_node((result.stdout or "").strip())
 
 
 def install_node_for_user(

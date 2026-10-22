@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=78.1.1"]
+requires = ["setuptools>=84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,8 +15,8 @@ Documentation = "https://github.com/bluehexagons/basaltwater/blob/main/docs/READ
 Issues = "https://github.com/bluehexagons/basaltwater/issues"
 
 [project.optional-dependencies]
-completion = ["argcomplete>=3.0.0"]
-dev = ["build", "coverage>=7.0", "aiohttp>=3.14.4,<4"]
+completion = ["argcomplete>=3.7.2"]
+dev = ["build>=1.6.1", "coverage>=7.17.0", "aiohttp>=3.14.5,<4"]
 
 [project.scripts]
 basaltw = "basaltwater:main"

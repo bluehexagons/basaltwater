@@ -72,7 +72,7 @@ ordinary `-Resume` retains its pin. This also upgrades an existing WSL installat
 that predates runner support. Add the desired `-CIRepository`/`-CIAllowedUser`
 options to that update command to configure it.
 
-The checksum-pinned official x64 runner is **2.338.0**. State, workspaces, bounded
+The checksum-pinned official x64 runner is **2.338.1**. State, workspaces, bounded
 gate outcomes and `_diag` logs live under `%LOCALAPPDATA%\Basaltwater\github-runner`,
 restricted to the owner, Administrators and SYSTEM. Registration diagnostics are
 discarded. Jobs can access the owner's Windows/WSL files and saved logins; use

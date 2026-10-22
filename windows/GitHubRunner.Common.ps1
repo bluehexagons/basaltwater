@@ -1,8 +1,8 @@
 <# Shared native Windows runner paths, state and bounded subprocess handling. #>
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:RunnerVersion = '2.338.0'
-$script:RunnerSha256 = 'f48e0750a21812bca5f82de5f7f5aeae71abee647fab5a582f1742d07eba455f'
+$script:RunnerVersion = '2.338.1'
+$script:RunnerSha256 = '478f533ac2c349040fbaea7e158f7f7d0235085cf35bc81f661af0c715207ff9'
 
 function Get-RunnerRoot {
     return Join-Path $env:LOCALAPPDATA 'Basaltwater\github-runner'

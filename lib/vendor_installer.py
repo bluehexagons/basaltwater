@@ -32,7 +32,7 @@ POLICIES = {
     "claude": ("https://claude.ai/install.sh", "bash", "vendor-rolling"),
     "opencode": ("https://opencode.ai/install", "bash", "vendor-rolling"),
     "uv": ("https://astral.sh/uv/install.sh", "sh", "vendor-rolling"),
-    "nvm": ("https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.6/install.sh", "bash", "vendor-tagged-installer-rolling-node-lts"),
+    "nvm": ("https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh", "bash", "vendor-tagged-installer-rolling-node-lts"),
 }
 MAX_INSTALLER_BYTES = 4 * 1024 * 1024
 

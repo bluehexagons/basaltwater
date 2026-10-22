@@ -26,6 +26,17 @@ _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 _PARTIAL = re.compile(r"v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?")
 _TOKEN = re.compile(r"(>=|<=|>|<|=|\^|~)?\s*(v?\d+(?:\.(?:\d+|[xX*])){0,2}|[xX*])")
 MAX_RUNTIME_ENTRIES = 256
+_SUPPORTED_NODE_FLOORS = ((24, 22, 1), (26, 12, 1))
+SUPPORTED_NODE_RANGE = " || ".join("^" + ".".join(map(str, floor)) for floor in _SUPPORTED_NODE_FLOORS)
+
+
+def is_supported_node(version: str) -> bool:
+    """Check managed runtime policy without restricting the generic range parser."""
+    try:
+        actual = _version(version)
+    except ValueError:
+        return False
+    return any(actual[0] == floor[0] and actual >= floor for floor in _SUPPORTED_NODE_FLOORS)
 
 
 class NodeSelectionUnavailable(ValueError):
@@ -389,6 +400,11 @@ def run_node_command(args: argparse.Namespace) -> int:
                 satisfies((0, 0, 0), engines)
                 if _VERSION.fullmatch(version) and not satisfies(_version(version), engines):
                     raise ValueError(f"Requested Node {version!r} does not satisfy project engines {engines!r}")
+            if re.fullmatch(r"v?\d+(?:\.\d+){0,2}", version):
+                lower, _upper, _count = _bounds(version)
+                if not any(max(lower, floor)[0] == floor[0] and satisfies(max(lower, floor), version)
+                           for floor in _SUPPORTED_NODE_FLOORS):
+                    raise ValueError(f"Managed Node requires {SUPPORTED_NODE_RANGE}; requested {version!r}")
             managers = args.package_manager
             for manager in managers:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):
@@ -424,6 +440,8 @@ def run_node_command(args: argparse.Namespace) -> int:
             # in the inventory (or a compatible Node found on PATH).
             installed = _version(result.stdout)
             installed_version = ".".join(map(str, installed))
+            if not is_supported_node(installed_version):
+                raise ValueError(f"Managed Node requires {SUPPORTED_NODE_RANGE}; installed {installed_version}")
             requirement = _resolve_alias(version, nvm.parent)
             if not satisfies(installed, requirement) or (engines and not satisfies(installed, engines)):
                 raise ValueError(

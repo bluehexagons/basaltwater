@@ -8,7 +8,7 @@ covers isolation, troubleshooting, replacement and live qualification.
 The operator account is separate from `basaltwater-runner`. The service account
 has a locked login shell, a dedicated non-root primary group, no supplementary groups, no sudo and no Docker
 access. Basaltwater installs neither Docker nor the other webhook-based CI
-services. The runner is pinned to official `actions/runner` **2.338.0**, Linux
+services. The runner is pinned to official `actions/runner` **2.338.1**, Linux
 x64, with SHA-256 verification before extraction. Native runtime libraries and
 CA certificates are installed from Debian packages. Provide outbound HTTPS
 access to GitHub and its runner/action download endpoints.

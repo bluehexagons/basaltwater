@@ -27,7 +27,7 @@ class NodeToolchainTests(unittest.TestCase):
         self.project.mkdir()
         (self.project / '.git').mkdir()
         self.nvm = self.root / 'nvm'
-        for version in ('20.20.2', '22.23.2', '24.21.0', '26.10.0'):
+        for version in ('20.20.2', '22.23.2', '24.21.0', '26.10.0', '24.22.2', '26.12.1'):
             binary = self.nvm / 'versions/node' / ('v' + version) / 'bin/node'
             binary.parent.mkdir(parents=True)
             binary.write_text('fake node')
@@ -65,7 +65,7 @@ class NodeToolchainTests(unittest.TestCase):
                 self.select()
 
     def test_default_and_compatible_system_node(self):
-        self.assertEqual(self.select().version, '24.21.0')
+        self.assertEqual(self.select().version, '24.22.2')
         (self.nvm / 'alias/default').unlink()
         with patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), patch(
             'lib.node_toolchain.run_probe', return_value=ProbeResult('v22.23.2\n')
@@ -122,23 +122,45 @@ class NodeToolchainTests(unittest.TestCase):
             with self.subTest(requirement=requirement), self.assertRaises(ValueError):
                 satisfies((22, 23, 2), requirement)
 
+    def test_managed_install_rejects_unsupported_numeric_requests_without_preparing_nvm(self):
+        for version in ("20", "22.23.4", "23", "24.22.0", "24.21", "25", "26.12.0", "26.11", "27"):
+            args = argparse.Namespace(node_command="install", project=str(self.project), version=version,
+                                      package_manager=[])
+            with self.subTest(version=version), patch.dict(os.environ, {"NVM_DIR": str(self.nvm)}), \
+                    patch("common.cachyos_development.prepare_project_node_versions") as bootstrap, \
+                    patch("lib.node_toolchain.subprocess.run") as run:
+                self.assertEqual(run_node_command(args), 1)
+                bootstrap.assert_not_called()
+                run.assert_not_called()
+
+    def test_alias_resolution_outside_managed_policy_never_installs_package_managers(self):
+        (self.nvm / "nvm.sh").write_text("# managed NVM")
+        args = argparse.Namespace(node_command="install", project=str(self.project), version="node",
+                                  package_manager=["pnpm@12.6.0"])
+        with patch.dict(os.environ, {"NVM_DIR": str(self.nvm)}), \
+                patch("lib.node_toolchain.subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 0, "v27.0.0", "")) as run, patch("lib.node_toolchain.run_probe") as probe:
+            self.assertEqual(run_node_command(args), 1)
+            self.assertEqual(run.call_count, 1)
+            probe.assert_not_called()
+
     def test_install_package_managers_use_selected_runtime_and_validate_before_mutation(self):
         (self.nvm / 'nvm.sh').write_text('# managed NVM')
         (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=26'}}))
-        args = argparse.Namespace(node_command='install', project=str(self.project), version='26.10.0',
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='26.12.1',
                                   package_manager=['pnpm@12.6.0'])
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), patch(
             'lib.node_toolchain.subprocess.run', side_effect=[
-                subprocess.CompletedProcess([], 0, 'v26.10.0'), subprocess.CompletedProcess([], 0, '12.1.0'),
+                subprocess.CompletedProcess([], 0, 'v26.12.1'), subprocess.CompletedProcess([], 0, '12.1.0'),
                 subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0, '12.6.0'),
             ]
-        ) as run, patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v26.10.0')):
+        ) as run, patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v26.12.1')):
             self.assertEqual(run_node_command(args), 0)
-            self.assertEqual(runtime_owner(self.nvm, "26.10.0"), "project")
+            self.assertEqual(runtime_owner(self.nvm, "26.12.1"), "project")
             installation = run.call_args_list[2]
-            self.assertEqual(installation.args[0], [str(self.nvm / 'versions/node/v26.10.0/bin/npm'),
+            self.assertEqual(installation.args[0], [str(self.nvm / 'versions/node/v26.12.1/bin/npm'),
                                                   'install', '--global', '--prefix',
-                                                  str(self.nvm / 'versions/node/v26.10.0'),
+                                                  str(self.nvm / 'versions/node/v26.12.1'),
                                                   '--ignore-scripts=false', '--allow-scripts=pnpm', 'pnpm@12.6.0'])
             self.assertEqual(installation.kwargs['env']['npm_config_engine_strict'], 'true')
             self.assertNotEqual(installation.kwargs['cwd'], str(self.project))
@@ -148,7 +170,7 @@ class NodeToolchainTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_install_prepares_missing_nvm_on_cachyos_then_installs_the_project_pin(self):
-        (self.project / '.nvmrc').write_text('22')
+        (self.project / '.nvmrc').write_text('24')
         args = argparse.Namespace(node_command='install', project=str(self.project), version=None,
                                   package_manager=[])
 
@@ -160,41 +182,41 @@ class NodeToolchainTests(unittest.TestCase):
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                 patch('lib.cachyos.is_cachyos', return_value=True), \
                 patch('common.cachyos_development.prepare_project_node_versions', side_effect=prepare) as bootstrap, \
-                patch('lib.node_toolchain.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'v22.23.2')) as run, \
-                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v22.23.2')):
+                patch('lib.node_toolchain.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'v24.22.2')) as run, \
+                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.2')):
             self.assertEqual(run_node_command(args), 0)
         bootstrap.assert_called_once_with()
-        self.assertEqual(run.call_args.args[0][-2:], [str(self.nvm / 'nvm.sh'), '22'])
-        self.assertEqual(runtime_owner(self.nvm, '22.23.2'), 'project')
+        self.assertEqual(run.call_args.args[0][-2:], [str(self.nvm / 'nvm.sh'), '24'])
+        self.assertEqual(runtime_owner(self.nvm, '24.22.2'), 'project')
 
     def test_install_checks_resolved_runtime_instead_of_older_compatible_inventory(self):
         (self.nvm / 'nvm.sh').write_text('# managed NVM')
-        old = self.nvm / 'versions/node/v20.10.0/bin/node'
+        old = self.nvm / 'versions/node/v24.22.1/bin/node'
         old.parent.mkdir(parents=True)
         old.write_text('old node')
         old.chmod(0o755)
-        (self.project / '.nvmrc').write_text('20')
-        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '<20.15.0'}}))
+        (self.project / '.nvmrc').write_text('24')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '<24.22.2'}}))
         args = argparse.Namespace(node_command='install', project=str(self.project), version=None,
                                   package_manager=['pnpm@10.0.0'])
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                 patch('lib.node_toolchain.subprocess.run',
-                      return_value=subprocess.CompletedProcess([], 0, 'v20.20.2\n')) as run, \
+                      return_value=subprocess.CompletedProcess([], 0, 'v24.22.3\n')) as run, \
                 patch('lib.node_toolchain.run_probe') as probe, \
                 patch('sys.stderr', new_callable=io.StringIO) as error:
-            self.assertEqual(self.select().version, '20.10.0')
+            self.assertEqual(self.select().version, '24.22.1')
             self.assertEqual(run_node_command(args), 1)
-            self.assertIn('Installed Node 20.20.2', error.getvalue())
-            self.assertIn('<20.15.0', error.getvalue())
+            self.assertIn('Installed Node 24.22.3', error.getvalue())
+            self.assertIn('<24.22.2', error.getvalue())
             self.assertEqual(run.call_count, 1)
             probe.assert_not_called()
 
     def test_install_rejects_invalid_resolution_missing_runtime_or_failed_probe(self):
         (self.nvm / 'nvm.sh').write_text('# managed NVM')
-        args = argparse.Namespace(node_command='install', project=str(self.project), version='22',
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='24',
                                   package_manager=['pnpm@10.0.0'])
         for resolved, observed in (('', None), ('N/A', None), ('v24.21.0', None),
-                                   ('v22.1.0', None), ('v22.23.2', None), ('v22.23.2', 'v24.21.0')):
+                                   ('v24.22.0', None), ('v24.22.2', None), ('v24.22.2', 'v24.21.0')):
             with self.subTest(resolved=resolved, observed=observed), \
                     patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                     patch('lib.node_toolchain.subprocess.run',
@@ -207,36 +229,36 @@ class NodeToolchainTests(unittest.TestCase):
     def test_install_uses_exact_resolution_even_when_a_newer_matching_runtime_exists(self):
         (self.nvm / 'nvm.sh').write_text('# managed NVM')
         (self.nvm / 'alias/lts').mkdir()
-        (self.nvm / 'alias/lts/*').write_text('22')
-        binary = self.nvm / 'versions/node/v22.12.0/bin/node'
+        (self.nvm / 'alias/lts/*').write_text('24')
+        binary = self.nvm / 'versions/node/v24.22.1/bin/node'
         binary.parent.mkdir(parents=True)
         binary.write_text('resolved node')
         binary.chmod(0o755)
-        for version in ('22', '22.12', 'lts/*', 'node'):
+        for version in ('24', '24.22', 'lts/*', 'node'):
             args = argparse.Namespace(node_command='install', project=str(self.project), version=version,
                                       package_manager=['pnpm@10.0.0'])
             with self.subTest(version=version), patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                     patch('lib.node_toolchain.subprocess.run', side_effect=[
-                        subprocess.CompletedProcess([], 0, 'v22.12.0\n'),
+                        subprocess.CompletedProcess([], 0, 'v24.22.1\n'),
                         subprocess.CompletedProcess([], 0, '10.0.0'),
                         subprocess.CompletedProcess([], 0),
                         subprocess.CompletedProcess([], 0, '10.0.0'),
-                    ]) as run, patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v22.12.0')) as probe:
+                    ]) as run, patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.1')) as probe:
                 self.assertEqual(run_node_command(args), 0)
                 self.assertEqual(probe.call_args.args[0], [str(binary), '--version'])
                 self.assertEqual(run.call_args_list[2].args[0][0], str(binary.with_name('npm')))
-                self.assertEqual(runtime_owner(self.nvm, '22.12.0'), 'project')
+                self.assertEqual(runtime_owner(self.nvm, '24.22.1'), 'project')
 
     def test_invalid_install_inputs_never_prepare_nvm_or_run_commands(self):
-        args = argparse.Namespace(node_command='install', project=str(self.project), version='22',
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='24',
                                   package_manager=[])
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                 patch('common.cachyos_development.prepare_project_node_versions') as bootstrap, \
                 patch('lib.node_toolchain.subprocess.run') as run:
             for version, managers, engines in (
                 ('22; injected', [], '>=22'),
-                ('22', ['pnpm@latest'], '>=22'),
-                ('22', [], 'invalid'),
+                ('24', ['pnpm@latest'], '>=22'),
+                ('24', [], 'invalid'),
             ):
                 with self.subTest(version=version, managers=managers, engines=engines):
                     args.version, args.package_manager = version, managers
@@ -268,7 +290,7 @@ class NodeToolchainTests(unittest.TestCase):
                     self.assertIsNone(runtime_owner(self.nvm, '20.20.2'))
 
     def test_missing_nvm_on_other_hosts_and_preparation_failure_stop_runtime_install(self):
-        args = argparse.Namespace(node_command='install', project=str(self.project), version='22',
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='24',
                                   package_manager=[])
         for cachyos, failure in ((False, None), (True, RuntimeError('NVM installation failed'))):
             with self.subTest(cachyos=cachyos), patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
@@ -280,13 +302,13 @@ class NodeToolchainTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_existing_custom_nvm_and_read_only_commands_never_prepare_nvm(self):
-        (self.project / '.nvmrc').write_text('22')
+        (self.project / '.nvmrc').write_text('24')
         with ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}))
             bootstrap = stack.enter_context(patch('common.cachyos_development.prepare_project_node_versions'))
             stack.enter_context(patch('lib.node_toolchain.subprocess.run',
-                                     return_value=subprocess.CompletedProcess([], 0, 'v22.23.2')))
-            stack.enter_context(patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v22.23.2')))
+                                     return_value=subprocess.CompletedProcess([], 0, 'v24.22.2')))
+            stack.enter_context(patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.2')))
             for command in ('status', 'env', 'doctor', 'exec'):
                 args = argparse.Namespace(node_command=command, project=str(self.project), version=None,
                                           json=True, argv=['--', 'node', '--version'])
@@ -392,7 +414,7 @@ class NodeToolchainTests(unittest.TestCase):
     def test_absent_pin_is_explicit_and_diagnosis_does_not_change_shell_or_alias(self):
         (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=26'}}))
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'PATH': '/fixture/other-node'}), \
-                patch('lib.node_toolchain.run_probe', side_effect=[ProbeResult('v26.10.0'), ProbeResult('12.1.0')]):
+                patch('lib.node_toolchain.run_probe', side_effect=[ProbeResult('v26.12.1'), ProbeResult('12.1.0')]):
             before = dict(os.environ)
             result = inspect_project_node_context(str(self.project))
             self.assertEqual(dict(os.environ), before)
@@ -400,7 +422,7 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertEqual(result['metadata']['pin_status'], 'absent')
         self.assertIsNone(result['metadata']['pin_source'])
         self.assertEqual(result['selection']['source'], 'package.json engines')
-        self.assertEqual(result['selection']['version'], '26.10.0')
+        self.assertEqual(result['selection']['version'], '26.12.1')
         self.assertEqual((self.nvm / 'alias/default').read_text(), '24')
 
     def test_runtime_inventory_limit_and_failed_version_probes_remain_unqualified(self):
