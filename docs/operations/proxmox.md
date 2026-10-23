@@ -1102,13 +1102,32 @@ basaltw proxmox backup pve1 101 \
   --storage backup --mode snapshot --compress zstd --dry-run
 ```
 
+The guest must belong to the selected host's local node (QEMU or LXC). Before
+running `vzdump`, Basaltwater checks local guest ownership and inventories the
+selected active backup storage. Success requires both a zero exit status and a
+new, nonempty archive for that VMID in a fresh JSON storage inventory. This also
+detects a guest moving away after the ownership check, when native `vzdump` can
+exit successfully without creating a backup. An existing archive alone never
+establishes success. Avoid concurrent backups for the same guest and storage:
+the inventory comparison cannot attribute a concurrent archive to this command.
+
+`--timeout SECONDS` bounds the backup SSH wait in scripts and interactive
+sessions. It defaults to 86400 seconds (24 hours), accepts 1 through 604800
+seconds (seven days), and can be increased for large backups. A timeout reports
+uncertain remote completion: inspect the Proxmox task log and target storage
+before retrying. Basaltwater does not automatically replay the backup or remove
+archives, locks, or tasks. A failed completion inventory also requires inspection
+before retrying. The Proxmox shell's `backup` command accepts the same storage,
+mode, compression, timeout, and dry-run options. Dry runs perform read-only
+preflight queries and print the command without starting a backup.
+
 The backup command defaults to the first backup-capable storage pool, snapshot
 mode, and zstd compression. `suspend` and `stop` modes trade availability for
 stronger consistency where the guest workload requires it. Always verify that
 the selected storage has enough capacity and a retention policy outside
 Basaltwater. These commands create and list immediate backups; they do not
-schedule backups, manage retention or off-host copies, verify freshness or
-integrity, or prove an isolated restore.
+schedule backups, manage retention or off-host copies, audit scheduled-backup
+freshness or archive integrity, or prove an isolated restore.
 
 Backup listing reports failed or malformed storage inventories as errors,
 including a failure in one pool after another pool was read successfully.

@@ -2049,7 +2049,7 @@ basaltw proxmox reconfigure <host> <vmid> --set KEY=VALUE [--set ...]
 basaltw proxmox modify <host> <vmid> [--cores N] [--memory N[M|G]]
 basaltw proxmox resize-disk <host> <vmid> <volume> <size>
 basaltw proxmox backups <host> <vmid>
-basaltw proxmox backup <host> <vmid> [--storage POOL] [--mode MODE] [--compress FORMAT]
+basaltw proxmox backup <host> <vmid> [--storage POOL] [--mode MODE] [--compress FORMAT] [--timeout SECONDS] [--dry-run]
 basaltw proxmox snapshots <host> <vmid>
 basaltw proxmox snapshot <host> <vmid> <name> [--description TEXT] [--dry-run]
 basaltw proxmox rollback <host> <vmid> <name> [--dry-run]
@@ -2090,6 +2090,16 @@ read-only and checks core Proxmox services, cluster quorum, active tasks,
 configured storage, root free space, guest locks, running guests, and the reboot
 marker. It exits nonzero when the host is not healthy and supports stable JSON
 output for automation.
+
+`backup` requires local node ownership and verifies a new nonempty archive for
+the VMID on the selected active backup storage after `vzdump` exits successfully.
+`--timeout` bounds the SSH wait in scripts and terminals: default 86400 seconds
+(24 hours), allowed range 1–604800 (seven days). On timeout, remote completion
+remains uncertain; inspect Proxmox tasks and storage before retrying. There is
+no automatic retry or cleanup. `--dry-run` makes read-only preflight queries
+without starting a backup. The Proxmox shell supports the same options. See
+[backup operation limits](../operations/proxmox.md#placement-backups-and-migration) for archive
+verification and recovery boundaries.
 
 `join-cluster` joins an empty registered Proxmox VE 9.x node through a registered,
 quorate cluster member with root SSH access. It obtains a temporary root API

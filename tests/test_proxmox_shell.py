@@ -46,6 +46,62 @@ class _ShellFixture(unittest.TestCase):
         self.assertIn(needle, joined, f"missing '{needle}' in: {joined}")
 
 
+class TestShellBackup(_ShellFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.shell.dispatch("add pve1 10.0.0.10")
+        self.shell.dispatch("use pve1")
+        self.outputs.clear()
+
+    @patch("lib.proxmox_shell.create_backup")
+    def test_backup_options_and_dry_run_output(self, backup) -> None:
+        self.shell.dispatch("backup 100 --storage nas --mode stop --compress gzip --timeout 14400 --dry-run")
+        self.assertEqual(backup.call_args.kwargs, {
+            "storage": "nas", "mode": "stop", "compress": "gzip",
+            "timeout": 14400, "dry_run": True,
+        })
+        self.assert_output_contains("Would back up VMID 100")
+        self.assertNotIn("complete", "\n".join(self.outputs))
+
+    @patch("lib.proxmox_shell.create_backup")
+    def test_incomplete_unknown_or_invalid_timeout_options(self, backup) -> None:
+        for args in ("--timeout", "--timeout --dry-run", "--storage", "--mode", "--compress",
+                     "--unknown", "--timeout nope", "--timeout 0"):
+            with self.subTest(args=args):
+                with self.assertRaises(ValueError):
+                    self.shell.dispatch(f"backup 100 {args}")
+        backup.assert_not_called()
+
+    def test_backup_failures_are_reported_and_shell_continues(self) -> None:
+        for result, message in (
+            (subprocess.TimeoutExpired(["ssh"], 86400), "remote completion is uncertain"),
+            (_completed("", returncode=1), "vzdump 100 failed"),
+            (_completed(), "no new nonempty backup archive"),
+        ):
+            with self.subTest(message=message):
+                self.outputs.clear()
+                inputs = iter(["backup 100", "help", "quit"])
+                self.shell._input = lambda _prompt: next(inputs)
+                inventories = [
+                    _completed('[{"vmid":100}]'), _completed("[]"),
+                    _completed('[{"storage":"local","content":"backup","active":1}]'),
+                    _completed("[]"), _completed("[]"),
+                ]
+                with patch("lib.proxmox_backup._run", side_effect=inventories), \
+                     patch("lib.proxmox_backup._ssh_opts", return_value=[]), \
+                     patch("lib.proxmox_backup._proxmox_ssh_command", return_value=["ssh", "mock"]), \
+                     patch("lib.proxmox_backup.subprocess.run") as execute:
+                    if isinstance(result, Exception):
+                        execute.side_effect = result
+                    else:
+                        execute.return_value = result
+                    self.assertEqual(self.shell.run(), 0)
+                self.assert_output_contains(message)
+                self.assert_output_contains("--compress zstd|gzip|lzo|0")
+                self.assertNotIn("complete.", "\n".join(self.outputs))
+                execute.assert_called_once()
+
+
 class TestShellHostManagement(_ShellFixture):
     def test_add_then_hosts_lists_it(self) -> None:
         self.shell.dispatch("add pve1 10.0.0.10 root")

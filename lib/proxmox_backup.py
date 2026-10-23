@@ -8,8 +8,9 @@ import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
-from lib.proxmox_guest import _ssh_opts, _ssh_run
+from lib.proxmox_guest import _proxmox_ssh_command, _ssh_opts, _ssh_run
 from lib.proxmox_hosts import ProxmoxHost
+from lib.validation import validate_positive_integer, validate_proxmox_storage_name
 
 
 class ProxmoxBackupError(Exception):
@@ -38,6 +39,8 @@ class BackupInfo:
 
 _VALID_MODES = ("snapshot", "suspend", "stop")
 _VALID_COMPRESS = ("zstd", "gzip", "lzo", "0")
+DEFAULT_BACKUP_TIMEOUT = 86400
+MAX_BACKUP_TIMEOUT = 604800
 
 
 def _run(
@@ -46,7 +49,10 @@ def _run(
     *,
     dry_run: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    return _ssh_run(host.address, host.user, _ssh_opts(host.ssh_key), cmd, dry_run=dry_run)
+    try:
+        return _ssh_run(host.address, host.user, _ssh_opts(host.ssh_key), cmd, dry_run=dry_run)
+    except subprocess.TimeoutExpired as exc:
+        raise ProxmoxBackupError(f"Backup inspection timed out on {host.address}") from exc
 
 
 def _backup_storages(host: ProxmoxHost) -> list[str]:
@@ -62,6 +68,10 @@ def _backup_storages(host: ProxmoxHost) -> list[str]:
         storage = entry.get("storage")
         if not isinstance(content, str) or not isinstance(storage, str) or not storage:
             raise ProxmoxBackupError(f"Invalid backup storage inventory on {host.address}")
+        try:
+            validate_proxmox_storage_name(storage, "storage")
+        except ValueError as exc:
+            raise ProxmoxBackupError(f"Invalid backup storage inventory on {host.address}") from exc
         if "backup" in content.split(",") and entry.get("active", 0):
             pools.append(storage)
     return pools
@@ -81,37 +91,64 @@ def _inventory(result: subprocess.CompletedProcess[str], label: str) -> list[dic
     return data
 
 
+def _storage_backups(host: ProxmoxHost, storage: str, vmid: int) -> list[BackupInfo]:
+    """Read one storage's archive inventory, failing closed on incomplete data."""
+    backups: list[BackupInfo] = []
+    cmd = (
+        f"pvesh get /nodes/$(hostname -s)/storage/{shlex.quote(storage)}/content"
+        f" --content backup --output-format json"
+    )
+    entries = _inventory(_run(host, cmd), f"backups in {storage} on {host.address}")
+    for entry in entries:
+        try:
+            entry_vmid = validate_positive_integer(str(entry["vmid"]), "VMID")
+            size = int(entry["size"])
+            ctime = int(entry["ctime"]) if entry.get("ctime") is not None else None
+            volid = entry["volid"]
+            if (size < 0 or not isinstance(volid, str)
+                    or not volid.startswith(f"{storage}:") or not volid.split(":", 1)[1]):
+                raise ValueError("invalid backup fields")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProxmoxBackupError(f"Invalid backup entry in {storage}") from exc
+        if entry_vmid != vmid:
+            continue
+        backups.append(BackupInfo(
+            volid=volid,
+            vmid=vmid,
+            size=size,
+            ctime=ctime,
+            format=str(entry.get("format", "")),
+            notes=str(entry.get("notes", "")),
+        ))
+    return backups
+
+
 def list_backups(host: ProxmoxHost, vmid: int) -> list[BackupInfo]:
     """Return all backups for ``vmid`` across every backup-capable storage pool."""
-    backups: list[BackupInfo] = []
-    for storage in _backup_storages(host):
-        cmd = (
-            f"pvesh get /nodes/$(hostname -s)/storage/{shlex.quote(storage)}/content"
-            f" --content backup --output-format json"
-        )
-        result = _run(host, cmd)
-        entries = _inventory(result, f"backups in {storage} on {host.address}")
+    vmid = validate_positive_integer(str(vmid), "VMID")
+    backups = [backup for storage in _backup_storages(host)
+               for backup in _storage_backups(host, storage, vmid)]
+    return sorted(backups, key=lambda b: b.ctime or 0)
+
+
+def _require_local_guest(host: ProxmoxHost, vmid: int) -> None:
+    """vzdump can silently skip a guest owned by another cluster node."""
+    matches = 0
+    for kind in ("qemu", "lxc"):
+        entries = _inventory(_run(
+            host, f"pvesh get /nodes/$(hostname -s)/{kind} --output-format json",
+        ), f"local {kind} guests on {host.address}")
         for entry in entries:
             try:
-                entry_vmid = int(entry["vmid"])
-                size = int(entry["size"])
-                ctime = int(entry["ctime"]) if entry.get("ctime") is not None else None
-                volid = entry["volid"]
-                if entry_vmid <= 0 or size < 0 or not isinstance(volid, str) or not volid:
-                    raise ValueError("invalid backup fields")
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ProxmoxBackupError(f"Invalid backup entry in {storage}") from exc
-            if entry_vmid != vmid:
-                continue
-            backups.append(BackupInfo(
-                volid=volid,
-                vmid=vmid,
-                size=size,
-                ctime=ctime,
-                format=str(entry.get("format", "")),
-                notes=str(entry.get("notes", "")),
-            ))
-    return sorted(backups, key=lambda b: b.ctime or 0)
+                guest_vmid = validate_positive_integer(str(entry["vmid"]), "VMID")
+            except (KeyError, ValueError) as exc:
+                raise ProxmoxBackupError(f"Invalid local guest inventory on {host.address}") from exc
+            matches += guest_vmid == vmid
+    if matches != 1:
+        raise ProxmoxBackupError(
+            f"Guest {vmid} is not uniquely owned by the local node on {host.address}. "
+            "Select the guest's owning host before backing up."
+        )
 
 
 def create_backup(
@@ -121,6 +158,7 @@ def create_backup(
     storage: Optional[str] = None,
     mode: str = "snapshot",
     compress: str = "zstd",
+    timeout: int = DEFAULT_BACKUP_TIMEOUT,
     dry_run: bool = False,
 ) -> None:
     """Trigger an immediate vzdump backup for ``vmid``.
@@ -128,7 +166,14 @@ def create_backup(
     mode: snapshot (no downtime for VMs, default), suspend, or stop.
     compress: zstd (default), gzip, lzo, or 0 (none).
     storage: target pool; auto-selects the first backup-capable pool if omitted.
+    timeout: bounded SSH wait in seconds, including interactive sessions.
     """
+    vmid = validate_positive_integer(str(vmid), "VMID")
+    timeout = validate_positive_integer(str(timeout), "--timeout")
+    if timeout > MAX_BACKUP_TIMEOUT:
+        raise ValueError(f"--timeout must be at most {MAX_BACKUP_TIMEOUT} seconds")
+    if storage is not None:
+        validate_proxmox_storage_name(storage, "--storage")
     if mode not in _VALID_MODES:
         raise ValueError(
             f"Invalid backup mode {mode!r}. Use one of: {', '.join(_VALID_MODES)}."
@@ -138,33 +183,62 @@ def create_backup(
             f"Invalid compress value {compress!r}. Use one of: {', '.join(_VALID_COMPRESS)}."
         )
 
-    target_storage = storage
-    if not target_storage:
-        pools = _backup_storages(host)
-        if not pools:
-            raise ProxmoxBackupError(
-                f"No backup-capable storage found on {host.address}. "
-                "Add a storage pool with 'backup' content type in Proxmox."
-            )
-        target_storage = pools[0]
+    _require_local_guest(host, vmid)
+    pools = _backup_storages(host)
+    if not pools:
+        raise ProxmoxBackupError(
+            f"No backup-capable storage found on {host.address}. "
+            "Add a storage pool with 'backup' content type in Proxmox."
+        )
+    target_storage = storage if storage is not None else pools[0]
+    if target_storage not in pools:
+        raise ProxmoxBackupError(f"Storage {target_storage!r} is not active backup storage on {host.address}")
+    before = {backup.volid for backup in _storage_backups(host, target_storage, vmid)}
 
     cmd = shlex.join([
-        "vzdump", str(int(vmid)),
+        "vzdump", str(vmid),
         "--storage", target_storage,
         "--mode", mode,
         "--compress", compress,
         "--remove", "0",   # never auto-remove via retention; let the user manage that
     ])
-    result = _run(host, cmd, dry_run=dry_run)
+    if dry_run:
+        _run(host, cmd, dry_run=True)
+        return
+    # Unlike the general SSH helper, backup waits stay bounded in terminals too.
+    ssh_cmd = _proxmox_ssh_command(host.address, host.user, _ssh_opts(host.ssh_key), cmd)
+    print(f"  $ {cmd}")
+    try:
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise ProxmoxBackupError(
+            f"vzdump {vmid} timed out after {timeout}s on {host.address}; remote completion "
+            "is uncertain. Inspect Proxmox tasks and target storage before retrying; "
+            "no retry or cleanup was attempted."
+        ) from exc
     if result.returncode != 0:
         raise ProxmoxBackupError(
             f"vzdump {vmid} failed on {host.address}: "
             f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}"
         )
+    try:
+        after = _storage_backups(host, target_storage, vmid)
+    except ProxmoxBackupError as exc:
+        raise ProxmoxBackupError(
+            f"Could not verify vzdump {vmid} completion on {host.address}: {exc}. "
+            "Inspect Proxmox tasks and target storage before retrying."
+        ) from exc
+    if not any(backup.volid not in before and backup.size > 0 for backup in after):
+        raise ProxmoxBackupError(
+            f"vzdump {vmid} exited successfully but no new nonempty backup archive "
+            f"was found in {target_storage} on {host.address}. Completion is unverified; "
+            "inspect Proxmox tasks and target storage before retrying."
+        )
 
 
 __all__ = [
     "BackupInfo",
+    "DEFAULT_BACKUP_TIMEOUT",
     "ProxmoxBackupError",
     "create_backup",
     "list_backups",

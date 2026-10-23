@@ -14,7 +14,9 @@ from typing import Optional
 
 from lib.cluster_update import run_cluster_update
 from lib.proxmox_cluster_join import ProxmoxClusterJoinError, run_cluster_join
-from lib.proxmox_backup import BackupInfo, ProxmoxBackupError, create_backup, list_backups
+from lib.proxmox_backup import (
+    DEFAULT_BACKUP_TIMEOUT, BackupInfo, ProxmoxBackupError, create_backup, list_backups,
+)
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
 from lib.proxmox_migrate import (
     DEFAULT_MIGRATION_TIMEOUT, DEFAULT_SHUTDOWN_TIMEOUT, ProxmoxMigrateError, migrate_guest,
@@ -494,6 +496,10 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         default="zstd",
         choices=["zstd", "gzip", "lzo", "0"],
         help="Compression format (default: zstd)",
+    )
+    backup.add_argument(
+        "--timeout", type=int, default=DEFAULT_BACKUP_TIMEOUT,
+        help="Backup SSH wait in seconds (1–604800; default: 86400 / 24 hours)",
     )
     backup.add_argument(
         "--dry-run",
@@ -1344,6 +1350,7 @@ def _cmd_backup(args: argparse.Namespace, workspace: Optional[str]) -> int:
         storage=args.storage,
         mode=args.mode,
         compress=args.compress,
+        timeout=args.timeout,
         dry_run=args.dry_run,
     )
     prefix = "Would back up" if args.dry_run else "Backed up"

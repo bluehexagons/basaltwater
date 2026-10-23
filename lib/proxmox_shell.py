@@ -16,7 +16,10 @@ import shlex
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
-from lib.proxmox_backup import ProxmoxBackupError, create_backup, list_backups
+from lib.validation import validate_positive_integer
+from lib.proxmox_backup import (
+    DEFAULT_BACKUP_TIMEOUT, ProxmoxBackupError, create_backup, list_backups,
+)
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
 from lib.proxmox_migrate import (
     DEFAULT_MIGRATION_TIMEOUT, DEFAULT_SHUTDOWN_TIMEOUT, ProxmoxMigrateError, migrate_guest,
@@ -104,6 +107,7 @@ Available commands:
   top                         Show CPU, memory, storage, and guest counts
   backups <vmid>              List backups for a guest
   backup <vmid> [--storage POOL] [--mode snapshot|suspend|stop]
+          [--compress zstd|gzip|lzo|0] [--timeout SECONDS] [--dry-run]
                               Create an immediate vzdump backup
   migrate <vmid|name> <target> [--online] [--with-local-disks]
           [--target-storage POOL] [--timeout SECONDS]
@@ -748,23 +752,42 @@ class ProxmoxShell:
     def _cmd_backup(self, args: list[str]) -> None:
         host = self._require_host()
         if not args:
-            raise ValueError("Usage: backup <vmid> [--storage POOL] [--mode snapshot|suspend|stop]")
+            raise ValueError("Usage: backup <vmid> [--storage POOL] [--mode MODE] "
+                             "[--compress FORMAT] [--timeout SECONDS] [--dry-run]")
         vmid = self._parse_vmid([args[0]], "backup")
         rest = args[1:]
         storage: Optional[str] = None
         mode = "snapshot"
+        compress = "zstd"
+        timeout = DEFAULT_BACKUP_TIMEOUT
+        dry_run = False
         i = 0
         while i < len(rest):
-            if rest[i] == "--storage" and i + 1 < len(rest):
-                storage = rest[i + 1]
-                i += 2
-            elif rest[i] == "--mode" and i + 1 < len(rest):
-                mode = rest[i + 1]
+            option = rest[i]
+            if option == "--dry-run":
+                dry_run = True
+                i += 1
+            elif option in ("--storage", "--mode", "--compress", "--timeout"):
+                if i + 1 >= len(rest) or rest[i + 1].startswith("--"):
+                    raise ValueError(f"{option} requires a value")
+                value = rest[i + 1]
+                if option == "--storage":
+                    storage = value
+                elif option == "--mode":
+                    mode = value
+                elif option == "--compress":
+                    compress = value
+                else:
+                    timeout = validate_positive_integer(value, "--timeout")
                 i += 2
             else:
-                raise ValueError(f"Unknown option: {rest[i]!r}")
-        create_backup(host, vmid, storage=storage, mode=mode)
-        self._output(f"  Backup of VMID {vmid} on {host.name} complete.")
+                raise ValueError(f"Unknown option: {option!r}")
+        create_backup(host, vmid, storage=storage, mode=mode, compress=compress,
+                      timeout=timeout, dry_run=dry_run)
+        if dry_run:
+            self._output(f"  Would back up VMID {vmid} on {host.name}.")
+        else:
+            self._output(f"  Backup of VMID {vmid} on {host.name} complete.")
 
     def _cmd_migrate(self, args: list[str]) -> None:
         host = self._require_host()

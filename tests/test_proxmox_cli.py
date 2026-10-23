@@ -56,6 +56,58 @@ class _CliFixture(unittest.TestCase):
         return rc, buf.getvalue()
 
 
+class TestProxmoxCliBackup(_CliFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self._run("add", "pve1", "10.0.0.10")
+
+    @patch("lib.proxmox_cli.create_backup")
+    def test_backup_options_and_dry_run_output(self, backup) -> None:
+        rc, out = self._run("backup", "pve1", "100", "--storage", "nas", "--mode", "stop",
+                            "--compress", "gzip", "--timeout", "14400", "--dry-run")
+        self.assertEqual(rc, 0)
+        self.assertIn("Would back up VMID 100", out)
+        self.assertEqual(backup.call_args.kwargs, {
+            "storage": "nas", "mode": "stop", "compress": "gzip",
+            "timeout": 14400, "dry_run": True,
+        })
+
+    def test_backup_failures_return_error_without_success_message(self) -> None:
+        for result, message in (
+            (subprocess.TimeoutExpired(["ssh"], 86400), "remote completion is uncertain"),
+            (_completed("", returncode=1), "vzdump 100 failed"),
+            (_completed(), "no new nonempty backup archive"),
+        ):
+            with self.subTest(message=message):
+                inventories = [
+                    _completed('[{"vmid":100}]'), _completed("[]"),
+                    _completed('[{"storage":"local","content":"backup","active":1}]'),
+                    _completed("[]"), _completed("[]"),
+                ]
+                with patch("lib.proxmox_backup._run", side_effect=inventories), \
+                     patch("lib.proxmox_backup._ssh_opts", return_value=[]), \
+                     patch("lib.proxmox_backup._proxmox_ssh_command", return_value=["ssh", "mock"]), \
+                     patch("lib.proxmox_backup.subprocess.run") as execute:
+                    if isinstance(result, Exception):
+                        execute.side_effect = result
+                    else:
+                        execute.return_value = result
+                    rc, out = self._run("backup", "pve1", "100")
+                self.assertEqual(rc, 1)
+                self.assertIn(message, out)
+                self.assertNotIn("Backed up", out)
+                execute.assert_called_once()
+
+    def test_invalid_timeout_is_rejected_before_ssh(self) -> None:
+        with patch("lib.proxmox_backup._ssh_run") as inspect:
+            for timeout in ("0", "-1", "604801"):
+                with self.subTest(timeout=timeout):
+                    rc, out = self._run("backup", "pve1", "100", "--timeout", timeout)
+                    self.assertEqual(rc, 1)
+                    self.assertIn("--timeout", out)
+            inspect.assert_not_called()
+
+
 class TestProxmoxCliHosts(_CliFixture):
     def test_add_then_list(self) -> None:
         rc, _ = self._run("add", "pve1", "10.0.0.10", "-u", "root", "--description", "primary")
