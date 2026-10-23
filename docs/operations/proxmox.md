@@ -83,6 +83,8 @@ placed through Proxmox storage APIs. By default, image staging prefers an
 active file-based storage with `import` content and falls back to `iso` content;
 use `--image-storage STORAGE` to choose the source storage explicitly. The
 selected node must also have active `snippets` content for cloud-init data.
+The `server_proxmox` setup profile enables snippets on active `local` directory
+storage when the node has no snippets pool configured; see the host defaults below.
 Custom VM image URLs must use HTTPS and include a matching 128-character
 SHA-512 value with `--image-sha512`; the curated Debian catalog carries pinned
 hashes automatically.
@@ -259,6 +261,17 @@ package state are checked before and after the upgrade, and setup verifies that
 the installed `pve-manager` matches APT's candidate. Repository failures,
 required package removals, HA/Ceph configurations, held core packages, or failed
 health/version checks stop setup and prevent its post-setup restart.
+
+Host setup then checks snippets storage for future VM cloud-init data. If no
+snippets pool is configured for this node, setup adds `snippets` to enabled,
+active `local` directory storage while retaining every existing content type.
+Proxmox's configuration digest protects this update against concurrent edits,
+and setup verifies the resulting content policy and availability. Existing
+snippets pools are preserved even when disabled or temporarily unavailable;
+setup warns when none is usable. Hosts without eligible `local` storage receive
+an actionable warning instead of a new pool or a changed storage path. Enable
+snippets on a suitable pool manually for those layouts. This default does not
+enable VM image content or relocate existing data.
 
 The kernel reboot-marker hook is installed before the package upgrade, including
 on first setup. To update an existing host and restart it when a new kernel
@@ -911,8 +924,10 @@ Every enabled storage pool must be accessible, while disabled pools are
 reported separately. It also reports host RAM and swap use,
 swap devices, swappiness, and whether the previous boot journal is retained.
 The previous kernel journal is scanned for OOM kills, blocked tasks, lockups,
-watchdogs, storage timeouts, thermal events, and hardware-error indicators;
-matching lines are included directly in text and JSON output. ZFS zvol-backed
+watchdog faults, storage failures, critical temperatures, and hardware-error
+indicators. Routine thermal/EDAC initialization and watchdog shutdown messages
+are omitted; the last 40 matching lines appear in text and JSON output.
+A failed journal read produces a warning. ZFS zvol-backed
 swap is a failing audit condition, while no swap, swappiness above 10, high
 memory/swap use, and missing prior-boot evidence are warnings. The command is
 read-only and exits nonzero when a health check fails.
@@ -1033,7 +1048,7 @@ pool for the migrated local disks instead of retaining their source pool names.
 The pool must be active and enabled on the destination and accept `images` for
 QEMU VMs or `rootdir` for LXC. In particular, a pool named `local` often permits only backup,
 ISO, and template content: inspect `proxmox probe TARGET` and explicitly enable
-VM images in Proxmox storage settings if required. Basaltwater does not change
+VM images in Proxmox storage settings if required. Migration does not change
 storage content policy. Shared disks retain their pool and volume identity.
 The plan checks aggregate free space for all local disks, including cloud-init
 and unused volumes, and verifies every declared bridge exists on the destination.

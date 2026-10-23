@@ -199,7 +199,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             ),
             _result(f"/dev/zvol/rpool/swap partition {8 * 1024 ** 3} 0\n"),
             _result("60\n"),
-            _result(" 0 boot-current\n"),
+            _result("-1 boot-old\n 0 boot-current\n"),
             _result("[10.0] Out of memory: Killed process 123 (qemu)\n"),
         ]
 
@@ -207,11 +207,90 @@ class TestCollectMaintenanceReport(unittest.TestCase):
 
         self.assertFalse(report.healthy)
         self.assertEqual(report.swappiness, 60)
-        self.assertFalse(report.previous_boot_available)
+        self.assertTrue(report.previous_boot_available)
         self.assertEqual(len(report.previous_boot_findings), 1)
         self.assertTrue(any("ZFS zvol-backed swap" in error for error in report.errors))
         self.assertTrue(any("at least 90%" in warning for warning in report.warnings))
         self.assertTrue(any("at least 50%" in warning for warning in report.warnings))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_benign_kernel_startup_and_shutdown_are_not_faults(self, command) -> None:
+        results = self._inventory_results("[]")
+        results[-1] = _result("\n".join((
+            "CPU0: Thermal monitoring enabled (TM1)",
+            "NMI watchdog: Enabled. Permanently consumes one hw-PMU counter.",
+            "thermal_sys: Registered thermal governor 'fair_share'",
+            "EDAC MC: Ver: 3.0.0",
+            "EDAC ie31200: No ECC support",
+            "ACPI BIOS Error (bug): Could not resolve symbol [\\_SB.PCI0.SAT0.SPT5._GTF.DSSP]",
+            "nvme nvme0: Shutdown timeout set to 10 seconds",
+            "watchdog: watchdog0: watchdog did not stop!",
+            "systemd-shutdown[1]: Using hardware watchdog 'Software Watchdog'",
+            "systemd-shutdown[1]: Watchdog running with a hardware timeout of 10min",
+        )))
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertTrue(report.healthy)
+        self.assertEqual(report.previous_boot_findings, [])
+        self.assertEqual(report.warnings, [])
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_actual_kernel_faults_are_retained(self, command) -> None:
+        faults = [
+            "oom-kill:constraint=CONSTRAINT_NONE", "Out of memory: Killed process 123 (qemu)",
+            "INFO: task qemu:123 blocked for more than 120 seconds.",
+            "watchdog: BUG: soft lockup - CPU#0 stuck for 26s!", "NMI watchdog: Watchdog detected hard LOCKUP",
+            "NETDEV WATCHDOG: eno1 (e1000e): transmit queue 0 timed out",
+            "Kernel panic - not syncing: Fatal exception", "Oops: 0000 [#1] SMP",
+            "I/O error, dev sda, sector 10", "ata1.00: failed command: READ FPDMA QUEUED",
+            "ata2: hard resetting link", "nvme nvme0: I/O 34 QID 2 timeout, reset controller",
+            "nvme nvme0: resetting controller", "ZFS: pool tank has I/O errors",
+            "mce: [Hardware Error]: Machine check events logged",
+            "EDAC MC0: 1 CE memory read error", "EDAC MC0: 1 UE on DIMM_A1",
+            "thermal thermal_zone0: critical temperature reached (105 C)",
+        ]
+        results = self._inventory_results("[]")
+        results[-1] = _result("\n".join(faults))
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertEqual(report.previous_boot_findings, faults)
+        self.assertTrue(any("possible fault indicator" in warning for warning in report.warnings))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_only_last_forty_matching_lines_are_retained(self, command) -> None:
+        faults = [f"[{number}] I/O error, dev sda" for number in range(45)]
+        results = self._inventory_results("[]")
+        results[-1] = _result("\n".join(faults + ["thermal_sys: Registered thermal governor 'step_wise'"]))
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertEqual(report.previous_boot_findings, faults[-40:])
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_missing_or_failed_boot_listing_skips_previous_journal(self, command) -> None:
+        for boots, available, warning in (
+            (_result("0 boot-current\n"), False, "Previous boot journal is unavailable"),
+            (_result(returncode=1, stderr="journal unavailable"), None, "journal unavailable"),
+        ):
+            with self.subTest(boots=boots):
+                results = self._inventory_results("[]")
+                results[-2:] = [boots]
+                command.reset_mock()
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertIs(report.previous_boot_available, available)
+                self.assertEqual(report.previous_boot_findings, [])
+                self.assertTrue(any(warning in item for item in report.warnings))
+                self.assertEqual(command.call_count, len(results))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_failed_journal_read_warns_instead_of_reporting_clean_scan(self, command) -> None:
+        results = self._inventory_results("[]")
+        results[-1] = _result(returncode=1, stderr="failed to open journal")
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertEqual(report.previous_boot_findings, [])
+        self.assertTrue(any("Could not inspect previous boot kernel log: failed to open journal" in item
+                            for item in report.warnings))
 
     @patch("lib.proxmox_maintenance._run")
     def test_ssh_failure_stops_further_probes(self, mock_run) -> None:

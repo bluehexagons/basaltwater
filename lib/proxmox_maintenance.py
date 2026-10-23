@@ -31,11 +31,15 @@ CORE_SERVICES = (
     "pvestatd",
     "pvescheduler",
 )
-_PREVIOUS_BOOT_PATTERN = (
-    "oom-kill|out of memory|killed process|blocked for more than|"
-    "soft lockup|hard lockup|watchdog|i/o error|timed out|timeout|"
-    "nvme.*reset|ata.*error|zfs.*(error|fault)|mce|edac|"
-    "hardware error|thermal"
+_PREVIOUS_BOOT_PATTERN = re.compile(
+    r"\boom-kill\b|\bout of memory\b|\bkilled process\b|blocked for more than|"
+    r"(?:soft|hard) lockup|watchdog.*(?:BUG:|lockup)|\bNETDEV WATCHDOG\b|"
+    r"kernel panic|\bOops:|\bBUG:|\bi/o error\b|"
+    r"\bnvme\w*\b.*(?:I/O.*(?:timeout|timed out)|resetting controller|controller is down)|"
+    r"\bata[0-9]+(?:\.[0-9]+)?:.*(?:error|failed|reset|timed out)|"
+    r"\bzfs\b.*(?:error|fault)|\b(?:mce|edac)\b.*(?:error|[1-9][0-9]* [uc]e\b)|"
+    r"hardware error|(?:thermal|temperature).*(?:critical|trip|throttl)",
+    re.IGNORECASE,
 )
 CommandRunner = Callable[[ProxmoxHost, str], subprocess.CompletedProcess[str]]
 
@@ -342,18 +346,26 @@ def _collect_memory_diagnostics(
                 "Previous boot journal is unavailable; forced-lockup evidence may be lost"
             )
 
+    if not report.previous_boot_available:
+        return
+
     findings = run_command(
         host,
-        "journalctl -b -1 -k --no-pager -o short-monotonic "
-        f"| grep -Ei '{_PREVIOUS_BOOT_PATTERN}' | tail -n 40",
+        "journalctl -b -1 -k --no-pager --quiet -o short-monotonic",
     )
-    if findings.stdout.strip():
-        report.previous_boot_findings = [
-            line.strip() for line in findings.stdout.splitlines() if line.strip()
-        ]
+    if findings.returncode != 0:
+        report.warnings.append(
+            f"Could not inspect previous boot kernel log: {_failure_detail(findings)}"
+        )
+        return
+    report.previous_boot_findings = [
+        line.strip() for line in findings.stdout.splitlines()
+        if _PREVIOUS_BOOT_PATTERN.search(line)
+    ][-40:]
+    if report.previous_boot_findings:
         report.warnings.append(
             f"Previous boot kernel log has {len(report.previous_boot_findings)} "
-            "possible lockup indicator(s)"
+            "possible fault indicator(s)"
         )
 
 
