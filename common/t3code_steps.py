@@ -54,7 +54,11 @@ from lib.t3code_runtime import (
     t3_version_binary,
     t3_version_root,
 )
-from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
+from lib.validation import (
+    validate_filesystem_path,
+    validate_network_ip_or_cidr,
+    validate_t3_bind_host,
+)
 from lib.validators import validate_username
 
 
@@ -543,21 +547,42 @@ def _temporary_t3_loginctl_shim(home: str, username: str) -> Iterator[str]:
             pass
 
 
-def _t3_local_endpoint_reachable(host: str, port: int) -> bool:
+def _t3_loopback_candidates(host: str) -> tuple[str, ...]:
+    """Map supported listeners to literal addresses without resolving localhost."""
+
+    host = validate_t3_bind_host("::" if host == "[::]" else host)
     if host == "0.0.0.0":
-        local_host = "127.0.0.1"
-    elif host in {"::", "[::]"}:
-        local_host = "::1"
-    else:
-        local_host = host
-    try:
-        with open_loopback(
-            f"http://{_url_host(local_host)}:{port}/",
-            timeout=2,
-        ) as response:
-            return response.status == 200
-    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
-        return False
+        return ("127.0.0.1",)
+    if host == "::":
+        return ("::1",)
+    if host == "localhost":
+        return ("127.0.0.1", "::1")
+    return (host,)
+
+
+def _t3_local_endpoint_host(
+    host: str, port: int, *, require_ok: bool = True,
+) -> str | None:
+    """Find a local listener; readiness additionally requires HTTP 200."""
+
+    for local_host in _t3_loopback_candidates(host):
+        try:
+            with open_loopback(
+                f"http://{_url_host(local_host)}:{port}/", timeout=2,
+            ) as response:
+                if not require_ok or response.status == 200:
+                    return local_host
+        except urllib.error.HTTPError:
+            # The pairing portal may require authentication or redirect to HTTPS.
+            if not require_ok:
+                return local_host
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+            continue
+    return None
+
+
+def _t3_local_endpoint_reachable(host: str, port: int) -> bool:
+    return _t3_local_endpoint_host(host, port) is not None
 
 
 def _wait_for_t3_service(
@@ -939,6 +964,7 @@ def _install_t3_service(
 ) -> str:
     """Install or update T3 through its supported per-user service manager."""
 
+    host = validate_t3_bind_host(host)
     with _t3_reconciliation_path(home, uid, gid) as reconciliation_path:
         return _install_locked_t3_service(
             home, username, uid, gid, workspace, host, port,
@@ -1030,11 +1056,23 @@ def _install_locked_t3_service(
             f"Refusing unsafe legacy service file: {LEGACY_T3_SERVICE_FILE}"
         )
     if legacy_present:
-        run(
-            ["systemctl", "stop", f"{LEGACY_T3_SERVICE_NAME}.service"],
-            check=False,
-            capture_output=True,
-        )
+        try:
+            stopped = run(
+                ["systemctl", "stop", f"{LEGACY_T3_SERVICE_NAME}.service"],
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError(
+                "Legacy T3 Code service stop timed out after 60 seconds; "
+                "resolve the service stop before retrying setup"
+            ) from exc
+        if stopped.returncode != 0:
+            raise RuntimeError(
+                "Could not stop legacy T3 Code service before migration: "
+                + _t3_command_failure_detail(stopped)
+            )
 
     try:
         retained_candidate = _retained_failed_t3_binary(home)
@@ -1924,6 +1962,15 @@ def _configure_t3_https(
     if pairing_port is not None:
         routes.append(("t3code-pairing", pairing_port, None))
     for name, target_port, max_body_size in routes:
+        candidates = _t3_loopback_candidates(config.web_interface_host or "127.0.0.1")
+        target_host = candidates[0]
+        if len(candidates) > 1:
+            # T3 and nginx can resolve localhost to different address families.
+            target_host = _t3_local_endpoint_host(
+                "localhost", target_port, require_ok=False,
+            )
+            if target_host is None:
+                raise RuntimeError(f"No literal loopback listener found for {name}:{target_port}")
         body_size_argument = (
             " --max-body-size " + shlex.quote(max_body_size)
             if max_body_size is not None
@@ -1936,8 +1983,8 @@ def _configure_t3_https(
             + shlex.quote(utility)
             + " forward add "
             + shlex.quote(name)
-            + " --listen auto --to 127.0.0.1:"
-            + str(target_port)
+            + " --listen auto --to "
+            + shlex.quote(f"{_url_host(target_host)}:{target_port}")
             + body_size_argument
             + " --lock-timeout 300 --json",
             check=False,
@@ -2045,13 +2092,13 @@ def remove_device_pairing(config: SetupConfig) -> None:
 def install_t3code_web(config: SetupConfig) -> None:
     """Install a boot-persistent T3 Code headless service for direct pairing."""
 
+    host = validate_t3_bind_host(config.web_interface_host or "127.0.0.1")
     if is_dry_run():
         print("  [DRY-RUN] Would install the T3 Code headless web service")
         return
 
     home = _user_home(config)
     account = pwd.getpwnam(config.username)
-    host = config.web_interface_host or "127.0.0.1"
     port = config.web_interface_port
     workspace = _workspace(config, home)
     _configure_firewall(config, port, host)

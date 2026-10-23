@@ -774,6 +774,22 @@ def validate_backup_specs(backup_specs: Optional[list[list[str]]]) -> None:
     validate_sync_specs(backup_specs)
 
 
+def validate_t3_bind_host(host: str) -> str:
+    """Require a T3 listener that also permits literal loopback management."""
+
+    if isinstance(host, str) and host.lower() == "localhost":
+        return "localhost"
+    normalized = validate_network_ip(host, "T3 Code bind address")
+    address = ipaddress.ip_address(normalized)
+    if not (address.is_loopback or address.is_unspecified):
+        raise ValueError(
+            "T3 Code does not support a specific non-loopback bind address; "
+            "use --web-interface-host 0.0.0.0 or :: with --access-source or "
+            "--web-interface-source to allow trusted sources, or use a loopback bind"
+        )
+    return normalized
+
+
 def validate_web_interface_settings(config: Any) -> None:
     """Validate explicit headless web-interface exposure settings."""
 
@@ -874,9 +890,13 @@ def validate_web_interface_settings(config: Any) -> None:
     if not isinstance(host, str) or not host:
         raise ValueError("--web-interface-host must be a non-empty IP address")
     normalized_host = host.lower()
-    if normalized_host != "localhost":
+    if "t3code" in interfaces:
+        normalized_host = validate_t3_bind_host(host)
+    elif normalized_host != "localhost":
         normalized_host = validate_network_ip_or_cidr(host, "web interface bind address")
     loopback = normalized_host in {"127.0.0.1", "::1", "localhost"}
+    if "t3code" in interfaces and normalized_host != "localhost":
+        loopback = ipaddress.ip_address(normalized_host).is_loopback
     if loopback and service_sources:
         raise ValueError(
             "--web-interface-source requires a non-loopback web interface bind"
