@@ -1058,6 +1058,7 @@ basaltw agent doctor --capability t3code --capability host
 basaltw agent doctor --capability t3code --capability host --record
 basaltw agent doctor --last-record --json
 basaltw agent doctor --capability t3code --fix
+basaltw agent doctor --capability t3code --wait-for-t3-startup
 basaltw agent doctor 10.0.0.10 agent --tool codex --json
 basaltw agent update --dry-run
 basaltw agent update --tool codex --tool claude
@@ -1133,6 +1134,21 @@ endpoint, provider authentication, Git identity and credential helper, and the
 managed agent skill. Its `--fix` mode can rebuild blocked native dependencies,
 configure the GitHub HTTPS helper after a successful login, enable the service
 at boot, and restart it when inactive.
+The normal check remains a quick snapshot. To wait for T3 Code startup after an
+update, opt in with:
+
+```bash
+basaltw agent doctor --capability t3code --wait-for-t3-startup
+```
+
+This allows up to 30 minutes of actual monotonic waiting for HTTP and service
+readiness. Readiness requires three stable checks from the same invocation ID;
+a systemd failure ends the wait early. The flag does not require `--fix`, and
+leaves a healthy running migration alone. The panel uses this wait after an
+update, with its readiness subprocess and outer action budgets including the
+wait window. When `--fix` performs native npm dependency repair, it skips that
+repair if stopping the service fails or times out, reports the diagnostic, and
+leaves T3 readiness unhealthy.
 `--capability host` reports memory and swap headroom, filesystem and bounded
 agent-storage use, T3 service cgroup counters, recurring maintenance timer
 state (including installed Node and Godot update jobs), the agent maintenance
