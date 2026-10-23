@@ -352,6 +352,36 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `--auto-restart-grace N` | Warning period before an automatic restart |
 | `--restart-if-needed` | After successful setup, restart for `/run/reboot-required` or pending Proxmox VM configuration |
 | `--wait-for-restart` | With `--restart-if-needed` on a remote target, wait for a new boot and run `basaltw health` |
+| `--shutdown` | After successful setup, gracefully shut down a provisioned Proxmox VM; takes precedence over restart options |
+
+### Maintain offline VMs
+
+Setup automatically starts an existing stopped Proxmox VM or resumes a paused
+one, then waits up to five minutes for SSH before continuing. A running VM
+whose SSH is still starting gets the same wait. This also applies to reruns
+that reuse saved provisioning metadata. Setup verifies the VM's identity
+before changing its power state and checks node memory capacity before
+starting a stopped VM. Provider errors or an SSH timeout stop setup.
+
+Add `--shutdown` to leave the VM offline after a successful setup:
+
+```bash
+basaltw setup server_lite 10.0.0.50 admin --provision-on pve1 --shutdown
+```
+
+This example reuses an already provisioned VM's saved configuration. For a new
+VM, supply the usual memory, storage, and other provisioning options.
+`--shutdown` requires a provisioned QEMU VM (`--provision-on`, `--machine vm`).
+It is a one-time controller action and is not saved for future setup runs.
+Failed setup leaves the VM running for inspection. A dry run previews power
+operations without contacting the provider.
+
+Shutdown uses Proxmox's graceful shutdown with a 180-second timeout and verifies
+that the VM stopped. It never forces the VM off; a failed shutdown returns
+nonzero. `--shutdown` takes precedence over both `--restart-if-needed` and
+`--wait-for-restart`: setup shuts down directly, including when updates or
+provider configuration changes would otherwise require a restart. The next
+start applies those changes.
 
 ### Restart after setup
 

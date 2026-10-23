@@ -21,6 +21,7 @@ import getpass
 import ipaddress
 import json
 import os
+import subprocess
 import sys
 import time
 from typing import Optional, Tuple, cast
@@ -102,7 +103,7 @@ from lib.setup_common import (
     remove_replaced_setup_cache,
     run_remote_setup,
 )
-from lib.setup_reboot import restart_after_setup
+from lib.setup_reboot import restart_after_setup, shutdown_after_setup
 from lib.state_read import StateReadError
 from lib.interactive_setup import prompt_for_missing_passwords
 from lib.system_utils import get_current_username
@@ -310,6 +311,14 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         help=(
             "With --restart-if-needed, wait for a remote target to boot again "
             "and run health checks"
+        ),
+    )
+    setup_parser.add_argument(
+        "--shutdown",
+        action="store_true",
+        help=(
+            "After successful setup, gracefully shut down a provisioned Proxmox "
+            "VM; takes precedence over restart options"
         ),
     )
     setup_parser.add_argument(
@@ -1838,14 +1847,18 @@ def run_setup_command(args: argparse.Namespace) -> int:
     """Execute the setup command."""
     restart_if_needed = getattr(args, "restart_if_needed", False)
     wait_for_restart = getattr(args, "wait_for_restart", False)
-    if wait_for_restart and not restart_if_needed:
+    shutdown = getattr(args, "shutdown", False)
+    if wait_for_restart and not restart_if_needed and not shutdown:
         print("Error: --wait-for-restart requires --restart-if-needed")
         return 1
-    if wait_for_restart and _is_local_host(args.host):
+    if wait_for_restart and _is_local_host(args.host) and not shutdown:
         print("Error: --wait-for-restart requires a remote setup target")
         return 1
 
     if args.system_type == "agent_cachyos":
+        if shutdown:
+            print("Error: --shutdown requires a provisioned QEMU VM (--provision-on)")
+            return 1
         if not _is_local_host(args.host):
             from lib.cachyos_remote import run_cachyos_remote_command
 
@@ -1958,6 +1971,10 @@ def run_setup_command(args: argparse.Namespace) -> int:
         print(f"Error: {e}")
         return 1
 
+    if shutdown and (not config.hosted_node or config.machine_type != "vm"):
+        print("Error: --shutdown requires a provisioned QEMU VM (--provision-on)")
+        return 1
+
     if not validate_host(config.host):
         print(f"Error: Invalid IP address or hostname: {config.host}")
         return 1
@@ -1967,13 +1984,17 @@ def run_setup_command(args: argparse.Namespace) -> int:
 
     if config.hosted_node and reuse_cached_provisioning:
         try:
+            if config.machine_type == "vm":
+                from lib.proxmox_vm import ensure_vm_running
+
+                ensure_vm_running(config)
             _refresh_existing_managed_guest_host_keys(
                 config,
                 cached_provisioning,
             )
-        except ProvisionError as exc:
+        except (ProvisionError, ValueError, OSError, subprocess.SubprocessError) as exc:
             print(
-                "\n✗ Failed to refresh the managed guest SSH host key: "
+                "\n✗ Failed to prepare the managed guest for setup: "
                 f"{exc}"
             )
             return 1
@@ -2177,6 +2198,8 @@ def run_setup_command(args: argparse.Namespace) -> int:
     )
     print("=" * 60)
 
+    if shutdown:
+        return shutdown_after_setup(config)
     if restart_if_needed:
         return restart_after_setup(config, wait_for_restart=wait_for_restart)
 

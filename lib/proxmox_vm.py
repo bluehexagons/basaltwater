@@ -68,8 +68,8 @@ from lib.proxmox_memory import (
     parse_guest_memory_mib,
 )
 from lib.types import NestedStrList, StrList
-from lib.validation import parse_memory_mib
-from lib.validators import validate_username
+from lib.validation import parse_memory_mib, validate_filesystem_path
+from lib.validators import validate_host, validate_ip_address, validate_username
 from lib.vm_storage import (
     VMDataDisk,
     VMDiskHardware,
@@ -902,7 +902,7 @@ def _reconcile_existing_vm(
         if require_existing:
             raise ProvisionError(
                 f"No VM matching saved name '{desired_name}' and IP {target_ip} "
-                f"was found on rebind destination {node_ip}"
+                f"was found on Proxmox node {node_ip}"
             )
         return False
 
@@ -921,7 +921,7 @@ def _reconcile_existing_vm(
     ):
         raise ProvisionError(
             f"VM {matched.vmid} at {target_ip} is named '{matched.name}', "
-            f"expected saved name '{desired_name}' for provider rebind"
+            f"expected saved name '{desired_name}'"
         )
 
     if (
@@ -970,11 +970,14 @@ def _reconcile_existing_vm(
         raise ProvisionError(
             f"Could not verify VM {matched.vmid} on {node_ip}: {detail}"
         )
-    status_text = status.stdout or ""
+    status_text = (status.stdout or "").strip()
     start_after_reconcile = False
-    if "status: stopped" in status_text and start_existing:
+    resume_after_reconcile = False
+    if status_text == "status: stopped" and start_existing:
         start_after_reconcile = True
-    elif "status: running" in status_text:
+    elif status_text == "status: paused" and start_existing:
+        resume_after_reconcile = True
+    elif status_text == "status: running":
         probe = _ssh_run(
             node_ip,
             user,
@@ -983,10 +986,16 @@ def _reconcile_existing_vm(
             dry_run=False,
         )
         if probe.returncode != 0 or "READY" not in (probe.stdout or ""):
-            raise ProvisionError(
-                f"VM {matched.vmid} is configured with IP {target_ip} but is not "
-                "reachable on SSH; repair it before retrying provisioning"
-            )
+            if start_existing:
+                _wait_for_guest_ssh(
+                    target_ip, node_ip, user, ssh_opts,
+                    timeout=300, dry_run=False, label="VM",
+                )
+            else:
+                raise ProvisionError(
+                    f"VM {matched.vmid} is configured with IP {target_ip} but is not "
+                    "reachable on SSH; repair it before retrying provisioning"
+                )
     else:
         raise ProvisionError(
             f"VM {matched.vmid} is not reachable because it is not running; "
@@ -1256,18 +1265,19 @@ def _reconcile_existing_vm(
                 f"for VM {matched.vmid}"
             )
 
-    if start_after_reconcile:
+    if start_after_reconcile or resume_after_reconcile:
+        action = "start" if start_after_reconcile else "resume"
         started = _ssh_run(
             node_ip,
             user,
             ssh_opts,
-            f"qm start {matched.vmid}",
+            f"qm {action} {matched.vmid}",
             dry_run=False,
         )
         if started.returncode != 0:
             detail = (started.stderr or started.stdout or "").strip() or "unknown error"
             raise ProvisionError(
-                f"Failed to start migrated VM {matched.vmid} on {node_ip}: {detail}"
+                f"Failed to {action} VM {matched.vmid} on {node_ip}: {detail}"
             )
         _wait_for_guest_ssh(
             target_ip,
@@ -1276,9 +1286,10 @@ def _reconcile_existing_vm(
             ssh_opts,
             timeout=300,
             dry_run=False,
-            label="Migrated VM",
+            label="VM",
         )
-        print(f"  ✓ Started migrated VM {matched.vmid} on {node_ip}")
+        verb = "Started" if start_after_reconcile else "Resumed"
+        print(f"  ✓ {verb} VM {matched.vmid} on {node_ip}")
 
     if name_changed:
         print(
@@ -1357,6 +1368,49 @@ def _reconcile_existing_vm(
         f"  ✓ VM {matched.vmid} already exists and is reachable at IP {target_ip}"
     )
     return True
+
+
+def ensure_vm_running(config: SetupConfig) -> None:
+    """Start or resume a saved VM and wait for SSH without changing its shape."""
+    node_ip = config.hosted_node
+    if not node_ip or not validate_host(node_ip):
+        raise ProvisionError("Invalid Proxmox host")
+    if not validate_username(config.hosted_user):
+        raise ProvisionError("Invalid Proxmox username")
+    if config.hosted_key:
+        validate_filesystem_path(config.hosted_key, must_exist=False)
+    target_ip = (
+        str(ipaddress.ip_interface(config.static_ipv4).ip)
+        if config.static_ipv4 else config.host
+    )
+    if not validate_ip_address(target_ip):
+        raise ProvisionError("Invalid VM setup address")
+    hostname = config.system_hostname or _build_guest_hostname(
+        target_ip, config.friendly_name, default_prefix="vm",
+    )
+    if config.dry_run:
+        print(
+            f"[DRY RUN] Would verify VM {hostname} ({target_ip}) on {node_ip}, "
+            "start or resume it if needed, and wait for SSH"
+        )
+        return
+    ssh_opts = _ssh_opts(config.hosted_key)
+    with guest_provisioning_locks(node_ip, target_ip, hostname):
+        with remote_proxmox_locks(
+            node_ip, config.hosted_user, ssh_opts,
+            [f"address|{target_ip}", f"hostname|{hostname.lower()}"],
+            wait=False, description=f"guest {hostname} ({target_ip})",
+        ):
+            with remote_proxmox_locks(
+                node_ip, config.hosted_user, ssh_opts, ["guest-admission"],
+                wait=True, description="guest memory admission",
+            ):
+                _reconcile_existing_vm(
+                    node_ip, target_ip, hostname, config.hosted_user, ssh_opts,
+                    require_existing=True, require_existing_name=True,
+                    start_existing=True,
+                    allow_memory_overcommit=config.allow_memory_overcommit,
+                )
 
 
 def check_vm_exists(
@@ -2089,7 +2143,7 @@ def provision_vm(
     allow_existing_data_disks: bool = False,
     require_existing_vm: bool = False,
     require_existing_name: bool = False,
-    start_existing_vm: bool = False,
+    start_existing_vm: bool = True,
     verify_existing_bridge: bool = False,
     verify_existing_storage: bool = False,
     attach_missing_data_disks: Optional[set[str]] = None,
@@ -2134,7 +2188,7 @@ def _provision_vm_locked(
     allow_existing_data_disks: bool = False,
     require_existing_vm: bool = False,
     require_existing_name: bool = False,
-    start_existing_vm: bool = False,
+    start_existing_vm: bool = True,
     verify_existing_bridge: bool = False,
     verify_existing_storage: bool = False,
     attach_missing_data_disks: Optional[set[str]] = None,
@@ -2149,7 +2203,7 @@ def _provision_vm_locked(
             when the caller has matched this guest to saved provisioning state.
         require_existing_vm: Refuse to create a replacement when rebind lookup fails.
         require_existing_name: Require an existing VM to retain the saved name.
-        start_existing_vm: Start a verified existing VM when it is stopped.
+        start_existing_vm: Start or resume a verified existing VM and wait for SSH.
         verify_existing_bridge: Require an existing VM's net0 bridge to match.
         verify_existing_storage: Require existing disks to match declared pools.
         attach_missing_data_disks: Exact named data disks that may be created on
@@ -2223,7 +2277,7 @@ def _provision_vm_locked(
                 "  Existing VM storage extension: attach "
                 + ", ".join(sorted(attach_missing_data_disks))
             )
-        if require_existing_name or start_existing_vm:
+        if require_existing_name:
             print(
                 "  Existing VM rebind: require and verify the destination, then "
                 "start it if stopped"
@@ -2233,6 +2287,8 @@ def _provision_vm_locked(
                 "  Existing VM verification: require the saved guest and "
                 "verify its declared provider layout"
             )
+        if start_existing_vm:
+            print("  Existing VMs: start or resume if needed and wait for SSH")
         print(f"  Proxmox node: {node_ip}")
         print(f"  Target IP: {target_ip}")
         if config.static_ipv6:

@@ -1,4 +1,4 @@
-"""Apply pending Proxmox VM configuration after a successful guest setup."""
+"""Verify and control Proxmox VM power after a successful guest setup."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from lib.validators import validate_host, validate_username
 
 def _provider_command(config: SetupConfig, command: str, *, timeout: int = 30) -> str:
     if not config.hosted_node or not validate_host(config.hosted_node):
-        raise ValueError("Invalid Proxmox restart host")
+        raise ValueError("Invalid Proxmox power operation host")
     if not validate_username(config.hosted_user):
-        raise ValueError("Invalid Proxmox restart username")
+        raise ValueError("Invalid Proxmox power operation username")
     if config.hosted_key:
         validate_filesystem_path(config.hosted_key, must_exist=False)
     result = run(
@@ -34,7 +34,7 @@ def _provider_command(config: SetupConfig, command: str, *, timeout: int = 30) -
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() or "SSH command failed"
-        raise RuntimeError(f"Proxmox restart operation on {config.hosted_node}: {detail}")
+        raise RuntimeError(f"Proxmox power operation on {config.hosted_node}: {detail}")
     return result.stdout
 
 
@@ -53,8 +53,8 @@ def _vmid(value: object) -> int:
     return vmid
 
 
-def pending_vm_restart(config: SetupConfig) -> int | None:
-    """Return a verified VMID only when Proxmox has unapplied changes."""
+def _verified_vm(config: SetupConfig) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    """Match both the saved name and setup address before a power operation."""
     expected_name = config.system_hostname or _build_guest_hostname(
         config.host, config.friendly_name, default_prefix="vm",
     )
@@ -81,6 +81,13 @@ def pending_vm_restart(config: SetupConfig) -> int | None:
                     addresses.add(str(ipaddress.ip_interface(option[3:]).ip))
     if config.host not in addresses:
         raise ValueError(f"Proxmox VM {vmid} does not have the setup address {config.host}")
+    return vmid, guest, observed
+
+
+def pending_vm_restart(config: SetupConfig) -> int | None:
+    """Return a verified VMID only when Proxmox has unapplied changes."""
+    vmid, guest, observed = _verified_vm(config)
+    path = f"/nodes/localhost/qemu/{vmid}"
 
     # Unlike qm pending's text display, the API explicitly separates current
     # values from pending replacements and removals.
@@ -107,3 +114,20 @@ def request_vm_restart(config: SetupConfig, vmid: int) -> None:
     """Gracefully restart through Proxmox so QEMU applies pending settings."""
     vmid = _vmid(vmid)
     _provider_command(config, f"qm reboot {vmid} --timeout 180", timeout=240)
+
+
+def request_vm_shutdown(config: SetupConfig) -> None:
+    """Gracefully shut down the verified VM and confirm it stopped."""
+    vmid, guest, observed = _verified_vm(config)
+    if guest.get("lock") or observed.get("lock"):
+        raise ValueError(f"Proxmox VM {vmid} is locked")
+    if guest.get("status") == "stopped":
+        return
+    if guest.get("status") != "running":
+        raise ValueError(f"Proxmox VM {vmid} is not running")
+    _provider_command(
+        config, f"qm shutdown {vmid} --timeout 180 --forceStop 0", timeout=240,
+    )
+    status = _api(config, f"/nodes/localhost/qemu/{vmid}/status/current")
+    if not isinstance(status, dict) or status.get("status") != "stopped":
+        raise RuntimeError(f"Proxmox VM {vmid} did not shut down")

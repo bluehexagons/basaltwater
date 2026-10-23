@@ -756,7 +756,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
             [],
             timeout=300,
             dry_run=False,
-            label="Migrated VM",
+            label="VM",
         )
 
     @patch("lib.proxmox_vm._report_memory_capacity", return_value=False)
@@ -903,6 +903,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
             provision_vm(config, require_existing_vm=True)
 
         mock_public_key.assert_not_called()
+        self.assertTrue(_mock_reconcile.call_args.kwargs["start_existing"])
         self.assertEqual(mock_remote_locks.call_count, 2)
         self.assertFalse(mock_remote_locks.call_args_list[0].kwargs["wait"])
         self.assertTrue(mock_remote_locks.call_args_list[1].kwargs["wait"])

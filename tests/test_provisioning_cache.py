@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -46,6 +47,11 @@ def _args(**overrides: object) -> Namespace:
 
 
 class TestCachedProvisioningMetadata(unittest.TestCase):
+    def setUp(self) -> None:
+        self.ensure_vm_running = self.enterContext(
+            patch("lib.proxmox_vm.ensure_vm_running")
+        )
+
     def test_setup_parser_accepts_additive_mounted_disk_without_root(self) -> None:
         parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(
@@ -899,6 +905,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
 
         self.assertEqual(result, 0)
         mock_provision.assert_not_called()
+        self.ensure_vm_running.assert_called_once_with(current)
         mock_refresh.assert_called_once_with(
             "10.0.0.50",
             "10.0.0.10",
@@ -1003,6 +1010,73 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
 
         self.assertEqual(result, 1)
         mock_remote.assert_not_called()
+
+    def test_cached_vm_start_failure_stops_before_trust_refresh_or_setup(self) -> None:
+        current = _config()
+        cached = _config(
+            container_memory="4G",
+            container_storage=[["root", "local-lvm", "32G"]],
+            static_ipv4="10.0.0.50/24",
+            network_gateway4="10.0.0.1",
+            network_dns=["1.1.1.1"],
+        )
+        for error in (
+            basaltwater.ProvisionError("start failed"),
+            subprocess.TimeoutExpired("ssh", 120),
+            OSError("ssh unavailable"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.ensure_vm_running.side_effect = error
+                with (
+                    patch("basaltwater.prompt_for_missing_passwords"),
+                    patch("basaltwater.SetupConfig.from_args", return_value=current),
+                    patch("basaltwater.load_setup_command", return_value=cached),
+                    patch("basaltwater._prepare_runtime_config_for_cli", side_effect=lambda config: config),
+                    patch("basaltwater.print_setup_summary"),
+                    patch("basaltwater.refresh_managed_guest_host_keys") as refresh,
+                    patch("basaltwater.run_remote_setup") as remote,
+                    patch("basaltwater.shutdown_after_setup") as shutdown,
+                ):
+                    self.assertEqual(basaltwater.run_setup_command(_args(shutdown=True)), 1)
+                refresh.assert_not_called()
+                remote.assert_not_called()
+                shutdown.assert_not_called()
+
+    def test_shutdown_runs_only_after_success_and_overrides_restart_options(self) -> None:
+        for setup_result, restart_if_needed in ((0, True), (0, False), (1, True)):
+            with self.subTest(setup_result=setup_result, restart=restart_if_needed):
+                current = _config()
+                cached = _config(
+                    container_memory="4G",
+                    container_storage=[["root", "local-lvm", "32G"]],
+                    static_ipv4="10.0.0.50/24",
+                    network_gateway4="10.0.0.1",
+                    network_dns=["1.1.1.1"],
+                )
+                events = []
+                self.ensure_vm_running.side_effect = lambda config: events.append("start")
+                with (
+                    patch("basaltwater.prompt_for_missing_passwords"),
+                    patch("basaltwater.SetupConfig.from_args", return_value=current),
+                    patch("basaltwater.load_setup_command", return_value=cached),
+                    patch("basaltwater._prepare_runtime_config_for_cli", side_effect=lambda config: config),
+                    patch("basaltwater.print_setup_summary"),
+                    patch("basaltwater.refresh_managed_guest_host_keys", side_effect=lambda *a, **kw: events.append("trust")),
+                    patch("basaltwater.ensure_guest_ipv4_route"),
+                    patch("basaltwater.store_cli_credentials"),
+                    patch("basaltwater.save_setup_command"),
+                    patch("basaltwater.register_proxmox_setup_host"),
+                    patch("basaltwater.run_remote_setup", side_effect=lambda config: events.append("setup") or setup_result),
+                    patch("basaltwater.shutdown_after_setup", side_effect=lambda config: events.append("shutdown") or 0) as shutdown,
+                    patch("basaltwater.restart_after_setup") as restart,
+                ):
+                    result = basaltwater.run_setup_command(
+                        _args(shutdown=True, restart_if_needed=restart_if_needed, wait_for_restart=True)
+                    )
+                self.assertEqual(result, setup_result)
+                self.assertEqual(events, ["start", "trust", "setup"] + (["shutdown"] if setup_result == 0 else []))
+                self.assertEqual(shutdown.call_count, int(setup_result == 0))
+                restart.assert_not_called()
 
     @patch("lib.proxmox_vm.provision_vm")
     @patch("basaltwater.register_proxmox_setup_host")

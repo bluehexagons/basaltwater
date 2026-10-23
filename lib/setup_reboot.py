@@ -1,4 +1,4 @@
-"""Optional post-setup restart and remote health-check workflow."""
+"""Optional post-setup shutdown, restart, and remote health-check workflow."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from uuid import UUID
 from lib.config import SetupConfig
 from lib.machine_state import can_restart_system
 from lib.maintenance_lock import maintenance_lock
-from lib.proxmox_vm_restart import pending_vm_restart, request_vm_restart
+from lib.proxmox_vm_restart import pending_vm_restart, request_vm_restart, request_vm_shutdown
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
 from lib.validators import validate_host, validate_username
@@ -38,6 +38,23 @@ sys.path.insert(0, "/opt/basaltwater")
 from lib.setup_reboot import _restart_local_proxmox
 raise SystemExit(_restart_local_proxmox())
 """
+
+
+def shutdown_after_setup(config: SetupConfig) -> int:
+    """Shut down a provisioned QEMU VM after successful setup."""
+    if not config.hosted_node or config.machine_type != "vm":
+        print("Error: --shutdown requires a provisioned QEMU VM (--provision-on)")
+        return 1
+    if config.dry_run:
+        print(f"[DRY RUN] Would gracefully shut down VM {config.host} through Proxmox")
+        return 0
+    try:
+        request_vm_shutdown(config)
+    except (CommandTimeoutError, OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        print(f"Setup completed, but VM shutdown failed: {exc}")
+        return 1
+    print(f"  ✓ VM {config.host} is shut down")
+    return 0
 
 
 def _local_restart_status() -> str:
