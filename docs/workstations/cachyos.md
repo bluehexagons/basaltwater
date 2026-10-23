@@ -442,8 +442,15 @@ basaltw setup agent_cachyos localhost --web-interface t3code
 systemctl --user status basaltwater-cachyos-t3.service
 ```
 
-The runtime is under `~/.local/share/basaltwater/cachyos-t3/releases`, and the
-unit is `~/.config/systemd/user/basaltwater-cachyos-t3.service`. The stable
+The unit is `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/basaltwater-cachyos-t3.service`,
+matching systemd's user-unit lookup. A custom `XDG_CONFIG_HOME` must be absolute,
+without parent traversal. Setup rejects symlinked paths and config/unit directories
+or unit files owned by another user. If a T3 unit remains in the default
+`~/.config/systemd/user` directory after changing `XDG_CONFIG_HOME`, setup stops
+before changing services. Resolve that installation using its original configuration
+before retrying; setup does not migrate it automatically.
+
+The runtime is under `~/.local/share/basaltwater/cachyos-t3/releases`. The stable
 `~/.local/share/basaltwater/cachyos-t3/bin/t3` link selects the current release
 for pairing and Connect commands. T3 0.1.2's npm package downloads a standalone
 archive on first use. Setup confines that download to the candidate release,

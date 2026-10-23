@@ -99,9 +99,12 @@ class T3InstallTests(unittest.TestCase):
 
     def system_command(self, argv, **kwargs):
         self.events.append(("system", argv))
+        # Model systemd's lookup independently of the installer's destination.
+        config_root = Path(os.environ.get("XDG_CONFIG_HOME") or self.home / ".config")
+        lookup_unit = config_root / "systemd/user" / t3.T3_SERVICE
         if argv[:3] == ["systemctl", "--user", "show"]:
-            present = argv[3] == t3.T3_SERVICE and self.unit.exists()
-            output = ("LoadState=loaded\nFragmentPath=" + str(self.unit) + "\n" if present else
+            present = argv[3] == t3.T3_SERVICE and lookup_unit.exists()
+            output = ("LoadState=loaded\nFragmentPath=" + str(lookup_unit) + "\n" if present else
                       "LoadState=not-found\nFragmentPath=\n")
             output += "DropInPaths=\nActiveState=" + ("active" if present and self.active else "inactive") + "\n"
             return subprocess.CompletedProcess(argv, 0, output, "")
@@ -128,10 +131,12 @@ class T3InstallTests(unittest.TestCase):
         elif "is-enabled" in argv:
             code = 0 if self.enabled else 1
         elif "start" in argv:
+            self.assertTrue(lookup_unit.is_file(), "systemd cannot find the unit by basename")
             self.active = True
         elif "stop" in argv:
             self.active = False
         elif "enable" in argv:
+            self.assertTrue(lookup_unit.is_file(), "systemd cannot find the unit by basename")
             self.enabled = True
         elif "disable" in argv:
             self.enabled = False
@@ -185,6 +190,139 @@ class T3InstallTests(unittest.TestCase):
         self.assertLess(native, verify)
         self.assertLess(verify, start)
         self.assertFalse((self.prefix / ".activation").exists())
+
+    def test_custom_config_root_activates_updates_and_switches_to_desktop(self):
+        default_unit = self.unit
+        root = self.home / "custom config"
+        self.unit = root / "systemd/user" / t3.T3_SERVICE
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}):
+            t3.preflight(self.config)
+            self.assertFalse(root.exists())
+            t3.install(self.config)
+            first = self.binary.resolve()
+            self.assertTrue(self.unit.is_file())
+            self.assertTrue(self.active)
+            self.assertTrue(self.enabled)
+            self.assertFalse(default_unit.exists())
+            t3.install(self.config)
+            self.assertNotEqual(self.binary.resolve(), first)
+            t3.install_desktop(self.desktop_config())
+            self.assertFalse(self.active)
+            self.assertFalse(self.enabled)
+            self.assertTrue((root / "autostart" / desktop.AUTOSTART_NAME).is_file())
+        self.assertFalse(default_unit.exists())
+
+    def test_custom_config_root_rolls_back_the_same_unit(self):
+        root = self.home / "custom"
+        self.unit = root / "systemd/user" / t3.T3_SERVICE
+        target, content = self.legacy()
+        self.ui.side_effect = RuntimeError("UI fixture failure")
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}), \
+                self.assertRaisesRegex(RuntimeError, "UI fixture failure"):
+            t3.install(self.config)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertFalse((self.home / ".config").exists())
+
+    def assert_path_rejected_before_commands(self, error, message):
+        for operation, config in ((t3.preflight, self.config), (t3.install, self.config),
+                                  (t3.install_desktop, self.desktop_config())):
+            with self.subTest(operation=operation.__name__), self.assertRaisesRegex(error, message):
+                operation(config)
+        self.system_run.assert_not_called()
+        self.user_run.assert_not_called()
+
+    def test_relative_traversal_and_control_character_config_roots_are_rejected(self):
+        for configured in ("relative", "../relative", str(self.home / "child/../config"),
+                           str(self.home / "bad\nconfig")):
+            with self.subTest(configured=configured), \
+                    patch.dict(os.environ, {"XDG_CONFIG_HOME": configured}):
+                self.assert_path_rejected_before_commands(ValueError, "path|Path")
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_unit_path_rejects_symlinked_directories_and_unit_files(self):
+        outside = self.home / "outside"
+        outside.mkdir()
+        root = self.home / "custom"
+        for relative in (".", "systemd", "systemd/user", "systemd/user/" + t3.T3_SERVICE):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(outside)
+            with self.subTest(relative=relative), patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}):
+                self.assert_path_rejected_before_commands(ValueError, "Unsafe T3 user-unit")
+            self.assertTrue(path.is_symlink())
+            path.unlink()
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_unit_path_rejects_foreign_owned_config_directories_and_unit(self):
+        root = self.home / "custom"
+        unit = root / "systemd/user" / t3.T3_SERVICE
+        unit.parent.mkdir(parents=True)
+        unit.write_text(t3._MARKER + "\n")
+        original_lstat = Path.lstat
+        for foreign in (root, root / "systemd", unit.parent, unit):
+            def lstat(path, *args, **kwargs):
+                info = original_lstat(path, *args, **kwargs)
+                if path == foreign:
+                    fields = list(info)
+                    fields[4] = os.getuid() + 1
+                    return os.stat_result(fields)
+                return info
+            with self.subTest(foreign=foreign), patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}), \
+                    patch.object(Path, "lstat", lstat):
+                self.assert_path_rejected_before_commands(ValueError, "ownership")
+        self.assertEqual(unit.read_text(), t3._MARKER + "\n")
+
+    def test_unit_path_rejects_wrong_file_types(self):
+        root = self.home / "custom"
+        for relative in (".", "systemd", "systemd/user"):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("personal file\n")
+            with self.subTest(relative=relative), patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}):
+                self.assert_path_rejected_before_commands(ValueError, "Unsafe T3 user-unit directory")
+            self.assertEqual(path.read_text(), "personal file\n")
+            path.unlink()
+        unit = root / "systemd/user" / t3.T3_SERVICE
+        unit.mkdir(parents=True)
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}):
+            self.assert_path_rejected_before_commands(ValueError, "Unsafe T3 user-unit file")
+        self.assertTrue(unit.is_dir())
+
+    def test_changed_config_root_refuses_old_default_units_without_stopping_them(self):
+        _target, content = self.legacy()
+        root = self.home / "custom"
+        for name in (t3.T3_SERVICE, "t3code.service"):
+            previous = self.unit.with_name(name)
+            self.unit.rename(previous)
+            with self.subTest(name=name), patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}):
+                self.assert_path_rejected_before_commands(RuntimeError, "original configuration")
+            self.assertEqual(previous.read_text(), content)
+            previous.rename(self.unit)
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertFalse(root.exists())
+
+    def test_custom_root_does_not_adopt_an_effective_unit_from_another_root(self):
+        root = self.home / "custom"
+        original = self.system_command
+        def command(argv, **kwargs):
+            if argv[:4] == ["systemctl", "--user", "show", t3.T3_SERVICE]:
+                return subprocess.CompletedProcess(argv, 0,
+                    "LoadState=loaded\nFragmentPath=/other/config/systemd/user/" + t3.T3_SERVICE +
+                    "\nDropInPaths=\nActiveState=active\n", "")
+            return original(argv, **kwargs)
+        self.system_run.side_effect = command
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}):
+            for operation, config in ((t3.install, self.config), (t3.install_desktop, self.desktop_config())):
+                with self.assertRaisesRegex(RuntimeError, "overridden"):
+                    operation(config)
+        self.user_run.assert_not_called()
+        self.assertTrue(all(call.args[0][:3] == ["systemctl", "--user", "show"]
+                            for call in self.system_run.call_args_list))
+        self.assertFalse(root.exists())
 
     def test_reruns_preserve_previous_release_and_prune_only_older_managed_ones(self):
         target, _ = self.legacy()

@@ -273,6 +273,64 @@ class CachyOSSetupTests(unittest.TestCase):
                 steps.install_cachyos_skills(self.config())
             self.assertIn(steps.CACHYOS_T3_SKILL, install.call_args.args[2])
 
+    def test_t3_skill_detection_uses_the_effective_unit_config_root(self):
+        for configured in (None, "", "custom config"):
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary)
+                root = home / configured if configured else home / ".config"
+                unit = root / "systemd/user" / steps.T3_SERVICE
+                unit.parent.mkdir(parents=True)
+                environment = dict(os.environ)
+                environment.pop("XDG_CONFIG_HOME", None)
+                if configured is not None:
+                    environment["XDG_CONFIG_HOME"] = str(root) if configured else ""
+                with patch.dict(os.environ, environment, clear=True), \
+                        patch.object(steps, "_home", return_value=home), \
+                        patch.object(steps, "run") as run, \
+                        patch.object(steps, "install_managed_agent_skills") as install:
+                    unit.write_text(steps._MARKER + "\n")
+                    steps.install_cachyos_skills(self.config())
+                    self.assertIn(steps.CACHYOS_T3_SKILL, install.call_args.args[2])
+                    unit.write_text("personal service\n")
+                    steps.install_cachyos_skills(self.config())
+                    self.assertNotIn(steps.CACHYOS_T3_SKILL, install.call_args.args[2])
+                    unit.unlink()
+                    if configured:
+                        default = home / ".config/systemd/user" / steps.T3_SERVICE
+                        default.parent.mkdir(parents=True)
+                        default.write_text(steps._MARKER + "\n")
+                    steps.install_cachyos_skills(self.config())
+                    self.assertNotIn(steps.CACHYOS_T3_SKILL, install.call_args.args[2])
+                    run.assert_not_called()
+
+    def test_t3_skill_detection_rejects_unsafe_unit_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            root = home / "custom"
+            with patch.object(steps, "_home", return_value=home), \
+                    patch.object(steps, "run") as run, \
+                    patch.object(steps, "install_managed_agent_skills") as install:
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": "relative"}), \
+                        self.assertRaisesRegex(ValueError, "absolute"):
+                    steps.install_cachyos_skills(self.config())
+                unit = root / "systemd/user" / steps.T3_SERVICE
+                unit.parent.mkdir(parents=True)
+                outside = home / "personal.service"
+                outside.write_text(steps._MARKER + "\n")
+                unit.symlink_to(outside)
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}), \
+                        self.assertRaisesRegex(ValueError, "Unsafe T3 user-unit file"):
+                    steps.install_cachyos_skills(self.config())
+                unit.unlink()
+                unit.write_text(steps._MARKER + "\n")
+                with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root)}), \
+                        patch.object(steps.os, "getuid", return_value=os.getuid() + 1), \
+                        self.assertRaisesRegex(ValueError, "ownership"):
+                    steps.install_cachyos_skills(self.config())
+                install.assert_not_called()
+                run.assert_not_called()
+                self.assertEqual(outside.read_text(), steps._MARKER + "\n")
+
     def test_native_graphics_flags_round_trip_and_reject_other_profiles(self):
         config = self.config(
             "--gaming", "--sunshine", "--moonlight", "--obs", "--blender",

@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 
 from common.cachyos_steps import (
-    T3_SERVICE, _MARKER, _directory, _home, _tool_path, _user_run, _write_managed,
+    T3_SERVICE, _MARKER, _directory, _home, _tool_path, _user_run, _user_unit_path, _write_managed,
 )
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
@@ -84,9 +84,18 @@ def _protect_desktop_data(home: Path) -> None:
 
 
 def _check_managed_paths(home: Path) -> tuple[Path, Path]:
+    unit = _user_unit_path(home)
+    default_directory = home / ".config/systemd/user"
+    if unit.parent != default_directory:
+        for name in (T3_SERVICE, "t3code.service"):
+            previous = default_directory / name
+            if previous.exists() or previous.is_symlink():
+                raise RuntimeError(
+                    f"T3 user service remains at {previous}; resolve it using its original "
+                    "configuration before changing XDG_CONFIG_HOME"
+                )
     desktop.autostart_path(home)
     prefix = home / ".local/share/basaltwater/cachyos-t3"
-    unit = home / ".config/systemd/user" / T3_SERVICE
     marker = prefix / "desktop-mode"
     for path in (prefix, unit.parent):
         validate_filesystem_path(str(path))
