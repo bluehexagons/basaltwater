@@ -721,6 +721,9 @@ class TestAgentDoctor(unittest.TestCase):
                 patch('lib.agent_cli._tool_path', return_value=None),
                 patch('lib.agent_cli._run_check', side_effect=run_check),
                 patch(
+                    'lib.agent_cli.subprocess.run', side_effect=run_check,
+                ) as stop,
+                patch(
                     'lib.agent_cli._t3_native_runtime_healthy',
                     return_value=False,
                 ),
@@ -733,6 +736,11 @@ class TestAgentDoctor(unittest.TestCase):
             ):
                 result = inspect_t3code(home, fix=True)
 
+        stop.assert_called_once()
+        self.assertEqual(
+            stop.call_args.args[0],
+            ['systemctl', '--user', 'stop', 't3code.service'],
+        )
         repair.assert_called_once()
         self.assertTrue(result['checks']['native_runtime'])
         self.assertIn('rebuilt T3 Code native runtime', result['fixes'])
