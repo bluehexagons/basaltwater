@@ -59,6 +59,16 @@ Run links use `GET /agents?run=RUN_ID` and an in-page anchor to open the selecte
 report; an evicted record produces a notice. IDs use the same strict
 32-character format as other task views. Opening a report changes no state.
 
+On a `server_proxmox` host, the panel is an optional host-monitoring dashboard.
+It includes the existing host metrics, services, mounted storage, scheduled
+jobs, and service diagnostics, plus diagnostics for installed Proxmox services
+and the native firewall. Proxmox service diagnostics cover `pveproxy`,
+`pvedaemon`, `pvestatd`, `pve-cluster`, and `corosync` when installed. The
+firewall view inspects native Proxmox firewall state and diagnostics. These
+views are for the host only: the panel does not manage VMs, containers, cluster
+membership, or Proxmox configuration, and it does not use a privileged Proxmox
+API or a guest-operation broker.
+
 ## Notification ingest
 
 The receiver is opt-in, HTTPS-only, and available at
@@ -471,9 +481,10 @@ The panel uses Basic Auth, request throttling, an
 `basaltwater-web-panel` fail2ban jail, a Unix-socket-only application listener,
 CSRF tokens for state-changing forms, no-store responses, and separate service
 group access for the socket, bearer token, audit snapshot, and notification
-history. It supports server and workstation profiles, but not `server_proxmox`.
-It normally runs as the setup user. A root-managed setup instead uses the
-locked `basaltwater-web-panel` service account.
+history. It supports server and workstation profiles, including optional
+host-only monitoring on `server_proxmox`. On a root-managed setup, it runs as
+the locked `basaltwater-web-panel` service account. Proxmox's `/etc/pve` and
+`/var/lib/pve-cluster` paths are hidden from the panel and its Nginx service.
 
 The panel renders saved configured access and discovers live `basaltwater-web`
 forwards and static sites. HomeBox status is a loopback readiness probe only;

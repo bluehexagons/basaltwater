@@ -40,7 +40,8 @@ Set up, register, and inspect the host:
 ```bash
 basaltw setup server_proxmox 10.0.0.10 root \
   --key ~/.ssh/proxmox_ed25519 \
-  --name pve1
+  --name pve1 \
+  --web-panel 9443 --ssl
 
 basaltw proxmox probe pve1
 basaltw proxmox top pve1
@@ -62,6 +63,45 @@ guest-data migration.
 
 The matching `.pub` file must sit beside the private key, and the Proxmox
 `root` account must accept that key.
+
+## Optional host web panel
+
+Add `--web-panel` to install the authenticated Basaltwater panel on this
+Proxmox host. It is optional and provides host monitoring only: host metrics,
+services, mounted storage, scheduled jobs, and service diagnostics, including
+installed Proxmox services and native firewall diagnostics. It does not manage
+VMs, containers, cluster membership, or Proxmox configuration. It uses neither
+a privileged Proxmox API nor a guest-operation broker. See the [web panel
+reference](../services/web-panel-reference.md#access-controls-and-scope).
+
+The port is optional: without `--ssl`, it defaults to 80; with `--ssl`, it
+defaults to 443. Choose another available panel port with
+`--web-panel PORT`; port 8006 is reserved for the native Proxmox UI and is
+rejected for the panel. The Proxmox UI remains on 8006 and appears as a link in
+the dashboard. For example, the setup command above serves the panel over TLS
+on 9443.
+
+TLS uses a separate Basaltwater certificate and CA, never Proxmox's
+`/etc/pve` certificate. Trust that CA on clients as needed using [Client CA
+trust](../services/client-ca-trust.md). This Proxmox installation path only
+sets up the panel certificate; it does not configure static-site publishing or
+a web-forward helper, and it does not add a listener on port 8443. When TLS
+certificate issuance needs HTTP validation, allow inbound TCP port 80 as well
+as the selected panel port.
+
+For `server_proxmox`, setup adds only node-owned native firewall allow rules
+for the panel port and, when TLS is selected, CA HTTP validation on port 80.
+When effective access sources are supplied with `--access-source` or
+`--lan-access`, the panel rules use those sources; otherwise the panel rules
+are unrestricted. This does not enable the Proxmox firewall, select or switch
+its backend, or require any other firewall enablement. Existing cluster, node,
+upstream, or operator `DROP` policy can still block connections, so verify
+effective access through your existing firewall policy before relying on the
+panel. Other Proxmox UI and SSH firewall policy remains operator-managed.
+
+Remove the panel with `--no-web-panel`. This removes only the Basaltwater-owned
+panel firewall rules and panel installation; it leaves other firewall rules,
+the native Proxmox UI, and Proxmox configuration in place.
 
 New VM provisioning uses an SSH identity's `.pub` file for cloud-init. The key
 is installed for both root and the configured guest setup username. Cloud-init
