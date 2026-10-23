@@ -537,13 +537,118 @@ class T3CodeWebTest(unittest.TestCase):
         self.assertIn("forward add t3code", command)
         self.assertIn("--max-body-size 50m", command)
 
-    def test_non_loopback_bind_requires_private_source(self) -> None:
-        config = self._config(web_interface_host="0.0.0.0", web_interface_sources=None)
-        with self.assertRaisesRegex(
-            ValueError,
-            "requires --access-source or --web-interface-source",
+    def test_https_gateway_uses_literal_loopback_for_both_routes(self) -> None:
+        for host, target in (
+            ("127.0.0.1", "127.0.0.1"), ("127.0.0.2", "127.0.0.2"),
+            ("::1", "[::1]"), ("0:0:0:0:0:0:0:1", "[::1]"),
+            ("0.0.0.0", "127.0.0.1"), ("::", "[::1]"),
         ):
+            with (
+                self.subTest(host=host),
+                patch("common.t3code_steps.os.geteuid", return_value=0),
+                patch("common.t3code_steps.os.path.isfile", return_value=True),
+                patch("common.godot_web_steps.configure_internal_web_host"),
+                patch("common.godot_web_steps.identities_for_config", return_value=["target"]),
+                patch("common.t3code_steps.open_loopback") as probe,
+                patch("common.t3code_steps.run", return_value=SimpleNamespace(
+                    returncode=0, stdout=json.dumps({"listen": 8444, "url": "https://target:8444/"}),
+                    stderr="",
+                )) as commands,
+            ):
+                _configure_t3_https(self._config(web_interface_host=host), 3773, 3774)
+                for call, name, port in zip(
+                    commands.call_args_list, ("t3code", "t3code-pairing"), (3773, 3774),
+                ):
+                    arguments = shlex.split(call.args[0])
+                    self.assertIn(name, arguments)
+                    self.assertEqual(arguments[arguments.index("--to") + 1], f"{target}:{port}")
+                    self.assertIn(f"--to {shlex.quote(f'{target}:{port}')} ", call.args[0])
+                self.assertEqual(commands.call_count, 2)
+                probe.assert_not_called()
+
+    def test_localhost_gateway_selects_each_listener_family_including_protected_pairing(self) -> None:
+        from urllib.error import HTTPError
+
+        for t3_host, pairing_host in (("127.0.0.1", "::1"), ("::1", "127.0.0.1")):
+            for status in (200, 301, 401):
+                with self.subTest(t3=t3_host, pairing=pairing_host, status=status):
+                    response = MagicMock()
+                    response.__enter__.return_value.status = 200
+                    expected = {
+                        f"http://{t3_host if ':' not in t3_host else '[' + t3_host + ']'}:3773/",
+                        f"http://{pairing_host if ':' not in pairing_host else '[' + pairing_host + ']'}:3774/",
+                    }
+
+                    def probe(url, **_kwargs):
+                        if url not in expected:
+                            raise OSError("No listener")
+                        if url.endswith(":3774/") and status != 200:
+                            raise HTTPError(url, status, "protected portal", {}, None)
+                        return response
+
+                    with (
+                        patch("common.t3code_steps.os.geteuid", return_value=0),
+                        patch("common.t3code_steps.os.path.isfile", return_value=True),
+                        patch("common.godot_web_steps.configure_internal_web_host"),
+                        patch("common.godot_web_steps.identities_for_config", return_value=["target"]),
+                        patch("common.t3code_steps.open_loopback", side_effect=probe),
+                        patch("common.t3code_steps.run", return_value=SimpleNamespace(
+                            returncode=0, stdout=json.dumps({"listen": 8444, "url": "https://target:8444/"}),
+                            stderr="",
+                        )) as commands,
+                    ):
+                        _configure_t3_https(self._config(web_interface_host="LOCALHOST"), 3773, 3774)
+                    for call, host, port in zip(commands.call_args_list, (t3_host, pairing_host), (3773, 3774)):
+                        target = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+                        self.assertIn(f"--to {shlex.quote(target)} ", call.args[0])
+
+    def test_t3_bind_validation_rejects_specific_nonloopback_and_cidr_addresses(self) -> None:
+        for host in ("192.168.1.2", "fd00::2", "8.8.8.8", "127.0.0.1/32"):
+            with self.subTest(host=host), self.assertRaises(ValueError) as raised:
+                validate_web_interface_settings(self._config(web_interface_host=host))
+            if "/" not in host:
+                self.assertIn("0.0.0.0 or ::", str(raised.exception))
+                self.assertIn("--access-source", str(raised.exception))
+
+    def test_t3_bind_validation_accepts_all_literal_loopbacks_and_localhost(self) -> None:
+        for host in ("127.0.0.1", "127.0.0.2", "127.255.255.254", "::1", "LOCALHOST"):
+            with self.subTest(host=host):
+                validate_web_interface_settings(self._config(
+                    web_interface_host=host, web_interface_sources=None,
+                ))
+
+    def test_t3_bind_restriction_does_not_apply_to_other_web_interfaces(self) -> None:
+        config = SimpleNamespace(
+            web_interfaces=["another-interface"], web_interface_host="192.168.1.2",
+            web_interface_sources=["192.168.1.0/24"],
+        )
+        with patch("lib.config.WEB_INTERFACES", ("t3code", "another-interface")):
             validate_web_interface_settings(config)
+
+    def test_unsupported_t3_bind_is_rejected_before_target_operations(self) -> None:
+        with (
+            patch("common.t3code_steps._user_home") as home,
+            patch("common.t3code_steps._configure_firewall") as firewall,
+            patch("common.t3code_steps._t3_reconciliation_path") as lock,
+            patch("common.t3code_steps.install_package") as packages,
+        ):
+            with self.assertRaisesRegex(ValueError, "specific non-loopback"):
+                install_t3code_web(self._config(web_interface_host="192.168.1.2"))
+            with self.assertRaisesRegex(ValueError, "specific non-loopback"):
+                _install_t3_service("/unused", "agent", 1000, 1000, "/unused", "fd00::2", 3773)
+        for operation in (home, firewall, lock, packages):
+            operation.assert_not_called()
+
+    def test_non_loopback_bind_requires_private_source(self) -> None:
+        for host in ("0.0.0.0", "::"):
+            with self.subTest(host=host):
+                config = self._config(web_interface_host=host, web_interface_sources=None)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "requires --access-source or --web-interface-source",
+                ):
+                    validate_web_interface_settings(config)
+                validate_web_interface_settings(self._config(web_interface_host=host))
 
     def test_loopback_bind_rejects_redundant_source_allowlist(self) -> None:
         config = self._config(web_interface_host="127.0.0.1")
@@ -1290,6 +1395,45 @@ class T3CodeWebTest(unittest.TestCase):
                 commands,
             )
 
+    def test_legacy_stop_failure_aborts_before_any_runtime_repair_or_activation(self) -> None:
+        for times_out in (False, True):
+            with (
+                self.subTest(times_out=times_out),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+                legacy = os.path.join(home, "legacy.service")
+                with open(legacy, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# legacy fixture\n")
+                candidate = stack.enter_context(patch(
+                    "common.t3code_steps._retained_failed_t3_binary",
+                    return_value=("0.1.3", os.path.join(home, "candidate")),
+                ))
+                commands = stack.enter_context(patch(
+                    "common.t3code_steps.run",
+                    side_effect=CommandTimeoutError("systemctl stop", 60) if times_out else None,
+                    return_value=SimpleNamespace(
+                        returncode=7, stdout="context", stderr="stop refused\n" + "x" * 5000 + "\ntail",
+                    ),
+                ))
+                with self.assertRaisesRegex(RuntimeError, "stop.*legacy|stop timed out") as raised:
+                    _install_t3_service(*state.arguments, refresh=True)
+                self.assertLess(len(str(raised.exception)), 2700)
+                if not times_out:
+                    for text in ("exit code 7", "stop refused", "output omitted", "tail", "context"):
+                        self.assertIn(text, str(raised.exception))
+                commands.assert_called_once_with(
+                    ["systemctl", "stop", "basaltwater-t3code.service"],
+                    check=False, capture_output=True, timeout=60,
+                )
+                for operation in (candidate, state.native, state.repair, state.updater, state.readiness):
+                    operation.assert_not_called()
+                actions = [call.args[2] for call in state.manager.call_args_list]
+                self.assertFalse(set(actions) & {"stop", "start", "restart", "enable"})
+                self.assertTrue(os.path.isfile(legacy))
+                self.assertTrue(os.path.isfile(state.marker))
+
     def test_incomplete_native_runtime_is_rebuilt_before_restart(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             workspace = os.path.join(home, "repos")
@@ -1889,6 +2033,36 @@ class T3CodeWebTest(unittest.TestCase):
                     self.assertEqual(
                         _t3_local_endpoint_reachable("0.0.0.0", 3773), status == 200
                     )
+
+    def test_endpoint_readiness_uses_only_literal_loopbacks(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        for host, target in (
+            ("127.0.0.2", "127.0.0.2"), ("0.0.0.0", "127.0.0.1"),
+            ("::", "[::1]"), ("[::]", "[::1]"), ("::1", "[::1]"),
+            ("localhost", "127.0.0.1"),
+        ):
+            with self.subTest(host=host), patch(
+                "common.t3code_steps.open_loopback", return_value=response,
+            ) as probe:
+                self.assertTrue(_t3_local_endpoint_reachable(host, 3773))
+                probe.assert_called_once_with(f"http://{target}:3773/", timeout=2)
+
+    def test_localhost_readiness_falls_back_to_ipv6_without_accepting_http_errors(self) -> None:
+        from urllib.error import HTTPError
+
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        for first_error in (OSError("no IPv4"), HTTPError("http://127.0.0.1:3773/", 401, "auth", {}, None)):
+            with self.subTest(error=first_error), patch(
+                "common.t3code_steps.open_loopback", side_effect=[first_error, response],
+            ) as probe:
+                self.assertTrue(_t3_local_endpoint_reachable("LOCALHOST", 3773))
+                self.assertEqual([call.args[0] for call in probe.call_args_list], [
+                    "http://127.0.0.1:3773/", "http://[::1]:3773/",
+                ])
+        with patch("common.t3code_steps.open_loopback", side_effect=OSError("not listening")):
+            self.assertFalse(_t3_local_endpoint_reachable("localhost", 3773))
 
     def test_service_invocation_requires_a_valid_systemd_id(self) -> None:
         for code, output, expected in (
