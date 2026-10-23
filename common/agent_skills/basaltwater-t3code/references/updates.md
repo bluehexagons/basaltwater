@@ -31,7 +31,7 @@ env -u npm_config_dangerously_allow_all_scripts \
     -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
     t3 service install'
-basaltw agent doctor --capability t3code --fix
+basaltw agent doctor --capability t3code --fix --wait-for-t3-startup
 ```
 
 If the client says the update requires a newer T3 Code service launcher,
@@ -56,13 +56,14 @@ through unchanged.
 If an older npm-backed update rolled back with a native-module load error,
 rerun the VM's Basaltwater setup. It repairs the retained candidate without
 stopping the working active version; then retry **Update server**.
-If a retained candidate cannot be repaired, setup warns and continues with the
-upstream updater and active-runtime checks instead of letting an obsolete
-candidate block the current release. Validation of the active runtime and
+If a retained candidate cannot be probed or repaired, including command timeouts,
+setup warns and continues with the upstream updater and active-runtime checks
+instead of letting an obsolete candidate block the current release. Validation of the active runtime and
 service remains required. The doctor repairs and verifies npm-backed active
-runtimes. Standalone archives are checked
-with their embedded Node, without requiring host Node for the probe. If that
-check fails, restore the matching upstream release archive and rerun setup;
+runtimes only after a successful service stop; a failed or timed-out stop skips
+repair and reports unhealthy readiness with its diagnostic. Standalone archives
+are checked with their embedded Node, without requiring host Node for the probe.
+If that check fails, restore the matching upstream release archive and rerun setup;
 host npm must not rebuild the archive against a different Node runtime.
 `basaltw agent update` remains an agent-only updater; setup reruns update T3
 and selected Codex, Claude Code, and OpenCode installations as well.
@@ -74,6 +75,12 @@ and stops waiting early if systemd reports a failed service. It leaves a newly
 updated service running rather than restarting its migration a second time,
 including same-version launcher repairs. Readiness requires HTTP 200 and three
 checks from the same systemd service invocation; a restart resets the count.
+An updater may already have restarted the service even when it reports failure;
+setup checks the invocation before deciding another restart is needed. Pending
+configuration reconciliation survives interrupted setup and is completed on retry.
+The opt-in doctor flag `--wait-for-t3-startup` allows the same startup window
+without restarting an active migration. The web panel uses it after updating;
+normal doctor checks remain quick.
 If an older Basaltwater setup timed out, inspect the boot log and service state
 first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.

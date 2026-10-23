@@ -122,8 +122,11 @@ do not imply that Basaltwater installed, authenticated, or qualified them.
 The 0.1.2 integration review verified the unchanged protocol/runtime layout and
 exercised the published Linux x64 archive in an isolated home: managed wrapper
 selection, embedded native-module loading, fresh HTTP startup, and issuance of
-all 16 administrative pairing scopes. These checks do not qualify provider
-turns, desktop/mobile clients, Connect, or the complete live matrix below.
+all 16 administrative pairing scopes. A separate isolated 0.1.1-to-0.1.2 smoke
+retained seeded project metadata and passed database integrity, post-upgrade
+pairing, and host-side thread listing; both versions applied 67 SQL migrations.
+These checks do not qualify provider turns, desktop/mobile clients, Connect,
+or the complete live matrix below.
 
 OpenCode 2 uses the separate `@opencode/cli` package and converts OpenCode's
 shared database on first run. Do not install/run 1.x and 2.x side by side or
@@ -318,7 +321,7 @@ env -u npm_config_dangerously_allow_all_scripts \
     -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
     t3 service install'
-basaltw agent doctor --capability t3code --fix
+basaltw agent doctor --capability t3code --fix --wait-for-t3-startup
 ```
 
 The direct command and Basaltwater setup operate on the same upstream-managed
@@ -333,6 +336,15 @@ was retained instead of updated, and continues setup. A first install,
 a damaged runtime, or a failed readiness check remains fatal. Updater failures
 include bounded diagnostics from both the beginning and end of npm's output so
 an earlier npm error is not hidden by a later successful native-build message.
+Even an updater that reports failure may already have started a new service
+invocation; setup preserves that migration while validating the retained runtime.
+Pending managed configuration changes survive interrupted reconciliation and
+are applied on a later setup, without restarting an invocation that already
+loaded them.
+Setup records this checkpoint in the private
+`~/.config/systemd/user/.basaltwater-t3-reconcile.json` file and removes it after
+verified application. Its adjacent `.lock` file remains to serialize setup;
+rerunning setup completes pending reconciliation automatically.
 
 For older npm-backed runtimes, keep the npm settings scoped to the trusted T3
 updater. npm 12 blocks native dependency scripts by default, but inherited `allow-scripts` or
@@ -357,18 +369,22 @@ produced an incomplete candidate and T3 rolled back, setup identifies the retain
 and rebuilds its two trusted native dependencies without stopping the active
 working version. Then retry **Update server** in the client. A refresh setup
 performs the same repair before invoking the upstream updater.
-If that retained candidate cannot be repaired, setup warns and continues with
-the upstream updater and active-runtime checks. An obsolete failed candidate
-does not block installing the current release or retaining a healthy service;
+If that retained candidate cannot be probed or repaired, including a command
+timeout, setup warns and continues with the upstream updater and active-runtime
+checks. An obsolete failed candidate does not block installing the current
+release or retaining a healthy service;
 failure to validate the selected active runtime still stops setup.
+Setup bounds each native probe to 30 seconds and each native rebuild to
+10 minutes.
 
 Older npm-backed T3 runtimes need a local `node-pty` build, so Basaltwater also
 selects the `gcc` and `g++` provided by `build-essential` for setup-time and
 service-initiated updates. This prevents a stale inherited `CC` or `CXX` value
 from selecting a missing versioned compiler. Basaltwater validates the native
-module, rebuilds an incomplete npm-backed active runtime, and waits for several
-consecutive healthy service and HTTP 200 checks from the same systemd service
-invocation before setup succeeds. A restart resets those checks. Readiness
+module, rebuilds an incomplete npm-backed active runtime only after successfully
+stopping the service, and waits for several consecutive healthy service and
+HTTP 200 checks from the same systemd service invocation before setup succeeds.
+A restart resets those checks. Readiness
 allows up to 30 minutes, matching the upstream launcher's preparation window:
 copying an existing database, migrating it, and optimizing SQLite can take
 minutes. Setup prints progress every 30 seconds and fails promptly if systemd
@@ -386,6 +402,12 @@ basaltw agent doctor --capability t3code --fix
 
 Doctor results establish service readiness only; they do not establish
 connected-client presentation, provider sign-in, or remote browser reachability.
+Use `--wait-for-t3-startup` after an update to allow the same 30-minute startup
+window; it checks for stable readiness without restarting an already active
+migration. The web panel uses this mode after updating T3 and budgets time for
+both the updater and startup. Ordinary doctor checks remain quick. A failed or
+timed-out stop skips native repair and leaves readiness unhealthy with the stop
+diagnostic.
 After updates and reboots, record readiness as the target account with
 `basaltw agent doctor --capability t3code --capability host --record`. No
 automatic post-boot readiness audit runs.
