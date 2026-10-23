@@ -23,6 +23,7 @@ from common.t3code_steps import (
     _remove_t3_https,
     _temporary_t3_loginctl_shim,
     _t3_local_endpoint_reachable,
+    _t3_native_runtime_healthy,
     _t3_service_invocation,
     _wait_for_t3_service,
     _write_passthrough_wrapper,
@@ -30,7 +31,7 @@ from common.t3code_steps import (
     remove_device_pairing,
 )
 from lib.config import SetupConfig
-from lib.remote_utils import CommandExecutionError
+from lib.remote_utils import CommandExecutionError, CommandTimeoutError
 from lib.validation import validate_web_interface_settings
 from plugins.common import extend_agent_steps
 
@@ -114,6 +115,57 @@ class T3CodeWebTest(unittest.TestCase):
                 file_obj.write("#!/bin/sh\nexit 0\n")
             os.chmod(path, 0o755)
         return node_bin
+
+    def _service_fixture(self, home: str, stack: ExitStack) -> SimpleNamespace:
+        """Run real setup file reconciliation with all host operations mocked."""
+
+        workspace = os.path.join(home, "repos")
+        os.makedirs(workspace)
+        node_bin = self._write_node_tools(home)
+        binary = self._write_upstream_runtime(home, "0.1.2")
+        state = SimpleNamespace(
+            invocation="a" * 32,
+            arguments=(home, "agent", os.getuid(), os.getgid(), workspace, "127.0.0.1", 3773),
+            marker=os.path.join(home, ".config", "systemd", "user", ".basaltwater-t3-reconcile.json"),
+            node_bin=node_bin,
+            binary=binary,
+        )
+
+        def systemctl(_username, _uid, action, *_args):
+            if action == "restart":
+                state.invocation = f"{int(state.invocation or '0', 16) + 1:032x}"
+            elif action == "stop":
+                state.invocation = None
+            return SimpleNamespace(
+                returncode=0, stdout=state.invocation if action == "show" else "", stderr="",
+            )
+
+        state.systemctl = systemctl
+        stack.enter_context(patch("common.t3code_steps.install_package", return_value=True))
+        stack.enter_context(patch("common.t3code_steps._ensure_user_manager"))
+        stack.enter_context(patch("common.t3code_steps._node_bin_directory", return_value=node_bin))
+        stack.enter_context(patch("common.t3code_steps.shutil.which", return_value="/bin/true"))
+        stack.enter_context(patch("common.t3code_steps.os.chown"))
+        stack.enter_context(patch(
+            "common.t3code_steps.LEGACY_T3_SERVICE_FILE", os.path.join(home, "legacy.service"),
+        ))
+        stack.enter_context(patch(
+            "common.t3code_steps.run", side_effect=AssertionError("Unexpected host call"),
+        ))
+        state.manager = stack.enter_context(patch(
+            "common.t3code_steps._user_systemctl", side_effect=systemctl,
+        ))
+        state.updater = stack.enter_context(patch(
+            "common.t3code_steps._run_as_login_user",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ))
+        state.native = stack.enter_context(patch(
+            "common.t3code_steps._t3_native_runtime_healthy", return_value=True,
+        ))
+        state.repair = stack.enter_context(patch("common.t3code_steps._rebuild_t3_native_runtime"))
+        state.readiness = stack.enter_context(patch("common.t3code_steps._wait_for_t3_service"))
+        state.messages = stack.enter_context(patch("builtins.print"))
+        return state
 
     @staticmethod
     def _pairing_cleanup_paths(
@@ -947,9 +999,9 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertIn(f'exec {real_loginctl} "$@"', content)
 
     def test_same_version_refresh_restarts_only_when_updater_did_not(self) -> None:
-        for updater_restarts in (True, False):
+        for updater_code, updater_restarts in ((0, True), (0, False), (1, True), (1, False)):
             with (
-                self.subTest(updater_restarts=updater_restarts),
+                self.subTest(updater_code=updater_code, updater_restarts=updater_restarts),
                 tempfile.TemporaryDirectory() as home,
             ):
                 workspace = os.path.join(home, "repos")
@@ -964,7 +1016,7 @@ class T3CodeWebTest(unittest.TestCase):
                 def update(*_args, **_kwargs):
                     if updater_restarts:
                         invocation[0] = "b" * 32
-                    return completed
+                    return SimpleNamespace(returncode=updater_code, stdout="", stderr="updater output")
 
                 def systemctl(_username, _uid, action, *_args):
                     return SimpleNamespace(
@@ -984,7 +1036,7 @@ class T3CodeWebTest(unittest.TestCase):
                     patch(
                         "common.t3code_steps._t3_native_runtime_healthy", return_value=True
                     ),
-                    patch("common.t3code_steps._wait_for_t3_service"),
+                    patch("common.t3code_steps._wait_for_t3_service") as readiness,
                     patch(
                         "common.t3code_steps._user_systemctl", side_effect=systemctl
                     ) as manager,
@@ -1005,6 +1057,7 @@ class T3CodeWebTest(unittest.TestCase):
                 actions = [call.args[2] for call in manager.call_args_list]
                 self.assertIn("start" if updater_restarts else "restart", actions)
                 self.assertEqual("restart" in actions, not updater_restarts)
+                readiness.assert_called_once()
 
     def test_refresh_retains_valid_runtime_when_updater_fails(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -1109,6 +1162,9 @@ class T3CodeWebTest(unittest.TestCase):
                     return_value=update_failed,
                 ),
                 patch("common.t3code_steps.os.chown"),
+                patch("common.t3code_steps._user_systemctl", return_value=SimpleNamespace(
+                    returncode=0, stdout="", stderr="",
+                )),
                 patch(
                     "common.t3code_steps.LEGACY_T3_SERVICE_FILE",
                     os.path.join(home, "legacy.service"),
@@ -1281,6 +1337,313 @@ class T3CodeWebTest(unittest.TestCase):
             actions = [call.args[2] for call in systemctl.call_args_list]
             self.assertIn("stop", actions)
             self.assertIn("restart", actions)
+
+    def test_native_repair_requires_successful_stop_and_recovers_on_retry(self) -> None:
+        for times_out in (False, True):
+            with (
+                self.subTest(times_out=times_out),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+                state.native.return_value = False
+
+                def fail_stop(username, uid, action, *arguments):
+                    if action == "stop":
+                        if times_out:
+                            raise CommandTimeoutError("systemctl stop t3code", 10)
+                        return SimpleNamespace(returncode=1, stdout="", stderr="stop refused")
+                    return state.systemctl(username, uid, action, *arguments)
+
+                state.manager.side_effect = fail_stop
+                with self.assertRaisesRegex((RuntimeError, TimeoutError), "stop|timed out"):
+                    _install_t3_service(*state.arguments)
+                state.repair.assert_not_called()
+                state.readiness.assert_not_called()
+                self.assertTrue(os.path.isfile(state.marker))
+                self.assertFalse(any(
+                    "✓ T3 Code user service" in call.args[0]
+                    for call in state.messages.call_args_list
+                ))
+                actions = [call.args[2] for call in state.manager.call_args_list]
+                self.assertNotIn("restart", actions)
+                self.assertNotIn("start", actions)
+
+                state.manager.side_effect = state.systemctl
+                self.assertEqual(_install_t3_service(*state.arguments), state.binary)
+                state.repair.assert_called_once_with("agent", home, state.node_bin, state.binary)
+                state.readiness.assert_called_once()
+                self.assertFalse(os.path.exists(state.marker))
+
+    def test_optional_candidate_probe_and_repair_failures_allow_current_runtime_checks(self) -> None:
+        for phase, error in (
+            ("probe", RuntimeError("probe failed")),
+            ("probe", CommandTimeoutError("candidate probe", 10)),
+            ("repair", CommandTimeoutError("candidate repair", 10)),
+        ):
+            for updater_code in (0, 1):
+                with (
+                    self.subTest(phase=phase, error=type(error), updater_code=updater_code),
+                    tempfile.TemporaryDirectory() as home,
+                    ExitStack() as stack,
+                ):
+                    state = self._service_fixture(home, stack)
+                    candidate = os.path.join(home, "retained", "t3")
+                    stack.enter_context(patch(
+                        "common.t3code_steps._retained_failed_t3_binary",
+                        return_value=("0.1.1", candidate),
+                    ))
+
+                    def probe(_user, _home, _node, binary):
+                        if binary == candidate:
+                            if phase == "probe":
+                                raise error
+                            return False
+                        return True
+
+                    state.native.side_effect = probe
+                    state.repair.side_effect = error
+                    state.updater.return_value = SimpleNamespace(
+                        returncode=updater_code, stdout="", stderr="update unavailable",
+                    )
+                    self.assertEqual(
+                        _install_t3_service(*state.arguments, refresh=True), state.binary,
+                    )
+                    state.updater.assert_called_once()
+                    state.native.assert_any_call("agent", home, state.node_bin, state.binary)
+                    state.readiness.assert_called_once()
+                    self.assertEqual(state.repair.call_count, int(phase == "repair"))
+                    self.assertTrue(any(
+                        "Could not repair retained" in call.args[0]
+                        for call in state.messages.call_args_list
+                    ))
+
+    def test_pending_configuration_survives_failures_and_reconciles_without_extra_restart(self) -> None:
+        for phase in (
+            "initial-reload", "initial-reload-timeout", "final-reload",
+            "enable-new-invocation", "restart", "restart-timeout", "readiness",
+        ):
+            with (
+                self.subTest(phase=phase),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+                reloads = 0
+
+                def fail_action(username, uid, action, *arguments):
+                    nonlocal reloads
+                    if action == "daemon-reload":
+                        reloads += 1
+                    fail = (
+                        (phase.startswith("initial-reload") and action == "daemon-reload" and reloads == 1)
+                        or (phase == "final-reload" and action == "daemon-reload" and reloads == 2)
+                        or (phase == "enable-new-invocation" and action == "enable")
+                        or (phase.startswith("restart") and action == "restart")
+                    )
+                    if fail:
+                        if phase == "restart-timeout":
+                            state.systemctl(username, uid, action, *arguments)
+                        if "timeout" in phase:
+                            raise CommandTimeoutError(f"systemctl {action}", 10)
+                        return SimpleNamespace(returncode=1, stdout="", stderr="injected failure")
+                    return state.systemctl(username, uid, action, *arguments)
+
+                def update(*_args, **_kwargs):
+                    if phase == "enable-new-invocation":
+                        state.invocation = "b" * 32
+                    return SimpleNamespace(returncode=1, stdout="", stderr="update failed")
+
+                state.manager.side_effect = fail_action
+                state.updater.side_effect = update
+                if phase == "readiness":
+                    state.readiness.side_effect = RuntimeError("readiness failed")
+                with self.assertRaises((RuntimeError, TimeoutError)):
+                    _install_t3_service(*state.arguments, refresh=True)
+                with open(state.marker, encoding="utf-8") as file_obj:
+                    pending = json.load(file_obj)
+                self.assertEqual(pending["original_invocation"], "a" * 32)
+                self.assertEqual(pending["reload_confirmed"], not phase.startswith("initial-reload"))
+                self.assertEqual(os.stat(state.marker).st_mode & 0o777, 0o600)
+                already_started = state.invocation != "a" * 32
+
+                state.manager.reset_mock()
+                state.manager.side_effect = state.systemctl
+                state.readiness.side_effect = None
+                self.assertEqual(_install_t3_service(*state.arguments), state.binary)
+                actions = [call.args[2] for call in state.manager.call_args_list]
+                self.assertEqual("restart" in actions, not already_started)
+                self.assertIn("start" if already_started else "restart", actions)
+                self.assertFalse(os.path.exists(state.marker))
+
+                state.manager.reset_mock()
+                self.assertEqual(_install_t3_service(*state.arguments), state.binary)
+                self.assertNotIn("restart", [call.args[2] for call in state.manager.call_args_list])
+                self.assertFalse(os.path.exists(state.marker))
+
+    def test_configuration_recovery_marker_is_written_before_managed_files(self) -> None:
+        for shim_present in (False, True):
+            with (
+                self.subTest(shim_present=shim_present),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+                from lib.atomic_io import write_json_atomic
+
+                if shim_present:
+                    _install_t3_npm_shim(home, state.node_bin, os.getuid(), os.getgid())
+
+                def record(path, payload, **kwargs):
+                    self.assertEqual(os.path.exists(os.path.join(
+                        home, ".local", "share", "basaltwater", "t3-npm", "bin", "npm",
+                    )), shim_present)
+                    self.assertFalse(os.path.exists(os.path.join(
+                        home, ".config", "systemd", "user", "t3code.service.d", "basaltwater.conf",
+                    )))
+                    write_json_atomic(path, payload, **kwargs)
+
+                with patch("common.t3code_steps.write_json_atomic", side_effect=record):
+                    # Stop before recording the successful reload checkpoint.
+                    state.manager.side_effect = lambda *_args: SimpleNamespace(
+                        returncode=1, stdout="", stderr="reload refused",
+                    )
+                    with self.assertRaisesRegex(RuntimeError, "Could not load"):
+                        _install_t3_service(*state.arguments)
+                self.assertTrue(os.path.isfile(state.marker))
+
+    def test_start_racing_reload_does_not_falsely_apply_pending_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
+            state = self._service_fixture(home, stack)
+            reloads = 0
+
+            def racing_reload(username, uid, action, *arguments):
+                nonlocal reloads
+                if action == "daemon-reload":
+                    reloads += 1
+                    if reloads == 1:
+                        state.invocation = "b" * 32
+                return state.systemctl(username, uid, action, *arguments)
+
+            state.manager.side_effect = racing_reload
+            _install_t3_service(*state.arguments, refresh=True)
+            actions = [call.args[2] for call in state.manager.call_args_list]
+            self.assertEqual(actions.count("restart"), 1)
+            self.assertNotEqual(state.invocation, "b" * 32)
+            self.assertFalse(os.path.exists(state.marker))
+
+    def test_failed_updater_with_new_invocation_still_requires_active_runtime_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
+            state = self._service_fixture(home, stack)
+
+            def update(*_args, **_kwargs):
+                state.invocation = "b" * 32
+                return SimpleNamespace(returncode=1, stdout="", stderr="update failed")
+
+            state.updater.side_effect = update
+            state.native.side_effect = CommandTimeoutError("active native probe", 30)
+            with self.assertRaises(CommandTimeoutError):
+                _install_t3_service(*state.arguments, refresh=True)
+            state.native.assert_called_once_with("agent", home, state.node_bin, state.binary)
+            state.readiness.assert_not_called()
+            self.assertTrue(os.path.exists(state.marker))
+            self.assertNotIn("restart", [call.args[2] for call in state.manager.call_args_list])
+            self.assertFalse(any(
+                "✓ T3 Code user service" in call.args[0]
+                for call in state.messages.call_args_list
+            ))
+
+    def test_reconciliation_rejects_unsafe_and_malformed_state_before_host_calls(self) -> None:
+        for kind in (
+            "symlink", "hardlink", "directory", "fifo", "malformed", "oversized",
+            "schema", "boolean-version", "duplicate", "invocation", "public",
+        ):
+            with (
+                self.subTest(kind=kind),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+                payload = b'{"version":1,"original_invocation":null,"reload_confirmed":false}'
+                destination = os.path.join(home, "preserved")
+                with open(destination, "wb") as file_obj:
+                    file_obj.write(payload)
+                os.chmod(destination, 0o600)
+                if kind == "symlink":
+                    os.symlink(destination, state.marker)
+                elif kind == "hardlink":
+                    os.link(destination, state.marker)
+                elif kind == "directory":
+                    os.mkdir(state.marker)
+                elif kind == "fifo":
+                    os.mkfifo(state.marker, 0o600)
+                else:
+                    content = {
+                        "malformed": b"not JSON",
+                        "oversized": b" " * 4097,
+                        "schema": payload.replace(b'"version":1', b'"version":2'),
+                        "boolean-version": payload.replace(b'"version":1', b'"version":true'),
+                        "duplicate": payload.replace(b'"version":1', b'"version":1,"version":1'),
+                        "invocation": payload.replace(b"null", b'"invalid"'),
+                        "public": payload,
+                    }[kind]
+                    with open(state.marker, "wb") as file_obj:
+                        file_obj.write(content)
+                    os.chmod(state.marker, 0o644 if kind == "public" else 0o600)
+                with self.assertRaisesRegex(RuntimeError, "Invalid T3 Code reconciliation state"):
+                    _install_t3_service(*state.arguments)
+                self.assertTrue(os.path.lexists(state.marker))
+                with open(destination, "rb") as file_obj:
+                    self.assertEqual(file_obj.read(), payload)
+                state.manager.assert_not_called()
+                state.updater.assert_not_called()
+
+    def test_reconciliation_rejects_unsafe_lock_files(self) -> None:
+        for kind in ("symlink", "hardlink", "directory", "fifo"):
+            with (
+                self.subTest(kind=kind),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                state = self._service_fixture(home, stack)
+                destination = os.path.join(home, "preserved")
+                with open(destination, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("preserved\n")
+                os.chmod(destination, 0o600)
+                lock = state.marker + ".lock"
+                if kind == "symlink":
+                    os.symlink(destination, lock)
+                elif kind == "hardlink":
+                    os.link(destination, lock)
+                elif kind == "directory":
+                    os.mkdir(lock)
+                else:
+                    os.mkfifo(lock, 0o600)
+                with self.assertRaises((OSError, RuntimeError)):
+                    _install_t3_service(*state.arguments)
+                self.assertTrue(os.path.lexists(lock))
+                with open(destination, encoding="utf-8") as file_obj:
+                    self.assertEqual(file_obj.read(), "preserved\n")
+                state.manager.assert_not_called()
+
+    def test_reconciliation_lock_prevents_concurrent_setup_and_false_marker_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
+            state = self._service_fixture(home, stack)
+
+            def readiness(*_args):
+                with self.assertRaisesRegex(RuntimeError, "already running"):
+                    _install_t3_service(*state.arguments)
+                # A replaced checkpoint must not be cleared by an earlier attempt.
+                with open(state.marker, encoding="utf-8") as file_obj:
+                    pending = json.load(file_obj)
+                pending["original_invocation"] = "c" * 32
+                with open(state.marker, "w", encoding="utf-8") as file_obj:
+                    json.dump(pending, file_obj)
+
+            state.readiness.side_effect = readiness
+            _install_t3_service(*state.arguments)
+            with open(state.marker, encoding="utf-8") as file_obj:
+                self.assertEqual(json.load(file_obj)["original_invocation"], "c" * 32)
 
     def test_setup_repairs_retained_failed_update_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -1474,7 +1837,7 @@ class T3CodeWebTest(unittest.TestCase):
                 patch(
                     "common.t3code_steps._run_as_login_user",
                     side_effect=run_as_user,
-                ),
+                ) as rebuild_command,
                 patch(
                     "common.t3code_steps._t3_native_runtime_healthy",
                     return_value=True,
@@ -1496,6 +1859,19 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertNotIn("--dangerously-allow-all-scripts", command)
             self.assertIn("--foreground-scripts --prefix", command)
             self.assertIn("node-pty msgpackr-extract", command)
+            self.assertEqual(rebuild_command.call_args.kwargs["timeout"], 600)
+
+    def test_native_probe_has_a_short_bound_and_propagates_timeouts(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            binary = self._write_upstream_runtime(home)
+            node_bin = self._write_node_tools(home)
+            with patch(
+                "common.t3code_steps._run_as_login_user",
+                side_effect=CommandTimeoutError("native probe", 30),
+            ) as probe:
+                with self.assertRaises(CommandTimeoutError):
+                    _t3_native_runtime_healthy("agent", home, node_bin, binary)
+            self.assertEqual(probe.call_args.kwargs["timeout"], 30)
 
     def test_endpoint_readiness_rejects_http_errors(self) -> None:
         from urllib.error import HTTPError

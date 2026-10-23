@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -10,12 +11,13 @@ import pwd
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
 import urllib.error
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Callable, Iterator
 
 from common.agent_steps import (
     BASE_AGENT_SKILL_NAMES,
@@ -24,7 +26,13 @@ from common.agent_steps import (
     install_managed_agent_skills,
 )
 from common.common_steps import _run_as_login_user
-from lib.atomic_io import write_bytes_atomic, write_text_atomic
+from lib.atomic_io import (
+    read_json_file,
+    remove_file_durable,
+    write_bytes_atomic,
+    write_json_atomic,
+    write_text_atomic,
+)
 from lib.auth_failure_bans import (
     configure_nginx_auth_failure_ban,
     remove_nginx_auth_failure_ban,
@@ -33,6 +41,7 @@ from lib.config import SetupConfig
 from lib.local_http import open_loopback
 from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
 from lib.remote_utils import install_package, is_dry_run, run
+from lib.setup_directories import directory_fd
 from lib.t3code_runtime import (
     T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL,
     T3_VERSION_EXECUTABLES,
@@ -122,6 +131,8 @@ _T3_READINESS_TIMEOUT = 30 * 60
 _T3_READINESS_PROGRESS_INTERVAL = 30
 _T3_READINESS_STABLE_CHECKS = 3
 _T3_COMMAND_OUTPUT_EXCERPT_LIMIT = 1200
+_T3_NATIVE_PROBE_TIMEOUT = 30
+_T3_NATIVE_REBUILD_TIMEOUT = 10 * 60
 
 
 def _user_home(config: SetupConfig) -> str:
@@ -382,6 +393,7 @@ def _t3_native_runtime_healthy(
         shlex.join(command),
         check=False,
         capture_output=True,
+        timeout=_T3_NATIVE_PROBE_TIMEOUT,
     )
     return result.returncode == 0
 
@@ -445,6 +457,7 @@ def _rebuild_t3_native_runtime(
             f"--prefix {shlex.quote(version_root)} {packages}",
             check=False,
             capture_output=True,
+            timeout=_T3_NATIVE_REBUILD_TIMEOUT,
         )
     if result.returncode != 0:
         detail = _t3_command_failure_detail(result)
@@ -695,6 +708,8 @@ def _install_t3_npm_shim(
     node_bin: str,
     uid: int,
     gid: int,
+    *,
+    before_change: Callable[[], None] | None = None,
 ) -> tuple[str, bool]:
     """Allow only T3's native scripts during immutable runtime staging."""
 
@@ -772,7 +787,7 @@ if [ "${{1-}}" = install ] \
 fi
 exec "$real_npm" "$@"
 """
-    changed = _write_executable_if_changed(wrapper, content)
+    changed = _write_executable_if_changed(wrapper, content, before_change=before_change)
     os.chown(wrapper, uid, gid)
     return current, changed
 
@@ -786,6 +801,8 @@ def _configure_t3_service_drop_in(
     npm_shim_bin: str,
     uid: int,
     gid: int,
+    *,
+    before_change: Callable[[], None] | None = None,
 ) -> bool:
     validate_filesystem_path(T3_SERVICE_LOG_FILTER_SCRIPT, must_exist=True)
     with open(T3_SERVICE_LOG_FILTER_SCRIPT, "rb") as filter_file:
@@ -834,10 +851,79 @@ ExecStartPre=/usr/bin/python3 -I {T3_SERVICE_LOG_FILTER_SCRIPT} sanitize-log
 ExecStart=
 ExecStart=/usr/bin/python3 -I {T3_SERVICE_LOG_FILTER_SCRIPT} upstream
 """
-    changed = _write_text_if_changed(path, content, 0o644)
+    changed = _write_text_if_changed(path, content, 0o644, before_change=before_change)
     os.chown(parent, uid, gid)
     os.chown(path, uid, gid)
     return changed
+
+
+@contextmanager
+def _t3_reconciliation_path(home: str, uid: int, gid: int) -> Iterator[str]:
+    """Serialize setup and anchor its private recovery files to a safe directory."""
+
+    parent = home
+    for component in (".config", "systemd", "user"):
+        parent = os.path.join(parent, component)
+        with directory_fd(parent, create=True) as parent_fd:
+            os.fchown(parent_fd, uid, gid)
+    with directory_fd(parent, create=True) as parent_fd:
+        anchored_parent = f"/proc/self/fd/{parent_fd}"
+        path = os.path.join(anchored_parent, ".basaltwater-t3-reconcile.json")
+        try:
+            descriptor = os.open(
+                path + ".lock",
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                0o600,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Unsafe T3 Code reconciliation lock in {parent}") from exc
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise RuntimeError(f"Unsafe T3 Code reconciliation lock in {parent}")
+            os.fchmod(descriptor, 0o600)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("T3 Code setup is already running") from exc
+            yield path
+        finally:
+            os.close(descriptor)
+
+
+def _load_t3_reconciliation(path: str) -> dict | None:
+    """Preserve and reject unsafe or unsupported recovery evidence."""
+
+    try:
+        info = os.lstat(path)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ValueError("Reconciliation state must be a private regular file")
+        value = read_json_file(path, max_bytes=4096)
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"version", "original_invocation", "reload_confirmed"}
+            or type(value["version"]) is not int
+            or value["version"] != 1
+            or type(value["reload_confirmed"]) is not bool
+            or (
+                value["original_invocation"] is not None
+                and (
+                    not isinstance(value["original_invocation"], str)
+                    or re.fullmatch(r"[0-9a-f]{32}", value["original_invocation"]) is None
+                )
+            )
+        ):
+            raise ValueError("Unsupported reconciliation record")
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        display_path = os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+        raise RuntimeError(f"Invalid T3 Code reconciliation state: {display_path}") from exc
+    return value
 
 
 def _install_t3_service(
@@ -853,6 +939,26 @@ def _install_t3_service(
 ) -> str:
     """Install or update T3 through its supported per-user service manager."""
 
+    with _t3_reconciliation_path(home, uid, gid) as reconciliation_path:
+        return _install_locked_t3_service(
+            home, username, uid, gid, workspace, host, port,
+            reconciliation_path, refresh=refresh,
+        )
+
+
+def _install_locked_t3_service(
+    home: str,
+    username: str,
+    uid: int,
+    gid: int,
+    workspace: str,
+    host: str,
+    port: int,
+    reconciliation_path: str,
+    *,
+    refresh: bool = False,
+) -> str:
+    pending = _load_t3_reconciliation(reconciliation_path)
     for name, package in (
         ("T3 Code native build tools", "build-essential"),
         ("T3 Code Python build support", "python3"),
@@ -862,11 +968,31 @@ def _install_t3_service(
 
     _ensure_user_manager(username, uid)
     node_bin = _node_bin_directory(username, home)
+    service_file = _t3_service_file(home)
+    service_was_present = os.path.isfile(service_file)
+    previous_invocation = (
+        _t3_service_invocation(username, uid) if service_was_present else None
+    )
+    config_marked = False
+
+    def before_config_change() -> None:
+        nonlocal pending, config_marked
+        if config_marked:
+            return
+        pending = {
+            "version": 1,
+            "original_invocation": previous_invocation,
+            "reload_confirmed": False,
+        }
+        write_json_atomic(reconciliation_path, pending, mode=0o600)
+        config_marked = True
+
     npm_shim_bin, npm_shim_changed = _install_t3_npm_shim(
         home,
         node_bin,
         uid,
         gid,
+        before_change=before_config_change,
     )
     drop_in_changed = _configure_t3_service_drop_in(
         home,
@@ -877,22 +1003,23 @@ def _install_t3_service(
         npm_shim_bin,
         uid,
         gid,
+        before_change=before_config_change,
     )
-    service_file = _t3_service_file(home)
-    if drop_in_changed and os.path.isfile(service_file):
+    if pending is not None:
         drop_in_reload = _user_systemctl(username, uid, "daemon-reload")
         if drop_in_reload.returncode != 0:
             raise RuntimeError("Could not load the T3 Code log-filter service configuration")
+        if not pending["reload_confirmed"]:
+            # A start before this reload cannot prove it loaded the new files.
+            # Sample after reload so a start racing reload is not falsely cleared.
+            pending["original_invocation"] = _t3_service_invocation(username, uid)
+            pending["reload_confirmed"] = True
+            write_json_atomic(reconciliation_path, pending, mode=0o600)
+        previous_invocation = _t3_service_invocation(username, uid)
     binary = _active_t3_binary(home)
     previous_binary = binary
-    service_was_present = os.path.isfile(service_file)
     update_needed = refresh or binary is None or not os.path.isfile(service_file)
     update_failed = False
-    previous_invocation = (
-        _t3_service_invocation(username, uid)
-        if update_needed and service_was_present
-        else None
-    )
 
     legacy_present = os.path.lexists(LEGACY_T3_SERVICE_FILE)
     if legacy_present and (
@@ -913,32 +1040,28 @@ def _install_t3_service(
         retained_candidate = _retained_failed_t3_binary(home)
         if retained_candidate is not None:
             candidate_version, candidate_binary = retained_candidate
-            if not _t3_native_runtime_healthy(
-                username,
-                home,
-                node_bin,
-                candidate_binary,
-            ):
-                try:
+            try:
+                if not _t3_native_runtime_healthy(
+                    username, home, node_bin, candidate_binary,
+                ):
                     _rebuild_t3_native_runtime(
                         username,
                         home,
                         node_bin,
                         candidate_binary,
                     )
-                except RuntimeError:
-                    # A superseded candidate must not prevent a newer update
-                    # or validation of the working active runtime below.
-                    print(
-                        "  ⚠ Could not repair retained T3 Code "
-                        f"v{candidate_version} update candidate; "
-                        "continuing with managed runtime checks"
-                    )
-                else:
                     print(
                         "  ✓ Repaired retained T3 Code "
                         f"v{candidate_version} update candidate"
                     )
+            except (RuntimeError, TimeoutError):
+                # A superseded candidate must not prevent a newer update
+                # or validation of the working active runtime below.
+                print(
+                    "  ⚠ Could not repair retained T3 Code "
+                    f"v{candidate_version} update candidate; "
+                    "continuing with managed runtime checks"
+                )
         if update_needed:
             with _temporary_t3_loginctl_shim(home, username) as shim_path:
                 result = _run_as_login_user(
@@ -991,7 +1114,13 @@ def _install_t3_service(
         native_repaired = False
         if not _t3_native_runtime_healthy(username, home, node_bin, binary):
             if not is_t3_standalone_binary(binary):
-                _user_systemctl(username, uid, "stop", T3_SERVICE_NAME)
+                stopped = _user_systemctl(username, uid, "stop", T3_SERVICE_NAME)
+                if stopped.returncode != 0:
+                    detail = _t3_command_failure_detail(stopped)
+                    raise RuntimeError(
+                        "Could not stop the T3 Code user service before native repair:\n"
+                        + detail
+                    )
             _rebuild_t3_native_runtime(username, home, node_bin, binary)
             native_repaired = True
         daemon_reload = _user_systemctl(username, uid, "daemon-reload")
@@ -1003,17 +1132,31 @@ def _install_t3_service(
         # The updater can start a new runtime or repair the same version's
         # launcher. Either start loads our preinstalled drop-in, and another
         # restart would interrupt its database migration unnecessarily.
-        updater_started_service = False
-        if update_needed and not update_failed:
-            current_invocation = _t3_service_invocation(username, uid)
-            updater_started_service = binary != previous_binary or (
+        current_invocation = (
+            _t3_service_invocation(username, uid)
+            if update_needed or pending is not None
+            else None
+        )
+        updater_started_service = update_needed and (
+            binary != previous_binary or (
                 current_invocation is not None
+                and (previous_invocation is not None or not service_was_present)
                 and current_invocation != previous_invocation
             )
+        )
+        config_applied = pending is not None and (
+            pending["original_invocation"] is not None
+            and current_invocation is not None
+            and current_invocation != pending["original_invocation"]
+        )
         action = (
             "restart"
             if native_repaired
-            or ((drop_in_changed or npm_shim_changed) and not updater_started_service)
+            or (
+                (pending is not None or drop_in_changed or npm_shim_changed)
+                and not config_applied
+                and not updater_started_service
+            )
             else "start"
         )
         service_result = _user_systemctl(username, uid, action, T3_SERVICE_NAME)
@@ -1021,6 +1164,19 @@ def _install_t3_service(
             detail = (service_result.stderr or service_result.stdout or "").strip()
             raise RuntimeError(f"Could not {action} the T3 Code user service: {detail}")
         _wait_for_t3_service(username, uid, host, port, home)
+        if pending is not None:
+            invocation = _t3_service_invocation(username, uid)
+            if (
+                invocation is not None
+                and invocation != pending["original_invocation"]
+                and (
+                    pending["original_invocation"] is not None
+                    or action == "restart"
+                    or not service_was_present
+                )
+                and _load_t3_reconciliation(reconciliation_path) == pending
+            ):
+                remove_file_durable(reconciliation_path)
     except Exception:
         if legacy_present:
             _user_systemctl(username, uid, "stop", T3_SERVICE_NAME)
@@ -1073,7 +1229,9 @@ def _install_t3_service(
     return binary
 
 
-def _write_executable_if_changed(path: str, content: str) -> bool:
+def _write_executable_if_changed(
+    path: str, content: str, *, before_change: Callable[[], None] | None = None,
+) -> bool:
     """Atomically write a managed user executable without following symlinks."""
 
     if os.path.lexists(path) and (
@@ -1087,6 +1245,8 @@ def _write_executable_if_changed(path: str, content: str) -> bool:
     except FileNotFoundError:
         pass
     if changed:
+        if before_change is not None:
+            before_change()
         descriptor, temporary = tempfile.mkstemp(
             prefix=f".{os.path.basename(path)}-", dir=os.path.dirname(path)
         )
@@ -1183,7 +1343,10 @@ def _write_admin_pair_wrapper(
     return _write_executable_if_changed(path, content)
 
 
-def _write_text_if_changed(path: str, content: str, mode: int) -> bool:
+def _write_text_if_changed(
+    path: str, content: str, mode: int,
+    *, before_change: Callable[[], None] | None = None,
+) -> bool:
     if os.path.islink(path):
         raise RuntimeError(f"Refusing symlinked managed configuration: {path}")
     try:
@@ -1192,6 +1355,8 @@ def _write_text_if_changed(path: str, content: str, mode: int) -> bool:
     except OSError:
         changed = True
     if changed:
+        if before_change is not None:
+            before_change()
         write_text_atomic(path, content, mode=mode)
     else:
         os.chmod(path, mode)
