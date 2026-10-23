@@ -96,8 +96,8 @@ redundancy files, verify protected files, and repair corruption when possible.
 Missing protected files are recorded and their parity retained: absence alone
 does not prove an intentional deletion. `REDUNDANCY` is an integer
 percentage from `1%` through `100%`. Empty files are skipped because par2 cannot
-create useful parity for them. An empty file with existing parity is still
-verified during a full scrub, so truncation is not silently treated as healthy.
+create useful parity for them. Fast maintenance flags an empty file with existing
+parity as a possible truncation; full scrubs verify it against that baseline.
 A file supplied as the source directory is rejected before orphan cleanup.
 
 Full scrubs report repaired files as warnings and unresolved integrity findings
@@ -122,7 +122,10 @@ and failure notifications every hour. Daily parity maintenance continues and
 reports unresolved findings without verifying those files again. Its completion
 does not resolve the findings.
 If validation, file access, parity creation, or cleanup prevents completion,
-the completion timestamp stays unchanged. Executed operations that fail retry
+the completion timestamp stays unchanged. Missing generation volumes and per-file
+verification errors leave findings for the affected files while the scan continues
+through other files. The report records the scan as incomplete and retains all
+remaining parity. Executed operations that fail retry
 after one hour, then two, four, eight, sixteen, and at most twenty-four hours
 between consecutive failures. Completion clears the retry history. Full scrubs
 waiting for a retry are not replaced by an unverified fast parity pass.

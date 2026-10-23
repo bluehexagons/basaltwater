@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -188,6 +189,54 @@ class TestScrubResultFailures(unittest.TestCase):
                 self.assertEqual(result["files_verified"], 1)
                 verify.assert_called_once()
                 create.assert_not_called()
+
+    def test_fast_maintenance_flags_truncation_without_running_par2(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, database = Path(root) / 'source', Path(root) / 'database'
+            source.mkdir()
+            database.mkdir()
+            (source / 'empty').touch()
+            truncated = source / 'truncated'
+            truncated.touch()
+            parity = database / 'truncated.par2'
+            parity.write_bytes(b'original recovery evidence')
+            # Even an older source timestamp cannot prove empty content healthy.
+            os.utime(truncated, (10, 10))
+            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.subprocess, 'run') as run:
+                result = scrub_par2.scrub_directory(str(source), str(database), 10, 'unused', verify=False, suppress_notifications=True)
+            self.assertFalse(result['ok'])
+            self.assertTrue(result['completed'])
+            self.assertEqual(result['files_unrepairable'], ['truncated'])
+            report = scrub_par2.Findings(str(source), str(database))
+            self.assertEqual(report.data['files']['truncated']['category'], 'changed_unverified')
+            self.assertTrue(report.active('truncated'))
+            self.assertNotIn('empty', report.data['files'])
+            self.assertEqual(parity.read_bytes(), b'original recovery evidence')
+            run.assert_not_called()
+
+    def test_verification_error_does_not_starve_later_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, database = Path(root) / 'source', Path(root) / 'database'
+            source.mkdir()
+            database.mkdir()
+            for name in ('bad', 'healthy'):
+                (source / name).write_bytes(b'data')
+                (database / (name + '.par2')).write_bytes(b'parity')
+            # Fix inventory order so a healthy file must follow the error.
+            inventory = [(str(source), [], ['bad', 'healthy'])]
+            codes = [6, 0]
+            def run(command, **kwargs):
+                return subprocess.CompletedProcess(command, codes.pop(0))
+            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2, '_scan_tree', return_value=inventory), patch.object(scrub_par2.subprocess, 'run', side_effect=run) as par2:
+                result = scrub_par2.scrub_directory(str(source), str(database), 10, 'unused', suppress_notifications=True)
+            self.assertFalse(result['ok'])
+            self.assertFalse(result['completed'])
+            self.assertEqual(result['files_failed'], ['bad'])
+            self.assertEqual(result['files_verified'], 1)
+            self.assertEqual(par2.call_count, 2)
+            report = scrub_par2.Findings(str(source), str(database))
+            self.assertEqual(report.data['files']['bad']['category'], 'io_error')
+            self.assertFalse(report.data['last_full_scan']['completed'])
 
     def test_stale_volume_only_parity_is_preserved_pending_review(self):
         with tempfile.TemporaryDirectory() as directory:

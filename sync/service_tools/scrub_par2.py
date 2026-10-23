@@ -135,9 +135,17 @@ def create_par2(
             operation_logger.log_error("validation_failed", str(e), {"file": relative_path})
         return False
     
-    # Skip 0-byte files silently (par2 cannot create parity for empty files)
+    # PAR2 cannot create parity for empty files, but an existing baseline
+    # makes an empty source a possible truncation rather than a new empty file.
     try:
         if os.path.getsize(file_path) == 0:
+            if par2_files:
+                report = Findings(directory, database)
+                if not report.active(relative_path):
+                    report.record(relative_path, {
+                        "category": "changed_unverified",
+                        "evidence": "Protected source is empty; possible truncation; existing parity retained",
+                    })
             return True
     except OSError:
         return False
@@ -257,13 +265,22 @@ def _record_missing_files(
     database: str,
     existing_files: set[str],
     log_file: str,
-) -> None:
+) -> list[str]:
     """Record missing protected files without destroying their recovery parity."""
     checked_bases: set[str] = set()
+    failed: list[str] = []
     report = Findings(directory, database)
     for relative in protected_files(database):
-        locate(os.path.join(directory, relative), directory, database)
-        if relative not in existing_files and not report.active(relative):
+        if relative in existing_files:
+            continue
+        try:
+            locate(os.path.join(directory, relative), directory, database)
+        except (OSError, ValueError) as exc:
+            report.record(relative, {"category": "invalid_parity" if isinstance(exc, ValueError) else "io_error",
+                                     "evidence": str(exc)})
+            failed.append(relative)
+            continue
+        if not report.active(relative):
             report.record(relative, {"category": "missing_file", "evidence": "Protected source absent; generation retained"})
     
     for root, _, files in _scan_tree(database, (os.path.abspath(os.path.join(database, METADATA_DIR)),)):
@@ -292,12 +309,17 @@ def _record_missing_files(
             report.record(relative_data, {"category": "missing_file",
                                          "evidence": "Absent from complete inventory; parity retained"})
             log(f"Missing protected file; preserving parity: {relative_data}", log_file)
+    return failed
 
 
 # Verification outcomes returned by verify_repair.
 VERIFY_OK = "ok"
 VERIFY_REPAIRED = "repaired"
 VERIFY_UNREPAIRABLE = "unrepairable"
+
+
+class VerificationFailure(OSError):
+    """An operational verification failure whose finding is already durable."""
 
 
 def verify_repair(file_path: str, directory: str, database: str, log_file: str) -> str:
@@ -327,7 +349,7 @@ def verify_repair(file_path: str, directory: str, database: str, log_file: str) 
             return VERIFY_REPAIRED
     log(f"Integrity finding: {relative_path}: {outcome['category']}", log_file)
     if outcome["category"] in {"io_error", "tool_error", "changed_during_scan"}:
-        raise OSError(f"{relative_path}: {outcome['category']}: {outcome.get('evidence', '')}")
+        raise VerificationFailure(f"{relative_path}: {outcome['category']}: {outcome.get('evidence', '')}")
     return VERIFY_UNREPAIRABLE
 
 
@@ -494,10 +516,9 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                 file_path = os.path.join(root, filename)
                 relative_path = os.path.relpath(file_path, directory)
                 existing_files.add(relative_path)
-                parity_files = locate(file_path, directory, database)[1]
-                is_new_par2 = not parity_files
-                
                 try:
+                    parity_files = locate(file_path, directory, database)[1]
+                    is_new_par2 = not parity_files
                     file_size = os.path.getsize(file_path)
                     if file_size == 0:
                         files_skipped_empty += 1
@@ -510,25 +531,44 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                                 files_repaired += 1
                             elif outcome == VERIFY_UNREPAIRABLE:
                                 files_unrepairable.append(relative_path)
+                        elif parity_files:
+                            if not create_par2(file_path, directory, database, redundancy, log_file,
+                                               operation_logger=operation_logger):
+                                raise OSError("Could not record possible truncation")
                         continue  # Skip 0-byte files (create_par2 will skip them anyway)
                     total_file_size += file_size
-                except OSError as exc:
-                    Findings(directory, database).record(relative_path, {"category": "io_error", "evidence": str(exc)})
-                    files_failed.append(relative_path)
-                    continue
-                
-                success = create_par2(file_path, directory, database, redundancy, log_file, 
-                                      operation_logger=operation_logger)
-                if success:
-                    files_processed += 1
-                    if is_new_par2 and locate(file_path, directory, database)[1]:
-                        files_created += 1
+
+                    success = create_par2(file_path, directory, database, redundancy, log_file,
+                                          operation_logger=operation_logger)
+                    if success:
+                        files_processed += 1
+                        if is_new_par2 and locate(file_path, directory, database)[1]:
+                            files_created += 1
+                        else:
+                            # Existing or suspect content retains its baseline.
+                            files_skipped_uptodate += 1
                     else:
-                        # Existing or suspect content retains its baseline.
-                        files_skipped_uptodate += 1
-                else:
+                        files_failed.append(relative_path)
+                        Findings(directory, database).record(relative_path, {"category": "tool_error", "evidence": "Parity creation failed"})
+
+                    if verify:
+                        outcome = verify_repair(file_path, directory, database, log_file)
+                        files_verified += 1
+                        if outcome == VERIFY_REPAIRED:
+                            files_repaired += 1
+                        elif outcome == VERIFY_UNREPAIRABLE:
+                            files_unrepairable.append(relative_path)
+                except VerificationFailure as exc:
+                    # verify_repair has already saved the precise classification.
                     files_failed.append(relative_path)
-                    Findings(directory, database).record(relative_path, {"category": "tool_error", "evidence": "Parity creation failed"})
+                    log(f"Verification failed for {relative_path}: {exc}", log_file)
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                    category = ("invalid_parity" if isinstance(exc, ValueError) else
+                                "changed_during_scan" if isinstance(exc, RuntimeError) else
+                                "io_error" if isinstance(exc, OSError) else "tool_error")
+                    Findings(directory, database).record(relative_path, {"category": category, "evidence": str(exc)[:8192]})
+                    files_failed.append(relative_path)
+                    log(f"Scrub failed for {relative_path}: {exc}", log_file)
                 
                 # Log progress periodically with detailed stats
                 if progress_tracker.should_log():
@@ -543,18 +583,12 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                     
                     progress_tracker.force_log(msg.build())
                 
-                if verify:
-                    outcome = verify_repair(file_path, directory, database, log_file)
-                    files_verified += 1
-                    if outcome == VERIFY_REPAIRED:
-                        files_repaired += 1
-                    elif outcome == VERIFY_UNREPAIRABLE:
-                        files_unrepairable.append(relative_path)
         
         log(f"Directory scan complete: {files_found} files in {dirs_found} directories", log_file)
         
         log("Checking for missing protected files...", log_file)
-        _record_missing_files(directory, database, existing_files, log_file)
+        files_failed.extend(_record_missing_files(directory, database, existing_files, log_file))
+        files_failed = list(dict.fromkeys(files_failed))
         # Fast maintenance cannot imply health while known damage remains.
         report = Findings(directory, database)
         files_unrepairable = sorted(set(files_unrepairable) | {
@@ -576,14 +610,14 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
         operation_logger.log_step(
             "scrub_completed",
             operation_status,
-            f"Processed {files_processed} files with {len(files_failed)} creation failures",
+            f"Processed {files_processed} files with {len(files_failed)} operational failures",
         )
         
         completion_label = "completed" if operation_status == "completed" else "finished with errors"
         log(f"Scrub {completion_label}: {datetime.now()}", log_file)
         log(
             f"Files: {files_processed} processed, {files_created} created, "
-            f"{len(files_failed)} creation failures, "
+            f"{len(files_failed)} operational failures, "
             f"{files_verified} verified, {files_repaired} repaired, "
             f"{len(files_unrepairable)} unresolved integrity findings",
             log_file,
@@ -632,7 +666,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                 if files_repaired > 0:
                     message += f", repaired {files_repaired}"
                 if files_failed:
-                    message += f", parity creation failed: {len(files_failed)}"
+                    message += f", operational failures: {len(files_failed)}"
                 if files_unrepairable:
                     message += f", unresolved findings: {len(files_unrepairable)}"
                 if files_verified > 0:
@@ -644,7 +678,7 @@ Files processed: {files_processed}
 Files created: {files_created}
 Files verified: {files_verified}
 Files repaired: {files_repaired}
-Parity creation failures: {len(files_failed)}
+Operational failures: {len(files_failed)}
 Unresolved integrity findings: {len(files_unrepairable)}
 Total size: {total_file_size // (1024 * 1024)} MB
 Redundancy: {redundancy}%

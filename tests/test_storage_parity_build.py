@@ -126,6 +126,44 @@ class ParityBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'generation is missing'):
             parity_sets.locate(*args)
 
+    def test_missing_volume_is_recorded_and_does_not_stop_other_files(self):
+        index, volume = self.root / 'set.par2', self.root / 'set.vol00+01.par2'
+        index.write_bytes(b'index')
+        volume.write_bytes(b'volume')
+        args = (str(self.file), str(self.source), str(self.database))
+        parity_sets.publish(*args, [str(index), str(volume)])
+        active = parity_sets.locate(*args)[1]
+        Path(active[1]).unlink()
+        self.file.write_bytes(b'changed content')
+        (self.source / 'healthy').write_bytes(b'healthy')
+        (self.database / 'healthy.par2').write_bytes(b'healthy parity')
+        with patch.object(scrub, 'log'), patch.object(scrub, 'create_operation_logger'), patch.object(scrub.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            result = scrub.scrub_directory(str(self.source), str(self.database), 10, 'unused', suppress_notifications=True)
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['completed'])
+        self.assertEqual(result['files_failed'], ['file'])
+        self.assertEqual(result['files_verified'], 1)
+        run.assert_called_once()
+        report = scrub.Findings(str(self.source), str(self.database))
+        self.assertTrue(report.active('file'))
+        self.assertEqual(report.data['files']['file']['category'], 'invalid_parity')
+        self.assertFalse(report.data['last_full_scan']['completed'])
+        self.assertEqual(Path(active[0]).read_bytes(), b'index')
+
+    def test_missing_source_with_missing_volume_is_recorded(self):
+        parity = self.root / 'set.par2'
+        parity.write_bytes(b'parity')
+        args = (str(self.file), str(self.source), str(self.database))
+        parity_sets.publish(*args, [str(parity)])
+        Path(parity_sets.locate(*args)[1][0]).unlink()
+        self.file.unlink()
+        with patch.object(scrub, 'log'), patch.object(scrub, 'create_operation_logger'), patch.object(scrub.subprocess, 'run') as run:
+            result = scrub.scrub_directory(str(self.source), str(self.database), 10, 'unused', suppress_notifications=True)
+        self.assertEqual(result['files_failed'], ['file'])
+        self.assertFalse(result['completed'])
+        self.assertTrue(scrub.Findings(str(self.source), str(self.database)).active('file'))
+        run.assert_not_called()
+
     def test_missing_source_keeps_generation_and_is_recorded(self):
         parity = self.root / 'set.par2'
         parity.write_bytes(b'parity')
