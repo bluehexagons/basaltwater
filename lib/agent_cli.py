@@ -82,6 +82,9 @@ _BROWSER_SMOKE_SCRIPT = "/opt/basaltwater-playwright/browser-smoke.js"
 _BROWSER_OUTPUT_MAX_BYTES = 256 * BYTES_PER_MB
 _BROWSER_DOCTOR_TIMEOUT_SECONDS = 210
 _REMOTE_DOCTOR_TIMEOUT_SECONDS = _BROWSER_DOCTOR_TIMEOUT_SECONDS + 90
+_T3_STARTUP_WAIT_SECONDS = 30 * 60
+_T3_STARTUP_STABLE_CHECKS = 3
+_T3_STARTUP_PROGRESS_SECONDS = 30
 _MAX_AGENT_SKILL_BYTES = 256 * 1024
 _PLAYWRIGHT_BROWSER_AGENT_SKILL_NAMES = frozenset(
     (
@@ -243,6 +246,11 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         "--fix",
         action="store_true",
         help="Apply safe T3 Code/Git repairs while checking readiness",
+    )
+    doctor.add_argument(
+        "--wait-for-t3-startup",
+        action="store_true",
+        help="Wait up to 30 minutes for T3 Code service and endpoint readiness",
     )
     doctor_history = doctor.add_mutually_exclusive_group()
     doctor_history.add_argument(
@@ -1799,7 +1807,7 @@ def _run_check(
     *,
     environment: Optional[dict[str, str]] = None,
     cwd: Optional[str] = None,
-    timeout: int = 15,
+    timeout: float = 15,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -2147,14 +2155,14 @@ def _temporary_t3_npm_config() -> Iterator[str]:
             pass
 
 
-def _t3_endpoint_reachable(port: int | None) -> bool:
+def _t3_endpoint_reachable(port: int | None, *, timeout: float = 5) -> bool:
     import urllib.error
 
     if port is None:
         return False
     try:
         with open_loopback(
-            f"http://127.0.0.1:{port}/", timeout=5
+            f"http://127.0.0.1:{port}/", timeout=timeout
         ) as response:
             return 200 <= response.status < 300 or 400 <= response.status < 500
     except urllib.error.HTTPError as exc:
@@ -2205,7 +2213,81 @@ def _t3_agent_skills_ready(home: str, catalogs: tuple[str, ...] = (".agents",)) 
     )
 
 
-def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict:
+def _wait_for_t3_startup(
+    port: int | None,
+    environment: dict[str, str],
+) -> tuple[bool, bool, str]:
+    """Observe stable readiness in one invocation within a wall-clock budget."""
+    started = time.monotonic()
+    deadline = started + _T3_STARTUP_WAIT_SECONDS
+    next_progress = started + _T3_STARTUP_PROGRESS_SECONDS
+    stable_checks = 0
+    stable_invocation = None
+    active = endpoint = False
+    failure = f"T3 Code did not reach stable readiness within {_T3_STARTUP_WAIT_SECONDS} seconds"
+
+    def service_state() -> dict[str, str]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {}
+        result = _run_check(
+            ["systemctl", "--user", "show", _T3_SERVICE_NAME,
+             "--property=ActiveState,InvocationID,LoadState"],
+            environment=environment,
+            timeout=min(15, remaining),
+        )
+        if result.returncode != 0:
+            return {}
+        return dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+
+    while time.monotonic() < deadline:
+        state = service_state()
+        active = state.get("ActiveState") == "active"
+        endpoint = False
+        if state.get("ActiveState") == "failed" or state.get("LoadState") == "not-found":
+            failure = "T3 Code startup failed: systemd reports a failed or missing service"
+            break
+        remaining = deadline - time.monotonic()
+        if active and remaining > 0:
+            endpoint = _t3_endpoint_reachable(port, timeout=min(5, remaining))
+        invocation = state.get("InvocationID", "")
+        if active and endpoint and re.fullmatch(r"[0-9a-fA-F]{32}", invocation):
+            # The endpoint may have answered just as the process exited.
+            # Re-read systemd before accepting this observation.
+            confirmed = service_state()
+            if confirmed.get("ActiveState") == "failed":
+                active = False
+                failure = "T3 Code startup failed: systemd reports a failed service"
+                break
+            if (confirmed.get("ActiveState") == "active"
+                    and confirmed.get("InvocationID", "").lower() == invocation.lower()):
+                invocation = invocation.lower()
+                stable_checks = stable_checks + 1 if invocation == stable_invocation else 1
+                stable_invocation = invocation
+                if stable_checks >= _T3_STARTUP_STABLE_CHECKS and time.monotonic() < deadline:
+                    return True, True, ""
+            else:
+                stable_checks = 0
+        else:
+            stable_checks = 0
+        now = time.monotonic()
+        if now >= next_progress:
+            print(
+                f"Waiting for T3 Code startup ({int(now - started)}s; database migration may take several minutes)",
+                file=sys.stderr, flush=True,
+            )
+            next_progress = now + _T3_STARTUP_PROGRESS_SECONDS
+        if now < deadline:
+            time.sleep(min(1, deadline - now))
+    return active, endpoint, failure
+
+
+def inspect_t3code(
+    home: Optional[str] = None,
+    *,
+    fix: bool = False,
+    wait_for_startup: bool = False,
+) -> JSONDict:
     """Verify the managed T3 service, Git integration, and user onboarding."""
 
     user_home = os.path.abspath(home or os.path.expanduser("~"))
@@ -2293,19 +2375,41 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         if setup_git.returncode == 0:
             fixes.append("configured GitHub HTTPS credential helper")
             credential_helper = True
+    repair_stop_error = ""
     if (
         fix and t3_binary and node and not native_runtime
         and not is_t3_standalone_binary(t3_binary)
     ):
         if service.returncode == 0:
-            _run_check(
-                ["systemctl", "--user", "stop", _T3_SERVICE_NAME],
-                environment=user_bus_environment,
-            )
-        native_runtime = _repair_t3_native_runtime(node, t3_binary, environment)
-        if native_runtime:
-            fixes.append("rebuilt T3 Code native runtime")
-        service = subprocess.CompletedProcess([], 1, "", "")
+            stop_command = ["systemctl", "--user", "stop", _T3_SERVICE_NAME]
+            try:
+                stopped = subprocess.run(
+                    stop_command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=user_bus_environment,
+                )
+            except subprocess.TimeoutExpired as exc:
+                detail = " ".join(
+                    value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+                    for value in (exc.stdout, exc.stderr)
+                    if value
+                )
+                repair_stop_error = "systemctl stop timed out" + (f": {detail}" if detail else "")
+            except OSError as exc:
+                repair_stop_error = f"systemctl stop could not run: {exc}"
+            else:
+                if stopped.returncode != 0:
+                    repair_stop_error = (stopped.stderr or stopped.stdout or "").strip()
+                    if not repair_stop_error:
+                        repair_stop_error = f"systemctl stop exited with status {stopped.returncode}"
+        if not repair_stop_error:
+            native_runtime = _repair_t3_native_runtime(node, t3_binary, environment)
+            if native_runtime:
+                fixes.append("rebuilt T3 Code native runtime")
+            service = subprocess.CompletedProcess([], 1, "", "")
     if fix and t3_binary and not service_enabled:
         enabled = _run_check(
             ["systemctl", "--user", "enable", _T3_SERVICE_NAME],
@@ -2326,17 +2430,22 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
 
     port = _t3_port(drop_in)
     endpoint = False
-    attempts = 10 if restarted_service else 1
-    for attempt in range(attempts):
-        service = _run_check(
-            ["systemctl", "--user", "is-active", "--quiet", _T3_SERVICE_NAME],
-            environment=user_bus_environment,
-        )
-        endpoint = _t3_endpoint_reachable(port)
-        if service.returncode == 0 and endpoint:
-            break
-        if attempt + 1 < attempts:
-            time.sleep(1)
+    startup_error = ""
+    if wait_for_startup:
+        active, endpoint, startup_error = _wait_for_t3_startup(port, user_bus_environment)
+        service = subprocess.CompletedProcess([], 0 if active else 1, "", "")
+    else:
+        attempts = 10 if restarted_service else 1
+        for attempt in range(attempts):
+            service = _run_check(
+                ["systemctl", "--user", "is-active", "--quiet", _T3_SERVICE_NAME],
+                environment=user_bus_environment,
+            )
+            endpoint = _t3_endpoint_reachable(port)
+            if service.returncode == 0 and endpoint:
+                break
+            if attempt + 1 < attempts:
+                time.sleep(1)
     service_enabled = _t3_service_enabled(user_bus_environment)
 
     checks = {
@@ -2350,10 +2459,16 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         "endpoint": endpoint,
         "t3_agent_skill": not catalogs or _t3_agent_skills_ready(user_home, catalogs),
     }
+    if wait_for_startup:
+        checks["startup_ready"] = not startup_error
     required_checks = list(checks)
     healthy = all(checks.values())
     checks["git_identity"] = bool(git_name and git_email)
     warnings: list[str] = []
+    if startup_error:
+        warnings.append(startup_error)
+    if repair_stop_error:
+        warnings.append(f"T3 native runtime repair skipped because the service did not stop: {repair_stop_error}")
     if t3_binary and is_t3_standalone_binary(t3_binary) and not native_runtime:
         warnings.append(
             "T3 standalone native module check failed; restore the matching "
@@ -2914,6 +3029,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
     )
     if all_capabilities_requested:
         requested_capabilities = list(AGENT_DOCTOR_CAPABILITIES)
+    if getattr(args, "wait_for_t3_startup", False) and "t3code" not in requested_capabilities:
+        requested_capabilities.append("t3code")
     capabilities_explicit = bool(requested_capabilities)
     record_requested = bool(getattr(args, "record", False))
     last_record_requested = bool(getattr(args, "last_record", False))
@@ -2937,6 +3054,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 remote_arguments.extend(("--capability", capability))
         if getattr(args, "fix", False):
             remote_arguments.append("--fix")
+        if getattr(args, "wait_for_t3_startup", False):
+            remote_arguments.append("--wait-for-t3-startup")
         if getattr(args, "container_storage", False):
             remote_arguments.append("--container-storage")
         if record_requested:
@@ -2949,10 +3068,19 @@ def run_agent_command(args: argparse.Namespace) -> int:
             target,
             "doctor",
             remote_arguments,
-            timeout=_REMOTE_DOCTOR_TIMEOUT_SECONDS + (40 if getattr(args, "container_storage", False) else 0),
+            timeout=(
+                _REMOTE_DOCTOR_TIMEOUT_SECONDS * (
+                    max(1, len(requested_capabilities))
+                    if getattr(args, "wait_for_t3_startup", False) else 1
+                )
+                + (_T3_STARTUP_WAIT_SECONDS if getattr(args, "wait_for_t3_startup", False) else 0)
+                + (360 if getattr(args, "fix", False) and getattr(args, "wait_for_t3_startup", False) else 0)
+                + (40 if getattr(args, "container_storage", False) else 0)
+            ),
         )
     if last_record_requested:
-        if requested_tools or requested_capabilities or getattr(args, "fix", False) or getattr(args, "container_storage", False):
+        if (requested_tools or requested_capabilities or getattr(args, "fix", False)
+                or getattr(args, "container_storage", False) or getattr(args, "wait_for_t3_startup", False)):
             print("Error: --last-record cannot be combined with checks or --fix")
             return 1
         from lib.agent_readiness import (
@@ -3002,7 +3130,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
                                       if getattr(args, "container_storage", False) else inspect_host_readiness())
         elif capability == "t3code":
             capability_results.append(
-                inspect_t3code(fix=getattr(args, "fix", False))
+                inspect_t3code(
+                    fix=getattr(args, "fix", False),
+                    wait_for_startup=getattr(args, "wait_for_t3_startup", False),
+                )
             )
     record_error: Optional[str] = None
     if record_requested:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
 import json
 import shlex
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -110,7 +111,8 @@ class T3ReadinessTests(unittest.TestCase):
             )
             self.assertIsNone(agent_cli._t3_active_binary(home))
 
-    def inspect(self, *, gh=True, endpoint=True, fix=False, native=True, standalone=False):
+    def inspect(self, *, gh=True, endpoint=True, fix=False, native=True, standalone=False,
+                wait_for_startup=False):
         with ExitStack() as stack:
             home = stack.enter_context(tempfile.TemporaryDirectory())
             for name in ('basaltwater-t3code-pairing-provider', 't3code-pair'):
@@ -142,7 +144,7 @@ class T3ReadinessTests(unittest.TestCase):
             stack.enter_context(patch.object(agent_cli, '_tool_path', side_effect=lambda tool, _home:
                                             '/fake/' + tool if tool == 'git' or (tool == 'gh' and gh) else None))
             stack.enter_context(patch.object(agent_cli, '_run_check', side_effect=run))
-            result = agent_cli.inspect_t3code(home, fix=fix)
+            result = agent_cli.inspect_t3code(home, fix=fix, wait_for_startup=wait_for_startup)
             record = build_agent_readiness_record([], [result], trigger='manual',
                                                   boot_id_path=str(Path(home, 'absent-boot-id')))
             return result, record, commands
@@ -191,6 +193,85 @@ class T3ReadinessTests(unittest.TestCase):
         self.assertFalse(any('stop' in command or 'restart' in command or 'rebuild' in command
                              for command in commands))
 
+    def test_failed_stop_prevents_native_repair_and_reports_diagnostic(self):
+        for outcome, diagnostic in (
+            (subprocess.CompletedProcess([], 1, '', 'stop denied'), 'stop denied'),
+            (subprocess.CompletedProcess([], 2, 'stop refused', ''), 'stop refused'),
+            (subprocess.CompletedProcess([], 3, '', ''), 'status 3'),
+            (subprocess.TimeoutExpired('systemctl', 30, output=b'still stopping', stderr=b'busy'), 'timed out'),
+            (OSError('stop unavailable'), 'stop unavailable'),
+        ):
+            with self.subTest(diagnostic=diagnostic), \
+                    patch.object(agent_cli.subprocess, 'run',
+                                 **({'side_effect': outcome} if isinstance(outcome, Exception)
+                                    else {'return_value': outcome})) as stop, \
+                    patch.object(agent_cli, '_repair_t3_native_runtime', return_value=True) as repair:
+                result, _, commands = self.inspect(fix=True, native=False, endpoint=True)
+            repair.assert_not_called()
+            self.assertFalse(result['healthy'])
+            self.assertFalse(result['checks']['native_runtime'])
+            self.assertTrue(result['checks']['endpoint'])
+            self.assertEqual(result['fixes'], [])
+            self.assertFalse(any('restart' in command for command in commands))
+            self.assertTrue(any(diagnostic in warning for warning in result['warnings']))
+            if isinstance(outcome, subprocess.TimeoutExpired):
+                self.assertTrue(any('still stopping' in warning and 'busy' in warning
+                                    for warning in result['warnings']))
+            self.assertEqual(stop.call_args.args[0], ['systemctl', '--user', 'stop', 't3code.service'])
+            self.assertEqual(stop.call_args.kwargs['timeout'], 30)
+
+    def test_successful_stop_allows_native_repair_and_one_restart(self):
+        with patch.object(agent_cli.subprocess, 'run', return_value=
+                          subprocess.CompletedProcess([], 0, '', '')) as stop, \
+                patch.object(agent_cli, '_repair_t3_native_runtime', return_value=True) as repair:
+            result, _, commands = self.inspect(fix=True, native=False)
+        stop.assert_called_once()
+        repair.assert_called_once()
+        self.assertTrue(result['healthy'])
+        self.assertIn('rebuilt T3 Code native runtime', result['fixes'])
+        self.assertEqual(sum('restart' in command for command in commands), 1)
+
+    def test_wait_flag_reaches_local_inspection_without_repairs(self):
+        result, _, _ = self.inspect()
+        parser = argparse.ArgumentParser()
+        agent_cli.add_agent_subparser(parser.add_subparsers(dest='command'))
+        args = parser.parse_args(['agent', 'doctor', '--wait-for-t3-startup', '--json'])
+        with patch.object(agent_cli, 'inspect_t3code', return_value=result) as inspect, \
+                patch.object(agent_cli, 'inspect_agent_tools', return_value=[]), \
+                redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(agent_cli.run_agent_command(args), 0)
+        inspect.assert_called_once_with(fix=False, wait_for_startup=True)
+        self.assertEqual(json.loads(output.getvalue()), [result])
+
+    def test_unstable_startup_fails_even_when_last_endpoint_probe_answered(self):
+        with patch.object(agent_cli, '_wait_for_t3_startup', return_value=(True, True, 'startup deadline exceeded')):
+            result, record, commands = self.inspect(wait_for_startup=True)
+        self.assertFalse(result['healthy'])
+        self.assertFalse(record['healthy'])
+        self.assertTrue(result['checks']['endpoint'])
+        self.assertFalse(result['checks']['startup_ready'])
+        self.assertIn('startup_ready', result['required_checks'])
+        self.assertIn('startup deadline exceeded', result['warnings'])
+        self.assertFalse(any('restart' in command for command in commands))
+
+    def test_remote_wait_preserves_other_capability_and_repair_budgets(self):
+        parser = argparse.ArgumentParser()
+        agent_cli.add_agent_subparser(parser.add_subparsers(dest='command'))
+        for flags, capability_count, repair_budget, storage_budget in (
+            ([], 1, 0, 0),
+            (['--all-capabilities', '--fix', '--container-storage'], 4, 360, 40),
+        ):
+            with self.subTest(flags=flags):
+                args = parser.parse_args(['agent', 'doctor', 'vm.example', 'agent',
+                                          '--wait-for-t3-startup', '--json', *flags])
+                with patch.object(agent_cli, '_run_remote_agent_lifecycle', return_value=0) as remote:
+                    self.assertEqual(agent_cli.run_agent_command(args), 0)
+                self.assertIn('--wait-for-t3-startup', remote.call_args.args[2])
+                self.assertEqual(remote.call_args.kwargs['timeout'],
+                                 agent_cli._T3_STARTUP_WAIT_SECONDS
+                                 + capability_count * agent_cli._REMOTE_DOCTOR_TIMEOUT_SECONDS
+                                 + repair_budget + storage_budget)
+
     def test_doctor_text_displays_warnings_and_returns_success(self):
         result, _, _ = self.inspect()
         parser = argparse.ArgumentParser()
@@ -203,6 +284,119 @@ class T3ReadinessTests(unittest.TestCase):
         self.assertIn('provider sessions are not tested', output.getvalue())
         self.assertIn('warning: Git author identity', output.getvalue())
         self.assertNotIn('readiness checks failed', output.getvalue())
+
+
+class T3StartupWaitTests(unittest.TestCase):
+    def setUp(self):
+        self.elapsed = 0.0
+        self.environment = {'XDG_RUNTIME_DIR': '/fake/runtime'}
+        # Replace the owning module's clock; never change other modules' timers.
+        self.enterContext(patch.object(agent_cli, 'time', SimpleNamespace(
+            monotonic=lambda: self.elapsed, sleep=self.advance)))
+        self.commands = []
+
+    def advance(self, seconds):
+        self.elapsed += seconds
+
+    @staticmethod
+    def state(invocation='a' * 32, active='active', loaded='loaded'):
+        return subprocess.CompletedProcess([], 0,
+            f'ActiveState={active}\nInvocationID={invocation}\nLoadState={loaded}\n', '')
+
+    def test_delayed_startup_reaches_stable_readiness_without_restarts(self):
+        def run(command, **kwargs):
+            self.commands.append(command)
+            self.assertEqual(kwargs['environment'], self.environment)
+            return self.state()
+
+        with patch.object(agent_cli, '_run_check', side_effect=run), \
+                patch.object(agent_cli, '_t3_endpoint_reachable', side_effect=[False, False, True, True, True]) as endpoint:
+            result = agent_cli._wait_for_t3_startup(3773, self.environment)
+        self.assertEqual(result, (True, True, ''))
+        self.assertEqual(endpoint.call_count, 5)
+        self.assertEqual(self.elapsed, 4)
+        self.assertTrue(all(command[:3] == ['systemctl', '--user', 'show'] for command in self.commands))
+
+    def test_changed_or_unknown_invocation_cannot_pass_early(self):
+        for invocations, elapsed in (
+            (['a' * 32] * 2 + ['b' * 32] * 6, 3),
+            (['a' * 32, 'b' * 32] + ['b' * 32] * 6, 3),
+            ([''] + ['b' * 32] * 6, 3),
+            (['invalid'] + ['b' * 32] * 6, 3),
+        ):
+            with self.subTest(invocations=invocations):
+                self.elapsed = 0
+                with patch.object(agent_cli, '_run_check', side_effect=[self.state(value) for value in invocations]), \
+                        patch.object(agent_cli, '_t3_endpoint_reachable', return_value=True):
+                    self.assertEqual(agent_cli._wait_for_t3_startup(3773, self.environment), (True, True, ''))
+                self.assertEqual(self.elapsed, elapsed)
+
+    def test_failed_or_missing_service_fails_early_without_endpoint_probe(self):
+        for state in (self.state(active='failed'), self.state(loaded='not-found')):
+            with self.subTest(state=state.stdout), \
+                    patch.object(agent_cli, '_run_check', return_value=state), \
+                    patch.object(agent_cli, '_t3_endpoint_reachable') as endpoint:
+                result = agent_cli._wait_for_t3_startup(3773, self.environment)
+            self.assertIn('failed or missing', result[2])
+            endpoint.assert_not_called()
+            self.assertEqual(self.elapsed, 0)
+
+    def test_process_failure_during_endpoint_probe_is_not_success(self):
+        with patch.object(agent_cli, '_run_check', side_effect=[self.state(), self.state(active='failed')]), \
+                patch.object(agent_cli, '_t3_endpoint_reachable', return_value=True):
+            active, endpoint, failure = agent_cli._wait_for_t3_startup(3773, self.environment)
+        self.assertFalse(active)
+        self.assertTrue(endpoint)
+        self.assertIn('failed service', failure)
+        self.assertEqual(self.elapsed, 0)
+
+    def test_permanently_unready_endpoint_exhausts_one_deadline(self):
+        with patch.object(agent_cli, '_T3_STARTUP_WAIT_SECONDS', 3), \
+                patch.object(agent_cli, '_run_check', return_value=self.state()) as run, \
+                patch.object(agent_cli, '_t3_endpoint_reachable', return_value=False) as endpoint:
+            result = agent_cli._wait_for_t3_startup(3773, self.environment)
+        self.assertEqual(self.elapsed, 3)
+        self.assertEqual(endpoint.call_count, 3)
+        self.assertEqual(run.call_count, 3)
+        self.assertIn('within 3 seconds', result[2])
+
+    def test_slow_probes_share_the_real_deadline_and_progress_uses_stderr(self):
+        probe_timeouts = []
+
+        def run(_command, **kwargs):
+            probe_timeouts.append(kwargs['timeout'])
+            self.advance(min(0.75, kwargs['timeout']))
+            return self.state()
+
+        def endpoint(_port, **kwargs):
+            probe_timeouts.append(kwargs['timeout'])
+            self.advance(kwargs['timeout'])
+            return False
+
+        with patch.object(agent_cli, '_T3_STARTUP_WAIT_SECONDS', 3), \
+                patch.object(agent_cli, '_T3_STARTUP_PROGRESS_SECONDS', 1), \
+                patch.object(agent_cli, '_run_check', side_effect=run), \
+                patch.object(agent_cli, '_t3_endpoint_reachable', side_effect=endpoint), \
+                redirect_stderr(io.StringIO()) as error, redirect_stdout(io.StringIO()) as output:
+            result = agent_cli._wait_for_t3_startup(3773, self.environment)
+        self.assertEqual(self.elapsed, 3)
+        self.assertEqual(probe_timeouts, [3, 2.25])
+        self.assertIn('within 3 seconds', result[2])
+        self.assertIn('Waiting for T3 Code startup', error.getvalue())
+        self.assertEqual(output.getvalue(), '')
+
+    def test_endpoint_answer_at_deadline_does_not_pass(self):
+        def endpoint(_port, **kwargs):
+            self.advance(kwargs['timeout'])
+            return True
+
+        with patch.object(agent_cli, '_T3_STARTUP_WAIT_SECONDS', 2), \
+                patch.object(agent_cli, '_run_check', return_value=self.state()) as run, \
+                patch.object(agent_cli, '_t3_endpoint_reachable', side_effect=endpoint):
+            result = agent_cli._wait_for_t3_startup(3773, self.environment)
+        self.assertTrue(result[2])
+        self.assertEqual(self.elapsed, 2)
+        run.assert_called_once()
 
 
 if __name__ == '__main__':
