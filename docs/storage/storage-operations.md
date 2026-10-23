@@ -125,6 +125,8 @@ content, and published by atomically selecting an immutable per-file generation.
 Creation subprocesses have a four-hour deadline. Failed builds retain their
 staging and manifest; previous generations and legacy parity are never removed
 automatically. Recovery payloads are excluded from directory inventory traversal.
+Source changes during generation publication leave an open finding, an incomplete
+scan, and a retained `published_unverified` build for inspection.
 A full scrub already performs parity maintenance, so it is not followed by a
 second fast pass. A scan that finishes with unrepairable files records its
 completion timestamp and reports an error, then waits for the configured scrub

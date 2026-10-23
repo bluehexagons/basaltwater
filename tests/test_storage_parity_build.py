@@ -89,6 +89,29 @@ class ParityBuildTests(unittest.TestCase):
         self.assertEqual(json.loads(manifest.read_text())['state'], 'publishing')
         self.assertEqual((manifest.parent / 'parity/set.par2').read_bytes(), b'verified parity')
 
+    def test_source_change_during_publication_keeps_an_open_finding(self):
+        publish = scrub.publish
+        def run(command, **kwargs):
+            if command[1] == 'create':
+                Path(command[-2]).write_bytes(b'verified parity')
+            return subprocess.CompletedProcess(command, 0)
+        def concurrent_publish(*args):
+            self.file.write_bytes(b'new contents during publication')
+            return publish(*args)
+        with patch.object(scrub, 'publish', side_effect=concurrent_publish), patch.object(scrub.subprocess, 'run', side_effect=run), patch.object(scrub, 'log'), patch.object(scrub, 'create_operation_logger'):
+            result = scrub.scrub_directory(str(self.source), str(self.database), 10, 'unused', verify=False, suppress_notifications=True)
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['completed'])
+        self.assertEqual(result['files_failed'], ['file'])
+        report = scrub.Findings(str(self.source), str(self.database))
+        self.assertTrue(report.active('file'))
+        self.assertEqual(report.data['files']['file']['category'], 'changed_during_scan')
+        self.assertEqual(self.file.read_bytes(), b'new contents during publication')
+        manifest = next((self.database / scrub.METADATA_DIR).glob('build-*/operation.json'))
+        self.assertEqual(json.loads(manifest.read_text())['state'], 'published_unverified')
+        self.assertEqual((manifest.parent / 'parity/set.par2').read_bytes(), b'verified parity')
+        self.assertEqual(Path(parity_sets.locate(str(self.file), str(self.source), str(self.database))[1][0]).read_bytes(), b'verified parity')
+
     def test_interrupted_generation_switch_keeps_previous_active_set(self):
         first, second = self.root / 'first.par2', self.root / 'second.par2'
         first.write_bytes(b'first')

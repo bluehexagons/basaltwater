@@ -231,6 +231,15 @@ def create_par2(
             manifest['state'] = 'publishing'
             write_json_atomic(manifest_path, manifest)
             publish(file_path, directory, database, generated)
+            if before != file_identity(file_path):
+                manifest['state'] = 'published_unverified'
+                write_json_atomic(manifest_path, manifest)
+                report.record(relative_path, {
+                    'category': 'changed_during_scan',
+                    'evidence': 'Source changed during parity publication; verify against the retained generation',
+                })
+                log(f"Source changed during parity publication for {relative_path}; staging retained at {staging}", log_file)
+                return False
             manifest['state'] = 'completed'
             write_json_atomic(manifest_path, manifest)
             shutil.rmtree(staging)
@@ -549,7 +558,9 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                             files_skipped_uptodate += 1
                     else:
                         files_failed.append(relative_path)
-                        Findings(directory, database).record(relative_path, {"category": "tool_error", "evidence": "Parity creation failed"})
+                        report = Findings(directory, database)
+                        if not report.active(relative_path):
+                            report.record(relative_path, {"category": "tool_error", "evidence": "Parity creation failed"})
 
                     if verify:
                         outcome = verify_repair(file_path, directory, database, log_file)
