@@ -760,10 +760,15 @@ detachment preserves the snippet. Failed provisioning deletes it only after VM
 destruction is confirmed; uncertain cleanup preserves it for inspection.
 
 Keep the guard and cloud-init cache for normal reboots, snapshot rollback and
-identity-preserving backup restores. Snapshots taken before the guard was
-installed do not receive its protection. Cache loss or incompatible cache
-invalidation can still cause first-boot behavior. Changes to Proxmox cloud-init
-fields do not automatically reinitialize an already provisioned guest; apply
+identity-preserving backup restores. Preserve the virtual NIC MAC addresses and
+interface layout when restoring a replacement: an inherited network configuration
+may match those MAC addresses or interface names. For example,
+`qmrestore --unique` generates new MAC addresses and can leave that configuration
+inactive. Keep the original guest stopped while its replacement uses the same
+address and MAC. Snapshots taken before the guard was installed do not receive
+its protection. Cache loss or incompatible cache invalidation can still cause
+first-boot behavior. Changes to Proxmox cloud-init fields do not automatically
+reinitialize an already provisioned guest; apply
 ordinary guest configuration through Basaltwater setup instead.
 
 Before capturing a template or cloning a VM with a **new identity**, remove
