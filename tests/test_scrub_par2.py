@@ -152,6 +152,7 @@ class TestSetupFailurePropagation(unittest.TestCase):
             '/source',
             '/destination',
             suppress_notifications=True,
+            excluded_paths=(),
         )
         disk_usage.assert_not_called()
         logger.complete.assert_called_once()

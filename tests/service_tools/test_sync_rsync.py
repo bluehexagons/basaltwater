@@ -8,9 +8,10 @@ import sys
 import unittest
 import tempfile
 import subprocess
+import signal
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -83,13 +84,97 @@ class TestSyncRsyncLogging(unittest.TestCase):
         self.assertFalse(filter_paths[0].exists())
 
     def test_copy_new_only_disables_deletion_and_existing_file_updates(self):
-        with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)) as popen, patch.object(sync_rsync, 'get_service_logger'):
+        with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)) as popen, patch.object(sync_rsync, 'get_service_logger'), patch.object(sync_rsync.os, 'walk', return_value=iter(())):
             self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, copy_new_only=True), 0)
         command = popen.call_args.args[0]
         self.assertIn('--ignore-existing', command)
         self.assertIn('--partial-dir=.rsync-partial', command)
         self.assertNotIn('--delete', command)
         self.assertNotIn('--delete-delay', command)
+
+    def test_conflicting_ancestors_are_excluded_before_rsync_runs(self):
+        for kind in ('source-file', 'source-symlink', 'destination-file', 'destination-symlink'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as root:
+                source, destination = Path(root) / 'source', Path(root) / 'destination'
+                source.mkdir()
+                destination.mkdir()
+                for endpoint, label in ((source, 'source'), (destination, 'destination')):
+                    folder = endpoint / 'folder'
+                    if kind == label + '-file':
+                        folder.write_text('replacement')
+                    elif kind == label + '-symlink':
+                        folder.symlink_to(Path(root), target_is_directory=True)
+                    else:
+                        folder.mkdir()
+                        (folder / 'flagged').write_text('preserve')
+                def popen(command, **kwargs):
+                    path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
+                    self.assertEqual(Path(path).read_bytes(), b'/folder\0/healthy-folder/flagged\0')
+                    self.assertTrue(kwargs['start_new_session'])
+                    return _FakeProcess(0)
+                with patch.object(sync_rsync.subprocess, 'Popen', side_effect=popen), patch.object(sync_rsync, 'get_service_logger'):
+                    result = sync_rsync.run_rsync_with_notifications(str(source), str(destination), True,
+                        excluded_paths=('folder/flagged', 'healthy-folder/flagged'))
+                self.assertEqual(result, 0)
+
+    def test_timeout_is_an_operational_failure(self):
+        with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)), patch.object(sync_rsync, '_output_lines', side_effect=subprocess.TimeoutExpired('rsync', 14400)), patch.object(sync_rsync, 'get_service_logger', return_value=self.logger):
+            with self.assertLogs(self.logger, level='ERROR') as logs:
+                result = sync_rsync.run_rsync_with_notifications('/src', '/dst', True)
+        self.assertEqual(result, 124)
+        self.assertIn('timed out', '\n'.join(logs.output))
+
+    def test_timed_out_job_is_checkpointed_and_later_backup_runs(self):
+        from sync.service_tools import storage_ops
+
+        first, second = _FakeProcess(0), _FakeProcess(0)
+        def output(process):
+            if process is first:
+                raise subprocess.TimeoutExpired('rsync', 14400)
+            return iter(())
+        config = {'backup_specs': [['/source', '/backup', 'daily'],
+                                   ['/other-source', '/other-backup', 'daily']]}
+        with tempfile.TemporaryDirectory() as root, patch.object(storage_ops, 'STATE_FILE', str(Path(root) / 'state.json')), patch.object(storage_ops, 'load_setup_config', return_value=config), patch.object(storage_ops, 'parse_notification_args', return_value=[]), patch.object(storage_ops, 'get_service_logger'), patch.object(storage_ops.time, 'time', return_value=1_000_000), patch.object(sync_rsync, 'get_service_logger'), patch.object(sync_rsync.subprocess, 'Popen', side_effect=[first, second]) as popen, patch.object(sync_rsync, '_output_lines', side_effect=output):
+            result = storage_ops.execute_storage_operations()
+            state = storage_ops.load_last_run()
+        self.assertEqual(popen.call_count, 2)
+        self.assertFalse(result['syncs'][0]['success'])
+        self.assertTrue(result['syncs'][1]['success'])
+        self.assertNotIn('sync:/source:/backup', state)
+        self.assertEqual(state['sync:/other-source:/other-backup'], 1_000_000)
+        self.assertEqual(state['_attempts']['sync:/source:/backup']['retry_after'], 1_003_600)
+
+    def test_copy_new_only_skips_directories_blocked_by_existing_entries(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, destination = Path(root) / 'source', Path(root) / 'destination'
+            source.mkdir()
+            destination.mkdir()
+            for name in ('file', 'link', 'dangling', 'normal', 'new', 'offline'):
+                (source / name).mkdir()
+            (destination / 'file').write_text('preserve')
+            (destination / 'link').symlink_to(source / 'normal', target_is_directory=True)
+            (destination / 'dangling').symlink_to(source / 'absent', target_is_directory=True)
+            (destination / 'normal').mkdir()
+            (destination / 'offline').mkdir()
+            # The offline exclusion must prune traversal before os.walk enters it.
+            walk = os.walk
+            visited = []
+            def inventory(*args, **kwargs):
+                for entry in walk(*args, **kwargs):
+                    visited.append(entry[0])
+                    yield entry
+            def popen(command, **kwargs):
+                path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
+                self.assertEqual(set(Path(path).read_bytes().split(b'\0')[:-1]),
+                                 {b'/file', b'/link', b'/dangling', b'/offline'})
+                return _FakeProcess(0)
+            with patch.object(sync_rsync.os, 'walk', side_effect=inventory), patch.object(sync_rsync.subprocess, 'Popen', side_effect=popen), patch.object(sync_rsync, 'get_service_logger'):
+                result = sync_rsync.run_rsync_with_notifications(str(source), str(destination), True,
+                    excluded_paths=('offline',), copy_new_only=True)
+            self.assertEqual(result, 0)
+            self.assertNotIn(str(source / 'offline'), visited)
+            self.assertNotIn(str(source / 'file'), visited)
+            self.assertIn(str(source / 'normal'), visited)
 
     def test_invalid_exclusions_never_start_rsync(self):
         for path in ('/absolute', '../outside', 'nested/../outside', '.', 'line\nbreak'):
@@ -174,6 +259,35 @@ class TestSyncRsyncLogging(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertIn("Failed to send success notification | error='notify boom'", "\n".join(logs.output))
+
+
+class TestRsyncDeadline(unittest.TestCase):
+    def test_deadline_stops_stalled_and_noisy_process_groups(self):
+        for noisy in (False, True):
+            with self.subTest(noisy=noisy):
+                process = Mock(pid=12345)
+                # A dead leader must not let descendants hold the pipes forever.
+                process.poll.return_value = 0
+                readable = [process.stdout] if noisy else []
+                with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 2), patch.object(sync_rsync.time, 'monotonic', side_effect=[0, 0, 1, 2]), patch.object(sync_rsync.select, 'select', return_value=(readable, [], [])) as select, patch.object(sync_rsync.os, 'read', return_value=b'progress\n'), patch.object(sync_rsync.os, 'killpg') as killpg:
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        list(sync_rsync._output_lines(process))
+                self.assertEqual(select.call_count, 2)
+                self.assertEqual(killpg.call_args_list, [call(12345, signal.SIGTERM), call(12345, signal.SIGKILL)])
+                process.stdout.close.assert_called_once()
+                process.stderr.close.assert_called_once()
+
+    def test_closed_pipes_do_not_allow_an_unbounded_process_wait(self):
+        process = Mock(pid=12345)
+        process.wait.side_effect = [subprocess.TimeoutExpired('rsync', 8),
+                                   subprocess.TimeoutExpired('rsync', 5), 0]
+        with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 10), patch.object(sync_rsync.time, 'monotonic', side_effect=[100, 101, 102]), patch.object(sync_rsync.select, 'select', return_value=([process.stdout, process.stderr], [], [])), patch.object(sync_rsync.os, 'read', return_value=b''), patch.object(sync_rsync.os, 'killpg') as killpg:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                list(sync_rsync._output_lines(process))
+        self.assertEqual(process.wait.call_args_list, [call(timeout=8), call(timeout=5), call(timeout=5)])
+        self.assertEqual(killpg.call_args_list[-1], call(12345, signal.SIGKILL))
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
 
 
 class TestSyncPathSafety(unittest.TestCase):

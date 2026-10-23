@@ -31,16 +31,43 @@ def validate_sync_paths(source: str, destination: str, *, resolve: bool = True) 
         raise ValueError("Sync source and destination must not be equal or nested")
 
 
-def validate_configured_storage_mounts(path: str, config: Any) -> None:
-    """Require the exact declared mount, not merely any mounted ancestor."""
-    path = os.path.abspath(path)
+def _configured_storage_mounts(config: Any) -> list[str]:
+    """Normalize declared mounts without following potentially unsafe aliases."""
     roots = [spec[0] for spec in getattr(config, "smb_mounts", None) or [] if spec]
     roots += [spec[1] for spec in getattr(config, "storage_mounts", None) or [] if len(spec) >= 2]
     for root in roots:
-        root = os.path.abspath(root)
-        if path == root or path.startswith(root.rstrip(os.sep) + os.sep):
-            if os.path.realpath(root) != root or not os.path.ismount(root):
+        validate_filesystem_path(root)
+        if not os.path.isabs(root):
+            raise ValueError(f"Configured mount must be absolute: {root}")
+    return sorted({os.path.abspath(root) for root in roots})
+
+
+def validate_configured_storage_mounts(path: str, config: Any) -> None:
+    """Require the exact declared mount, including access through aliases."""
+    paths = {os.path.abspath(path), os.path.realpath(path)}
+    for root in _configured_storage_mounts(config):
+        resolved = os.path.realpath(root)
+        if any(os.path.commonpath([candidate, mount]) == mount
+               for candidate in paths for mount in {root, resolved}):
+            if resolved != root or not os.path.ismount(root):
                 raise RuntimeError(f"Required configured mount is unavailable: {root}")
+
+
+def unavailable_sync_subtrees(source: str, destination: str, config: Any) -> tuple[str, ...]:
+    """Preserve offline nested mounts on both sides of a recursive mirror."""
+    endpoints = {os.path.abspath(path) for path in (source, destination)}
+    endpoints.update(os.path.realpath(path) for path in (source, destination))
+    excluded: set[str] = set()
+    for root in _configured_storage_mounts(config):
+        resolved = os.path.realpath(root)
+        relatives = {
+            os.path.relpath(candidate, endpoint)
+            for endpoint in endpoints for candidate in {root, resolved}
+            if candidate != endpoint and os.path.commonpath([candidate, endpoint]) == endpoint
+        }
+        if relatives and (resolved != root or not os.path.ismount(root)):
+            excluded.update(relatives)
+    return tuple(sorted(excluded))
 
 
 def validate_frequency(frequency: str, label: str = "frequency") -> None:

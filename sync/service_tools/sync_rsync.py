@@ -9,7 +9,10 @@ import subprocess
 import re
 import select
 import codecs
+import signal
+import stat
 import tempfile
+import time
 from collections import deque
 from logging import ERROR, WARNING
 from datetime import datetime
@@ -27,16 +30,22 @@ BYTES_TO_MB = 1024 * 1024
 
 # Progress logging interval (seconds)
 PROGRESS_LOG_INTERVAL = 30
+RSYNC_TIMEOUT_SECONDS = 14400
 
 
 def _output_lines(process):
-    """Drain both pipes without waiting for a newline on either pipe."""
+    """Drain both pipes under one deadline, including the final process wait."""
     streams = {process.stdout: True, process.stderr: False}
     decoders = {stream: codecs.getincrementaldecoder("utf-8")(errors="replace") for stream in streams}
     pending = {stream: "" for stream in streams}
+    deadline = time.monotonic() + RSYNC_TIMEOUT_SECONDS
+    completed = False
     try:
         while streams:
-            readable, _, _ = select.select(list(streams), [], [], 0.5)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired('rsync', RSYNC_TIMEOUT_SECONDS)
+            readable, _, _ = select.select(list(streams), [], [], min(0.5, remaining))
             if not readable:
                 yield True, ""
             for stream in readable:
@@ -53,17 +62,84 @@ def _output_lines(process):
                     pending[stream] = ""
                 if not chunk:
                     del streams[stream]
-        process.wait()
+        process.wait(timeout=max(0, deadline - time.monotonic()))
+        completed = True
     finally:
-        if process.poll() is None:
-            process.terminate()
+        try:
+            if not completed:
+                # rsync forks a local receiver too. Stop the entire private session,
+                # even if its leader exited while a child still holds the pipes.
+                def signal_group(sig):
+                    try:
+                        os.killpg(process.pid, sig)
+                    except ProcessLookupError:
+                        pass
+                signal_group(signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                finally:
+                    signal_group(signal.SIGKILL)
+                    process.wait(timeout=5)
+        finally:
+            process.stdout.close()
+            process.stderr.close()
+
+
+def _protected_paths(source: str, destination: str, paths: tuple[str, ...]) -> tuple[str, ...]:
+    """Preserve a conflicting ancestor when a descendant cannot be excluded alone."""
+    protected: dict[str, None] = {}
+    for path in paths:
+        validate_filesystem_path(path)
+        if os.path.isabs(path) or path in ('', '.') or '..' in path.split('/'):
+            raise ValueError(f"Expected a relative sync exclusion: {path}")
+        path = os.path.normpath(path)
+        components = path.split('/')
+        for depth in range(1, len(components)):
+            ancestor = '/'.join(components[:depth])
+            conflict = False
+            for endpoint in (source, destination):
+                try:
+                    mode = os.lstat(os.path.join(endpoint, ancestor)).st_mode
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISDIR(mode):
+                    conflict = True
+                    break
+            if conflict:
+                path = ancestor
+                break
+        protected[path] = None
+    return tuple(protected)
+
+
+def _copy_new_conflicts(source: str, destination: str, protected: tuple[str, ...]) -> tuple[str, ...]:
+    """Skip source directories blocked by existing destination files or links."""
+    excluded = set(protected)
+    conflicts: list[str] = []
+
+    def fail(error: OSError) -> None:
+        raise error
+
+    for root, dirs, _files in os.walk(source, onerror=fail):
+        for name in list(dirs):
+            relative = os.path.relpath(os.path.join(root, name), source)
+            # Pruning each excluded ancestor also avoids walking unavailable
+            # nested mounts while preparing conservative copy mode.
+            if relative in excluded or name in {'.git', '.rsync-partial'}:
+                dirs.remove(name)
+                continue
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-        process.stdout.close()
-        process.stderr.close()
+                source_mode = os.lstat(os.path.join(root, name)).st_mode
+                destination_mode = os.lstat(os.path.join(destination, relative)).st_mode
+            except FileNotFoundError:
+                dirs.remove(name)  # A wholly new subtree has no conflicts.
+                continue
+            if stat.S_ISDIR(source_mode) and not stat.S_ISDIR(destination_mode):
+                conflicts.append(relative)
+                dirs.remove(name)
+    return tuple(conflicts)
 
 
 def run_rsync_with_notifications(
@@ -129,20 +205,19 @@ def run_rsync_with_notifications(
         validate_sync_paths(source, destination)
         if not os.path.isdir(source):
             raise ValueError(f"Sync source is not an existing directory: {source}")
+        protected_paths = _protected_paths(source, destination, excluded_paths)
         options = [] if copy_new_only else ['--delete', '--delete-delay']
         if copy_new_only:
             # Keep interrupted new files out of their final names so the next
             # --ignore-existing run can finish them instead of skipping them.
             options.extend(['--ignore-existing', '--partial-dir=.rsync-partial'])
-        if excluded_paths:
+            protected_paths += _copy_new_conflicts(source, destination, protected_paths)
+        if protected_paths:
             # Use a private file to avoid argv limits for large reports. Anchored
             # excludes hide source paths and protect their destination copies,
             # including absent source files and replaced directory ancestors.
             filter_file = tempfile.NamedTemporaryFile(prefix='sync-excludes-')
-            for path in excluded_paths:
-                validate_filesystem_path(path)
-                if os.path.isabs(path) or path in ('', '.') or '..' in path.split('/'):
-                    raise ValueError(f"Expected a relative sync exclusion: {path}")
+            for path in protected_paths:
                 if any(char in path for char in '*?['):
                     path = re.sub(r'([\\*?\[])', r'\\\1', path)
                 filter_file.write(os.fsencode('/' + path) + b'\0')
@@ -166,6 +241,7 @@ def run_rsync_with_notifications(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            start_new_session=True,
             bufsize=1  # Line buffered
         )
         
@@ -308,7 +384,8 @@ Duration: {duration:.1f}s
         
         return 0
         
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        returncode = 124 if isinstance(e, subprocess.TimeoutExpired) else e.returncode
         duration = (datetime.now() - start_time).total_seconds()
         log_event(
             logger,
@@ -317,7 +394,7 @@ Duration: {duration:.1f}s
             source=source,
             destination=destination,
             duration_seconds=f"{duration:.1f}",
-            exit_code=e.returncode,
+            exit_code=returncode,
         )
         error_output = e.stderr or e.output or str(e)
         log_event(logger, "Rsync error output", level=ERROR, stderr=error_output)
@@ -343,7 +420,7 @@ Duration: {duration:.1f}s
             except Exception as notify_error:
                 log_event(logger, "Failed to send failure notification", level=ERROR, error=str(notify_error))
         
-        return e.returncode
+        return returncode
     
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()

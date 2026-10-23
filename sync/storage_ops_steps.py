@@ -89,8 +89,8 @@ ExecStart=/usr/bin/python3 {shlex.quote(orchestrator_script)}
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=storage-ops
-TimeoutStartSec=14400
-# Allow the service to run for up to 4 hours
+TimeoutStartSec=infinity
+# Each rsync/PAR2 subprocess has its own deadline; later jobs must still run.
 
 [Install]
 WantedBy=multi-user.target

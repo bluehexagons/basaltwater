@@ -36,7 +36,10 @@ from lib.notifications import (
 )
 from lib.machine_state import load_setup_config
 from lib.mount_utils import get_mount_ancestor
-from lib.task_utils import needs_mount_check, validate_configured_storage_mounts, validate_sync_paths
+from lib.task_utils import (
+    needs_mount_check, unavailable_sync_subtrees,
+    validate_configured_storage_mounts, validate_sync_paths,
+)
 from lib.runtime_config import RuntimeConfig
 from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
@@ -265,7 +268,9 @@ def validate_mounts_for_operation(paths: list[str], config: RuntimeConfig, opera
             validate_configured_storage_mounts(path, config)
         except (OSError, ValueError, RuntimeError) as exc:
             return False, str(exc)
-        if needs_mount_check(path, config):
+        needs_check = needs_mount_check(path, config)
+        path = os.path.realpath(path)
+        if needs_check or needs_mount_check(path, config):
             # Check if path exists
             path_exists = os.path.exists(path)
             
@@ -370,6 +375,10 @@ def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig
     if excluded_paths:
         sample = ", ".join(sorted(excluded_paths)[:5])
         warnings.insert(0, f"Preserved {len(excluded_paths)} path(s) with unresolved integrity findings: {sample}; inspect with basaltw scrub")
+    unavailable = unavailable_sync_subtrees(source, destination, config)
+    if unavailable:
+        excluded_paths.update(unavailable)
+        warnings.append(f"Preserved {len(unavailable)} subtree(s) on unavailable configured mounts: {', '.join(unavailable[:5])}")
     if copy_new_only:
         warnings.append("Copying new files only; existing destination files and deletions are preserved until findings are available")
     return SyncIntegrity(tuple(sorted(excluded_paths)), "; ".join(warnings), copy_new_only)

@@ -32,6 +32,7 @@ class TestCreateStorageOpsService(unittest.TestCase):
         service = replace.call_args.args[0]["storage-ops.service"]
         self.assertNotIn("ExecCondition=", service)
         self.assertIn("ExecStart=/usr/bin/python3", service)
+        self.assertIn("TimeoutStartSec=infinity", service)
 
     @patch("sync.storage_ops_steps.run")
     @patch("sync.storage_ops_steps.open")

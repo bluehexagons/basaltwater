@@ -52,21 +52,28 @@ acceptable.
 Equal or nested sync paths are rejected, including aliases through symlinks.
 The source must be an existing directory. Output from both rsync pipes is
 drained without waiting for newlines, and retained output is bounded to prevent
-large runs from exhausting memory.
+large runs from exhausting memory. Each rsync operation has a four-hour deadline;
+on timeout its process group is stopped, the failure is checkpointed for retry,
+and later jobs continue. The service has no shared four-hour limit that can
+repeatedly starve later jobs. Rerun setup to refresh existing service units.
 
 Scheduled syncs and backups continue when either tree contains open scrub findings.
 Only affected relative paths are excluded from transfer and deletion, preserving
 existing destination copies while other files are mirrored normally. This also
 protects destination files when the source file is missing. Completion is recorded
 on the normal schedule, with a warning listing a bounded sample of preserved paths.
+If a file or symlink replaces a protected path's directory ancestor, that ancestor
+is preserved too, avoiding repeated transfer errors while other paths sync.
 Resolve findings with `basaltw scrub` to include those paths in subsequent syncs.
 These precautions use recorded findings; they do not verify every source file.
 
 If a relevant findings report cannot be read (including an unavailable parity
 volume), the mirror continues in a conservative mode: it copies new files,
 preserves existing destination files, and disables deletion. A finding covering
-the entire sync root uses this mode too. Logs and notifications report the warning;
-the report and parity remain intact for investigation. Normal mirroring resumes
+the entire sync root uses this mode too. Logs and notifications report the warning.
+Source directories blocked by existing destination files or symlinks are skipped
+so these type conflicts do not trigger repeated transfer failures.
+The report and parity remain intact for investigation. Normal mirroring resumes
 on a subsequent scheduled run once the report is readable and root findings are
 resolved.
 Destinations that contain, are inside, or alias a configured parity database are
@@ -81,6 +88,10 @@ are skipped instead of writing to an underlying local directory. Mount checks
 run separately for each operation, so an offline scrub database or another job's
 missing mount cannot stop independent backups. Rerun setup to replace older
 service units that checked every storage mount before starting the orchestrator.
+Mount checks also resolve endpoint aliases. An unavailable configured mount
+below either mirror root is excluded from both transfer and deletion, with a
+warning, so healthy subtrees continue and existing backup content is preserved.
+These nested mount protections also apply to custom inline sync setup steps.
 
 Managed SMB client mounts use native systemd automount units, with a 60-second
 idle timeout. Access triggers the matching network-ordered mount; enabling the
