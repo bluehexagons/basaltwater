@@ -91,6 +91,10 @@ _SERVICE_PROBE_TIMEOUT_SECONDS = 1
 _SYSTEM_OVERVIEW_CACHE_SECONDS = 30
 _INTERNAL_WEB_URL_FILE = "/etc/basaltwater/internal-web/base-url"
 _T3_UPDATE_TIMEOUT_SECONDS = 30 * 60
+_T3_STARTUP_TIMEOUT_SECONDS = 30 * 60
+# Doctor also inventories the runtime, tools and service configuration.
+_T3_READINESS_TIMEOUT_SECONDS = _T3_STARTUP_TIMEOUT_SECONDS + 300
+_T3_ACTION_TIMEOUT_SECONDS = _T3_UPDATE_TIMEOUT_SECONDS + _T3_READINESS_TIMEOUT_SECONDS + 60
 _T3_CORE_READINESS_CHECKS = (
     "service_active",
     "service_enabled",
@@ -99,6 +103,7 @@ _T3_CORE_READINESS_CHECKS = (
     "wrapper",
     "pairing_helper",
     "endpoint",
+    "startup_ready",
     "t3_agent_skill",
 )
 _T3_GITHUB_READINESS_CHECKS = (
@@ -114,6 +119,7 @@ _T3_READINESS_LABELS = {
     "wrapper": "pairing provider installed",
     "pairing_helper": "pairing helper installed",
     "endpoint": "web endpoint responding",
+    "startup_ready": "service startup stable",
     "t3_agent_skill": "managed T3 skills installed",
     "git_identity": "Git author identity configured",
     "gh_authenticated": "GitHub CLI authenticated",
@@ -898,6 +904,7 @@ class WebPanelState:
             )
 
     def _run_t3_update(self) -> None:
+        deadline = time.monotonic() + _T3_ACTION_TIMEOUT_SECONDS
         home = os.path.expanduser("~")
         environment = os.environ.copy()
         environment.pop("BASALTWATER_T3_LOGINCTL_SHIM", None)
@@ -957,6 +964,12 @@ class WebPanelState:
                 output,
             )
             return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self._finish_action("failed", "T3 Code update exceeded its action deadline.", output)
+            return
+        with self._lock:
+            self.action_message = "Waiting for T3 Code startup (up to 30 minutes)…"
         try:
             check = subprocess.run(
                 [
@@ -965,13 +978,13 @@ class WebPanelState:
                     "doctor",
                     "--capability",
                     "t3code",
-                    "--fix",
+                    "--wait-for-t3-startup",
                     "--json",
                 ],
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=min(_T3_READINESS_TIMEOUT_SECONDS, remaining),
                 cwd=home,
                 env=environment,
             )
@@ -988,6 +1001,12 @@ class WebPanelState:
                 "failed",
                 "T3 Code updated, but its readiness check could not start.",
                 output + str(exc),
+            )
+            return
+        if time.monotonic() >= deadline:
+            self._finish_action(
+                "failed", "T3 Code update exceeded its action deadline.",
+                output + (check.stderr or ""),
             )
             return
         readiness = _evaluate_t3_readiness(self.manifest, check.stdout or "")

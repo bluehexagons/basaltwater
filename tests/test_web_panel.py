@@ -33,6 +33,7 @@ from common.web_panel_steps import (
     render_web_panel_nginx,
 )
 from common.service_tools.web_panel_audit_export import _audit_tool, collect_audit_snapshot
+from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import (
     WebPanelState,
@@ -82,6 +83,7 @@ def _t3_doctor_output(**overrides: bool) -> str:
         "wrapper": True,
         "pairing_helper": True,
         "endpoint": True,
+        "startup_ready": True,
         "git_identity": False,
         "t3_agent_skill": True,
         "gh_authenticated": False,
@@ -2006,8 +2008,73 @@ class WebPanelEventTest(unittest.TestCase):
         )
         mock_which.assert_called_once_with("basaltw", path=launcher_path)
         self.assertIn("--json", mock_run.call_args_list[1].args[0])
+        self.assertIn("--wait-for-t3-startup", mock_run.call_args_list[1].args[0])
+        self.assertNotIn("--fix", mock_run.call_args_list[1].args[0])
+        self.assertEqual(
+            mock_run.call_args_list[1].kwargs["timeout"],
+            panel._T3_READINESS_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(len(mock_run.call_args_list), 2)
+        self.assertEqual(
+            mock_run.call_args_list[0].kwargs["timeout"],
+            panel._T3_UPDATE_TIMEOUT_SECONDS,
+        )
         self.assertEqual(state.action_status, "complete")
         self.assertIn("Not required by this setup", state.action_output)
+
+    def test_t3_update_bounds_readiness_and_total_worker_time(self) -> None:
+        for scenario in ('slow-update', 'worker-deadline', 'worker-expired', 'doctor-timeout', 'unstable-startup'):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as home:
+                state = WebPanelState(self._t3_manifest(), agent_home=home)
+                elapsed = 0
+                commands = []
+
+                def run(command, **kwargs):
+                    nonlocal elapsed
+                    commands.append((command, kwargs))
+                    if len(commands) == 1:
+                        elapsed += (
+                            panel._T3_ACTION_TIMEOUT_SECONDS + 1 if scenario == 'worker-expired' else
+                            panel._T3_ACTION_TIMEOUT_SECONDS - 10 if scenario == 'worker-deadline' else
+                            panel._T3_UPDATE_TIMEOUT_SECONDS
+                        )
+                        return SimpleNamespace(returncode=0, stdout='updated\n', stderr='')
+                    self.assertIn('Waiting for T3 Code startup', state.action_message)
+                    if scenario == 'doctor-timeout':
+                        raise subprocess.TimeoutExpired(command, kwargs['timeout'], output=b'partial', stderr=b'migration busy')
+                    if scenario == 'worker-deadline':
+                        elapsed += 11
+                    return SimpleNamespace(returncode=0,
+                        stdout=_t3_doctor_output(startup_ready=scenario != 'unstable-startup'), stderr='')
+
+                with (
+                    patch.object(panel, 'time', SimpleNamespace(monotonic=lambda: elapsed)),
+                    patch.object(panel.os.path, 'expanduser', return_value=home),
+                    patch.object(panel.shutil, 'which', return_value=home + '/basaltw'),
+                    patch.object(panel, '_temporary_t3_loginctl_shim', return_value=nullcontext(home)),
+                    patch.object(panel.subprocess, 'run', side_effect=run),
+                ):
+                    state._run_t3_update()
+                self.assertGreaterEqual(panel._T3_READINESS_TIMEOUT_SECONDS, 30 * 60 + 300)
+                self.assertGreaterEqual(panel._T3_ACTION_TIMEOUT_SECONDS,
+                                        panel._T3_UPDATE_TIMEOUT_SECONDS + panel._T3_READINESS_TIMEOUT_SECONDS)
+                if scenario == 'worker-expired':
+                    self.assertEqual(len(commands), 1)
+                else:
+                    self.assertEqual(len(commands), 2)
+                    self.assertEqual(commands[1][1]['timeout'],
+                                     10 if scenario == 'worker-deadline' else panel._T3_READINESS_TIMEOUT_SECONDS)
+                    self.assertNotIn('--fix', commands[1][0])
+                    self.assertIn('--wait-for-t3-startup', commands[1][0])
+                self.assertEqual(state.action_status, 'complete' if scenario == 'slow-update' else 'failed')
+                if scenario in {'worker-expired', 'worker-deadline'}:
+                    self.assertIn('action deadline', state.action_message)
+                elif scenario == 'doctor-timeout':
+                    self.assertIn('timed out', state.action_message)
+                    self.assertIn('partial', state.action_output)
+                    self.assertIn('migration busy', state.action_output)
+                elif scenario == 'unstable-startup':
+                    self.assertIn('✗ service startup stable', state.action_output)
 
     def test_t3_update_requires_github_checks_when_credentials_were_staged(self) -> None:
         manifest = self._t3_manifest()
