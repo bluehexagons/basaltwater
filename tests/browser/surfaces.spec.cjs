@@ -727,6 +727,113 @@ test.describe('agent task workflow', () => {
   });
 });
 
+test.describe('host inspection', () => {
+  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('jobs and logs load on request, preserve filters and explain incomplete results', async ({ page, developmentServer: dev }, info) => {
+    test.setTimeout(90000);
+    await page.goto(dev.url + '/jobs');
+    await expect(page.getByText('Select Load scheduled jobs to inspect maintenance timers and their last runs.', { exact: true })).toBeVisible();
+    await expect(page.locator('.job-card')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Load scheduled jobs', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.job-card')).toHaveCount(3);
+    const failedJob = page.getByRole('region', { name: 'Package updates', exact: true });
+    const inactiveJob = page.getByRole('region', { name: 'System cleanup', exact: true });
+    await expect(failedJob.getByText('Last run failed', { exact: true })).toBeVisible();
+    await expect(failedJob).toContainText('In about 45 minutes');
+    await expect(inactiveJob.getByText('Last run succeeded', { exact: true })).toBeVisible();
+    await expect(inactiveJob.getByText('Timer inactive', { exact: true })).toBeVisible();
+    await expect(inactiveJob).toContainText('Timer is not active');
+    await expect(page.getByRole('region', { name: 'Security monitoring', exact: true })).toContainText('Last run succeeded');
+    await expect(failedJob.getByText('exit-code', { exact: true })).not.toBeVisible();
+    await failedJob.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(failedJob.getByText('exit-code', { exact: true })).toBeVisible();
+    await expect(failedJob.locator('dl > div').filter({ has: page.getByText('Process exit status', { exact: true }) }).locator('dd')).toHaveText('1');
+    await failedJob.getByRole('link', { name: 'Inspect job logs', exact: true }).click();
+    await expect(page.getByLabel('Service', { exact: true })).toHaveValue('auto-update-apt.service');
+    await expect(page.getByLabel('Time window', { exact: true })).toHaveValue('24h');
+    await expect(page.getByLabel('Severity', { exact: true })).toHaveValue('7');
+    await expect(page.getByText('Choose a service and select Load diagnostics. No log query has run yet.', { exact: true })).toBeVisible();
+    await expect(page.locator('.journal-entry')).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.has('load')).toBe(false);
+
+    const search = 'upstream "probe" <tag> & connection';
+    await page.getByLabel('Time window', { exact: true }).selectOption('boot');
+    await page.getByLabel('Severity', { exact: true }).selectOption('3');
+    await page.getByLabel('Message contains', { exact: true }).fill(search);
+    await page.getByRole('button', { name: 'Load diagnostics', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Recent journal entries', exact: true })).toBeVisible();
+    await expect(page.getByLabel('Message contains', { exact: true })).toHaveValue(search);
+    const filters = new URL(page.url()).searchParams;
+    expect(Object.fromEntries(filters)).toEqual({ service: 'auto-update-apt.service', window: 'boot', priority: '3', search, load: '1' });
+    // Collectors return fixed synthetic events; assert the real form/link
+    // contract here, rather than claiming to qualify journal filtering.
+    await expect(page.locator('.journal-entry')).toHaveCount(1);
+    await expect(page.locator('.journal-entry')).toContainText('Synthetic upstream connection refused');
+    await expect(page.locator('.journal-entry').getByText('Error', { exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Show all priorities', exact: true }).click();
+    await expect(page.getByLabel('Severity', { exact: true })).toHaveValue('7');
+    await expect(page.getByLabel('Time window', { exact: true })).toHaveValue('boot');
+    await expect(page.getByLabel('Service', { exact: true })).toHaveValue('auto-update-apt.service');
+    await expect(page.getByLabel('Message contains', { exact: true })).toHaveValue(search);
+    await page.getByRole('link', { name: 'Search last 24 hours', exact: true }).click();
+    await expect(page.getByLabel('Time window', { exact: true })).toHaveValue('24h');
+    await expect(page.getByLabel('Message contains', { exact: true })).toHaveValue(search);
+    await expect(page.getByRole('link', { name: 'Show all priorities', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Search last 24 hours', exact: true })).toHaveCount(0);
+    const ssh = page.locator('details').filter({ has: page.getByText('Continue inspection over SSH', { exact: true }) });
+    await ssh.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(ssh.locator('code')).toContainText('--unit=auto-update-apt.service');
+    await expect(ssh.locator('code')).toContainText('--priority=7');
+    await expect(ssh.locator('code')).toContainText('--since=-24h');
+    await expect(ssh.locator('code')).toContainText('--grep=upstream');
+    await expect(ssh.locator('code')).toContainText('<tag>');
+    await expect(ssh.locator('tag')).toHaveCount(0);
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width: 320, height: 900 });
+      await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${colorScheme}: diagnostics`).toBe(true);
+      await expect(page.getByRole('button', { name: 'Load diagnostics', exact: true })).toBeVisible();
+    }
+    await page.screenshot({ path: info.outputPath('diagnostics-mobile-dark.png'), fullPage: true });
+
+    const toolbar = page.locator('#panel-development');
+    for (const scenario of ['empty', 'degraded']) {
+      await toolbar.getByLabel('Scenario').selectOption(scenario);
+      await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
+      await page.goto(dev.url + '/jobs');
+      await expect(page.locator('.job-card')).toHaveCount(0);
+      await page.getByRole('button', { name: 'Load scheduled jobs', exact: true }).click();
+      if (scenario === 'empty') {
+        await expect(page.locator('.job-card')).toHaveCount(0);
+        await expect(page.getByText('No supported maintenance timers are installed.', { exact: true })).toBeVisible();
+        await expect(page.locator('.audit-issues')).toHaveCount(0);
+      } else {
+        await expect(page.locator('.job-card')).toHaveCount(3);
+        await expect(page.locator('.audit-issues')).toContainText('Synthetic timer collection incomplete');
+        await expect(failedJob.getByText('Last run failed', { exact: true })).toBeVisible();
+      }
+      await page.goto(dev.url + '/logs');
+      await expect(page.locator('.journal-entry')).toHaveCount(0);
+      await expect(page.getByText('Choose a service and select Load diagnostics. No log query has run yet.', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Load diagnostics', exact: true }).click();
+      if (scenario === 'empty') {
+        await expect(page.locator('.journal-entry')).toHaveCount(0);
+        await expect(page.getByText('No matching entries were returned for these filters.', { exact: false })).toBeVisible();
+        await expect(page.locator('.audit-issues')).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'Show all priorities', exact: true })).toBeVisible();
+      } else {
+        await expect(page.locator('.audit-issues')).toContainText('Synthetic journal access restricted');
+        await expect(page.locator('.journal-entry')).toContainText('Synthetic upstream connection refused');
+      }
+    }
+    await page.goto('about:blank');
+  });
+});
+
 test.describe('storage dashboard', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
   test('storage diagnostic, alternate views, partial coverage and responsive charts', async ({ page, developmentServer: dev }, info) => {

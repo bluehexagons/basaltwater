@@ -233,8 +233,12 @@ submissions and redirects, authentication challenges, Secure/HttpOnly/SameSite
 pairing cookies, nonce replay, forged CSRF, approval origin and replay rejection,
 denial and expiry of a previously rendered approval form, safe status recovery
 after a rejected decision, long approval values at narrow widths, readable Connect
-authorization links and keyboard focus,
-and completed CA downloads checked against the displayed fingerprint. Unexpected
+authorization links and keyboard focus, on-demand jobs and diagnostics loading,
+job failure and inactive-timer details, log-filter handoff and broader searches,
+empty and incomplete collection notices, and completed CA downloads checked
+against the displayed fingerprint. Jobs and diagnostics scenarios use synthetic
+collector results; browser assertions qualify forms and rendered states, while
+collector behavior requires unit tests and host checks. Unexpected
 page errors, console errors, and failed required requests fail the run.
 Aborted document navigations that complete as downloads and canceled optional
 favicon loads are distinguished from required request failures. Negative cases
