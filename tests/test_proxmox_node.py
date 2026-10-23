@@ -280,7 +280,7 @@ class TestResolveTemplateName(unittest.TestCase):
         )
         self.assertEqual(
             result,
-            "/var/lib/vz/template/cache/debian-standard_latest_amd64.tar.zst",
+            "local:vztmpl/debian-standard_latest_amd64.tar.zst",
         )
         mock_run.assert_called_once()
 
@@ -306,6 +306,31 @@ class TestResolveTemplateName(unittest.TestCase):
         with self.assertRaises(Exception):
             _resolve_template_name("nonexistent-os", "local", "10.0.0.1", "root", [])
 
+    @patch("lib.proxmox_node._ssh_run")
+    def test_custom_local_pool_uses_volume_id(self, mock_run):
+        name = "debian-13-standard_13.6-1_amd64.tar.zst"
+        for available in (f"system {name} amd64\n", ""):
+            with self.subTest(available=bool(available)):
+                mock_run.side_effect = [
+                    MagicMock(returncode=0),
+                    MagicMock(returncode=0, stdout=available),
+                    MagicMock(returncode=0, stdout=f"NAME SIZE\nlocal-nfs:vztmpl/{name} 100M\n"),
+                ]
+                self.assertEqual(
+                    _resolve_template_name("debian", "local-nfs", "10.0.0.1", "root", []),
+                    f"local-nfs:vztmpl/{name}",
+                )
+
+    @patch("lib.proxmox_node._ssh_run")
+    def test_catalog_failure_reports_actual_error(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=1, stdout="", stderr="catalog unavailable"),
+            MagicMock(returncode=0, stdout="NAME SIZE\n"),
+        ]
+        with self.assertRaisesRegex(ProvisionError, "catalog unavailable"):
+            _resolve_template_name("debian", "local", "10.0.0.1", "root", [])
+
 
 class TestCheckContainerExists(unittest.TestCase):
     @patch("lib.proxmox_node._ssh_run")
@@ -324,15 +349,19 @@ class TestCheckContainerExists(unittest.TestCase):
 
         with self.assertRaisesRegex(ProvisionError, "Failed to query containers"):
             check_container_exists("10.0.0.1", "10.0.0.50")
+        self.assertEqual(mock_run.call_args.args[3], "pct list")
 
     @patch("lib.proxmox_node._ssh_run")
     def test_container_with_matching_ip(self, mock_run):
-        list_result = MagicMock(stdout="100\n101\n", returncode=0)
+        list_result = MagicMock(stdout="VMID Status Lock Name\n100 running web\n101 stopped db\n", returncode=0)
         config_100 = MagicMock(
             stdout="net0: name=eth0,bridge=vmbr0,ip=10.0.0.50/24,gw=10.0.0.1,type=veth\n",
             returncode=0
         )
-        mock_run.side_effect = [list_result, config_100]
+        config_101 = MagicMock(
+            stdout="net0: name=eth0,ip=10.0.0.51/24\n", returncode=0,
+        )
+        mock_run.side_effect = [list_result, config_100, config_101]
         result = check_container_exists("10.0.0.1", "10.0.0.50")
         self.assertTrue(result)
 
@@ -422,6 +451,16 @@ class TestNameserverFiltering(unittest.TestCase):
 
 
 class TestParsePveamAvailable(unittest.TestCase):
+    def test_three_columns_filter_architecture_and_derivatives(self):
+        stdout = (
+            "system debian-13-standard_13.6-1_amd64.tar.zst amd64\n"
+            "system debian-13-standard_13.6-1_arm64.tar.zst arm64\n"
+            "turnkeylinux debian-13-turnkey-web_18.0-1_amd64.tar.gz amd64\n"
+        )
+        self.assertEqual(_parse_pveam_available(stdout, "debian"), [
+            "debian-13-standard_13.6-1_amd64.tar.zst",
+        ])
+
     def test_real_whitespace_format(self):
         # Actual pveam available output uses whitespace-separated columns.
         stdout = (
@@ -581,6 +620,7 @@ class TestCreateContainerInjectsPubkey(unittest.TestCase):
         )
         pct_cmd = mock_run.call_args_list[0].args[3]
         self.assertIn("--memory 1536", pct_cmd)
+        self.assertIn("--rootfs local-lvm:20 ", pct_cmd)
         self.assertIn("--ssh-public-keys", pct_cmd)
         self.assertIn("/tmp/basaltwater_pubkey.abc", pct_cmd)
         self.assertIn("ip6=2001:db8::51/64", pct_cmd)
@@ -612,6 +652,18 @@ class TestCreateContainerInjectsPubkey(unittest.TestCase):
         )
         pct_cmd = mock_run.call_args_list[0].args[3]
         self.assertNotIn("--ssh-public-keys", pct_cmd)
+
+    @patch("lib.proxmox_node._ssh_run")
+    def test_root_allocation_normalizes_supported_units(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        for size, gib in (("10G", 10), ("8192M", 8), ("2T", 2048)):
+            with self.subTest(size=size):
+                _create_container(
+                    200, "10.0.0.51", "local:vztmpl/debian.tar.zst", 1024, 1,
+                    "local-lvm", size, "24", "vmbr0", "10.0.0.1",
+                    ["1.1.1.1"], "web", "10.0.0.10", "root", [], dry_run=True,
+                )
+                self.assertIn(f"--rootfs local-lvm:{gib} ", mock_run.call_args.args[3])
 
 
 if __name__ == '__main__':

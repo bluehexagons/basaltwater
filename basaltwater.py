@@ -1988,6 +1988,10 @@ def run_setup_command(args: argparse.Namespace) -> int:
                 from lib.proxmox_vm import ensure_vm_running
 
                 ensure_vm_running(config)
+            else:
+                from lib.proxmox_node import ensure_container_running
+
+                ensure_container_running(config)
             _refresh_existing_managed_guest_host_keys(
                 config,
                 cached_provisioning,

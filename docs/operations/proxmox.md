@@ -822,6 +822,15 @@ named data disks using `--storage NAME POOL AMOUNT` or
 LXC provisioning uses root storage and
 `--storage template` for the saved/default template pool; named disks and
 guest mount and cache declarations are VM-only.
+LXC root disks require a pool supporting `rootdir`. Sizes are converted to
+numeric GiB allocations, rounding up to a whole GiB (minimum 1 GiB).
+Template selection uses stock amd64 images, including Proxmox catalogs with
+an architecture column. Templates are referenced through their storage volume
+IDs, so relocated `local` pools and custom template pools work alike. If the
+catalog cannot supply a match, Basaltwater checks downloaded templates first.
+Setup reruns verify the existing container's name and static address, start it
+if stopped, and wait for SSH before refreshing host trust. Ambiguous identities
+and locked containers abort recovery; setup does not force-unlock or replace them.
 The guest bridge defaults to the bridge carrying the Proxmox host's default
 route; use `--bridge NAME` when the host has multiple routed bridge networks.
 VM disks default to discard enabled and SSD emulation disabled. Use

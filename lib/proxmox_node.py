@@ -36,7 +36,8 @@ from lib.proxmox_guest import (
     remote_proxmox_locks,
 )
 from lib.types import NestedStrList, StrList
-from lib.validation import parse_memory_mib
+from lib.validation import parse_memory_mib, validate_filesystem_path
+from lib.validators import validate_host, validate_ip_address, validate_username
 
 
 class ContainerAlreadyExists(Exception):
@@ -95,25 +96,43 @@ def check_container_exists(
 
     Checks all running/stopped containers' network config for the target IP.
     """
-    opts = _ssh_opts(hosted_key)
+    matches = _find_containers_by_ip(
+        node_ip, target_ip, user, _ssh_opts(hosted_key), dry_run=dry_run,
+    )
+    for vmid, _ in matches:
+        print(f"  ✓ Container VMID {vmid} already exists with IP {target_ip}")
+    return bool(matches)
+
+
+def _find_containers_by_ip(
+    node_ip: str,
+    target_ip: str,
+    user: str,
+    opts: StrList,
+    *,
+    dry_run: bool = False,
+) -> list[tuple[int, dict[str, str]]]:
+    """Inspect successful inventory/config queries before returning IP matches."""
     result = _ssh_run(
         node_ip, user, opts,
-        "pct list | awk 'NR>1 {print $1}'",
+        "pct list",
         dry_run=dry_run
     )
 
     if dry_run:
-        return False
+        return []
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or "unknown error"
         raise ProvisionError(f"Failed to query containers on {node_ip}: {detail}")
     if not result.stdout.strip():
-        return False
+        return []
 
-    for vmid in result.stdout.strip().split('\n'):
-        vmid = vmid.strip()
-        if not vmid:
+    matches: list[tuple[int, dict[str, str]]] = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if not fields or not fields[0].isdigit():
             continue
+        vmid = fields[0]
         config_result = _ssh_run(
             node_ip, user, opts,
             f"pct config {vmid}",
@@ -126,20 +145,87 @@ def check_container_exists(
             raise ProvisionError(
                 f"Failed to inspect container {vmid} on {node_ip}: {detail}"
             )
-        for line in config_result.stdout.split('\n'):
-            if not line.startswith('net0:'):
+        observed = dict(
+            line.split(': ', 1) for line in config_result.stdout.splitlines()
+            if ': ' in line
+        )
+        for key, value in observed.items():
+            if not re.fullmatch(r'net\d+', key):
                 continue
             # net0 line example:
             #   net0: name=eth0,bridge=vmbr0,ip=10.0.0.50/24,gw=10.0.0.1,type=veth
-            match = re.search(r'(?:^|,)ip=([^,\s]+)', line)
+            match = re.search(r'(?:^|,)ip=([^,\s]+)', value)
             if not match:
                 continue
             container_ip = match.group(1).split('/', 1)[0].strip()
             if container_ip == target_ip:
-                print(f"  ✓ Container VMID {vmid} already exists with IP {target_ip}")
-                return True
+                matches.append((int(vmid), observed))
+                break
 
-    return False
+    return matches
+
+
+def _ensure_container_running_locked(
+    config: SetupConfig, target_ip: str, hostname: str,
+) -> None:
+    """Recover a uniquely identified container while its identity is reserved."""
+    node_ip = cast(str, config.hosted_node)
+    user = config.hosted_user
+    opts = _ssh_opts(config.hosted_key)
+    matches = _find_containers_by_ip(node_ip, target_ip, user, opts)
+    if len(matches) != 1 or matches[0][1].get("hostname") != hostname:
+        raise ProvisionError(
+            f"Expected exactly one container named {hostname} with IP {target_ip} "
+            f"on {node_ip}; refusing to start another guest"
+        )
+    vmid, observed = matches[0]
+    if observed.get("lock"):
+        raise ProvisionError(f"Container {vmid} is locked: {observed['lock']}")
+    status = _ssh_run(node_ip, user, opts, f"pct status {vmid}")
+    if status.returncode != 0:
+        raise ProvisionError(f"Failed to query container {vmid} status: {status.stderr.strip()}")
+    state = status.stdout.strip()
+    if state == "status: stopped":
+        with remote_proxmox_locks(
+            node_ip, user, opts, ["guest-admission"], wait=True,
+            description="guest capacity admission",
+        ):
+            result = _ssh_run(node_ip, user, opts, f"pct start {vmid}", timeout=300)
+        if result.returncode != 0:
+            raise ProvisionError(f"Failed to start container {vmid}: {result.stderr.strip()}")
+    elif state != "status: running":
+        raise ProvisionError(f"Unexpected container {vmid} status: {state}")
+    _wait_for_container_ssh(target_ip, node_ip, user, opts, timeout=300)
+
+
+def ensure_container_running(config: SetupConfig) -> None:
+    """Start a saved LXC if needed and wait for SSH before refreshing trust."""
+    node_ip = config.hosted_node
+    if not node_ip or not validate_host(node_ip):
+        raise ProvisionError("Invalid Proxmox host")
+    if not validate_username(config.hosted_user):
+        raise ProvisionError("Invalid Proxmox username")
+    if config.hosted_key:
+        validate_filesystem_path(config.hosted_key, must_exist=False)
+    target_ip = (
+        str(ipaddress.ip_interface(config.static_ipv4).ip)
+        if config.static_ipv4 else config.host
+    )
+    if not validate_ip_address(target_ip):
+        raise ProvisionError("Invalid LXC setup address")
+    hostname = config.system_hostname or _build_container_hostname(
+        target_ip, config.friendly_name,
+    )
+    if config.dry_run:
+        print(f"[DRY RUN] Would verify/start container {hostname} and wait for SSH")
+        return
+    with guest_provisioning_locks(node_ip, target_ip, hostname):
+        with remote_proxmox_locks(
+            node_ip, config.hosted_user, _ssh_opts(config.hosted_key),
+            [f"address|{target_ip}", f"hostname|{hostname.lower()}"],
+            wait=False, description=f"guest {hostname} ({target_ip})",
+        ):
+            _ensure_container_running_locked(config, target_ip, hostname)
 
 def _resolve_template_storage(
     root_pool: str,
@@ -183,9 +269,8 @@ def _parse_pveam_available(stdout: str, system: str) -> StrList:
     """Parse `pveam available` output and return matching template filenames.
 
     pveam available emits whitespace-separated columns like:
-        section          template_name
-        system           debian-13-standard_13.1-2_amd64.tar.zst
-        system           ubuntu-24.04-standard_24.04-1_amd64.tar.zst
+        section          template_name                               architecture
+        system           debian-13-standard_13.1-2_amd64.tar.zst      amd64
 
     Older or differently-formatted output may use `section/template`. We accept either.
     The match requires `<system>-<digits>` so `--base debian` doesn't pull in
@@ -198,18 +283,19 @@ def _parse_pveam_available(stdout: str, system: str) -> StrList:
         line = raw.strip()
         if not line or line.startswith('---') or line.upper().startswith('NAME') or line.upper().startswith('SECTION'):
             continue
-        # Pick the last whitespace-separated field, then strip any leading "section/" prefix.
-        candidate = line.split()[-1]
-        candidate = candidate.rsplit('/', 1)[-1]
-        cand_lc = candidate.lower()
-        if not pattern.match(cand_lc):
-            continue
-        # Exclude derivative distributions that share the base name but ship a
-        # different OS (e.g. debian-12-turnkey-wordpress is a TurnKey appliance,
-        # not a stock Debian image).
-        if '-turnkey-' in cand_lc:
-            continue
-        matches.append(candidate)
+        # Locate the filename rather than assuming a fixed column count. This
+        # also accepts cached storage volume IDs and older section/file rows.
+        for field in line.split():
+            candidate = field.rsplit('/', 1)[-1]
+            cand_lc = candidate.lower()
+            if not pattern.match(cand_lc):
+                continue
+            # pct create uses amd64; do not select an ARM image from catalogs
+            # that now advertise several architectures for the same release.
+            if '-turnkey-' in cand_lc or not re.search(r'_amd64\.tar\.', cand_lc):
+                continue
+            matches.append(candidate)
+            break
     return matches
 
 
@@ -239,12 +325,14 @@ def _resolve_template_name(
 
     Queries pveam available on the host to find the latest matching template.
     """
-    # Update template list
-    _ssh_run(node_ip, user, ssh_opts, "pveam update", dry_run=dry_run)
+    update = _ssh_run(node_ip, user, ssh_opts, "pveam update", dry_run=dry_run)
 
     if dry_run:
         print(f"  [DRY-RUN] Would select the latest {base_arg} LXC template")
-        return f"/var/lib/vz/template/cache/{base_arg}-standard_latest_amd64.tar.zst"
+        return f"{template_storage}:vztmpl/{base_arg}-standard_latest_amd64.tar.zst"
+
+    if update.returncode != 0:
+        print("  ⚠ Template catalog refresh failed; trying the existing catalog/cache")
 
     # List available templates
     result = _ssh_run(
@@ -254,33 +342,28 @@ def _resolve_template_name(
     )
 
     system = base_arg.lower()
-    candidates = _parse_pveam_available(result.stdout, system)
+    candidates = _parse_pveam_available(result.stdout, system) if result.returncode == 0 else []
 
     if not candidates:
         # Also check what's already downloaded
         local_result = _ssh_run(
             node_ip, user, ssh_opts,
-            f"pveam list {shlex.quote(template_storage)} 2>/dev/null",
+            f"pveam list {shlex.quote(template_storage)}",
             dry_run=dry_run
         )
-        local_pattern = re.compile(rf'^{re.escape(system)}-\d')
-        local_candidates: StrList = []
-        for line in (local_result.stdout or "").strip().split('\n')[1:]:
-            parts = line.split()
-            if not parts:
-                continue
-            # pveam list rows typically show full storage path: local:vztmpl/<file>
-            name = parts[0].rsplit('/', 1)[-1]
-            if local_pattern.match(name.lower()):
-                local_candidates.append(name)
+        if local_result.returncode != 0:
+            detail = (local_result.stderr or local_result.stdout or "").strip()
+            raise ProvisionError(f"Failed to list templates on {template_storage}: {detail}")
+        local_candidates = _parse_pveam_available(local_result.stdout, system)
         if local_candidates:
             local_candidates.sort(key=_template_sort_key)
             chosen = local_candidates[-1]
-            template_path = f"/var/lib/vz/template/cache/{chosen}"
-            if not template_storage.startswith("local"):
-                template_path = f"{template_storage}:vztmpl/{chosen}"
             print(f"  ✓ Found downloaded template: {chosen}")
-            return template_path
+            return f"{template_storage}:vztmpl/{chosen}"
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise ProvisionError(f"Failed to query available templates: {detail}")
 
         raise ProvisionError(
             f"No template found matching '{base_arg}'. "
@@ -326,12 +409,8 @@ def _resolve_template_name(
             f"Error: {result.stderr.strip() or 'unknown error'}"
         )
 
-    template_path = f"/var/lib/vz/template/cache/{template_name}"
-    if not template_storage.startswith("local"):
-        template_path = f"{template_storage}:vztmpl/{template_name}"
-
-    print(f"  ✓ Template path: {template_path}")
-    return template_path
+    print(f"  ✓ Template volume: {template_ref}")
+    return template_ref
 
 
 def _upload_pubkey_to_host(
@@ -407,6 +486,13 @@ def _create_container(
 ) -> None:
     """Create and start the LXC container on the Proxmox host."""
     unprivileged = "0" if privileged else "1"
+    try:
+        disk_mib = parse_memory_mib(storage_amount, "LXC root disk size")
+    except ValueError as exc:
+        raise ProvisionError(str(exc)) from exc
+    if disk_mib < 1024:
+        raise ProvisionError("LXC root disk must be at least 1G")
+    disk_gib = (disk_mib + 1023) // 1024
 
     network_parts = [
         "name=eth0",
@@ -425,7 +511,7 @@ def _create_container(
         f"--hostname {shlex.quote(hostname)}",
         f"--memory {memory_mb}",
         f"--cores {cores}",
-        f"--rootfs {shlex.quote(root_pool)}:{shlex.quote(storage_amount)}",
+        f"--rootfs {shlex.quote(root_pool)}:{disk_gib}",
         f"--net0 {shlex.quote(','.join(network_parts))}",
         f"--nameserver {shlex.quote(' '.join(nameservers))}",
         f"--unprivileged {unprivileged}",
@@ -582,6 +668,7 @@ def _provision_container_locked(config: SetupConfig) -> None:
     if check_container_exists(
         node_ip, target_ip, user, config.hosted_key, dry_run=dry_run
     ):
+        _ensure_container_running_locked(config, target_ip, hostname)
         raise ContainerAlreadyExists(
             f"Container with IP {target_ip} already exists on {node_ip}"
         )
@@ -596,7 +683,7 @@ def _provision_container_locked(config: SetupConfig) -> None:
     storage_amount = root_spec[2]
 
     root_pool = _resolve_storage_pool(
-        root_pool_arg, node_ip, user, ssh_opts, "images,rootdir"
+        root_pool_arg, node_ip, user, ssh_opts, "rootdir"
     )
 
     # Template storage
