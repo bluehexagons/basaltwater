@@ -751,7 +751,7 @@ test.describe('storage dashboard', () => {
     expect(new URLSearchParams(extendedResponse.request().postData()).get('mode')).toBe('extended');
     await expect(depth).toHaveValue('extended');
     await expect(page.locator('.storage-notes')).toContainText('60 seconds and 2,000,000 entries');
-    for (const [view, label] of [['Services', 'T3 Code'], ['Projects', 'infra-tools'], ['VM areas', 'Home directories']]) {
+    for (const [view, label] of [['Services', 'T3 Code'], ['Projects', 'infra-tools'], ['Host areas', 'Home directories']]) {
       await page.getByRole('navigation', { name: 'Storage breakdown' }).getByRole('link', { name: view, exact: true }).click();
       await expect(page.locator('.storage-table')).toContainText(label);
     }

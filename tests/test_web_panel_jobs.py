@@ -101,6 +101,22 @@ class JobTest(unittest.TestCase):
             timer["ActiveState"] = "inactive"
             self.assertEqual(format_timer_next_trigger(timer), "Timer is not active")
 
+    def test_native_month_and_year_spans_after_long_uptime(self) -> None:
+        for uptime, deadline in (
+            (32 * 86400, "1month 1d 13h 35min"),
+            (31557600, "1y 5min"),
+            (31557600 + 2629800, "1y 1month 5min"),
+        ):
+            with self.subTest(deadline=deadline), patch("lib.systemd_timers.time.monotonic", return_value=uptime):
+                output = _pair().replace(
+                    "NextElapseUSecRealtime=Tue 2026-09-08 06:00:00 CDT",
+                    "NextElapseUSecRealtime=\nNextElapseUSecMonotonic=" + deadline,
+                )
+                self.assertEqual(self.collect(output).jobs[0]["next"], "In about 5 minutes")
+                timer = {"ActiveState": "active", "NextElapseUSecMonotonic": deadline,
+                         "NextElapseUSecRealtime": "tomorrow"}
+                self.assertEqual(format_timer_next_trigger(timer), "tomorrow or in about 5 minutes, whichever is earlier")
+
     def test_collected_mixed_deadlines_include_boot_trigger(self) -> None:
         output = _pair().replace("Persistent=yes", "Persistent=yes\nNextElapseUSecMonotonic=15min")
         with patch("lib.systemd_timers.time.monotonic", return_value=600):

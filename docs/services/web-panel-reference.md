@@ -177,6 +177,8 @@ next and previous triggers, last result, and available job details. An inactive
 job service is normal between runs. A timer trigger without retained service
 details is reported as unavailable rather than successful. Current systemd
 state can reset after reboot or service-manager reload.
+Interval deadlines include systemd's month and year spans on hosts with long
+uptimes; calendar and interval deadlines remain visible together when both apply.
 
 **Service diagnostics** uses fixed service names and properties without
 elevation. Select a time window, severity, and literal case-insensitive text;
@@ -189,7 +191,8 @@ units, journal permission failures, unavailable user service managers, and
 missing diagnostic commands. A successful empty query is distinct from an
 unavailable collector; reaching 100 entries shows an explicit limit notice.
 Logs can contain sensitive application data; redaction covers common credentials
-and keys but cannot identify every secret. The panel service receives the
+and keys, including quoted JSON credential fields and escaped quoted values,
+but cannot identify every secret. The panel service receives the
 `systemd-journal` supplementary group so system logs are readable without sudo.
 This is scoped to the service unit rather than the setup user's login groups;
 processes launched by the panel also inherit it. Rerun setup to apply the unit

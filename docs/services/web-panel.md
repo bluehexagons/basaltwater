@@ -9,7 +9,7 @@ under the panel account; no T3 Code installation is required.
 | --- | --- | --- |
 | Check host health | Overview | Uptime, load average, memory, swap, resource pressure, kernel, reboot state, and update timers |
 | Check storage capacity | Mounted storage | Mounted local filesystems, available space, inode use, device/type, and read-only state |
-| Estimate disk usage | Storage | An on-demand diagnostic with visual capacity, ranked VM areas, services and projects, file counts and coverage notes |
+| Estimate disk usage | Storage | An on-demand diagnostic with visual capacity, ranked host areas, services and projects, file counts and coverage notes |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Observe or control an agent desktop | Desktop | Optional browser access, mobile input, zoom and read-only readiness checks for the shared XRDP desktop |
 | Open a shell without starting a desktop | Console, or Desktop → Open browser console | Guacamole SSH terminal with the Unix password; Desktop also offers an SSH command for an existing client |
@@ -152,10 +152,10 @@ time. Extended scans can cover larger package stores and checkouts, but retain
 the same filesystem and permission boundaries.
 
 The capacity chart shows root filesystem usage, available space and reserves at
-scan time. **VM areas**, **Services** and **Projects** show ranked allocated
+scan time. **Host areas**, **Services** and **Projects** show ranked allocated
 space, logical sizes (file lengths and directory metadata) and file counts.
 Services and projects are alternate attributions of files already included in
-VM areas; their totals must not be
+host areas; their totals must not be
 added together. Conventional service paths and project directories are used,
 so this does not discover every possible project location.
 
@@ -171,7 +171,7 @@ aliases, PrivateTmp remappings, other filesystems and ambiguous mount records
 are excluded. Permission-denied paths are identified explicitly; increasing
 scan depth does not grant access to them.
 Known service locations and discovered projects each receive a share of the
-remaining time and entry budgets before the rest of the VM is scanned. Large
+remaining time and entry budgets before the rest of the host is scanned. Large
 locations can resume afterward with spare budget, so a single large checkout
 or package store cannot monopolize the initial scan. Project discovery itself
 is bounded; omitted projects and unfinished locations remain explicit in the
@@ -182,7 +182,7 @@ bounds. Sparse files, shared blocks, filesystem metadata and deleted files held
 open can make directory estimates differ from filesystem capacity usage.
 
 For UI development, the local panel's diagnostic returns synthetic results;
-the degraded scenario demonstrates incomplete coverage without inspecting the VM.
+the degraded scenario demonstrates incomplete coverage without inspecting the host.
 
 ## Install and sign in
 

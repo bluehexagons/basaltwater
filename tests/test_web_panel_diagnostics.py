@@ -162,6 +162,38 @@ class DiagnosticQueryTest(unittest.TestCase):
         self.assertIn("safe=kept", rendered)
         self.assertIn("[private key redacted]", rendered)
 
+    def test_json_credentials_are_redacted_during_collection_and_rendering(self) -> None:
+        credentials = {
+            "password": 'probe-password"escaped-tail',
+            "access_token": r"probe-token\escaped-tail",
+            "Authorization": "Bearer probe-auth",
+            "Cookie": "session=probe-cookie; other=probe-other",
+        }
+        message = json.dumps({**credentials, "context": "Operational <detail>"})
+        query = diagnostics.DiagnosticQuery(load=True)
+        with patch.object(diagnostics, "_bounded_command", side_effect=[
+            ("LoadState=loaded", ""), (json.dumps({"MESSAGE": message}), ""),
+        ]):
+            result = diagnostics.collect_diagnostics(query)
+        collected = result["events"][0]["message"]
+        self.assertEqual(
+            json.loads(collected),
+            {**dict.fromkeys(credentials, "[redacted]"), "context": "Operational <detail>"},
+        )
+        self.assertEqual(diagnostics._redact_log_message(collected), collected)
+        # The renderer must also protect records from alternate collectors.
+        result["events"][0]["message"] = message
+        with patch.object(diagnostics, "collect_diagnostics", return_value=result):
+            page = diagnostics.render_diagnostics(query, "", "host")
+        for secret in ("probe-password", "escaped-tail", "probe-token", "probe-auth", "probe-cookie", "probe-other"):
+            self.assertNotIn(secret, page)
+        self.assertIn("Operational &lt;detail&gt;", page)
+
+    def test_single_quoted_credentials_include_escaped_quotes(self) -> None:
+        message = r"'password'='probe\'escaped-tail', 'client_secret': 'probe-secret'; context=kept"
+        redacted = diagnostics._redact_log_message(message)
+        self.assertEqual(redacted, "'password'='[redacted]', 'client_secret':'[redacted]'; context=kept")
+
     def test_system_unit_and_incomplete_journal_are_visible(self) -> None:
         with patch.object(diagnostics, "_bounded_command", side_effect=[
             ("LoadState=not-found", ""),

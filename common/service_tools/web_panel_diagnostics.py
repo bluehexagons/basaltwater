@@ -85,9 +85,9 @@ _PRIVATE_KEY_PATTERN = re.compile(
     re.DOTALL,
 )
 _CREDENTIAL_VALUE_PATTERN = re.compile(
-    r"(?ix)\b(authorization|cookie|set-cookie|password|passwd|secret|api[_-]?key|"
-    r"access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*([:=])\s*"
-    r"(?:bearer\s+|basic\s+)?(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+    r'''(?ix)(?P<field>(?P<quote>["']?)\b(?:authorization|cookie|set-cookie|password|passwd|secret|api[_-]?key|'''
+    r'''access[_-]?token|refresh[_-]?token|client[_-]?secret)(?P=quote))\s*(?P<separator>[:=])\s*'''
+    r'''(?:bearer\s+|basic\s+)?(?P<value>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)'''
 )
 _SENSITIVE_HEADER_PATTERN = re.compile(
     r"(?im)^\s*(authorization|cookie|set-cookie)\s*:\s*[^\r\n]*"
@@ -229,9 +229,14 @@ def _redact_log_message(message: str) -> str:
     message = _SENSITIVE_HEADER_PATTERN.sub(
         lambda match: f"{match[1]}: [redacted]", message
     )
-    message = _CREDENTIAL_VALUE_PATTERN.sub(
-        lambda match: f"{match[1]}{match[2]}[redacted]", message
-    )
+    def redact_value(match: re.Match[str]) -> str:
+        value = "[redacted]"
+        if match["value"].startswith(('"', "'")):
+            quote = match["value"][0]
+            value = quote + value + quote
+        return f"{match['field']}{match['separator']}{value}"
+
+    message = _CREDENTIAL_VALUE_PATTERN.sub(redact_value, message)
 
     def redact_url(match: re.Match[str]) -> str:
         try:

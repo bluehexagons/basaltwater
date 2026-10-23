@@ -16,11 +16,13 @@ def format_timer_next_trigger(timer: dict[str, str]) -> str:
     fallback = str(realtime) if has_realtime else "Next trigger not reported"
     # systemctl formats monotonic deadlines as boot-relative time spans.
     raw = timer.get("NextElapseUSecMonotonic", "")
-    factors = {"w": 604800, "d": 86400, "h": 3600, "min": 60, "s": 1, "ms": .001, "us": .000001}
+    # Native systemd spans use a 365.25-day year and one twelfth of it per month.
+    factors = {"y": 31557600, "month": 2629800, "w": 604800, "d": 86400, "h": 3600,
+               "min": 60, "s": 1, "ms": .001, "us": .000001}
     parts = raw.split()
     seconds = 0.0
     for part in parts:
-        match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(min|ms|us|w|d|h|s)", part)
+        match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(month|min|ms|us|y|w|d|h|s)", part)
         if not match:
             return fallback
         seconds += float(match[1]) * factors[match[2]]

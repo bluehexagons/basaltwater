@@ -9,7 +9,7 @@ from common.service_tools.web_panel_templates import render_document
 from lib.storage_diagnostics import SCAN_LIMITS
 
 
-VIEWS = {"areas": "VM areas", "services": "Services", "projects": "Projects"}
+VIEWS = {"areas": "Host areas", "services": "Services", "projects": "Projects"}
 STYLE = """
 .storage-heading,.storage-actions {display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .storage-actions form {margin:0;display:flex;align-items:end;gap:12px;flex-wrap:wrap;min-width:0}
@@ -132,7 +132,7 @@ def _breakdown(report: dict, view: str) -> str:
             body.append(f'''<tr><td><strong>{_escape(row["label"])}</strong><small><code>{_escape(row["path"])}</code></small><div class="storage-bar" aria-hidden="true"><span style="width:{width:.3f}%"></span></div></td>
 <td>{allocated}<small>{share}</small></td><td>{logical}</td><td>{"—" if missing else format(row["files"], ",")}</td><td class="storage-coverage">{coverage}</td></tr>''')
         content = '<div class="storage-table-wrap" tabindex="0" role="region" aria-label="Storage estimates, scroll horizontally on small screens"><table class="storage-table"><thead><tr><th scope="col">Location</th><th scope="col">Allocated</th><th scope="col">Logical size</th><th scope="col">Files</th><th scope="col">Coverage</th></tr></thead><tbody>' + "".join(body) + '</tbody></table></div>'
-    explanation = "VM areas are disjoint directory groups on the root filesystem." if view == "areas" else "Services and projects are alternate views of files already counted in VM areas; do not add these totals together."
+    explanation = "Host areas are disjoint directory groups on the root filesystem." if view == "areas" else "Services and projects are alternate views of files already counted in host areas; do not add these totals together."
     return f'''<section aria-labelledby="breakdown-heading"><div class="section-heading"><h2 id="breakdown-heading">Where space is used</h2><span class="meta">{_size(measured)} attributed in this view</span></div>
 <nav class="storage-tabs" aria-label="Storage breakdown">{tabs}</nav><p class="storage-footnote">{explanation} Bars compare the observed allocations. Partial estimates are lower bounds.</p>{content}</section>'''
 
@@ -148,7 +148,7 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
     mode = snapshot.get("scan_mode", "quick")
     options = "".join(f'<option value="{key}"{" selected" if key == mode else ""}>{key.capitalize()} · {limits["duration_seconds"]:g}s / {limits["entry_limit"]:,} entries</option>' for key, limits in SCAN_LIMITS.items())
     actions = f'''<div class="storage-actions"><a href="/storage?view={view}">Refresh status</a><form method="post" action="/actions/storage-scan"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><label>Scan depth<select name="mode"{" disabled" if running else ""}>{options}</select></label><button type="submit"{" disabled" if running else ""}>{button}</button></form></div>'''
-    content = f'''<div class="storage-heading"><div><p class="eyebrow">On-demand diagnostic</p><h2>Understand this VM’s storage</h2></div>{actions}</div>
+    content = f'''<div class="storage-heading"><div><p class="eyebrow">On-demand diagnostic</p><h2>Understand this host’s storage</h2></div>{actions}</div>
 <div class="storage-status {status}" role="status"><strong>{title}</strong><p>{_escape(snapshot.get("message", ""))}</p>{'<p>Use Refresh status to check progress. Previous results remain visible below.</p>' if running and report else '<p>Use Refresh status to check progress.</p>' if running else ''}</div>'''
     if report:
         content += f'<p class="storage-footnote">Showing scan recorded at <time>{_escape(report["generated_at"])}</time>.</p>'
@@ -171,9 +171,9 @@ def render_storage_usage(state, base_style: str, view: str = "areas") -> str:
 <p>Scan recorded at <time>{_escape(report["generated_at"])}</time>. Limits: {limits["duration_seconds"]:g} seconds and {limits["entry_limit"]:,} entries.</p>
 <ul>{issues}<li>Allocated size uses filesystem blocks; logical size includes file lengths and directory metadata. Sparse files, shared blocks, filesystem metadata and deleted files still held open can make these estimates differ from capacity usage.</li>
 <li>The diagnostic uses the panel account’s access. Permission-denied paths remain partial even with an extended scan. Symlinks and nested mounts are skipped, except verified same-path projections of the root filesystem used by service isolation. Other filesystems, including shared storage, are outside this scan.</li>
-<li>Service attribution uses conventional paths. Project estimates cover recognized project directories, not every possible checkout on the VM.</li></ul></details>'''
+<li>Service attribution uses conventional paths. Project estimates cover recognized project directories, not every possible checkout on this host.</li></ul></details>'''
     else:
-        content += '''<section class="storage-empty"><h2>A clear view of your disk</h2><p>Run a diagnostic to estimate storage used by VM areas, known service data and project directories. You’ll get ranked usage, allocated and logical sizes, and coverage notes.</p><p>The scan reads file metadata using this account’s access. It does not read file contents or remove data. Results stay in memory until the panel restarts.</p></section>'''
+        content += '''<section class="storage-empty"><h2>A clear view of your disk</h2><p>Run a diagnostic to estimate storage used by host areas, known service data and project directories. You’ll get ranked usage, allocated and logical sizes, and coverage notes.</p><p>The scan reads file metadata using this account’s access. It does not read file contents or remove data. Results stay in memory until the panel restarts.</p></section>'''
     header = f'<header class="dashboard-header"><div><p class="eyebrow">Inspect</p><h1>Storage</h1><p class="lede">Capacity, usage estimates and the places taking up space.</p><p class="meta">{_escape(state.manifest["host"])}</p></div></header>'
     return render_document(title="Storage", style=base_style + STYLE, header=header, content=content,
                            navigation=state.navigation("storage"), footer="Read-only storage diagnostic · Estimates reflect the last requested scan.")
