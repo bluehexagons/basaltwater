@@ -2380,31 +2380,32 @@ def inspect_t3code(
         fix and t3_binary and node and not native_runtime
         and not is_t3_standalone_binary(t3_binary)
     ):
-        if service.returncode == 0:
-            stop_command = ["systemctl", "--user", "stop", _T3_SERVICE_NAME]
-            try:
-                stopped = subprocess.run(
-                    stop_command,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    env=user_bus_environment,
-                )
-            except subprocess.TimeoutExpired as exc:
-                detail = " ".join(
-                    value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
-                    for value in (exc.stdout, exc.stderr)
-                    if value
-                )
-                repair_stop_error = "systemctl stop timed out" + (f": {detail}" if detail else "")
-            except OSError as exc:
-                repair_stop_error = f"systemctl stop could not run: {exc}"
-            else:
-                if stopped.returncode != 0:
-                    repair_stop_error = (stopped.stderr or stopped.stdout or "").strip()
-                    if not repair_stop_error:
-                        repair_stop_error = f"systemctl stop exited with status {stopped.returncode}"
+        # A non-active unit may still be deactivating with a live process.
+        # Require a completed stop even when the initial is-active probe failed.
+        stop_command = ["systemctl", "--user", "stop", _T3_SERVICE_NAME]
+        try:
+            stopped = subprocess.run(
+                stop_command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=user_bus_environment,
+            )
+        except subprocess.TimeoutExpired as exc:
+            detail = " ".join(
+                value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+                for value in (exc.stdout, exc.stderr)
+                if value
+            )
+            repair_stop_error = "systemctl stop timed out" + (f": {detail}" if detail else "")
+        except OSError as exc:
+            repair_stop_error = f"systemctl stop could not run: {exc}"
+        else:
+            if stopped.returncode != 0:
+                repair_stop_error = (stopped.stderr or stopped.stdout or "").strip()
+                if not repair_stop_error:
+                    repair_stop_error = f"systemctl stop exited with status {stopped.returncode}"
         if not repair_stop_error:
             native_runtime = _repair_t3_native_runtime(node, t3_binary, environment)
             if native_runtime:
@@ -2418,7 +2419,7 @@ def inspect_t3code(
         if enabled.returncode == 0:
             fixes.append("enabled T3 Code service at boot")
     restarted_service = False
-    if fix and t3_binary and service.returncode != 0:
+    if fix and t3_binary and service.returncode != 0 and not repair_stop_error:
         restart_command = ["systemctl", "--user", "restart", _T3_SERVICE_NAME]
         restarted = _run_check(
             restart_command,
