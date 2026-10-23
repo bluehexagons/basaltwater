@@ -151,10 +151,17 @@ path** to the absolute launcher path printed by setup, typically
 
 ## T3 desktop updates
 
-The desktop's embedded server uses the installed `t3code-bin` version. A newer
-client can report a server update even when Basaltwater setup succeeded:
-`setup` and `refresh` retain an installed desktop package. `pacman -Qu` checks
-repository sync metadata and does not check AUR releases.
+The desktop's embedded server uses the installed `t3code-bin` version. Desktop
+`setup` and `refresh` check the selected AUR helper for a pending update and run
+it with the helper's normal review prompts. Current packages are not rebuilt;
+the helper's configured source and ignore policy determine available updates.
+An update failure or unchanged package version stops setup before changing T3's
+startup configuration.
+
+`pacman -Qu` checks repository sync metadata and does not check AUR releases.
+The Arch-Update version shipped as `cachy-update` on current CachyOS detects
+paru, yay, and pikaur for AUR checks, but does not detect Shelly. With only Shelly
+installed, an empty `cachy-update` result does not establish AUR freshness.
 
 Update through the same AUR helper that installed the package. On a workstation
 using CachyOS's default Shelly, run as your desktop user and complete its normal
@@ -162,9 +169,14 @@ package-review and sudo prompts:
 
 ```fish
 pacman -Q t3code-bin
+shelly list-updates aur
 shelly update aur t3code-bin
 pacman -Q t3code-bin
 ```
+
+Run the update command when the check lists T3; a direct Shelly update can
+rebuild an already-current package. Do not configure Shelly as Arch-Update's
+`AURHelper`: their command-line interfaces differ.
 
 Finish active work and quit/reopen T3 Code afterward to load the updated embedded
 server. Installing a package does not update an already running process. If
@@ -557,8 +569,8 @@ once first to acquire this refresh interface and any new options.
 Alternatively, rerun `setup` with all desired options. That successful run
 replaces the record rather than merging with earlier selections.
 Refresh follows the same update behavior as setup: managed agent CLIs update,
-web mode updates/restarts its service, and an installed T3 desktop package is
-retained for your normal AUR update workflow. Finish active work first.
+web mode updates/restarts its service, and desktop mode checks for T3 AUR updates
+with interactive package review when an update is available. Finish active work first.
 
 Missing or invalid saved options stop refresh before the source upgrade.
 An upgrade failure prevents setup. If setup fails after a successful upgrade,

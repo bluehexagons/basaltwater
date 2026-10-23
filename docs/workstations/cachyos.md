@@ -90,9 +90,9 @@ sh -c '
 
 This installs the launcher, Codex, GitHub CLI, T3 desktop, and the selected
 project tools. Omit `--node --python --git-lfs` for just the default coding tools
-and T3 desktop; add `--no-agent-tool gh` to omit GitHub CLI. A missing
-`t3code-bin` is installed using CachyOS's default Shelly CLI and may prompt for
-package review or sudo. T3 Code starts automatically at subsequent KDE logins.
+and T3 desktop; add `--no-agent-tool gh` to omit GitHub CLI. Setup installs or
+checks for updates to `t3code-bin` using CachyOS's default Shelly CLI and may
+prompt for package review or sudo. T3 Code starts automatically at subsequent KDE logins.
 
 For an installer-wide preview, add `--plan` before `--local-setup` in your
 chosen block. This does not install packages, download the repository, or
@@ -124,7 +124,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Remote desktop or diagnostics | `--remmina`, `--sysadmin-tools` |
 | Materials, removable media, publishing | `--material-maker`, `--etcher`, `--butler`, `--steamcmd` ([packages and post-install checks](cachyos-software.md)) |
 | Repository workspace | `--repo HTTPS_URL` (repeatable), `--agent-workspace /absolute/path` (default `~/repos`) |
-| T3 Code desktop | `--t3code-desktop`: install or retain `t3code-bin` and enable KDE login startup; mutually exclusive with `--web-interface` |
+| T3 Code desktop | `--t3code-desktop`: install or update `t3code-bin` through your AUR helper and enable KDE login startup; mutually exclusive with `--web-interface` |
 | T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
@@ -376,13 +376,21 @@ Preflight also verifies that the selected helper executable belongs to an
 installed pacman package. Remove or rename an unowned executable shadowing
 Shelly, paru, or yay in your PATH before retrying.
 
-Setup preserves Shelly's configured AUR source and review policy. A failed or
-cancelled installation stops setup before disabling the working web service;
-it does not retry through another helper or bypass Shelly's policy. An installed
-package is retained without requiring any AUR helper; update it through your
-normal AUR workflow. Setup checks package metadata and executable ownership
-without launching Electron. See [Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/)
-for its native AUR commands.
+For an installed package, setup checks `shelly list-updates aur --json` and runs
+`shelly update aur t3code-bin` only when T3 has a pending update. Paru/yay use
+their native AUR query and install commands instead. Every desktop setup needs
+an installed helper, including when T3 is already installed. Setup preserves
+the helper's configured source, ignore policy, and review prompts; it does not
+rebuild current packages or upgrade unrelated AUR packages.
+
+A failed query, failed installation, or update that leaves the package version
+unchanged stops setup before disabling the working web service; setup does not
+retry through another helper. Setup checks package metadata and executable
+ownership without launching Electron. Quit/reopen an already-running T3 when
+convenient to load the updated embedded server. `cachy-update` may skip AUR
+checks when only Shelly is installed; use `shelly list-updates aur` for routine
+checks. See [desktop updates](cachyos-maintenance.md#t3-desktop-updates) and
+[Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/).
 
 Before invoking Shelly, setup creates its missing AUR cache directories as your
 desktop user. This avoids a Shelly 3.1.6 first-install path that creates the cache
@@ -602,7 +610,7 @@ runtime updates, and activation recovery, use the
   system upgrade. Use CachyOS's normal update workflow first, and never use
   `pacman -Sy` as a repair for a partial upgrade.
 - Package installation and pruning old pacman downloads may prompt for sudo.
-  Agent CLIs, the T3 runtime, user-cache cleanup, and repository checks are
+  Agent CLIs, the T3 web runtime, user-cache cleanup, and repository checks are
   otherwise noninteractive. No update or cleanup timers are installed.
 - Cache cleanup runs after tool readiness. If cleanup fails, setup reports an
   incomplete result and returns nonzero; installed tools are retained. Resolve

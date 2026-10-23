@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -55,6 +56,40 @@ def _package_owned_helper(executable: str) -> str:
     except ValueError as exc:
         raise RuntimeError(f"AUR helper has invalid package ownership: {executable}") from exc
     return executable
+
+
+def update_command(home: Path, package: str) -> list[str] | None:
+    """Check the selected helper for updates without rebuilding current packages."""
+    command = install_command(home, package)
+    helper = command[0]
+    shelly = Path(helper).name == "shelly"
+    if shelly:
+        prepare_cache(home)
+    query = ([helper, "list-updates", "aur", "--json"] if shelly else
+             [helper, "-Qua", "--quiet", "--color", "never"])
+    try:
+        result = run(query, capture_output=True, check=False, timeout=120)
+        output = (result.stdout or "").strip()
+        # Pacman-compatible query commands return 1 for an empty result.
+        if not shelly and result.returncode == 1 and not output and not result.stderr:
+            return None
+        if result.returncode:
+            raise ValueError(f"helper exited with status {result.returncode}")
+        if shelly:
+            records = json.loads(output)
+            if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+                raise ValueError("expected a JSON update list")
+            packages = [validate_arch_package_name(item["Name"]) for item in records]
+        else:
+            packages = [validate_arch_package_name(line) for line in output.splitlines()]
+    except (CommandExecutionError, CommandTimeoutError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError(
+            f"Cannot check AUR updates for {package}; retry as your desktop user: "
+            f"{shlex.join(query)}. Resolve the helper error before rerunning setup."
+        ) from exc
+    if package not in packages:
+        return None
+    return [helper, "update", "aur", package] if shelly else command
 
 
 def prepare_cache(home: Path, *, create: bool = False) -> None:

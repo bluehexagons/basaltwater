@@ -174,9 +174,10 @@ def collect_host_health(probe, uid: int, *, home: Path | None = None) -> list[tu
     status, output = probe(["/usr/bin/pacman", "-Qu"], uid)
     count = len(output.strip().splitlines()) if output.strip() else 0
     add("health.updates", "deferred",
-        f"{count} repository updates in local sync metadata; use the normal full CachyOS update workflow. "
+        (f"{count} repository updates in local sync metadata; use the normal full CachyOS update workflow. "
         "Metadata may be stale; AUR updates are not checked."
         if status == "ok" else "Update freshness unknown; check through the normal CachyOS update workflow.")
+        + " For Shelly AUR updates, run shelly list-updates aur; cachy-update may skip these checks.")
     capacity_paths = [("health.capacity", "/", "Root")]
     if home is not None:
         capacity_paths.append(("health.home-capacity", str(home), "Home"))

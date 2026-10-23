@@ -146,7 +146,6 @@ def preflight(config: SetupConfig) -> None:
     _check_service_ownership(unit)
     if config.t3code_desktop:
         _desktop_data_paths(home)
-    if config.t3code_desktop and aur.package_version(DESKTOP_PACKAGE) is None:
         command = aur.install_command(home, DESKTOP_PACKAGE)
         if Path(command[0]).name == "shelly":
             aur.prepare_cache(home)
@@ -155,7 +154,7 @@ def preflight(config: SetupConfig) -> None:
 def install_desktop(config: SetupConfig) -> None:
     """Retain AUR ownership and retire only the Basaltwater web service."""
     if config.dry_run or is_dry_run():
-        print("  Would install/retain T3 desktop, disable the managed web service, and enable KDE login startup")
+        print("  Would install/update T3 desktop through your AUR helper, disable the managed web service, and enable KDE login startup")
         return
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
@@ -170,6 +169,18 @@ def install_desktop(config: SetupConfig) -> None:
         version = aur.package_version(DESKTOP_PACKAGE)
         if version is None:
             raise RuntimeError("AUR installation finished without t3code-bin")
+    else:
+        command = aur.update_command(home, DESKTOP_PACKAGE)
+        if command is not None:
+            print(f"  Updating {DESKTOP_PACKAGE} through your AUR helper; complete its review prompts", flush=True)
+            aur.install_package(command, home)
+            updated = aur.package_version(DESKTOP_PACKAGE)
+            if updated is None or updated == version:
+                raise RuntimeError("AUR update did not change t3code-bin; finish the helper's review/install "
+                                   "before rerunning setup. The update may have been cancelled.")
+            version = updated
+        else:
+            print("  No T3 desktop update reported by your AUR helper (including its ignore policy)")
     executable = shutil.which("t3code", path="/usr/bin:/bin")
     if not executable:
         raise RuntimeError("t3code-bin is installed but its desktop executable is missing; repair it with your AUR helper")
@@ -192,11 +203,11 @@ def install_desktop(config: SetupConfig) -> None:
                 raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
         desktop.enable_autostart(home)
         _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
-    print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; updates remain with your AUR helper")
+    print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; checked through your AUR helper")
     print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
     print("  Default ~/.t3 desktop state is private; existing credential contents retained")
     print("  T3 Code enabled at KDE login; normal quit stays stopped until the next login")
-    print("  Open T3 Code from KDE and verify a provider thread and terminal")
+    print("  Quit/reopen T3 Code when convenient to load package updates; verify a provider thread and terminal")
     for tool in config.selected_agent_tools():
         if tool != "gh":
             binary = shutil.which(tool, path=_tool_path(home))

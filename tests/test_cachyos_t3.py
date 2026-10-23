@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -37,6 +38,7 @@ class T3InstallTests(unittest.TestCase):
         self.failure = None
         self.launcher_layout = False
         self.desktop_version = "0.0.42-1"
+        self.desktop_update = None
         stack.enter_context(patch.object(t3, "_home", return_value=self.home))
         self.user_run = stack.enter_context(patch.object(t3, "_user_run", side_effect=self.user_command))
         self.system_run = stack.enter_context(patch.object(t3, "run", side_effect=self.system_command))
@@ -115,6 +117,17 @@ class T3InstallTests(unittest.TestCase):
             package = Path(argv[-1]).name if Path(argv[-1]).name in {"shelly", "paru", "yay"} else "t3code-bin"
             return subprocess.CompletedProcess(argv, 0, package + "\n", "")
         if argv[0] in {"/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay"}:
+            if argv[1:3] == ["list-updates", "aur"] or argv[1] == "-Qua":
+                if self.failure == "aur-query":
+                    return subprocess.CompletedProcess(argv, 2, "", "AUR query fixture failure")
+                if self.failure == "aur-json":
+                    return subprocess.CompletedProcess(argv, 0, '{"unexpected": "response"}', "")
+                if argv[0] == "/usr/bin/shelly":
+                    records = ([{"Name": "t3code-bin", "Version": self.desktop_version,
+                                 "NewVersion": self.desktop_update}] if self.desktop_update else [])
+                    return subprocess.CompletedProcess(argv, 0, json.dumps(records), "")
+                return subprocess.CompletedProcess(argv, 0 if self.desktop_update else 1,
+                                                   "t3code-bin\n" if self.desktop_update else "", "")
             if argv[0] == "/usr/bin/shelly":
                 cache = self.home / ".cache/Shelly"
                 self.assertTrue(cache.is_dir(), "Cache must exist before Shelly elevates")
@@ -122,7 +135,8 @@ class T3InstallTests(unittest.TestCase):
             if self.failure == "aur":
                 raise aur.CommandExecutionError(" ".join(argv), 1, "AUR fixture failure")
             if self.failure != "aur-cancel":
-                self.desktop_version = "0.0.42-1"
+                self.desktop_version = self.desktop_update or "0.0.42-1"
+                self.desktop_update = None
         if argv[0] == "systemd-analyze" and self.failure == "verify":
             raise RuntimeError("unit fixture failure")
         code = 0
@@ -584,14 +598,69 @@ class T3InstallTests(unittest.TestCase):
         return SetupConfig(host="localhost", username="human", system_type="agent_cachyos",
                            agent_tools=["codex"], t3code_desktop=True)
 
-    def test_desktop_retains_installed_package_without_launching_or_downloading(self):
+    def test_current_desktop_is_checked_without_reinstalling_or_launching(self):
         t3.install_desktop(self.desktop_config())
         self.assertEqual(desktop.autostart_path(self.home).read_text(), desktop.AUTOSTART_ENTRY)
         self.assertTrue((self.prefix / "desktop-mode").is_file())
         self.assertFalse(self.unit.exists())
         self.assertFalse(self.binary.exists())
-        self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay",
-                                       "/usr/bin/t3code"} for _, cmd in self.events))
+        helpers = [cmd for _, cmd in self.events
+                   if cmd[0] in {"/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay"}]
+        self.assertEqual(helpers, [["/usr/bin/shelly", "list-updates", "aur", "--json"]])
+        self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/t3code"} for _, cmd in self.events))
+        self.assertFalse((self.home / ".cache").exists())
+
+    def test_pending_desktop_update_is_targeted_reviewed_and_not_repeated(self):
+        self.desktop_update = "0.1.2-1"
+        t3.install_desktop(self.desktop_config())
+        self.assertEqual(self.desktop_version, "0.1.2-1")
+        calls = [call for call in self.system_run.call_args_list
+                 if call.args[0][:3] == ["/usr/bin/shelly", "update", "aur"]]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].args[0], ["/usr/bin/shelly", "update", "aur", "t3code-bin"])
+        self.assertTrue(calls[0].kwargs["interactive"])
+        self.events.clear()
+        t3.install_desktop(self.desktop_config())
+        self.assertFalse(any(cmd[1:3] == ["update", "aur"] for _, cmd in self.events))
+
+    def test_desktop_update_failure_or_cancellation_preserves_previous_mode(self):
+        target, content = self.legacy()
+        for failure, message in (("aur", "AUR fixture"), ("aur-cancel", "did not change"),
+                                 ("aur-query", "Cannot check AUR updates"),
+                                 ("aur-json", "Cannot check AUR updates")):
+            with self.subTest(failure=failure):
+                self.failure = failure
+                self.desktop_update = "0.1.2-1"
+                self.events.clear()
+                with self.assertRaisesRegex(RuntimeError, message):
+                    t3.install_desktop(self.desktop_config())
+                self.assertEqual(self.desktop_version, "0.0.42-1")
+                self.assertTrue(self.active)
+                self.assertTrue(self.enabled)
+                self.assertEqual(self.unit.read_text(), content)
+                self.assertEqual(self.binary.resolve(), target)
+                self.assertFalse((self.prefix / "desktop-mode").exists())
+                self.assertFalse((self.home / ".t3").exists())
+                self.assertFalse(any(cmd[0] in {"/usr/bin/paru", "/usr/bin/yay"}
+                                     for _, cmd in self.events))
+
+    def test_legacy_helpers_check_and_update_only_the_selected_package(self):
+        for helper in ("paru", "yay"):
+            with self.subTest(helper=helper):
+                self.desktop_version = "0.0.42-1"
+                self.which.side_effect = lambda name, **kw: (
+                    "/usr/bin/" + name if name in {helper, "codex", "t3code"} else None
+                )
+                self.desktop_update = "0.1.2-1"
+                self.events.clear()
+                t3.install_desktop(self.desktop_config())
+                self.assertIn(("system", ["/usr/bin/" + helper, "-Qua", "--quiet", "--color", "never"]),
+                              self.events)
+                self.assertIn(("system", ["/usr/bin/" + helper, "-S", "--aur", "--needed", "--", "t3code-bin"]),
+                              self.events)
+                self.events.clear()
+                t3.install_desktop(self.desktop_config())
+                self.assertFalse(any("-S" in cmd for _, cmd in self.events))
 
     def test_t3_dry_runs_do_not_probe_install_or_change_files(self):
         for install, config in ((t3.install, self.config), (t3.install_desktop, self.desktop_config())):
@@ -788,11 +857,12 @@ class T3InstallTests(unittest.TestCase):
                               self.events)
                 self.assertFalse((self.home / ".cache/Shelly").exists())
 
-    def test_installed_desktop_needs_no_aur_helper(self):
+    def test_installed_desktop_requires_helper_to_check_updates(self):
         self.which.side_effect = lambda name, **kw: "/usr/bin/" + name if name in {"t3code", "codex"} else None
-        t3.preflight(self.desktop_config())
-        t3.install_desktop(self.desktop_config())
-        self.assertTrue((self.prefix / "desktop-mode").is_file())
+        for operation in (t3.preflight, t3.install_desktop):
+            with self.assertRaisesRegex(RuntimeError, "sudo pacman -S --needed shelly"):
+                operation(self.desktop_config())
+        self.assertFalse(self.prefix.exists())
         self.assertFalse((self.home / ".cache/Shelly").exists())
 
     def test_missing_helper_fails_preflight_without_mutation(self):

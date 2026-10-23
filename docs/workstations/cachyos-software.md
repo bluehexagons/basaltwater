@@ -40,8 +40,10 @@ in the attached KDE terminal as your desktop account.
 | SteamCMD | `--steamcmd` | AUR `steamcmd`, with repository `lib32-glibc` and `lib32-gcc-libs`; independent of `--gaming` |
 
 Native dependencies follow the enabled repositories' priority, including CachyOS
-optimized builds. Setup installs missing packages only, never runs `pacman -Sy`,
-and does not silently upgrade the OS or installed AUR packages. Missing-package
+optimized builds. For the software selections on this page, setup installs
+missing packages only, never runs `pacman -Sy`, and does not upgrade the OS or
+installed AUR packages. The separate [T3 desktop selection](cachyos-maintenance.md#t3-desktop-updates)
+also checks for T3 updates through your AUR helper. Missing-package
 errors require resolving the mirror/repository problem or completing a normal
 full-system update, then rerunning setup. Omitted or `--no-*` software flags stop
 managing that selection; they do not uninstall packages or remove user data.

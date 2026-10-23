@@ -231,6 +231,8 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["health.system-units"][0], "failed")
         self.assertEqual(result["health.capacity"][0], "failed")
         self.assertIn("stale", result["health.updates"][1])
+        self.assertIn("shelly list-updates aur", result["health.updates"][1])
+        self.assertIn("cachy-update may skip", result["health.updates"][1])
         self.assertIn("without a dm-crypt", result["health.encryption"][1])
         self.assertNotIn("secret", str(result))
         self.assertNotIn("nvme", str(result))

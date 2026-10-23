@@ -24,10 +24,16 @@ providers to silence optional checks.
 
 `basaltw setup agent_cachyos localhost --t3code-desktop` installs missing
 `t3code-bin` through current CachyOS's default Shelly CLI
-(`shelly install aur t3code-bin`) and retains installed versions. Only when
+(`shelly install aur t3code-bin`). For installed packages, setup/refresh checks
+`shelly list-updates aur --json` and runs `shelly update aur t3code-bin` only
+when an update is available; it does not rebuild current packages. Only when
 Shelly is absent does setup try paru, then yay. Preserve package-review prompts
 and Shelly's configured AUR policy; do not switch helpers to bypass a failure.
-Updates belong to the AUR workflow. It disables the Basaltwater web service;
+Every desktop setup requires a helper. Failed queries, failed updates, and
+updates leaving the installed version unchanged stop setup before startup
+changes. `cachy-update` may skip AUR checks with only Shelly installed; use
+`shelly list-updates aur` for routine checks. Quit/reopen T3 after updating to
+load its new embedded server. Setup disables the Basaltwater web service;
 an inactive service is expected in this mode. Setup retains all application data.
 The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
 the selection. Do not launch another backend to repair a working desktop.
