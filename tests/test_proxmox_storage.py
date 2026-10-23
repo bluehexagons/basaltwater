@@ -83,6 +83,38 @@ class TestParsePvesmList(unittest.TestCase):
 
 
 class TestListOrphanedVolumes(unittest.TestCase):
+    def test_empty_local_inventories_allow_orphan_scan(self) -> None:
+        for output in ('', ' \n'):
+            with self.subTest(output=output), patch('lib.proxmox_storage._ssh_run', side_effect=[
+                _ok(output), _ok(output), _ok('[]'), _ok(_PVESM_STATUS),
+                _ok(_PVESM_LIST_LOCAL_LVM), _ok('Volid Format Type Size VMID\n'),
+            ]):
+                self.assertEqual({volume.vmid for volume in list_orphaned_volumes(_host())}, {100, 999})
+
+    @patch('lib.proxmox_storage._ssh_run')
+    def test_empty_local_inventories_still_protect_cluster_guests(self, mock_run) -> None:
+        mock_run.side_effect = [
+            _ok(), _ok(), _ok('[{"vmid": 100}, {"vmid": 999}]'),
+            _ok(_PVESM_STATUS), _ok(_PVESM_LIST_LOCAL_LVM), _ok(_PVESM_LIST_LOCAL_LVM),
+        ]
+        self.assertEqual(list_orphaned_volumes(_host()), [])
+
+    def test_empty_local_inventories_require_valid_cluster_inventory(self) -> None:
+        for result in (_fail(), _ok(), _ok('{}'), _ok('[{"vmid": 0}]')):
+            with self.subTest(result=result), patch('lib.proxmox_storage._ssh_run', side_effect=[
+                _ok(), _ok(), result,
+            ]) as mock_run:
+                with self.assertRaises(ProxmoxStorageError):
+                    list_orphaned_volumes(_host())
+                self.assertEqual(mock_run.call_count, 3)
+
+    def test_malformed_local_inventory_aborts_before_volume_scan(self) -> None:
+        for output in ('unexpected output', 'VMID NAME STATUS\nnot-a-vmid guest running'):
+            with self.subTest(output=output), patch('lib.proxmox_storage._ssh_run', return_value=_ok(output)) as mock_run:
+                with self.assertRaises(ProxmoxStorageError):
+                    list_orphaned_volumes(_host())
+                self.assertEqual(mock_run.call_count, 1)
+
     def test_malformed_storage_inventory_aborts_before_volume_scan(self):
         for output in ('', 'unexpected output', 'Name Type Status\npool dir unknown'):
             with self.subTest(output=output), patch('lib.proxmox_storage._ssh_run', side_effect=[

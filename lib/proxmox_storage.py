@@ -48,6 +48,10 @@ def _active_vmids(host: ProxmoxHost) -> set[int]:
         result = _run(host, cmd)
         if result.returncode != 0:
             raise ProxmoxStorageError(f'Incomplete guest inventory on {host.address}: {cmd} failed')
+        # Both native commands omit even the header when no guests exist.
+        # The cluster JSON inventory below remains mandatory in this case.
+        if not result.stdout.strip():
+            continue
         lines = result.stdout.splitlines()
         if not lines or not lines[0].split() or lines[0].split()[0] != 'VMID':
             raise ProxmoxStorageError(f'Invalid guest inventory from {cmd} on {host.address}')

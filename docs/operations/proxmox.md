@@ -1225,8 +1225,10 @@ basaltw proxmox clean-disks pve1 --delete
 check cannot infer whether an external workflow still needs a volume.
 
 Cleanup aborts if either guest inventory, cluster guest inventory, or an active
-pool's volume listing fails. Cluster-wide guest IDs protect shared-storage disks
-owned by other nodes. Every deletion repeats the complete scan and refuses a
+pool's volume listing fails. Successful empty output from `qm list` or `pct list`
+is accepted for a node with no guests; the cluster JSON inventory is still
+required. Cluster-wide guest IDs protect shared-storage disks owned by other
+nodes. Every deletion repeats the complete scan and refuses a
 volume that is no longer orphaned. Keep provisioning and migration paused during
 cleanup: inventory and deletion are separate Proxmox operations. CLI partial
 failures return nonzero; the shell stops cleanup and reports the failure.
