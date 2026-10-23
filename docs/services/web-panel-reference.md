@@ -485,6 +485,27 @@ history. It supports server and workstation profiles, including optional
 host-only monitoring on `server_proxmox`. On a root-managed setup, it runs as
 the locked `basaltwater-web-panel` service account. Proxmox's `/etc/pve` and
 `/var/lib/pve-cluster` paths are hidden from the panel and its Nginx service.
+The optional Proxmox panel is host monitoring only and links to the native
+Proxmox UI on port 8006; it does not provide VM or container control. With
+panel TLS enabled, it listens on the selected HTTPS port and exposes the
+certificate-only CA enrollment and download listener on port 8442. Port 8442
+serves the public CA certificate; it is not an ACME issuance listener on port
+80, and the panel does not use the shared web origin on port 8443. The panel
+shows the CA fingerprint, which can be checked on the host with
+`sudo sha256sum /srv/basaltwater/web/basaltwater-ca.crt`. The Proxmox TLS path
+sets up Nginx and OpenSSL and creates or reuses the panel certificate without
+installing the `basaltwater-web` publisher/control helper, its web policy, or
+NSS trust.
+
+For Proxmox, setup prepends native node-level TCP `ACCEPT` rules for the
+selected panel port and, with TLS, port 8442. Rules use the selected access
+sources when configured and are otherwise unrestricted. Each carries the
+exact ownership comment `Managed by basaltwater web panel`. They do not switch
+the firewall engine, enable or disable the global firewall, or change the
+cluster-wide `management` IP set. Removing the panel deletes only these owned
+rules, its Nginx site and systemd isolation drop-in, backend/configuration,
+and Fail2ban configuration; the shared CA, Nginx/OpenSSL packages, native
+Proxmox UI/configuration, and unowned firewall rules remain.
 
 The panel renders saved configured access and discovers live `basaltwater-web`
 forwards and static sites. HomeBox status is a loopback readiness probe only;

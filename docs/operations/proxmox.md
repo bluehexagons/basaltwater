@@ -40,8 +40,7 @@ Set up, register, and inspect the host:
 ```bash
 basaltw setup server_proxmox 10.0.0.10 root \
   --key ~/.ssh/proxmox_ed25519 \
-  --name pve1 \
-  --web-panel 9443 --ssl
+  --name pve1
 
 basaltw proxmox probe pve1
 basaltw proxmox top pve1
@@ -78,30 +77,43 @@ The port is optional: without `--ssl`, it defaults to 80; with `--ssl`, it
 defaults to 443. Choose another available panel port with
 `--web-panel PORT`; port 8006 is reserved for the native Proxmox UI and is
 rejected for the panel. The Proxmox UI remains on 8006 and appears as a link in
-the dashboard. For example, the setup command above serves the panel over TLS
-on 9443.
+the dashboard. To opt in and serve the panel over TLS on port 9443, use:
 
-TLS uses a separate Basaltwater certificate and CA, never Proxmox's
-`/etc/pve` certificate. Trust that CA on clients as needed using [Client CA
-trust](../services/client-ca-trust.md). This Proxmox installation path only
-sets up the panel certificate; it does not configure static-site publishing or
-a web-forward helper, and it does not add a listener on port 8443. When TLS
-certificate issuance needs HTTP validation, allow inbound TCP port 80 as well
-as the selected panel port.
+```bash
+basaltw setup server_proxmox 10.0.0.10 root \
+  --key ~/.ssh/proxmox_ed25519 --name pve1 \
+  --web-panel 9443 --ssl
+```
 
-For `server_proxmox`, setup adds only node-owned native firewall allow rules
-for the panel port and, when TLS is selected, CA HTTP validation on port 80.
-When effective access sources are supplied with `--access-source` or
-`--lan-access`, the panel rules use those sources; otherwise the panel rules
-are unrestricted. This does not enable the Proxmox firewall, select or switch
-its backend, or require any other firewall enablement. Existing cluster, node,
-upstream, or operator `DROP` policy can still block connections, so verify
-effective access through your existing firewall policy before relying on the
-panel. Other Proxmox UI and SSH firewall policy remains operator-managed.
+With `--ssl`, the Proxmox path installs Nginx and OpenSSL as needed, then
+creates or reuses a panel certificate independently of Proxmox's `/etc/pve`
+certificate. The panel serves HTTPS on the selected port and exposes a
+certificate-only CA enrollment and download listener on TCP port 8442. This
+is public CA enrollment, not an ACME issuance listener; it does not require
+port 80, and the panel does not use the shared web origin on port 8443. The
+panel displays the CA fingerprint; on the host, verify it with
+`sudo sha256sum /srv/basaltwater/web/basaltwater-ca.crt`. Clients can install
+the downloaded CA certificate to trust the panel using [Client CA
+trust](../services/client-ca-trust.md). This Proxmox TLS path does not install
+or configure the `basaltwater-web` publisher/control helper, its web policy,
+or NSS trust.
 
-Remove the panel with `--no-web-panel`. This removes only the Basaltwater-owned
-panel firewall rules and panel installation; it leaves other firewall rules,
-the native Proxmox UI, and Proxmox configuration in place.
+Setup prepends native Proxmox node-level `ACCEPT` rules for TCP traffic to the
+selected panel port and, with TLS, port 8442. The rules allow only those ports
+and the selected sources (`--access-source` or `--lan-access`); without a
+source restriction, they are unrestricted. Each owned rule has the exact
+comment `Managed by basaltwater web panel`. Setup does not switch the firewall
+engine, enable or disable the global firewall, or change the cluster-wide
+`management` IP set. Existing cluster, node, upstream, or operator `DROP`
+policy can still block connections, so verify effective access through your
+existing firewall policy before relying on the panel. Other Proxmox UI and SSH
+firewall policy remains operator-managed.
+
+Remove the panel with `--no-web-panel`. This removes only the owned panel
+firewall rules, Nginx site, Nginx systemd isolation drop-in, panel backend and
+configuration, and Fail2ban configuration. It preserves the shared CA,
+Nginx/OpenSSL packages, native Proxmox UI and configuration, and unowned
+firewall rules.
 
 New VM provisioning uses an SSH identity's `.pub` file for cloud-init. The key
 is installed for both root and the configured guest setup username. Cloud-init
