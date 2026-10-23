@@ -1036,6 +1036,33 @@ container or VM arguments. Use `rootfs` or `mpN` for containers and the disk
 slot (for example, `scsi0`) for VMs. VM disk growth increases the virtual disk;
 grow its partition and filesystem inside the guest afterward.
 
+`resize-disk` accepts an absolute positive integer size with a K, M, G, or T
+suffix; lowercase suffixes are normalized to uppercase. Shrinking is rejected
+by Proxmox. LXC growth uses `pct resize`. VM growth invokes the same native
+resize API through `pvesh` and requires its returned task to be stopped with
+exit status `OK`. A zero CLI exit code alone cannot establish VM resize success:
+[`qm resize`](https://github.com/proxmox/qemu-server/blob/master/src/PVE/CLI/qm.pm)
+does not propagate the asynchronous worker result through its task-exit callback.
+
+Resize execution on the node is limited to one hour, followed by a ten-second
+termination grace period. VM task verification has a separate 30-second limit.
+SSH retains its normal interactive authentication policy; these remote limits
+start after authentication. Noninteractive SSH waits are also bounded (3660
+seconds for resize, 50 seconds for verification). A timeout, lost connection,
+missing task ID, or unverifiable outcome reports an error and never replays the
+mutation. Interrupting the wait does not prove cancellation or undo partial
+storage changes. Inspect the Proxmox task log and disk state before retrying.
+Large or unusually slow resizes exceeding this fixed limit require an
+operator-managed native workflow. Automated coverage is mocked; live VM and LXC
+verification remains an operator check.
+
+`proxmox config HOST VMID --pending` and shell `config VMID --pending` show only
+unapplied changes. Native `cur` records are omitted, `new` records appear under
+the option name with their new value, and `del` records appear as `<deleted>`.
+The deletion marker describes removal of that configuration option; it does
+not assert that an associated storage volume will be erased. Parsing follows
+[Proxmox's pending formatter](https://github.com/proxmox/pve-guest-common/blob/master/src/PVE/GuestHelpers.pm).
+
 For an existing VM, Proxmox stores `memory` and `balloon` in MiB. Keep
 `balloon` no greater than `memory`; setting both to the same value disables
 dynamic reclamation without removing the balloon device.

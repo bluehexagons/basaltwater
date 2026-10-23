@@ -21,6 +21,7 @@ provisioning path.
 from __future__ import annotations
 
 import base64
+import json
 import re
 import shlex
 import subprocess
@@ -31,6 +32,7 @@ import urllib.parse
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_guest import _proxmox_ssh_command, _ssh_opts, _ssh_run
 from lib.types import StrList
+from lib.validation import validate_positive_integer
 
 
 class ProxmoxManageError(Exception):
@@ -128,7 +130,7 @@ class ProxmoxWebhookNotificationConfig:
 
 _GUEST_OPTION_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 _SNAPSHOT_NAME_RE = re.compile(r"^[a-zA-Z0-9_]{1,40}$")
-_DISK_SIZE_RE = re.compile(r"^\d+[KkMmGgTt]$")
+_DISK_SIZE_RE = re.compile(r"[0-9]+[KkMmGgTt]")
 _MISSING_GUEST_PATTERNS = (
     "does not exist",
     "not exist",
@@ -723,8 +725,8 @@ def get_container_pending(
 ) -> dict[str, str]:
     """Return pending (unapplied) configuration changes for ``vmid``.
 
-    Returns a dict of option -> new-value for options that require a guest
-    restart to take effect.
+    Returns option -> new-value, with ``<deleted>`` marking pending removals.
+    Native ``cur`` records describe current configuration and are omitted.
     """
     if dry_run:
         return {}
@@ -745,9 +747,13 @@ def get_container_pending(
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if ":" in line:
-            key, _, value = line.partition(":")
-            pending[key.strip()] = value.strip()
+        option, separator, value = line.partition(":")
+        prefix, _, key = option.partition(" ")
+        if separator and _GUEST_OPTION_RE.fullmatch(key):
+            if prefix == "new":
+                pending[key] = value.strip()
+            elif prefix == "del":
+                pending[key] = "<deleted>"
     return pending
 
 
@@ -825,32 +831,92 @@ def resize_container_disk(
     *,
     dry_run: bool = False,
 ) -> None:
-    """Increase a guest disk volume to ``size`` using ``pct resize``/``qm resize``.
+    """Increase a guest disk, verifying the native task result for QEMU VMs.
 
     ``volume`` is the volume name (e.g. ``"rootfs"``). ``size`` is the new
     absolute size with a unit suffix, e.g. ``"20G"``. Proxmox only supports
-    increasing disk size.
+    increasing disk size. Unit suffixes are normalized to uppercase. A failed
+    or uncertain resize is never automatically replayed.
     """
+    vmid = validate_positive_integer(str(vmid), "VMID")
     _validate_guest_option(volume)
-    if not _DISK_SIZE_RE.match(size):
+    if not _DISK_SIZE_RE.fullmatch(size) or int(size[:-1]) == 0:
         raise ValueError(
             f"Invalid disk size: {size!r}. Use a positive integer followed by "
             "K, M, G, or T (e.g. '20G')."
         )
-    pct_cmd = shlex.join(["pct", "resize", str(int(vmid)), volume, size])
-    qm_cmd = shlex.join(["qm", "resize", str(int(vmid)), volume, size])
-    result, guest_type = _run_guest_update(
-        host,
-        vmid,
-        pct_cmd,
-        qm_cmd,
-        dry_run=dry_run,
+    size = size.upper()
+    pct_cmd = shlex.join(["pct", "resize", str(vmid), volume, size])
+    # qm resize omits the CLI task-exit callback: its worker can fail while
+    # qm exits zero. pvesh exposes the same API's UPID for explicit verification.
+    vm_cmd = shlex.join([
+        "pvesh", "set", f"/nodes/localhost/qemu/{vmid}/resize",
+        "--disk", volume, "--size", size, "--output-format", "json",
+    ])
+    if dry_run:
+        _run_guest_command(host, vmid, pct_cmd, vm_cmd, dry_run=True)
+        return
+    guest_type, _status = _get_guest_status(host, vmid)
+    cmd = vm_cmd if guest_type == "vm" else pct_cmd
+    label = f"{'qm' if guest_type == 'vm' else 'pct'} resize {vmid} {volume} {size}"
+    recovery = (
+        "Inspect the Proxmox task log and disk state before retrying; "
+        "the resize was not replayed."
     )
-    if result.returncode != 0:
-        tool = "qm" if guest_type == "vm" else "pct"
+    # A remote watchdog bounds execution after authentication, including in a
+    # terminal where the shared SSH helper deliberately allows passphrase waits.
+    try:
+        result = _run_on_host(
+            host, f"timeout --kill-after=10s 3600s {cmd}", timeout=3660
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise ProxmoxManageError(
-            f"{tool} resize {vmid} {volume} {size} failed on {host.address}: "
-            f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}"
+            f"{label} completion is uncertain on {host.address}: {exc}. {recovery}"
+        ) from exc
+    if result.returncode != 0:
+        raise ProxmoxManageError(
+            f"{label} failed on {host.address}; completion may be uncertain: "
+            f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}. {recovery}"
+        )
+    if guest_type != "vm":
+        return
+    try:
+        # Synchronous CLI worker logs precede pvesh's final JSON return value.
+        upid = json.loads((result.stdout or "").strip().splitlines()[-1])
+        if not isinstance(upid, str) or not re.fullmatch(
+            rf"UPID:[^:\s/]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:resize:{vmid}:[^:\s/]+:",
+            upid,
+        ):
+            raise ValueError("missing or invalid resize task ID")
+    except (ValueError, IndexError) as exc:
+        detail = (result.stderr or "").strip()
+        raise ProxmoxManageError(
+            f"{label} completion is uncertain: no valid native task ID. {detail} {recovery}"
+        ) from exc
+    status_cmd = shlex.join([
+        "pvesh", "get", f"/nodes/localhost/tasks/{upid}/status",
+        "--output-format", "json",
+    ])
+    try:
+        task_result = _run_on_host(
+            host, f"timeout --kill-after=10s 30s {status_cmd}", timeout=50
+        )
+        if task_result.returncode != 0:
+            raise ValueError((task_result.stderr or task_result.stdout or "no output").strip())
+        task = json.loads(task_result.stdout)
+        if not isinstance(task, dict) or task.get("upid") != upid:
+            raise ValueError("missing or mismatched task status")
+        # pvesh runs this CLI worker synchronously. A running/malformed result
+        # cannot establish completion and must not trigger another mutation.
+        if task.get("status") != "stopped" or not task.get("exitstatus"):
+            raise ValueError("native task has no final outcome")
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise ProxmoxManageError(
+            f"{label} completion is uncertain for task {upid}: {exc}. {recovery}"
+        ) from exc
+    if task["exitstatus"] != "OK":
+        raise ProxmoxManageError(
+            f"{label} failed: task {upid}: {task['exitstatus']}. {recovery}"
         )
 
 

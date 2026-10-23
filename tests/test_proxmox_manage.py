@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 import sys
@@ -885,10 +886,37 @@ class TestGetContainerConfig(unittest.TestCase):
 class TestGetContainerPending(unittest.TestCase):
     @patch("lib.proxmox_manage._ssh_run")
     def test_parses_pending_output(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = _completed("cores: 4\nmemory: 8192\n")
-        pending = get_container_pending(_host(), 100)
-        self.assertEqual(pending["cores"], "4")
-        self.assertEqual(pending["memory"], "8192")
+        # PVE::GuestHelpers::format_pending emits current rows even when no
+        # changes exist, and includes the old value in deletion records.
+        fixture = (
+            "cur arch: amd64\n"
+            "cur cores: 2\nnew cores: 4\n"
+            "new memory: 8192\n"
+            "new description: notes: with a colon\n"
+            "new searchdomain: \n"
+            "del net1: name=eth1,bridge=vmbr0\n"
+        )
+        for tool in ("pct", "qm"):
+            with self.subTest(tool=tool):
+                mock_run.reset_mock()
+                mock_run.side_effect = (
+                    [_completed(fixture)] if tool == "pct" else [
+                        _completed(stderr="CT 100 does not exist", returncode=2),
+                        _completed(fixture),
+                    ]
+                )
+                self.assertEqual(get_container_pending(_host(), 100), {
+                    "cores": "4", "memory": "8192", "net1": "<deleted>",
+                    "description": "notes: with a colon", "searchdomain": "",
+                })
+                self.assertEqual(mock_run.call_args.args[3], f"{tool} pending 100")
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_unchanged_native_config_has_no_pending_changes(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _completed(
+            "cur arch: amd64\ncur cores: 2\ncur net0: name=eth0,bridge=vmbr0\n"
+        )
+        self.assertEqual(get_container_pending(_host(), 100), {})
 
     @patch("lib.proxmox_manage._ssh_run")
     def test_raises_on_failure(self, mock_run: MagicMock) -> None:
@@ -906,7 +934,7 @@ class TestGetContainerPending(unittest.TestCase):
     def test_falls_back_to_qm_pending(self, mock_run: MagicMock) -> None:
         mock_run.side_effect = [
             _completed(stderr="CT 100 does not exist", returncode=2),
-            _completed("cores: 8\n"),
+            _completed("cur cores: 4\nnew cores: 8\n"),
         ]
         pending = get_container_pending(_host(), 100)
         self.assertEqual(pending["cores"], "8")
@@ -1008,6 +1036,23 @@ class TestModifyContainer(unittest.TestCase):
 
 
 class TestResizeContainerDisk(unittest.TestCase):
+    UPID = "UPID:pve1:00001234:00005678:12345678:resize:100:root@pam:"
+
+    def setUp(self) -> None:
+        opts = patch("lib.proxmox_manage._ssh_opts", return_value=["-o", "BatchMode=no"])
+        opts.start()
+        self.addCleanup(opts.stop)
+
+    def vm_results(self, *, exitstatus: str = "OK") -> list[subprocess.CompletedProcess]:
+        return [
+            _completed(stderr="CT 100 does not exist", returncode=2),
+            _completed("status: running\n"),
+            _completed("size of disk updated\n" + json.dumps(self.UPID) + "\n"),
+            _completed(json.dumps({
+                "upid": self.UPID, "status": "stopped", "exitstatus": exitstatus,
+            })),
+        ]
+
     @patch("lib.proxmox_manage._ssh_run")
     def test_builds_pct_resize_command(self, mock_run: MagicMock) -> None:
         mock_run.return_value = _completed()
@@ -1048,17 +1093,102 @@ class TestResizeContainerDisk(unittest.TestCase):
         self.assertTrue(kwargs.get("dry_run"))
 
     @patch("lib.proxmox_manage._ssh_run")
-    def test_vm_uses_qm_resize(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = [
-            _completed(stderr="CT 100 does not exist", returncode=2),
-            _completed("status: running\n"),
-            _completed(),
-        ]
+    def test_vm_verifies_native_resize_task(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = self.vm_results()
         resize_container_disk(_host(), 100, "scsi0", "20G")
         self.assertEqual(
             [call.args[3] for call in mock_run.call_args_list],
-            ["pct status 100", "qm status 100", "qm resize 100 scsi0 20G"],
+            ["pct status 100", "qm status 100",
+             "timeout --kill-after=10s 3600s pvesh set /nodes/localhost/qemu/100/resize "
+             "--disk scsi0 --size 20G --output-format json",
+             f"timeout --kill-after=10s 30s pvesh get /nodes/localhost/tasks/{self.UPID}/status "
+             "--output-format json"],
         )
+        self.assertEqual(mock_run.call_args_list[2].kwargs["timeout"], 3660)
+        self.assertEqual(mock_run.call_args_list[3].kwargs["timeout"], 50)
+        # Reuse the selected SSH authentication options, including interactive
+        # prompts; the remote watchdog starts only after authentication.
+        self.assertEqual(mock_run.call_args_list[2].args[2], ["-o", "BatchMode=no"])
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_zero_exit_with_worker_failure_is_an_error(self, mock_run: MagicMock) -> None:
+        responses = self.vm_results(exitstatus="shrinking disks is not supported")
+        responses[2] = _completed(
+            json.dumps(self.UPID) + "\n", stderr="shrinking disks is not supported\n"
+        )
+        mock_run.side_effect = responses
+        with self.assertRaisesRegex(ProxmoxManageError, "failed: task .*shrinking disks"):
+            resize_container_disk(_host(), 100, "scsi0", "20G")
+        self.assertEqual(mock_run.call_count, 4)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_unverifiable_task_never_reports_success_or_replays(self, mock_run: MagicMock) -> None:
+        statuses = [
+            _completed("not json"), _completed("[]"),
+            _completed(json.dumps({"upid": self.UPID, "status": "running"})),
+            _completed(json.dumps({"upid": self.UPID, "status": "stopped"})),
+            _completed(json.dumps({"upid": "other", "status": "stopped", "exitstatus": "OK"})),
+            _completed(stderr="connection lost", returncode=255),
+            subprocess.TimeoutExpired("ssh", 50), OSError("connection lost"),
+        ]
+        for status in statuses:
+            with self.subTest(status=status):
+                mock_run.reset_mock()
+                mock_run.side_effect = [*self.vm_results()[:3], status]
+                with self.assertRaisesRegex(ProxmoxManageError, "completion is uncertain.*task"):
+                    resize_container_disk(_host(), 100, "scsi0", "20G")
+                self.assertEqual(mock_run.call_count, 4)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_missing_or_invalid_upid_fails_closed(self, mock_run: MagicMock) -> None:
+        for output in ("", "TASK ERROR: cannot shrink\n", '"UPID:invalid:"',
+                       json.dumps(self.UPID.replace(":100:", ":200:")), "{}"):
+            with self.subTest(output=output):
+                mock_run.reset_mock()
+                mock_run.side_effect = [*self.vm_results()[:2], _completed(output)]
+                with self.assertRaisesRegex(ProxmoxManageError, "no valid native task ID"):
+                    resize_container_disk(_host(), 100, "scsi0", "20G")
+                self.assertEqual(mock_run.call_count, 3)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_transport_and_watchdog_failure_never_replay(self, mock_run: MagicMock) -> None:
+        failures = [
+            subprocess.TimeoutExpired("ssh", 3660), OSError("connection lost"),
+            _completed(stderr="connection lost", returncode=255),
+            _completed(returncode=124), _completed(returncode=137),
+        ]
+        for tool in ("pct", "qm"):
+            for failure in failures:
+                with self.subTest(tool=tool, failure=failure):
+                    mock_run.reset_mock()
+                    before = [_completed("status: running\n")]
+                    if tool == "qm":
+                        before.insert(0, _completed(stderr="CT 100 does not exist", returncode=2))
+                    mock_run.side_effect = [*before, failure]
+                    with self.assertRaisesRegex(ProxmoxManageError, "uncertain.*not replayed"):
+                        resize_container_disk(_host(), 100, "scsi0", "20G")
+                    self.assertEqual(mock_run.call_count, len(before) + 1)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_lowercase_sizes_are_normalized_for_both_guest_types(self, mock_run: MagicMock) -> None:
+        for tool in ("pct", "qm"):
+            for suffix in "kmgt":
+                with self.subTest(tool=tool, suffix=suffix):
+                    mock_run.reset_mock()
+                    mock_run.side_effect = (
+                        self.vm_results() if tool == "qm" else [_completed(), _completed()]
+                    )
+                    resize_container_disk(_host(), 100, "scsi0", f"20{suffix}")
+                    command = mock_run.call_args_list[2 if tool == "qm" else 1].args[3]
+                    self.assertIn(f"20{suffix.upper()}", command)
+                    self.assertNotIn(f"20{suffix}", command)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_invalid_sizes_fail_before_ssh(self, mock_run: MagicMock) -> None:
+        for size in ("0G", "00g", "20G\n", "20GB", "+20G", "1.5G", "２０G"):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                resize_container_disk(_host(), 100, "rootfs", size)
+        mock_run.assert_not_called()
 
 
 class TestGuestUpdateRouting(unittest.TestCase):
@@ -1102,7 +1232,8 @@ class TestGuestUpdateRouting(unittest.TestCase):
         mock_run.assert_called_once()
         self.assertTrue(mock_run.call_args.kwargs["dry_run"])
         self.assertEqual(mock_run.call_args.args[3], "pct resize 100 scsi0 20G")
-        self.assertIn("qm resize 100 scsi0 20G", mock_run.call_args.kwargs["log_cmd"])
+        self.assertIn("pvesh set /nodes/localhost/qemu/100/resize",
+                      mock_run.call_args.kwargs["log_cmd"])
 
 
 class TestParseListsnapshot(unittest.TestCase):
