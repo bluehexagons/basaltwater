@@ -53,7 +53,7 @@ from lib.t3code_runtime import (
     t3_version_binary,
     t3_version_root,
 )
-from lib.validation import validate_filesystem_path, validate_package_name
+from lib.validation import validate_filesystem_path, validate_network_ip, validate_package_name
 from lib.validators import validate_host, validate_username
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.node_toolchain import SUPPORTED_NODE_RANGE, is_supported_node
@@ -2030,6 +2030,16 @@ def _t3_port(drop_in: str) -> int | None:
     return port if 1 <= port <= 65535 else None
 
 
+def _t3_host(drop_in: str) -> str:
+    """Read the managed bind host, defaulting older installations to IPv4."""
+    try:
+        with open(drop_in, encoding="utf-8") as file_obj:
+            match = re.search(r"^Environment=T3CODE_HOST=(.*)$", file_obj.read(), re.MULTILINE)
+    except OSError:
+        match = None
+    return match.group(1) if match else "127.0.0.1"
+
+
 def _t3_active_binary(home: str) -> str | None:
     runtime = os.path.join(home, _T3_RUNTIME_RELATIVE)
     state_file = os.path.join(runtime, "service-state.json")
@@ -2110,6 +2120,9 @@ def _repair_t3_native_runtime(
             repair_environment.pop(key, None)
     repair_environment.update(
         {
+            "PATH": os.pathsep.join(
+                (os.path.dirname(node), environment.get("PATH", _UPDATE_SYSTEM_PATH))
+            ),
             "CC": "gcc",
             "CXX": "g++",
             "npm_config_foreground_scripts": "true",
@@ -2155,20 +2168,39 @@ def _temporary_t3_npm_config() -> Iterator[str]:
             pass
 
 
-def _t3_endpoint_reachable(port: int | None, *, timeout: float = 5) -> bool:
+def _t3_endpoint_reachable(
+    port: int | None, *, host: str = "127.0.0.1", timeout: float = 5,
+) -> bool:
     import urllib.error
 
     if port is None:
         return False
     try:
-        with open_loopback(
-            f"http://127.0.0.1:{port}/", timeout=timeout
-        ) as response:
-            return 200 <= response.status < 300 or 400 <= response.status < 500
-    except urllib.error.HTTPError as exc:
-        return 400 <= exc.code < 500
-    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+        if host.lower() == "localhost":
+            local_hosts = ("127.0.0.1", "::1")
+        else:
+            if host.startswith("[") and host.endswith("]"):
+                host = host[1:-1]
+            local_host = validate_network_ip(host, name="T3 Code bind address")
+            # Match setup's wildcard mapping; open_loopback still rejects any
+            # specific non-loopback address and bypasses proxies and redirects.
+            local_hosts = ({"0.0.0.0": "127.0.0.1", "::": "::1"}.get(local_host, local_host),)
+    except ValueError:
         return False
+    deadline = time.monotonic() + timeout
+    for index, local_host in enumerate(local_hosts):
+        # Both localhost families share the caller's remaining probe budget.
+        remaining = timeout if index == 0 else deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        url_host = f"[{local_host}]" if ":" in local_host else local_host
+        try:
+            with open_loopback(f"http://{url_host}:{port}/", timeout=remaining) as response:
+                if response.status == 200:
+                    return True
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+            pass
+    return False
 
 
 def _t3_service_enabled(environment: dict[str, str]) -> bool:
@@ -2216,6 +2248,8 @@ def _t3_agent_skills_ready(home: str, catalogs: tuple[str, ...] = (".agents",)) 
 def _wait_for_t3_startup(
     port: int | None,
     environment: dict[str, str],
+    *,
+    host: str = "127.0.0.1",
 ) -> tuple[bool, bool, str]:
     """Observe stable readiness in one invocation within a wall-clock budget."""
     started = time.monotonic()
@@ -2249,7 +2283,7 @@ def _wait_for_t3_startup(
             break
         remaining = deadline - time.monotonic()
         if active and remaining > 0:
-            endpoint = _t3_endpoint_reachable(port, timeout=min(5, remaining))
+            endpoint = _t3_endpoint_reachable(port, host=host, timeout=min(5, remaining))
         invocation = state.get("InvocationID", "")
         if active and endpoint and re.fullmatch(r"[0-9a-fA-F]{32}", invocation):
             # The endpoint may have answered just as the process exited.
@@ -2430,10 +2464,11 @@ def inspect_t3code(
             restarted_service = True
 
     port = _t3_port(drop_in)
+    host = _t3_host(drop_in)
     endpoint = False
     startup_error = ""
     if wait_for_startup:
-        active, endpoint, startup_error = _wait_for_t3_startup(port, user_bus_environment)
+        active, endpoint, startup_error = _wait_for_t3_startup(port, user_bus_environment, host=host)
         service = subprocess.CompletedProcess([], 0 if active else 1, "", "")
     else:
         attempts = 10 if restarted_service else 1
@@ -2442,7 +2477,7 @@ def inspect_t3code(
                 ["systemctl", "--user", "is-active", "--quiet", _T3_SERVICE_NAME],
                 environment=user_bus_environment,
             )
-            endpoint = _t3_endpoint_reachable(port)
+            endpoint = _t3_endpoint_reachable(port, host=host)
             if service.returncode == 0 and endpoint:
                 break
             if attempt + 1 < attempts:

@@ -6,21 +6,32 @@ import argparse
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
 import json
+import os
 import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import MagicMock, patch
 
 from lib import agent_cli
 from lib.agent_readiness import build_agent_readiness_record
+from lib.local_http import open_loopback
 from lib.t3code_runtime import t3_native_probe_command
 from common import t3code_steps
 
 
 class T3ReadinessTests(unittest.TestCase):
+    def setUp(self):
+        for name in ('_run_check', 'subprocess.run', 'open_loopback'):
+            self.enterContext(patch(
+                'lib.agent_cli.' + name,
+                side_effect=AssertionError('Unexpected system or network call: ' + name),
+            ))
+
     def test_host_inventory_counts_scratch_files_without_following_symlinks(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as outside:
             scratch = Path(home, '.t3', 'scratch', 'thread-folder')
@@ -82,6 +93,96 @@ class T3ReadinessTests(unittest.TestCase):
             doctor_run.assert_not_called()
             setup_run.assert_not_called()
 
+    def test_native_repair_uses_selected_nvm_node_for_npm_and_postprobe(self):
+        with tempfile.TemporaryDirectory(prefix='t3 home ') as home:
+            node_bin = Path(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin')
+            node_bin.mkdir(parents=True)
+            for name in ('node', 'npm'):
+                executable = node_bin / name
+                executable.write_text('#!/usr/bin/env node\n')
+                executable.chmod(0o700)
+            binary = Path(home, 'versions', '0.0.35', 'node_modules', 't3', 'dist', 'bin.mjs')
+            binary.parent.mkdir(parents=True)
+            binary.write_text('fixture')
+            node = str(node_bin / 'node')
+            for original in ({'PATH': '/system-only'}, {}):
+                for probe_status in (0, 1):
+                    with self.subTest(environment=original, probe_status=probe_status):
+                        environment = original.copy()
+
+                        def run(command, **kwargs):
+                            if command[0] == str(node_bin / 'npm'):
+                                repair_path = kwargs['environment']['PATH']
+                                self.assertEqual(repair_path.split(os.pathsep)[0], str(node_bin))
+                                self.assertEqual(shutil.which('node', path=repair_path), node)
+                                self.assertEqual(repair_path.split(os.pathsep)[1:],
+                                                 original.get('PATH', agent_cli._UPDATE_SYSTEM_PATH).split(os.pathsep))
+                                self.assertEqual(kwargs['cwd'], str(binary.parents[3]))
+                                self.assertEqual(kwargs['timeout'], 300)
+                                return subprocess.CompletedProcess(command, 0, '', '')
+                            self.assertEqual(command, t3_native_probe_command(str(binary), node))
+                            self.assertEqual(command[0], node)
+                            self.assertEqual(kwargs['environment'], original)
+                            return subprocess.CompletedProcess(command, probe_status, '', '')
+
+                        with patch.object(agent_cli, '_run_check', side_effect=run) as runner:
+                            self.assertEqual(agent_cli._repair_t3_native_runtime(node, str(binary), environment),
+                                             probe_status == 0)
+                        self.assertEqual(runner.call_count, 2)
+                        self.assertEqual(environment, original)
+
+    def test_endpoint_maps_supported_binds_to_literal_loopback_urls(self):
+        for host, url_host in (
+            ('127.0.0.1', '127.0.0.1'), ('0.0.0.0', '127.0.0.1'),
+            ('localhost', '127.0.0.1'), ('LOCALHOST', '127.0.0.1'),
+            ('::1', '[::1]'), ('[::1]', '[::1]'), ('::', '[::1]'), ('[::]', '[::1]'),
+        ):
+            with self.subTest(host=host), patch.object(agent_cli, 'open_loopback') as opener:
+                opener.return_value.__enter__.return_value.status = 200
+                self.assertTrue(agent_cli._t3_endpoint_reachable(3773, host=host, timeout=2))
+                opener.assert_called_once_with(f'http://{url_host}:3773/', timeout=2)
+
+    def test_endpoint_requires_http_200_and_rejects_http_errors(self):
+        for status in (200, 201, 204, 302, 401, 404, 429, 500):
+            with self.subTest(status=status), patch.object(agent_cli, 'open_loopback') as opener:
+                opener.return_value.__enter__.return_value.status = status
+                self.assertEqual(agent_cli._t3_endpoint_reachable(3773), status == 200)
+        for status in (302, 401, 404, 429, 500):
+            error = urllib.error.HTTPError('http://127.0.0.1:3773/', status, 'fixture', {}, None)
+            with self.subTest(error=status), patch.object(agent_cli, 'open_loopback', side_effect=error):
+                self.assertFalse(agent_cli._t3_endpoint_reachable(3773))
+
+    def test_endpoint_keeps_literal_loopback_transport_restriction(self):
+        with patch.object(agent_cli, 'open_loopback', wraps=open_loopback), \
+                patch('urllib.request.build_opener') as opener:
+            for host in ('192.0.2.10', 'example.com', '127.0.0.1/path'):
+                with self.subTest(host=host):
+                    self.assertFalse(agent_cli._t3_endpoint_reachable(3773, host=host))
+            self.assertFalse(agent_cli._t3_endpoint_reachable(None))
+        opener.assert_not_called()
+
+    def test_localhost_families_share_one_probe_timeout(self):
+        for first_duration, expected_calls in ((1, 2), (3, 1)):
+            with self.subTest(first_duration=first_duration):
+                elapsed = [0.0]
+                response = MagicMock()
+                response.__enter__.return_value.status = 200
+
+                def respond(url, **kwargs):
+                    if url == 'http://127.0.0.1:3773/':
+                        self.assertEqual(kwargs['timeout'], 3)
+                        elapsed[0] += first_duration
+                        raise TimeoutError('IPv4 unavailable')
+                    self.assertEqual(url, 'http://[::1]:3773/')
+                    self.assertEqual(kwargs['timeout'], 2)
+                    return response
+
+                with patch.object(agent_cli, 'time', SimpleNamespace(monotonic=lambda: elapsed[0])), \
+                        patch.object(agent_cli, 'open_loopback', side_effect=respond) as opener:
+                    self.assertEqual(agent_cli._t3_endpoint_reachable(3773, host='localhost', timeout=3),
+                                     expected_calls == 2)
+                self.assertEqual(opener.call_count, expected_calls)
+
     def test_active_binary_accepts_forward_protocol_with_known_runtime_layout(self):
         with tempfile.TemporaryDirectory() as home:
             runtime = Path(home, ".t3", "runtime")
@@ -112,9 +213,13 @@ class T3ReadinessTests(unittest.TestCase):
             self.assertIsNone(agent_cli._t3_active_binary(home))
 
     def inspect(self, *, gh=True, endpoint=True, fix=False, native=True, standalone=False,
-                wait_for_startup=False, initial_service_status=0):
+                wait_for_startup=False, initial_service_status=0, bind_host=None):
         with ExitStack() as stack:
             home = stack.enter_context(tempfile.TemporaryDirectory())
+            if bind_host is not None:
+                drop_in = Path(home, '.config', 'systemd', 'user', 't3code.service.d', 'basaltwater.conf')
+                drop_in.parent.mkdir(parents=True)
+                drop_in.write_text(f'Environment=T3CODE_HOST={bind_host}\n')
             for name in ('basaltwater-t3code-pairing-provider', 't3code-pair'):
                 path = Path(home, '.local', 'bin', name)
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +236,8 @@ class T3ReadinessTests(unittest.TestCase):
             def run(command, **kwargs):
                 nonlocal active_checks
                 commands.append(command)
+                if command[:3] == ['systemctl', '--user', 'show']:
+                    return T3StartupWaitTests.state()
                 if command[:3] == ['systemctl', '--user', 'is-active']:
                     active_checks += 1
                     if active_checks == 1:
@@ -144,10 +251,11 @@ class T3ReadinessTests(unittest.TestCase):
                 ('_t3_active_binary', binary),
                 ('_t3_node_binary', '/fake/node'),
                 ('_t3_native_runtime_healthy', native),
-                ('_t3_endpoint_reachable', endpoint),
                 ('_tool_version', 't3 fixture'),
             ):
                 stack.enter_context(patch.object(agent_cli, name, return_value=value))
+            if endpoint is not None:
+                stack.enter_context(patch.object(agent_cli, '_t3_endpoint_reachable', return_value=endpoint))
             stack.enter_context(patch.object(agent_cli, '_tool_path', side_effect=lambda tool, _home:
                                             '/fake/' + tool if tool == 'git' or (tool == 'gh' and gh) else None))
             stack.enter_context(patch.object(agent_cli, '_run_check', side_effect=run))
@@ -155,6 +263,68 @@ class T3ReadinessTests(unittest.TestCase):
             record = build_agent_readiness_record([], [result], trigger='manual',
                                                   boot_id_path=str(Path(home, 'absent-boot-id')))
             return result, record, commands
+
+    def test_doctor_probes_configured_ipv6_and_default_ipv4_with_and_without_wait(self):
+        for host, url_host, candidates in (
+            (None, '127.0.0.1', 1), ('::1', '[::1]', 1), ('::', '[::1]', 1),
+            ('0.0.0.0', '127.0.0.1', 1), ('localhost', '127.0.0.1', 1), ('localhost', '[::1]', 2),
+        ):
+            for wait in (False, True):
+                with self.subTest(host=host, url_host=url_host, wait=wait):
+                    elapsed = [0.0]
+
+                    def sleep(seconds):
+                        elapsed[0] += seconds
+
+                    def respond(url, **kwargs):
+                        # An IPv4 request cannot accidentally pass the IPv6 fixture.
+                        if candidates == 2 and url == 'http://127.0.0.1:3773/':
+                            raise ConnectionRefusedError('Fixture only listens on IPv6')
+                        self.assertEqual(url, f'http://{url_host}:3773/')
+                        return response
+
+                    with patch.object(agent_cli, 'open_loopback', side_effect=respond) as opener, \
+                            patch.object(agent_cli, 'time', SimpleNamespace(
+                                monotonic=lambda: elapsed[0], sleep=sleep)):
+                        response = MagicMock()
+                        response.__enter__.return_value.status = 200
+                        result, record, commands = self.inspect(
+                            endpoint=None, wait_for_startup=wait, bind_host=host)
+                    self.assertTrue(result['healthy'])
+                    self.assertTrue(record['healthy'])
+                    self.assertTrue(result['checks']['endpoint'])
+                    if wait:
+                        self.assertTrue(result['checks']['startup_ready'])
+                    self.assertEqual(opener.call_count, candidates * (3 if wait else 1))
+                    self.assertEqual(elapsed[0], 2 if wait else 0)
+                    self.assertFalse(any('restart' in command for command in commands))
+
+    def test_repeated_http_errors_never_report_startup_ready(self):
+        for status in (401, 404, 429):
+            for raises in (False, True):
+                with self.subTest(status=status, raises=raises):
+                    elapsed = [0.0]
+
+                    def sleep(seconds):
+                        elapsed[0] += seconds
+
+                    with patch.object(agent_cli, 'open_loopback') as opener, \
+                            patch.object(agent_cli, '_T3_STARTUP_WAIT_SECONDS', 3), \
+                            patch.object(agent_cli, 'time', SimpleNamespace(
+                                monotonic=lambda: elapsed[0], sleep=sleep)):
+                        if raises:
+                            opener.side_effect = urllib.error.HTTPError(
+                                'http://127.0.0.1:3773/', status, 'fixture', {}, None)
+                        else:
+                            opener.return_value.__enter__.return_value.status = status
+                        result, record, commands = self.inspect(endpoint=None, wait_for_startup=True)
+                    self.assertFalse(result['healthy'])
+                    self.assertFalse(record['healthy'])
+                    self.assertFalse(result['checks']['endpoint'])
+                    self.assertFalse(result['checks']['startup_ready'])
+                    self.assertEqual(opener.call_count, 3)
+                    self.assertEqual(elapsed[0], 3)
+                    self.assertFalse(any('restart' in command for command in commands))
 
     def test_installed_unauthenticated_github_is_optional(self):
         result, record, _ = self.inspect()
@@ -305,6 +475,11 @@ class T3ReadinessTests(unittest.TestCase):
 
 class T3StartupWaitTests(unittest.TestCase):
     def setUp(self):
+        for name in ('_run_check', 'subprocess.run', 'open_loopback'):
+            self.enterContext(patch(
+                'lib.agent_cli.' + name,
+                side_effect=AssertionError('Unexpected system or network call: ' + name),
+            ))
         self.elapsed = 0.0
         self.environment = {'XDG_RUNTIME_DIR': '/fake/runtime'}
         # Replace the owning module's clock; never change other modules' timers.
