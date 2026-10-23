@@ -32,6 +32,10 @@ from lib.validation import validate_filesystem_path
 
 
 DESKTOP_PACKAGE = "t3code-bin"
+# Match upstream's preparation window for database migrations and optimization.
+_T3_READINESS_TIMEOUT = 30 * 60
+_T3_READINESS_PROGRESS_INTERVAL = 30
+_T3_READINESS_STABLE_CHECKS = 3
 
 
 def _desktop_data_paths(home: Path) -> tuple[Path, Path, Path]:
@@ -306,6 +310,7 @@ def _check_runtime(prefix: Path, home: Path) -> str:
 
 
 def _wait_for_ui(url: str) -> None:
+    """Allow migrations to finish and require one stable service invocation."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     expected = urllib.parse.urlsplit(url)
 
@@ -321,25 +326,52 @@ def _wait_for_ui(url: str) -> None:
             return False
 
     stable = 0
-    for _attempt in range(20):
-        active = run(["systemctl", "--user", "is-active", "--quiet", T3_SERVICE], check=False)
+    stable_invocation = None
+    started = time.monotonic()
+    deadline = started + _T3_READINESS_TIMEOUT
+    next_progress = started + _T3_READINESS_PROGRESS_INTERVAL
+    failure = f"within {_T3_READINESS_TIMEOUT} seconds"
+    while time.monotonic() < deadline:
+        active = run(["systemctl", "--user", "is-active", "--quiet", T3_SERVICE],
+                     check=False, timeout=15)
         if active.returncode == 0:
             try:
                 with opener.open(url, timeout=2) as response:
                     if response.status == 200 and same_origin(response.geturl()):
-                        stable += 1
-                        if stable >= 3:
-                            print(f"  T3 HTTP UI reachable: {url}")
-                            print("  Provider threads and interactive terminals still require a client test")
-                            return
+                        invocation = run([
+                            "systemctl", "--user", "show", T3_SERVICE,
+                            "--property=InvocationID", "--value",
+                        ], check=False, capture_output=True, timeout=15)
+                        current = (invocation.stdout or "").strip().lower()
+                        if invocation.returncode == 0 and re.fullmatch(r"[0-9a-f]{32}", current):
+                            stable = stable + 1 if current == stable_invocation else 1
+                            stable_invocation = current
+                            if stable >= _T3_READINESS_STABLE_CHECKS:
+                                print(f"  T3 HTTP UI reachable: {url}")
+                                print("  Provider threads and interactive terminals still require a client test")
+                                return
+                        else:
+                            stable = 0
                     else:
                         stable = 0
             except (OSError, urllib.error.URLError):
                 stable = 0
         else:
             stable = 0
-        time.sleep(1)
-    raise RuntimeError(f"T3 UI did not become reachable; inspect journalctl --user -u {T3_SERVICE}")
+            failed = run(["systemctl", "--user", "is-failed", "--quiet", T3_SERVICE],
+                         check=False, timeout=15)
+            if failed.returncode == 0:
+                failure = "because systemd reports a failed service"
+                break
+        now = time.monotonic()
+        if now >= next_progress:
+            print(f"  Waiting for T3 Code startup ({int(now - started)}s; "
+                  "database migration may take several minutes)", flush=True)
+            next_progress = now + _T3_READINESS_PROGRESS_INTERVAL
+        if now < deadline:
+            time.sleep(min(1, deadline - now))
+    raise RuntimeError(f"T3 UI did not become reachable {failure}; "
+                       f"inspect journalctl --user -u {T3_SERVICE}")
 
 
 def _prune_releases(releases: Path, keep: set[Path]) -> None:

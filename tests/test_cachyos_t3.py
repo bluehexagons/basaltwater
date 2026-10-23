@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+import urllib.error
 
 from common import cachyos_t3 as t3
 from common import cachyos_aur as aur
@@ -816,6 +817,27 @@ class T3InstallTests(unittest.TestCase):
 
 
 class T3UITests(unittest.TestCase):
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        self.clock = 0.0
+        stack.enter_context(patch.object(t3.time, "monotonic", side_effect=lambda: self.clock))
+        self.sleep = stack.enter_context(patch.object(t3.time, "sleep", side_effect=self.advance))
+        self.system = stack.enter_context(patch.object(t3, "run", side_effect=self.system_command))
+        self.opener = stack.enter_context(patch.object(t3.urllib.request, "build_opener"))
+        self.output = stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
+        self.response = MagicMock()
+        self.response.__enter__.return_value.status = 200
+        self.response.__enter__.return_value.geturl.return_value = "http://127.0.0.1:3773/"
+        self.opener.return_value.open.return_value = self.response
+
+    def advance(self, seconds):
+        self.clock += seconds
+
+    @staticmethod
+    def system_command(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, "a" * 32 if "show" in argv else "", "")
+
     def test_ui_check_requires_consecutive_direct_successes_and_labels_its_limit(self):
         responses = []
         for status, url in [(200, "http://127.0.0.1:3773/"),
@@ -827,16 +849,52 @@ class T3UITests(unittest.TestCase):
             item.__enter__.return_value.status = status
             item.__enter__.return_value.geturl.return_value = url
             responses.append(item)
-        with patch.object(t3, "run", return_value=subprocess.CompletedProcess([], 0)), \
-                patch.object(t3.urllib.request, "build_opener") as opener, \
-                patch.object(t3.time, "sleep"), \
-                patch("sys.stdout", new_callable=io.StringIO) as output:
-            opener.return_value.open.side_effect = responses
+        self.opener.return_value.open.side_effect = responses
+        t3._wait_for_ui("http://127.0.0.1:3773/")
+        self.assertEqual(self.opener.call_args.args[0].proxies, {})
+        self.assertEqual(self.opener.return_value.open.call_count, 6)
+        self.assertIn("still require a client test", self.output.getvalue())
+        self.assertNotIn("Code ready", self.output.getvalue())
+
+    def test_slow_migration_can_finish_after_the_old_readiness_window(self):
+        self.opener.return_value.open.side_effect = [
+            *[urllib.error.URLError("migration in progress") for _ in range(65)],
+            self.response, self.response, self.response,
+        ]
+        t3._wait_for_ui("http://127.0.0.1:3773/")
+        self.assertGreaterEqual(self.clock, 65)
+        self.assertIn("Waiting for T3 Code startup (30s", self.output.getvalue())
+        self.assertIn("Waiting for T3 Code startup (60s", self.output.getvalue())
+        self.assertFalse(any("stop" in call.args[0] for call in self.system.call_args_list))
+
+    def test_service_restart_or_unavailable_invocation_resets_successes(self):
+        for interruption in ("b" * 32, "", "invalid"):
+            with self.subTest(interruption=interruption):
+                invocations = iter(["a" * 32, "a" * 32, interruption, "b" * 32, "b" * 32, "b" * 32])
+                def command(argv, **kwargs):
+                    return subprocess.CompletedProcess(argv, 0, next(invocations) if "show" in argv else "", "")
+                self.system.side_effect = command
+                self.opener.return_value.open.reset_mock()
+                t3._wait_for_ui("http://127.0.0.1:3773/")
+                expected = 5 if interruption == "b" * 32 else 6
+                self.assertEqual(self.opener.return_value.open.call_count, expected)
+
+    def test_migration_timeout_is_bounded(self):
+        self.opener.return_value.open.side_effect = urllib.error.URLError("migration in progress")
+        with patch.object(t3, "_T3_READINESS_TIMEOUT", 3), \
+                self.assertRaisesRegex(RuntimeError, "within 3 seconds"):
             t3._wait_for_ui("http://127.0.0.1:3773/")
-        self.assertEqual(opener.call_args.args[0].proxies, {})
-        self.assertEqual(opener.return_value.open.call_count, 6)
-        self.assertIn("still require a client test", output.getvalue())
-        self.assertNotIn("Code ready", output.getvalue())
+        self.assertEqual(self.clock, 3)
+        self.assertEqual(self.opener.return_value.open.call_count, 3)
+
+    def test_failed_service_stops_waiting_without_http_or_sleep(self):
+        def command(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 3 if "is-active" in argv else 0, "", "")
+        self.system.side_effect = command
+        with self.assertRaisesRegex(RuntimeError, "systemd reports a failed service"):
+            t3._wait_for_ui("http://127.0.0.1:3773/")
+        self.opener.return_value.open.assert_not_called()
+        self.sleep.assert_not_called()
 
 
 if __name__ == "__main__":
