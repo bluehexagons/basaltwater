@@ -34,6 +34,13 @@ SYSTEM_UNITS = {
     "antistatic-db.service": "Antistatic database",
     "fail2ban.service": "Login protection",
     "auditd.service": "System audit",
+    "pveproxy.service": "Proxmox web proxy",
+    "pvedaemon.service": "Proxmox API daemon",
+    "pvestatd.service": "Proxmox host statistics",
+    "pve-cluster.service": "Proxmox cluster filesystem",
+    "pve-firewall.service": "Proxmox firewall",
+    "proxmox-firewall.service": "Proxmox nftables firewall",
+    "corosync.service": "Corosync cluster messaging",
     "basaltwater-web-panel.service": "Web panel",
 }
 JOB_SERVICES = {

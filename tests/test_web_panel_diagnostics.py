@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from http import HTTPStatus
 from types import SimpleNamespace
@@ -15,6 +16,45 @@ from common.service_tools.web_panel_features import PanelFeatures
 
 
 class DiagnosticQueryTest(unittest.TestCase):
+    def test_proxmox_host_diagnostics_keep_fixed_read_only_commands(self) -> None:
+        for unit in (
+            "pveproxy", "pvedaemon", "pvestatd", "pve-cluster",
+            "pve-firewall", "proxmox-firewall", "corosync",
+        ):
+            with self.subTest(unit=unit), patch.object(diagnostics, "_bounded_command", side_effect=[
+                ("LoadState=loaded\nActiveState=active", ""),
+                (json.dumps({"MESSAGE": "Host service ready"}), ""),
+            ]) as command:
+                query = diagnostics.parse_query(f"service={unit}.service&load=1")
+                result = diagnostics.collect_diagnostics(query)
+            self.assertEqual(command.call_count, 2)
+            status, journal = [call.args[0] for call in command.call_args_list]
+            self.assertEqual(status[:3], ["systemctl", "show", unit + ".service"])
+            self.assertEqual(journal[:2], ["journalctl", "--unit=" + unit + ".service"])
+            self.assertIn("--lines=100", journal)
+            self.assertIn("--since=-1h", journal)
+            self.assertNotIn("--user", status + journal)
+            self.assertEqual(result["events"][0]["message"], "Host service ready")
+
+    def test_proxmox_diagnostic_choices_reuse_installed_unit_filter(self) -> None:
+        installed = {"pveproxy.service", "pve-cluster.service", "proxmox-firewall.service"}
+        with tempfile.TemporaryDirectory() as home:
+            state = panel.WebPanelState({"features": {}}, agent_home=home)
+            with (
+                patch.object(state, "features", return_value=PanelFeatures()),
+                patch.object(panel, "unit_installed", side_effect=lambda unit, _home, **_kwargs: unit in installed) as check,
+                patch.object(diagnostics, "_bounded_command") as command,
+            ):
+                sources = state.diagnostic_sources()
+                page = diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(), "", "pve.example.test", sources=sources)
+            self.assertEqual(set(sources), installed)
+            for unit in installed:
+                check.assert_any_call(unit, home, user=False)
+                self.assertIn(f'value="{unit}"', page)
+            self.assertNotIn('value="pve-firewall.service"', page)
+            self.assertNotIn('value="corosync.service"', page)
+            command.assert_not_called()
+
     def test_opening_form_does_not_collect(self) -> None:
         query = diagnostics.parse_query("service=homebox.service")
         with patch.object(diagnostics, "collect_diagnostics") as collect:

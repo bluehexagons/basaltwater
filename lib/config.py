@@ -1000,9 +1000,10 @@ class SetupConfig:
         if self.web_panel_port is not None:
             ports.append(self.web_panel_port)
             if self.enable_ssl:
-                # HTTPS panel certificates and client enrollment use the
-                # shared per-machine internal web origin.
-                ports.append(GODOT_WEB_HTTPS_PORT)
+                # Proxmox serves the certificate through the panel without
+                # installing the shared internal web origin.
+                if self.system_type != "server_proxmox":
+                    ports.append(GODOT_WEB_HTTPS_PORT)
                 ports.append(WEB_PANEL_CA_HTTP_PORT)
         if self.include_web_firewall:
             ports.extend((80, 443))

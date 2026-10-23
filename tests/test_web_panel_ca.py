@@ -203,6 +203,28 @@ class TestCertificateDownloadTrust(unittest.TestCase):
         config.enable_ssl = False
         self.assertNotIn(WEB_PANEL_CA_HTTP_PORT, config.effective_web_ports())
 
+    def test_panel_ports_preserve_profile_specific_tls_origins(self):
+        for profile in ("server_proxmox", "server_lite", "server_dev", "server_web"):
+            for tls in (False, True):
+                with self.subTest(profile=profile, tls=tls):
+                    config = SetupConfig("192.0.2.1", "root", profile, web_ports=[9444])
+                    # Exercise port derivation independently of profile option
+                    # validation, which has its own setup boundary tests.
+                    config.web_panel_port = 8444
+                    config.enable_ssl = tls
+                    expected = [8444, 9444]
+                    if tls:
+                        expected.append(WEB_PANEL_CA_HTTP_PORT)
+                        if profile != "server_proxmox":
+                            expected.append(8443)
+                    self.assertEqual(config.effective_web_ports(), sorted(expected))
+
+    def test_proxmox_panel_preserves_explicit_web_ports(self):
+        config = SetupConfig("192.0.2.1", "root", "server_proxmox", web_ports=[8443])
+        config.web_panel_port = 8444
+        config.enable_ssl = True
+        self.assertEqual(config.effective_web_ports(), [WEB_PANEL_CA_HTTP_PORT, 8443, 8444])
+
     def test_http_certificate_port_conflicts_are_rejected(self):
         for fields in (
             {"web_panel_port": 8442}, {"privilege_broker_port": 8442},

@@ -1477,6 +1477,8 @@ footer {
 
 
 def _system_type_label(value: str) -> str:
+    if value == "server_proxmox":
+        return "Proxmox"
     words = value.replace("_", " ").replace("-", " ").split()
     return " ".join("VM" if word.lower() == "vm" else word.capitalize() for word in words)
 

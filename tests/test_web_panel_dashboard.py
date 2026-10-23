@@ -233,6 +233,45 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 2)
         self.assertIn("--user", run.call_args.args[0])
 
+    def test_proxmox_host_services_use_installed_system_unit_health(self) -> None:
+        installed = {
+            "pveproxy.service": "active", "pvedaemon.service": "failed",
+            "pvestatd.service": "active", "pve-cluster.service": "active",
+            "pve-firewall.service": "inactive",
+        }
+        absent = {"proxmox-firewall.service", "corosync.service"}
+        output = "\n\n".join(
+            f"Id={unit}\nLoadState=loaded\nActiveState={status}\nSubState={status}"
+            for unit, status in installed.items()
+        ) + "\n\n" + "\n\n".join(
+            f"Id={unit}\nLoadState=not-found\nActiveState=inactive" for unit in sorted(absent)
+        )
+        with patch.object(panel.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout=output)) as run:
+            records = panel.collect_service_health(user_services=False)
+        self.assertEqual({record["unit"]: record["value"] for record in records}, installed)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["systemctl", "show"])
+        self.assertTrue((set(installed) | absent).issubset(command))
+        self.assertNotIn("--user", command)
+
+    def test_proxmox_dashboard_uses_friendly_profile_name(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            state = panel.WebPanelState({
+                "host": "pve.example.test", "username": "root", "system_type": "server_proxmox",
+                "features": {}, "services": [], "access": [],
+            }, agent_home=home)
+            with (
+                patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
+                patch.object(panel, "discover_certificate_trust", return_value=None),
+                patch.object(state, "system_overview", return_value=[]),
+                patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
+            ):
+                page = panel.render_page(state)
+            self.assertIn("Proxmox", page)
+            self.assertNotIn("Server Proxmox", page)
+            self.assertEqual(list(Path(home).iterdir()), [])
+
     def test_timeouts_and_empty_output_are_not_healthy(self) -> None:
         with patch.object(panel.subprocess, "run", side_effect=[
             subprocess.TimeoutExpired("systemctl", 2),
