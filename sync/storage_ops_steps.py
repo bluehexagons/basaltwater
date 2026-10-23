@@ -16,10 +16,6 @@ from lib.config import SetupConfig
 from lib.setup_common import REMOTE_INSTALL_DIR
 from lib.remote_utils import run, is_dry_run
 from lib.unit_transaction import replace_units
-from lib.task_utils import (
-    get_mount_points_from_config,
-    has_mount_paths,
-)
 
 
 SERVICE_NAME = "storage-ops"
@@ -75,18 +71,10 @@ def create_storage_ops_service(config: SetupConfig, **_kwargs: Any) -> None:
     os.makedirs("/var/lib/storage-ops", exist_ok=True)
     os.makedirs("/var/log/storage-ops", exist_ok=True)
 
-    # Determine if mount checking is needed
-    needs_mount_check = has_mount_paths(config)
-
     # Paths
     orchestrator_script = f"{REMOTE_INSTALL_DIR}/sync/service_tools/storage_ops.py"
 
     # Build service file content
-    exec_condition = ""
-    if needs_mount_check:
-        # Create a mount check script that validates all configured paths
-        exec_condition = generate_mount_check_condition(config)
-
     service_content = f"""[Unit]
 Description=Unified storage operations (sync, scrub, parity)
 After=local-fs.target network.target
@@ -96,7 +84,8 @@ Documentation=https://github.com/bluehexagons/basaltwater/blob/main/docs/storage
 Type=oneshot
 User=root
 Group=root
-{exec_condition}ExecStart=/usr/bin/python3 {shlex.quote(orchestrator_script)}
+# The orchestrator validates mounts separately for each operation.
+ExecStart=/usr/bin/python3 {shlex.quote(orchestrator_script)}
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=storage-ops
@@ -128,21 +117,3 @@ WantedBy=timers.target
 
     print(f"    ✓ Storage operations timer started")
     print(f"    ℹ Run 'systemctl status {SERVICE_NAME}.timer' to check status")
-
-
-def generate_mount_check_condition(config: SetupConfig) -> str:
-    """Generate ExecCondition for mount validation.
-
-    Returns a systemd ExecCondition line that validates all configured
-    mount points are available before running operations.
-    """
-    mount_points = get_mount_points_from_config(config)
-
-    if not mount_points:
-        return ""
-
-    # Use static script with mount points as arguments
-    check_script_path = f"{REMOTE_INSTALL_DIR}/sync/service_tools/check_storage_ops_mounts.py"
-    mount_args = " ".join(shlex.quote(mp.replace("%", "%%")) for mp in sorted(mount_points))
-
-    return f"ExecCondition=/usr/bin/python3 {shlex.quote(check_script_path)} {mount_args}\n"

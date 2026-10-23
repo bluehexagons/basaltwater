@@ -13,43 +13,26 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from lib.config import SetupConfig
 from sync.storage_ops_steps import (
     create_storage_ops_service,
-    generate_mount_check_condition,
     schedule_storage_ops_update,
 )
 
 
-class TestGenerateMountCheckCondition(unittest.TestCase):
-    @patch("lib.task_utils.get_mount_ancestor", return_value=None)
-    def test_only_used_mounts_are_required_and_percent_is_literal(self, _ancestor):
+class TestCreateStorageOpsService(unittest.TestCase):
+    @patch("sync.storage_ops_steps.os.makedirs")
+    @patch("sync.storage_ops_steps.replace_units")
+    @patch("sync.storage_ops_steps.is_dry_run", return_value=False)
+    def test_service_leaves_mount_validation_to_each_operation(self, _dry_run, replace, _makedirs):
         config = SetupConfig(
             host="test", username="test", system_type="server_lite",
-            sync_specs=[["/srv/data", "/mnt/backup%20/copy", "daily"]],
-            smb_mounts=[
-                ["/mnt/backup%20", "nas", "user:password", "backup", "/"],
-                ["/mnt/media", "other", "user:password", "media", "/"],
-            ],
+            backup_specs=[["/srv/data", "/srv/backup", "daily"]],
+            scrub_specs=[["/srv/data", "/mnt/offline-parity", "10%", "weekly"]],
+            storage_mounts=[["backup", "/srv/backup", "ext4", "empty"]],
         )
-        condition = generate_mount_check_condition(config)
-        self.assertIn("/mnt/backup%%20", condition)
-        self.assertNotIn("/mnt/media", condition)
-        config.backup_specs = [["/mnt/media/photos", "/srv/photos", "weekly"]]
-        self.assertIn("/mnt/media", generate_mount_check_condition(config))
+        create_storage_ops_service(config)
+        service = replace.call_args.args[0]["storage-ops.service"]
+        self.assertNotIn("ExecCondition=", service)
+        self.assertIn("ExecStart=/usr/bin/python3", service)
 
-    @patch("lib.task_utils.get_mount_ancestor", return_value=None)
-    def test_includes_derived_mnt_mountpoint_when_unmounted(self, _ancestor):
-        config = SetupConfig(
-            host="test",
-            username="test",
-            system_type="server_lite",
-            sync_specs=[["/mnt/data/source", "/home/test/backup", "daily"]],
-            scrub_specs=[],
-        )
-        condition = generate_mount_check_condition(config)
-        self.assertIn("ExecCondition=", condition)
-        self.assertIn("/mnt/data", condition)
-
-
-class TestCreateStorageOpsService(unittest.TestCase):
     @patch("sync.storage_ops_steps.run")
     @patch("sync.storage_ops_steps.open")
     @patch("sync.storage_ops_steps.os.makedirs")

@@ -8,6 +8,7 @@ import sys
 import unittest
 import tempfile
 import subprocess
+from pathlib import Path
 from datetime import datetime
 from unittest.mock import patch
 
@@ -58,6 +59,43 @@ class TestSyncRsyncLogging(unittest.TestCase):
         output = patch.object(sync_rsync, "_output_lines", side_effect=fake_lines)
         output.start()
         self.addCleanup(output.stop)
+
+    def test_literal_exclusions_are_private_and_live_until_rsync_finishes(self):
+        paths = ("file[1]?.bin", "literal\\name", "wild\\*.bin", "nested/+ file", "#comment")
+        expected = b'/file\\[1]\\?.bin\0/literal\\name\0/wild\\\\\\*.bin\0/nested/+ file\0/#comment\0'
+        filter_paths = []
+
+        def popen(command, **kwargs):
+            self.assertIn('--delete-delay', command)
+            self.assertIn('--from0', command)
+            path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
+            filter_paths.append(Path(path))
+            self.assertEqual(Path(path).read_bytes(), expected)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            return _FakeProcess(0)
+
+        def output(process):
+            self.assertTrue(filter_paths[0].exists())
+            yield True, ''
+
+        with patch.object(sync_rsync.subprocess, 'Popen', side_effect=popen), patch.object(sync_rsync, '_output_lines', side_effect=output), patch.object(sync_rsync, 'get_service_logger'):
+            self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, excluded_paths=paths), 0)
+        self.assertFalse(filter_paths[0].exists())
+
+    def test_copy_new_only_disables_deletion_and_existing_file_updates(self):
+        with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)) as popen, patch.object(sync_rsync, 'get_service_logger'):
+            self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, copy_new_only=True), 0)
+        command = popen.call_args.args[0]
+        self.assertIn('--ignore-existing', command)
+        self.assertIn('--partial-dir=.rsync-partial', command)
+        self.assertNotIn('--delete', command)
+        self.assertNotIn('--delete-delay', command)
+
+    def test_invalid_exclusions_never_start_rsync(self):
+        for path in ('/absolute', '../outside', 'nested/../outside', '.', 'line\nbreak'):
+            with self.subTest(path=path), patch.object(sync_rsync.subprocess, 'Popen') as popen, patch.object(sync_rsync, 'get_service_logger'):
+                self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, excluded_paths=(path,)), 1)
+                popen.assert_not_called()
 
     @patch("sync.service_tools.sync_rsync.datetime")
     @patch("sync.service_tools.sync_rsync.subprocess.Popen")

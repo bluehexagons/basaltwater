@@ -273,28 +273,121 @@ class TestFindings(unittest.TestCase):
         self.assertTrue(result["completed"])
         self.assertFalse(result["ok"])
 
-    def test_sync_rejects_parity_destination_and_known_suspect_endpoints(self):
+    def test_sync_rejects_parity_destinations_including_aliases(self):
+        config = RuntimeConfig.from_dict({"scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]})
+        unrelated = str(self.root) + "-other"
+        with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")):
+            for destination in (str(self.root), str(self.database), str(self.database / "child")):
+                with self.assertRaisesRegex(ValueError, "overlaps scrub database"):
+                    storage_ops.validate_sync_integrity(unrelated, destination, config)
+            alias = self.root / "alias"
+            alias.symlink_to(self.database, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "overlaps scrub database"):
+                storage_ops.validate_sync_integrity(unrelated, str(alias), config)
+
+    def test_sync_excludes_only_open_paths_in_either_endpoint(self):
         config = RuntimeConfig.from_dict({"scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]})
         unrelated = str(self.root / "other")
         with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")):
-            for destination in (str(self.root), str(self.database), str(self.database / "child")):
-                valid, message = storage_ops.validate_sync_integrity(unrelated, destination, config)
-                self.assertFalse(valid)
-                self.assertIn("overlaps scrub database", message)
-            alias = self.root / "alias"
-            alias.symlink_to(self.database, target_is_directory=True)
-            self.assertFalse(storage_ops.validate_sync_integrity(unrelated, str(alias), config)[0])
-            self.assertTrue(storage_ops.validate_sync_integrity(str(self.source), unrelated, config)[0])
-            self.report().record("data.bin", {"category": "unrepairable"})
-            for first, second in ((str(self.source), unrelated), (unrelated, str(self.source))):
-                valid, message = storage_ops.validate_sync_integrity(first, second, config)
-                self.assertFalse(valid)
-                self.assertIn("unresolved integrity finding", message)
-            self.assertTrue(storage_ops.validate_sync_integrity(str(self.source / "unaffected"), unrelated, config)[0])
+            self.assertEqual(storage_ops.validate_sync_integrity(str(self.source), unrelated, config), storage_ops.SyncIntegrity())
+            for category in findings.ADVICE:
+                self.report().record("data.bin", {"category": category})
+                for first, second in ((str(self.source), unrelated), (unrelated, str(self.source))):
+                    with self.subTest(category=category, source=first):
+                        integrity = storage_ops.validate_sync_integrity(first, second, config)
+                        self.assertEqual(integrity.excluded_paths, ("data.bin",))
+                        self.assertFalse(integrity.copy_new_only)
+                        self.assertIn("unresolved integrity findings", integrity.warning)
+            self.assertEqual(storage_ops.validate_sync_integrity(str(self.source / "unaffected"), unrelated, config), storage_ops.SyncIntegrity())
             self.report().record("data.bin", {"category": "healthy"})
-            self.assertTrue(storage_ops.validate_sync_integrity(str(self.source), unrelated, config)[0])
+            self.assertEqual(storage_ops.validate_sync_integrity(str(self.source), unrelated, config), storage_ops.SyncIntegrity())
+
+    def test_sync_maps_missing_paths_and_nested_roots_without_resolving_file_aliases(self):
+        nested = self.source / "nested"
+        nested.mkdir()
+        (nested / "alias").symlink_to(self.file)
+        self.report().record("nested/missing", {"category": "missing_file"})
+        # A file replaced by a symlink must still be excluded at its recorded name.
+        report = self.report()
+        report.data["files"]["nested/alias"] = {"category": "unrepairable", "state": "open"}
+        report.save()
+        config = RuntimeConfig.from_dict({"scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]})
+        unrelated = str(self.root / "other")
+        with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")):
+            for first, second in ((str(self.source), unrelated), (unrelated, str(self.source))):
+                self.assertEqual(storage_ops.validate_sync_integrity(first, second, config).excluded_paths,
+                                 ("nested/alias", "nested/missing"))
+            self.assertEqual(storage_ops.validate_sync_integrity(str(nested), unrelated, config).excluded_paths,
+                             ("alias", "missing"))
+
+    def test_unavailable_findings_use_copy_new_only_and_preserve_the_report(self):
+        config = RuntimeConfig.from_dict({"scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]})
+        unrelated = str(self.root / "other")
+        self.report().record("data.bin", {"category": "unrepairable"})
+        with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")):
+            report_path = Path(self.report().path)
+            report_path.write_text("broken")
+            integrity = storage_ops.validate_sync_integrity(str(self.source), unrelated, config)
+            self.assertTrue(integrity.copy_new_only)
+            self.assertIn("Copying new files only", integrity.warning)
+            self.assertEqual(report_path.read_text(), "broken")
+            self.assertEqual(storage_ops.validate_sync_integrity(unrelated, str(self.root / "elsewhere"), config), storage_ops.SyncIntegrity())
+        with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(False, "parity mount offline")):
+            integrity = storage_ops.validate_sync_integrity(str(self.source), unrelated, config)
+        self.assertTrue(integrity.copy_new_only)
+        self.assertIn("parity mount offline", integrity.warning)
+
+    def test_sync_protections_combine_reports_and_cannot_bypass_parity_destination_guard(self):
+        other = self.root / "other"
+        other.mkdir()
+        other_db = self.root / "other-db"
+        other_db.mkdir()
+        self.report().record("data.bin", {"category": "unrepairable"})
+        findings.Findings(str(other), str(other_db)).record("other.bin", {"category": "missing_file"})
+        config = RuntimeConfig.from_dict({"scrub_specs": [
+            [str(self.source), str(self.database), "10%", "weekly"],
+            [str(other), str(other_db), "10%", "weekly"],
+        ]})
+        with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")):
+            integrity = storage_ops.validate_sync_integrity(str(self.source), str(other), config)
+            self.assertEqual(integrity.excluded_paths, ("data.bin", "other.bin"))
             Path(self.report().path).write_text("broken")
-            self.assertFalse(storage_ops.validate_sync_integrity(str(self.source), unrelated, config)[0])
+            with self.assertRaisesRegex(ValueError, "overlaps scrub database"):
+                storage_ops.validate_sync_integrity(str(self.source), str(other_db), config)
+
+    def test_findings_do_not_block_backup_or_reset_its_cadence(self):
+        from sync.service_tools import sync_rsync
+
+        destination = str(self.root / "backup")
+        self.report().record("data.bin", {"category": "unrepairable"})
+        config = {"backup_specs": [[str(self.source), destination, "daily"]],
+                  "scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]}
+        op_id = storage_ops.get_sync_op_id(str(self.source), destination)
+        now = 1_000_000.0
+        state = {storage_ops.get_scrub_op_id(str(self.source), str(self.database)): now,
+                 storage_ops.get_parity_op_id(str(self.source), str(self.database)): now,
+                 "_attempts": {op_id: {"failures": 3, "failed_at": 1, "retry_after": 2}}}
+        with (
+            patch.object(storage_ops, "load_setup_config", return_value=config),
+            patch.object(storage_ops, "load_last_run", return_value=state),
+            patch.object(storage_ops, "save_last_run") as save,
+            patch.object(storage_ops.time, "time", return_value=now),
+            patch.object(storage_ops, "parse_notification_args", return_value=["cfg"]),
+            patch.object(storage_ops, "get_service_logger"),
+            patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")),
+            patch.object(sync_rsync, "run_rsync_with_notifications", return_value=0) as run,
+            patch.object(storage_ops, "send_notification_safe") as notify,
+        ):
+            result = storage_ops.execute_storage_operations()
+        run.assert_called_once_with(str(self.source), destination, suppress_notifications=True,
+                                    excluded_paths=("data.bin",), copy_new_only=False)
+        self.assertTrue(result["success"])
+        self.assertTrue(result["syncs"][0]["success"])
+        self.assertEqual(save.call_args.args[0][op_id], now)
+        self.assertNotIn("_attempts", save.call_args.args[0])
+        self.assertEqual(notify.call_args.kwargs["status"], "warning")
+        self.assertIn("data.bin", notify.call_args.kwargs["details"])
+        self.assertTrue(self.report().active("data.bin"))
 
     def test_sync_guard_is_enforced_before_rsync(self):
         config = {"sync_specs": [[str(self.source), str(self.database), "daily"]],
@@ -304,6 +397,49 @@ class TestFindings(unittest.TestCase):
         run.assert_not_called()
         self.assertFalse(result["success"])
         self.assertIn("overlaps scrub database", result["syncs"][0]["error"])
+
+    def test_offline_mounts_skip_only_dependent_jobs_and_parity_does_not_block_backups(self):
+        from sync.service_tools import sync_rsync
+
+        destination = str(self.root / "available")
+        offline = str(self.root / "offline")
+        config = {
+            "backup_specs": [[str(self.source), offline, "daily"],
+                             [str(self.source), destination, "daily"]],
+            "scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]],
+            "storage_mounts": [["offline", offline], ["available", destination],
+                               ["parity", str(self.database)]],
+        }
+        with (
+            patch.object(storage_ops, "STATE_FILE", str(self.root / "state.json")),
+            patch.object(storage_ops, "load_setup_config", return_value=config),
+            patch.object(storage_ops, "parse_notification_args", return_value=[]),
+            patch.object(storage_ops, "get_service_logger"),
+            patch("lib.task_utils.os.path.ismount", side_effect=lambda path: path == destination),
+            patch.object(sync_rsync, "run_rsync_with_notifications", return_value=0) as run,
+            patch.object(storage_ops, "run_scrub") as scrub,
+        ):
+            result = storage_ops.execute_storage_operations()
+            state = storage_ops.load_last_run()
+        self.assertTrue(result["syncs"][0]["skipped"])
+        self.assertTrue(result["syncs"][1]["success"])
+        self.assertIn("Copying new files only", result["syncs"][1]["warning"])
+        run.assert_called_once_with(str(self.source), destination, suppress_notifications=True,
+                                    excluded_paths=(), copy_new_only=True)
+        self.assertIn(storage_ops.get_sync_op_id(str(self.source), destination), state)
+        self.assertNotIn(storage_ops.get_sync_op_id(str(self.source), offline), state)
+        self.assertTrue(result["parity_updates"][0]["skipped"])
+        scrub.assert_not_called()
+
+    def test_finding_covering_a_sync_root_uses_conservative_copying(self):
+        self.report().record("data.bin", {"category": "unrepairable"})
+        self.file.unlink()
+        self.file.mkdir()
+        config = RuntimeConfig.from_dict({"scrub_specs": [[str(self.source), str(self.database), "10%", "weekly"]]})
+        with patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")):
+            integrity = storage_ops.validate_sync_integrity(str(self.file), str(self.root / "other"), config)
+        self.assertTrue(integrity.copy_new_only)
+        self.assertIn("Finding covers the sync root", integrity.warning)
 
     def test_completed_operation_is_checkpointed_before_later_job_crashes(self):
         config = {"sync_specs": [["/source", "/destination", "daily"], ["/other", "/another", "daily"]]}

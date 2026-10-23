@@ -180,7 +180,6 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_setup_maintenance.py",
     ),
     "storage": (
-        "tests/service_tools/test_check_storage_ops_mounts.py",
         "tests/service_tools/test_scrub_par2.py",
         "tests/service_tools/test_storage_ops.py",
         "tests/service_tools/test_sync_rsync.py",

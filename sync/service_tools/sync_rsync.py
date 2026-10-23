@@ -9,6 +9,7 @@ import subprocess
 import re
 import select
 import codecs
+import tempfile
 from collections import deque
 from logging import ERROR, WARNING
 from datetime import datetime
@@ -19,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.progress_utils import ProgressTracker, ProgressMessage
 from lib.task_utils import validate_sync_paths
+from lib.validation import validate_filesystem_path
 
 # Conversion constants
 BYTES_TO_MB = 1024 * 1024
@@ -64,13 +66,18 @@ def _output_lines(process):
         process.stderr.close()
 
 
-def run_rsync_with_notifications(source: str, destination: str, suppress_notifications: bool = False) -> int:
+def run_rsync_with_notifications(
+    source: str, destination: str, suppress_notifications: bool = False, *,
+    excluded_paths: tuple[str, ...] = (), copy_new_only: bool = False,
+) -> int:
     """Run rsync and send notifications on completion or failure.
     
     Args:
         source: Source directory
         destination: Destination directory
         suppress_notifications: If True, skip sending notifications (caller will handle)
+        excluded_paths: Literal paths relative to the mirror root to preserve on both sides
+        copy_new_only: Add new files without replacing or deleting existing destination data
         
     Returns:
         Exit code (0 for success, non-zero for failure)
@@ -117,17 +124,36 @@ def run_rsync_with_notifications(source: str, destination: str, suppress_notific
     total_bytes = 0
     percent_done = 0
     
+    filter_file = None
     try:
         validate_sync_paths(source, destination)
         if not os.path.isdir(source):
             raise ValueError(f"Sync source is not an existing directory: {source}")
+        options = [] if copy_new_only else ['--delete', '--delete-delay']
+        if copy_new_only:
+            # Keep interrupted new files out of their final names so the next
+            # --ignore-existing run can finish them instead of skipping them.
+            options.extend(['--ignore-existing', '--partial-dir=.rsync-partial'])
+        if excluded_paths:
+            # Use a private file to avoid argv limits for large reports. Anchored
+            # excludes hide source paths and protect their destination copies,
+            # including absent source files and replaced directory ancestors.
+            filter_file = tempfile.NamedTemporaryFile(prefix='sync-excludes-')
+            for path in excluded_paths:
+                validate_filesystem_path(path)
+                if os.path.isabs(path) or path in ('', '.') or '..' in path.split('/'):
+                    raise ValueError(f"Expected a relative sync exclusion: {path}")
+                if any(char in path for char in '*?['):
+                    path = re.sub(r'([\\*?\[])', r'\\\1', path)
+                filter_file.write(os.fsencode('/' + path) + b'\0')
+            filter_file.flush()
+            options.extend(['--from0', f'--exclude-from={filter_file.name}'])
         # Run rsync with progress information
         process = subprocess.Popen(
             [
                 '/usr/bin/rsync',
                 '-av',
-                '--delete',
-                '--delete-delay',
+                *options,
                 '--partial',
                 '--mkpath',  # Create destination directory if it doesn't exist
                 '--exclude=.git',
@@ -352,6 +378,9 @@ Duration: {duration:.1f}s
                 log_event(logger, "Failed to send failure notification", level=ERROR, error=str(notify_error))
         
         return 1
+    finally:
+        if filter_file is not None:
+            filter_file.close()
 
 
 def main():

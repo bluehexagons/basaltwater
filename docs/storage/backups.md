@@ -15,14 +15,19 @@ basaltw setup server_dev 192.168.0.41 agent \
 Backup jobs use the existing root-owned `storage-ops.service` and hourly
 timer. `--backup` is a semantic label for an rsync mirror, so it has the same
 interval choices and mount checks as `--sync`. When the destination is a
-declared `--storage-mount`, the service has an explicit systemd mount guard and
-will not run while that disk is absent. It does not create snapshots,
+declared `--storage-mount`, the job checks that exact mount and skips copying
+while that disk is absent. Other available jobs continue. It does not create snapshots,
 retention points, or an automatic restore workflow.
 
 For parity protection, add a matching `--scrub` job. Parity metadata should be
 stored on reliable storage separate from the data when possible. A mirror and
 parity are useful layers, but neither is a substitute for an independent
 off-host copy.
+
+Open scrub findings do not pause the entire backup. Affected paths are preserved
+on the destination while other files continue copying, with a completion warning.
+If the findings report is unavailable, the backup copies new files and preserves
+all existing destination content until a later scheduled run can read it again.
 
 ## Additional VM storage
 

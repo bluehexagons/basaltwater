@@ -54,24 +54,33 @@ The source must be an existing directory. Output from both rsync pipes is
 drained without waiting for newlines, and retained output is bounded to prevent
 large runs from exhausting memory.
 
-Scheduled syncs pause if either affected tree contains an open scrub finding,
-so known damage is not propagated and a suspect destination is not overwritten
-before inspection. An unreadable findings report also blocks the affected sync.
-Resolve the finding with `basaltw scrub` before retrying. This guard uses recorded
-findings; it does not verify every source file before each sync.
+Scheduled syncs and backups continue when either tree contains open scrub findings.
+Only affected relative paths are excluded from transfer and deletion, preserving
+existing destination copies while other files are mirrored normally. This also
+protects destination files when the source file is missing. Completion is recorded
+on the normal schedule, with a warning listing a bounded sample of preserved paths.
+Resolve findings with `basaltw scrub` to include those paths in subsequent syncs.
+These precautions use recorded findings; they do not verify every source file.
+
+If a relevant findings report cannot be read (including an unavailable parity
+volume), the mirror continues in a conservative mode: it copies new files,
+preserves existing destination files, and disables deletion. A finding covering
+the entire sync root uses this mode too. Logs and notifications report the warning;
+the report and parity remain intact for investigation. Normal mirroring resumes
+on a subsequent scheduled run once the report is readable and root findings are
+resolved.
 Destinations that contain, are inside, or alias a configured parity database are
 rejected because rsync could delete recovery evidence. Place the database outside
 the mirror destination. These checks apply to the scheduled orchestrator;
 standalone rsync and custom inline setup steps do not consult findings.
 
 Operations require the exact configured SMB or VM mount before running;
-a mounted parent does not satisfy a missing child mount. Declared VM data disks are
-also protected by a systemd mount guard on the storage service. If an expected
-SMB, VM, or other mounted filesystem is unavailable, the operation is skipped
-or prevented from starting instead of writing to an underlying local directory.
-The service mount guard includes only mounts used by configured sync, backup,
-or scrub paths. An unrelated configured share does not block storage work.
-Literal percent signs in mount paths are escaped when generating the unit.
+a mounted parent does not satisfy a missing child mount. If an expected SMB,
+VM, or other mounted filesystem is unavailable, only operations requiring it
+are skipped instead of writing to an underlying local directory. Mount checks
+run separately for each operation, so an offline scrub database or another job's
+missing mount cannot stop independent backups. Rerun setup to replace older
+service units that checked every storage mount before starting the orchestrator.
 
 Managed SMB client mounts use native systemd automount units, with a 60-second
 idle timeout. Access triggers the matching network-ordered mount; enabling the

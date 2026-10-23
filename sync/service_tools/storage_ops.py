@@ -18,6 +18,7 @@ import io
 import fcntl
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 from logging import ERROR, WARNING
@@ -35,7 +36,7 @@ from lib.notifications import (
 )
 from lib.machine_state import load_setup_config
 from lib.mount_utils import get_mount_ancestor
-from lib.task_utils import needs_mount_check, validate_configured_storage_mounts
+from lib.task_utils import needs_mount_check, validate_configured_storage_mounts, validate_sync_paths
 from lib.runtime_config import RuntimeConfig
 from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
@@ -300,49 +301,78 @@ def validate_mounts_for_operation(paths: list[str], config: RuntimeConfig, opera
     return True, ""
 
 
-def run_sync(source: str, destination: str, logger) -> tuple[bool, str]:
+@dataclass(frozen=True)
+class SyncIntegrity:
+    """Limit integrity precautions to affected paths without stopping backups."""
+
+    excluded_paths: tuple[str, ...] = ()
+    warning: str = ""
+    copy_new_only: bool = False
+
+
+def run_sync(source: str, destination: str, logger, *, integrity: SyncIntegrity = SyncIntegrity()) -> tuple[bool, str]:
     """Execute rsync sync operation."""
     from sync.service_tools.sync_rsync import run_rsync_with_notifications
     
     # Logging is handled by run_rsync_with_notifications
     
     try:
-        result = run_rsync_with_notifications(source, destination, suppress_notifications=True)
-        return result == 0, f"Sync completed with exit code {result}"
+        result = run_rsync_with_notifications(
+            source, destination, suppress_notifications=True,
+            excluded_paths=integrity.excluded_paths, copy_new_only=integrity.copy_new_only,
+        )
+        return result == 0, f"Sync {'completed' if result == 0 else 'failed'} with exit code {result}"
     except Exception as e:
         log_event(logger, "Sync failed", level=ERROR, source=source, destination=destination, error=str(e))
         return False, str(e)
 
 
-def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig) -> tuple[bool, str]:
-    """Keep mirrors from overwriting recovery evidence or propagating known damage."""
+def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig) -> SyncIntegrity:
+    """Reject parity destinations and collect precautions for recorded findings."""
     from sync.service_tools.scrub_findings import Findings
     from lib.validation import validate_scrub_specs
 
     def overlaps(first: Path, second: Path) -> bool:
         return first.is_relative_to(second) or second.is_relative_to(first)
 
-    try:
-        validate_scrub_specs(config.scrub_specs)
-        source_path, destination_path = Path(source).resolve(), Path(destination).resolve()
-        for directory, database, _redundancy, _interval in config.scrub_specs:
-            database = resolve_scrub_database_path(directory, database)
-            root, parity = Path(directory).resolve(), Path(database).resolve()
-            if overlaps(destination_path, parity):
-                return False, f"Sync destination overlaps scrub database {database}; move parity outside the mirror destination"
-            if not any(overlaps(endpoint, root) for endpoint in (source_path, destination_path)):
-                continue
-            valid, error = validate_mounts_for_operation([directory, database], config, "sync integrity check")
+    validate_sync_paths(source, destination)
+    validate_scrub_specs(config.scrub_specs)
+    source_path, destination_path = Path(source).resolve(), Path(destination).resolve()
+    excluded_paths: set[str] = set()
+    warnings: list[str] = []
+    copy_new_only = False
+    for directory, database, _redundancy, _interval in config.scrub_specs:
+        database = resolve_scrub_database_path(directory, database)
+        root, parity = Path(directory).resolve(), Path(database).resolve()
+        if overlaps(destination_path, parity):
+            raise ValueError(f"Sync destination overlaps scrub database {database}; move parity outside the mirror destination")
+        if not any(overlaps(endpoint, root) for endpoint in (source_path, destination_path)):
+            continue
+        try:
+            valid, error = validate_mounts_for_operation([database], config, "sync integrity check")
             if not valid:
-                return False, error
+                raise RuntimeError(error)
             report = Findings(directory, database)
             for relative in report.data["files"]:
-                if report.active(relative) and any((root / relative).is_relative_to(endpoint)
-                                                   for endpoint in (source_path, destination_path)):
-                    return False, f"Sync paused for unresolved integrity finding: {root / relative}; inspect with basaltw scrub"
-        return True, ""
-    except (OSError, ValueError, RuntimeError) as exc:
-        return False, f"Cannot establish sync integrity safety: {exc}"
+                if not report.active(relative):
+                    continue
+                affected = root / relative
+                for endpoint in (source_path, destination_path):
+                    if affected.is_relative_to(endpoint) and affected != endpoint:
+                        path = affected.relative_to(endpoint).as_posix()
+                        validate_filesystem_path(path)
+                        excluded_paths.add(path)
+                    elif endpoint.is_relative_to(affected):
+                        raise ValueError(f"Finding covers the sync root: {affected}")
+        except (OSError, ValueError, RuntimeError) as exc:
+            copy_new_only = True
+            warnings.append(f"Cannot read complete integrity findings for {directory}: {exc}")
+    if excluded_paths:
+        sample = ", ".join(sorted(excluded_paths)[:5])
+        warnings.insert(0, f"Preserved {len(excluded_paths)} path(s) with unresolved integrity findings: {sample}; inspect with basaltw scrub")
+    if copy_new_only:
+        warnings.append("Copying new files only; existing destination files and deletions are preserved until findings are available")
+    return SyncIntegrity(tuple(sorted(excluded_paths)), "; ".join(warnings), copy_new_only)
 
 
 def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logger) -> tuple[bool, str, bool]:
@@ -495,7 +525,10 @@ def execute_storage_operations() -> dict:
         # Validate mounts
         valid, error_msg = validate_mounts_for_operation([source, destination], config, "sync")
         if valid:
-            valid, error_msg = validate_sync_integrity(source, destination, config)
+            try:
+                integrity = validate_sync_integrity(source, destination, config)
+            except (OSError, ValueError, RuntimeError) as exc:
+                valid, error_msg = False, str(exc)
         if not valid:
             log_event(logger, "Skipping sync", level=WARNING, source=source, destination=destination, error=error_msg)
             results["syncs"].append({
@@ -508,12 +541,16 @@ def execute_storage_operations() -> dict:
             results["success"] = False
             continue
         
-        success, message = run_sync(source, destination, logger)
+        if integrity.warning:
+            log_event(logger, "Sync continuing with integrity precautions", level=WARNING,
+                      source=source, destination=destination, warning=integrity.warning)
+        success, message = run_sync(source, destination, logger, integrity=integrity)
         results["syncs"].append({
             "source": source,
             "destination": destination,
             "success": success,
-            "message": message
+            "message": message,
+            "warning": integrity.warning,
         })
         
         if success:
@@ -664,8 +701,9 @@ def send_operation_notification(results: dict, notification_configs: list, logge
     name_prefix = f"[{friendly_name}] " if friendly_name else ""
     
     if results["success"]:
-        status = "good"
-        subject = f"{name_prefix}Storage operations completed"
+        has_warnings = any(op.get("warning") for op in results["syncs"])
+        status = "warning" if has_warnings else "good"
+        subject = f"{name_prefix}Storage operations completed" + (" with warnings" if has_warnings else "")
     else:
         status = "error"
         subject = f"{name_prefix}Storage operations completed with errors"
@@ -699,7 +737,7 @@ Parity Update Operations:
             details=details,
             logger=logger,
             event_type="storage.operations",
-            state="success" if results["success"] else "firing",
+            state="success" if status == "good" else "firing",
             dedup_key="storage-ops:latest-run",
             delivery_policy="signal",
         )
@@ -730,6 +768,8 @@ def format_operation_results(operations: list) -> str:
             lines.append(f"    Error: {op['error']}")
         elif op.get("message"):
             lines.append(f"    {op['message']}")
+        if op.get("warning"):
+            lines.append(f"    Warning: {op['warning']}")
     
     return "\n".join(lines)
 

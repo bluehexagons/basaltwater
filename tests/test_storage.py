@@ -6,7 +6,6 @@ import os
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 # Ensure project root is on the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -29,8 +28,6 @@ from lib.task_utils import (
     escape_systemd_description,
     check_path_on_smb_mount,
     ensure_directory,
-    get_all_storage_paths,
-    get_mount_points_from_config,
     VALID_FREQUENCIES,
 )
 from lib.validation import (
@@ -314,60 +311,6 @@ class TestCheckPathOnSmbMount(unittest.TestCase):
     def test_no_mounts(self):
         config = self._make_config(None)
         self.assertFalse(check_path_on_smb_mount('/mnt/share', config))
-
-
-# ---------------------------------------------------------------------------
-# get_mount_points_from_config
-# ---------------------------------------------------------------------------
-
-class TestGetMountPointsFromConfig(unittest.TestCase):
-    def test_derives_expected_mnt_mountpoint_when_unmounted(self):
-        config = SetupConfig(
-            host='test', username='test', system_type='server_lite',
-            sync_specs=[['/mnt/data/source', '/home/test/backup', 'daily']],
-            scrub_specs=[],
-        )
-        with patch.object(tu, 'get_mount_ancestor', return_value=None):
-            mount_points = get_mount_points_from_config(config)
-        self.assertIn('/mnt/data', mount_points)
-
-    def test_includes_smb_mount_points(self):
-        config = SetupConfig(
-            host='test', username='test', system_type='server_lite',
-            sync_specs=[['/srv/nas/data', '/home/test/backup', 'daily']],
-            scrub_specs=[],
-            smb_mounts=[['/srv/nas', '1.2.3.4', 'u:p', 'share', '/']],
-        )
-        mount_points = get_mount_points_from_config(config)
-        self.assertIn('/srv/nas', mount_points)
-
-    def test_unrelated_mounts_do_not_gate_local_operations(self):
-        config = SetupConfig(
-            host='test', username='test', system_type='server_lite',
-            sync_specs=[['/srv/data-extra', '/srv/backup', 'daily']],
-            smb_mounts=[['/srv/data', '1.2.3.4', 'u:p', 'share', '/']],
-            storage_mounts=[['unused', '/srv/unrelated', 'ext4', 'empty']],
-        )
-        self.assertEqual(get_mount_points_from_config(config), set())
-
-    def test_declared_child_mount_is_required_even_with_mounted_parent(self):
-        config = SetupConfig(
-            host='test', username='test', system_type='server_lite',
-            backup_specs=[['/srv/data', '/mnt/backup/nested/copy', 'daily']],
-            smb_mounts=[['/mnt/backup/nested', '1.2.3.4', 'u:p', 'share', '/']],
-        )
-        with patch.object(tu, 'get_mount_ancestor', return_value='/mnt/backup'):
-            self.assertIn('/mnt/backup/nested', get_mount_points_from_config(config))
-
-    def test_includes_declared_vm_storage_mount_points(self):
-        config = SetupConfig(
-            host='test', username='test', system_type='server_lite',
-            backup_specs=[['/srv/workspace', '/srv/backups', 'daily']],
-            storage_mounts=[['backup-data', '/srv/backups', 'ext4', 'empty']],
-        )
-        mount_points = get_mount_points_from_config(config)
-        self.assertIn('/srv/workspace', get_all_storage_paths(config))
-        self.assertIn('/srv/backups', mount_points)
 
 
 # ---------------------------------------------------------------------------
