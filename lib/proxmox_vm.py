@@ -1761,6 +1761,12 @@ def _render_user_data(
         "    permissions: '0644'",
         "    content: |",
         "      virtio_balloon",
+        "  - path: /etc/cloud/cloud.cfg.d/99-basaltwater-instance.cfg",
+        "    owner: root:root",
+        "    permissions: '0644'",
+        "    content: |",
+        "      # Preserve this instance until explicitly prepared for cloning.",
+        "      manual_cache_clean: true",
     ]
     if nopasswd and create_setup_user and username and username != "root":
         lines.extend([
@@ -1858,8 +1864,8 @@ def _destroy_vm_best_effort(
     node_ip: str,
     user: str,
     ssh_opts: StrList,
-) -> None:
-    """Remove a VM created by this run after a failed provisioning attempt."""
+) -> bool:
+    """Attempt failed provisioning cleanup and report confirmed destruction."""
     print(f"  ⚠ Cleaning up partially provisioned VM {vmid}")
     failures: list[str] = []
     for command in (
@@ -1876,6 +1882,7 @@ def _destroy_vm_best_effort(
             print(f"    {failure}")
     else:
         print(f"  ✓ Removed partially provisioned VM {vmid}")
+    return result.returncode == 0
 
 
 def _create_vm(
@@ -2135,6 +2142,49 @@ def _wait_for_guest_agent(
         "  ⚠ qemu-guest-agent was not ready after "
         f"{timeout}s; continuing with the SSH handoff"
     )
+
+
+def _verify_cloud_init_bootstrap(
+    vmid: int,
+    node_ip: str,
+    user: str,
+    ssh_opts: StrList,
+) -> None:
+    """Require completed initialization and a persistent instance-cache guard."""
+    # PVE hashes user-data into the NoCloud instance ID. Removing cicustom
+    # changes that ID; trust this guest's cache before allowing detachment.
+    guest_command = (
+        "timeout 180 cloud-init status --wait && "
+        "grep -qxF 'manual_cache_clean: true' "
+        "/etc/cloud/cloud.cfg.d/99-basaltwater-instance.cfg"
+    )
+    result = _ssh_run(
+        node_ip,
+        user,
+        ssh_opts,
+        shlex.join([
+            "qm", "guest", "exec", str(vmid), "--timeout", "190",
+            "--synchronous", "1", "--", "/bin/sh", "-c", guest_command,
+        ]),
+        dry_run=False,
+        timeout=210,
+    )
+    try:
+        status = json.loads(result.stdout or "{}")
+    except (TypeError, ValueError):
+        status = None
+    if (
+        result.returncode != 0
+        or not isinstance(status, dict)
+        or status.get("exited") != 1
+        or status.get("exitcode") != 0
+    ):
+        detail = (result.stderr or result.stdout or "").strip()
+        raise ProvisionError(
+            f"Could not verify cloud-init completion and instance protection "
+            f"in VM {vmid}: {detail or 'missing guest completion status'}"
+        )
+    print("  ✓ Cloud-init completed with persistent instance protection")
 
 
 def provision_vm(
@@ -2540,6 +2590,7 @@ def _provision_vm_locked(
         else None
     )
     vm_started = False
+    vm_removed = False
     provision_complete = False
 
     try:
@@ -2623,6 +2674,7 @@ def _provision_vm_locked(
             dry_run=dry_run,
             label="VM",
         )
+        _verify_cloud_init_bootstrap(vmid, node_ip, user, ssh_opts)
         enroll_provisioned_guest_host_keys(
             target_ip,
             node_ip,
@@ -2633,7 +2685,7 @@ def _provision_vm_locked(
         provision_complete = True
     except Exception:
         if vm_started and not dry_run:
-            _destroy_vm_best_effort(vmid, node_ip, user, ssh_opts)
+            vm_removed = _destroy_vm_best_effort(vmid, node_ip, user, ssh_opts)
         raise
     finally:
         # Detach custom cloud-init before deleting its snippet. Leaving a
@@ -2659,14 +2711,14 @@ def _provision_vm_locked(
                         f"rm -f {shlex.quote(user_data_path)}",
                         dry_run=False,
                     )
-            else:
-                # Failed provisioning destroys the partial VM, so the snippet
-                # is no longer referenced.
+            elif vm_removed:
                 _ssh_run(
                     node_ip, user, ssh_opts,
                     f"rm -f {shlex.quote(user_data_path)}",
                     dry_run=False,
                 )
-            # Tiny grace period so qemu-guest-agent / cloud-init finish flushing
-            # before subsequent setup steps log in.
-            time.sleep(2)
+            else:
+                print(
+                    "  ⚠ VM removal was not confirmed; preserving potentially "
+                    f"referenced cloud-init snippet {user_data_path}"
+                )

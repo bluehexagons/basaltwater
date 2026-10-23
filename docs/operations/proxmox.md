@@ -750,7 +750,32 @@ Imported images retain the native format selected by the destination storage
 backend,
 and provisioning rejects a requested disk smaller than the source image. The
 cloud-init snippet is detached from the VM before its temporary file is
-removed, preventing a stale `cicustom` reference. See the current
+removed, preventing a stale `cicustom` reference. Before detaching, Basaltwater
+waits up to 180 seconds for successful cloud-init completion through the guest
+agent and verifies `/etc/cloud/cloud.cfg.d/99-basaltwater-instance.cfg` contains
+`manual_cache_clean: true`. This persistent setting trusts the existing instance
+cache: Proxmox changes its generated instance ID when custom user-data is removed,
+which would otherwise rerun first-boot modules and rotate SSH host keys. Failed
+detachment preserves the snippet. Failed provisioning deletes it only after VM
+destruction is confirmed; uncertain cleanup preserves it for inspection.
+
+Keep the guard and cloud-init cache for normal reboots, snapshot rollback and
+identity-preserving backup restores. Snapshots taken before the guard was
+installed do not receive its protection. Cache loss or incompatible cache
+invalidation can still cause first-boot behavior. Changes to Proxmox cloud-init
+fields do not automatically reinitialize an already provisioned guest; apply
+ordinary guest configuration through Basaltwater setup instead.
+
+Before capturing a template or cloning a VM with a **new identity**, remove
+`99-basaltwater-instance.cfg`, run `cloud-init clean --machine-id`, and shut
+down without booting the source again. Removing the guard alone is insufficient
+because cloud-init can retain a manual-clean marker in its cache. Prepare fresh
+user-data, networking and SSH keys for the clone. If cloud-init will configure
+networking, also remove Basaltwater's managed cloud-init network-disable file
+and inherited static network configuration before capture. This is an explicit
+image-preparation operation, not part of an identity-preserving restore. See
+[cloud-init's first-boot behavior](https://docs.cloud-init.io/en/latest/explanation/first_boot.html)
+and the current
 [Proxmox VE administration guide](https://pve.proxmox.com/pve-docs/pve-admin-guide.pdf).
 
 Physical GPU passthrough is a different profile. It needs host IOMMU/device
@@ -970,9 +995,9 @@ Snapshots and rollback:
 
 ```bash
 basaltw proxmox snapshots pve1 101
-basaltw proxmox snapshot pve1 101 pre-upgrade --description "before kernel update"
-basaltw proxmox rollback pve1 101 pre-upgrade
-basaltw proxmox delsnapshot pve1 101 pre-upgrade
+basaltw proxmox snapshot pve1 101 pre_upgrade --description "before kernel update"
+basaltw proxmox rollback pve1 101 pre_upgrade
+basaltw proxmox delsnapshot pve1 101 pre_upgrade
 ```
 
 Snapshot deletion requires typing `yes`, or `--yes` for automation. `--dry-run`

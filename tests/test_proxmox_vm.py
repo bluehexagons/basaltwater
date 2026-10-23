@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import tempfile
 import unittest
+from contextlib import nullcontext
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -20,12 +24,14 @@ from lib.proxmox_vm import (
     _parse_disk_size_gib,
     _parse_memory_mb,
     _preflight_data_disk_capacity,
+    _provision_vm_locked,
     _render_user_data,
     _reconcile_existing_vm,
     _resolve_image,
     _destroy_vm_best_effort,
     _upload_user_data,
     _wait_for_guest_agent,
+    _verify_cloud_init_bootstrap,
     check_vm_exists,
 )
 from lib.config import SetupConfig
@@ -270,6 +276,15 @@ class TestRenderUserData(unittest.TestCase):
         self.assertIn("virtio_balloon", out)
         self.assertIn("basaltwater-virtio-balloon.conf", out)
         self.assertIn("systemctl enable --now qemu-guest-agent", out)
+        self.assertIn(
+            "  - path: /etc/cloud/cloud.cfg.d/99-basaltwater-instance.cfg\n"
+            "    owner: root:root\n"
+            "    permissions: '0644'\n"
+            "    content: |\n"
+            "      # Preserve this instance until explicitly prepared for cloning.\n"
+            "      manual_cache_clean: true\n",
+            out,
+        )
 
     def test_creates_non_root_user(self):
         out = _render_user_data(username="alice", pubkey_contents="ssh-ed25519 KEY")
@@ -503,12 +518,20 @@ class TestVMCleanup(unittest.TestCase):
             MagicMock(returncode=1, stdout="", stderr="destroy failed"),
         ]
         with patch("builtins.print") as mock_print:
-            _destroy_vm_best_effort(101, "10.0.0.10", "root", [])
+            self.assertFalse(_destroy_vm_best_effort(101, "10.0.0.10", "root", []))
 
         output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
         self.assertIn("cleanup incomplete", output)
         self.assertIn("stop failed", output)
         self.assertIn("destroy failed", output)
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_successful_destruction_confirms_removal_even_if_stop_failed(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="already stopped"),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        self.assertTrue(_destroy_vm_best_effort(101, "10.0.0.10", "root", []))
 
     @patch("lib.proxmox_vm._ssh_run")
     def test_resize_failure_destroys_partial_vm(self, mock_run):
@@ -548,6 +571,109 @@ class TestVMCleanup(unittest.TestCase):
         self.assertEqual(commands[-2:], [
             "qm stop 101 --skiplock 1",
             "qm destroy 101 --purge 1 --skiplock 1",
+        ])
+
+
+class TestCloudInitBootstrap(unittest.TestCase):
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_requires_completed_successful_guest_command(self, mock_run):
+        for result in (
+            MagicMock(returncode=0, stdout='{"exited": 1, "exitcode": 0}', stderr=""),
+            MagicMock(returncode=0, stdout='{"exited": 1, "exitcode": 2}', stderr=""),
+            MagicMock(returncode=0, stdout='{"pid": 100}', stderr=""),
+            MagicMock(returncode=0, stdout='[]', stderr=""),
+            MagicMock(returncode=0, stdout='not json', stderr=""),
+            MagicMock(returncode=1, stdout='', stderr="agent unavailable"),
+        ):
+            with self.subTest(stdout=result.stdout, returncode=result.returncode):
+                mock_run.return_value = result
+                if result.stdout == '{"exited": 1, "exitcode": 0}':
+                    _verify_cloud_init_bootstrap(101, "10.0.0.10", "root", [])
+                else:
+                    with self.assertRaisesRegex(ProvisionError, "cloud-init completion"):
+                        _verify_cloud_init_bootstrap(101, "10.0.0.10", "root", [])
+        command = mock_run.call_args.args[3]
+        self.assertIn("--timeout 190 --synchronous 1", command)
+        self.assertIn("timeout 180 cloud-init status --wait", command)
+        self.assertIn("manual_cache_clean: true", command)
+        self.assertGreater(mock_run.call_args.kwargs["timeout"], 190)
+
+    def setUp(self):
+        public_key_dir = self.enterContext(tempfile.TemporaryDirectory())
+        public_key = Path(public_key_dir) / "id.pub"
+        public_key.write_text("ssh-ed25519 AAAA test\n", encoding="utf-8")
+        defaults = {
+            "_resolve_public_key_path": str(public_key),
+            "_resolve_image": (_ResolvedImage(None, None, None, "local:import/test.img"), None),
+            "auto_detect_bridge": "vmbr0",
+            "_reconcile_existing_vm": False,
+            "_resolve_storage_pool": "local",
+            "_upload_user_data": "/var/lib/vz/snippets/test.yaml",
+            "_report_memory_capacity": True,
+            "_preflight_data_disk_capacity": None,
+            "_get_next_vmid": 101,
+            "_create_vm": None,
+            "_wait_for_guest_agent": None,
+            "_wait_for_guest_ssh": None,
+        }
+        for name, value in defaults.items():
+            self.enterContext(patch(f"lib.proxmox_vm.{name}", return_value=value))
+        self.enterContext(patch(
+            "lib.proxmox_vm.remote_proxmox_locks",
+            side_effect=lambda *a, **kw: nullcontext(),
+        ))
+        self.events = []
+        self.enterContext(patch(
+            "lib.proxmox_vm.enroll_provisioned_guest_host_keys",
+            side_effect=lambda *a, **kw: self.events.append("enroll"),
+        ))
+        self.enterContext(patch("lib.proxmox_vm._ssh_run", side_effect=self._run))
+        self.failed_command = ""
+        self.config = SetupConfig(
+            host="10.0.0.50", static_ipv4="10.0.0.50/24", username="agent",
+            system_type="server_lite", hosted_node="10.0.0.10",
+            container_memory="1G", container_storage=[["root", "local", "12G"]],
+            network_gateway4="10.0.0.1", network_dns=["1.1.1.1"],
+        )
+
+    def _run(self, *args, **kwargs):
+        command = args[3]
+        self.events.append(command)
+        failed = self.failed_command and self.failed_command in command
+        return MagicMock(
+            returncode=1 if failed else 0,
+            stdout=json.dumps({"exited": 1, "exitcode": 0}),
+            stderr="injected failure" if failed else "",
+        )
+
+    def test_success_verifies_before_enrollment_detachment_and_unlink(self):
+        _provision_vm_locked(self.config)
+        self.assertIn("qm guest exec 101", self.events[0])
+        self.assertEqual(self.events[1:], [
+            "enroll", "qm set 101 --delete cicustom", "rm -f /var/lib/vz/snippets/test.yaml",
+        ])
+
+    def test_verification_failure_destroys_before_unlinking(self):
+        self.failed_command = "qm guest exec"
+        with self.assertRaisesRegex(ProvisionError, "cloud-init completion"):
+            _provision_vm_locked(self.config)
+        self.assertEqual(self.events[1:], [
+            "qm stop 101 --skiplock 1", "qm destroy 101 --purge 1 --skiplock 1",
+            "rm -f /var/lib/vz/snippets/test.yaml",
+        ])
+
+    def test_detach_failure_preserves_snippet(self):
+        self.failed_command = "--delete cicustom"
+        _provision_vm_locked(self.config)
+        self.assertFalse(any(command.startswith("rm ") for command in self.events))
+
+    def test_failed_destruction_preserves_potentially_referenced_snippet(self):
+        with patch("lib.proxmox_vm._wait_for_guest_ssh", side_effect=ProvisionError("timeout")):
+            self.failed_command = "qm destroy"
+            with self.assertRaisesRegex(ProvisionError, "timeout"):
+                _provision_vm_locked(self.config)
+        self.assertEqual(self.events, [
+            "qm stop 101 --skiplock 1", "qm destroy 101 --purge 1 --skiplock 1",
         ])
 
 
