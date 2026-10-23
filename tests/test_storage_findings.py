@@ -223,6 +223,45 @@ class TestFindings(unittest.TestCase):
         self.assertEqual(self.parity.read_bytes(), b"old-parity")
         self.assertTrue(self.report().active("data.bin"))
 
+    def test_change_during_accept_publication_keeps_finding_open(self):
+        from sync.service_tools import parity_sets
+
+        publish = parity_sets.publish
+
+        def create(file_path, directory, database, *args):
+            Path(database, "data.bin.vol00+01.par2").write_bytes(b"new-parity")
+            return True
+
+        def concurrent_publish(*args):
+            self.file.write_bytes(b"concurrent edit while publishing parity")
+            publish(*args)
+
+        with patch.object(scrub_par2, "create_par2", side_effect=create), self.run_par2(0), patch.object(parity_sets, "publish", side_effect=concurrent_publish):
+            outcome = findings.remediate(*self.args, 10, "accept")
+        self.assertEqual(outcome["category"], "changed_during_scan")
+        self.assertTrue(self.report().active("data.bin"))
+        self.assertEqual(self.file.read_bytes(), b"concurrent edit while publishing parity")
+        recovery = Path(outcome["recovery"])
+        self.assertEqual((recovery / "original/data.bin").read_bytes(), b"damaged")
+        self.assertEqual(json.loads((recovery / "operation.json").read_text())["state"], "published_unverified")
+
+    def test_change_after_restore_publication_keeps_finding_open(self):
+        backup = self.root / "backup"
+        backup.write_bytes(b"restored")
+        sync_directory = findings._fsync_directory
+
+        def concurrent_write(path):
+            sync_directory(path)
+            if path == str(self.source) and self.file.read_bytes() == b"restored":
+                self.file.write_bytes(b"edit after restored file was published")
+
+        with self.run_par2(0), patch.object(findings, "_fsync_directory", side_effect=concurrent_write):
+            outcome = findings.remediate(*self.args, 10, "restore", backup=str(backup))
+        self.assertEqual(outcome["category"], "changed_during_scan")
+        self.assertTrue(self.report().active("data.bin"))
+        self.assertEqual(self.file.read_bytes(), b"edit after restored file was published")
+        self.assertTrue((Path(outcome["recovery"]) / "original/data.bin").exists())
+
     def test_symlinks_and_outside_paths_are_rejected(self):
         outside = self.root / "outside"
         outside.write_bytes(b"outside")

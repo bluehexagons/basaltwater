@@ -269,6 +269,7 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
         manifest["state"] = "publishing"
         write_json_atomic(manifest_path, manifest)
         publish(file_path, directory, database, new_parity)
+        expected_identity = before
     else:
         # Stage beside the target so publication is atomic across filesystems.
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -280,6 +281,9 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
                 info = os.stat(file_path)
                 os.chown(temporary, info.st_uid, info.st_gid)
                 os.chmod(temporary, stat.S_IMODE(info.st_mode))
+            with open(temporary, "rb") as stream:
+                os.fsync(stream.fileno())
+            expected_identity = file_identity(temporary)
             if file_identity(file_path) != before:
                 raise RuntimeError("Live file changed before publication")
             os.replace(temporary, file_path)
@@ -287,8 +291,18 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
-    manifest.update({"state": "completed", "completed_at": stamp()})
+    after = file_identity(file_path)
+    # Renaming a restored file may update ctime; its inode, size and mtime
+    # must still match the durable publication copy. Acceptance changes no
+    # source metadata, so compare its complete original identity.
+    unchanged = (after == expected_identity if action == "accept"
+                 else after is not None and after[:4] == expected_identity[:4])
+    if not unchanged:
+        outcome.update({"category": "changed_during_scan",
+                        "evidence": "Live file changed during recovery publication; verify again before resolving"})
+    manifest.update({"state": "completed" if unchanged else "published_unverified",
+                     "completed_at": stamp()})
     write_json_atomic(manifest_path, manifest)
-    outcome["file_identity"] = file_identity(file_path)
+    outcome["file_identity"] = after
     report.record(relative, outcome, resolution="accepted" if action == "accept" else action)
     return outcome

@@ -99,6 +99,10 @@ refuse to run while it is busy. Required configured mounts must be present.
 Keep protected files and parity stable during recovery: ordinary concurrent
 writes are checked, but these tools do not provide filesystem snapshots or
 protection from a hostile writer racing path checks.
+Recovery checks the live file again after publication. A change during that
+publication leaves the finding open as `changed_during_scan` and records
+`published_unverified` in the retained manifest; stop writers and use targeted
+`verify` before treating the file as healthy.
 
 Findings survive daily parity maintenance and setup reruns. A successful fast
 maintenance pass does not resolve them. Inventory checks preserve parity for
