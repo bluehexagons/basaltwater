@@ -578,6 +578,7 @@ class TestAgentDoctor(unittest.TestCase):
                 patch('lib.agent_cli._tool_path', side_effect=lambda tool, _home: t3_binary if tool == 't3' else None),
                 patch('lib.agent_cli._run_check', return_value=type('Completed', (), {'returncode': 1, 'stdout': '', 'stderr': ''})()),
                 patch('lib.agent_cli._t3_endpoint_reachable', return_value=False),
+                patch('lib.agent_cli._tool_version', return_value='t3 fixture'),
             ):
                 result = inspect_t3code(home)
 
