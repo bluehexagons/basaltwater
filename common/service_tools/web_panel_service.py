@@ -814,7 +814,7 @@ class WebPanelState:
 
     def features(self) -> PanelFeatures:
         if self.manifest["system_type"] == "server_proxmox":
-            return PanelFeatures()
+            return PanelFeatures(admin_page=False)
         return discover_features(self.agent_tasks.home, admin=bool(self.admin.approval_url),
                                  configured=self.manifest["features"])
 

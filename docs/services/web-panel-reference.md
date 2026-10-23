@@ -274,9 +274,10 @@ metadata before running the CLI; it never executes a selected user checkout.
 The source's managed state directory is excluded from this code check because
 the refresh command validates its saved setup separately. The approved check
 reports validation success or failure without exposing privileged plan output.
-Root-managed panels and hosts without the supported optional broker retain
-inspection pages and installed account features; the administration page is
-omitted.
+Proxmox panels omit the administration page and its navigation entry because
+the optional broker is unsupported on that profile. Other profiles retain the
+page's setup instructions when the broker is unavailable; administration actions
+require a configured broker.
 
 ## Agent tool preparation
 

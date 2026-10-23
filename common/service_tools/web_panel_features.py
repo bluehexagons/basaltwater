@@ -26,6 +26,7 @@ class PanelFeatures:
     desktop: bool = False
     console: bool = False
     github_runner: bool = False
+    admin_page: bool = True
 
     @property
     def prompts(self) -> bool:
@@ -37,7 +38,9 @@ class PanelFeatures:
 
     @property
     def pages(self) -> frozenset[str]:
-        pages = {"dashboard", "services", "storage", "jobs", "logs", "admin"}
+        pages = {"dashboard", "services", "storage", "jobs", "logs"}
+        if self.admin_page:
+            pages.add("admin")
         if self.agents:
             pages.update(("agents", "agent-inbox"))
         if self.prompts:

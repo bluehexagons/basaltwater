@@ -301,6 +301,27 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
             discover.assert_not_called()
             start.assert_not_called()
 
+    def test_monitoring_profile_omits_unsupported_administration_page(self) -> None:
+        manifest = steps.build_web_panel_manifest(config(web_panel_port=9443), ["pve.example.test"])
+        with tempfile.TemporaryDirectory() as temporary:
+            state = panel.WebPanelState(manifest, agent_home=temporary)
+            self.assertNotIn("admin", state.features().pages)
+            self.assertNotIn("/admin", {item[0] for item in state.navigation("dashboard")})
+            handler = object.__new__(panel.WebPanelHandler)
+            handler.state = state
+            handler._send = Mock()
+            with patch.object(panel, "render_admin") as render:
+                for path, method in (("/admin", handler.do_GET),
+                                     ("/actions/admin", handler.do_POST),
+                                     ("/actions/admin/cancel", handler.do_POST)):
+                    with self.subTest(path=path):
+                        handler.path = path
+                        method()
+                        self.assertEqual(handler._send.call_args.args[0], 404)
+                render.assert_not_called()
+        # Other profiles retain instructions for enabling their supported broker.
+        self.assertIn("admin", panel.PanelFeatures().pages)
+
     def test_ca_routes_are_certificate_only_on_http_and_https(self) -> None:
         nginx = steps.render_web_panel_nginx(["pve.example.test"], 9443,
                                             cert_path="/tmp/server.crt", key_path="/tmp/server.key",
