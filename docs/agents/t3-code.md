@@ -429,9 +429,11 @@ supported. The published runtime archive includes its executable and native
 packages. Basaltwater checks its `node-pty` with the executable's embedded Node
 using a short-lived preload that exits before T3 opens application state. Host Node.js is not needed
 for this check. npm-backed runtimes use the Node configured in the service PATH
-and retain the `node-pty`/`msgpackr-extract` repair allowlist. Host npm must not
-rebuild a standalone archive against a different Node runtime. A failed archive
-probe is reported without stopping an active service; restore the damaged
+and retain the `node-pty`/`msgpackr-extract` repair allowlist. Doctor places that
+Node's directory first in the repair PATH so npm and its build scripts use the
+same runtime as the service. Host npm must not rebuild a standalone archive
+against a different Node runtime. A failed archive probe is reported without
+stopping an active service; restore the damaged
 version from its matching upstream release archive and rerun setup. Basaltwater
 applies the supported 50 MiB request-body limit to T3's managed HTTPS route while leaving
 the pairing route at its deliberately small limit. See the upstream
@@ -473,7 +475,8 @@ Older basaltwater installations used a root-owned
 `basaltwater-t3code.service` and a separate npm runtime. A subsequent setup
 stops that service, starts and validates the upstream user service, and only
 then disables and removes the old unit and clears its retained failed state.
-The old service is restarted if the migration fails.
+A failed legacy stop aborts before updating or activating the replacement.
+The old service is restarted if a later migration step fails.
 
 Retiring the old AppImage installer did not delete an AppImage that an
 older setup placed in a user's home. After confirming the files were not
@@ -509,6 +512,12 @@ declare private source networks:
 A non-loopback bind is rejected unless UFW is active and a private or
 non-global allowlist is present. Basaltwater reconciles only its own labeled
 UFW rules and refuses conflicting unmanaged rules on the managed ports.
+T3 supports loopback literals, `localhost`, and the wildcard binds `0.0.0.0`
+and `::`. Specific non-loopback addresses are rejected because readiness and
+administrative pairing require a local loopback connection. Use a wildcard
+with the source allowlist for LAN access. Local checks try both loopback
+families for `localhost`; IPv6-only listeners use IPv6 loopback for readiness
+and their managed HTTPS forwards, including the pairing route.
 
 The protected device-pairing broker uses port 3774 by default. Its Basic Auth
 credential is staged for setup and is not written to the saved setup command.
@@ -641,9 +650,12 @@ because a provider status probe timed out.
 
 The doctor validates the upstream service-state protocol and selected immutable
 runtime, required native terminal module, active and boot-enabled user service,
-endpoint, pairing helper, Git identity, and managed agent skill. Add `--fix` to
-rebuild an incomplete npm-backed native runtime, repair GitHub's credential
-helper, enable the service for future boots, or restart an inactive user service. The separate
+HTTP 200 endpoint, pairing helper, Git identity, and managed agent skill. Its
+local endpoint checks support IPv4 and IPv6 loopback binds; wildcard listeners
+are checked through the corresponding loopback address. HTTP errors do not count
+as successful startup checks. Add `--fix` to rebuild an incomplete npm-backed
+native runtime, repair GitHub's credential helper, enable the service for future
+boots, or restart an inactive user service. The separate
 host capability reports memory, swap, filesystem and agent-storage headroom,
 T3 cgroup usage, recurring maintenance state, and pending reboots. Capacity
 warnings do not make an otherwise healthy service fail; critical disk pressure

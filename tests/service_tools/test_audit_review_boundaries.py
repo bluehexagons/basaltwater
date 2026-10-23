@@ -53,7 +53,7 @@ class TestAuditReviewBoundaries(unittest.TestCase):
         with patch.object(agent_cli, "open_loopback", return_value=response) as probe:
             self.assertTrue(agent_cli._t3_endpoint_reachable(8080))
             probe.assert_called_once_with("http://127.0.0.1:8080/", timeout=5)
-        for code, expected in ((302, False), (401, True), (503, False)):
+        for code, expected in ((302, False), (401, False), (503, False)):
             with patch.object(agent_cli, "open_loopback", side_effect=urllib.error.HTTPError(
                 "http://127.0.0.1:8080/", code, "status", {}, None,
             )):
