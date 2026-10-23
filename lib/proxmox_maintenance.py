@@ -35,7 +35,8 @@ _PREVIOUS_BOOT_PATTERN = re.compile(
     r"\boom-kill\b|\bout of memory\b|\bkilled process\b|blocked for more than|"
     r"(?:soft|hard) lockup|watchdog.*(?:BUG:|lockup)|\bNETDEV WATCHDOG\b|"
     r"kernel panic|\bOops:|\bBUG:|\bi/o error\b|"
-    r"\bnvme\w*\b.*(?:I/O.*(?:timeout|timed out)|resetting controller|controller is down)|"
+    r"\bnvme\w*\b.*(?:I/O.*(?:timeout|timed out)|resetting controller|"
+    r"controller is down|device not ready; aborting)|"
     r"\bata[0-9]+(?:\.[0-9]+)?:.*(?:error|failed|reset|timed out)|"
     r"\bzfs\b.*(?:error|fault)|\b(?:mce|edac)\b.*(?:error|[1-9][0-9]* [uc]e\b)|"
     r"hardware error|(?:thermal|temperature).*(?:critical|trip|throttl)",
@@ -356,6 +357,11 @@ def _collect_memory_diagnostics(
     if findings.returncode != 0:
         report.warnings.append(
             f"Could not inspect previous boot kernel log: {_failure_detail(findings)}"
+        )
+        return
+    if not findings.stdout.strip():
+        report.warnings.append(
+            "Previous boot kernel log is empty; fault evidence is unavailable"
         )
         return
     report.previous_boot_findings = [

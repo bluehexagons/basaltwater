@@ -927,7 +927,8 @@ The previous kernel journal is scanned for OOM kills, blocked tasks, lockups,
 watchdog faults, storage failures, critical temperatures, and hardware-error
 indicators. Routine thermal/EDAC initialization and watchdog shutdown messages
 are omitted; the last 40 matching lines appear in text and JSON output.
-A failed journal read produces a warning. ZFS zvol-backed
+A failed or empty kernel journal read produces a warning, even when the boot
+itself is retained. ZFS zvol-backed
 swap is a failing audit condition, while no swap, swappiness above 10, high
 memory/swap use, and missing prior-boot evidence are warnings. The command is
 read-only and exits nonzero when a health check fails.

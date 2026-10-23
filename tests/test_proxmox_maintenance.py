@@ -54,7 +54,7 @@ def _healthy_memory_diagnostics() -> list[subprocess.CompletedProcess[str]]:
         _result(f"/dev/dm-0 partition {8 * 1024 ** 3} 0\n"),
         _result("10\n"),
         _result("-1 boot-old\n 0 boot-current\n"),
-        _result(),
+        _result("Linux version 6.17.0\n"),
     ]
 
 
@@ -224,6 +224,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             "EDAC ie31200: No ECC support",
             "ACPI BIOS Error (bug): Could not resolve symbol [\\_SB.PCI0.SAT0.SPT5._GTF.DSSP]",
             "nvme nvme0: Shutdown timeout set to 10 seconds",
+            "nvme nvme0: Controller reset completed",
             "watchdog: watchdog0: watchdog did not stop!",
             "systemd-shutdown[1]: Using hardware watchdog 'Software Watchdog'",
             "systemd-shutdown[1]: Watchdog running with a hardware timeout of 10min",
@@ -245,6 +246,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             "I/O error, dev sda, sector 10", "ata1.00: failed command: READ FPDMA QUEUED",
             "ata2: hard resetting link", "nvme nvme0: I/O 34 QID 2 timeout, reset controller",
             "nvme nvme0: resetting controller", "ZFS: pool tank has I/O errors",
+            "nvme nvme0: Device not ready; aborting reset, CSTS=0x1",
             "mce: [Hardware Error]: Machine check events logged",
             "EDAC MC0: 1 CE memory read error", "EDAC MC0: 1 UE on DIMM_A1",
             "thermal thermal_zone0: critical temperature reached (105 C)",
@@ -291,6 +293,22 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         self.assertEqual(report.previous_boot_findings, [])
         self.assertTrue(any("Could not inspect previous boot kernel log: failed to open journal" in item
                             for item in report.warnings))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_empty_kernel_journal_warns_even_when_previous_boot_is_retained(self, command) -> None:
+        for journal in ("", " \n\t"):
+            with self.subTest(journal=journal):
+                results = self._inventory_results("[]")
+                results[-1] = _result(journal)
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertTrue(report.healthy)
+                self.assertTrue(report.previous_boot_available)
+                self.assertEqual(report.previous_boot_findings, [])
+                self.assertIn(
+                    "Previous boot kernel log is empty; fault evidence is unavailable",
+                    report.warnings,
+                )
 
     @patch("lib.proxmox_maintenance._run")
     def test_ssh_failure_stops_further_probes(self, mock_run) -> None:
