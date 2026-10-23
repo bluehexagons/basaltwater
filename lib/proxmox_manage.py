@@ -217,6 +217,24 @@ def _get_guest_status(host: ProxmoxHost, vmid: int) -> tuple[str, str]:
     return guest_type, _parse_status_output(result.stdout)
 
 
+def _run_guest_update(
+    host: ProxmoxHost,
+    vmid: int,
+    pct_cmd: str,
+    qm_cmd: str,
+    *,
+    dry_run: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Select the guest tool before submitting tool-specific update arguments."""
+    if dry_run:
+        return _run_guest_command(host, vmid, pct_cmd, qm_cmd, dry_run=True)
+    # pct validates options and disk names before looking up the guest. A VM's
+    # arguments can therefore fail without producing a missing-container error.
+    guest_type, _status = _get_guest_status(host, vmid)
+    cmd = qm_cmd if guest_type == "vm" else pct_cmd
+    return _run_on_host(host, cmd), guest_type
+
+
 def _parse_pct_list(stdout: str) -> list[ContainerInfo]:
     """Parse ``pct list`` output into :class:`ContainerInfo` rows."""
     rows: list[ContainerInfo] = []
@@ -708,7 +726,7 @@ def reconfigure_container(
         qm_parts.extend([f"--{name}", value])
     pct_cmd = shlex.join(pct_parts)
     qm_cmd = shlex.join(qm_parts)
-    result, guest_type = _run_guest_command(
+    result, guest_type = _run_guest_update(
         host,
         vmid,
         pct_cmd,
@@ -773,7 +791,7 @@ def resize_container_disk(
         )
     pct_cmd = shlex.join(["pct", "resize", str(int(vmid)), volume, size])
     qm_cmd = shlex.join(["qm", "resize", str(int(vmid)), volume, size])
-    result, guest_type = _run_guest_command(
+    result, guest_type = _run_guest_update(
         host,
         vmid,
         pct_cmd,

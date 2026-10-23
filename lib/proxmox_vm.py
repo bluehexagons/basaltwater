@@ -1731,8 +1731,9 @@ def _render_user_data(
 
     Optionally creates ``username`` and installs the SSH key. An explicit
     ``nopasswd`` request also installs the managed sudo rule. The rest of
-    basaltwater' setup runs over key-only root SSH, so standard users do not
-    need a temporary passwordless bootstrap rule.
+    Basaltwater setup runs over key-only root SSH. Bootstrap accounts retain
+    locked passwords until target setup explicitly configures a password;
+    standard users do not need a temporary passwordless bootstrap rule.
     """
     if not validate_username(username):
         raise ProvisionError(f"Invalid VM setup username: {username!r}")
@@ -1772,7 +1773,7 @@ def _render_user_data(
     lines.extend([
         "users:",
         "  - name: root",
-        "    lock_passwd: false",
+        "    lock_passwd: true",
     ])
     if pubkey_yaml:
         lines.append("    ssh_authorized_keys:")
@@ -1782,7 +1783,7 @@ def _render_user_data(
             f"  - name: {username}",
             "    groups: sudo",
             "    shell: /bin/bash",
-            "    lock_passwd: false",
+            "    lock_passwd: true",
         ])
         if pubkey_yaml:
             lines.append("    ssh_authorized_keys:")

@@ -64,7 +64,9 @@ The matching `.pub` file must sit beside the private key, and the Proxmox
 `root` account must accept that key.
 
 New VM provisioning uses an SSH identity's `.pub` file for cloud-init. The key
-is installed for both root and the configured guest setup username. Key-only
+is installed for both root and the configured guest setup username. Cloud-init
+keeps their passwords locked and SSH password authentication disabled; target
+setup can subsequently configure an explicitly requested user password. Key-only
 root SSH is the stable privileged setup channel for route repair and remote
 setup handoff. The guest user joins `sudo`, but receives an unrestricted
 managed `NOPASSWD` rule only when `--nopasswd` is explicit. This also lets a
@@ -952,7 +954,13 @@ basaltw proxmox modify pve1 101 --cores 4 --memory 8G
 basaltw proxmox reconfigure pve1 101 --set hostname=newbox
 basaltw proxmox reconfigure pve1 101 --set balloon=4096
 basaltw proxmox resize-disk pve1 101 rootfs 40G
+basaltw proxmox resize-disk pve1 102 scsi0 40G
 ```
+
+Reconfiguration and disk growth detect the guest type before submitting
+container or VM arguments. Use `rootfs` or `mpN` for containers and the disk
+slot (for example, `scsi0`) for VMs. VM disk growth increases the virtual disk;
+grow its partition and filesystem inside the guest afterward.
 
 For an existing VM, Proxmox stores `memory` and `balloon` in MiB. Keep
 `balloon` no greater than `memory`; setting both to the same value disables

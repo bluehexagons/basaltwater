@@ -784,9 +784,13 @@ class TestReconfigureContainer(unittest.TestCase):
 
     @patch("lib.proxmox_manage._ssh_run")
     def test_raises_on_remote_failure(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = _completed(returncode=1, stderr="error")
-        with self.assertRaises(ProxmoxManageError):
+        mock_run.side_effect = [
+            _completed("status: running\n"),
+            _completed(returncode=1, stderr="error"),
+        ]
+        with self.assertRaisesRegex(ProxmoxManageError, "pct set 100 failed"):
             reconfigure_container(_host(), 100, {"cores": "4"})
+        self.assertEqual(mock_run.call_count, 2)
 
     @patch("lib.proxmox_manage._ssh_run")
     def test_dry_run_passes_through(self, mock_run: MagicMock) -> None:
@@ -805,9 +809,11 @@ class TestReconfigureContainer(unittest.TestCase):
             _completed("status: running\n"),
             _completed(),
         ]
-        reconfigure_container(_host(), 100, {"cores": "2"})
-        self.assertIn("qm", mock_run.call_args.args[3])
-        self.assertIn("set", mock_run.call_args.args[3])
+        reconfigure_container(_host(), 100, {"balloon": "1024"})
+        self.assertEqual(
+            [call.args[3] for call in mock_run.call_args_list],
+            ["pct status 100", "qm status 100", "qm set 100 --balloon 1024"],
+        )
 
 
 class TestModifyContainer(unittest.TestCase):
@@ -871,9 +877,13 @@ class TestResizeContainerDisk(unittest.TestCase):
 
     @patch("lib.proxmox_manage._ssh_run")
     def test_raises_on_remote_failure(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = _completed(returncode=1, stderr="can't shrink")
-        with self.assertRaises(ProxmoxManageError):
+        mock_run.side_effect = [
+            _completed("status: running\n"),
+            _completed(returncode=1, stderr="can't shrink"),
+        ]
+        with self.assertRaisesRegex(ProxmoxManageError, "pct resize 100 rootfs 20G failed"):
             resize_container_disk(_host(), 100, "rootfs", "20G")
+        self.assertEqual(mock_run.call_count, 2)
 
     @patch("lib.proxmox_manage._ssh_run")
     def test_dry_run_passes_through(self, mock_run: MagicMock) -> None:
@@ -893,8 +903,54 @@ class TestResizeContainerDisk(unittest.TestCase):
             _completed(),
         ]
         resize_container_disk(_host(), 100, "scsi0", "20G")
-        self.assertIn("qm", mock_run.call_args.args[3])
-        self.assertIn("resize", mock_run.call_args.args[3])
+        self.assertEqual(
+            [call.args[3] for call in mock_run.call_args_list],
+            ["pct status 100", "qm status 100", "qm resize 100 scsi0 20G"],
+        )
+
+
+class TestGuestUpdateRouting(unittest.TestCase):
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_status_failure_prevents_updates(self, mock_run: MagicMock) -> None:
+        operations = (
+            lambda: reconfigure_container(_host(), 100, {"balloon": "1024"}),
+            lambda: resize_container_disk(_host(), 100, "scsi0", "20G"),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation):
+                mock_run.reset_mock()
+                mock_run.return_value = _completed(stderr="permission denied", returncode=1)
+                with self.assertRaisesRegex(ProxmoxManageError, "pct status 100 failed"):
+                    operation()
+                mock_run.assert_called_once()
+                self.assertEqual(mock_run.call_args.args[3], "pct status 100")
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_vm_update_failure_does_not_retry_another_tool(self, mock_run: MagicMock) -> None:
+        operations = (
+            (lambda: reconfigure_container(_host(), 100, {"balloon": "1024"}), "set"),
+            (lambda: resize_container_disk(_host(), 100, "scsi0", "20G"), "resize"),
+        )
+        for operation, action in operations:
+            with self.subTest(action=action):
+                mock_run.reset_mock()
+                mock_run.side_effect = [
+                    _completed(stderr="CT 100 does not exist", returncode=2),
+                    _completed("status: stopped\n"),
+                    _completed(stderr="volume not found", returncode=1),
+                ]
+                with self.assertRaisesRegex(ProxmoxManageError, f"qm {action} 100"):
+                    operation()
+                self.assertEqual(mock_run.call_count, 3)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_resize_dry_run_does_not_probe_guest_status(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _completed()
+        resize_container_disk(_host(), 100, "scsi0", "20G", dry_run=True)
+        mock_run.assert_called_once()
+        self.assertTrue(mock_run.call_args.kwargs["dry_run"])
+        self.assertEqual(mock_run.call_args.args[3], "pct resize 100 scsi0 20G")
+        self.assertIn("qm resize 100 scsi0 20G", mock_run.call_args.kwargs["log_cmd"])
 
 
 class TestParseListsnapshot(unittest.TestCase):

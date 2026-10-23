@@ -261,6 +261,9 @@ class TestRenderUserData(unittest.TestCase):
     def test_includes_root_key(self):
         out = _render_user_data(username="root", pubkey_contents="ssh-ed25519 AAAA test")
         self.assertIn("- name: root", out)
+        self.assertEqual(out.count("lock_passwd: true"), 1)
+        self.assertNotIn("lock_passwd: false", out)
+        self.assertIn("ssh_pwauth: false", out)
         self.assertIn("ssh-ed25519 AAAA test", out)
         self.assertIn("packages:", out)
         self.assertIn("qemu-guest-agent", out)
@@ -272,6 +275,9 @@ class TestRenderUserData(unittest.TestCase):
         out = _render_user_data(username="alice", pubkey_contents="ssh-ed25519 KEY")
         self.assertIn("- name: alice", out)
         self.assertIn("groups: sudo", out)
+        self.assertEqual(out.count("lock_passwd: true"), 2)
+        self.assertNotIn("lock_passwd: false", out)
+        self.assertIn("ssh_pwauth: false", out)
         self.assertNotIn("NOPASSWD:ALL", out)
         self.assertNotIn("/etc/sudoers.d/basaltwater-alice", out)
         # SSH key is added under both root and alice.
