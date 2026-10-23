@@ -112,7 +112,7 @@ class T3ReadinessTests(unittest.TestCase):
             self.assertIsNone(agent_cli._t3_active_binary(home))
 
     def inspect(self, *, gh=True, endpoint=True, fix=False, native=True, standalone=False,
-                wait_for_startup=False):
+                wait_for_startup=False, initial_service_status=0):
         with ExitStack() as stack:
             home = stack.enter_context(tempfile.TemporaryDirectory())
             for name in ('basaltwater-t3code-pairing-provider', 't3code-pair'):
@@ -121,6 +121,7 @@ class T3ReadinessTests(unittest.TestCase):
                 path.write_text('#!/bin/sh\n')
                 path.chmod(0o700)
             commands = []
+            active_checks = 0
             binary = '/fake/t3'
             if standalone:
                 runtime = Path(home, '.t3', 'runtime', 'versions', '0.0.45')
@@ -128,7 +129,13 @@ class T3ReadinessTests(unittest.TestCase):
                 binary = str(runtime / 't3')
 
             def run(command, **kwargs):
+                nonlocal active_checks
                 commands.append(command)
+                if command[:3] == ['systemctl', '--user', 'is-active']:
+                    active_checks += 1
+                    if active_checks == 1:
+                        return subprocess.CompletedProcess(command, initial_service_status,
+                                                           'deactivating\n' if initial_service_status else 'active\n', '')
                 if command[0] == 'systemctl':
                     return subprocess.CompletedProcess(command, 0, 'enabled\n', '')
                 return subprocess.CompletedProcess(command, 1, '', '')
@@ -194,6 +201,11 @@ class T3ReadinessTests(unittest.TestCase):
                              for command in commands))
 
     def test_failed_stop_prevents_native_repair_and_reports_diagnostic(self):
+        for initial_service_status in (0, 3):
+            with self.subTest(initial_service_status=initial_service_status):
+                self.assert_failed_stop_blocks_repair(initial_service_status)
+
+    def assert_failed_stop_blocks_repair(self, initial_service_status):
         for outcome, diagnostic in (
             (subprocess.CompletedProcess([], 1, '', 'stop denied'), 'stop denied'),
             (subprocess.CompletedProcess([], 2, 'stop refused', ''), 'stop refused'),
@@ -206,7 +218,8 @@ class T3ReadinessTests(unittest.TestCase):
                                  **({'side_effect': outcome} if isinstance(outcome, Exception)
                                     else {'return_value': outcome})) as stop, \
                     patch.object(agent_cli, '_repair_t3_native_runtime', return_value=True) as repair:
-                result, _, commands = self.inspect(fix=True, native=False, endpoint=True)
+                result, _, commands = self.inspect(fix=True, native=False, endpoint=True,
+                                                   initial_service_status=initial_service_status)
             repair.assert_not_called()
             self.assertFalse(result['healthy'])
             self.assertFalse(result['checks']['native_runtime'])
@@ -217,19 +230,23 @@ class T3ReadinessTests(unittest.TestCase):
             if isinstance(outcome, subprocess.TimeoutExpired):
                 self.assertTrue(any('still stopping' in warning and 'busy' in warning
                                     for warning in result['warnings']))
+            stop.assert_called_once()
             self.assertEqual(stop.call_args.args[0], ['systemctl', '--user', 'stop', 't3code.service'])
             self.assertEqual(stop.call_args.kwargs['timeout'], 30)
 
     def test_successful_stop_allows_native_repair_and_one_restart(self):
-        with patch.object(agent_cli.subprocess, 'run', return_value=
-                          subprocess.CompletedProcess([], 0, '', '')) as stop, \
-                patch.object(agent_cli, '_repair_t3_native_runtime', return_value=True) as repair:
-            result, _, commands = self.inspect(fix=True, native=False)
-        stop.assert_called_once()
-        repair.assert_called_once()
-        self.assertTrue(result['healthy'])
-        self.assertIn('rebuilt T3 Code native runtime', result['fixes'])
-        self.assertEqual(sum('restart' in command for command in commands), 1)
+        for initial_service_status in (0, 3):
+            with self.subTest(initial_service_status=initial_service_status), \
+                    patch.object(agent_cli.subprocess, 'run', return_value=
+                                 subprocess.CompletedProcess([], 0, '', '')) as stop, \
+                    patch.object(agent_cli, '_repair_t3_native_runtime', return_value=True) as repair:
+                result, _, commands = self.inspect(fix=True, native=False,
+                                                   initial_service_status=initial_service_status)
+            stop.assert_called_once()
+            repair.assert_called_once()
+            self.assertTrue(result['healthy'])
+            self.assertIn('rebuilt T3 Code native runtime', result['fixes'])
+            self.assertEqual(sum('restart' in command for command in commands), 1)
 
     def test_wait_flag_reaches_local_inspection_without_repairs(self):
         result, _, _ = self.inspect()
