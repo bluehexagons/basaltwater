@@ -158,7 +158,7 @@ option below is available to that agent session.
 
 | Option | Useful for | Origin and limits |
 | --- | --- | --- |
-| T3 collaborative preview | Live participation, shared evidence, connected-client routing and trust | Connected client; depends on its automation host |
+| T3 collaborative preview | Live participation, shared evidence, and environment-local automation | Server browser preferred in 0.1.2; desktop-hosted tabs use the desktop's routes and trust |
 | Managed Playwright | Repeatable DOM, console, network, fixture, canvas/WebGL, and VM loopback checks | VM; isolated profile and session-exposed MCP tools |
 | Existing project Playwright tests | Project-specific browser assertions with its documented test command | Selected project runtime; existing dependencies and engine payload required |
 | Configured desktop browser | Native dialogs, desktop integration, visual interaction, or available fallback | VM desktop; separate profile, scoped input, and active control permission |
@@ -166,19 +166,21 @@ option below is available to that agent session.
 T3 sessions may require collaborative preview first: call `preview_status`, then
 `preview_open` when no automation-capable tab is attached. Under that policy,
 switch when preview tools are absent, the user explicitly requests another
-browser, or open returns an explicit unsupported/unavailable host error,
-including a disconnected or missing client. A failed navigation, timeout,
-closed pane, or TLS error alone does not establish host unavailability; inspect
-actionable errors and retry with corrected arguments. A status without a tab
-can be repaired by opening once and must not be treated as a disconnect.
+browser, or open returns an explicit unsupported/unavailable host error.
+Inspect actionable errors and retry with
+corrected arguments. If the active policy permits fallback after two failures
+at the same step, retain the raw error and switch to a configured alternative.
+A status without a tab can be repaired by opening once and must not be treated
+as a disconnect.
 
 ### Automatic continuation after client disconnection
 
 Once fallback is permitted, continue automatically with a ready alternative
 within the authorized browser test. Do not wait for the user to reopen T3,
 restart its service to restore automation, or request approval merely to select
-another configured browser. If session policy does not require T3 probes and
-the client is known to be closed, select the appropriate alternative directly.
+another configured browser. The server browser can remain available after a
+viewing client closes; check its tools before treating client disconnection as
+browser unavailability.
 Playwright and VM desktop browsers do not depend on an open T3 application.
 
 Discover browser contexts with `basaltw agent manifest REPOSITORY --capability
@@ -214,11 +216,11 @@ work, report that specific gap and continue build, unit, and HTTP checks.
 
 ## File import, download, and reopen
 
-Browser filesystem access follows the browser's origin. Managed Playwright can
+Browser filesystem access follows the selected runtime. Managed Playwright can
 upload fixture paths from the VM through `browser_file_upload` or
-`browser_drop`; a VM path is not automatically available to the connected
-client's collaborative preview. When session policy permits both surfaces,
-use the surface with access to the fixture for file round trips and the shared
+`browser_drop`; T3's server browser uses the server filesystem, while a VM path
+is not automatically available to a desktop-hosted tab. When session policy
+permits both surfaces, use the surface with access to the fixture for file round trips and the shared
 preview for client-visible review. Keep source fixtures disposable and use the
 application's normal import, edit, and save controls.
 
@@ -326,43 +328,31 @@ continuous screenshots before attributing capture overhead to the game.
 
 ## Collaborative preview and private networks
 
-T3 Code's collaborative preview and the managed Playwright fallback do not use
-the same network origin. The collaborative browser runs in the connected
-client's context, while managed Playwright runs on the agent VM. Consequently,
-an internal `basaltwater-web` URL such as `https://192.168.x.x:8443/...` can pass
-`curl` and `basaltwater-web doctor` on the VM yet fail in the collaborative preview
-when the client lacks a route to that LAN, is outside the gateway's allowed
-source ranges, or has not enrolled the local CA.
+T3 Code 0.1.2 prefers a server-hosted browser. Its requests use the environment
+host's network and certificate trust; clients view the streamed tab. A
+desktop-hosted tab instead uses that desktop's routes and trust. Managed
+Playwright uses the agent VM. Identify the runtime from the active tool/host
+metadata or a controlled loopback check before attributing a failure to the
+client. A disconnected viewer does not establish that the server browser failed.
 
-For a local environment hosted on the preview client's own machine, use the
-native target with the retained tab ID:
+For a development server in the current environment, prefer the native target
+with the retained tab ID:
 
 ```json
 {"tabId":"TAB_ID","target":{"kind":"environment-port","port":5173,"path":"/"}}
 ```
 
 Pass exactly one of `url` or `target`. The target defaults to HTTP and accepts
-`protocol: "https"` when the development endpoint uses TLS. A private remote
-environment can use this target only when the service is already reachable at
-that environment's connection host and port. T3 v0.1.0 rejects public relay
-hosts with an authenticated-preview-gateway requirement; the target does not
-add a relay tunnel. Keep a remote loopback development server on loopback and
-use Basaltwater's existing HTTPS forward rather than broadening its binding.
-The pinned upstream resolver and its tests define these boundaries; they do
-not establish live client reachability. See the
-[resolver](https://github.com/pingdotgg/t3code/blob/v0.1.0/apps/web/src/browser/browserTargetResolver.ts).
+`protocol: "https"` for TLS. The server browser resolves `environment-port`
+directly to `localhost:PORT`, so VM loopback needs no gateway forward. See the
+[server resolver and preferred-host registration](https://github.com/pingdotgg/t3code/blob/v0.1.2/apps/server/src/preview/ServerBrowser.ts).
+Desktop-hosted tabs use the client resolver, which rewrites the environment's
+connection host and may reject public relay targets; it does not tunnel to VM
+loopback. See the
+[desktop resolver](https://github.com/pingdotgg/t3code/blob/v0.1.2/apps/web/src/browser/browserTargetResolver.ts).
 
-An `environment-port` preview target is a host rewrite, not a tunnel from the
-connected client to VM loopback. T3 maps the requested port onto the host in
-the environment connection. If that connection is represented by localhost,
-the collaborative browser still requests its own localhost; if it is
-represented by a private VM address, a server bound only to VM loopback is not
-listening on that address. A healthy loopback Vite server can therefore remain
-unreachable through both `environment-port` and a direct loopback URL. Treat a
-failed navigation that leaves the tab at `about:blank` with no network request
-as a client/VM routing boundary after verifying the VM endpoint.
-
-Resolve a VM development port before navigating in T3:
+When a desktop browser needs a reachable URL for a VM loopback service, resolve
+the existing HTTPS route:
 
 ```bash
 basaltwater-web preview resolve --port 8080 --json
@@ -378,17 +368,16 @@ Use `--host ::1` for IPv6 or `--profile godot` for cross-origin isolation.
 See [preview resolution](../services/internal-web.md#forward-an-existing-loopback-service).
 VM-side success does not verify the client's network or certificate trust.
 
-Collaborative preview is an opportunistic test surface. During normal agent
-work, T3 may be minimized, its preview pane may be closed, or no preview
-automation host may be attached. These are expected coverage states, not
-application-health failures and not reasons to pause unrelated implementation
-or non-browser verification.
+An internal gateway URL can pass VM checks yet fail on a desktop with no LAN
+route, an excluded source address, or missing CA trust. Attribute that boundary
+only after establishing the browser host. Keep development servers on loopback
+and preserve the saved access policy.
 
 When the task selects collaborative preview, agents should call preview status
 first and open a preview once when no automation-capable tab is attached. A tab
-with `visible: false` may still
-navigate and accept input, but a minimized T3 window can make snapshots or
-recordings fail. Attempt one snapshot after navigation. If capture fails or
+with `visible: false` has no active viewer; server-browser navigation, input,
+and capture can still work. Desktop-hosted capture can depend on the client
+window. Attempt one snapshot after navigation. If capture fails or
 times out while the tab remains available and invisible, do not repeatedly
 retry or diagnose the application, WebGL, TLS, or network from that result.
 Use the healthy VM-local fallback when session policy permits it and its network origin is
@@ -403,8 +392,10 @@ the current agent session has no selected tab. Open once, retain the returned
 tab ID, and use it explicitly after an agent-session boundary. Do not describe
 that state as a detached or unavailable preview.
 
-Once a visible tab is attached, use a snapshot-first workflow. Snapshot output
-provides visible text, accessibility data, semantic locators, console and
+Once a tab is attached, use a snapshot-first workflow. Server hosts list every
+tab in the thread, including tabs opened by the user. Read the requested tab
+by `tabId`; act on your own or an unclaimed tab only while no human controls it.
+Snapshot output provides visible text, accessibility data, semantic locators, console and
 network diagnostics, a screenshot, and recent action history. Prefer role/name
 locators from that output. Treat a successful type, press, click, or scroll
 response as proof that T3 accepted the helper, not that the page received an
@@ -453,8 +444,9 @@ constructed as `running`.
 When the response itself has returned, that self-entry is expected; use prior
 completed actions and the returned page state to assess success.
 
-A narrower failure is possible when `preview_open` returns a usable background
-tab but the desktop application never mounts a sidebar or floating preview:
+A narrower desktop-hosted failure is possible when `preview_open` returns a
+usable background tab but the desktop application never mounts a sidebar or
+floating preview:
 status remains `visible: false`, lightweight DOM operations can succeed, and
 snapshot capture fails or times out. This is stale T3 preview-presentation
 state, not proof of an application, route, certificate, or VM browser failure.
@@ -486,11 +478,11 @@ snapshot and network error. Use the observed failure to choose the next step:
 | Observation | Next step |
 | --- | --- |
 | No selected automation tab | Call open once and retain its tab ID; status alone does not prove host unavailability. |
-| Open explicitly reports a disconnected/unavailable host, or preview tools are absent | Automatically select a ready configured alternative within session policy; report only the missing client-origin coverage. |
+| Open explicitly reports a disconnected/unavailable host, or preview tools are absent | Automatically select a ready configured alternative within session policy; report the missing coverage for that browser host. |
 | Unavailable capture with an attached tab | Follow bounded capture diagnostics; use an alternative when session policy permits it. |
-| Explicit `ERR_CERT_AUTHORITY_INVALID` | Offer `basaltwater-web ca` and [Client CA trust](../services/client-ca-trust.md) only when the user wants client access restored. Otherwise skip that client-origin check. |
-| Timeout, refused connection, or unreachable address | Check client routing and the gateway's source policy; CA enrollment will not repair connectivity. |
-| Background DOM works but no visible surface or snapshot | Follow the bounded stale-preview recovery above. |
+| Explicit `ERR_CERT_AUTHORITY_INVALID` | Inspect trust on the browser host. For a desktop-hosted tab, offer `basaltwater-web ca` and [Client CA trust](../services/client-ca-trust.md) when client access is wanted. A server-browser error needs host-side trust diagnosis. |
+| Timeout, refused connection, or unreachable address | Check routing from the browser host and any gateway source policy; CA enrollment will not repair connectivity. |
+| Desktop-hosted background DOM works but no visible surface or snapshot | Follow the bounded stale-preview recovery above. |
 
 Before using provisioned Playwright as the fallback, run
 `basaltw agent doctor --capability browser --json`. If the capability is

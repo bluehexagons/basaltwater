@@ -43,8 +43,9 @@ Read only the route needed:
   must not create or release holds.
 - **Browser:** the installed `basaltwater-browser-testing` or
   `basaltwater-t3-preview-testing` skill. Explicit
-  `net::ERR_CERT_AUTHORITY_INVALID` identifies client trust; enrollment is
-  optional. Keep TLS intact and use the browser skill's recovery procedure.
+  `net::ERR_CERT_AUTHORITY_INVALID` identifies the browser host's trust;
+  distinguish server and desktop runtimes before offering optional client CA
+  enrollment. Keep TLS intact and use the browser skill's recovery procedure.
 
 **No project** folders under `~/.t3/scratch` are retained user files, not cache.
 Use a real project/worktree for repository changes; do not move T3's data or

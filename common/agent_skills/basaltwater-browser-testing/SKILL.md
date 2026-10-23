@@ -1,6 +1,6 @@
 ---
 name: basaltwater-browser-testing
-description: Choose a configured browser for web testing and continue after T3 client disconnection.
+description: Choose a configured browser for web testing, including T3 server or desktop preview, and continue when a browser is unavailable.
 metadata:
   managed-by: basaltwater
 ---
@@ -12,7 +12,7 @@ Choose a ready option that covers the task under the session's browser policy.
 
 | Need | Read only the matching workflow |
 | --- | --- |
-| Live collaboration or connected-client routing/trust | [T3 preview](references/collaborative-preview.md) |
+| Live collaboration or server-side browser automation | [T3 preview](references/collaborative-preview.md) |
 | Repeatable DOM, console, network, fixture, or VM loopback checks | [Playwright](references/playwright.md) |
 | Canvas/WebGL input, held keys, or gameplay timing | [Canvas testing](references/canvas.md), alongside the selected browser |
 | Native dialogs, desktop integration, or an available visual alternative | [Desktop browser](references/desktop-browser.md), then its installed desktop skill |
@@ -21,7 +21,11 @@ When T3-first policy applies, call `preview_status`, then `preview_open` once
 if no automation-capable tab is attached. Status without a tab is not proof of
 disconnection. Use alternatives when tools are absent, the user requests them,
 or open explicitly reports an unsupported/unavailable host. Inspect actionable
-errors; a navigation, timeout, pane, or TLS failure alone is not host unavailability.
+errors and follow the active session's additional fallback rules, including two
+failures on the same step when specified; quote the raw error when switching.
+T3 v0.1.2 prefers a server browser that reaches server loopback directly and can
+continue after client disconnection. Diagnose routes and trust on the selected
+browser host before requesting a gateway forward or client CA enrollment.
 
 Once policy permits fallback, continue automatically with a ready configured
 alternative. Do not wait for the user to reopen T3 or restart its service.

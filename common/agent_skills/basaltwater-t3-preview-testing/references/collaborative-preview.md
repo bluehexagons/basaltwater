@@ -1,8 +1,10 @@
 # T3 collaborative preview testing
 
-This VM has T3 Code preview guidance but no managed Playwright fallback. The
-preview depends on the connected T3 application remaining open and uses that
-client's routes and certificate trust.
+This VM has T3 Code preview guidance but no managed Playwright fallback. T3
+v0.1.2 prefers its server browser, which uses the server's routes and certificate
+trust and can automate without a viewing client. A desktop-hosted preview uses
+the desktop client's routes and trust instead. Identify the selected runtime
+before diagnosing connectivity or requesting client changes.
 
 This workflow requires preview tools exposed to the active agent session.
 Unattended panel prompts run outside the connected T3 thread and cannot borrow
@@ -12,20 +14,21 @@ an installed T3 service does not establish browser access.
 ## Preview availability
 
 Choose a browser that covers the task under the active session's policy. T3 is
-useful for live collaboration and connected-client routing or trust; a configured
+useful for live collaboration and server-side automation; a configured
 desktop browser covers native integration and visual interaction, and existing
 project Playwright tests cover repeatable automation. This skill does not imply
 that either alternative is installed.
-Under a preview-first policy, fallback requires absent preview tools, an explicit
+Under a preview-first policy, fallback is allowed for absent preview tools, an explicit
 user request for another browser, or an explicit unsupported/unavailable host
-error from `preview_open`, including a disconnected or missing client.
-Navigation, capture, timeout, and certificate failures alone do not establish
-host unavailability; inspect and correct actionable errors.
+error from `preview_open`. Follow any additional fallback rules in the active
+session, including a limit of two failures on the same step when specified;
+quote the raw error when switching. Inspect and correct actionable errors before
+classifying the host as unavailable.
 
 Call `preview_status` first. If no automation-capable tab is attached, call
 `preview_open` once. Do not repeatedly reopen or poll. A closed or minimized T3
-application is a normal coverage limitation, not evidence that the web
-application is unhealthy.
+application does not establish that the server browser is unavailable or that
+the web application is unhealthy.
 
 `available: true` with `tabId: null` means the automation host is reachable but
 this agent session has no current tab. Open once and retain the returned tab ID;
@@ -40,20 +43,23 @@ existing browser profiles. Alternatively use a project's existing Playwright
 dependencies and documented test command. Do not install Playwright ad hoc,
 bind a service to `0.0.0.0`, or widen firewall policy.
 
-If the client disconnects during a test, make one bounded status/open check,
-then choose an available alternative when policy permits. Inspect application
-state before retrying uncertain submissions. Do not copy cookies between
+If the client disconnects during a test, keep using an available server browser.
+If the automation host also becomes unavailable, make one bounded status/open
+check, then choose an available alternative when policy permits. Inspect
+application state before retrying uncertain submissions. Do not copy cookies between
 profiles or poll T3 before every subsequent action. Record browser, origin, and
 observed behavior; VM desktop checks do not verify the disconnected client's
 trust or routes. If no usable browser remains, complete build, unit, service,
 loopback HTTP, and gateway checks and report only the missing browser coverage.
 
-A hidden tab may still navigate while raster capture is unavailable. Attempt
-one snapshot after navigation. If it fails while the tab remains hidden, stop
-retrying and choose an alternative when policy permits, or continue non-browser
-checks. Opening a tab or seeing a URL in
-status does not prove the page rendered; confirm visible content or a snapshot.
+A server-browser tab can navigate, accept input, and capture snapshots without a
+visible preview surface. A hidden desktop-hosted tab may lack raster capture;
+attempt a snapshot and apply the session's bounded retry rules on failure.
+Opening a tab or seeing a URL in status does not prove the page rendered;
+confirm visible content or a snapshot.
 
+Retain the returned tab ID on every call. Read a human-controlled tab only with
+snapshot/wait tools, or open your own tab; operate it only while unclaimed.
 Snapshot before interaction and prefer its semantic role/name locators. A
 successful action response confirms the helper was accepted, not that the page
 received an event or changed, so verify the expected state with a bounded wait,
@@ -108,8 +114,9 @@ data. The current snapshot can appear as `running` in its own action timeline
 while the response is assembled; that self-entry is not a hung action after the
 snapshot has returned.
 
-If `preview_open` reports success but the user sees no preview surface, status
-stays `visible: false`, and snapshot capture fails, reuse the same tab for at
+For a desktop-hosted preview, if `preview_open` reports success but the user sees
+no preview surface, status stays `visible: false`, and snapshot capture fails,
+reuse the same tab for at
 most one confirmation. A read-only page check may show that a background
 renderer works even though T3 did not mount its UI. Treat that combination as
 stale preview-presentation state rather than an application, route, or TLS
@@ -130,16 +137,18 @@ policy permits; a full VM reboot is not the first recovery step.
 
 ## Network origin
 
-The preview runs in the connected client's context, not on the VM. An
-`environment-port` target rewrites the requested port onto the environment
-connection host; it does not tunnel to VM loopback. If the VM endpoint is
-healthy but preview navigation remains at `about:blank` with no network entry,
-report the client/VM routing boundary. For a local environment on the preview
-client's machine, navigate with `target: {kind: "environment-port", port: PORT}`
-and the retained tab ID; add `path` or `protocol` as needed. Remote private hosts
-require an already reachable service; public relay hosts reject this target
-until T3's authenticated preview gateway exists. Resolve a remote VM's loopback
-development ports first:
+With the preferred server browser, `environment-port` resolves directly to
+`localhost:PORT` on the T3 server. Navigate with
+`target: {kind: "environment-port", port: PORT}` and the retained tab ID; add
+`path` or `protocol` as needed. No gateway forward is needed for VM-loopback
+automation in this runtime.
+
+With a desktop-hosted preview, the same target rewrites the requested port onto
+the environment connection host; it does not tunnel to VM loopback. A local
+environment on the desktop client's machine is reachable directly. Remote
+private hosts require an already reachable service, and public relay hosts
+reject this target until T3's authenticated preview gateway exists. When the
+desktop browser needs a remote VM's loopback development port, resolve it first:
 
 ```bash
 basaltwater-web preview resolve --port PORT --json
@@ -149,9 +158,9 @@ Navigate using the returned `navigation.url` and retained tab ID. For
 `forward_missing`, execute the exact returned `command` when client-visible
 preview is in the requested scope, then resolve again. Use `--host ::1` for
 IPv6 or `--profile godot` for threaded Godot. The resolver is read-only and
-reports failures by `component`, `issue`, and `remediation`. If the CLI is
-missing, report the unprovisioned gateway; a VM-side pass does not verify client
-reachability or trust.
+reports failures by `component`, `issue`, and `remediation`. If this desktop
+route needs the CLI and it is missing, report the unprovisioned gateway. A
+server-browser pass does not verify a desktop client's reachability or trust.
 
 Use the managed `basaltwater-web-gateway` only when client-visible access is in
 scope. Do not rebind the development server or weaken access policy solely to
@@ -164,15 +173,16 @@ response data.
 
 ## Certificate errors are not blockers
 
-Only an explicit preview network error of
-`net::ERR_CERT_AUTHORITY_INVALID` establishes a client trust problem. Do not
-require the user to trust the VM CA. Skip the affected preview-only operation,
+An explicit preview network error of `net::ERR_CERT_AUTHORITY_INVALID` identifies
+a trust problem on the selected browser host. Check whether that host is the
+server or desktop before choosing a repair. Do not require client CA enrollment
+for a server-browser error. Skip the affected preview-only operation,
 continue server and HTTPS checks from the VM without bypassing verification,
 and report the browser coverage gap. Never use `curl -k`, ignore HTTPS errors,
 or disable TLS.
 
-For a managed `basaltwater-web` URL, if the user wants to restore collaborative
-preview access, run:
+For a desktop-hosted preview of a managed `basaltwater-web` URL, if the user wants
+to restore client trust, run:
 
 ```bash
 basaltwater-web ca
@@ -191,5 +201,5 @@ preview status, and retry the existing tab. If enrollment is declined or the
 guide is unavailable, retain the coverage gap and continue the other checks.
 
 For a certificate error on any other HTTPS origin, use that origin's documented
-trust process or leave the client-origin check skipped; `basaltwater-web ca` does not
-repair unrelated certificates.
+trust process on the browser host or leave the affected check skipped;
+`basaltwater-web ca` does not repair unrelated certificates.

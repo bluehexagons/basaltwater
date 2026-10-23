@@ -1,6 +1,6 @@
 ---
 name: basaltwater-t3-preview-testing
-description: Test through T3 preview and use configured alternatives after client disconnection; managed Playwright is not provisioned.
+description: Test through T3 server or desktop preview and use configured alternatives when unavailable; managed Playwright is not provisioned.
 metadata:
   managed-by: basaltwater
 ---
@@ -14,10 +14,14 @@ When T3-first policy applies, call `preview_status`, then `preview_open` once
 if no capable tab is attached. A status without a tab is not a disconnect.
 Fallback is allowed for absent tools, an explicit alternative-browser request,
 or an explicit unsupported/unavailable host from open. Correct actionable errors;
-navigation, timeout, pane, and TLS failures alone do not establish host absence.
+follow the active session's additional fallback rules, including two failures
+on the same step when specified, and quote the raw error when switching.
 
 Read [preview interaction, networking, and evidence](references/collaborative-preview.md)
 before T3 navigation or input. Retain the tab ID and verify resulting state.
+T3 v0.1.2 prefers a server browser that reaches server loopback directly and can
+continue after client disconnection. Diagnose routes and trust on the selected
+browser host before requesting a gateway forward or client CA enrollment.
 
 Once policy permits fallback, choose a ready configured desktop browser or
 existing project Playwright tests automatically. Read the installed desktop skill

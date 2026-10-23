@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.1. Terminal agents do not
+only the section needed. The baseline is stable 0.1.2. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -88,5 +88,5 @@ When exposed, PR guide tools supply an asynchronous reading aid. Read the
 finished guide and its staleness before citing it; retain actual diff/check
 evidence and unresolved findings.
 
-Upstream: [0.1.1 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
-and [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.1/docs/orchestration-v2/orchestrator-mcp-server.md).
+Upstream: [0.1.2 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.2)
+and [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.2/docs/orchestration-v2/orchestrator-mcp-server.md).

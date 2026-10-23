@@ -39,11 +39,14 @@ Generate a one-time URL from the control system:
 basaltw agent web pair vm.example agent
 ```
 
-T3 Code sessions can expose collaborative preview tools through the client.
+T3 Code sessions can expose collaborative preview tools backed by a server or
+desktop browser.
 In those sessions, use preview first: status, then open if no capable tab is
-attached. Fallback requires absent preview tools, an explicit user request for
-another browser, or an explicit unsupported/unavailable response from open;
-navigation and certificate failures alone do not permit switching browsers.
+attached. Fallback is allowed for absent preview tools, an explicit user request
+for another browser, or an explicit unsupported/unavailable response from open.
+Follow the active session's additional bounded retry and fallback rules for
+navigation, timeout, and certificate failures, including two failures on the same
+step when specified; quote the raw error when switching.
 For independent SSH or terminal sessions, request VM-local Chromium explicitly:
 
 ```bash
@@ -51,16 +54,20 @@ basaltw setup agent_code_vm vm.example agent \
   --browser-automation playwright
 ```
 
-The collaborative preview uses the connected client's routes and certificate
-store. Use the [browser workflow](browser-automation.md#collaborative-preview-and-private-networks)
+Stable 0.1.2 prefers its server browser, which uses the server's routes and
+certificate trust and can keep working after a viewing client disconnects.
+Desktop-hosted tabs use the desktop's network and trust instead. Use the
+[browser workflow](browser-automation.md#collaborative-preview-and-private-networks)
 for tab attachment, verified input, recordings, and bounded recovery. If only
 client-origin testing fails, continue with healthy VM-local Playwright when
 session policy permits fallback, or
-non-browser checks. For an explicit `ERR_CERT_AUTHORITY_INVALID`, optional
+non-browser checks. For a desktop-browser `ERR_CERT_AUTHORITY_INVALID`, optional
 [client CA enrollment](../services/client-ca-trust.md) can restore private-origin access;
 a timeout or unreachable address needs network diagnosis. Never bypass TLS.
 
-Before navigating to a remote VM's loopback development port, run
+For server-hosted preview, use `target: {kind: "environment-port", port: PORT}`
+to reach a VM loopback development port directly. When a desktop-hosted browser
+needs a reachable VM URL, run
 `basaltwater-web preview resolve --port PORT --json`. It returns a verified
 owned gateway URL for `preview_navigate`, or an exact forward creation command
 with actionable failure fields. See [Internal HTTPS previews](../services/internal-web.md#forward-an-existing-loopback-service).
@@ -98,11 +105,11 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-10-21**, GitHub's latest stable release and npm's `t3@latest`
-are **0.1.1**, released October 21. It retains the stable Orchestrator V2
+As checked on **2026-10-23**, GitHub's latest stable release and npm's `t3@latest`
+are **0.1.2**, released October 22. It retains the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.1)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.2)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's minimum provider versions are Codex **0.159+**, Claude Code
@@ -111,6 +118,12 @@ The release's minimum provider versions are Codex **0.159+**, Claude Code
 binary, version, and readiness. Setup manages only selected Basaltwater
 providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
 do not imply that Basaltwater installed, authenticated, or qualified them.
+
+The 0.1.2 integration review verified the unchanged protocol/runtime layout and
+exercised the published Linux x64 archive in an isolated home: managed wrapper
+selection, embedded native-module loading, fresh HTTP startup, and issuance of
+all 16 administrative pairing scopes. These checks do not qualify provider
+turns, desktop/mobile clients, Connect, or the complete live matrix below.
 
 OpenCode 2 uses the separate `@opencode/cli` package and converts OpenCode's
 shared database on first run. Do not install/run 1.x and 2.x side by side or
@@ -159,7 +172,7 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.1 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.2 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Workspace/context | Child worktree starts from committed local base, project setup completes, uncommitted edits stay in parent, explicit launch/handoff binding works, context fork/merge-back leaves Git integration explicit, and cleanup preserves unrelated work. |
 | Queues and limits | Queue order and attachments survive restart, queue awaits user resume, steering reaches the intended turn, auto-continuation is controlled, and usage-limit/reset recovery does not duplicate edits. |
@@ -497,6 +510,14 @@ managed authentication policy and upstream assets.
 ## Git and provider behavior
 
 ### Current provider and thread workflows
+
+Stable 0.1.2 adds `t3 thread` commands for scripts on the environment host.
+`t3 thread list --json` and `t3 thread show THREAD_ID` inspect existing work;
+`start` creates an ordinary thread and `send` queues a message without
+interrupting a running turn. `--wait` exits 2 when an answer is needed in the
+app. Use native `delegate_task` for child work inside a T3 session and keep
+top-level thread creation within the user's requested scope. See the
+[upstream host CLI guide](https://github.com/pingdotgg/t3code/blob/v0.1.2/docs/user/outside-agents.md#scripts-on-the-host).
 
 After installing or updating Basaltwater's managed skills, use **Restart agent
 session** from T3's command palette (`Ctrl+K` on Linux/Windows, `Cmd+K` on
