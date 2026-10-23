@@ -139,6 +139,15 @@ def build_web_panel_manifest(
             }
         )
 
+    if config.system_type == "server_proxmox":
+        services.append(
+            {
+                "label": "Proxmox VE",
+                "url": _http_url(host, 8006, "https"),
+                "description": "Native Proxmox host and guest management",
+            }
+        )
+
     if config.gogs:
         domain, port = _split_service_spec(str(config.gogs[0]), 3000)
         if domain or config.effective_gogs_sources():
@@ -255,6 +264,7 @@ def render_web_panel_nginx(
     notification_ingest: bool = False,
     guacamole: bool = False,
     github_runner_registration: bool = False,
+    ca_https_download: bool = False,
 ) -> str:
     """Render the Basic-Auth reverse proxy for the Unix-socket app."""
 
@@ -275,9 +285,21 @@ def render_web_panel_nginx(
 """
     server_names = " ".join(_url_host(identity) for identity in identities)
     ca_download = ""
+    ca_tls_location = ""
     if ssl:
         from common.godot_web_steps import GODOT_WEB_CA_DOWNLOAD
 
+        if ca_https_download:
+            ca_tls_location = f"""
+    location = /basaltwater-ca.crt {{
+        auth_basic off;
+        limit_except GET {{ deny all; }}
+        alias {GODOT_WEB_CA_DOWNLOAD};
+        default_type application/x-x509-ca-cert;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }}
+"""
         ca_download = f"""
 # Public certificate only: no panel, credentials, redirects, or site content.
 server {{
@@ -398,6 +420,7 @@ server {{
 {ingest_location}
 {desktop_location}
 {registration_location}
+{ca_tls_location}
 
     location / {{
         limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
@@ -770,6 +793,11 @@ def _configure_service(config: SetupConfig, home: str) -> bool:
     service_home = home if service_user == config.username else "/nonexistent"
     service_account = pwd.getpwnam(service_user)
     web_account = pwd.getpwnam("www-data")
+    isolation = ""
+    if config.system_type == "server_proxmox":
+        from common.proxmox_web_panel_steps import PROXMOX_PANEL_INACCESSIBLE_PATHS
+
+        isolation = PROXMOX_PANEL_INACCESSIBLE_PATHS + "\n"
     content = f"""{_SERVICE_MARKER}
 [Unit]
 Description=basaltwater web panel
@@ -794,7 +822,7 @@ NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectControlGroups=true
+{isolation}ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 LockPersonality=true
@@ -1146,7 +1174,17 @@ def configure_web_panel(config: SetupConfig) -> None:
         print(f"  [DRY-RUN] Would {action} the web panel")
         return
     if config.disable_web_panel:
+        if config.system_type == "server_proxmox":
+            from common.proxmox_web_panel_steps import preflight_proxmox_panel_nginx
+
+            preflight_proxmox_panel_nginx()
         remove_web_panel()
+        if config.system_type == "server_proxmox":
+            from common.proxmox_web_panel_steps import remove_proxmox_panel_nginx
+            from security.proxmox_web_panel_firewall import remove_proxmox_web_panel_firewall
+
+            remove_proxmox_web_panel_firewall()
+            remove_proxmox_panel_nginx()
         return
     if config.web_panel_port is None:
         return
@@ -1158,12 +1196,21 @@ def configure_web_panel(config: SetupConfig) -> None:
 
     from common.godot_web_steps import (
         configure_internal_web_host,
+        configure_internal_web_tls,
         discover_local_web_identities,
         identities_for_config,
         validate_web_identities,
     )
 
+    if config.system_type == "server_proxmox":
+        from common.proxmox_web_panel_steps import preflight_proxmox_panel_nginx
+
+        preflight_proxmox_panel_nginx()
     _ensure_nginx()
+    if config.system_type == "server_proxmox":
+        from common.proxmox_web_panel_steps import configure_proxmox_panel_nginx
+
+        configure_proxmox_panel_nginx()
     discovered = discover_local_web_identities()
     identities = validate_web_identities(
         [*identities_for_config(config.host, config.system_hostname), *discovered]
@@ -1171,13 +1218,16 @@ def configure_web_panel(config: SetupConfig) -> None:
     cert_path = None
     key_path = None
     if config.enable_ssl:
-        _base_url, _local_ca, cert_path, key_path, _changed = configure_internal_web_host(
-            identities,
-            [config.username],
-            config.effective_access_sources(),
-            configure_static_site=True,
-            install_utility=True,
-        )
+        if config.system_type == "server_proxmox":
+            cert_path, key_path, _local_ca, _changed = configure_internal_web_tls(identities)
+        else:
+            _base_url, _local_ca, cert_path, key_path, _changed = configure_internal_web_host(
+                identities,
+                [config.username],
+                config.effective_access_sources(),
+                configure_static_site=True,
+                install_utility=True,
+            )
 
     auth_changed, previous_auth = _install_auth_file(config.username)
     try:
@@ -1188,6 +1238,8 @@ def configure_web_panel(config: SetupConfig) -> None:
         if ingest_enabled:
             _install_ingest_token(True, account.pw_gid)
         manifest = build_web_panel_manifest(config, identities)
+        if config.system_type == "server_proxmox" and config.enable_ssl:
+            manifest["certificate_trust"] = {"certificate": cert_path, "local_ca": _local_ca}
         os.makedirs(WEB_PANEL_CONFIG_DIR, mode=0o750, exist_ok=True)
         write_json_atomic(WEB_PANEL_MANIFEST, manifest, mode=0o644, sort_keys=True)
         _configure_audit_exporter(account.pw_gid)
@@ -1209,6 +1261,7 @@ def configure_web_panel(config: SetupConfig) -> None:
                 notification_ingest=ingest_enabled,
                 guacamole=config.guacamole is True,
                 github_runner_registration=config.system_type == GITHUB_RUNNER_PROFILE,
+                ca_https_download=config.system_type == "server_proxmox",
             )
         )
         if not ingest_enabled:
@@ -1230,7 +1283,13 @@ def configure_web_panel(config: SetupConfig) -> None:
         raise
     if auth_changed and not nginx_changed:
         run("systemctl reload nginx", check=True)
-    configure_nginx_auth_failure_ban("web-panel", WEB_PANEL_AUTH_FAILURE_LOG)
+    configure_nginx_auth_failure_ban(
+        "web-panel", WEB_PANEL_AUTH_FAILURE_LOG, port=config.web_panel_port
+    )
+    if config.system_type == "server_proxmox":
+        from security.proxmox_web_panel_firewall import configure_proxmox_web_panel_firewall
+
+        configure_proxmox_web_panel_firewall(config)
     scheme = "https" if config.enable_ssl else "http"
     host = _preferred_host(config, identities)
     print(

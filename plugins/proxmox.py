@@ -43,6 +43,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
     from common.proxmox_storage_steps import configure_proxmox_snippets_storage
     from common.steps import check_restart_required, configure_swap
     from common.setup_maintenance import run_setup_maintenance
+    from plugins.common import extend_web_panel_steps
     from security.steps import (
         configure_auto_restart,
         configure_auto_updates,
@@ -91,4 +92,5 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
                 configure_proxmox_management_firewall,
             ),
         )
+    extend_web_panel_steps(config, steps)
     return steps

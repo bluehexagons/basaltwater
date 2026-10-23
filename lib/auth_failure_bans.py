@@ -7,7 +7,7 @@ import re
 
 from lib.atomic_io import write_text_atomic
 from lib.remote_utils import install_package, run
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_network_port
 
 
 FAIL2BAN_FILTER_PATH = "/etc/fail2ban/filter.d/basaltwater-nginx-auth.conf"
@@ -15,7 +15,9 @@ FAIL2BAN_JAIL_DIR = "/etc/fail2ban/jail.d"
 _JAIL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
-def configure_nginx_auth_failure_ban(jail_name: str, log_path: str) -> None:
+def configure_nginx_auth_failure_ban(
+    jail_name: str, log_path: str, *, port: int | None = None
+) -> None:
     """Ban clients that repeatedly reach an Nginx-managed auth failure log."""
 
     if not _JAIL_NAME_RE.fullmatch(jail_name):
@@ -23,6 +25,8 @@ def configure_nginx_auth_failure_ban(jail_name: str, log_path: str) -> None:
     validate_filesystem_path(log_path, must_exist=False)
     if os.path.dirname(log_path) != "/var/log/nginx":
         raise ValueError("Authentication failure logs must be under /var/log/nginx")
+    if port is not None:
+        validate_network_port(port, "Authentication listener port")
     if not install_package(
         "Fail2ban",
         "fail2ban",
@@ -41,6 +45,7 @@ ignoreregex =
         mode=0o644,
     )
     jail_path = os.path.join(FAIL2BAN_JAIL_DIR, f"basaltwater-{jail_name}.local")
+    port_setting = f"port = {port}\n" if port is not None else ""
     write_text_atomic(
         jail_path,
         f"""# Managed by basaltwater
@@ -48,7 +53,7 @@ ignoreregex =
 enabled = true
 filter = basaltwater-nginx-auth
 logpath = {log_path}
-maxretry = 5
+{port_setting}maxretry = 5
 findtime = 10m
 bantime = 1h
 """,

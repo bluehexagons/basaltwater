@@ -989,8 +989,8 @@ def validate_web_panel_settings(config: Any) -> None:
         raise ValueError(
             "--web-panel PORT 8443 is reserved for the shared internal HTTPS host"
         )
-    if getattr(config, "system_type", None) == "server_proxmox":
-        raise ValueError("--web-panel is not supported on a Proxmox host")
+    if getattr(config, "system_type", None) == "server_proxmox" and port == 8006:
+        raise ValueError("--web-panel PORT 8006 is reserved for the Proxmox web UI")
     if notification_ingest is True and getattr(config, "enable_ssl", None) is not True:
         raise ValueError("--web-panel-notification-ingest requires --ssl")
     if password is not None:

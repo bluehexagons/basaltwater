@@ -62,6 +62,22 @@ class AuthFailureBanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "/var/log/nginx"):
             configure_nginx_auth_failure_ban("gogs", "/tmp/gogs.log")
 
+    def test_custom_port_protects_the_actual_listener(self) -> None:
+        with (
+            patch("lib.auth_failure_bans.install_package", return_value=True),
+            patch("lib.auth_failure_bans.write_text_atomic") as write,
+            patch("lib.auth_failure_bans.run", return_value=SimpleNamespace(returncode=0)),
+        ):
+            configure_nginx_auth_failure_ban("web-panel", "/var/log/nginx/panel.log", port=9443)
+        self.assertIn("\nport = 9443\n", write.call_args.args[1])
+
+    def test_invalid_port_is_rejected_before_installation(self) -> None:
+        with patch("lib.auth_failure_bans.install_package") as install:
+            for port in (0, 65536, True, "9443"):
+                with self.subTest(port=port), self.assertRaises(ValueError):
+                    configure_nginx_auth_failure_ban("web-panel", "/var/log/nginx/panel.log", port=port)
+        install.assert_not_called()
+
     def test_removes_managed_jail_and_reloads_fail2ban(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             jail_path = os.path.join(temporary, "basaltwater-gogs.local")

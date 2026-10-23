@@ -912,6 +912,21 @@ def configure_godot_web_host(
     return changed
 
 
+def configure_internal_web_tls(identities: list[str]) -> tuple[str, str, bool, bool]:
+    """Prepare a certificate and public CA download without publishing sites.
+
+    Host panels on hypervisors need TLS without the shared static-site host,
+    Chromium trust setup, forwarding policy, or privileged web-control helper.
+    """
+
+    normalized = validate_web_identities(identities)
+    _ensure_nginx()
+    _ensure_managed_directory(GODOT_WEB_ROOT, 0o755)
+    cert_path, key_path, local_ca, changed = _certificate_for_identities(normalized)
+    changed = _configure_ca_download(local_ca) or changed
+    return cert_path, key_path, local_ca, changed
+
+
 def configure_internal_web_host(
     identities: list[str],
     users: list[str],
@@ -977,6 +992,7 @@ __all__ = [
     "INTERNAL_WEB_SITES_ROOT",
     "configure_godot_agent_skills",
     "configure_internal_web_host",
+    "configure_internal_web_tls",
     "configure_godot_web_host",
     "discover_local_web_identities",
     "identities_for_config",

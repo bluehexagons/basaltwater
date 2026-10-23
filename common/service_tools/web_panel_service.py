@@ -318,17 +318,46 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
     return services
 
 
-def discover_certificate_trust() -> dict[str, str | bool] | None:
-    """Return safe trust metadata for the shared internal-web certificate."""
+def discover_certificate_trust(
+    manifest: dict[str, Any] | None = None,
+) -> dict[str, str | bool] | None:
+    """Verify live TLS and return safe trust metadata for this host."""
 
-    utility = shutil.which("basaltwater-web")
-    if not utility:
-        return None
-    payload = _run_json([utility, "ca", "--json"])
+    host_command = "basaltwater-web ca"
+    if manifest is not None and manifest.get("system_type") == "server_proxmox":
+        from common.godot_web_steps import GODOT_WEB_CA_DOWNLOAD
+        from common.service_tools.basaltwater_web import _certificate_trust
+        from lib.validation import validate_filesystem_path
+
+        metadata = manifest.get("certificate_trust")
+        if not isinstance(metadata, dict):
+            return None
+        certificate = metadata.get("certificate")
+        base_url = _safe_url(manifest.get("panel_url"))
+        if (not isinstance(certificate, str) or not os.path.isabs(certificate)
+                or type(metadata.get("local_ca")) is not bool
+                or not base_url or urllib.parse.urlsplit(base_url).scheme != "https"):
+            return {"status": "unknown"}
+        try:
+            validate_filesystem_path(certificate)
+        except ValueError:
+            return {"status": "unknown"}
+        payload = _certificate_trust({
+            "certificate": certificate,
+            "ca_certificate": GODOT_WEB_CA_DOWNLOAD if metadata["local_ca"] else None,
+            "base_url": base_url.rstrip("/"),
+        })
+        host_command = f"sha256sum {GODOT_WEB_CA_DOWNLOAD}"
+    else:
+        utility = shutil.which("basaltwater-web")
+        if not utility:
+            return None
+        payload = _run_json([utility, "ca", "--json"])
+    host_hint = {"host_command": host_command} if host_command != "basaltwater-web ca" else {}
     if payload.get("publicly_trusted") is True:
         return {"publicly_trusted": True}
     if payload.get("status") == "unknown":
-        trust: dict[str, str | bool] = {"status": "unknown"}
+        trust: dict[str, str | bool] = {"status": "unknown", **host_hint}
         reason = payload.get("reason")
         if isinstance(reason, str) and reason.strip():
             trust["reason"] = " ".join(reason[:512].split())
@@ -352,6 +381,7 @@ def discover_certificate_trust() -> dict[str, str | bool] | None:
         "publicly_trusted": False,
         "url": url,
         "sha256": fingerprint.lower(),
+        **host_hint,
     }
 
 
@@ -776,6 +806,8 @@ class WebPanelState:
         return self.manifest["features"].get("notification_ingest") is True
 
     def features(self) -> PanelFeatures:
+        if self.manifest["system_type"] == "server_proxmox":
+            return PanelFeatures()
         return discover_features(self.agent_tasks.home, admin=bool(self.admin.approval_url),
                                  configured=self.manifest["features"])
 
@@ -1504,7 +1536,7 @@ def _linux_trust_script(
     checksum = "shasum -a 256" if macos else "sha256sum"
     return f"""(
   set -eu
-  # Confirm this expected file hash using basaltwater-web ca over SSH or the VM console.
+  # Confirm this expected file hash independently over SSH or the host console.
   download_url={shlex.quote(download_url)}
   expected_sha256='{fingerprint}'
   temporary=$(mktemp)
@@ -1536,7 +1568,7 @@ def _windows_trust_script(fingerprint: str, download_url: str, *, local_file: bo
                 if local_file else '  Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 60 -ErrorAction Stop')
     return f'''& {{
 $DownloadUrl = '{powershell_url}'
-# Confirm this expected file hash using basaltwater-web ca over SSH or the VM console.
+# Confirm this expected file hash independently over SSH or the host console.
 $ExpectedSha256 = "{fingerprint}"
 $Temporary = [System.IO.Path]::GetTempFileName()
 try {{
@@ -1607,12 +1639,14 @@ def _certificate_scripts(fingerprint: str, download_url: str) -> str:
 def _render_certificate_trust(
     trust: dict[str, str | bool],
 ) -> str:
+    host_command = str(trust.get("host_command", "basaltwater-web ca"))
+    escaped_host_command = html.escape(host_command)
     if trust.get("publicly_trusted") is True:
         return f'''<section aria-labelledby="trust-heading">
 <div class="section-heading"><div>
 {render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
 <div class="trust-panel-public"><strong>No certificate installation required</strong>
-<p>The shared web-hosting certificate is issued by a publicly trusted authority.</p></div></section>'''
+<p>The web certificate is issued by a publicly trusted authority.</p></div></section>'''
     if trust.get("status") == "unknown":
         reason = trust.get("reason")
         reason_html = (
@@ -1620,7 +1654,7 @@ def _render_certificate_trust(
             if isinstance(reason, str) and reason else ""
         )
         recovery = ""
-        if reason == "configured CA certificate is missing":
+        if reason == "configured CA certificate is missing" and host_command == "basaltwater-web ca":
             recovery = '''<p>The gateway's public CA file is missing or inaccessible. This is a VM configuration problem; installing a certificate on this device will not repair it.</p>
 <details><summary>Repair an older VM</summary>
 <p>Shared gateway setup in older versions could omit the public CA copy. On a Debian VM with a saved setup, review and run a refresh over SSH or the VM console:</p>
@@ -1633,7 +1667,7 @@ basaltwater-web ca --json</code></pre>
 {render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
 <div class="trust-panel-public status failed"><strong>Certificate trust could not be verified</strong>
 {reason_html}{recovery}
-<p>Check the gateway certificate and CA on the host with <code>basaltwater-web ca</code>. Once verification succeeds, reload this page for certificate download and installation instructions.</p></div></section>'''
+<p>Check the certificate and CA on the host with <code>{escaped_host_command}</code> and rerun setup if they need repair. Once verification succeeds, reload this page for certificate download and installation instructions.</p></div></section>'''
 
     download_url = str(trust["url"])
     trust_url = html.escape(download_url, quote=True)
@@ -1645,7 +1679,7 @@ basaltwater-web ca --json</code></pre>
 <span class="trust-summary-note">One-time setup for browsers and other devices</span></span></summary>
 <div class="trust-panel"><strong>Trust this machine on your device</strong>
 <p>Choose the operating system and shell on the computer where you will run the script. Install the public CA once for the panel, hosted sites, and managed HTTPS services.</p>
-<p>Confirm the independently obtained fingerprint with <code>basaltwater-web ca</code> over SSH or the VM console. A fingerprint or script from a page opened past a certificate warning is not proof of authenticity.</p>
+<p>Confirm the independently obtained fingerprint with <code>{escaped_host_command}</code> over SSH or the host console. A fingerprint or script from a page opened past a certificate warning is not proof of authenticity.</p>
 <code class="fingerprint">SHA-256 {escaped_fingerprint}</code>
 <h3>Download, verify, and install with a script</h3>
 <p class="trust-intro">First enrollment uses HTTP for the public certificate and checks SHA-256 before installing. It does not require HTTPS that your client already trusts. If port 8442 is unavailable, copy <code>/srv/basaltwater/web/basaltwater-ca.crt</code> through SSH and choose Local certificate file.</p>
@@ -2044,7 +2078,8 @@ def render_page(state: WebPanelState) -> str:
     filesystem_section = render_filesystems(overview, _format_bytes)
     if filesystem_section:
         filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
-    trust = discover_certificate_trust()
+    trust = (discover_certificate_trust(manifest) if manifest["system_type"] == "server_proxmox"
+             else discover_certificate_trust())
     trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
