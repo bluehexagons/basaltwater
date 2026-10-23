@@ -70,13 +70,79 @@ class TestVendorInstaller(unittest.TestCase):
                 self.assertIn("--accept-vendor-channel", result.stdout)
 
     def test_download_records_exact_digest_and_private_file(self):
-        with patch.object(installer, "run", side_effect=self.download):
+        with patch.object(installer, "run", side_effect=self.download) as runner:
             path, state_path, record = installer.download_installer("codex", str(self.downloads))
+        self.assertEqual(runner.call_count, 1)
+        self.assertEqual(runner.call_args.args[0][-1], installer.POLICIES["codex"][0])
         self.assertEqual(Path(path).read_bytes(), self.payload)
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(state_path).st_mode & 0o777, 0o600)
         self.assertEqual(record["observed_sha256"], hashlib.sha256(self.payload).hexdigest())
         self.assertEqual(json.loads(Path(state_path).read_text()), record)
+
+    def test_codex_http_failure_uses_official_fallback_and_records_its_payload(self):
+        fallback = "https://raw.githubusercontent.com/openai/codex/main/scripts/install/install.sh"
+        attempts = []
+
+        def download(command, **kwargs):
+            attempts.append(command[-1])
+            if len(attempts) == 1:
+                Path(command[command.index("--output") + 1]).write_bytes(b"partial response")
+                raise installer.CommandExecutionError("curl", 22, "HTTP 404")
+            self.assertEqual(command[-1], fallback)
+            result = self.download(command, **kwargs)
+            result.stdout = fallback
+            return result
+
+        with patch.object(installer, "run", side_effect=download):
+            path, state_path, record = installer.download_installer("codex", str(self.downloads))
+        self.assertEqual(attempts, [installer.POLICIES["codex"][0], fallback])
+        self.assertEqual(Path(path).read_bytes(), self.payload)
+        self.assertEqual(record["source"], installer.POLICIES["codex"][0])
+        self.assertEqual(record["effective_url"], fallback)
+        self.assertEqual(record["observed_sha256"], hashlib.sha256(self.payload).hexdigest())
+        self.assertEqual(json.loads(Path(state_path).read_text()), record)
+
+    def test_codex_fallback_failure_is_not_retried_and_removes_partial_file(self):
+        def failed(command, **kwargs):
+            self.download(command, **kwargs)
+            raise installer.CommandExecutionError("curl", 22, "HTTP 404")
+
+        with patch.object(installer, "run", side_effect=failed) as runner:
+            with self.assertRaises(installer.CommandExecutionError):
+                installer.download_installer("codex", str(self.downloads))
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(list(self.downloads.iterdir()), [])
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_fallback_does_not_retry_transport_errors_or_other_tools(self):
+        failures = [("codex", code) for code in (6, 28, 60)]
+        failures.extend((tool, 22) for tool in installer.POLICIES if tool != "codex")
+        for tool, code in failures:
+            with self.subTest(tool=tool, code=code), patch.object(
+                installer, "run", side_effect=installer.CommandExecutionError("curl", code),
+            ) as runner:
+                with self.assertRaises(installer.CommandExecutionError):
+                    installer.download_installer(tool, str(self.downloads))
+                self.assertEqual(runner.call_count, 1)
+                self.assertEqual(list(self.downloads.iterdir()), [])
+
+    def test_invalid_fallback_payload_never_executes(self):
+        calls = 0
+
+        def download(command, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise installer.CommandExecutionError("curl", 22)
+            self.payload = b""
+            return self.download(command, **kwargs)
+
+        with patch.object(installer, "run", side_effect=download) as runner:
+            with self.assertRaisesRegex(ValueError, "empty"):
+                installer.install("codex", accept_vendor_channel=True)
+        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(list(self.state.iterdir()), [])
 
     def test_invalid_payload_or_redirect_never_executes(self):
         for payload in (b"", b"12345"):
@@ -96,10 +162,10 @@ class TestVendorInstaller(unittest.TestCase):
     def test_download_failure_removes_partial_file(self):
         def failed(command, **kwargs):
             self.download(command, **kwargs)
-            raise subprocess.CalledProcessError(28, command)
+            raise installer.CommandExecutionError("curl", 28)
 
         with patch.object(installer, "run", side_effect=failed):
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(installer.CommandExecutionError):
                 installer.download_installer("codex", str(self.downloads))
         self.assertEqual(list(self.downloads.iterdir()), [])
 

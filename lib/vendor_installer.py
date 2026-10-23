@@ -21,7 +21,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.atomic_io import write_json_atomic
-from lib.remote_utils import run
+from lib.remote_utils import CommandExecutionError, run
 from lib.validation import validate_filesystem_path
 
 
@@ -35,6 +35,7 @@ POLICIES = {
     "nvm": ("https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh", "bash", "vendor-tagged-installer-rolling-node-lts"),
 }
 MAX_INSTALLER_BYTES = 4 * 1024 * 1024
+_CODEX_INSTALLER_FALLBACK_URL = "https://raw.githubusercontent.com/openai/codex/main/scripts/install/install.sh"
 
 
 def _policy(tool: str) -> tuple[str, str, str]:
@@ -97,11 +98,22 @@ def download_installer(tool: str, directory: str) -> tuple[str, str, dict]:
             "--connect-timeout", "15", "--max-time", "120", "--max-filesize", str(MAX_INSTALLER_BYTES),
             "--output", path, "--write-out", "%{url_effective}", source,
         ]
-        downloaded = run(
-            ["/usr/bin/prlimit", f"--fsize={MAX_INSTALLER_BYTES}", "--", *curl],
-            capture_output=True,
-            timeout=130,
-        )
+        try:
+            downloaded = run(
+                ["/usr/bin/prlimit", f"--fsize={MAX_INSTALLER_BYTES}", "--", *curl],
+                capture_output=True,
+                timeout=130,
+            )
+        except CommandExecutionError as exc:
+            if tool != "codex" or exc.returncode != 22:
+                raise
+            print("  codex: installer HTTP error; retrying the official GitHub source", file=sys.stderr)
+            curl[-1] = _CODEX_INSTALLER_FALLBACK_URL
+            downloaded = run(
+                ["/usr/bin/prlimit", f"--fsize={MAX_INSTALLER_BYTES}", "--", *curl],
+                capture_output=True,
+                timeout=130,
+            )
         state_path, record = record_installer(tool, path, effective_url=downloaded.stdout.strip())
         return path, state_path, record
     except BaseException:
