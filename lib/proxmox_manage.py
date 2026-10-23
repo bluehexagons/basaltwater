@@ -1041,6 +1041,8 @@ def _validate_webhook_config(
 ) -> ProxmoxWebhookNotificationConfig:
     _validate_notification_id(endpoint_name, "endpoint name")
     _validate_notification_id(matcher_name, "matcher name")
+    if endpoint_name == matcher_name:
+        raise ValueError("Proxmox notification endpoint and matcher names must differ")
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError(f"Invalid webhook URL: {url}")
@@ -1127,8 +1129,8 @@ def _webhook_body_template() -> str:
   "job": "proxmox",
   "status": "{{ severity }}",
   "message": "{{ escape message }}",
-  "details": "severity={{ severity }}\\ntype={{ fields.type }}\\nfields={{ json fields }}",
-  "hostname": "{{ fields.hostname }}"
+  "details": "severity={{ severity }}\\ntype={{#if fields.type}}{{ escape fields.type }}{{/if}}\\nfields={{ escape (json fields) }}",
+  "hostname": "{{#if fields.hostname}}{{ escape fields.hostname }}{{/if}}"
 }"""
 
 

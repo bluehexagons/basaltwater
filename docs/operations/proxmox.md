@@ -831,6 +831,14 @@ catalog cannot supply a match, Basaltwater checks downloaded templates first.
 Setup reruns verify the existing container's name and static address, start it
 if stopped, and wait for SSH before refreshing host trust. Ambiguous identities
 and locked containers abort recovery; setup does not force-unlock or replace them.
+On Debian 13 unprivileged LXC guests, setup adds scoped systemd drop-ins for
+`tmp.mount`, `run-lock.mount`, and `dev-mqueue.mount` to use util-linux's classic
+mount API. This avoids mount-move denials from stock Proxmox AppArmor confinement
+without enabling nesting. Only available units receive the setting. Setup marks
+the container for reboot; it does not restart mounts over populated directories.
+After reboot, check `systemctl --failed` and query each mount with
+`findmnt --mountpoint /tmp`, `findmnt --mountpoint /run/lock`, and
+`findmnt --mountpoint /dev/mqueue`.
 The guest bridge defaults to the bridge carrying the Proxmox host's default
 route; use `--bridge NAME` when the host has multiple routed bridge networks.
 VM disks default to discard enabled and SSD emulation disabled. Use
@@ -920,6 +928,13 @@ These commands also accept an explicit registered provider host and VMID, and
 power-off path; `stop` exits the guest immediately. Shutdown and reboot pass
 an optional timeout to Proxmox and all lifecycle commands report the observed
 state after the provider operation completes.
+
+For LXC, `pause`/`suspend` invokes Proxmox's experimental `pct suspend`
+checkpoint operation. It can fail on otherwise healthy containers, including
+when CRIU cannot checkpoint nested namespaces created by systemd services.
+Inspect the task error and observed state; do not assume the container paused.
+Use graceful shutdown/start for reliable LXC maintenance, and keep confinement
+enabled rather than weakening it to make checkpointing work.
 
 The provider-specific forms remain available for compatibility:
 
@@ -1303,6 +1318,10 @@ active marker. Dry runs do not create or consume checkpoints.
 `notifications install-webhook` configures Proxmox's native notification
 matcher; repeat `--severity` to limit routing, and use `--dry-run` before
 writing the endpoint. Treat webhook URLs as sensitive values.
+Endpoint and matcher names must differ because Proxmox shares their namespace.
+The JSON payload preserves event metadata in the `details` string, including
+quotes and line breaks. The built-in test has empty metadata; also check delivery
+from a real backup event when validating a receiver and severity routing.
 
 ## Network planning
 

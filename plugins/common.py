@@ -117,6 +117,10 @@ def get_common_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     ]
     if config.system_hostname:
         steps.insert(4, ("Configuring system hostname", configure_system_hostname))
+    if config.machine_type == "unprivileged":
+        from common.lxc_steps import configure_lxc_mount_compatibility
+
+        steps.insert(1, ("Configuring LXC mount compatibility", configure_lxc_mount_compatibility))
     return steps
 
 
