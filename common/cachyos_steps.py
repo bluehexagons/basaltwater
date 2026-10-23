@@ -11,6 +11,7 @@ from pathlib import Path
 import pwd
 import shlex
 import shutil
+import stat
 from subprocess import CompletedProcess
 from typing import Any
 
@@ -81,6 +82,32 @@ def desktop_automation_requested(config: SetupConfig) -> bool:
 
 def _home(config: SetupConfig) -> Path:
     return Path(pwd.getpwnam(config.username).pw_dir)
+
+
+def _user_unit_path(home: Path) -> Path:
+    """Resolve T3's effective user-unit path without creating directories."""
+    configured = os.environ.get("XDG_CONFIG_HOME", "")
+    validate_filesystem_path(configured or str(home / ".config"))
+    root = Path(configured) if configured else home / ".config"
+    if not root.is_absolute() or ".." in root.parts:
+        raise ValueError("T3 XDG_CONFIG_HOME must be an absolute path without parent traversal")
+    directory = root / "systemd/user"
+    owned = {root, root / "systemd", directory}
+    for path in reversed((directory, *directory.parents)):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(info.st_mode) or (path in owned and info.st_uid != os.getuid()):
+            raise ValueError(f"Unsafe T3 user-unit directory (type or ownership): {path}")
+    unit = directory / T3_SERVICE
+    try:
+        info = unit.lstat()
+    except FileNotFoundError:
+        return unit
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        raise ValueError(f"Unsafe T3 user-unit file (type or ownership): {unit}")
+    return unit
 
 
 def _tool_path(home: Path) -> str:
@@ -355,7 +382,7 @@ def configure_cachyos_agent_context(config: SetupConfig) -> None:
 
 def install_cachyos_skills(config: SetupConfig) -> None:
     home = _home(config)
-    unit = home / ".config/systemd/user" / T3_SERVICE
+    unit = _user_unit_path(home)
     existing_t3 = unit.is_file() and not unit.is_symlink() and _MARKER in unit.read_text()
     desktop = home / ".local/share/basaltwater/cachyos-t3/desktop-mode"
     existing_desktop = desktop.is_file() and not desktop.is_symlink() and desktop.read_text() == _MARKER + "\n"
