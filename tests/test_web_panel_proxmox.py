@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
-from contextlib import ExitStack
+import urllib.parse
+from contextlib import ExitStack, contextmanager, redirect_stdout
 from types import SimpleNamespace
-from unittest.mock import DEFAULT, patch
+from unittest.mock import DEFAULT, Mock, call, patch
 
 from common import godot_web_steps as tls
 from common import proxmox_web_panel_steps as isolation
 from common import web_panel_steps as steps
 from common.service_tools import web_panel_service as panel
+from common.service_tools import web_panel_tls
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
 from plugins.proxmox import build_server_proxmox_steps
@@ -50,8 +55,8 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
                          "url": "https://[2001:db8::5]:8006/",
                          "description": "Native Proxmox host and guest management"}])
 
-    def test_ssl_setup_uses_certificate_only_path_and_native_firewall(self) -> None:
-        selected = config(web_panel_port=9443, enable_ssl=True)
+    @contextmanager
+    def mock_configuration(self):
         account = SimpleNamespace(pw_name="basaltwater-web-panel", pw_gid=991, pw_dir="/nonexistent")
         with ExitStack() as stack:
             mocks = stack.enter_context(patch.multiple(
@@ -60,10 +65,11 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
                 _validate_ingest_token_path=DEFAULT, _install_ingest_token=DEFAULT,
                 write_json_atomic=DEFAULT, _configure_audit_exporter=DEFAULT,
                 _configure_service=DEFAULT, _write_nginx_site=DEFAULT,
-                configure_nginx_auth_failure_ban=DEFAULT,
+                configure_nginx_auth_failure_ban=DEFAULT, run=DEFAULT,
             ))
             mocks["_install_auth_file"].return_value = (False, None)
             mocks["_ensure_web_panel_service_account"].return_value = account
+            mocks["run"].return_value = SimpleNamespace(returncode=0)
             stack.enter_context(patch.object(steps.os, "makedirs"))
             stack.enter_context(patch.object(steps, "is_dry_run", return_value=False))
             stack.enter_context(patch("desktop.guacamole_steps.preflight_units"))
@@ -71,25 +77,58 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
             stack.enter_context(patch("desktop.guacamole_steps.remove_guacamole"))
             stack.enter_context(patch("web.github_runner_registration_steps.remove_registration_service"))
             stack.enter_context(patch.object(isolation, "preflight_proxmox_panel_nginx"))
-            isolate = stack.enter_context(patch.object(isolation, "configure_proxmox_panel_nginx"))
-            firewall = stack.enter_context(patch(
+            mocks["isolate"] = stack.enter_context(patch.object(isolation, "configure_proxmox_panel_nginx"))
+            mocks["firewall"] = stack.enter_context(patch(
                 "security.proxmox_web_panel_firewall.configure_proxmox_web_panel_firewall"))
             stack.enter_context(patch.object(tls, "discover_local_web_identities", return_value=[]))
-            full_host = stack.enter_context(patch.object(tls, "configure_internal_web_host"))
-            certificate = stack.enter_context(patch.object(tls, "configure_internal_web_tls",
+            mocks["full_host"] = stack.enter_context(patch.object(tls, "configure_internal_web_host"))
+            mocks["certificate"] = stack.enter_context(patch.object(tls, "configure_internal_web_tls",
                 return_value=("/etc/basaltwater/internal-web/server.crt", "/etc/basaltwater/internal-web/server.key", True, True)))
+            yield mocks
+
+    def test_ssl_setup_uses_certificate_only_path_and_native_firewall(self) -> None:
+        selected = config(web_panel_port=9443, enable_ssl=True)
+        with self.mock_configuration() as mocks:
             steps.configure_web_panel(selected)
 
-        certificate.assert_called_once()
-        full_host.assert_not_called()
-        isolate.assert_called_once()
-        firewall.assert_called_once_with(selected)
+        mocks["certificate"].assert_called_once()
+        mocks["full_host"].assert_not_called()
+        mocks["isolate"].assert_called_once()
+        mocks["firewall"].assert_called_once_with(selected)
         mocks["configure_nginx_auth_failure_ban"].assert_called_once_with(
             "web-panel", steps.WEB_PANEL_AUTH_FAILURE_LOG, port=9443)
         manifest = mocks["write_json_atomic"].call_args.args[1]
         self.assertEqual(manifest["certificate_trust"], {
             "certificate": "/etc/basaltwater/internal-web/server.crt", "local_ca": True})
         self.assertEqual(manifest["panel_url"], "https://pve.example.test:9443/")
+
+    def test_certificate_renewal_reloads_an_unchanged_validated_site(self) -> None:
+        write_site = steps._write_nginx_site
+        selected = config(web_panel_port=9443, enable_ssl=True)
+        for changed, reload_fails in ((False, False), (True, False), (True, True)):
+            with self.subTest(changed=changed, reload_fails=reload_fails), tempfile.TemporaryDirectory() as temporary:
+                with (
+                    self.mock_configuration() as mocks,
+                    patch.object(steps, "WEB_PANEL_NGINX_SITE", os.path.join(temporary, "panel.conf")),
+                    patch.object(steps, "WEB_PANEL_NGINX_LINK", os.path.join(temporary, "enabled.conf")),
+                ):
+                    mocks["_write_nginx_site"].side_effect = write_site
+                    steps.configure_web_panel(selected)
+                    mocks["run"].reset_mock()
+                    mocks["certificate"].return_value = (
+                        "/etc/basaltwater/internal-web/server.crt",
+                        "/etc/basaltwater/internal-web/server.key", True, changed,
+                    )
+                    if reload_fails:
+                        mocks["run"].side_effect = [SimpleNamespace(returncode=0), RuntimeError("reload failed")]
+                        with self.assertRaisesRegex(RuntimeError, "reload failed"):
+                            steps.configure_web_panel(selected)
+                    else:
+                        steps.configure_web_panel(selected)
+                    expected = [call("nginx -t", check=False, capture_output=True)]
+                    if changed:
+                        expected.append(call("systemctl reload nginx", check=True))
+                    self.assertEqual(mocks["run"].call_args_list, expected)
 
     def test_removal_cleans_owned_proxmox_resources(self) -> None:
         with (
@@ -163,20 +202,91 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
             manifest = steps.build_web_panel_manifest(config(web_panel_port=9443, enable_ssl=True),
                                                      ["pve.example.test"])
             manifest["certificate_trust"] = {"certificate": "/tmp/server.crt", "local_ca": True}
+
+            def collect(command, **kwargs):
+                self.assertEqual(command[:2], [sys.executable, web_panel_tls.__file__])
+                self.assertEqual(kwargs["timeout"], 10)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    web_panel_tls.main(command[2:])
+                return subprocess.CompletedProcess(command, 0, output.getvalue(), "")
+
             with (
                 patch.object(tls, "GODOT_WEB_CA_DOWNLOAD", ca),
                 patch("common.service_tools.basaltwater_web._verify_live_tls") as verify,
                 patch.object(panel.shutil, "which", return_value=None),
-                patch.object(panel, "_run_json") as subprocess_json,
+                patch.object(panel.subprocess, "run", side_effect=collect) as subprocess_json,
             ):
                 trust = panel.discover_certificate_trust(manifest)
             verify.assert_called_once_with("pve.example.test", 9443, ca)
-            subprocess_json.assert_not_called()
+            subprocess_json.assert_called_once()
             self.assertEqual(trust["sha256"], hashlib.sha256(b"public CA fixture").hexdigest())
             self.assertEqual(trust["url"], "https://pve.example.test:9443/basaltwater-ca.crt")
             content = panel._render_certificate_trust(trust)
             self.assertIn("sha256sum " + ca, content)
             self.assertNotIn("basaltwater-web ca", content)
+
+    def test_stalled_dns_is_terminated_by_the_collector_deadline(self) -> None:
+        manifest = steps.build_web_panel_manifest(config(web_panel_port=9443, enable_ssl=True),
+                                                 ["pve.example.test"])
+        manifest["certificate_trust"] = {
+            "certificate": "/etc/letsencrypt/live/pve.example.test/fullchain.pem", "local_ca": False,
+        }
+        run_process = subprocess.run
+        with tempfile.TemporaryDirectory() as temporary:
+            entered_dns = os.path.join(temporary, "dns-entered")
+
+            def stalled_collector(command, **kwargs):
+                self.assertEqual(kwargs["timeout"], 10)
+                script = (
+                    "import runpy, socket, ssl, sys, threading\n"
+                    "from unittest.mock import Mock\n"
+                    "def stalled_dns(*args, **kwargs):\n"
+                    f"    with open({entered_dns!r}, 'w') as marker: marker.write('entered')\n"
+                    "    threading.Event().wait()\n"
+                    "socket.getaddrinfo = stalled_dns\n"
+                    "ssl.create_default_context = Mock()\n"
+                    f"sys.argv = [{command[1]!r}, *sys.argv[1:]]\n"
+                    f"runpy.run_path({command[1]!r}, run_name='__main__')\n"
+                )
+                # Retain the real subprocess kill/wait behavior with a shorter
+                # test deadline; only DNS and the TLS context are simulated.
+                kwargs["timeout"] = 2
+                return run_process([command[0], "-c", script, *command[2:]], **kwargs)
+
+            with patch.object(panel.subprocess, "run", side_effect=stalled_collector):
+                trust = panel.discover_certificate_trust(manifest)
+            self.assertTrue(os.path.isfile(entered_dns))
+        self.assertEqual(trust["status"], "unknown")
+        self.assertIn("sha256sum", trust["host_command"])
+        self.assertNotIn("trust-download", panel._render_certificate_trust(trust))
+
+    def test_retained_t3_runtime_cannot_enable_host_only_update_actions(self) -> None:
+        manifest = steps.build_web_panel_manifest(
+            config(username="agent", web_panel_port=9443, enable_ssl=True,
+                   web_interfaces=["t3code"], agent_tools=["codex"]),
+            ["pve.example.test"],
+        )
+        self.assertTrue(manifest["features"]["t3_update"])
+        with tempfile.TemporaryDirectory() as temporary:
+            os.makedirs(os.path.join(temporary, ".t3", "runtime"))
+            state = panel.WebPanelState(manifest, agent_home=temporary)
+            with (
+                patch.object(panel.os.path, "expanduser", return_value=temporary + "/.t3/runtime"),
+                patch.object(panel.threading, "Thread") as worker,
+            ):
+                self.assertFalse(state.features().t3)
+                self.assertFalse(state.t3_update_available())
+                self.assertFalse(state.trigger_t3_update())
+                handler = object.__new__(panel.WebPanelHandler)
+                handler.state, handler.path = state, "/actions/t3-update"
+                body = urllib.parse.urlencode({"csrf": state.csrf_token}).encode()
+                handler.headers = {"Content-Length": str(len(body)), "X-Forwarded-Proto": "https"}
+                handler.rfile = io.BytesIO(body)
+                handler._send = Mock()
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], 404)
+            worker.assert_not_called()
 
     def test_monitoring_profile_does_not_start_installed_tool_workers(self) -> None:
         manifest = steps.build_web_panel_manifest(config(web_panel_port=80), ["pve.example.test"])
@@ -216,11 +326,24 @@ class ProxmoxNginxIsolationTest(unittest.TestCase):
         with open(self.path, encoding="utf-8") as stream:
             self.assertIn(isolation.PROXMOX_PANEL_INACCESSIBLE_PATHS, stream.read())
         isolation.configure_proxmox_panel_nginx()
-        self.assertEqual(self.runner.call_count, 2)
+        self.assertEqual(self.runner.call_count, 4)
         isolation.remove_proxmox_panel_nginx()
         self.assertFalse(os.path.exists(self.path))
         isolation.remove_proxmox_panel_nginx()
-        self.assertEqual(self.runner.call_count, 4)
+        self.assertEqual(self.runner.call_count, 6)
+
+    def test_retry_activates_isolation_after_interrupted_publication(self) -> None:
+        self.runner.side_effect = KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            isolation.configure_proxmox_panel_nginx()
+        self.assertTrue(os.path.isfile(self.path))
+        self.runner.reset_mock(side_effect=True)
+        isolation.configure_proxmox_panel_nginx()
+        self.assertEqual(self.runner.call_args_list, [
+            call("systemctl daemon-reload", check=True),
+            call("systemctl restart nginx", check=True),
+        ])
+        self.active.assert_called_once_with("nginx")
 
     def test_failed_restart_restores_previous_configuration_and_mode(self) -> None:
         os.makedirs(os.path.dirname(self.path))

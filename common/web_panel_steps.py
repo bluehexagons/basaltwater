@@ -1217,11 +1217,12 @@ def configure_web_panel(config: SetupConfig) -> None:
     )
     cert_path = None
     key_path = None
+    tls_changed = False
     if config.enable_ssl:
         if config.system_type == "server_proxmox":
-            cert_path, key_path, _local_ca, _changed = configure_internal_web_tls(identities)
+            cert_path, key_path, _local_ca, tls_changed = configure_internal_web_tls(identities)
         else:
-            _base_url, _local_ca, cert_path, key_path, _changed = configure_internal_web_host(
+            _base_url, _local_ca, cert_path, key_path, tls_changed = configure_internal_web_host(
                 identities,
                 [config.username],
                 config.effective_access_sources(),
@@ -1281,7 +1282,7 @@ def configure_web_panel(config: SetupConfig) -> None:
         if auth_changed:
             _restore_auth_file(previous_auth)
         raise
-    if auth_changed and not nginx_changed:
+    if (auth_changed or tls_changed) and not nginx_changed:
         run("systemctl reload nginx", check=True)
     configure_nginx_auth_failure_ban(
         "web-panel", WEB_PANEL_AUTH_FAILURE_LOG, port=config.web_panel_port

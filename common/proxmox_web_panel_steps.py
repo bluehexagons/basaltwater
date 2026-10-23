@@ -34,8 +34,12 @@ def _restart_nginx() -> None:
 
 def _change_dropin(content: str | None) -> None:
     previous = preflight_proxmox_panel_nginx()
-    if (previous is None and content is None
-            or previous is not None and previous["content"] == content):
+    if previous is None and content is None:
+        return
+    if previous is not None and previous["content"] == content:
+        # A prior setup may have stopped after publishing this file. Disk
+        # contents do not prove the running master has the mount restrictions.
+        _restart_nginx()
         return
     with directory_fd(os.path.dirname(PROXMOX_PANEL_NGINX_DROPIN), create=True):
         if content is None:

@@ -61,10 +61,9 @@ report; an evicted record produces a notice. IDs use the same strict
 
 On a `server_proxmox` host, the panel is an optional host-monitoring dashboard.
 It includes the existing host metrics, services, mounted storage, scheduled
-jobs, and service diagnostics, plus diagnostics for installed Proxmox services
-and the native firewall. Proxmox service diagnostics cover `pveproxy`,
-`pvedaemon`, `pvestatd`, `pve-cluster`, and `corosync` when installed. The
-firewall view inspects native Proxmox firewall state and diagnostics. These
+jobs, and service diagnostics, including status and logs for installed Proxmox
+services. The diagnostic allowlist includes `pveproxy`, `pvedaemon`, `pvestatd`,
+`pve-cluster`, `corosync`, `pve-firewall`, and `proxmox-firewall`. These
 views are for the host only: the panel does not manage VMs, containers, cluster
 membership, or Proxmox configuration, and it does not use a privileged Proxmox
 API or a guest-operation broker.
@@ -94,7 +93,7 @@ separate group. Every retained receipt remains available in history.
 | Invalid token or request | Rejected without storing the event |
 | Excess requests or body size | Rejected by dedicated limits |
 
-The endpoint is the panel's only Basic Auth exception. It requires HTTPS as
+The endpoint uses its bearer token instead of Basic Auth. It requires HTTPS as
 reported by the local Nginx proxy, compares the token in constant time, limits
 bodies to 64 KiB, limits requests independently, and validates bounded
 schema-v2 data. Unknown fields are discarded; malformed or deeply nested data
@@ -485,6 +484,8 @@ history. It supports server and workstation profiles, including optional
 host-only monitoring on `server_proxmox`. On a root-managed setup, it runs as
 the locked `basaltwater-web-panel` service account. Proxmox's `/etc/pve` and
 `/var/lib/pve-cluster` paths are hidden from the panel and its Nginx service.
+Proxmox panel setup restarts Nginx to apply these restrictions, including on
+retries after an interrupted setup.
 The optional Proxmox panel is host monitoring only and links to the native
 Proxmox UI on port 8006; it does not provide VM or container control. With
 panel TLS enabled, it listens on the selected HTTPS port and exposes the

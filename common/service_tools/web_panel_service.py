@@ -326,9 +326,10 @@ def discover_certificate_trust(
     host_command = "basaltwater-web ca"
     if manifest is not None and manifest.get("system_type") == "server_proxmox":
         from common.godot_web_steps import GODOT_WEB_CA_DOWNLOAD
-        from common.service_tools.basaltwater_web import _certificate_trust
         from lib.validation import validate_filesystem_path
 
+        host_command = f"sha256sum {GODOT_WEB_CA_DOWNLOAD}"
+        host_hint = {"host_command": host_command}
         metadata = manifest.get("certificate_trust")
         if not isinstance(metadata, dict):
             return None
@@ -337,17 +338,23 @@ def discover_certificate_trust(
         if (not isinstance(certificate, str) or not os.path.isabs(certificate)
                 or type(metadata.get("local_ca")) is not bool
                 or not base_url or urllib.parse.urlsplit(base_url).scheme != "https"):
-            return {"status": "unknown"}
+            return {"status": "unknown", **host_hint}
         try:
             validate_filesystem_path(certificate)
         except ValueError:
-            return {"status": "unknown"}
-        payload = _certificate_trust({
+            return {"status": "unknown", **host_hint}
+        # The socket timeout alone cannot bound DNS resolution. Collect in a
+        # separate process so _run_json's deadline covers the entire probe.
+        policy = {
             "certificate": certificate,
             "ca_certificate": GODOT_WEB_CA_DOWNLOAD if metadata["local_ca"] else None,
             "base_url": base_url.rstrip("/"),
-        })
-        host_command = f"sha256sum {GODOT_WEB_CA_DOWNLOAD}"
+        }
+        payload = _run_json([
+            sys.executable,
+            os.path.join(SOURCE_ROOT, "common", "service_tools", "web_panel_tls.py"),
+            json.dumps(policy),
+        ])
     else:
         utility = shutil.which("basaltwater-web")
         if not utility:
@@ -376,7 +383,7 @@ def discover_certificate_trust(
         or len(fingerprint) != 64
         or any(character not in "0123456789abcdefABCDEF" for character in fingerprint)
     ):
-        return {"status": "unknown"}
+        return {"status": "unknown", **host_hint}
     return {
         "publicly_trusted": False,
         "url": url,
@@ -908,7 +915,8 @@ class WebPanelState:
         """Return whether T3 Code is both configured and present for this user."""
 
         return bool(
-            self.manifest["features"].get("t3_update") is True
+            self.features().t3
+            and self.manifest["features"].get("t3_update") is True
             and os.path.isdir(os.path.expanduser("~/.t3/runtime"))
         )
 
