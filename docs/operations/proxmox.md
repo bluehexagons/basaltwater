@@ -929,12 +929,24 @@ power-off path; `stop` exits the guest immediately. Shutdown and reboot pass
 an optional timeout to Proxmox and all lifecycle commands report the observed
 state after the provider operation completes.
 
+For noninteractive shutdown and reboot commands, the SSH wait is at least
+120 seconds and includes 60 seconds beyond an explicit native timeout. Terminal
+sessions retain the interactive SSH passphrase policy. If a power command's
+SSH wait expires, Basaltwater makes one noninteractive status check with a
+30-second limit and reports an uncertain outcome as an error, even if the
+observed state matches the request. Inspect the Proxmox task log and guest state
+before retrying; Basaltwater does not replay the command or force a shutdown.
+
 For LXC, `pause`/`suspend` invokes Proxmox's experimental `pct suspend`
 checkpoint operation. It can fail on otherwise healthy containers, including
 when CRIU cannot checkpoint nested namespaces created by systemd services.
 Inspect the task error and observed state; do not assume the container paused.
 Use graceful shutdown/start for reliable LXC maintenance, and keep confinement
 enabled rather than weakening it to make checkpointing work.
+An inactive LXC checkpoint appears as `stopped`; `resume` submits it to
+`pct resume`, which reports a missing or invalid checkpoint. A running LXC
+cannot be resumed. QEMU resume continues to require a paused guest; use `start`
+for a stopped VM.
 
 The provider-specific forms remain available for compatibility:
 

@@ -38,11 +38,13 @@ from lib.proxmox_manage import (
     reboot_guest,
     reconfigure_container,
     resize_container_disk,
+    resume_guest,
     rollback_guest,
     send_webhook_test_notification,
     snapshot_guest,
     start_container,
     stop_container,
+    suspend_guest,
     unlock_guest,
     ProxmoxWebhookNotificationConfig,
 )
@@ -447,6 +449,156 @@ class TestReboot(unittest.TestCase):
     def test_reboot_rejects_negative_timeout(self) -> None:
         with self.assertRaisesRegex(ValueError, "timeout must be >= 0"):
             reboot_guest(_host(), 100, timeout=-1)
+
+
+class TestResume(unittest.TestCase):
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_resumes_stopped_lxc_checkpoint(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = [_completed("status: stopped\n"), _completed()]
+        resume_guest(_host(), 100)
+        self.assertEqual([call.args[3] for call in mock_run.call_args_list],
+                         ["pct status 100", "pct resume 100"])
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_stopped_lxc_reports_native_checkpoint_error(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = [
+            _completed("status: stopped\n"),
+            _completed(stderr="checkpoint directory not found", returncode=1),
+        ]
+        with self.assertRaisesRegex(ProxmoxManageError, "checkpoint directory not found"):
+            resume_guest(_host(), 100)
+        self.assertEqual(mock_run.call_count, 2)
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_rejects_running_lxc(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _completed("status: running\n")
+        with self.assertRaisesRegex(ProxmoxManageError, "already running"):
+            resume_guest(_host(), 100)
+        mock_run.assert_called_once()
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_vm_state_guards_and_paused_resume(self, mock_run: MagicMock) -> None:
+        for state in ("running", "stopped", "paused"):
+            with self.subTest(state=state):
+                mock_run.reset_mock()
+                mock_run.side_effect = [
+                    _completed(stderr="CT 100 does not exist", returncode=2),
+                    _completed(f"status: {state}\n"), _completed(),
+                ]
+                if state == "stopped":
+                    with self.assertRaisesRegex(ProxmoxManageError, "use the start command"):
+                        resume_guest(_host(), 100)
+                else:
+                    resume_guest(_host(), 100)
+                self.assertEqual(mock_run.call_count, 3 if state == "paused" else 2)
+                if state == "paused":
+                    self.assertEqual(mock_run.call_args.args[3], "qm resume 100")
+
+
+class TestPowerTimeouts(unittest.TestCase):
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_native_timeout_has_transport_headroom(self, mock_run: MagicMock) -> None:
+        for tool in ("pct", "qm"):
+            for operation in (stop_container, reboot_guest):
+                for timeout, budget in ((0, 120), (300, 360)):
+                    with self.subTest(tool=tool, operation=operation, timeout=timeout):
+                        mock_run.reset_mock()
+                        responses = [_completed("status: running\n"), _completed()]
+                        if tool == "qm":
+                            responses.insert(0, _completed(stderr="CT 100 does not exist", returncode=2))
+                        mock_run.side_effect = responses
+                        operation(_host(), 100, timeout=timeout)
+                        action = "shutdown" if operation is stop_container else "reboot"
+                        self.assertEqual(mock_run.call_args.args[3],
+                                         f"{tool} {action} 100 --timeout {timeout}")
+                        self.assertEqual(mock_run.call_args.kwargs["timeout"], budget)
+                        self.assertTrue(all(call.kwargs["timeout"] == 120
+                                            for call in mock_run.call_args_list[:-1]))
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_forced_stop_does_not_inherit_graceful_timeout(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = [_completed("status: running\n"), _completed()]
+        stop_container(_host(), 100, force=True, timeout=300)
+        self.assertEqual(mock_run.call_args.args[3], "pct stop 100")
+        self.assertEqual(mock_run.call_args.kwargs["timeout"], 120)
+
+    def setUp(self) -> None:
+        # Avoid real SSH option filesystem setup, even on recovery paths.
+        opts = patch("lib.proxmox_manage._ssh_opts", return_value=["-o", "BatchMode=no"])
+        opts.start()
+        self.addCleanup(opts.stop)
+        builder = patch(
+            "lib.proxmox_manage._proxmox_ssh_command",
+            side_effect=lambda host, user, opts, cmd: ["ssh", *opts, f"{user}@{host}", cmd],
+        )
+        builder.start()
+        self.addCleanup(builder.stop)
+
+    @patch("lib.proxmox_manage.subprocess.run")
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_timeout_observes_same_guest_once_without_replaying(
+        self, mock_run: MagicMock, mock_observe: MagicMock,
+    ) -> None:
+        cases = (
+            (start_container, "stopped", "start"),
+            (stop_container, "running", "shutdown"),
+            (reboot_guest, "running", "reboot"),
+            (suspend_guest, "running", "suspend"),
+            (resume_guest, "paused", "resume"),
+        )
+        for tool in ("pct", "qm"):
+            for operation, initial, action in cases:
+                with self.subTest(tool=tool, action=action):
+                    mock_run.reset_mock()
+                    mock_observe.reset_mock()
+                    responses = [_completed(f"status: {initial}\n"),
+                                 subprocess.TimeoutExpired("ssh", 120)]
+                    if tool == "qm":
+                        responses.insert(0, _completed(stderr="CT 100 does not exist", returncode=2))
+                    mock_run.side_effect = responses
+                    mock_observe.return_value = _completed("status: running\n")
+                    with self.assertRaisesRegex(ProxmoxManageError,
+                                                "observed state: running.*outcome is uncertain"):
+                        operation(_host(), 100)
+                    self.assertEqual(mock_run.call_count, len(responses))
+                    self.assertEqual(mock_run.call_args.args[3], f"{tool} {action} 100")
+                    mock_observe.assert_called_once()
+                    self.assertEqual(mock_observe.call_args.args[0][-1], f"{tool} status 100")
+                    self.assertEqual(mock_observe.call_args.args[0][1:3], ["-o", "BatchMode=yes"])
+                    self.assertEqual(mock_observe.call_args.kwargs["timeout"], 30)
+
+    @patch("lib.proxmox_manage.subprocess.run")
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_failed_observation_preserves_uncertainty(
+        self, mock_run: MagicMock, mock_observe: MagicMock,
+    ) -> None:
+        for failure in (_completed(returncode=255), OSError("offline"),
+                        subprocess.TimeoutExpired("ssh", 30)):
+            with self.subTest(failure=failure):
+                mock_run.reset_mock()
+                mock_observe.reset_mock()
+                mock_run.side_effect = [_completed("status: running\n"),
+                                        subprocess.TimeoutExpired("ssh", 120)]
+                mock_observe.side_effect = [failure]
+                with self.assertRaisesRegex(ProxmoxManageError, "observed state: unavailable"):
+                    stop_container(_host(), 100)
+                self.assertEqual(mock_run.call_count, 2)
+                mock_observe.assert_called_once()
+
+    @patch("lib.proxmox_manage.subprocess.run")
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_uncertain_shutdown_aborts_destroy_even_if_observed_stopped(
+        self, mock_run: MagicMock, mock_observe: MagicMock,
+    ) -> None:
+        mock_run.side_effect = [_completed("status: running\n"),
+                                _completed("status: running\n"),
+                                subprocess.TimeoutExpired("ssh", 120)]
+        mock_observe.return_value = _completed("status: stopped\n")
+        with self.assertRaisesRegex(ProxmoxManageError, "observed state: stopped"):
+            destroy_container(_host(), 100)
+        self.assertEqual([call.args[3] for call in mock_run.call_args_list],
+                         ["pct status 100", "pct status 100", "pct shutdown 100"])
+        mock_observe.assert_called_once()
 
 
 class TestDestroy(unittest.TestCase):
@@ -954,6 +1106,39 @@ class TestGuestUpdateRouting(unittest.TestCase):
 
 
 class TestParseListsnapshot(unittest.TestCase):
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_native_nested_qemu_and_lxc_trees(self, mock_run: MagicMock) -> None:
+        # GuestHelpers::print_snapshot_tree emits `-> on every row, with one
+        # extra leading space per descendant; current may be between branches.
+        fixtures = {
+            "pct": (
+                "`-> baseline                   2026-10-20 08:00:00     no-description\n"
+                " `-> before_upgrade            2026-10-21 09:10:11     before upgrade\n"
+                "  `-> current                                          You are here!\n"
+                " `-> alternate                 2026-10-21 10:00:00     other branch\n"
+            ),
+            "qm": (
+                "`-> baseline                   2026-10-20 08:00:00     with RAM\n"
+                " `-> before_upgrade            2026-10-21 09:10:11     before upgrade\n"
+                "  `-> current                                          You are here!\n"
+                "`-> alternate                  2026-10-21 10:00:00     other root\n"
+            ),
+        }
+        for tool, output in fixtures.items():
+            with self.subTest(tool=tool):
+                mock_run.reset_mock()
+                responses = [_completed(output)]
+                if tool == "qm":
+                    responses.insert(0, _completed(stderr="CT 100 does not exist", returncode=2))
+                mock_run.side_effect = responses
+                snapshots = list_snapshots(_host(), 100)
+                self.assertEqual([snap.name for snap in snapshots],
+                                 ["alternate", "baseline", "before_upgrade", "current"])
+                self.assertEqual([snap.name for snap in snapshots if snap.is_current], ["current"])
+                self.assertEqual(snapshots[2].description, "2026-10-21 09:10:11     before upgrade")
+                self.assertEqual(snapshots[3].description, "You are here!")
+                self.assertEqual(mock_run.call_args.args[3], f"{tool} listsnapshot 100")
+
     def test_parses_pct_format(self) -> None:
         out = (
             "-> current (no snapshot)\n"

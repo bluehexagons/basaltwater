@@ -258,13 +258,36 @@ class TestProxmoxCliContainerOps(_CliFixture):
     @patch("lib.proxmox_manage._ssh_run")
     def test_resume_runs_pct_resume(self, mock_run) -> None:
         mock_run.side_effect = [
-            _completed("status: running\n"),
+            _completed("status: stopped\n"),
             _completed(""),
         ]
         rc, out = self._run("resume", "pve1", "100")
         self.assertEqual(rc, 0)
         self.assertIn("Resumed guest 100", out)
         self.assertIn("pct resume 100", mock_run.call_args_list[-1].args[3])
+
+    @patch("lib.proxmox_manage._ssh_run")
+    def test_resume_running_lxc_returns_error(self, mock_run) -> None:
+        mock_run.return_value = _completed("status: running\n")
+        rc, out = self._run("resume", "pve1", "100")
+        self.assertEqual(rc, 1)
+        self.assertIn("already running", out)
+        self.assertNotIn("Resumed guest", out)
+        mock_run.assert_called_once()
+
+    @patch("lib.proxmox_manage._run_on_host")
+    def test_power_timeout_returns_error_without_success_message(self, mock_run) -> None:
+        mock_run.side_effect = [
+            _completed("status: running\n"),
+            subprocess.TimeoutExpired("ssh", 120),
+            _completed("status: stopped\n"),
+        ]
+        rc, out = self._run("stop", "pve1", "100")
+        self.assertEqual(rc, 1)
+        self.assertIn("observed state: stopped", out)
+        self.assertIn("outcome is uncertain", out)
+        self.assertNotIn("Stopped guest", out)
+        self.assertEqual(mock_run.call_count, 3)
 
     @patch("lib.proxmox_manage._ssh_run")
     def test_stop_force(self, mock_run) -> None:

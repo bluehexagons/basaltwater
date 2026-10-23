@@ -29,7 +29,7 @@ from typing import Optional
 import urllib.parse
 
 from lib.proxmox_hosts import ProxmoxHost
-from lib.proxmox_guest import _ssh_opts, _ssh_run
+from lib.proxmox_guest import _proxmox_ssh_command, _ssh_opts, _ssh_run
 from lib.types import StrList
 
 
@@ -158,10 +158,53 @@ def _run_on_host(
     *,
     dry_run: bool = False,
     log_cmd: Optional[str] = None,
+    timeout: int = 120,
+    bounded: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Execute ``cmd`` on ``host`` over SSH, returning the completed process."""
     opts = _ssh_opts(host.ssh_key)
-    return _ssh_run(host.address, host.user, opts, cmd, dry_run=dry_run, log_cmd=log_cmd)
+    if bounded and not dry_run:
+        # Recovery observations must not wait on an interactive authentication
+        # prompt. OpenSSH uses the first value supplied for an option.
+        ssh_cmd = _proxmox_ssh_command(
+            host.address, host.user, ["-o", "BatchMode=yes", *opts], cmd
+        )
+        return subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=timeout)
+    return _ssh_run(
+        host.address, host.user, opts, cmd, dry_run=dry_run,
+        log_cmd=log_cmd, timeout=timeout,
+    )
+
+
+def _run_power_command(
+    host: ProxmoxHost,
+    vmid: int,
+    guest_type: str,
+    cmd: str,
+    *,
+    timeout: int = 120,
+) -> subprocess.CompletedProcess[str]:
+    """Submit a power command once and report state if its SSH wait expires."""
+    try:
+        return _run_on_host(host, cmd, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        tool = "qm" if guest_type == "vm" else "pct"
+        observed = "unavailable"
+        try:
+            result = _run_on_host(
+                host, f"{tool} status {int(vmid)}", timeout=30, bounded=True
+            )
+            if result.returncode == 0:
+                observed = _parse_status_output(result.stdout)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        # A matching state cannot prove a reboot completed or that a native task
+        # is finished. Keep callers (including destroy) from proceeding.
+        raise ProxmoxManageError(
+            f"{cmd} timed out on {host.address}; observed state: {observed}. "
+            "The operation outcome is uncertain; inspect the Proxmox task log "
+            "and guest state before retrying."
+        ) from exc
 
 
 def _looks_like_missing_guest(result: subprocess.CompletedProcess[str]) -> bool:
@@ -427,7 +470,7 @@ def start_container(host: ProxmoxHost, vmid: int) -> None:
     if current == "running":
         return
     cmd = f"qm start {int(vmid)}" if guest_type == "vm" else f"pct start {int(vmid)}"
-    result = _run_on_host(host, cmd)
+    result = _run_power_command(host, vmid, guest_type, cmd)
     if result.returncode != 0:
         tool = "qm" if guest_type == "vm" else "pct"
         raise ProxmoxManageError(
@@ -460,7 +503,8 @@ def stop_container(
         cmd = f"pct stop {int(vmid)}" if force else f"pct shutdown {int(vmid)}"
     if timeout is not None and not force:
         cmd += f" --timeout {timeout}"
-    result = _run_on_host(host, cmd)
+    transport_timeout = max(120, timeout + 60) if timeout is not None and not force else 120
+    result = _run_power_command(host, vmid, guest_type, cmd, timeout=transport_timeout)
     if result.returncode != 0:
         raise ProxmoxManageError(
             f"{cmd} failed on {host.address}: "
@@ -486,7 +530,8 @@ def reboot_guest(
     cmd = f"{tool} reboot {int(vmid)}"
     if timeout is not None:
         cmd += f" --timeout {timeout}"
-    result = _run_on_host(host, cmd)
+    transport_timeout = max(120, timeout + 60) if timeout is not None else 120
+    result = _run_power_command(host, vmid, guest_type, cmd, timeout=transport_timeout)
     if result.returncode != 0:
         raise ProxmoxManageError(
             f"{cmd} failed on {host.address}: "
@@ -504,7 +549,7 @@ def suspend_guest(host: ProxmoxHost, vmid: int) -> None:
             f"Guest {vmid} is stopped; start it before pausing it."
         )
     cmd = f"qm suspend {int(vmid)}" if guest_type == "vm" else f"pct suspend {int(vmid)}"
-    result = _run_on_host(host, cmd)
+    result = _run_power_command(host, vmid, guest_type, cmd)
     if result.returncode != 0:
         raise ProxmoxManageError(
             f"{cmd} failed on {host.address}: "
@@ -517,12 +562,15 @@ def resume_guest(host: ProxmoxHost, vmid: int) -> None:
     guest_type, current = _get_guest_status(host, vmid)
     if guest_type == "vm" and current == "running":
         return
-    if current == "stopped":
+    if guest_type == "vm" and current == "stopped":
         raise ProxmoxManageError(
             f"Guest {vmid} is stopped; use the start command instead."
         )
+    if guest_type == "lxc" and current == "running":
+        raise ProxmoxManageError(f"Container {vmid} is already running; cannot resume it.")
+    # An inactive LXC checkpoint reports stopped. Let pct validate the checkpoint.
     cmd = f"qm resume {int(vmid)}" if guest_type == "vm" else f"pct resume {int(vmid)}"
-    result = _run_on_host(host, cmd)
+    result = _run_power_command(host, vmid, guest_type, cmd)
     if result.returncode != 0:
         raise ProxmoxManageError(
             f"{cmd} failed on {host.address}: "
@@ -848,13 +896,13 @@ def _parse_listsnapshot(stdout: str) -> list[SnapshotInfo]:
         stripped = line.strip()
         if not stripped:
             continue
-        # Both pct and qm prefix the current state with "->" or "->".
-        is_current = stripped.startswith("->")
-        text = stripped.lstrip("-> ").strip()
+        # Native pct/qm trees prefix every snapshot with `->, indented by depth.
+        text = re.sub(r"^`?->\s*", "", stripped)
         parts = text.split(None, 1)
         if not parts:
             continue
         snap_name = parts[0]
+        is_current = snap_name == "current"
         if snap_name.lower() in {"name", "snapname"}:
             continue
         description = parts[1].strip() if len(parts) > 1 else ""
