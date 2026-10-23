@@ -589,5 +589,157 @@ class TestFormatMaintenanceReport(unittest.TestCase):
         self.assertIn("swappiness:     10", output)
 
 
+class TestThinPoolDiagnostics(unittest.TestCase):
+    def setUp(self) -> None:
+        self.host = ProxmoxHost(name="pve1", address="10.0.0.10")
+
+    @staticmethod
+    def _pool(**overrides: str) -> dict[str, str]:
+        return {
+            "vg_name": "pve", "lv_name": "data", "lv_attr": "twi-aotz--",
+            "data_percent": "0.00", "metadata_percent": "1.59",
+            "seg_monitor": "monitored", **overrides,
+        }
+
+    def _collect(self, command, pool_result, *, allow_inactive_storage=False):
+        results = TestCollectMaintenanceReport._inventory_results("[]")
+        results[6] = _result(json.dumps([
+            {"storage": "local-lvm", "enabled": 1, "active": 1, "type": "lvmthin"},
+        ]))
+        results.insert(7, pool_result)
+        command.side_effect = results
+        return collect_maintenance_report(
+            self.host, allow_inactive_storage=allow_inactive_storage,
+        )
+
+    @staticmethod
+    def _lvs(*entries):
+        return _result(json.dumps({"report": [{"lv": list(entries)}]}))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_native_lvm_output_reports_active_pools_and_ignores_other_volumes(self, command):
+        report = self._collect(command, self._lvs(
+            self._pool(),
+            self._pool(vg_name="lab_ssd", metadata_percent=" 1.65 "),
+            self._pool(lv_name="inactive", lv_attr="twi---tz--", data_percent=""),
+            {"lv_name": "root", "lv_attr": "-wi-ao----", "data_percent": ""},
+        ))
+        self.assertTrue(report.reboot_safe)
+        self.assertEqual(report.warnings, [])
+        self.assertEqual([pool.volume_group for pool in report.thin_pools], ["lab_ssd", "pve"])
+        self.assertEqual(report.to_dict()["thin_pools"][1], {
+            "volume_group": "pve", "name": "data", "data_percent": 0.0,
+            "metadata_percent": 1.59, "monitored": True,
+        })
+        self.assertIn("data=0.00%, metadata=1.59%, monitoring=on", format_maintenance_report(report))
+        lvm_commands = [call.args[1] for call in command.call_args_list if "lvs " in call.args[1]]
+        self.assertEqual(len(lvm_commands), 1)
+        self.assertIn("LC_ALL=C lvs --reportformat json", lvm_commands[0])
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_data_and_metadata_thresholds_independently_warn_or_block(self, command):
+        for metric, percent, severity in product(
+            ("data_percent", "metadata_percent"),
+            ("79.99", "80.00", "94.99", "95.00", "100.00"),
+            (False, True),
+        ):
+            with self.subTest(metric=metric, percent=percent, allow_inactive=severity):
+                report = self._collect(
+                    command, self._lvs(self._pool(**{metric: percent})),
+                    allow_inactive_storage=severity,
+                )
+                self.assertEqual(report.healthy, float(percent) < 95)
+                self.assertEqual(bool(report.warnings), 80 <= float(percent) < 95)
+                if float(percent) >= 95:
+                    self.assertTrue(any("critical capacity pressure" in item for item in report.reboot_blockers()))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_missing_monitoring_warns_without_claiming_capacity_failure(self, command):
+        for monitor in ("not monitored", ""):
+            with self.subTest(monitor=monitor):
+                report = self._collect(command, self._lvs(self._pool(seg_monitor=monitor)))
+                self.assertTrue(report.healthy)
+                self.assertIn("is not monitored by dmeventd", report.warnings[0])
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_invalid_or_partial_inventory_warns_instead_of_reporting_zero_use(self, command):
+        for result in (
+            _result("{}"), _result("not json"), self._lvs(),
+            self._lvs(self._pool(), self._pool()), self._lvs(None),
+            self._lvs(self._pool(vg_name="bad\nname")),
+            *(self._lvs(self._pool(**{metric: value}))
+              for metric, value in product(
+                  ("data_percent", "metadata_percent"),
+                  ("", "NaN", "Infinity", "-1", "100.01", None, 0),
+              )),
+        ):
+            with self.subTest(stdout=result.stdout):
+                report = self._collect(command, result)
+                self.assertTrue(any("Could not parse LVM-thin pressure" in item for item in report.warnings))
+                self.assertIsNotNone(report.root_free_bytes)
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_critical_readings_survive_unknown_fields_and_malformed_neighboring_pools(self, command):
+        for entries in (
+            [self._pool(data_percent="95.00", metadata_percent="")],
+            [self._pool(metadata_percent="95.00", data_percent=None)],
+            [self._pool(data_percent="95.00", seg_monitor=None)],
+            [self._pool(data_percent="95.00"), None],
+            [None, self._pool(metadata_percent="95.00")],
+            [self._pool(), self._pool(data_percent="95.00")],
+        ):
+            with self.subTest(entries=entries):
+                report = self._collect(command, self._lvs(*entries))
+                self.assertFalse(report.reboot_safe)
+                self.assertTrue(report.warnings)
+                self.assertTrue(any("critical capacity pressure" in item for item in report.errors))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_unknown_percentage_is_null_in_json_and_explicit_in_text(self, command):
+        report = self._collect(command, self._lvs(self._pool(metadata_percent="", seg_monitor=None)))
+        self.assertIsNone(report.to_dict()["thin_pools"][0]["metadata_percent"])
+        self.assertIsNone(report.to_dict()["thin_pools"][0]["monitored"])
+        self.assertIn("metadata=unknown, monitoring=unknown", format_maintenance_report(report))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_failed_diagnostic_still_enforces_known_critical_readings(self, command):
+        for metric in ("data_percent", "metadata_percent"):
+            with self.subTest(metric=metric):
+                result = self._lvs(self._pool(**{metric: "95.00"}))
+                result.returncode = 5
+                result.stderr = "Another volume group could not be read"
+                report = self._collect(command, result)
+                self.assertFalse(report.reboot_safe)
+                self.assertTrue(any("Could not inspect LVM-thin pressure" in item for item in report.warnings))
+                self.assertTrue(any("critical capacity pressure" in item for item in report.errors))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_failed_or_timed_out_diagnostic_warns_and_remaining_checks_continue(self, command):
+        for result in (
+            _result(returncode=5, stderr="LVM unavailable"),
+            subprocess.TimeoutExpired("lvs", 60),
+            OSError("connection lost"),
+        ):
+            with self.subTest(result=result):
+                report = self._collect(command, result)
+                self.assertTrue(any("Could not inspect LVM-thin pressure" in item for item in report.warnings))
+                self.assertEqual(report.thin_pools, [])
+                self.assertIsNotNone(report.root_free_bytes)
+                self.assertTrue(report.previous_boot_available)
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_no_lvm_probe_without_active_enabled_thin_storage(self, command):
+        for enabled, active, storage_type in ((0, 1, "lvmthin"), (1, 0, "lvmthin"), (1, 1, "dir")):
+            with self.subTest(enabled=enabled, active=active, storage_type=storage_type):
+                results = TestCollectMaintenanceReport._inventory_results("[]")
+                results[6] = _result(json.dumps([
+                    {"storage": "test", "enabled": enabled, "active": active, "type": storage_type},
+                ]))
+                command.reset_mock()
+                command.side_effect = results
+                collect_maintenance_report(self.host)
+                self.assertFalse(any("lvs " in call.args[1] for call in command.call_args_list))
+
+
 if __name__ == "__main__":
     unittest.main()

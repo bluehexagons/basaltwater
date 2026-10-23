@@ -17,13 +17,15 @@ from lib.proxmox_memory import (
 )
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
 from lib.remote_utils import run
-from lib.validation import validate_proxmox_storage_name
+from lib.validation import validate_no_control_characters, validate_proxmox_storage_name
 
 
 MIN_ROOT_FREE_BYTES = 4 * 1024 ** 3
 MIN_BOOT_FREE_BYTES = 256 * 1024 ** 2
 MIN_ROOT_FREE_INODES = 1024
 MIN_BOOT_FREE_INODES = 128
+THIN_POOL_WARNING_PERCENT = 80
+THIN_POOL_CRITICAL_PERCENT = 95
 CORE_SERVICES = (
     "pve-cluster",
     "pvedaemon",
@@ -46,6 +48,17 @@ CommandRunner = Callable[[ProxmoxHost, str], subprocess.CompletedProcess[str]]
 
 
 @dataclass
+class ThinPoolState:
+    """Read-only capacity and monitoring observations for an active thin pool."""
+
+    volume_group: str
+    name: str
+    data_percent: Optional[float]
+    metadata_percent: Optional[float]
+    monitored: Optional[bool]
+
+
+@dataclass
 class ProxmoxMaintenanceReport:
     """Observed node state used by audits and rolling-update safety gates."""
 
@@ -59,6 +72,7 @@ class ProxmoxMaintenanceReport:
     running_guests: list[ContainerInfo] = field(default_factory=list)
     locked_guests: list[ContainerInfo] = field(default_factory=list)
     storage_states: dict[str, str] = field(default_factory=dict)
+    thin_pools: list[ThinPoolState] = field(default_factory=list)
     root_free_bytes: Optional[int] = None
     boot_free_bytes: Optional[int] = None
     root_total_inodes: Optional[int] = None
@@ -113,6 +127,7 @@ class ProxmoxMaintenanceReport:
             "running_guests": [asdict(guest) for guest in self.running_guests],
             "locked_guests": [asdict(guest) for guest in self.locked_guests],
             "storage_states": dict(self.storage_states),
+            "thin_pools": [asdict(pool) for pool in self.thin_pools],
             "root_free_bytes": self.root_free_bytes,
             "boot_free_bytes": self.boot_free_bytes,
             "root_total_inodes": self.root_total_inodes,
@@ -216,6 +231,109 @@ def _parse_guest_inventory(stdout: str, guest_type: str) -> list[ContainerInfo]:
         seen.add(vmid)
         guests.append(ContainerInfo(vmid=vmid, status=status, name=name, guest_type=guest_type, lock=lock))
     return guests
+
+
+def _parse_thin_pools(stdout: str) -> tuple[list[ThinPoolState], list[str]]:
+    """Preserve known readings even when neighboring LVM fields are missing."""
+    payload = json.loads(stdout)
+    if not isinstance(payload, dict) or not isinstance(payload.get("report"), list):
+        raise ValueError("LVM response has no report list")
+    pools = []
+    warnings = []
+    seen = set()
+    for section in payload["report"]:
+        if not isinstance(section, dict) or not isinstance(section.get("lv"), list):
+            warnings.append("LVM response has no logical volume list")
+            continue
+        for entry in section["lv"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("lv_attr"), str):
+                warnings.append("LVM response contains an invalid logical volume")
+                continue
+            attributes = entry["lv_attr"].strip()
+            if not attributes.startswith("t"):
+                continue
+            if len(attributes) < 5:
+                warnings.append("LVM response contains incomplete thin pool attributes")
+                continue
+            if attributes[4] != "a":
+                continue
+            names = []
+            try:
+                for key in ("vg_name", "lv_name"):
+                    value = entry.get(key)
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError("LVM response contains an unnamed thin pool")
+                    value = value.strip()
+                    validate_no_control_characters(value, key)
+                    names.append(value)
+            except ValueError as exc:
+                warnings.append(str(exc))
+                continue
+            identity = tuple(names)
+            if identity in seen:
+                warnings.append("LVM response repeats a thin pool")
+            seen.add(identity)
+            label = "/".join(names)
+            percentages = []
+            for key in ("data_percent", "metadata_percent"):
+                value = entry.get(key)
+                if not isinstance(value, str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", value.strip()):
+                    warnings.append(f"Thin pool {label} has invalid {key}")
+                    percentages.append(None)
+                    continue
+                percent = float(value)
+                if not 0 <= percent <= 100:
+                    warnings.append(f"Thin pool {label} has out-of-range {key}")
+                    percentages.append(None)
+                    continue
+                percentages.append(percent)
+            monitor = entry.get("seg_monitor")
+            if not isinstance(monitor, str) or monitor.strip() not in ("monitored", "not monitored", ""):
+                warnings.append(f"Thin pool {label} has invalid monitoring data")
+                monitored = None
+            else:
+                monitored = monitor.strip() == "monitored"
+            pools.append(ThinPoolState(*names, *percentages, monitored))
+    if not pools:
+        warnings.append("No active thin pools were reported for active LVM-thin storage")
+    return sorted(pools, key=lambda pool: (pool.volume_group, pool.name)), warnings
+
+
+def _collect_thin_pool_diagnostics(
+    host: ProxmoxHost,
+    report: ProxmoxMaintenanceReport,
+    run_command: CommandRunner,
+) -> None:
+    """Inspect active host thin pools without extending or repairing them."""
+    try:
+        result = run_command(
+            host,
+            "LC_ALL=C lvs --reportformat json "
+            "-o vg_name,lv_name,lv_attr,data_percent,metadata_percent,seg_monitor",
+        )
+    except (OSError, TimeoutError, subprocess.TimeoutExpired) as exc:
+        report.warnings.append(f"Could not inspect LVM-thin pressure: {exc}")
+        return
+    if result.returncode != 0:
+        report.warnings.append(f"Could not inspect LVM-thin pressure: {_failure_detail(result)}")
+    try:
+        report.thin_pools, warnings = _parse_thin_pools(result.stdout)
+    except (TypeError, ValueError) as exc:
+        report.warnings.append(f"Could not parse LVM-thin pressure: {exc}")
+        return
+    report.warnings.extend(f"Could not parse LVM-thin pressure: {item}" for item in warnings)
+    for pool in report.thin_pools:
+        label = f"LVM-thin pool {pool.volume_group}/{pool.name}"
+        for kind, percent in (("data", pool.data_percent), ("metadata", pool.metadata_percent)):
+            if percent is None:
+                continue
+            message = f"{label} {kind} use is {percent:.2f}%"
+            if percent >= THIN_POOL_CRITICAL_PERCENT:
+                report.errors.append(message + "; critical capacity pressure (at least 95%)")
+            elif percent >= THIN_POOL_WARNING_PERCENT:
+                report.warnings.append(message + "; capacity pressure (at least 80%)")
+        if pool.monitored is False:
+            report.warnings.append(label + " is not monitored by dmeventd")
 
 
 def _collect_filesystem_capacity(
@@ -506,6 +624,12 @@ def collect_maintenance_report(
                             )
                         else:
                             report.errors.append(f"Storage {storage_name} is {state}")
+                if any(
+                    entry.get("type") == "lvmthin"
+                    and report.storage_states[entry["storage"]] == "active"
+                    for entry in json.loads(storage.stdout)
+                ):
+                    _collect_thin_pool_diagnostics(host, report, run_command)
 
         _collect_filesystem_capacity(host, report, run_command)
 
@@ -602,6 +726,14 @@ def format_maintenance_report(report: ProxmoxMaintenanceReport) -> str:
     ]
     if report.active_tasks:
         lines.append("  tasks:          " + ", ".join(report.active_tasks))
+    for pool in report.thin_pools:
+        data = "unknown" if pool.data_percent is None else f"{pool.data_percent:.2f}%"
+        metadata = "unknown" if pool.metadata_percent is None else f"{pool.metadata_percent:.2f}%"
+        monitoring = "unknown" if pool.monitored is None else "on" if pool.monitored else "off"
+        lines.append(
+            f"  thin pool:      {pool.volume_group}/{pool.name}: "
+            f"data={data}, metadata={metadata}, monitoring={monitoring}"
+        )
     if report.running_guests:
         guests = ", ".join(
             f"{guest.vmid} ({guest.guest_type}, {guest.name or '-'})"
@@ -623,6 +755,7 @@ __all__ = [
     "MIN_BOOT_FREE_BYTES",
     "MIN_ROOT_FREE_INODES",
     "MIN_BOOT_FREE_INODES",
+    "ThinPoolState",
     "ProxmoxMaintenanceReport",
     "collect_maintenance_report",
     "collect_local_maintenance_report",

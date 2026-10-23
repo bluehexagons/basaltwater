@@ -989,8 +989,16 @@ swap is a failing audit condition, while no swap, swappiness above 10, high
 memory/swap use, and missing prior-boot evidence are warnings. The command is
 read-only and exits nonzero when a health check fails.
 
-The audit checks pool accessibility, not ZFS pool or scrub health, LVM-thin
-pressure, SMART/NVMe condition, detailed backup storage, certificate expiry, or
+When enabled LVM-thin storage is active, the audit also reads LVM's data and
+metadata percentages for all active thin pools on the host. Either percentage
+at 80% produces a warning; at 95% it fails the audit and blocks automatic
+maintenance. These are Basaltwater's headroom thresholds, not LVM limits.
+Missing pool measurements and disabled `dmeventd` monitoring produce warnings.
+Monitoring alone does not prove automatic extension is configured or that the
+volume group has free space. This check never extends, repairs, or fills a pool.
+
+The audit also checks pool accessibility. It does not check ZFS pool or scrub
+health, SMART/NVMe condition, detailed backup storage, certificate expiry, or
 timer delivery. It does not prove that a backup is fresh, intact, stored
 off-host, or restorable in isolation.
 
