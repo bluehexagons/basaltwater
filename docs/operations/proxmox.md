@@ -1287,14 +1287,50 @@ basaltw proxmox clean-disks pve1 --delete
 `--yes`/`-y` is supplied; treat it as destructive because an orphaned-volume
 check cannot infer whether an external workflow still needs a volume.
 
-Cleanup aborts if either guest inventory, cluster guest inventory, or an active
-pool's volume listing fails. Successful empty output from `qm list` or `pct list`
-is accepted for a node with no guests; the cluster JSON inventory is still
-required. Cluster-wide guest IDs protect shared-storage disks owned by other
-nodes. Every deletion repeats the complete scan and refuses a
-volume that is no longer orphaned. Keep provisioning and migration paused during
-cleanup: inventory and deletion are separate Proxmox operations. CLI partial
-failures return nonzero; the shell stops cleanup and reports the failure.
+Cleanup requires consistent local and cluster guest inventories, effective
+storage sharing metadata, replication configuration, and successful volume
+listings from every active pool. It reads all QEMU and LXC configuration files
+under `/etc/pve/nodes` using the host's Python 3, including pending, unused, and
+snapshot sections. A volume referenced by another guest is protected even when
+its reported owner VMID is absent. Configured storage IDs, including disabled or
+node-restricted IDs, are read separately so references through an unlisted alias
+are checked too. Native volume references and absolute host-path references are
+compared with Proxmox volume paths and backing identities: referencing a disk
+through one storage ID protects aliases of that disk under other IDs.
+Missing, unreadable, malformed, or inconsistent
+inventories abort cleanup; empty native guest lists are accepted when the other
+inventories agree.
+
+Backing comparisons require resolvable volume paths; inactive LVM devices with
+missing aliases abort cleanup rather than guessing device identity. VirtioFS
+directory mappings are resolved on the inspected node and protect volumes that
+contain, equal, or lie beneath the shared directory. A missing or invalid mapping
+aborts cleanup. A guest using native volume IDs, absolute host paths, or VirtioFS
+on another node conservatively protects all shared-storage candidates because its paths and
+aliases cannot be resolved locally. References on another node still do not
+protect unrelated node-local volumes.
+Custom QEMU `args` in any configuration section conservatively protect all
+candidates in that guest's storage scope. These arguments can encode paths in
+quoted strings or backend-specific syntax that the cleanup scan cannot fully
+interpret; remove or review them separately before reclaiming those volumes.
+During backing comparisons, native userspace RBD identifiers are conservatively
+retained because they do not establish filesystem/device identity; unrelated
+local-storage candidates remain eligible. An unresolved userspace RBD reference
+conservatively protects all candidates. Unknown path formats still abort cleanup.
+
+For shared storage, an owner or reference on any cluster node protects the disk.
+For node-local storage, only owners and references on the inspected node count:
+the same storage ID on another node can name different physical storage.
+Configured replication jobs conservatively protect their guest's volumes,
+including disabled jobs and jobs awaiting removal. Review those jobs separately
+before reclaiming old replicas.
+
+Every deletion repeats the complete scan and refuses a volume that is no longer
+orphaned. Keep provisioning, migration, replication changes, and other guest
+configuration changes paused during cleanup: inventory and deletion are separate
+Proxmox operations. External workflows and storage dependencies outside guest
+configuration still require manual review. CLI partial failures return nonzero;
+the shell stops cleanup and reports the failure.
 `--dry-run` is honored in both interfaces, including with `--delete --yes`.
 
 After confirming that no backup, migration, or snapshot task is still active,
