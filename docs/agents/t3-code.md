@@ -239,6 +239,12 @@ permissions after upgrading, enroll it again through the protected pairing
 entrypoint. See the
 [upstream permission contract](https://github.com/pingdotgg/t3code/blob/v0.1.0/packages/contracts/src/auth.ts).
 
+The helper sends its temporary administrative bearer only to an explicit
+loopback address or `localhost`, with proxies and redirects disabled. Remote
+and wildcard server addresses are rejected before a session is issued. The
+client-facing base URL remains independently configurable, including IPv6;
+it does not determine where the helper sends that bearer.
+
 T3 also records non-fatal provider diagnostics. It can health-check optional
 agent CLIs even when setup deliberately omitted them, so a missing-Claude or
 similar warning is not a failed configured capability; compare it with the

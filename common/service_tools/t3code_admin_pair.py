@@ -88,17 +88,19 @@ def _validated_url(value: str, label: str, *, local_only: bool = False) -> str:
         port = parsed.port
     except ValueError as exc:
         raise ValueError(f"Invalid {label}") from exc
+    try:
+        local_host = ipaddress.ip_address(parsed.hostname or "")
+    except ValueError:
+        local_host = None
     if local_only:
-        try:
-            local_host = ipaddress.ip_address(parsed.hostname or "")
-        except ValueError:
-            local_host = None
-        if local_host is None and (parsed.hostname or "").lower() != "localhost":
+        if (local_host is not None and not local_host.is_loopback) or (
+            local_host is None and (parsed.hostname or "").lower() != "localhost"
+        ):
             raise ValueError(f"Invalid {label}")
     if (
         parsed.scheme not in ({"http"} if local_only else {"http", "https"})
         or not parsed.hostname
-        or not validate_host(parsed.hostname)
+        or (local_host is None and not validate_host(parsed.hostname))
         or parsed.username
         or parsed.password
         or parsed.path not in ("", "/")

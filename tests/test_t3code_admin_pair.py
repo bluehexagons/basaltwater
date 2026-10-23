@@ -12,13 +12,44 @@ from common.service_tools import t3code_admin_pair
 
 
 class T3CodeAdministrativePairingTest(unittest.TestCase):
-    def test_local_server_url_rejects_dns_hosts(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Invalid local T3 server URL"):
-            t3code_admin_pair._validated_url(
-                "http://attacker.example:3773",
-                "local T3 server URL",
-                local_only=True,
-            )
+    def test_remote_server_urls_fail_before_issuing_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            t3_binary = os.path.join(temporary, "t3")
+            base_dir = os.path.join(temporary, "state")
+            os.mkdir(base_dir)
+            with open(t3_binary, "w", encoding="utf-8") as file_obj:
+                file_obj.write("#!/bin/sh\n")
+            with (
+                patch.object(t3code_admin_pair, "_issue_temporary_session") as issue,
+                patch.object(t3code_admin_pair, "_request_pairing_link") as request,
+            ):
+                for host in (
+                    "attacker.example", "203.0.113.9", "192.168.1.9", "0.0.0.0",
+                    "[2001:db8::9]", "[fd00::9]", "[::]",
+                ):
+                    with self.subTest(host=host), self.assertRaisesRegex(
+                        ValueError, "Invalid local T3 server URL"
+                    ):
+                        t3code_admin_pair.issue_administrative_pairing(
+                            t3_binary, base_dir, f"http://{host}:3773",
+                            "https://agent.example", "Remote app",
+                        )
+                issue.assert_not_called()
+                request.assert_not_called()
+
+    def test_local_server_urls_accept_only_loopback_or_localhost(self) -> None:
+        for host in ("127.0.0.1", "127.12.34.56", "[::1]", "localhost"):
+            with self.subTest(host=host):
+                url = f"http://{host}:3773"
+                self.assertEqual(t3code_admin_pair._validated_url(
+                    url, "local T3 server URL", local_only=True,
+                ), url)
+
+    def test_public_base_url_can_use_remote_ipv6(self) -> None:
+        url = "https://[2001:db8::9]:3773"
+        self.assertEqual(t3code_admin_pair._validated_url(url, "public T3 base URL"), url)
+        self.assertEqual(t3code_admin_pair._pairing_url(url, "credential"),
+                         url + "/pair#token=credential")
 
     def test_url_rejects_invalid_port(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid local T3 server URL"):
