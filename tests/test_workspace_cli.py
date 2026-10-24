@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
+import io
 import os
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,6 +19,151 @@ import basaltwater
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
 from argparse import Namespace
+
+
+class TestWorkspaceInheritance(unittest.TestCase):
+    # Split each command at an existing command-local --workspace position.
+    commands = (
+        (("setup",), ("server_lite", "example.com")),
+        (("patch",), ("example.com",)),
+        (("list",), ("prod",)),
+        (("ls",), ()),
+        (("deploy",), ("prod",)),
+        (("cleanup",), ("--dry-run",)),
+        (("credentials",), ("list",)),
+        (("network",), ("list",)),
+        (("vm",), ("status", "saved-vm", "--json")),
+        (("vm",), ("snapshot", "list", "saved-vm")),
+        (("vm",), ("backup", "list", "saved-vm")),
+        (("proxmox",), ("hosts",)),
+        (("proxmox",), ("notifications", "test-webhook", "pve1")),
+        (("homebox", "health"), ("example.com",)),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
+
+    def test_global_workspace_survives_omitted_command_options(self):
+        for prefix, suffix in self.commands:
+            with self.subTest(command=prefix + suffix):
+                args = self.parser.parse_args([
+                    "--workspace", "/tmp/global-workspace", *prefix, *suffix,
+                ])
+                self.assertEqual(args.workspace, "/tmp/global-workspace")
+
+    def test_command_workspace_overrides_global_workspace(self):
+        for prefix, suffix in self.commands:
+            with self.subTest(command=prefix + suffix):
+                args = self.parser.parse_args([
+                    "--workspace", "/tmp/global-workspace", *prefix,
+                    "--workspace", "/tmp/local-workspace", *suffix,
+                ])
+                self.assertEqual(args.workspace, "/tmp/local-workspace")
+
+    def test_command_workspace_still_works_without_global_option(self):
+        for prefix, suffix in self.commands:
+            with self.subTest(command=prefix + suffix):
+                args = self.parser.parse_args([
+                    *prefix, "--workspace", "/tmp/local-workspace", *suffix,
+                ])
+                self.assertEqual(args.workspace, "/tmp/local-workspace")
+
+    def test_omitted_workspace_is_none_without_leaking_previous_parse(self):
+        self.parser.parse_args(["--workspace", "/tmp/previous-workspace", "list"])
+        for prefix, suffix in self.commands:
+            with self.subTest(command=prefix + suffix):
+                self.assertIsNone(self.parser.parse_args([*prefix, *suffix]).workspace)
+        self.assertIsNone(self.parser.parse_args([]).workspace)
+
+    def test_unrelated_defaults_and_validation_are_preserved(self):
+        args = self.parser.parse_args([
+            "--workspace", "/tmp/global-workspace", "vm", "status", "saved-vm",
+        ])
+        self.assertIsNone(args.vmid)
+        self.assertFalse(args.json)
+        args = self.parser.parse_args(["setup", "server_lite", "example.com"])
+        self.assertIsNone(args.username)
+        self.assertFalse(args.dry_run)
+
+        for command in (
+            ["vm", "status", "pve1", "invalid-id"],
+            ["vm", "status", "saved-vm", "--unknown-option"],
+            ["vm", "status", "saved-vm", "--workspace", "/tmp/unsupported-position"],
+            ["list", "--workspace"],
+        ):
+            with self.subTest(command=command), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    self.parser.parse_args(["--workspace", "/tmp/global-workspace", *command])
+                self.assertEqual(error.exception.code, 2)
+
+    def test_standalone_parsers_keep_workspace_defaults(self):
+        setup_parser = create_setup_argument_parser("test")
+        self.assertIsNone(setup_parser.parse_args(["example.com"]).workspace)
+        self.assertEqual(
+            setup_parser.parse_args(["example.com", "--workspace", "/tmp/local-workspace"]).workspace,
+            "/tmp/local-workspace",
+        )
+        for builder, command in (
+            (basaltwater.add_vm_subparser, ["vm", "status", "saved-vm"]),
+            (basaltwater.add_proxmox_subparser, ["proxmox", "hosts"]),
+        ):
+            with self.subTest(command=command):
+                parser = argparse.ArgumentParser()
+                builder(parser.add_subparsers(dest="command"))
+                self.assertIsNone(parser.parse_args(command).workspace)
+                self.assertEqual(
+                    parser.parse_args([
+                        command[0], "--workspace", "/tmp/local-workspace", *command[1:],
+                    ]).workspace,
+                    "/tmp/local-workspace",
+                )
+
+    def test_main_activates_workspace_before_dispatch(self):
+        with tempfile.TemporaryDirectory() as root:
+            global_workspace = os.path.join(root, "global")
+            local_workspace = os.path.join(root, "local")
+            fallback_workspace = os.path.join(root, "fallback")
+            for command, handler in (
+                (["list", "prod", "--json"], "list_configurations"),
+                (["vm", "status", "saved-vm", "--json"], "run_vm_command"),
+                (["proxmox", "hosts"], "run_proxmox_command"),
+                (["setup", "server_lite", "example.com"], "run_setup_command"),
+            ):
+                for override in (False, True):
+                    expected = local_workspace if override else global_workspace
+                    argv = ["basaltw", "--workspace", global_workspace, command[0]]
+                    if override:
+                        argv.extend(["--workspace", local_workspace])
+                    argv.extend(command[1:])
+
+                    def dispatch(*args, **kwargs):
+                        self.assertEqual(basaltwater.get_workspace_dir(), expected)
+                        if args and isinstance(args[0], Namespace):
+                            self.assertEqual(args[0].workspace, expected)
+                        return 23
+
+                    with self.subTest(command=command, override=override), \
+                         patch.dict(os.environ, {"BASALTWATER_WORKSPACE": fallback_workspace}), \
+                         patch.object(sys, "argv", argv), \
+                         patch("basaltwater.argcomplete", None), \
+                         patch.object(basaltwater, handler, side_effect=dispatch) as mock_dispatch:
+                        self.assertEqual(basaltwater.main(), 23)
+                        mock_dispatch.assert_called_once()
+            self.assertNotEqual(os.environ.get("BASALTWATER_WORKSPACE"), global_workspace)
+            self.assertNotEqual(os.environ.get("BASALTWATER_WORKSPACE"), local_workspace)
+
+    def test_main_keeps_environment_workspace_when_option_is_omitted(self):
+        with tempfile.TemporaryDirectory() as workspace, \
+             patch.dict(os.environ, {"BASALTWATER_WORKSPACE": workspace}), \
+             patch.object(sys, "argv", ["basaltw", "list"]), \
+             patch("basaltwater.argcomplete", None), \
+             patch("basaltwater.set_workspace_dir") as mock_set_workspace, \
+             patch("basaltwater.list_configurations", return_value=0) as mock_list:
+            self.assertEqual(basaltwater.main(), 0)
+            mock_set_workspace.assert_not_called()
+            mock_list.assert_called_once_with(None, json_output=False)
+            self.assertEqual(basaltwater.get_workspace_dir(), workspace)
 
 
 class TestWorkspaceCli(unittest.TestCase):

@@ -260,6 +260,17 @@ def run_tool_upgrade_command(args: argparse.Namespace | None = None) -> int:
         return 1
 
 
+class _CommandArgumentParser(argparse.ArgumentParser):
+    """Keep an inherited workspace unless this command explicitly replaces it."""
+
+    def add_argument(self, *args: str, **kwargs) -> argparse.Action:
+        if "--workspace" in args:
+            # argparse copies subparser defaults over the parent namespace.
+            # Omitted command-local options must leave the root value intact.
+            kwargs["default"] = argparse.SUPPRESS
+        return super().add_argument(*args, **kwargs)
+
+
 def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.ArgumentParser, argparse.ArgumentParser]:
     """Create the main argument parser for basaltwater."""
     parser = argparse.ArgumentParser(
@@ -280,7 +291,9 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         ),
     )
     
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(
+        dest="command", help="Available commands", parser_class=_CommandArgumentParser,
+    )
     migration_parser = subparsers.add_parser("migrate", help="One-time migration from recent infra-tools installations")
     migration_parser.add_argument("--system", action="store_true", help="Migrate this host's system installation")
     migration_parser.add_argument("--installation", help="Explicit recent source directory when installed at a custom path")

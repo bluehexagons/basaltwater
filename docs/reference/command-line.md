@@ -138,6 +138,31 @@ endpoint, and agent skill. Add `--fix` to rebuild missing native dependencies,
 configure the GitHub HTTPS credential helper after a successful login, enable
 the service at boot, and restart it when inactive.
 
+### Global workspace selection
+
+Place `--workspace PATH` before the command to select the workspace for saved
+setups, credentials, `known_hosts`, and history. The selection carries through
+nested command groups:
+
+```bash
+basaltw --workspace /srv/basaltwater list
+basaltw --workspace /srv/basaltwater vm status saved-vm --json
+basaltw --workspace /srv/basaltwater vm snapshot list saved-vm --json
+basaltw --workspace /srv/basaltwater proxmox hosts
+```
+
+Commands that expose their own `--workspace` still accept it in the positions
+shown by their `--help`. An explicitly supplied command-local workspace
+overrides the global selection; omitting it preserves the global selection.
+For example, this command uses `/srv/other`:
+
+```bash
+basaltw --workspace /srv/basaltwater vm --workspace /srv/other status saved-vm --json
+```
+
+With no `--workspace`, Basaltwater uses `BASALTWATER_WORKSPACE` when set,
+otherwise `~/.config/basaltwater`.
+
 ### Refresh this machine
 
 On Debian, run:
