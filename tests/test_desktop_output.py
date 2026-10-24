@@ -61,8 +61,9 @@ class DesktopOutputTests(unittest.TestCase):
         add_desktop_subparser(parser.add_subparsers())
         return parser.parse_args(["desktop", *argv])
 
-    def run_cli(self, result, *argv):
-        with (patch("lib.desktop_cli.runtime.status", return_value={"state": "running", "generation": "generation-1"}),
+    def run_cli(self, result, *argv, mode="enabled"):
+        with (patch("lib.desktop_cli.runtime.status", return_value={"state": "running", "generation": "generation-1", "control_revision": "r",
+                                                                   "agent_control": mode, "paused": mode != "enabled"}),
               patch("lib.desktop_cli.runtime.request", return_value=result) as request,
               patch("sys.stdout", new_callable=io.StringIO) as output):
             code = run_desktop_command(self.arguments(*argv))
@@ -70,10 +71,14 @@ class DesktopOutputTests(unittest.TestCase):
 
     def test_default_inspection_keeps_legacy_payload(self) -> None:
         result = self.observation()
-        code, output, _ = self.run_cli(result, "inspect", "--pid", "123")
-        self.assertEqual(code, 0)
-        self.assertEqual(output, result)
-        self.assertFalse(self.directory.exists())
+        for mode in ("enabled", "human-override", "disabled"):
+            with self.subTest(mode=mode):
+                code, output, request = self.run_cli(result, "inspect", "--pid", "123", mode=mode)
+                self.assertEqual(code, 0)
+                self.assertEqual(output, result)
+                request.assert_called_once()
+                self.assertEqual(request.call_args.args[0]["action"], "inspect")
+                self.assertFalse(self.directory.exists())
 
     def test_save_output_preserves_query_and_failure_status(self) -> None:
         result = {**self.observation(), "error": "Timed out waiting for one complete match"}

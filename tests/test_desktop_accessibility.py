@@ -6,11 +6,13 @@ import argparse
 import contextlib
 import io
 import subprocess
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import accessibility as a11y, client, session_runtime as runtime
+from desktop import accessibility as a11y, client, control_state, session_runtime as runtime
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
 
 
@@ -264,6 +266,8 @@ class DependencyTests(unittest.TestCase):
 
 class SessionTests(unittest.TestCase):
     def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
         process = Mock(pid=100)
         process.poll.return_value = None
         self.session = runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, process)
@@ -276,22 +280,22 @@ class SessionTests(unittest.TestCase):
     def inspect(self):
         return self.session.handle({"action": "inspect", "generation": self.session.generation, "pid": 42})
 
-    def test_observation_during_pause_and_actions_require_lease(self):
-        self.session.paused = True
+    def test_observation_during_override_and_actions_require_current_revision(self):
+        control_state.change("human-override", human_approved=True)
         self.assertEqual(self.inspect()["elements"], [self.row])
         payload = {"action": "element", "generation": self.session.generation, "ref": "ref", "operation": "focus"}
-        with self.assertRaisesRegex(RuntimeError, "paused"):
+        with self.assertRaisesRegex(RuntimeError, "human-override"):
             self.session.handle(payload)
-        self.session.paused = False
-        with self.assertRaisesRegex(ValueError, "lease"):
+        control_state.change("enabled", human_approved=True)
+        with self.assertRaisesRegex(ValueError, "control changed"):
             self.session.handle(payload)
         self.assertEqual(self.worker.call_count, 1)
 
     def test_reference_is_bound_to_observation_and_consumed_even_on_failure(self):
         self.inspect()
-        lease = self.session.handle({"action": "acquire", "generation": self.session.generation})
+        context = {"generation": self.session.generation, "control_revision": control_state.status()["control_revision"]}
         self.worker.side_effect = RuntimeError("Application rejected")
-        payload = {"action": "element", **lease, "ref": "ref", "operation": "focus", "pid": 999}
+        payload = {"action": "element", **context, "ref": "ref", "operation": "focus", "pid": 999}
         with self.assertRaisesRegex(RuntimeError, "rejected"):
             self.session.handle(payload)
         self.assertEqual(self.worker.call_args.args[0]["pid"], 42)
@@ -300,10 +304,10 @@ class SessionTests(unittest.TestCase):
 
     def test_expired_reference_and_stale_generation_fail_before_worker(self):
         self.inspect()
-        lease = self.session.handle({"action": "acquire", "generation": self.session.generation})
+        context = {"generation": self.session.generation, "control_revision": control_state.status()["control_revision"]}
         self.session.elements["ref"]["observed_at"] -= 61
         with self.assertRaisesRegex(ValueError, "expired"):
-            self.session.handle({"action": "element", **lease, "ref": "ref", "operation": "focus"})
+            self.session.handle({"action": "element", **context, "ref": "ref", "operation": "focus"})
         with self.assertRaisesRegex(ValueError, "session changed"):
             self.session.handle({"action": "inspect", "generation": "old", "pid": 42})
         self.assertEqual(self.worker.call_count, 1)
@@ -321,7 +325,7 @@ class WaitTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "root changed"):
             client.wait_for_element("g", pid=42, root="0:" + "a" * 32, name="Save", state="absent")
 
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"})
     @patch.object(runtime, "request", return_value={"elements": [], "truncated": False})
     def test_cli_requires_explicit_generation_for_scoped_inspection(self, request, status):
         parser = argparse.ArgumentParser()
@@ -363,13 +367,14 @@ class WaitTests(unittest.TestCase):
         result = client.wait_for_element("g", pid=42, role="text", text="prefix", timeout=1)
         self.assertIn("error", result)
 
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
-    @patch.object(runtime, "request", side_effect=[{"lease": "l"}, {"requested": "invoke"}, {}])
-    def test_cli_routes_named_action_and_releases_lease(self, request, status):
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"})
+    @patch.object(runtime, "request", return_value={"requested": "invoke"})
+    def test_cli_routes_named_action_with_current_revision(self, request, status):
         parser = argparse.ArgumentParser()
         add_desktop_subparser(parser.add_subparsers())
         args = parser.parse_args(["desktop", "element", "invoke", "--generation", "g", "--ref", "ref", "--action-name", "click"])
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(run_desktop_command(args), 0)
-        self.assertEqual(request.call_args_list[1].args[0]["action_name"], "click")
-        self.assertEqual(request.call_args.args[0]["action"], "release")
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["action_name"], "click")
+        self.assertEqual(request.call_args.args[0]["control_revision"], "r")

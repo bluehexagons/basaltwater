@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from desktop import development, development_worker
+from desktop import control_state, development, development_worker
 from lib import desktop_cli
 from lib import agent_environment, agent_workspace
 from lib.atomic_io import write_json_atomic
@@ -25,6 +25,7 @@ from lib.atomic_io import write_json_atomic
 class TestDevelopmentTasks(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
         self.project = self.home / "project with %n $HOME `ticks`"
         self.project.mkdir()
         (self.project / "project.godot").write_text('[application]\nconfig/features=PackedStringArray("4.7", "Forward Plus")\n')
@@ -34,7 +35,8 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.uid = os.getuid()
         self.enterContext(patch.object(development, "_guard", return_value=self.uid))
         self.enterContext(patch.object(development.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(self.home))))
-        self.enterContext(patch.object(development, "_honor_human_pause"))
+        self.honor_agent_control = development._honor_agent_control
+        self.control = self.enterContext(patch.object(development, "_honor_agent_control", return_value="c" * 32))
         self.which = self.enterContext(patch.object(development.shutil, "which", side_effect=lambda name: str(self.engine) if name in ("godot", str(self.engine)) else None))
         self.enterContext(patch.object(development, "is_dry_run", return_value=False))
         self.environment = self.enterContext(patch.object(development, "session_environment", return_value=({"WAYLAND_DISPLAY": "wayland-0"}, "available")))
@@ -156,6 +158,35 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.probe.assert_not_called()
         self.assertFalse((self.home / ".local").exists())
 
+    def test_blocked_modes_allow_observation_and_previews_but_never_queue_tasks(self):
+        self.control.side_effect = self.honor_agent_control
+        for mode in ("human-override", "disabled"):
+            with self.subTest(mode=mode):
+                current = control_state.change(mode, seconds=None, human_approved=True)
+                self.assertTrue(development.doctor(str(self.project))["prerequisites_only"])
+                self.assertEqual(development.list_tasks()["tasks"], [])
+                self.assertTrue(self.launch(dry_run=True)["dry_run"])
+                with self.assertRaisesRegex(RuntimeError, mode):
+                    self.launch()
+                self.assertEqual(control_state.status(), current)
+                self.probe.assert_not_called()
+                self.assertFalse((self.home / ".local/state/basaltwater/development").exists())
+
+    def test_blocked_modes_cannot_stop_existing_tasks_but_can_inspect_and_preview(self):
+        launched = self.launch()
+        self.control.side_effect = self.honor_agent_control
+        for mode in ("human-override", "disabled"):
+            with self.subTest(mode=mode):
+                current = control_state.change(mode, seconds=None, human_approved=True)
+                self.probe.reset_mock()
+                self.assertEqual(development.task_status(launched["task"])["state"], "running")
+                self.assertTrue(development.task_status(launched["task"], stop=True, dry_run=True)["dry_run"])
+                with self.assertRaisesRegex(RuntimeError, mode):
+                    development.task_status(launched["task"], stop=True)
+                self.assertFalse(any(call.args[0][2] == "stop" for call in self.probe.call_args_list))
+                self.assertFalse((Path(launched["directory"]) / "stop-requested.json").exists())
+                self.assertEqual(control_state.status(), current)
+
     def test_runtime_path_is_forwarded_once_without_importing_provider_credentials(self):
         with patch.dict(os.environ, {"PATH": "/usr/bin:/tmp/literal%npath", "PROVIDER_TOKEN": "secret"}):
             self.launch()
@@ -205,6 +236,7 @@ class TestDevelopmentTasks(unittest.TestCase):
         record = development.load_task(directory)
         self.assertEqual(record["argv"], [str(self.engine), "--path", str(self.project), str(scene), "--", "%n", "$HOME", "`touch nope`", "two words", ""])
         self.assertEqual(record["invocation_id"], "a" * 32)
+        self.assertEqual(record["control_revision"], "c" * 32)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
         self.assertEqual((directory / "task.json").stat().st_mode & 0o777, 0o600)
         command = self.probe.call_args_list[0].args[0]
@@ -369,6 +401,20 @@ class TestDevelopmentTasks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identity"):
             development.task_status(launched["task"], stop=True)
 
+    def test_task_control_revision_is_validated_and_legacy_records_remain_readable(self):
+        launched = self.launch()
+        directory = Path(launched["directory"])
+        record = development.load_task(directory)
+        for revision in (None, True, [], "old", "g" * 32, "a" * 32 + "\n"):
+            with self.subTest(revision=revision):
+                write_json_atomic(str(directory / "task.json"), {**record, "control_revision": revision})
+                with self.assertRaisesRegex(ValueError, "control revision"):
+                    development.load_task(directory)
+        record.pop("control_revision")
+        write_json_atomic(str(directory / "task.json"), record)
+        self.assertNotIn("control_revision", development.load_task(directory))
+        self.assertEqual(development.task_status(launched["task"])["state"], "running")
+
     def test_symlink_storage_ancestor_is_rejected_before_mutation(self):
         (self.home / ".local").symlink_to(self.project)
         with self.assertRaisesRegex(ValueError, "storage ancestor"):
@@ -441,15 +487,23 @@ class TestDevelopmentSession(unittest.TestCase):
         with patch.object(development.os, "getuid", return_value=1234), patch.object(development.os, "geteuid", return_value=1234), patch.object(development, "is_cachyos", return_value=False), self.assertRaises(RuntimeError):
             development._guard()
 
-    def test_persisted_and_live_human_pause_are_honored(self):
-        with patch("desktop.native_grants.metadata", return_value={"paused": True}), patch("desktop.native_session.request") as request, self.assertRaisesRegex(RuntimeError, "Human paused"):
-            development._honor_human_pause()
-        request.assert_not_called()
-        with patch("desktop.native_grants.metadata", return_value={"paused": False}), patch("desktop.native_session.request", return_value={"paused": True}), self.assertRaisesRegex(RuntimeError, "Human paused"):
-            development._honor_human_pause()
+    def test_persisted_control_blocks_mutations_without_contacting_native_backend(self):
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=home))
+        with patch("desktop.native_session.request") as request:
+            development._honor_agent_control()
+            for mode in ("human-override", "disabled"):
+                control_state.change(mode, human_approved=True)
+                with self.subTest(mode=mode), self.assertRaisesRegex(RuntimeError, mode):
+                    development._honor_agent_control()
+            request.assert_not_called()
 
 
 class TestDevelopmentWorker(unittest.TestCase):
+    def setUp(self):
+        home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=home))
+
     def test_small_output_is_visible_while_application_is_still_running(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -457,7 +511,7 @@ class TestDevelopmentWorker(unittest.TestCase):
             process = Mock(stdout=os.fdopen(read_fd, "rb"), pid=123)
             process.wait.return_value = 0
             process.poll.return_value = None
-            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary}), patch.object(development_worker.subprocess, "Popen", return_value=process), patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_human_pause"):
+            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary, "control_revision": "c" * 32}), patch.object(development_worker.subprocess, "Popen", return_value=process), patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_agent_control"):
                 worker = threading.Thread(target=development_worker.run_task, args=(directory,))
                 worker.start()
                 try:
@@ -504,7 +558,7 @@ class TestDevelopmentWorker(unittest.TestCase):
             process.wait.side_effect = wait
             process.terminate.side_effect = terminate
             process.kill.side_effect = finished.set
-            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary}), patch.object(development_worker.subprocess, "Popen", return_value=process), patch.object(development_worker.signal, "signal", side_effect=lambda number, handler: handlers.update({number: handler})), patch.object(development_worker.os, "read", side_effect=read_output), patch.object(development_worker, "_honor_human_pause"):
+            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary, "control_revision": "c" * 32}), patch.object(development_worker.subprocess, "Popen", return_value=process), patch.object(development_worker.signal, "signal", side_effect=lambda number, handler: handlers.update({number: handler})), patch.object(development_worker.os, "read", side_effect=read_output), patch.object(development_worker, "_honor_agent_control"):
                 worker = threading.Thread(target=development_worker.run_task, args=(directory,))
                 worker.start()
                 try:
@@ -529,7 +583,7 @@ class TestDevelopmentWorker(unittest.TestCase):
             process = Mock(stdout=stream, pid=123)
             process.wait.return_value = 7
             process.poll.return_value = 7
-            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture", "literal $HOME"], "project": temporary}), patch.object(development_worker.subprocess, "Popen", return_value=process) as popen, patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_human_pause"), patch.object(development_worker, "LOG_LIMIT", 8):
+            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture", "literal $HOME"], "project": temporary, "control_revision": "c" * 32}), patch.object(development_worker.subprocess, "Popen", return_value=process) as popen, patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_agent_control"), patch.object(development_worker, "LOG_LIMIT", 8):
                 self.assertEqual(development_worker.run_task(directory), 0)
             self.assertEqual((directory / "output.log").read_bytes(), b"01234567")
             result = json.loads((directory / "result.json").read_text())
@@ -544,15 +598,54 @@ class TestDevelopmentWorker(unittest.TestCase):
     def test_spawn_failure_retains_completion_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            with patch.object(development_worker, "load_task", return_value={"argv": ["missing"], "project": temporary}), patch.object(development_worker.subprocess, "Popen", side_effect=OSError("missing")), patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_human_pause"):
+            with patch.object(development_worker, "load_task", return_value={"argv": ["missing"], "project": temporary, "control_revision": "c" * 32}), patch.object(development_worker.subprocess, "Popen", side_effect=OSError("missing")), patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_agent_control"):
                 self.assertEqual(development_worker.run_task(directory), 0)
             self.assertEqual(json.loads((directory / "result.json").read_text())["returncode"], 1)
 
-    def test_pause_after_service_queueing_prevents_child_launch(self):
+    def test_control_change_after_service_queueing_prevents_child_launch(self):
+        for mode in ("human-override", "disabled"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(Path, "home", return_value=Path(temporary)):
+                directory = Path(temporary)
+                submitted_revision = control_state.status()["control_revision"]
+                current = control_state.change(mode, seconds=None, human_approved=True)
+                with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary,
+                                                                              "control_revision": submitted_revision}), \
+                        patch.object(development_worker.subprocess, "Popen") as popen, \
+                        patch.object(development_worker.signal, "signal"):
+                    self.assertEqual(development_worker.run_task(directory), 0)
+                popen.assert_not_called()
+                self.assertEqual(json.loads((directory / "result.json").read_text())["returncode"], 1)
+                self.assertFalse((directory / "output.log").exists())
+                self.assertFalse((directory / "started.json").exists())
+                self.assertEqual(control_state.status(), current)
+
+    def test_queued_task_cannot_launch_after_handback_changes_its_submission_revision(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(Path, "home", return_value=Path(temporary)):
+            directory = Path(temporary)
+            submitted_revision = control_state.status()["control_revision"]
+            control_state.change("human-override", seconds=None, human_approved=True)
+            current = control_state.change("enabled", human_approved=True)
+            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary,
+                                                                          "control_revision": submitted_revision}), \
+                    patch.object(development_worker.subprocess, "Popen") as popen, \
+                    patch.object(development_worker.signal, "signal"):
+                self.assertEqual(development_worker.run_task(directory), 0)
+            popen.assert_not_called()
+            self.assertEqual(json.loads((directory / "result.json").read_text())["returncode"], 1)
+            self.assertFalse((directory / "output.log").exists())
+            self.assertFalse((directory / "started.json").exists())
+            self.assertEqual(control_state.status(), current)
+
+    def test_legacy_queued_task_is_rejected_before_permission_check_or_spawn(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary}), patch.object(development_worker.subprocess, "Popen") as popen, patch.object(development_worker.signal, "signal"), patch.object(development_worker, "_honor_human_pause", side_effect=RuntimeError("Human paused")):
+            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary}), \
+                    patch.object(development_worker, "_honor_agent_control") as guard, \
+                    patch.object(development_worker.subprocess, "Popen") as popen, \
+                    patch.object(development_worker.signal, "signal"):
                 self.assertEqual(development_worker.run_task(directory), 0)
+            guard.assert_not_called()
             popen.assert_not_called()
             self.assertEqual(json.loads((directory / "result.json").read_text())["returncode"], 1)
 

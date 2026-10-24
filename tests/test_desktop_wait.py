@@ -1,4 +1,4 @@
-"""Window readiness stays bounded, observable and independent of control leases."""
+"""Window readiness stays bounded and observable in every permission mode."""
 from __future__ import annotations
 
 import argparse
@@ -199,26 +199,27 @@ class WindowWaitCliTests(unittest.TestCase):
                     ["open", "/task/score.mid", "--wait-window", "Editor", "--exclude-title", ""])
         for command in commands:
             with self.subTest(command=command), patch.object(runtime, "status", return_value={
-                "state": "running", "generation": "g",
+                "state": "running", "generation": "g", "control_revision": "r",
             }), patch.object(runtime, "request") as request, redirect_stdout(StringIO()):
                 self.assertEqual(run_desktop_command(self.args(command)), 1)
                 request.assert_not_called()
 
-    def test_launch_filters_reach_wait_after_control_is_released(self):
+    def test_launch_filters_reach_wait_without_permission_changes_or_leases(self):
         for backend, prefix in ((runtime, []), (native_session, ["--native"])):
             events = []
             def request(payload):
                 events.append(payload["action"])
-                return {"windows": []} if payload["action"] == "windows" else (
-                    {"lease": "l"} if payload["action"] == "acquire" else {"pid": 42, "launch": "token"})
+                if payload["action"] == "exec":
+                    self.assertEqual(payload["control_revision"], "r")
+                return {"windows": []} if payload["action"] == "windows" else {"pid": 42, "launch": "token"}
             def wait(*args, **kwargs):
-                self.assertEqual(events[-1], "release")
+                self.assertEqual(events, ["windows", "exec"])
                 self.assertEqual(kwargs["exclude_titles"], ["Startup", "Welcome"])
                 self.assertEqual(kwargs["stable_seconds"], 1)
                 self.assertIs(kwargs["backend"], backend)
                 return {"windows": [window()], "launch_status": {"returncode": None}}
             with self.subTest(backend=backend.__name__), patch.object(backend, "status", return_value={
-                "state": "running", "generation": "g",
+                "state": "running", "generation": "g", "control_revision": "r",
             }), patch.object(backend, "request", side_effect=request), patch.object(
                 client, "wait_for_window", side_effect=wait,
             ), redirect_stdout(StringIO()):
@@ -226,13 +227,14 @@ class WindowWaitCliTests(unittest.TestCase):
                     "--exclude-title", "Startup", "--exclude-title", "Welcome", "--stable-seconds", "1",
                     "--", "musescore3"])), 0)
 
-    def test_wait_remains_read_only_during_human_pause(self):
-        with patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "paused": True}), patch.object(
-            runtime, "request", return_value=observation(window()),
-        ) as request, redirect_stdout(StringIO()) as output:
-            self.assertEqual(run_desktop_command(self.args(["wait", "--title", "MuseScore", "--exclude-title", "Startup"])), 0)
-        self.assertEqual(json.loads(output.getvalue())["windows"], [window()])
-        self.assertEqual(request.call_args.args[0]["action"], "windows")
+    def test_wait_remains_read_only_in_each_blocked_mode(self):
+        for mode in ("human-override", "disabled"):
+            with self.subTest(mode=mode), patch.object(runtime, "status", return_value={
+                "state": "running", "generation": "g", "control_revision": "r", "agent_control": mode, "paused": True,
+            }), patch.object(runtime, "request", return_value=observation(window())) as request, redirect_stdout(StringIO()) as output:
+                self.assertEqual(run_desktop_command(self.args(["wait", "--title", "MuseScore", "--exclude-title", "Startup"])), 0)
+                self.assertEqual(json.loads(output.getvalue())["windows"], [window()])
+                request.assert_called_once_with({"action": "windows", "generation": "g"})
 
 
 if __name__ == "__main__":

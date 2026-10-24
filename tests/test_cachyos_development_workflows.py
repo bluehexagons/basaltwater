@@ -22,6 +22,7 @@ from lib.atomic_io import write_json_atomic
 class TestDevelopmentWorkflows(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
         self.project = self.home / "project %n $HOME with spaces"
         self.project.mkdir()
         self.engine = self.home / "godot"
@@ -30,7 +31,7 @@ class TestDevelopmentWorkflows(unittest.TestCase):
         self.enterContext(patch.object(development, "_guard", return_value=os.getuid()))
         self.enterContext(patch.object(development.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(self.home))))
         self.enterContext(patch.object(development, "is_dry_run", return_value=False))
-        self.enterContext(patch.object(development, "_honor_human_pause"))
+        self.enterContext(patch.object(development, "_honor_agent_control", return_value="c" * 32))
         self.enterContext(patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "NVM_DIR": ""}))
         self.enterContext(patch.object(development, "session_environment", side_effect=lambda _: ({"WAYLAND_DISPLAY": "wayland-0"}, "available")))
         self.enterContext(patch.object(development.shutil, "which", side_effect=lambda name: str(self.engine) if name == "godot" else None))
