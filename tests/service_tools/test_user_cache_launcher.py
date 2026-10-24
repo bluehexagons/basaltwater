@@ -64,7 +64,8 @@ class LauncherTests(unittest.TestCase):
         for uid, isolated in ((1000, True), (0, False)):
             with self.subTest(uid=uid, isolated=isolated), \
                     patch.object(launcher.os, "geteuid", return_value=uid), \
-                    patch.object(launcher.sys, "flags", SimpleNamespace(isolated=isolated)), \
+                    patch.object(launcher, "sys", SimpleNamespace(
+                        flags=SimpleNamespace(isolated=isolated), stderr=launcher.sys.stderr)), \
                     patch.object(launcher, "launch") as launch:
                 self.assertEqual(launcher.main(["--user", "agent"]), 1)
                 launch.assert_not_called()
@@ -73,7 +74,8 @@ class LauncherTests(unittest.TestCase):
         events = []
         account = SimpleNamespace(pw_uid=1000)
         with patch.object(launcher.os, "geteuid", return_value=0), \
-                patch.object(launcher.sys, "flags", SimpleNamespace(isolated=True)), \
+                patch.object(launcher, "sys", SimpleNamespace(
+                    flags=SimpleNamespace(isolated=True), stderr=launcher.sys.stderr)), \
                 patch.object(launcher, "_trusted_path", side_effect=lambda _: events.append("trust")), \
                 patch.object(launcher, "_account", side_effect=lambda *args: events.append("account") or account), \
                 patch.object(launcher, "launch", side_effect=lambda *args, **kwargs: events.append("worker") or 7):
