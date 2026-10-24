@@ -57,7 +57,7 @@ User=root
 Group={service_gid}
 UMask=0027
 ExecStart=/usr/bin/python3 -I {_SNAPSHOT_SCRIPT} --export
-TimeoutStartSec=30
+TimeoutStartSec=60
 TimeoutStopSec=5
 KillMode=control-group
 LimitFSIZE=3M
@@ -65,6 +65,8 @@ LimitCORE=0
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
+BindReadOnlyPaths=-/dev/zfs
+DeviceAllow=/dev/zfs rw
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths={SNAPSHOT_DIR}
@@ -72,7 +74,7 @@ ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 StandardOutput=null
 StandardError=journal
 """
@@ -89,7 +91,7 @@ AccuracySec=5s
 WantedBy=timers.target
 """
     replace_units({SNAPSHOT_SERVICE: service, SNAPSHOT_TIMER: timer}, activate=(SNAPSHOT_TIMER,))
-    run(["systemctl", "start", SNAPSHOT_SERVICE], check=True, timeout=40)
+    run(["systemctl", "start", SNAPSHOT_SERVICE], check=True, timeout=70)
 
 
 def remove_proxmox_snapshot() -> None:

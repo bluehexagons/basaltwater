@@ -59,31 +59,87 @@ Run links use `GET /agents?run=RUN_ID` and an in-page anchor to open the selecte
 report; an evicted record produces a notice. IDs use the same strict
 32-character format as other task views. Opening a report changes no state.
 
-On a `server_proxmox` host, the dashboard adds a **Proxmox overview** with local
-VMs, LXC containers and templates, guest state, CPU use and vCPU allocation,
-memory use/allocation, disk capacity and uptime. Guest names link directly to
-their native Proxmox summary. Storage pools show their reported state, type,
-shared flag and capacity, with warnings at 80% and 95% use. Pool totals can
-overlap; do not add them together. Guest disk capacity is allocated space,
-not a guest filesystem free-space measurement. The overview also reports the
-installed Proxmox version, standalone/cluster state, quorum and online-node
-counts. **Open Proxmox VE** uses the configured native address on HTTPS port
-8006, including IPv6, and Proxmox's own login and certificate.
+On a `server_proxmox` host, the dashboard adds a **Proxmox overview** for all
+visible cluster nodes, guests, storage and recent tasks. It shows node status,
+CPU and RAM capacity/use, guest counts and assigned vCPU/RAM alongside host
+capacity, and separate running-guest and all-guest totals. Assigned resources
+do not guarantee host headroom: ballooning and LXC limits affect actual use.
+Templates are excluded from guest allocations. Offline node metrics may be the
+last values Proxmox reported; unknown or truncated allocations and capped
+inventory are explicitly partial.
+Per-node ZFS pool health is local to the collector node; Ceph health is
+cluster-wide when Ceph is locally configured. Missing backends are distinct
+from failed or unavailable health checks. An incomplete storage inventory cannot
+establish that a backend is unconfigured.
 
-A separate root oneshot, `basaltwater-web-panel-proxmox.service`, runs only
-`pvesh get /cluster/status`, `/cluster/resources` and `/version` with JSON output.
-These read cached cluster statistics; there are no per-guest, remote-node or
-storage scans. Each query has an eight-second deadline and 2 MiB output limit;
-the service has a 30-second total start limit. Its timer runs about every minute,
-and setup starts an initial collection. The root-owned snapshot at
-`/var/lib/basaltwater/web-panel/proxmox/inventory.json` is mode 0640, readable
-by the panel group. Only selected inventory fields are copied; configuration,
-credentials, raw output and command errors are excluded. The panel revalidates
-bounded JSON on read, limits each table to 512 rows, warns after three minutes,
-and distinguishes failed collection from a successfully empty inventory.
-Unknown metrics remain unavailable. Refreshing the dashboard reads this file
-without launching Proxmox commands. Rerun panel setup to install the collector
-on an existing host. To investigate missing or stale data, inspect
+Guest tables support search and filters by name, VMID, node, state, type and
+tag, and sorting by name, VMID, CPU or memory. Guest filters affect only the
+guest table; node selection also filters tasks, storage and allocation
+summaries. Clustered views default to the cluster. Task activity shows the
+latest bounded shared task list of up to 50 tasks, including running, succeeded,
+warning, failed and unknown states; it does not expose raw errors or logs or
+provide a complete task archive. Malformed task records leave an incomplete or
+unavailable notice while valid records remain visible. Native Proxmox links
+open guest, node or task details for investigation. Storage pools show their
+reported state, type, shared flag and capacity, with warnings at 80% and 95%
+use. Pool totals can overlap; do not add them together. Guest disk capacity is
+allocated space, not guest filesystem free space. **Open Proxmox VE** uses the
+configured native address on HTTPS port 8006, including IPv6, and Proxmox's own
+login and certificate.
+
+The overview controls use bounded GET fields `pve_q`, `pve_node`, `pve_type`,
+`pve_state`, `pve_tag` and `pve_sort`. Controls retain the selected values; a
+reset link clears them.
+
+Guest addresses and application links are best-effort details from a bounded
+probe of up to 16 local-node guests per collector run, rotated each minute to
+cover larger inventories. Guest configuration, QEMU guest-agent and interface
+probes are only made for guests on the collector's own node; remote-node
+addresses and Notes links are not fetched automatically. QEMU addresses require
+the guest agent to be enabled and running; LXC addresses come from its
+interfaces. Loopback, link-local and multicast addresses are omitted. A
+copy-address control has a selectable-text fallback. Application links are
+validated HTTP(S) Markdown links from saved Proxmox Notes; the panel does not
+export raw descriptions/configuration or provide a link editor.
+
+A separate root oneshot, `basaltwater-web-panel-proxmox.service`, writes a
+sanitized read-only snapshot to
+`/var/lib/basaltwater/web-panel/proxmox/inventory.json`, mode 0640, readable by
+the panel group. The schema-2 snapshot is bounded to 2 MiB per query and in
+total; it allows up to 128 nodes, 512 guests, 512 node-pool entries and 32 tags
+per guest. An oversized export preserves the last readable snapshot, whose age
+warning becomes visible if refreshes keep failing. Resource history and backup
+freshness are not provided. Core cached
+reads use only fixed allowlisted GET endpoints
+`/cluster/resources`, `/cluster/tasks`, `/cluster/status` and `/version`.
+The shared resources API supplies visible nodes, guests and storage; the shared
+tasks API supplies the latest at most 50 tasks. Status supplies quorum and
+members; version is the local installed version. Standalone nodes remain
+supported.
+Guest detail reads are local-only and separately bounded to three seconds each;
+collection rotates candidates to stay within 45 seconds overall. Each cached
+core query is limited to eight seconds. The systemd service allows 60 seconds
+to start, and initial setup waits up to 70 seconds. The timer refreshes 60
+seconds after collection finishes.
+
+Only selected sanitized fields are published. The root collector uses fixed
+read-only GET queries; the web worker and Nginx cannot execute root queries or
+see Proxmox's `/etc/pve` and `/var/lib/pve-cluster`. The collector uses AF_UNIX,
+AF_INET and AF_INET6 for local Ceph monitor communications; `ProtectHome=true`
+remains in place. Its private device namespace exposes only the optional
+`/dev/zfs` control device in addition to standard pseudo devices, so local
+`zpool` status reads work without exposing disks. It does not use remote-node
+SSH, scan storage backends, accept arbitrary query parameters or paths,
+export raw descriptions/configuration, task errors,
+credentials or command output, or control guests. ZFS health covers only pools
+on the local node; snapshot presence does not mean remote ZFS was collected.
+
+The panel revalidates bounded JSON on read, warns when the snapshot is more than
+three minutes old, and distinguishes unavailable or failed collection from a
+successfully empty inventory. Unknown metrics remain unavailable. Refreshing
+the dashboard reads the cache and launches no commands.
+Existing installations must rerun panel setup to install the updated service
+and collector. To investigate missing or stale data, inspect
 `systemctl status basaltwater-web-panel-proxmox.timer` and
 `journalctl -u basaltwater-web-panel-proxmox.service` on the host.
 

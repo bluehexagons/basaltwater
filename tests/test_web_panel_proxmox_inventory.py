@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from common import proxmox_web_panel_steps as steps
 from common.service_tools import web_panel_proxmox as ui
@@ -21,13 +21,19 @@ def resources() -> list[dict]:
     return [
         {"type": "qemu", "node": "pve1", "vmid": 100, "name": "build <agent>", "status": "running",
          "template": 0, "cpu": .25, "maxcpu": 4, "mem": 2 * 1024**3, "maxmem": 8 * 1024**3,
-         "uptime": 90000, "maxdisk": 40 * 1024**3, "password": "never-publish", "sshkeys": "private"},
+         "uptime": 90000, "maxdisk": 40 * 1024**3, "tags": "linux;dev;linux;bad/tag",
+         "password": "never-publish", "sshkeys": "private"},
         {"type": "lxc", "node": "pve1", "vmid": 101, "name": "web", "status": "stopped", "maxmem": 1024**3},
         {"type": "qemu", "node": "pve1", "vmid": 9000, "template": 1, "status": "stopped"},
         {"type": "qemu", "node": "pve2", "vmid": 200, "name": "other-node", "status": "running"},
         {"type": "storage", "node": "pve1", "storage": "fast", "status": "available",
          "plugintype": "lvmthin", "disk": 95 * 1024**3, "maxdisk": 100 * 1024**3, "shared": 1,
          "path": "/private/backend/path", "secret": "never-publish"},
+        {"type": "storage", "node": "pve2", "storage": "fast", "status": "available", "shared": 1},
+        {"type": "node", "node": "pve1", "status": "online", "maxcpu": 8,
+         "cpu": .3, "mem": 16 * 1024**3, "maxmem": 32 * 1024**3},
+        {"type": "node", "node": "pve2", "status": "offline", "maxcpu": 16,
+         "cpu": .1, "mem": 8 * 1024**3, "maxmem": 64 * 1024**3},
     ]
 
 
@@ -38,7 +44,9 @@ def cluster_rows() -> list[dict]:
 
 
 def snapshot() -> dict:
-    with patch.object(inventory, "_query", side_effect=[cluster_rows(), resources(), {"version": "9.1.0", "repoid": "excluded"}]):
+    with patch.object(inventory, "_query", side_effect=[cluster_rows(), resources(), {"version": "9.1.0", "repoid": "excluded"}]), patch(
+        "lib.proxmox_panel_details.collect_details", return_value={},
+    ):
         return inventory.collect_snapshot()
 
 
@@ -46,20 +54,27 @@ class ProxmoxInventoryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.path = str(self.home / "inventory.json")
+        self.details = self.enterContext(patch("lib.proxmox_panel_details.collect_details", return_value={}))
 
     def save(self, value: dict | None = None) -> dict:
         write_json_atomic(self.path, snapshot() if value is None else value)
         return inventory.load_snapshot(self.path)
 
-    def test_collects_only_local_public_inventory_with_fixed_queries(self) -> None:
+    def test_collects_cluster_public_inventory_with_fixed_cached_queries(self) -> None:
         with patch.object(inventory, "_query", side_effect=[cluster_rows(), resources(), {"version": "9.1.0"}]) as query:
             value = inventory.collect_snapshot()
         self.assertEqual([call.args[0] for call in query.call_args_list], ["/cluster/status", "/cluster/resources", "/version"])
-        self.assertEqual([row["vmid"] for row in value["guests"]], [100, 101, 9000])
+        self.assertEqual([row["vmid"] for row in value["guests"]], [100, 101, 200, 9000])
+        self.assertEqual(value["scope"], "cluster")
+        self.assertTrue(value["inventory_complete"])
+        self.assertEqual(value["guests"][0]["tags"], ["dev", "linux"])
         self.assertEqual(value["cluster"]["online"], 1)
         self.assertEqual(value["cluster"]["nodes"], 2)
         self.assertEqual(value["storage"][0]["disk"], 95 * 1024**3)
-        for excluded in ("never-publish", "sshkeys", "/private/backend", "other-node", "repoid"):
+        self.assertEqual([row["node"] for row in value["storage"]], ["pve1", "pve2"])
+        self.assertEqual(value["nodes"][0]["maxmem"], 32 * 1024**3)
+        self.assertEqual(value["nodes"][1]["status"], "offline")
+        for excluded in ("never-publish", "sshkeys", "/private/backend", "repoid"):
             self.assertNotIn(excluded, json.dumps(value))
         loaded = self.save(value)
         self.assertTrue(loaded["available"])
@@ -99,22 +114,74 @@ class ProxmoxInventoryTests(unittest.TestCase):
             with self.subTest(rows=rows), self.assertRaises(ValueError):
                 inventory.sanitize_cluster(rows)
 
+    def test_standalone_inventory_and_failed_resource_metrics_keep_node_membership(self) -> None:
+        with patch.object(inventory, "_query", side_effect=[cluster_rows()[1:2], [], {"version": "9.1.0"}]):
+            standalone = inventory.collect_snapshot()
+        self.assertEqual(standalone["scope"], "node")
+        self.assertTrue(standalone["inventory"])
+        self.assertEqual(standalone["nodes"][0]["node"], "pve1")
+        self.assertIsNone(standalone["nodes"][0]["maxmem"])
+        with patch.object(inventory, "_query", side_effect=[cluster_rows(), ValueError(), {"version": "9.1.0"}]):
+            failed = inventory.collect_snapshot()
+        self.assertFalse(failed["inventory"])
+        self.assertFalse(failed["inventory_complete"])
+        self.assertEqual([row["status"] for row in failed["nodes"]], ["online", "offline"])
+
+    def test_omitted_records_mark_inventory_partial_and_tags_round_trip(self) -> None:
+        invalid = {**resources()[0], "node": "../pve1", "vmid": 300}
+        with patch.object(inventory, "_query", side_effect=[cluster_rows(), [*resources(), invalid], {"version": "9.1.0"}]):
+            partial = inventory.collect_snapshot()
+        self.assertTrue(partial["inventory"])
+        self.assertFalse(partial["inventory_complete"])
+        self.assertIn("invalid node", partial["issues"][0])
+        self.assertEqual(self.save(partial)["guests"][0]["tags"], ["dev", "linux"])
+        with patch.object(inventory, "MAX_ROWS", 2):
+            limited = self.save()
+        self.assertFalse(limited["inventory_complete"])
+        self.assertEqual(len(limited["guests"]), 2)
+        self.assertTrue(any("limited" in issue for issue in limited["issues"]))
+
+    def test_node_metrics_are_bounded_and_membership_wins_over_cached_status(self) -> None:
+        rows = [{"type": "node", "node": "pve1", "status": "online", "cpu": 2, "mem": True},
+                {"type": "node", "node": "pve2", "status": "online", "maxcpu": 16},
+                {"type": "node", "node": "../bad", "status": "online"}]
+        nodes = inventory.sanitize_nodes(rows)
+        self.assertEqual(len(nodes), 2)
+        self.assertIsNone(nodes[0]["cpu"])
+        self.assertIsNone(nodes[0]["mem"])
+        with patch.object(inventory, "_query", side_effect=[cluster_rows(), rows, {"version": "9.1.0"}]):
+            value = inventory.collect_snapshot()
+        self.assertEqual(value["nodes"][1]["status"], "offline")
+
+    def test_incomplete_inventory_cannot_establish_backend_absence(self) -> None:
+        absent = {"health": {"zfs": {"status": "not_configured", "node": "pve1", "pools": []},
+                             "ceph": {"status": "not_configured", "state": None, "checks": []}}}
+        for payload in (ValueError(), [*resources(), {**resources()[0], "node": "../bad"}]):
+            with self.subTest(payload=type(payload)), patch.object(
+                inventory, "_query", side_effect=[cluster_rows(), payload, {"version": "9.1.0"}],
+            ), patch("lib.proxmox_panel_details.collect_details", return_value=absent):
+                value = inventory.collect_snapshot()
+            self.assertFalse(value["inventory_complete"])
+            self.assertTrue(all(backend["status"] == "unavailable" for backend in value["health"].values()))
+        partial = {**snapshot(), **absent, "inventory_complete": False}
+        self.assertTrue(all(backend["status"] == "unavailable" for backend in self.save(partial)["health"].values()))
+
     def test_invalid_metrics_remain_unavailable_and_records_are_bounded(self) -> None:
         for invalid in (True, -1, float("inf"), float("nan"), "12", {}, []):
             with self.subTest(invalid=invalid):
                 row = {**resources()[0], "mem": invalid, "cpu": invalid, "maxdisk": invalid}
-                guests, _, _ = inventory.sanitize_resources([row], "pve1")
+                guests, _, _ = inventory.sanitize_resources([row])
                 self.assertIsNone(guests[0]["mem"])
                 self.assertIsNone(guests[0]["cpu"])
                 self.assertIsNone(guests[0]["maxdisk"])
         row = {**resources()[0], "cpu": 1.1, "maxmem": .5, "mem": 1024.0}
-        guests, _, _ = inventory.sanitize_resources([row], "pve1")
+        guests, _, _ = inventory.sanitize_resources([row])
         self.assertIsNone(guests[0]["cpu"])
         self.assertIsNone(guests[0]["maxmem"])
         self.assertEqual(guests[0]["mem"], 1024)
-        invalid = [{**resources()[0], "vmid": True}, {**resources()[-1], "storage": "../../etc"}]
+        invalid = [{**resources()[0], "vmid": True}, {**resources()[4], "storage": "../../etc"}]
         with patch.object(inventory, "MAX_ROWS", 2):
-            guests, _, issues = inventory.sanitize_resources([*resources(), resources()[0], *invalid], "pve1")
+            guests, _, issues = inventory.sanitize_resources([*resources(), resources()[0], *invalid])
         self.assertEqual(len(guests), 2)
         self.assertEqual(len(issues), 4)
 
@@ -133,7 +200,8 @@ class ProxmoxInventoryTests(unittest.TestCase):
 
     def test_invalid_schema_time_and_cluster_are_rejected_and_stale_data_warns(self) -> None:
         value = snapshot()
-        for change in ({"schema": 2}, {"inventory": "yes"}, {"node": "../pve1"}, {"generated_at": 10**100},
+        for change in ({"schema": 1}, {"schema": True}, {"inventory": "yes"}, {"scope": []},
+                       {"inventory_complete": "yes"}, {"nodes": {}}, {"node": "../pve1"}, {"generated_at": 10**100},
                        {"cluster": []}, {"cluster": {**value["cluster"], "online": 3}}):
             with self.subTest(change=change):
                 self.assertFalse(self.save({**value, **change})["available"])
@@ -142,26 +210,63 @@ class ProxmoxInventoryTests(unittest.TestCase):
             self.assertEqual(self.save(fresh)["issues"], [])
             stale = self.save({**fresh, "generated_at": 819})
             self.assertTrue(stale["available"])
+            self.assertTrue(stale["inventory_complete"])
             self.assertIn("more than three minutes", stale["issues"][0])
             self.assertFalse(self.save({**fresh, "generated_at": 1061})["available"])
 
     def test_query_bounds_output_and_deadline_and_discards_stderr(self) -> None:
-        def run(command, **kwargs):
-            self.assertEqual(command, ["/usr/bin/pvesh", "get", "/version", "--output-format", "json"])
-            self.assertEqual(kwargs["timeout"], 8)
-            self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
-            kwargs["stdout"].write(b'{"version":"9.1.0"}')
-            return subprocess.CompletedProcess(command, 0)
+        process = Mock()
+        process.wait.return_value = 0
 
-        with patch.object(inventory.subprocess, "run", side_effect=run):
+        def start(command, **kwargs):
+            self.assertEqual(command, ["/usr/bin/pvesh", "get", "/version", "--output-format", "json"])
+            self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertTrue(kwargs["start_new_session"])
+            kwargs["stdout"].write(b'{"version":"9.1.0"}')
+            return process
+
+        with patch.object(inventory.subprocess, "Popen", side_effect=start):
             self.assertEqual(inventory._query("/version"), {"version": "9.1.0"})
+            process.wait.assert_called_once_with(timeout=8)
             with patch.object(inventory, "MAX_BYTES", 8), self.assertRaises(ValueError):
                 inventory._query("/version")
-        with patch.object(inventory.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)), self.assertRaises(ValueError):
+        process.wait.return_value = 1
+        with patch.object(inventory.subprocess, "Popen", return_value=process), self.assertRaises(ValueError):
             inventory._query("/version")
         with patch.object(inventory.resource, "setrlimit") as limit:
             inventory._limit_output()
         limit.assert_called_once_with(inventory.resource.RLIMIT_FSIZE, (inventory.MAX_BYTES + 1, inventory.MAX_BYTES + 1))
+
+    def test_query_allowlist_refuses_remote_nodes_mutations_and_arbitrary_endpoints(self) -> None:
+        allowed = ["/cluster/status", "/cluster/resources", "/cluster/tasks", "/version",
+                   "/nodes/pve1/qemu/100/config", "/nodes/pve1/qemu/100/agent/network-get-interfaces",
+                   "/nodes/pve1/lxc/101/interfaces", "/nodes/pve1/lxc/101/config",
+                   "/nodes/pve1/disks/zfs", "/nodes/pve1/disks/zfs/rpool", "/nodes/pve1/ceph/status"]
+        for path in allowed:
+            with self.subTest(path=path):
+                self.assertTrue(inventory._allowed_query(path, "pve1"))
+        rejected = ["/nodes/pve2/qemu/100/config", "/nodes/pve1/qemu/100/status/start",
+                    "/nodes/pve1/qemu/99/config", "/nodes/pve1/qemu/１００/config",
+                    "/nodes/pve1/qemu/100/agent/exec", "/nodes/pve1/disks/zfs/../../etc",
+                    "/nodes/pve1/tasks/anything/log", "/cluster/backup", "--help", None, []]
+        with patch.object(inventory.subprocess, "Popen") as run:
+            for path in rejected:
+                with self.subTest(path=path), self.assertRaises(ValueError):
+                    inventory._query(path, local_node="pve1")
+            for timeout in (0, -1, True, float("inf"), 9):
+                with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                    inventory._query("/version", timeout=timeout)
+        run.assert_not_called()
+
+    def test_query_timeout_kills_and_reaps_the_probe_process_group(self) -> None:
+        process = Mock(pid=12345)
+        process.wait.side_effect = [subprocess.TimeoutExpired("pvesh", 2), -9]
+        with patch.object(inventory.subprocess, "Popen", return_value=process), patch.object(
+            inventory.os, "killpg",
+        ) as kill, self.assertRaises(subprocess.TimeoutExpired):
+            inventory._query("/version", timeout=2)
+        kill.assert_called_once_with(12345, inventory.signal.SIGKILL)
+        self.assertEqual([call.kwargs["timeout"] for call in process.wait.call_args_list], [2, 1])
 
     def test_export_uses_fixed_destination_and_panel_group_permissions(self) -> None:
         with patch.object(inventory, "SNAPSHOT", self.path), patch.object(inventory, "collect_snapshot", return_value=snapshot()):
@@ -171,7 +276,17 @@ class ProxmoxInventoryTests(unittest.TestCase):
         self.assertEqual(info.st_gid, os.getegid())
         self.assertTrue(inventory.load_snapshot(self.path)["available"])
 
-    def test_dashboard_links_and_metrics_are_escaped_and_local(self) -> None:
+    def test_oversized_export_preserves_the_last_readable_snapshot(self) -> None:
+        self.save()
+        previous = Path(self.path).read_bytes()
+        with patch.object(inventory, "SNAPSHOT", self.path), patch.object(
+            inventory, "collect_snapshot", return_value=snapshot(),
+        ), patch.object(inventory, "MAX_BYTES", 100), self.assertRaisesRegex(ValueError, "publication size limit"):
+            inventory.export_snapshot()
+        self.assertEqual(Path(self.path).read_bytes(), previous)
+        self.assertTrue(inventory.load_snapshot(self.path)["available"])
+
+    def test_dashboard_links_and_metrics_are_escaped_and_cluster_scoped(self) -> None:
         loaded = self.save()
         manifest = {"host": "2001:db8::5", "services": []}
         rendered = ui.render_proxmox(loaded, manifest, panel._format_bytes, panel._format_uptime)
@@ -183,11 +298,12 @@ class ProxmoxInventoryTests(unittest.TestCase):
         self.assertIn("25.0%", rendered)
         self.assertIn("2.0 GiB / 8.0 GiB", rendered)
         self.assertIn("1d 1h", rendered)
-        self.assertIn("1 running", rendered)
-        self.assertIn("2 guests · 1 template", rendered)
+        self.assertIn("2 running", rendered)
+        self.assertIn("3 guests · 1 template", rendered)
         self.assertIn("Cluster needs attention", rendered)
         self.assertIn('class="metric-value critical">95%', rendered)
-        self.assertNotIn("other-node", rendered)
+        self.assertIn("other-node", rendered)
+        self.assertIn("storage%2Fpve2%2Ffast", rendered)
         self.assertNotIn("never-publish", rendered)
         self.assertNotIn("build <agent>", rendered)
         parsed = urllib_fragment(ui._resource_url("https://pve1:8006/", "qemu/100", "qemu"))
@@ -234,11 +350,14 @@ class ProxmoxSnapshotSetupTests(unittest.TestCase):
         service = units[steps.SNAPSHOT_SERVICE]
         self.assertIn("User=root\nGroup=991", service)
         self.assertIn("--export\n", service)
-        self.assertIn("TimeoutStartSec=30", service)
+        self.assertIn("TimeoutStartSec=60", service)
         self.assertIn("ProtectSystem=strict", service)
+        self.assertIn("ProtectHome=true", service)
+        self.assertIn("PrivateDevices=true\nBindReadOnlyPaths=-/dev/zfs\nDeviceAllow=/dev/zfs rw", service)
+        self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", service)
         self.assertNotIn("sudo", service)
         self.assertIn("OnUnitInactiveSec=60s", units[steps.SNAPSHOT_TIMER])
-        self.run.assert_called_once_with(["systemctl", "start", steps.SNAPSHOT_SERVICE], check=True, timeout=40)
+        self.run.assert_called_once_with(["systemctl", "start", steps.SNAPSHOT_SERVICE], check=True, timeout=70)
 
     def test_unmanaged_units_and_symlink_storage_fail_before_mutations(self) -> None:
         self.units.return_value = {"content": "[Service]\n# operator"}

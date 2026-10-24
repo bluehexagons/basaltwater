@@ -50,7 +50,8 @@ from lib.validation import validate_runner_registration_token
 from common.service_tools.web_panel_host import (
     FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
 )
-from common.service_tools.web_panel_proxmox import STYLE as PROXMOX_STYLE, render_proxmox
+from common.service_tools.web_panel_proxmox import STYLE as PROXMOX_STYLE, SCRIPT_CSP as PROXMOX_SCRIPT_CSP, render_proxmox
+from common.service_tools.web_panel_proxmox_views import ProxmoxQuery, parse_proxmox_query
 from lib.proxmox_panel import load_snapshot as load_proxmox_snapshot
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agent_activity, render_agents
 from common.service_tools.web_panel_templates import (
@@ -1968,7 +1969,7 @@ def _render_notification_section(state: WebPanelState) -> str:
 {content}</section>'''
 
 
-def render_page(state: WebPanelState) -> str:
+def render_page(state: WebPanelState, *, proxmox_query: ProxmoxQuery | None = None) -> str:
     """Render the dashboard with progressively enhanced certificate help."""
 
     manifest = state.manifest
@@ -2087,7 +2088,7 @@ def render_page(state: WebPanelState) -> str:
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
     proxmox_section = (
-        render_proxmox(load_proxmox_snapshot(), manifest, _format_bytes, _format_uptime)
+        render_proxmox(load_proxmox_snapshot(), manifest, _format_bytes, _format_uptime, query=proxmox_query)
         if manifest["system_type"] == "server_proxmox" else ""
     )
     if filesystem_section:
@@ -2222,6 +2223,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         script_policy = f"script-src {CA_SCRIPT_CSP}; " if content_type == "text/html" else ""
+        if content_type == "text/html" and self.state.manifest.get("system_type") == "server_proxmox":
+            script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP}; "
         self.send_header("Content-Security-Policy", f"default-src 'none'; {script_policy}img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -2377,7 +2380,16 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path != "/":
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
-        self._send(HTTPStatus.OK, render_page(self.state), "text/html")
+        if self.state.manifest["system_type"] == "server_proxmox":
+            try:
+                proxmox_query = parse_proxmox_query(parsed.query)
+            except (UnicodeError, ValueError):
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Proxmox filters\n", "text/plain")
+                return
+            body = render_page(self.state, proxmox_query=proxmox_query)
+        else:
+            body = render_page(self.state)
+        self._send(HTTPStatus.OK, body, "text/html")
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
