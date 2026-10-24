@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -433,7 +434,7 @@ class TestVMHardwareProfile(unittest.TestCase):
     @patch("lib.proxmox_vm._ssh_run")
     def test_graphical_vm_uses_virtio_gpu_and_disk_iothread(self, mock_run):
         mock_run.side_effect = [
-            *[MagicMock(returncode=0, stdout="", stderr="") for _ in range(3)],
+            *[MagicMock(returncode=0, stdout="", stderr="") for _ in range(2)],
             *_resize_results(),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
@@ -476,17 +477,65 @@ class TestVMHardwareProfile(unittest.TestCase):
         self.assertIn("--scsihw virtio-scsi-single", commands[0])
         self.assertIn("--cpu host", commands[0])
         self.assertIn("--memory 8192 --balloon 4096", commands[0])
-        self.assertEqual(
-            commands[1],
-            "qm disk import 101 /var/lib/vz/import/debian.qcow2 local-lvm",
-        )
         self.assertIn("ip6=2001:db8::50/64", commands[0])
         self.assertIn("gw6=2001:db8::1", commands[0])
         self.assertIn(
-            "--scsi0 local-lvm:vm-101-disk-0,iothread=1,discard=on",
-            commands[2],
+            "--scsi0 local-lvm:0,import-from=/var/lib/vz/import/debian.qcow2,iothread=1,discard=on",
+            commands[1],
         )
-        self.assertNotIn("ssd=1", commands[2])
+        self.assertNotIn("ssd=1", commands[1])
+
+    @patch("lib.proxmox_vm.resize_vm_disk")
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_image_import_attaches_native_volume_without_assuming_its_name(self, mock_run, _resize):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        for root_pool in ("local-lvm", "file-store"):
+            for image_path, storage_ref in (
+                ("/srv/image cache/debian.qcow2", None),
+                (None, "local:import/debian.qcow2"),
+            ):
+                with self.subTest(pool=root_pool, image=image_path or storage_ref):
+                    mock_run.reset_mock()
+                    _create_vm(
+                        vmid=101, target_ip="10.0.0.50", image_remote_path=image_path,
+                        storage_ref=storage_ref, memory_mb=2048, balloon_min_mb=2048,
+                        cores=2, root_pool=root_pool, disk_size_gib=20,
+                        data_disk_specs=[], cidr_prefix="24", bridge="vmbr0",
+                        gateway="10.0.0.1", nameservers=["10.0.0.1"], hostname="agent-vm",
+                        user_data_path=None, user_data_ref=None, graphical_console=False,
+                        node_ip="10.0.0.10", user="root", ssh_opts=[],
+                    )
+                    commands = [call.args[3] for call in mock_run.call_args_list]
+                    self.assertEqual(len(commands), 3)
+                    disk_args = shlex.split(commands[1])
+                    self.assertEqual(
+                        disk_args[disk_args.index("--scsi0") + 1],
+                        f"{root_pool}:0,import-from={image_path or storage_ref},iothread=1,discard=on",
+                    )
+                    self.assertNotIn("vm-101-disk-0", commands[1])
+                    self.assertNotIn("format=", commands[1])
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_invalid_image_source_is_rejected_before_vm_creation(self, mock_run):
+        for image_path, storage_ref in (
+            (None, None),
+            ("relative/image.qcow2", None),
+            ("/srv/image\n.qcow2", None),
+            ("/srv/image,discard=off.qcow2", None),
+            (None, "local:import/image,discard=off.qcow2"),
+        ):
+            with self.subTest(image=image_path, storage_ref=storage_ref):
+                with self.assertRaises(ProvisionError):
+                    _create_vm(
+                        vmid=101, target_ip="10.0.0.50", image_remote_path=image_path,
+                        storage_ref=storage_ref, memory_mb=2048, balloon_min_mb=2048,
+                        cores=2, root_pool="local-lvm", disk_size_gib=20,
+                        data_disk_specs=[], cidr_prefix="24", bridge="vmbr0",
+                        gateway="10.0.0.1", nameservers=["10.0.0.1"], hostname="agent-vm",
+                        user_data_path=None, user_data_ref=None, graphical_console=False,
+                        node_ip="10.0.0.10", user="root", ssh_opts=[],
+                    )
+        mock_run.assert_not_called()
 
     @patch("lib.proxmox_vm._ssh_run")
     def test_partial_vm_is_destroyed_when_import_fails(self, mock_run):
@@ -553,7 +602,6 @@ class TestVMCleanup(unittest.TestCase):
     @patch("lib.proxmox_vm._ssh_run")
     def test_resize_failure_destroys_partial_vm(self, mock_run):
         mock_run.side_effect = [
-            MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             *_resize_results("cannot shrink disk"),
@@ -754,7 +802,6 @@ class TestVMDataDisks(unittest.TestCase):
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
             *_resize_results(),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(
@@ -800,8 +847,8 @@ class TestVMDataDisks(unittest.TestCase):
 
         commands = [call.args[3] for call in mock_run.call_args_list]
         self.assertIn(
-            "--scsi0 local-lvm:vm-101-disk-0,iothread=1,discard=on,ssd=1",
-            commands[2],
+            "--scsi0 local-lvm:0,import-from=/var/lib/vz/import/debian.qcow2,iothread=1,discard=on,ssd=1",
+            commands[1],
         )
         self.assertIn(
             "qm set 101 --scsi1 bulk-lvm:128,iothread=1,serial=bw-agent-data,discard=on",
@@ -817,7 +864,6 @@ class TestVMDataDisks(unittest.TestCase):
     @patch("lib.proxmox_vm._ssh_run")
     def test_attach_failure_destroys_partial_vm(self, mock_run):
         mock_run.side_effect = [
-            MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             *_resize_results(),

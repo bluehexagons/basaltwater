@@ -14,8 +14,8 @@ The flow is:
    helpers from :mod:`lib.proxmox_node`).
 4. ``qm create`` with a recovery console + virtio-scsi. Desktop/RDP guests
    receive VirtIO-GPU for noVNC; server guests retain the serial console.
-5. ``qm disk import`` (or ``--import-from``) the qcow2 into the root storage,
-   attach as ``scsi0``, set boot order, attach a cloud-init drive.
+5. Import the qcow2 with ``scsi0``'s ``import-from`` option into the root
+   storage, set boot order, attach a cloud-init drive.
 6. Cloud-init: user/SSH key/IP from basaltwater, then resize to the requested
    size and ``qm start``.
 7. Wait for SSH on the target IP.
@@ -1920,6 +1920,18 @@ def _create_vm(
 ) -> bool:
     """Build, populate, and start the VM on ``node_ip``."""
     cpu_type = _validate_cpu_type(cpu_type)
+    image_source = image_remote_path or storage_ref
+    if not image_source:
+        raise ProvisionError("No image source available to attach to VM disk")
+    if image_remote_path:
+        try:
+            validate_filesystem_path(image_remote_path)
+            if not os.path.isabs(image_remote_path):
+                raise ValueError("the image path must be absolute")
+        except ValueError as exc:
+            raise ProvisionError(f"Invalid VM image path: {exc}") from exc
+    if "," in image_source:
+        raise ProvisionError("VM image sources cannot contain ',' in import-from syntax")
     ipconfig_parts = [
         f"ip={target_ip}/{cidr_prefix}",
         f"gw={gateway}",
@@ -1962,34 +1974,11 @@ def _create_vm(
         )
     created = True
 
-    # Attach the disk: prefer importing the qcow2; otherwise reference the
-    # pre-uploaded storage volume directly.
-    if image_remote_path:
-        # Let Proxmox choose the target's native image format. Block-backed
-        # pools such as LVM-thin only support raw volumes, while directory
-        # pools commonly use qcow2.
-        import_cmd = (
-            f"qm disk import {vmid} {shlex.quote(image_remote_path)} "
-            f"{shlex.quote(root_pool)}"
-        )
-        imported = _ssh_run(node_ip, user, ssh_opts, import_cmd, dry_run=dry_run)
-        if imported.returncode != 0:
-            if not dry_run and created:
-                _destroy_vm_best_effort(vmid, node_ip, user, ssh_opts)
-            raise ProvisionError(
-                f"qm disk import for VM {vmid} failed: "
-                f"{(imported.stderr or imported.stdout or '').strip() or 'unknown error'}"
-            )
-        # Proxmox names the imported volume {pool}:vm-{vmid}-disk-0.
-        disk_volume = f"{root_pool}:vm-{vmid}-disk-0"
-    elif storage_ref:
-        # Caller has uploaded a qcow2 to e.g. local:import/foo.qcow2; let qm
-        # import-from copy it into the root pool during set.
-        disk_volume = f"{root_pool}:0,import-from={storage_ref}"
-    else:
-        if not dry_run and created:
-            _destroy_vm_best_effort(vmid, node_ip, user, ssh_opts)
-        raise ProvisionError("No image source available to attach to VM disk")
+    # import-from accepts an absolute image path or a storage reference and
+    # attaches the allocated volume itself. Let the backend choose its format
+    # and volume ID: directory storage includes a VMID directory and suffix,
+    # unlike block-backed pools such as LVM-thin.
+    disk_volume = f"{root_pool}:0,import-from={image_source}"
 
     default_hardware = VMDiskHardware("root", disk_discard, disk_ssd, True)
     root_hardware = (disk_hardware_settings or {}).get(

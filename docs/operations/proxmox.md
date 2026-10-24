@@ -803,9 +803,13 @@ and the documented 512 MiB default when the property is omitted. These formats
 and current-versus-pending reads follow the
 [QEMU configuration schema](https://pve.proxmox.com/pve-docs/qm.conf.5.html) and
 [`qm config` reference](https://pve.proxmox.com/pve-docs/qm.1.html).
-Imported images retain the native format selected by the destination storage
-backend. Before booting a new VM, provisioning verifies that the root-disk resize
-task finished with native status `OK`; this rejects requests smaller than the
+Downloaded image paths and pre-uploaded storage references both use Proxmox's
+`import-from` option to copy and attach the root disk. Proxmox selects the native
+format and volume ID for the destination backend, including directory-backed
+storage whose volume IDs contain a VMID directory and filename extension. Image
+sources containing commas are rejected before VM creation because commas delimit
+drive options. Before booting a new VM, provisioning verifies that the root-disk
+resize task finished with native status `OK`; this rejects requests smaller than the
 source image even when Proxmox's CLI exits zero. A confirmed task failure triggers
 cleanup of the new VM. An unknown outcome (including a timeout, lost connection,
 or unavailable task status) preserves the VM and its referenced snippet for
