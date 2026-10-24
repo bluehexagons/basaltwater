@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import copy
 import grp
 import json
@@ -9,20 +11,24 @@ import os
 import pwd
 import re
 import shlex
+import shutil
 import stat
+import tempfile
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from common.storage_steps import STORAGE_MARKER, assert_declared_storage_mount
-from lib.atomic_io import write_text_atomic
+from lib.atomic_io import remove_file_durable, write_bytes_atomic, write_json_atomic, write_text_atomic
 from lib.config import DEFAULT_SYNCTHING_ROOT, SetupConfig
 from lib.credentials import get_runtime_credential
 from lib.local_http import open_loopback
 from lib.machine_state import can_manage_system_services
+from lib.operation_state import OperationStateError, OperationStateStore
 from lib.remote_utils import is_dry_run, is_package_installed, run
 from lib.setup_directories import directory_fd
+from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
 from lib.validation import _validate_syncthing_root, validate_filesystem_path
 from lib.vm_storage import storage_mounts
 
@@ -80,6 +86,7 @@ SuccessExitStatus=3 4
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
+ReadOnlyPaths=/tmp /var/tmp /dev/shm
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHome=true
@@ -463,6 +470,14 @@ def _validate_state_paths() -> None:
         path = os.path.join(SYNCTHING_HOME, name)
         if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path) or os.stat(path).st_nlink != 1):
             raise RuntimeError(f"Refusing unsafe Syncthing identity file: {path}")
+    existing = {name for name in ("config.xml", "cert.pem", "key.pem")
+                if os.path.exists(os.path.join(SYNCTHING_HOME, name))}
+    has_state = os.path.isdir(SYNCTHING_HOME) and bool(os.listdir(SYNCTHING_HOME))
+    if has_state and not {"cert.pem", "key.pem"} <= existing:
+        raise RuntimeError(
+            "Incomplete Syncthing identity; preserve existing state and recover "
+            "the device certificate and key before rerunning setup"
+        )
 
 
 def _stop_before_configuration() -> None:
@@ -494,6 +509,159 @@ def _prepare_state_home(username: str, uid: int, gid: int) -> None:
         run(["runuser", "-u", username, "--", "/usr/bin/test", permission, SYNCTHING_HOME])
 
 
+def _snapshot_config(backup_dir: str) -> dict[str, int] | None:
+    """Save only offline configuration, privately, with restoration metadata."""
+    path = os.path.join(SYNCTHING_HOME, "config.xml")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise RuntimeError(f"Refusing unsafe Syncthing configuration: {path}")
+        content = stream.read(16 * 1024 * 1024 + 1)
+    if len(content) > 16 * 1024 * 1024:
+        raise RuntimeError("Syncthing configuration exceeds 16 MiB")
+    write_bytes_atomic(os.path.join(backup_dir, "config.xml"), content, mode=0o600)
+    return {"mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid}
+
+
+def _assert_no_syncthing_recovery() -> None:
+    """Refuse setup/removal before preflight mutates an unresolved endpoint."""
+    store = OperationStateStore(os.path.join(os.path.dirname(SYNCTHING_HOME), ".syncthing-operation.json"))
+    previous = store.load()
+    if previous is not None:
+        raise OperationStateError(
+            f"Unfinished {previous.operation_type} operation is recorded in {store.path}; "
+            "preserve private evidence and verify recovery before retrying"
+        )
+
+
+def _restore_syncthing(
+    username: str, backup_dir: str, previous_unit: dict | None,
+    previous_state: dict[str, str], previous_config: dict[str, int] | None,
+    first_install: bool,
+) -> None:
+    """Quiesce the candidate before restoring login, unit and activation state."""
+    unit = f"{SYNCTHING_SERVICE_NAME}.service"
+    _stop_before_configuration()
+    state = inspect_unit_state(unit)
+    if state["LoadState"] != "not-found":
+        flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
+        run(["systemctl", "disable", *flags, unit])
+        state = inspect_unit_state(unit)
+    if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+        raise RuntimeError("Could not quiesce replacement Syncthing service")
+    if previous_config is not None:
+        with open(os.path.join(backup_dir, "config.xml"), "rb") as stream:
+            write_bytes_atomic(
+                os.path.join(SYNCTHING_HOME, "config.xml"), stream.read(), **previous_config,
+            )
+    # With no old config (first install), leave generated identity/config in
+    # place for explicit recovery, but never start it during rollback.
+    if previous_unit is None:
+        remove_file_durable(SYNCTHING_SERVICE_FILE)
+    else:
+        write_text_atomic(SYNCTHING_SERVICE_FILE, **previous_unit)
+    run(["systemctl", "daemon-reload"])
+    if previous_unit is not None and not first_install:
+        if previous_state["ActiveState"] == "active":
+            _validate_state_paths()
+            if not os.path.isfile(os.path.join(SYNCTHING_HOME, "config.xml")):
+                raise RuntimeError("Prior Syncthing configuration is unavailable; refusing to regenerate it")
+        if previous_state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+            flags = ["--runtime"] if previous_state["UnitFileState"] == "enabled-runtime" else []
+            run(["systemctl", "enable", *flags, unit])
+        if previous_state["ActiveState"] == "active":
+            run(["systemctl", "start", unit])
+            _wait_for_api(username)
+    actual = inspect_unit_state(unit)
+    if first_install:
+        if actual["ActiveState"] in {"active", "activating"} or actual["UnitFileState"] in {"enabled", "enabled-runtime"}:
+            raise RuntimeError("Unverified first Syncthing install is still active or enabled")
+    elif (
+        (actual["ActiveState"] == "active") != (previous_state["ActiveState"] == "active")
+        or actual["UnitFileState"] != previous_state["UnitFileState"]
+    ):
+        raise RuntimeError("Restored Syncthing activation state did not match")
+
+
+@contextmanager
+def _syncthing_transaction(username: str) -> Iterator[None]:
+    """Extend unit rollback across offline credentials and API policy changes.
+
+    Unit replacement alone cannot restore application side effects. Keep one
+    operation open until policy and API health have also passed. Never snapshot
+    or roll back synchronized data, the database, or the device certificate/key.
+    """
+    parent = os.path.dirname(SYNCTHING_HOME)
+    store = OperationStateStore(os.path.join(parent, ".syncthing-operation.json"))
+    backup_dir = ""
+    resolved = False
+    record = None
+    modified = False
+    previous_config = None
+    try:
+        record = store.begin("syncthing-reconciliation", SYNCTHING_HOME, "snapshotting")
+        previous_unit = snapshot_unit_file(SYNCTHING_SERVICE_FILE)
+        previous_state = inspect_unit_state(f"{SYNCTHING_SERVICE_NAME}.service")
+        first_install = not os.path.isfile(os.path.join(SYNCTHING_HOME, "config.xml"))
+        if previous_state["ActiveState"] == "active" and (
+            previous_unit is None or first_install
+        ):
+            raise RuntimeError("Active Syncthing endpoint lacks a recoverable managed unit/config")
+        backup_dir = tempfile.mkdtemp(prefix=".syncthing-recovery-", dir=parent)
+        store.transition(record.operation_id, "snapshotting", context={"backup_dir": backup_dir})
+        write_json_atomic(os.path.join(backup_dir, "previous.json"), {
+            "unit": previous_unit, "state": previous_state, "first_install": first_install,
+        })
+        store.transition(record.operation_id, "stopping", context={"backup_dir": backup_dir})
+        modified = True  # A failed stop can already have stopped the old daemon.
+        _stop_before_configuration()
+        previous_config = _snapshot_config(backup_dir)
+        write_json_atomic(os.path.join(backup_dir, "config-metadata.json"), previous_config)
+        store.transition(record.operation_id, "configuring")
+        yield
+        store.complete(record.operation_id)
+        resolved = True
+    except BaseException:
+        if record is None:
+            raise
+        try:
+            if modified:
+                marker_error = None
+                try:
+                    store.transition(record.operation_id, "rolling-back")
+                except Exception as exc:
+                    marker_error = exc
+                _restore_syncthing(username, backup_dir, previous_unit, previous_state, previous_config, first_install)
+                if marker_error is not None:
+                    raise marker_error
+            store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
+            resolved = True
+        except BaseException as recovery_error:
+            try:
+                store.transition(record.operation_id, "rollback-failed", status="recovery_required",
+                                 context={"backup_dir": backup_dir, "error": type(recovery_error).__name__})
+            except Exception:
+                # The existing marker and private snapshots still identify the
+                # interrupted operation even if updating the marker also fails.
+                pass
+            raise RuntimeError(
+                f"Syncthing rollback needs recovery; inspect {store.path} and {backup_dir}; "
+                "preserve private evidence and verify recovery before retrying"
+            ) from recovery_error
+        raise
+    finally:
+        store.close()
+        if resolved and backup_dir:
+            try:
+                shutil.rmtree(backup_dir)
+            except OSError as exc:
+                print(f"  ⚠ Syncthing backup cleanup failed at {backup_dir}: {exc}")
+
+
 def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     """Install and reconcile one unprivileged, relay-capable Syncthing endpoint."""
     if not config.enable_syncthing and not config.disable_syncthing:
@@ -504,6 +672,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Skipping Syncthing service configuration")
         return
+    _assert_no_syncthing_recovery()
     if config.disable_syncthing:
         _remove_syncthing_https(config)
         unit_exists = os.path.lexists(SYNCTHING_SERVICE_FILE)
@@ -559,29 +728,28 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     _preflight_existing_folders(config.username, share_root)
     _prepare_share_root(config, group_name)
 
-    _stop_before_configuration()
-    _run_as_user(
-        config.username,
-        [
-            "generate",
-            f"--home={SYNCTHING_HOME}",
-            "--skip-port-probing",
-            "--no-default-folder",
-            f"--gui-user={admin_username}",
-            "--gui-password=-",
-        ],
-        input_data=admin_password + "\n",
-    )
+    with _syncthing_transaction(config.username):
+        _run_as_user(
+            config.username,
+            [
+                "generate",
+                f"--home={SYNCTHING_HOME}",
+                "--skip-port-probing",
+                "--no-default-folder",
+                f"--gui-user={admin_username}",
+                "--gui-password=-",
+            ],
+            input_data=admin_password + "\n",
+        )
 
-    write_text_atomic(
-        SYNCTHING_SERVICE_FILE,
-        _render_service(config, group_name),
-        mode=0o644,
-    )
-    run(["systemd-analyze", "verify", SYNCTHING_SERVICE_FILE])
-    run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", "--now", f"{SYNCTHING_SERVICE_NAME}.service"])
-    try:
+        write_text_atomic(
+            SYNCTHING_SERVICE_FILE,
+            _render_service(config, group_name),
+            mode=0o644,
+        )
+        run(["systemd-analyze", "verify", SYNCTHING_SERVICE_FILE])
+        run(["systemctl", "daemon-reload"])
+        run(["systemctl", "enable", "--now", f"{SYNCTHING_SERVICE_NAME}.service"])
         _wait_for_api(config.username)
         device_id_result = _run_as_user(
             config.username,
@@ -597,24 +765,9 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
         _put_config(desired)
         run(["systemctl", "restart", f"{SYNCTHING_SERVICE_NAME}.service"])
         _wait_for_api(config.username)
-        active = run(
-            ["systemctl", "is-active", f"{SYNCTHING_SERVICE_NAME}.service"],
-            capture_output=True,
-            check=False,
-        )
-        if active.returncode != 0:
-            raise RuntimeError("Managed Syncthing service is not active")
-    except Exception:
-        run(
-            [
-                "systemctl",
-                "disable",
-                "--now",
-                f"{SYNCTHING_SERVICE_NAME}.service",
-            ],
-            check=False,
-        )
-        raise
+        active = inspect_unit_state(f"{SYNCTHING_SERVICE_NAME}.service")
+        if active["ActiveState"] != "active" or active["UnitFileState"] != "enabled":
+            raise RuntimeError("Managed Syncthing service is not active and enabled")
 
     https_url = _configure_syncthing_https(config)
     print(f"  ✓ Syncthing device ID: {local_device_id}")
