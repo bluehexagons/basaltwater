@@ -1259,6 +1259,7 @@ def _rename_managed_credentials(manifest: dict[str, Any]) -> None:
 
 
 def _rewrite_managed_home_files(old_home: str, new_home: str) -> list[str]:
+    replacements = [(old_home, new_home), (new_home, new_home)]
     changed: list[str] = []
     for relative in (".local/bin", ".local/share/basaltwater", ".local/share/t3code"):
         root = os.path.join(new_home, relative)
@@ -1267,7 +1268,7 @@ def _rewrite_managed_home_files(old_home: str, new_home: str) -> list[str]:
         for directory, _, filenames in os.walk(root):
             for filename in filenames:
                 path = os.path.join(directory, filename)
-                if _replace_in_file(path, [(old_home, new_home)]):
+                if _replace_in_file(path, replacements):
                     changed.append(path)
     for path in (
         os.path.join(new_home, ".config", "systemd", "user", "t3code.service"),
@@ -1280,7 +1281,7 @@ def _rewrite_managed_home_files(old_home: str, new_home: str) -> list[str]:
             "basaltwater.conf",
         ),
     ):
-        if _replace_in_file(path, [(old_home, new_home)]):
+        if _replace_in_file(path, replacements):
             changed.append(path)
     return changed
 
@@ -1532,6 +1533,40 @@ def _validate_renamed_account(manifest: dict[str, Any]) -> pwd.struct_passwd:
     return account
 
 
+def _validate_reconciled_identity(manifest: dict[str, Any]) -> None:
+    """Require completed account and saved-state identity before activation."""
+
+    new_username = manifest["new_username"]
+    new_home = manifest["new_home"]
+    account = _account(new_username)
+    if account.pw_uid != int(manifest["old_uid"]):
+        raise RenameError("Renamed account UID changed unexpectedly")
+    if account.pw_gid != int(manifest["old_gid"]):
+        raise RenameError("Renamed account primary GID changed unexpectedly")
+    if account.pw_dir != new_home:
+        raise RenameError("Renamed account home does not match requested path")
+    if account.pw_shell != manifest["old_shell"]:
+        raise RenameError("Account shell changed outside the rename operation")
+    for path, presence_key in (
+        (STATE_FILE, "machine_state_present"),
+        (SETUP_CONFIG_FILE, "setup_config_present"),
+    ):
+        if manifest.get(presence_key) or os.path.exists(path):
+            saved = _read_json(path)
+            if saved is None or saved.get("username") != new_username:
+                raise RenameError(f"{os.path.basename(path)} was not updated")
+    try:
+        _account(manifest["old_username"])
+    except RenameError:
+        pass
+    else:
+        raise RenameError("Old account name still exists after rename")
+    if os.path.islink(new_home) or not os.path.isdir(new_home):
+        raise RenameError("Renamed account home is not a regular directory")
+    if os.stat(new_home, follow_symlinks=False).st_uid != account.pw_uid:
+        raise RenameError("Renamed account home is not owned by the account")
+
+
 def _run_migration_locked(manifest: dict[str, Any]) -> int:
     _require_root()
     operation_id = manifest["operation_id"]
@@ -1628,6 +1663,7 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
             _write_marker(manifest, "configuration-updated")
             _write_status(operation_id, "configuration-updated", "in_progress")
 
+        _validate_reconciled_identity(manifest)
         if phase not in {"services-reconciled", "verified"}:
             _write_status(operation_id, "services-starting", "in_progress")
             _run(["systemctl", "daemon-reload"])
@@ -1641,31 +1677,7 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
             _write_status(operation_id, "services-reconciled", "in_progress")
 
         _write_status(operation_id, "verified", "in_progress")
-        final_account = _account(new_username)
-        if final_account.pw_uid != int(manifest["old_uid"]):
-            raise RenameError("Renamed account UID changed unexpectedly")
-        if final_account.pw_gid != int(manifest["old_gid"]):
-            raise RenameError("Renamed account primary GID changed unexpectedly")
-        if final_account.pw_dir != new_home:
-            raise RenameError("Renamed account home does not match requested path")
-        if os.path.exists(STATE_FILE):
-            state = _read_json(STATE_FILE)
-            if state is None or state.get("username") != new_username:
-                raise RenameError("machine.json was not updated")
-        if os.path.exists(SETUP_CONFIG_FILE):
-            setup = _read_json(SETUP_CONFIG_FILE)
-            if setup is None or setup.get("username") != new_username:
-                raise RenameError("setup.json was not updated")
-        try:
-            _account(old_username)
-        except RenameError:
-            pass
-        else:
-            raise RenameError("Old account name still exists after rename")
-        if not os.path.isdir(new_home):
-            raise RenameError("Renamed account home is not a directory")
-        if os.stat(new_home, follow_symlinks=False).st_uid != final_account.pw_uid:
-            raise RenameError("Renamed account home is not owned by the account")
+        _validate_reconciled_identity(manifest)
         _verify_managed_rewrites(manifest, old_home)
         _verify_group_memberships(old_username)
         _verify_subordinate_id_files(old_username)

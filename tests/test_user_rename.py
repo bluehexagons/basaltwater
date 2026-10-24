@@ -95,6 +95,37 @@ class TestUserRenameHelpers(unittest.TestCase):
                 user_rename._rewrite_sudoers("alice", "alice2")
             self.assertEqual(new_path.read_text(), "alice2 ALL=(ALL) NOPASSWD: ALL\notheralice ALL=(ALL) ALL\n")
 
+    def test_all_managed_home_files_protect_overlapping_destinations_on_two_passes(self):
+        for suffix in (" archive", "@archive"):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmpdir:
+                old_home = str(Path(tmpdir, "alice"))
+                new_home = old_home + suffix
+                paths = [Path(new_home, relative) for relative in (
+                    ".local/bin/launch",
+                    ".local/share/basaltwater/nested/launch",
+                    ".local/share/t3code/nested/launch",
+                    ".config/systemd/user/t3code.service",
+                    ".config/systemd/user/t3code.service.d/basaltwater.conf",
+                )]
+                original = (f'exec "{old_home}/bin/t3"\n'
+                            f'# existing "{new_home}/bin/t3"\n'
+                            f'# {old_home}other/unchanged\n')
+                expected = original.replace(f'"{old_home}/bin/t3"', f'"{new_home}/bin/t3"')
+                for path in paths:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(original)
+                manifest = {"old_username": "alice", "new_username": "alice2", "new_home": new_home}
+                with patch.object(user_rename.os, "chown"):
+                    self.assertEqual(set(user_rename._rewrite_managed_home_files(old_home, new_home)),
+                                     {str(path) for path in paths})
+                    for path in paths:
+                        self.assertEqual(path.read_text(), expected)
+                    user_rename._verify_managed_rewrites(manifest, old_home)
+                    self.assertEqual(user_rename._rewrite_managed_home_files(old_home, new_home), [])
+                    for path in paths:
+                        self.assertEqual(path.read_text(), expected)
+                    user_rename._verify_managed_rewrites(manifest, old_home)
+
     def test_verification_rejects_exact_stale_identity_but_accepts_overlaps(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir, "unit.service")
@@ -360,6 +391,19 @@ class TestUserRenameHelpers(unittest.TestCase):
             with self.subTest(drift=drift):
                 self._exercise_resume("identity-renamed", move_home=True, renamed=True, drift=drift)
 
+    def test_later_resume_rejects_identity_drift_before_any_service_restoration(self):
+        for phase in ("configuration-updated", "services-reconciled", "verified"):
+            for drift in ("uid", "gid", "home", "shell", "temporary-shell", "old-name",
+                          "old-home", "missing-home", "home-owner", "machine", "setup",
+                          "missing-machine", "missing-setup"):
+                with self.subTest(phase=phase, drift=drift):
+                    self._exercise_resume(phase, move_home=True, renamed=True, home_moved=True, drift=drift)
+
+    def test_later_resume_with_matching_identity_preserves_service_snapshot(self):
+        for phase in ("configuration-updated", "services-reconciled", "verified"):
+            with self.subTest(phase=phase):
+                self._exercise_resume(phase, move_home=True, renamed=True, home_moved=True)
+
     def _exercise_resume(self, phase, *, fail_identity=False, move_home=False, renamed=False, home_moved=False, drift=None, container_store=False):
         with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
             root = Path(tmpdir)
@@ -375,20 +419,31 @@ class TestUserRenameHelpers(unittest.TestCase):
             if drift == "both-homes":
                 new_home.mkdir()
             if drift == "missing-home":
-                home.rmdir()
+                (new_home if home_moved else home).rmdir()
             operation_id = "0123456789abcdef"
             units = [{"path": str(root / "unit.service"), "unit": "unit.service", "kind": "service", "enabled": True, "active": True}]
             facts = dict(old_uid=os.getuid(), old_gid=os.getgid(), old_shell="/bin/bash", old_home=str(home), new_home=str(new_home),
                          primary_group="users", rename_primary_group=False, managed_units=units,
                          machine_state_present=False, setup_config_present=False, linger_enabled=False)
             manifest = dict(operation_id=operation_id, old_username="alice", new_username="alice2", keep_home=not move_home, **facts)
+            later_phase = phase in {"configuration-updated", "services-reconciled", "verified"}
+            if later_phase:
+                manifest.update(machine_state_present=True, setup_config_present=True)
+                for name, missing, changed in (("machine", "missing-machine", "machine"),
+                                                ("setup", "missing-setup", "setup")):
+                    if drift != missing:
+                        (root / f"{name}.json").write_text(json.dumps({
+                            "username": "alice" if drift == changed else "alice2",
+                        }))
             events = []
             initial_name = "alice2" if renamed else "alice"
             accounts = {initial_name: pwd.struct_passwd((
                 initial_name, "x", os.getuid() + int(drift == "uid"), os.getgid() + int(drift == "gid"), "",
-                str(root / "external") if drift == "home" else str(new_home if home_moved else home),
-                "/bin/zsh" if drift == "shell" else "/bin/bash" if renamed or phase is None else "/usr/sbin/nologin",
+                str(root / "external") if drift == "home" else str(home if drift == "old-home" else new_home if home_moved else home),
+                "/bin/zsh" if drift == "shell" else "/usr/sbin/nologin" if drift == "temporary-shell" else "/bin/bash" if renamed or phase is None else "/usr/sbin/nologin",
             ))}
+            if drift == "old-name":
+                accounts["alice"] = pwd.struct_passwd(("alice", *accounts[initial_name][1:]))
             live = True
 
             def account(username):
@@ -427,17 +482,30 @@ class TestUserRenameHelpers(unittest.TestCase):
             stack.enter_context(patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", ()))
             stack.enter_context(patch.object(user_rename, "_account", side_effect=account))
             stack.enter_context(patch.object(user_rename, "_run", side_effect=run))
+            if drift == "home-owner":
+                real_stat = os.stat
+
+                def changed_owner(path, **kwargs):
+                    metadata = real_stat(path, **kwargs)
+                    if path == str(new_home):
+                        fields = list(metadata)
+                        fields[4] = os.getuid() + 1
+                        return os.stat_result(fields)
+                    return metadata
+
+                stack.enter_context(patch.object(user_rename.os, "stat", side_effect=changed_owner))
             current = {**facts, "old_shell": accounts[initial_name].pw_shell,
                        "managed_units": [{**units[0], "active": False, "enabled": False}] if phase else units}
             preflight = stack.enter_context(patch.object(user_rename, "_preflight", side_effect=lambda _m: events.append("preflight") or current))
             backup = stack.enter_context(patch.object(user_rename, "_backup_files"))
             stack.enter_context(patch.object(user_rename, "_processes_for_uid", side_effect=lambda _uid: [12345] if live else []))
             stack.enter_context(patch.object(user_rename.os, "kill", side_effect=AssertionError("manager stop must drain fixture processes")))
+            effects = {}
             for name in ("_rename_cron_and_mail", "_rename_linger", "_rewrite_group_memberships", "_rewrite_state_files",
                          "_rewrite_subordinate_id_files", "_rewrite_sudoers", "_rename_managed_credentials", "_rewrite_managed_units",
                          "_rewrite_managed_home_files", "_restore_t3_user_service", "_verify_managed_rewrites", "_verify_group_memberships",
                          "_verify_subordinate_id_files", "_cleanup_operation"):
-                stack.enter_context(patch.object(user_rename, name))
+                effects[name] = stack.enter_context(patch.object(user_rename, name))
             storage_blocked = container_store and move_home and not home_moved
             self.assertEqual(user_rename._run_migration_locked(manifest if phase is None else {"operation_id": operation_id}), int(fail_identity or bool(drift) or storage_blocked))
             if renamed:
@@ -450,10 +518,33 @@ class TestUserRenameHelpers(unittest.TestCase):
             self.assertEqual(saved["managed_units"], units)
             if drift or storage_blocked:
                 self.assertEqual(events, [] if renamed else ["preflight"])
+                effects["_restore_t3_user_service"].assert_not_called()
+                effects["_cleanup_operation"].assert_not_called()
                 self.assertEqual(accounts[initial_name].pw_shell, current["old_shell"])
+                if later_phase:
+                    status = user_rename._read_json(user_rename._status_path(operation_id))
+                    self.assertEqual(status["status"], "failed")
+                    expected_error = {
+                        "uid": "UID changed", "gid": "GID changed",
+                        "home": "home does not match", "old-home": "home does not match",
+                        "shell": "shell changed", "temporary-shell": "shell changed",
+                        "old-name": "Old account name still exists",
+                        "missing-home": "home is not a regular directory",
+                        "home-owner": "home is not owned",
+                        "machine": "machine.json was not updated", "missing-machine": "machine.json was not updated",
+                        "setup": "setup.json was not updated", "missing-setup": "setup.json was not updated",
+                    }[drift]
+                    self.assertIn(expected_error, status["error"])
                 if storage_blocked:
                     status = user_rename._read_json(user_rename._status_path(operation_id))
                     self.assertIn("Rootless container storage would move", status["error"])
+                return
+            if later_phase:
+                expected = [("systemctl", "daemon-reload"), ("systemctl", "enable", "unit.service"),
+                            ("systemctl", "start", "unit.service")] if phase == "configuration-updated" else []
+                self.assertEqual(events, expected)
+                self.assertEqual(effects["_restore_t3_user_service"].call_count, int(phase == "configuration-updated"))
+                effects["_cleanup_operation"].assert_called_once_with(operation_id)
                 return
             if not renamed:
                 self.assertLess(events.index("preflight"), events.index(("systemctl", "stop", "unit.service")))

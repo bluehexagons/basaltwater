@@ -516,6 +516,15 @@ restores the original shell only after the current worker installed its
 temporary shell, and only while that shell and the recorded UID/GID still
 match; a rejected external shell change is preserved.
 
+From `configuration-updated` and later phases, resume requires the destination
+account's recorded UID, primary GID, destination home and original shell, plus
+the new username in the saved machine/setup files, before reloading, enabling
+or starting services. Previously present state files must still exist, and the
+old account must be absent. Identity drift blocks recovery for inspection.
+Managed home-file rewrites protect existing destination paths on every pass,
+including destinations such as `/home/alice archive` that contain the old home
+prefix, so interrupted configuration updates can safely revisit those files.
+
 Fresh cutover changes the login and home with one native `usermod` invocation.
 If interrupted after the login changed, resume checks the renamed account's
 UID, primary GID, shell, and current home before stopping its managed units and
