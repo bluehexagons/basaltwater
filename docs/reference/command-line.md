@@ -1642,6 +1642,11 @@ unless blank and named by `--swap-initialize`; existing filesystems,
 partitions, mounts, or unrelated signatures stop setup. Removing a swap
 declaration never wipes its block-device signature.
 
+Reruns accept lsblk's `[SWAP]` marker for an already active whole-device swap
+area. An unchanged area stays active without reformatting; priority drift or
+a declared priority/discard change triggers reactivation with the requested
+policy. Actual filesystem mounts and partitioned devices remain rejected.
+
 Basaltwater records owned areas in `/opt/basaltwater/state/swap.json` and
 edits only a marked block in `/etc/fstab`. Existing unmanaged swap is
 preserved. Managed fstab entries use `nofail`, and ownership is journaled

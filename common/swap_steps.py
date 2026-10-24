@@ -15,7 +15,6 @@ from common.storage_steps import (
     _device_path,
     _find_declared_disk,
     _find_device_by_path,
-    _has_mountpoint,
     _wipefs_signatures,
 )
 from lib.atomic_io import (
@@ -509,6 +508,19 @@ def _resolve_direct_device(source: str) -> str:
     return resolved
 
 
+def _has_filesystem_mountpoint(device: dict[str, Any]) -> bool:
+    """Reject filesystem mounts while allowing lsblk's active-swap marker."""
+    for field in ("mountpoints", "mountpoint"):
+        value = device.get(field)
+        mountpoints = value if isinstance(value, list) else [value]
+        if any(
+            isinstance(mountpoint, str) and mountpoint and mountpoint != "[SWAP]"
+            for mountpoint in mountpoints
+        ):
+            return True
+    return False
+
+
 def _ensure_swap_device(
     config: SetupConfig,
     area: SwapDevice,
@@ -556,7 +568,7 @@ def _ensure_swap_device(
             f"  ⚠ Swap device {path} appears to be ZFS-backed. Direct ZFS swap "
             "has not been qualified by basaltwater; monitor pool memory pressure."
         )
-    if record.get("children") or _has_mountpoint(record):
+    if record.get("children") or _has_filesystem_mountpoint(record):
         raise RuntimeError(f"Refusing to use partitioned or mounted swap device {path}")
     signatures = _wipefs_signatures(path)
     current_type = record.get("fstype") or _swap_type(path)

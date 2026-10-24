@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack
 from unittest.mock import MagicMock, call, patch
 
 from common.swap_steps import (
@@ -46,6 +47,140 @@ class TestSwapRuntimeSafety(unittest.TestCase):
             {"/swap path/file": 20, "/dev/vdb": 0},
         )
         self.assertNotIn("--json", mock_run.call_args.args[0])
+
+    def test_named_disk_activation_then_native_active_swap_rerun(self):
+        record = {
+            "name": "sda",
+            "path": "/dev/sda",
+            "type": "disk",
+            "fstype": None,
+            "mountpoints": [None],
+            "pkname": None,
+            "serial": "bw-swap-fast",
+        }
+        config = self._config(
+            container_storage=[["swap-fast", "local-lvm", "8G"]],
+            swap_devices=[["fast", "swap-fast", "priority=200", "discard=once"]],
+        )
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            for name, value in {
+                "SWAP_STATE_FILE": os.path.join(directory, "swap.json"),
+                "FSTAB_PATH": os.path.join(directory, "fstab"),
+            }.items():
+                stack.enter_context(patch(f"common.swap_steps.{name}", value))
+            for name, value in {
+                "is_dry_run": False,
+                "can_manage_swap": True,
+                "_find_declared_disk": record,
+                "_swap_type": None,
+                "_swap_uuid": "11111111-1111",
+                "_reconcile_zram": [],
+                "_configure_swappiness": None,
+                "_configure_zswap": None,
+                "_configure_resume": None,
+            }.items():
+                stack.enter_context(
+                    patch(f"common.swap_steps.{name}", return_value=value)
+                )
+            stack.enter_context(
+                patch("common.swap_steps._wipefs_signatures", side_effect=[[], ["swap"]])
+            )
+            stack.enter_context(
+                patch(
+                    "common.swap_steps._active_swap_inventory",
+                    side_effect=[{}, {}, {"/dev/sda": 200}, {"/dev/sda": 200}],
+                )
+            )
+            mock_run = stack.enter_context(patch("common.swap_steps.run"))
+
+            configure_swap(config)
+            initial_state = _load_state()
+            with open(os.path.join(directory, "fstab"), encoding="utf-8") as stream:
+                initial_fstab = stream.read()
+            self.assertEqual(
+                mock_run.call_args_list,
+                [
+                    call("mkswap --label bw-fast /dev/sda"),
+                    call("udevadm settle"),
+                    call("swapon --priority 200 --discard=once /dev/sda"),
+                ],
+            )
+            self.assertEqual(initial_state["areas"][0]["serial"], "bw-swap-fast")
+            self.assertIn("UUID=11111111-1111", initial_fstab)
+            record.update(fstype="swap", mountpoints=["[SWAP]"])
+            mock_run.reset_mock()
+
+            # Auto reruns recover the named disk and policy from persisted ownership.
+            configure_swap(self._config())
+
+            mock_run.assert_not_called()
+            self.assertEqual(_load_state(), initial_state)
+            with open(os.path.join(directory, "fstab"), encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), initial_fstab)
+
+    @patch("common.swap_steps.run")
+    @patch("common.swap_steps._active_swap_inventory", return_value={"/dev/sda": 200})
+    @patch("common.swap_steps._swap_uuid", return_value="11111111-1111")
+    @patch("common.swap_steps._wipefs_signatures", return_value=["swap"])
+    @patch("common.swap_steps._find_device_by_path")
+    @patch("common.swap_steps._resolve_direct_device", return_value="/dev/sda")
+    def test_active_direct_swap_lsblk_forms_and_policy_reconciliation(
+        self, _resolve, mock_find, _signatures, _uuid, mock_inventory, mock_run
+    ):
+        area = SwapDevice("fast", "UUID=11111111-1111", 200, "once")
+        for fields in (
+            {"mountpoint": "[SWAP]"},
+            {"mountpoints": ["[SWAP]"]},
+            {"mountpoints": "[SWAP]"},
+            {"mountpoints": [None, ""], "mountpoint": "[SWAP]"},
+        ):
+            with self.subTest(fields=fields):
+                mock_find.return_value = {"path": "/dev/sda", "fstype": "swap", **fields}
+                prior = _ensure_swap_device(self._config(), area, None)
+                self.assertFalse(prior["provider_owned"])
+                _ensure_swap_device(self._config(), area, prior)
+                mock_run.assert_not_called()
+
+        for observed_priority, prior_discard in ((10, "once"), (200, "off")):
+            with self.subTest(priority=observed_priority, discard=prior_discard):
+                mock_inventory.return_value = {"/dev/sda": observed_priority}
+                result = _ensure_swap_device(
+                    self._config(), area, {**prior, "discard": prior_discard}
+                )
+                self.assertEqual(result["priority"], 200)
+                self.assertEqual(result["discard"], "once")
+                self.assertEqual(
+                    mock_run.call_args_list,
+                    [
+                        call("swapoff /dev/sda"),
+                        call("swapon --priority 200 --discard=once /dev/sda"),
+                    ],
+                )
+                mock_run.reset_mock()
+
+    @patch("common.swap_steps.run")
+    @patch("common.swap_steps._wipefs_signatures")
+    @patch("common.swap_steps._find_device_by_path")
+    @patch("common.swap_steps._resolve_direct_device", return_value="/dev/sda")
+    def test_swap_marker_does_not_hide_filesystem_mounts_or_children(
+        self, _resolve, mock_find, mock_signatures, mock_run
+    ):
+        for fields in (
+            {"mountpoint": "/srv/data"},
+            {"mountpoints": "/srv/data"},
+            {"mountpoints": ["[SWAP]", "/srv/data"]},
+            {"mountpoints": ["[SWAP]"], "mountpoint": "/srv/data"},
+            {"mountpoints": [None], "mountpoint": "/srv/data"},
+            {"mountpoints": ["[SWAP]"], "children": [{"name": "sda1"}]},
+        ):
+            with self.subTest(fields=fields):
+                mock_find.return_value = {"path": "/dev/sda", "fstype": "swap", **fields}
+                with self.assertRaisesRegex(RuntimeError, "partitioned or mounted"):
+                    _ensure_swap_device(
+                        self._config(), SwapDevice("fast", "UUID=11111111-1111"), None
+                    )
+        mock_signatures.assert_not_called()
+        mock_run.assert_not_called()
 
     def test_legacy_provider_state_is_accepted_for_upgrade(self):
         state = {
@@ -129,7 +264,6 @@ class TestSwapRuntimeSafety(unittest.TestCase):
     @patch("common.swap_steps._active_swap_inventory")
     @patch("common.swap_steps._swap_uuid", return_value="11111111-1111")
     @patch("common.swap_steps._wipefs_signatures", return_value=["swap"])
-    @patch("common.swap_steps._has_mountpoint", return_value=False)
     @patch(
         "common.swap_steps._find_device_by_path",
         return_value={"path": "/dev/vdb", "children": [], "fstype": "swap"},
@@ -139,7 +273,6 @@ class TestSwapRuntimeSafety(unittest.TestCase):
         self,
         _mock_resolve,
         _mock_find,
-        _mock_mount,
         _mock_signatures,
         _mock_uuid,
         mock_inventory,
