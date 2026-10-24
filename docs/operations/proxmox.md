@@ -66,17 +66,19 @@ The matching `.pub` file must sit beside the private key, and the Proxmox
 ## Optional host web panel
 
 Add `--web-panel` to install the authenticated Basaltwater panel on this
-Proxmox host. Its dashboard shows local VMs, LXC containers and templates,
-guest state and resource use, Proxmox storage capacity, installed version,
-cluster quorum and online-node counts. Guest and storage links open their
-native Proxmox summary, and **Open Proxmox VE** opens the full panel. A separate
-root collector publishes sanitized inventory about every minute; the web
-worker remains unprivileged. Host metrics, services, mounted storage,
-scheduled jobs and Proxmox service/firewall diagnostics are also available.
-See the [web panel reference](../services/web-panel-reference.md#host-snapshot)
-for collection limits and troubleshooting. Rerun panel setup to add the
-collector to an existing installation. Guest management uses Proxmox's own UI
-and login.
+Proxmox host. Its dashboard covers visible cluster nodes, guests, storage and
+recent task activity, with guest search/filter/sort, per-node guest allocations,
+node capacity/status, local-node guest addresses and validated application
+links from saved Notes, local-node ZFS health and cluster Ceph health when
+configured. Guest, node, storage and task links open their native Proxmox
+details; **Open Proxmox VE** opens the full panel. A separate root collector
+publishes a sanitized read-only snapshot; the web worker remains unprivileged
+and cannot control guests. Host metrics, services, mounted storage, scheduled
+jobs and Proxmox service/firewall diagnostics are also available. See the
+[web panel reference](../services/web-panel-reference.md#host-snapshot) for
+scope, collection limits and troubleshooting. Rerun panel setup on an existing
+installation to install the updated service and collector. Dashboard refreshes
+read only the cache; guest management uses Proxmox's own UI and login.
 
 The port is optional: without `--ssl`, it defaults to 80; with `--ssl`, it
 defaults to 443. Choose another available panel port with

@@ -42,8 +42,10 @@ page:
 - `minimal`: core inspection pages with optional tools absent.
 - `empty`: optional pages and forms with no saved tasks, messages or job records.
 - `degraded`: high resource use, collector notices and simulated operation failures.
-- `proxmox`: a monitoring-only Proxmox node with running/stopped VMs, an LXC,
-  a template and a storage pool at 85% use; no Proxmox commands run.
+- `proxmox`: a monitoring-only cluster with online/offline nodes, remote guests,
+  tags, a shared pool visible on two nodes, realistic guest allocations,
+  running/succeeded/failed tasks, synthetic guest addresses and Notes links,
+  a ZFS warning and Ceph health. No `pvesh` or guest-agent commands run.
 
 To test runner registration, use `--scenario empty --https` and open **GitHub
 runner → Load runner status**. Enter `reject-sample-runner-token` to test rejection,
