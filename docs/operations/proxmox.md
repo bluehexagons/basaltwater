@@ -851,13 +851,20 @@ first-boot behavior. Changes to Proxmox cloud-init fields do not automatically
 reinitialize an already provisioned guest; apply
 ordinary guest configuration through Basaltwater setup instead.
 
-Before capturing a template or cloning a VM with a **new identity**, remove
+For reusable images, prefer a never-booted vendor-image template; see the
+[VM template workflow](proxmox-vm-templates.md) for construction, first-boot
+configuration, clone modes, and identity checks. Basaltwater currently imports
+images when provisioning; template creation and cloning use native Proxmox tools.
+
+Before capturing an already provisioned VM with a **new identity**, remove
 `99-basaltwater-instance.cfg`, run `cloud-init clean --machine-id`, and shut
 down without booting the source again. Removing the guard alone is insufficient
 because cloud-init can retain a manual-clean marker in its cache. Prepare fresh
 user-data, networking and SSH keys for the clone. If cloud-init will configure
 networking, also remove Basaltwater's managed cloud-init network-disable file
-and inherited static network configuration before capture. This is an explicit
+and inherited static network configuration before capture. Reset its managed
+hostname-preservation setting and review inherited authorizations, credentials,
+leases, and application state too. This is an explicit
 image-preparation operation, not part of an identity-preserving restore. See
 [cloud-init's first-boot behavior](https://docs.cloud-init.io/en/latest/explanation/first_boot.html)
 and the current
