@@ -1190,6 +1190,7 @@ def _install_locked_t3_service(
         action = (
             "restart"
             if native_repaired
+            or (refresh and not updater_started_service)
             or (
                 (pending is not None or drop_in_changed or npm_shim_changed)
                 and not config_applied

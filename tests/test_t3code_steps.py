@@ -980,10 +980,21 @@ class T3CodeWebTest(unittest.TestCase):
                     "common.t3code_steps._node_bin_directory",
                     return_value=node_bin,
                 ),
+                patch(
+                    "common.t3code_steps._install_t3_npm_shim",
+                    return_value=(os.path.join(home, "npm-shim"), False),
+                ),
+                patch(
+                    "common.t3code_steps._configure_t3_service_drop_in",
+                    return_value=False,
+                ),
                 patch("common.t3code_steps._run_as_login_user") as run_as_user,
                 patch("common.t3code_steps._t3_native_runtime_healthy", return_value=True),
                 patch("common.t3code_steps._wait_for_t3_service"),
-                patch("common.t3code_steps._user_systemctl", return_value=completed),
+                patch(
+                    "common.t3code_steps._user_systemctl",
+                    return_value=completed,
+                ) as systemctl,
                 patch("common.t3code_steps.os.chown"),
                 patch(
                     "common.t3code_steps.LEGACY_T3_SERVICE_FILE",
@@ -1000,8 +1011,11 @@ class T3CodeWebTest(unittest.TestCase):
                     3773,
                 )
             run_as_user.assert_not_called()
+            actions = [call.args[2] for call in systemctl.call_args_list]
+            self.assertIn("start", actions)
+            self.assertNotIn("restart", actions)
 
-    def test_refresh_keeps_an_unchanged_service_running(self) -> None:
+    def test_refresh_restarts_an_unchanged_service(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             workspace = os.path.join(home, "repos")
             os.makedirs(workspace)
@@ -1072,8 +1086,8 @@ class T3CodeWebTest(unittest.TestCase):
 
             updater.assert_called_once()
             actions = [call.args[2] for call in systemctl.call_args_list]
-            self.assertIn("start", actions)
-            self.assertNotIn("restart", actions)
+            self.assertIn("restart", actions)
+            self.assertNotIn("start", actions)
 
     def test_t3_loginctl_shim_supplies_explicit_username(self) -> None:
         with tempfile.TemporaryDirectory() as home:
