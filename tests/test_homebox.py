@@ -194,6 +194,44 @@ class HomeBoxConfigTests(unittest.TestCase):
         )
 
 
+class HomeBoxRuntimeStateTests(unittest.TestCase):
+    def test_state_and_update_receipts_work_with_the_managed_runtime_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            durable = root / "var/lib/basaltwater"
+            durable.mkdir(parents=True)
+            legacy = root / "opt/basaltwater/state"
+            legacy.parent.mkdir(parents=True)
+            legacy.symlink_to(durable, target_is_directory=True)
+            # Preserve production path layout so runtime-relative constants
+            # reproduce the real first-install failure instead of hiding it.
+            with patch.object(h, "STATE", root / h.STATE.relative_to("/")), \
+                    patch.object(h, "UPDATE_STATE", root / h.UPDATE_STATE.relative_to("/")):
+                self.assertIsNone(h.read_state())
+                h._save_state(state())
+                self.assertEqual(h.read_state(), state())
+                self.assertTrue((durable / "homebox.json").is_file())
+                h.UPDATE_STATE.write_text(json.dumps({"schema_version": 1, "successful": True}))
+                job = {"available": True, "ActiveState": "inactive", "Result": "success"}
+                timer = {"available": True, "ActiveState": "active",
+                         "NextElapseUSecRealtime": "Sun 2026-09-14 06:00:00 UTC"}
+                with patch.object(h, "_private_file", side_effect=h._safe_path), \
+                        patch.object(h, "_unit_properties", side_effect=(job, timer)):
+                    self.assertTrue(h._automatic_update_health()["healthy"])
+
+    def test_symlinked_durable_state_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "elsewhere"
+            target.mkdir()
+            durable = root / "var/lib/basaltwater"
+            durable.parent.mkdir(parents=True)
+            durable.symlink_to(target, target_is_directory=True)
+            with patch.object(h, "STATE", durable / "homebox.json"):
+                with self.assertRaisesRegex(RuntimeError, "symlinked HomeBox path"):
+                    h.read_state()
+
+
 class HomeBoxFixture:
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -405,6 +443,10 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
                 self.assertIn('HBOX_WEB_HOST="127.0.0.1"', env)
                 self.assertIn("HBOX_DATABASE_SQLITE_PATH", env)
                 self.assertIn('HBOX_SEARCH_DRIVER="database"', env)
+                self.assertIn(
+                    f'HBOX_STORAGE_CONN_STRING="file://{endpoint["data_path"]}/?no_tmp_dir=true"',
+                    env,
+                )
         unit = h.render_unit(value)
         for setting in ("User=homebox", "ProtectSystem=strict", "ReadWritePaths=/srv/homebox", "RequiresMountsFor=/srv/homebox"):
             self.assertIn(setting, unit)

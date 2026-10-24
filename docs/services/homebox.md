@@ -64,10 +64,14 @@ registration is disabled.
 | `/opt/homebox/current` | Selected release link |
 | `/etc/homebox/homebox.env` | Root-only managed environment |
 | `/etc/homebox/secrets.json` | Root-only initial password and persistent API-key pepper |
-| `/opt/basaltwater/state/homebox.json` | Validated release, endpoint, and storage state |
-| `/opt/basaltwater/state/homebox_update.json` | Last automatic update result, with no credentials |
+| `/var/lib/basaltwater/homebox.json` | Validated release, endpoint, and storage state |
+| `/var/lib/basaltwater/homebox_update.json` | Last automatic update result, with no credentials |
 | `/var/lib/homebox` or selected data path | `homebox.db`, SQLite sidecars, and attachments |
 | `/var/lib/homebox-backups` | Private manual backups and automatic recovery archives |
+
+HomeBox accesses durable state directly. The managed runtime link at
+`/opt/basaltwater/state` still exposes the same files; no state migration is
+needed. Unexpected symlinks in the durable state path remain rejected.
 
 Use local ext4, xfs, btrfs, or zfs storage below `/srv`, `/mnt`, `/data`, or
 `/var/lib`. Network/FUSE filesystems, symlinked paths, and overlap with managed
@@ -75,6 +79,9 @@ file shares or other services are rejected. A declared storage mount must
 contain a HomeBox subdirectory; do not select the mount root itself. Setup and
 operations verify backing-mount identity and capacity, and the unit requires
 its data mount. Data-path changes require a deliberate migration, not a patch.
+Attachment uploads stage files beside their destinations before an atomic
+rename, so a data disk can be on a different filesystem from `/tmp`. An
+interrupted upload can leave a temporary file in the attachment directory.
 
 Basaltwater owns the environment, systemd unit, and Nginx site. Manual changes
 to those generated files are reconciled on setup. Keep the API-key pepper:

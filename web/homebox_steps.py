@@ -45,13 +45,15 @@ from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 
 ROOT = Path("/opt/homebox")
 CONFIG = Path("/etc/homebox")
-STATE = Path("/opt/basaltwater/state/homebox.json")
+# Use durable paths directly: the runtime tree exposes state through a symlink,
+# while HomeBox deliberately rejects symlinks in its management paths.
+STATE = Path("/var/lib/basaltwater/homebox.json")
 UNIT = Path("/etc/systemd/system/homebox.service")
 SITE = Path("/etc/nginx/sites-available/basaltwater-homebox")
 LINK = Path("/etc/nginx/sites-enabled/basaltwater-homebox")
 BACKUPS = Path("/var/lib/homebox-backups")
 LOCK = Path("/run/lock/basaltwater-homebox.lock")
-UPDATE_STATE = Path("/opt/basaltwater/state/homebox_update.json")
+UPDATE_STATE = Path("/var/lib/basaltwater/homebox_update.json")
 MARKER = "# Managed by basaltwater HomeBox"
 STATUS_PATH = "/api/v1/status"
 SERVICE = "homebox.service"
@@ -369,7 +371,9 @@ def render_environment(value: dict, secret: dict) -> str:
         "HBOX_DATABASE_DRIVER": "sqlite3",
         "HBOX_SEARCH_DRIVER": "database",
         "HBOX_DATABASE_SQLITE_PATH": f"{data}/homebox.db?_pragma=busy_timeout=999&_pragma=journal_mode=WAL&_fk=1&_time_format=sqlite",
-        "HBOX_STORAGE_CONN_STRING": f"file://{data}/", "HBOX_STORAGE_PREFIX_PATH": "attachments",
+        # fileblob must rename upload staging files on the same filesystem as
+        # their destination, including when inventory lives on a data disk.
+        "HBOX_STORAGE_CONN_STRING": f"file://{data}/?no_tmp_dir=true", "HBOX_STORAGE_PREFIX_PATH": "attachments",
         "HBOX_OPTIONS_ALLOW_REGISTRATION": "false", "HBOX_OPTIONS_ALLOW_LOCAL_LOGIN": "true",
         "HBOX_OPTIONS_ALLOW_ANALYTICS": "false", "HBOX_DEBUG_ENABLED": "false", "HBOX_DEMO": "false",
         "HBOX_OTEL_ENABLED": "false", "HBOX_OPTIONS_TRUST_PROXY": "true" if value["domain"] else "false",
