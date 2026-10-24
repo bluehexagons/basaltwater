@@ -222,11 +222,14 @@ an implicit shell. Arguments are limited to 100 entries, 4096 characters each,
 and 48 KiB serialized in total. `--dry-run` validates prerequisites/arguments
 without creating task records or services.
 
-Screen capture and input retain their separate consent, generation, geometry,
-and lease checks; see [native desktop control](cachyos-desktop.md). Launches
-honor a saved or active human pause. Pause agent control before the owner
-playtests through Moonlight, and wait for explicit handback before resuming
-input. A launched game can keep running after the portal helper stops.
+Screen capture and input retain their separate portal consent, generation,
+geometry, and stale-generation checks; see [native desktop control](cachyos-desktop.md)
+and [persistent desktop control](desktop-control.md). Agent launches and
+mutations follow the remembered enabled, human-override, or disabled state.
+Before the owner playtests through Moonlight, the owner must explicitly choose
+Take control in the UI or approve a state change. A task request alone does not
+authorize changing state. A launched game can keep running after the portal
+helper stops.
 
 Prefer project-defined playtest fixtures and input actions. Capture the tested
 revision/worktree, scene, engine, renderer, resolution, seed, logs, and expected

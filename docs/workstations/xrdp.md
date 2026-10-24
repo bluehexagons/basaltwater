@@ -102,8 +102,7 @@ basaltw desktop status
 basaltw desktop start
 basaltw desktop exec -- thunar
 basaltw desktop screenshot --output /tmp/desktop-1.png
-basaltw desktop control pause
-basaltw desktop control resume
+basaltw desktop control enabled --human-approved
 basaltw desktop logout
 ```
 
@@ -181,13 +180,35 @@ basaltw desktop input --generation GENERATION --geometry 1280 720 key --key ctrl
 basaltw desktop input --generation GENERATION --geometry 1280 720 text --text 'Example'
 ```
 
-`move` takes coordinates; click buttons 4–7 scroll. Each mutation acquires a
-short exclusive lease. Human takeover with `control pause` revokes it and blocks
-agent mutations while leaving screenshots and RDP input available. `resume`
-is explicit. This is cooperative same-account coordination, not a sandbox.
-Human mouse movement does not automatically pause agents. Recapture after any
+`move` takes coordinates; click buttons 4–7 scroll. Agent mutations follow the
+persistent desktop control state. Enabled allows authorized desktop work
+without an unpause request or lease. Human override blocks agent mutations
+while allowing observation; disabled also blocks mutations until a human
+explicitly changes state. RDP input remains available. Recapture after any
 resize, reconnect or stale-input error. Screenshots are private PNGs at new
-paths, never overwritten; delete temporary evidence after use.
+paths, never overwritten; delete temporary evidence after use. See
+[persistent desktop control](desktop-control.md) for state transitions and
+approval rules.
+
+Change state only after explicit human approval or a human UI choice. Use
+`--human-approved` for an approved CLI state change; a task request alone is
+not approval. For a timed or indefinite override:
+
+```bash
+basaltw desktop control enabled --human-approved
+basaltw desktop control human-override --human-approved
+basaltw desktop control human-override --seconds 900 --human-approved
+basaltw desktop control human-override --indefinite --human-approved
+basaltw desktop control disabled --human-approved
+```
+
+Overrides accept 60–86400 seconds or `--indefinite`. Timed expiry returns to
+enabled because the human selected that duration; disabled and indefinite
+override never auto-enable. The native CachyOS command adds `--native` before
+`control`. Native helper lifetime is unlimited by default; optional
+`--session-seconds` accepts 60–28800, with `0` unlimited, and renewal uses the
+same range. See [persistent desktop control](desktop-control.md) for the full
+contract.
 
 For almost all browser testing, use available T3 Code collaborative preview or
 managed Playwright. Desktop input is for native applications, desktop-specific
@@ -200,8 +221,11 @@ and command guidance for Codex/OpenCode.
 Setup installs `wmctrl` and `python3-tk` from the normal package repositories
 and adds **Shared Desktop Control** to the application menu. Rerun setup to
 install these additions; setup handles managed desktop logout. The control
-window shows agent status and offers pause/resume; closing it leaves pause in
-effect. Agents can open it with `basaltw desktop handoff` before handing over.
+window offers **Enable agents**, **Disable agents**, and **Take control** with a
+15-minute default, duration choice, or indefinite override. Closing the window
+does not change remembered state. See
+[persistent desktop control](desktop-control.md) for state transitions and
+approval rules.
 
 ```bash
 basaltw desktop doctor
@@ -237,8 +261,8 @@ it never destroys the X client. Verify completion with a fresh observation.
 
 `wait` supports present, visible, active, and absent conditions. Window ID, title,
 and PID selectors combine with AND. Absence requires a complete inventory.
-Polling takes place outside the supervisor without holding a control lease;
-human pause remains available. Timeout defaults to 15 seconds (maximum 120),
+Polling takes place outside the supervisor; human override remains available.
+Timeout defaults to 15 seconds (maximum 120),
 plus any in-flight bounded request. A timeout does not kill or relaunch the app.
 
 Screenshots without `--output` receive unique persistent paths under private
@@ -247,10 +271,11 @@ automatically removed; retain linked response artifacts and clean disposable one
 
 `sequence PATH --generation GENERATION` accepts a JSON list of 1–20 `input`,
 `window`, `screenshot`, or `windows` requests with their normal payload fields.
-Do not embed leases or generations. A single revocable 30-second lease prevents
-other agents from interleaving mutations; human input remains independent.
-Steps are not transactional: a failure reports partial results and releases
-control without rollback or retries. Long waits belong outside a sequence.
+Do not embed control revisions or generations. Sequences remain limited to 20
+seconds and 1–20 actions, and stop when the control revision changes or input
+becomes stale. Operators coordinate manually; there is no exclusive lease.
+Steps are not transactional: a failure reports partial results without rollback
+or retries. Long waits belong outside a sequence.
 For example, after observing current desktop geometry, a short save-and-capture
 file can contain:
 
@@ -276,7 +301,7 @@ desktop capability on a later headless setup is not a desktop uninstaller.
 
 Run setup from SSH or a text console when desktop work is saved. Before package
 upgrades, setup automatically requests normal logout of the configured account's
-managed desktop, including a paused desktop, and waits up to 60 seconds plus
+managed desktop and waits up to 60 seconds plus
 in-flight request time. It then allows up to 10 seconds for logind/sesman cleanup.
 If the supervisor disconnects during logout, setup rechecks status within the
 same deadline instead of resending logout or assuming it finished. A connection
@@ -291,7 +316,7 @@ in the final run notes even after logout and setup succeeded; that teardown
 race is harmless. A failed session list or an unreadable session that still
 exists continues to block desktop setup, as does a remaining XRDP process.
 No separate logout command or confirmation is required. A canceled logout stops
-setup and leaves agent input paused; no applications are force-killed. Disable
+setup; no applications are force-killed. Disable
 RDP automatic reconnect during setup. A replacement generation aborts the logout
 wait, and desktop steps recheck idle state before cutover. Unmanaged/legacy
 X11/Wayland or XRDP sessions still require manual logout. Setup leaves the desktop
@@ -338,7 +363,8 @@ Rollback restores configuration, not unsaved applications. Keep SSH available.
 ## Current behavior and limits
 
 The supported path provides local peer-authenticated startup, native
-application launch/input/capture, pause and handoff, clipboard in both
+application launch/input/capture, persistent human override and explicit state
+control, clipboard in both
 directions, normal logout, and reconnect to a retained session.
 
 With Remmina 1.4.43 and FreeRDP 3.31.1, dynamic resizing can briefly blank the
@@ -351,7 +377,7 @@ than seamless; the cause is not isolated to XRDP or FreeRDP.
 
 Screen locking and automatic locking are outside the default contract. Audio
 redirection, keyring unlock, multi-monitor behavior, and other desktop
-environments are not supported guarantees. Agent pause is not a screen lock.
+environments are not supported guarantees. Human override is not a screen lock.
 
 ## Managed configuration
 
