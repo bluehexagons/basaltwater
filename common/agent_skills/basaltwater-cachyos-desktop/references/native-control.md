@@ -45,6 +45,27 @@ owner `revoke` closes control, deletes only its portal PermissionStore entries
 and removes the saved record, including while stopped. Retry reported store
 errors; never work around revocation with a different input service.
 
+## Sleeping displays
+
+A sleeping monitor can leave capture black, frozen or unavailable even when the
+application and portal are running. While agent control is enabled, try
+`basaltw desktop --native wake` from the existing KDE session. It requests
+`kscreen-doctor --dpms on` (from `libkscreen`) with a ten-second timeout, without
+typing keys, moving the pointer, changing permission, or starting a portal.
+It also works before the native helper starts. Disabled and human override
+still block this agent action; do not enable agents merely to wake the monitor.
+
+Wait briefly, then take and inspect a fresh capture before input. A successful
+wake request does not prove the physical display or capture is ready. If needed,
+inspect `kscreen-doctor --dpms show` and `kscreen-doctor -o`; an unplugged,
+physically switched-off, disabled or locked display needs separate diagnosis.
+Do not unlock, enable outputs, change layout or disable idle power policy as a
+substitute. If capture stays stuck after wake, inspect status before restarting
+the helper and obtaining any KDE approval it requests.
+
+For Moonlight connection failures while the monitor sleeps, see
+[Sunshine display wake](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+
 ## Observe, act, verify
 
 Use `exec -- APPLICATION ARGS...` with absolute task paths and the intended cwd.

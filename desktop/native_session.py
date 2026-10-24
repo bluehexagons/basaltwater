@@ -117,6 +117,23 @@ def check_session():
     return display
 
 
+def wake():
+    """Request KDE display power on without injecting input or opening a portal."""
+    check_session()
+    permission = control_state.status()
+    control_state.require_enabled(permission)
+    try:
+        result = subprocess.run(["/usr/bin/kscreen-doctor", "--dpms", "on"],
+                                capture_output=True, text=True, timeout=10, check=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError("Display wake requires kscreen-doctor from libkscreen; rerun desktop setup") from exc
+    if result.returncode:
+        raise RuntimeError("KDE display wake failed; inspect kscreen-doctor --dpms show in the graphical session")
+    control_state.require_enabled(permission)
+    return {**permission, "wake_requested": True, "desktop_preserved": True,
+            "detail": "Display power-on requested; wait briefly and take a fresh screenshot to verify readiness"}
+
+
 def start(*, remember=False, session_seconds=SESSION_SECONDS):
     validate_session_seconds(session_seconds)
     current = status()
@@ -497,7 +514,8 @@ class NativeSession:
                 raise RuntimeError("Capture response exceeded its limit")
             result = json.loads(process.stdout)
             if process.returncode or "error" in result:
-                raise RuntimeError(result.get("error", "Portal capture failed"))
+                raise RuntimeError(str(result.get("error", "Portal capture failed")) +
+                    "; if the display is asleep and agent control is enabled, try 'basaltw desktop --native wake', then recapture")
             if self.stopping.is_set():
                 raise RuntimeError("Portal control was revoked during capture")
             geometry = result.get("geometry")

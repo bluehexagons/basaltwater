@@ -23,6 +23,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
         command.add_argument("--json", action="store_true")
         if name == "windows":
             command.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
+    wake = commands.add_parser("wake", help="Native KDE: wake sleeping displays without keyboard/pointer input; requires enabled agent control")
+    wake.add_argument("--json", action="store_true")
     starting = commands.add_parser("start")
     starting.add_argument("--json", action="store_true")
     starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
@@ -128,6 +130,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
         if command == "status":
             result = backend.status()
+        elif command == "wake":
+            if backend is runtime:
+                raise ValueError("Display wake requires --native in the existing KDE Wayland session")
+            result = backend.wake()
         elif command == "start":
             if backend is runtime:
                 if args.remember or args.session_seconds != 0:

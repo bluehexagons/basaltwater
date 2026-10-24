@@ -33,7 +33,7 @@ in the attached KDE terminal as your desktop account.
 | Engineering editors | `--freecad`, `--kicad` | Corresponding native repository packages |
 | OBS | `--obs` | Repository `obs-studio`; no automatic capture or recording |
 | Remmina | `--remmina` | Repository `remmina`, `freerdp`, `libvncserver`, `spice-gtk`, `gtk-vnc`, `libsecret` |
-| Sunshine | `--sunshine` | Repository `sunshine` plus `libva-utils`; starts its user service and enables startup at KDE login |
+| Sunshine | `--sunshine` | Repository `sunshine`, `libva-utils`, and `libkscreen`; starts its user service and enables startup at KDE login |
 | Moonlight | `--moonlight` | Repository `moonlight-qt`; command is `moonlight` |
 | Balena Etcher | `--etcher` | CachyOS repository `etcher-bin`; command is `etcher` |
 | itch.io butler | `--butler` | AUR `butler`; independent of `--godot` |
@@ -52,7 +52,8 @@ records selected software metadata without launching a GUI or publisher.
 For later software additions, see [saved setup maintenance](cachyos-maintenance.md#upgrade-and-repeat-your-last-setup).
 
 Desktop application selections also install Python GObject, AT-SPI,
-GStreamer/base/PipeWire and GTK3 prerequisites for task-scoped automation.
+GStreamer/base/PipeWire and GTK3 prerequisites for task-scoped automation,
+plus `libkscreen` for bounded display wake requests.
 These automation prerequisites do not start input/capture. The explicit Sunshine
 selection starts the separate streaming host. The [native desktop guide](cachyos-desktop.md)
 and managed `basaltwater-cachyos-desktop` skill cover autonomous application
@@ -106,7 +107,9 @@ it does not need an AUR build or an unmanaged AppImage download.
   On verified Intel-only VA-API hardware, setup fills an absent encoder setting
   with VA-API while Sunshine is stopped, preserving explicit settings.
   Set credentials locally, pair Moonlight,
-  and test video, audio, and input. Package-provided udev access rules are retained;
+  and test video, audio, and input. If a sleeping display prevents connection,
+  [wake it before connecting](cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+  Package-provided udev access rules are retained;
   Basaltwater does not add the user to `input`, apply capabilities, select GPU
   drivers, or grant capture permissions. See the
   [upstream setup guide](https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html).

@@ -39,6 +39,13 @@ Wait for `running` before input. Native helpers have no default lifetime limit.
 An optional `--session-seconds` bounds backend availability without changing
 agent permission. Nothing starts the helper at login.
 
+If a monitor is asleep or capture is black/frozen, enabled agents should try
+`basaltw desktop --native wake`, wait briefly, and inspect a fresh screenshot
+before input. This bounded KDE display-power request needs no running portal
+and preserves agent permission, screen locking and idle policy. See the
+[native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#sleeping-displays)
+and [Moonlight recovery](cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+
 The [native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md)
 is the operational guide for consent stages, saved grants, bounded capture/input,
 accessibility, physical-key troubleshooting, stop/revoke, and recovery.
@@ -48,7 +55,7 @@ It is installed with the skill; use it for exact procedures and limits.
 
 Selecting a supported desktop application during setup installs
 `python-gobject`, `at-spi2-core`, `gstreamer`, `gst-plugins-base`,
-`gst-plugin-pipewire`, `gtk3`, and `libxkbcommon`. Blender also selects
+`gst-plugin-pipewire`, `gtk3`, `libxkbcommon`, and `libkscreen`. Blender also selects
 `libdecor`. Setup never starts automation or changes KDE preferences, account
 groups, graphics drivers, or existing control permission. Rerun setup to install
 runtime and guidance changes; restart an existing native helper to load them.

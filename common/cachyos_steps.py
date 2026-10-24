@@ -65,7 +65,7 @@ CACHYOS_SYSADMIN_PACKAGES = (
 )
 CACHYOS_AUTOMATION_PACKAGES = (
     "python-gobject", "at-spi2-core", "gstreamer", "gst-plugins-base",
-    "gst-plugin-pipewire", "gtk3", "libxkbcommon",
+    "gst-plugin-pipewire", "gtk3", "libxkbcommon", "libkscreen",
 )
 CACHYOS_AV_COMMANDS = ("ffmpeg", "ffprobe", "magick", "exiftool")
 CACHYOS_GL_COMMANDS = ("glxinfo", "vulkaninfo", "apitrace")
@@ -237,7 +237,7 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
 
         packages.extend(GAME_DEV_PACKAGES)
     if config.install_sunshine:
-        packages.extend(("sunshine", "libva-utils"))
+        packages.extend(("sunshine", "libva-utils", "libkscreen"))
     if config.install_moonlight:
         packages.append("moonlight-qt")
     if config.install_gaming:

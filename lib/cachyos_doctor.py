@@ -302,7 +302,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                        if available else "Selected native command missing; inspect PATH and its original package manager.",
                        selected=True)
             for enabled, packages in (
-                (config.install_sunshine, ("sunshine", "libva-utils")),
+                (config.install_sunshine, ("sunshine", "libva-utils", "libkscreen")),
                 (config.install_moonlight, ("moonlight-qt",)),
                 (config.install_gaming, ("cachyos-gaming-meta", "cachyos-gaming-applications")),
                 (config.install_blender, ("libdecor",)),

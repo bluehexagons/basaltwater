@@ -64,6 +64,8 @@ asking to unpause or acquiring a lease. `human-override` and `disabled` block
 agent mutations; change these states only with explicit human approval or the
 human control UI. A desktop task alone does not authorize a state change.
 Timed override returns automatically at its human-approved deadline.
+If the monitor is asleep or captures are black/frozen, try
+`basaltw desktop --native wake` while enabled, then recapture before input.
 Verify identity, focus, mode and current selected-monitor geometry before input; restart the portal
 after monitor/scaling/resolution changes. Review captures before sharing unrelated
 content. Leave enabled control available between tasks, preserving KDE and applications.

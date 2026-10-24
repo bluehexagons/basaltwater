@@ -285,7 +285,7 @@ encoding can use VA-API; a missing CUDA library during automatic probing does
 not establish a streaming failure on those GPUs. See the upstream
 [encoder settings](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md#encoder).
 
-`--sunshine` installs the native package and `libva-utils`, enables Sunshine at
+`--sunshine` installs the native package, `libva-utils` and `libkscreen`, enables Sunshine at
 KDE login, and starts its user service. Setup verifies that the same process
 and service invocation remain active across consecutive checks; repeated
 restarts cannot count as stable startup. The package's `Restart=on-failure` policy allows a
@@ -387,6 +387,47 @@ Keep Sunshine administration local at `https://localhost:47990`, pair a trusted
 Moonlight client, and verify video, audio, and input. Include `--lan-access` or
 explicit `--access-source` values in the full setup selection before remote
 streaming. The read-only doctor does not start capture or change encoder settings.
+
+### Sleeping monitors and Moonlight
+
+Display sleep is separate from agent permission and Sunshine service health.
+The host can be awake with Sunshine active while its powered-down output is
+unavailable for capture. In KDE, inspect and wake display power with:
+
+```fish
+kscreen-doctor --dpms show
+kscreen-doctor --dpms on
+```
+
+Wait briefly, then retry Moonlight. Enabled agents can instead use
+`basaltw desktop --native wake`; it honors the persistent permission state and
+works without starting the native portal. Inspect a fresh capture after waking.
+Wake requests preserve locking and idle policy; they do not power on an
+unplugged monitor, enable a disabled output, or resume a suspended computer.
+
+The owner can also request display wake through an existing same-account SSH
+login, using KDE's user-manager environment rather than guessing a display or bus:
+
+```fish
+systemd-run --user --collect --wait --pipe -- /usr/bin/kscreen-doctor --dpms on
+```
+
+KDE must already be logged in and its user manager must have the graphical
+environment. A failure remains a session/display issue; do not create another
+desktop or change login policy to make this command work.
+
+Automatic wake before a Sunshine connection is not configured. As checked on
+2026-10-24, Sunshine's current launch path probes capture/encoders before its
+normal application/global preparation commands. If the sleeping output makes
+that probe fail, a wake command in `global_prep_cmd` never runs. See upstream
+[issue #4971](https://github.com/LizardByte/Sunshine/issues/4971) and the open
+[pre-display preparation proposal #5808](https://github.com/LizardByte/Sunshine/pull/5808).
+The installed `2026.1018.5342-1` binary lacks the proposed
+`pre_display_prep_cmd` option. Once supported, that earlier hook could run
+`/usr/bin/kscreen-doctor --dpms on` before probing; verify release support and
+sleep-to-stream behavior before adopting it. Setup preserves existing Sunshine
+commands and KDE idle settings rather than installing a late wake hook or
+keeping displays awake for the entire lifetime of the streaming service.
 
 ## Switch modes on a later setup
 

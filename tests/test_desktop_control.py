@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
+from contextlib import redirect_stdout
 import importlib
+from io import StringIO
 import json
 import os
 from pathlib import Path
@@ -127,6 +130,63 @@ class ControlStateTests(unittest.TestCase):
                 session.close()
                 self.assertEqual(session.snapshot_status()["agent_control"], mode)
                 self.assertEqual(native_session.NativeSession(Mock()).snapshot_status()["agent_control"], mode)
+
+    def test_display_wake_works_without_portal_and_preserves_permission(self):
+        before = control_state.status()
+        with patch.object(native_session, "check_session"), \
+                patch.object(native_session, "request", side_effect=AssertionError("No portal needed")), \
+                patch.object(native_session.subprocess, "run", return_value=Mock(returncode=0)) as command:
+            result = native_session.wake()
+        self.assertTrue(result["wake_requested"])
+        self.assertEqual(control_state.status(), before)
+        command.assert_called_once_with(["/usr/bin/kscreen-doctor", "--dpms", "on"],
+                                        capture_output=True, text=True, timeout=10, check=False)
+
+    def test_display_wake_honors_permission_session_failures_and_backend_errors(self):
+        with patch.object(native_session, "check_session") as session, \
+                patch.object(native_session.subprocess, "run", return_value=Mock(returncode=0)) as command:
+            for mode in ("human-override", "disabled"):
+                self.change(mode)
+                with self.subTest(mode=mode), self.assertRaisesRegex(RuntimeError, mode):
+                    native_session.wake()
+                command.assert_not_called()
+            self.change("enabled")
+            session.side_effect = RuntimeError("Wrong graphical session")
+            with self.assertRaisesRegex(RuntimeError, "graphical session"):
+                native_session.wake()
+            command.assert_not_called()
+            session.side_effect = None
+            command.return_value = Mock(returncode=1)
+            with self.assertRaisesRegex(RuntimeError, "display wake failed"):
+                native_session.wake()
+            command.side_effect = FileNotFoundError
+            with self.assertRaisesRegex(RuntimeError, "libkscreen"):
+                native_session.wake()
+            command.side_effect = lambda *args, **kwargs: (self.change("disabled"), Mock(returncode=0))[1]
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                native_session.wake()
+
+    def test_display_wake_cli_requires_native_and_does_not_start_helper(self):
+        from lib import desktop_cli
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        with patch.object(native_session, "wake", return_value={"wake_requested": True}) as wake, \
+                patch.object(native_session, "start") as start, redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "--native", "wake", "--json"])), 0)
+            wake.assert_called_once_with()
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "wake"])), 1)
+            self.assertEqual(wake.call_count, 1)
+            start.assert_not_called()
+
+    def test_capture_failure_suggests_display_wake_and_removes_partial_artifact(self):
+        session = native_session.NativeSession(Mock(fd=42))
+        session.node = 17
+        output = self.home / "failed-capture.png"
+        with patch.object(native_session.subprocess, "run", return_value=Mock(
+                returncode=1, stdout=json.dumps({"error": "No frame arrived"}))), \
+                self.assertRaisesRegex(RuntimeError, "desktop --native wake"):
+            session.capture({"output": str(output)})
+        self.assertFalse(output.exists())
 
     def test_runtime_actions_need_enabled_state_and_current_revision(self):
         process = Mock(pid=1)
