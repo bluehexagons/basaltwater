@@ -104,6 +104,9 @@ rsync in that same namespace. Host unmounts after validation cannot expose an
 underlying directory to that traversal. A mount removed before namespace
 creation is rejected or excluded by the worker. Inline setup's directory
 creation and SMB probes also run inside this boundary.
+Generated exclusions preserve literal spaces and glob characters. The worker
+passes their NUL-delimited filters through rsync's standard input using an
+anonymous file, so no filter pathname needs cleanup after execution.
 An autofs placeholder alone does not satisfy a declared mount: the backing
 filesystem must already be mounted when the namespace is created. Otherwise
 the worker rejects the endpoint or excludes the nested subtree. Activate the

@@ -68,30 +68,40 @@ class TestSyncRsyncLogging(unittest.TestCase):
         output.start()
         self.addCleanup(output.stop)
 
-    def test_literal_exclusions_are_private_and_live_until_rsync_finishes(self):
-        paths = ("file[1]?.bin", "literal\\name", "wild\\*.bin", "nested/+ file", "#comment")
-        expected = b'/file\\[1]\\?.bin\0/literal\\name\0/wild\\\\\\*.bin\0/nested/+ file\0/#comment\0'
-        filter_paths = []
+    def test_literal_exclusions_use_anonymous_stdin_filters(self):
+        paths = ("offline [x]", "file[1]?.bin", "literal\\name", "wild\\*.bin", "nested/+ file", "#comment")
+        expected = b'/offline \\[x]\0/file\\[1]\\?.bin\0/literal\\name\0/wild\\\\\\*.bin\0/nested/+ file\0/#comment\0'
 
-        with sync_rsync._rsync_command('/src', '/dst', paths, False) as command:
+        with sync_rsync._rsync_command('/src', '/dst', paths, False) as (command, filters):
             self.assertIn('--delete-delay', command)
             self.assertIn('--from0', command)
-            path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
-            filter_paths.append(Path(path))
-            self.assertEqual(Path(path).read_bytes(), expected)
-            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
-            self.assertTrue(filter_paths[0].exists())
-            descriptor = int(path.rsplit('/', 1)[1])
-            self.assertTrue(os.get_inheritable(descriptor))
-        self.assertFalse(filter_paths[0].exists())
+            self.assertEqual([arg for arg in command if arg.startswith('--exclude-from=')], ['--exclude-from=-'])
+            self.assertEqual(filters.read(), expected)
+            self.assertEqual(os.fstat(filters.fileno()).st_mode & 0o777, 0o600)
+            self.assertEqual(os.fstat(filters.fileno()).st_nlink, 0)
+            self.assertFalse(os.get_inheritable(filters.fileno()))
+        self.assertTrue(filters.closed)
+
+    def test_filter_stream_closes_on_failure_without_leaving_a_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(sync_rsync.tempfile, 'tempdir', root):
+                with self.assertRaisesRegex(RuntimeError, 'exec failed'):
+                    with sync_rsync._rsync_command('/src', '/dst', ('offline [x]',), False) as (_command, filters):
+                        self.assertEqual(os.listdir(root), [])
+                        raise RuntimeError('exec failed')
+            self.assertTrue(filters.closed)
+            self.assertEqual(os.listdir(root), [])
 
     def test_copy_new_only_disables_deletion_and_existing_file_updates(self):
         with patch.object(sync_rsync.os, 'walk', return_value=iter(())):
-            with sync_rsync._rsync_command('/src', '/dst', (), True) as command:
+            with sync_rsync._rsync_command('/src', '/dst', (), True) as (command, filters):
                 self.assertIn('--ignore-existing', command)
                 self.assertIn('--partial-dir=.rsync-partial', command)
                 self.assertNotIn('--delete', command)
                 self.assertNotIn('--delete-delay', command)
+                self.assertIsNone(filters)
+                self.assertNotIn('--from0', command)
+                self.assertNotIn('--exclude-from=-', command)
 
     def test_conflicting_ancestors_are_excluded_before_rsync_runs(self):
         for kind in ('source-file', 'source-symlink', 'destination-file', 'destination-symlink'):
@@ -109,9 +119,8 @@ class TestSyncRsyncLogging(unittest.TestCase):
                         folder.mkdir()
                         (folder / 'flagged').write_text('preserve')
                 with sync_rsync._rsync_command(str(source), str(destination),
-                        ('folder/flagged', 'healthy-folder/flagged'), False) as command:
-                    path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
-                    self.assertEqual(Path(path).read_bytes(), b'/folder\0/healthy-folder/flagged\0')
+                        ('folder/flagged', 'healthy-folder/flagged'), False) as (_command, filters):
+                    self.assertEqual(filters.read(), b'/folder\0/healthy-folder/flagged\0')
 
     def test_timeout_is_an_operational_failure(self):
         with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)), patch.object(sync_rsync, '_output_lines', side_effect=subprocess.TimeoutExpired('rsync', 14400)), patch.object(sync_rsync, 'get_service_logger', return_value=self.logger):
@@ -160,9 +169,8 @@ class TestSyncRsyncLogging(unittest.TestCase):
                     visited.append(entry[0])
                     yield entry
             with patch.object(sync_rsync.os, 'walk', side_effect=inventory):
-                with sync_rsync._rsync_command(str(source), str(destination), ('offline',), True) as command:
-                    path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
-                    self.assertEqual(set(Path(path).read_bytes().split(b'\0')[:-1]),
+                with sync_rsync._rsync_command(str(source), str(destination), ('offline',), True) as (_command, filters):
+                    self.assertEqual(set(filters.read().split(b'\0')[:-1]),
                                      {b'/file', b'/link', b'/dangling', b'/offline'})
             self.assertNotIn(str(source / 'offline'), visited)
             self.assertNotIn(str(source / 'file'), visited)
@@ -282,6 +290,9 @@ class TestMountNamespace(unittest.TestCase):
         execute = patch.object(sync_rsync.os, 'execv', side_effect=self.execute)
         self.exec = execute.start()
         self.addCleanup(execute.stop)
+        redirect = patch.object(sync_rsync.os, 'dup2', side_effect=self.redirect_stdin)
+        self.dup2 = redirect.start()
+        self.addCleanup(redirect.stop)
 
     def spawn(self, command, **kwargs):
         self.assertEqual(command[:6], ['/usr/bin/unshare', '--mount', '--propagation', 'private', '--', sys.executable])
@@ -298,6 +309,7 @@ class TestMountNamespace(unittest.TestCase):
             escaped = root.replace('\\', '\\134').replace(' ', '\\040')
             mountinfo += f'37 36 0:33 / {escaped} rw - ext4 /dev/data rw\n'
         self.in_worker = True
+        self.filter_input = None
         errors = io.StringIO()
         try:
             with patch.object(sync_rsync.sys, 'stdin', io.StringIO(json.dumps(request))), patch.object(sync_rsync.sys, 'stderr', errors), patch.object(sync_rsync, 'open', mock_open(read_data=mountinfo), create=True), patch.object(sys, 'argv', ['sync_rsync.py', '--mount-worker']):
@@ -305,6 +317,13 @@ class TestMountNamespace(unittest.TestCase):
         finally:
             self.in_worker = False
         return _FakeProcess(result, stderr=errors.getvalue())
+
+    def redirect_stdin(self, descriptor, target):
+        self.assertTrue(self.in_worker)
+        self.assertEqual(target, 0)
+        self.assertEqual(sync_rsync.sys.stdin.read(), '')
+        self.assertFalse(os.get_inheritable(descriptor))
+        self.filter_input = os.read(descriptor, 65536)
 
     def execute(self, executable, command):
         self.assertTrue(self.in_worker)
@@ -341,8 +360,8 @@ class TestMountNamespace(unittest.TestCase):
                 self.before_namespace = lambda: self.host_mounts.clear()
                 filters = []
                 def inspect(command):
-                    path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
-                    filters.append(Path(path).read_bytes())
+                    self.assertIn('--exclude-from=-', command)
+                    filters.append(self.filter_input)
                 self.after_validation = inspect
                 with self.subTest(endpoint=endpoint, nested=nested):
                     self.exec.reset_mock()
@@ -351,6 +370,46 @@ class TestMountNamespace(unittest.TestCase):
                         self.assertEqual(filters, [b'/disk\0'])
                     else:
                         self.exec.assert_not_called()
+
+    def test_absent_nested_mount_filters_reach_stdin_before_exec(self):
+        for endpoint in (self.source, self.destination):
+            with self.subTest(endpoint=endpoint):
+                self.config = {'smb_mounts': [[str(endpoint / 'offline [x]'), 'host', 'secret-reference', 'share']]}
+                def inspect(command):
+                    self.assertIn('--from0', command)
+                    self.assertEqual([arg for arg in command if arg.startswith('--exclude-from=')], ['--exclude-from=-'])
+                    self.assertEqual(self.filter_input, b'/finding \\[1]\\?.bin\0/wild\\*.bin\0/offline \\[x]\0')
+                self.after_validation = inspect
+                self.dup2.reset_mock()
+                self.exec.reset_mock()
+                self.assertEqual(self.run_sync(excluded_paths=('finding [1]?.bin', 'wild*.bin')), 0)
+                self.dup2.assert_called_once()
+                self.exec.assert_called_once()
+                self.assertNotIn('secret-reference', json.dumps(self.request))
+
+    def test_filter_handoff_or_exec_failure_closes_streams_and_refuses_sync(self):
+        self.config = {'storage_mounts': [['data', str(self.source / 'offline [x]')]]}
+        temporary_file = sync_rsync.tempfile.TemporaryFile
+        for operation in (self.dup2, self.exec):
+            streams = []
+            def capture_stream(*args, **kwargs):
+                stream = temporary_file(*args, **kwargs)
+                streams.append(stream)
+                return stream
+            original = operation.side_effect
+            operation.side_effect = OSError('handoff failed')
+            try:
+                with self.subTest(operation=operation), patch.object(sync_rsync.tempfile, 'TemporaryFile', side_effect=capture_stream):
+                    self.exec.reset_mock()
+                    self.assertEqual(self.run_sync(), 1)
+                    self.assertEqual(len(streams), 2)  # Request and generated filters.
+                    self.assertTrue(all(stream.closed for stream in streams))
+                    if operation is self.dup2:
+                        self.exec.assert_not_called()
+                    else:
+                        self.exec.assert_called_once()
+            finally:
+                operation.side_effect = original
 
     def test_mount_view_survives_host_unmount_after_child_validation(self):
         for endpoint in (self.source, self.destination):
@@ -363,6 +422,8 @@ class TestMountNamespace(unittest.TestCase):
                     self.assertIn(root, self.view)
                     self.assertIn('--delete', command)
                     self.assertFalse(any(arg.startswith('--exclude-from=') for arg in command))
+                    self.assertIsNone(self.filter_input)
+                    self.dup2.assert_not_called()
                 self.after_validation = traverse
                 with self.subTest(endpoint=endpoint, nested=nested):
                     self.assertEqual(self.run_sync(), 0)

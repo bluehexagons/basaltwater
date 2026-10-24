@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from logging import ERROR, WARNING
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import BinaryIO, TYPE_CHECKING
 
 # Add lib directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -158,7 +158,7 @@ def _copy_new_conflicts(source: str, destination: str, protected: tuple[str, ...
 
 @contextmanager
 def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...],
-                   copy_new_only: bool) -> Iterator[list[str]]:
+                   copy_new_only: bool) -> Iterator[tuple[list[str], BinaryIO | None]]:
     """Build filters inside the pinned mount view and retain them through exec."""
     protected_paths = _protected_paths(source, destination, excluded_paths)
     options = [] if copy_new_only else ['--delete', '--delete-delay']
@@ -173,15 +173,12 @@ def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...
                 filters.write(os.fsencode('/' + path) + b'\0')
             filters.flush()
             filters.seek(0)
-            # Anonymous file: no pathname cleanup is needed after exec. Both
-            # rsync's local processes inherit the descriptor until completion.
-            os.set_inheritable(filters.fileno(), True)
-            options.extend(['--from0', f'--exclude-from=/proc/self/fd/{filters.fileno()}'])
+            options.extend(['--from0', '--exclude-from=-'])
         yield [
             '/usr/bin/rsync', '-av', *options, '--partial', '--mkpath',
             '--exclude=.git', '--info=progress2', '--stats', '--',
             f'{source}/', f'{destination}/',
-        ]
+        ], filters if protected_paths else None
 
 
 def _mount_worker() -> int:
@@ -236,9 +233,13 @@ def _mount_worker() -> int:
         if unavailable:
             print(f'Preserving unavailable mount subtrees: {", ".join(unavailable[:5])}', file=sys.stderr)
         excluded = tuple(dict.fromkeys([*request['excluded_paths'], *unavailable]))
-        with _rsync_command(source, destination, excluded, request['copy_new_only']) as command:
+        with _rsync_command(source, destination, excluded, request['copy_new_only']) as (command, filters):
             # No extra supervisor: rsync retains the parent's private session,
             # pipes and deadline, and this namespace for its entire traversal.
+            if filters is not None:
+                # JSON has been fully consumed. Rsync closes nonstandard FDs
+                # during startup, so give it the anonymous NUL filters on stdin.
+                os.dup2(filters.fileno(), 0)
             os.execv(command[0], command)
     except Exception as exc:
         print(f'Sync mount worker refused to run: {exc}', file=sys.stderr)
