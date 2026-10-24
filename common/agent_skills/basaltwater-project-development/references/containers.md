@@ -10,7 +10,9 @@ no needed isolation or compatibility.
 
 Prefer a compatible image already present in the local Podman store. Give each
 task its own uniquely named container; use `podman run --rm` for short-lived
-work. Remove only containers created by the task, including its own stopped
+work and `podman build --force-rm` to remove intermediate containers on build
+failure. Interrupted or killed builds can still leave working containers.
+Remove only containers created by the task, including its own stopped
 Podman or Buildah build containers, after confirming they are not active. Do not
 force-remove, stop or otherwise interfere with another task's active work.
 

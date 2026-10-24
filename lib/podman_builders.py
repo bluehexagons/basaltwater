@@ -6,12 +6,14 @@ import json
 import re
 import subprocess
 from collections.abc import Callable
+from typing import NoReturn
+
+from lib.maintenance_defaults import PODMAN_KEEP_LABEL
 
 
 _IDENTIFIER = re.compile(r"[0-9a-f]{64}\Z")
 _INVENTORY_LIMIT = 10_000
 _INSPECTION_LIMIT = 32
-_KEEP_LABEL = "io.basaltwater.keep"
 
 
 class BuilderObservationError(Exception):
@@ -22,13 +24,13 @@ class BuilderObservationError(Exception):
         super().__init__(code)
 
 
-def _raise(code: str) -> None:
+def _raise(code: str) -> NoReturn:
     raise BuilderObservationError(code)
 
 
 def _identifier(value: object) -> str:
     if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
-        _raise("invalid_identifier")
+        raise BuilderObservationError("invalid_identifier")
     return value
 
 
@@ -37,7 +39,7 @@ def _json_output(result: subprocess.CompletedProcess[str], code: str) -> object:
         _raise(code)
     try:
         return json.loads(result.stdout)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         _raise(code)
 
 
@@ -83,15 +85,17 @@ def _inspect(
 
     labels: list[dict] = []
     try:
-        docker_labels = payload["Docker"]["config"]["Labels"]
-        oci_labels = payload["OCIv1"]["config"]["Labels"]
-    except (KeyError, TypeError):
+        docker_labels = payload["Docker"]["config"].get("Labels")
+        oci_labels = payload["OCIv1"]["config"].get("Labels")
+    except (KeyError, TypeError, AttributeError):
         _raise("invalid_builder_metadata")
     for value in (docker_labels, oci_labels):
+        if value is None:
+            continue
         if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
             _raise("invalid_builder_metadata")
         labels.append(value)
-    if mount_point != "" or any(_KEEP_LABEL in item for item in labels):
+    if mount_point != "" or any(PODMAN_KEEP_LABEL in item for item in labels):
         return False
     return True
 
@@ -162,11 +166,15 @@ def plan_builders(
         created = row.get("Created")
         if type(created) is not int or created < 0:
             _raise("invalid_podman_inventory")
-        identifier = _identifier(row.get("ID"))
+        identifier = _identifier(row.get("Id", row.get("ID")))
         if created >= cutoff:
             retain("young")
         else:
-            old_storage.append(identifier)
+            if identifier not in old_storage:
+                old_storage.append(identifier)
+
+    if not old_storage:
+        return {"candidate_ids": [], "retained_counts": retained_counts}
 
     if buildah_run is None:
         retain("tool_unavailable", len(old_storage))
@@ -187,7 +195,8 @@ def plan_builders(
         if row["builder"]:
             builders.add(identifier)
 
-    info = _run_json(buildah_run, ["info", "--format", "json"], "buildah_info_failed")
+    # Buildah's default is JSON; --format accepts a Go template, not 'json'.
+    info = _run_json(buildah_run, ["info"], "buildah_info_failed")
     _store_matches(info, store)
 
     candidates: list[str] = []

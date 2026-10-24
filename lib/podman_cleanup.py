@@ -12,8 +12,10 @@ import shutil
 import stat
 import subprocess
 import time
+from collections import deque
 
 from lib.agent_storage_inventory import _local, _mounts
+from lib.podman_builders import BuilderObservationError, builder_is_removable, plan_builders
 from lib.maintenance_defaults import (
     PODMAN_IMAGE_PRESSURE_RETENTION_DAYS,
     PODMAN_IMAGE_RETENTION_DAYS,
@@ -27,20 +29,24 @@ from lib.validation import validate_filesystem_path
 
 _COMMAND_TIMEOUT = 30
 _PRUNE_TIMEOUT = 300
+_CLEANUP_SECONDS = 300
 _OUTPUT_LIMIT = 256 * 1024
 _PROCESS_LIMIT = 16384
 _PROCESS_SECONDS = 3
 _PREVIEW_LIMIT = 12
-_ID = re.compile(r"(?:sha256:)?[0-9a-f]{12,64}\Z")
+_ID = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
 _PROCESS_NAMES = frozenset((
     "podman", "buildah", "buildkitd", "buildctl", "conmon", "crun", "runc",
     "containerd", "containers-storage",
 ))
 _SIZE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*(B|kB|KB|MB|GB|TB|KiB|MiB|GiB|TiB)\Z")
 _NOTES = [
-    "Podman image prune protects tagged and referenced images at prune time.",
+    "Unused testing images are disposable, including tagged images; non-forced native removal protects container references.",
+    "Retention uses image/container creation time, not last use or pull time; old shared images can be recreated.",
+    "Only old, unmounted, unpinned Buildah working containers are eligible; ordinary containers and volumes are retained.",
     "Image size totals are estimates; shared layers can make them overstate reclaimed space.",
-    "Native prune may also remove newly dangling parents; candidate IDs are preflight evidence, not an exact deletion set.",
+    "Removal uses exact image IDs with parent pruning disabled; retained parents and persistent cache mounts are preserved.",
+    "Removing abandoned builders can make additional old images eligible after preview.",
     "A fresh process snapshot cannot exclude a build starting immediately afterwards.",
 ]
 
@@ -77,6 +83,9 @@ def _base_result(apply: bool) -> dict:
         "status": "failed", "issue": None, "issues": [], "apply": apply,
         "pressure": None, "retention_days": None, "cutoff_epoch": None,
         "pressure_threshold_bytes": None,
+        "age_basis": "created", "retained_counts": {},
+        "builder_candidate_count": 0, "builder_candidate_ids": [],
+        "builder_preview_truncated": False, "builders_removed": 0, "builder_retained_counts": {},
         "candidate_count": 0, "candidate_ids": [], "candidate_preview_truncated": False,
         "image_estimate_bytes": None, "free_bytes_before": None, "free_bytes_after": None,
         "free_bytes_change": None, "cleanup_executed": False, "cleanup_attempted": False,
@@ -149,11 +158,12 @@ def _graph_root(value: object, home: str, uid: int) -> str:
 
 
 def _command(executable: str, home: str, args: list[str], *,
-             timeout: int = _COMMAND_TIMEOUT) -> subprocess.CompletedProcess[str]:
+             timeout: int = _COMMAND_TIMEOUT, podman: bool = True) -> subprocess.CompletedProcess[str]:
     # Preserve native XDG/storage configuration so every probe and prune uses
     # the account's selected store. Force local mode and validate its graph root.
     environment = dict(os.environ, HOME=home, PATH="/usr/local/bin:/usr/bin:/bin", LC_ALL="C")
-    return run_captured([executable, "--remote=false", *args], cwd=home, env=environment,
+    prefix = [executable, "--remote=false"] if podman else [executable]
+    return run_captured([*prefix, *args], cwd=home, env=environment,
                         timeout=timeout, max_bytes=_OUTPUT_LIMIT)
 
 
@@ -189,7 +199,7 @@ def _process_activity(uid: int) -> tuple[str, str | None]:
     return "eligible", None
 
 
-def _inventory(output: str, *, keep_label: str, cutoff: int) -> tuple[list[dict], int | None]:
+def _inventory(output: str, *, keep_label: str, cutoff: int) -> tuple[list[dict], int | None, dict]:
     try:
         rows = json.loads(output)
     except (ValueError, RecursionError) as exc:
@@ -197,39 +207,86 @@ def _inventory(output: str, *, keep_label: str, cutoff: int) -> tuple[list[dict]
     if not isinstance(rows, list) or len(rows) > 100000:
         raise _Unknown("invalid_image_inventory")
     candidates: list[dict] = []
+    retained = {"recent": 0, "container_referenced": 0, "keep_label": 0, "dependent_image": 0}
+    seen: dict[str, tuple] = {}
+    records: dict[str, dict] = {}
+    parents: dict[str, str] = {}
     for row in rows:
         if not isinstance(row, dict):
             raise _Unknown("invalid_image_inventory")
         created, containers = _integer(row.get("Created")), _integer(row.get("Containers"))
-        tags, labels = row.get("RepoTags"), row.get("Labels")
+        tags, labels = row.get("Names", row.get("RepoTags")), row.get("Labels")
         identifier = row.get("Id", row.get("ID"))
         if (created is None or containers is None or not (tags is None or isinstance(tags, list))
                 or not (labels is None or isinstance(labels, dict))
                 or not isinstance(identifier, str) or not _ID.fullmatch(identifier)):
             raise _Unknown("invalid_image_inventory")
-        # The native selector already restricts the list to dangling images;
-        # apply the remaining eligibility rules before reporting estimates.
-        if created > cutoff or tags not in (None, []) or containers != 0:
+        identifier = identifier.removeprefix("sha256:")
+        parent = row.get("ParentId", "") or ""
+        if not isinstance(parent, str) or (parent and not _ID.fullmatch(parent)):
+            raise _Unknown("invalid_image_inventory")
+        parent = parent.removeprefix("sha256:")
+        # Native image ls can repeat a multi-tag image. Count each image once,
+        # but do not hide contradictory reference/retention metadata.
+        observation = (created, containers, labels, row.get("Size"), parent)
+        if identifier in seen:
+            if seen[identifier] != observation:
+                raise _Unknown("inconsistent_image_inventory")
             continue
+        seen[identifier] = observation
+        parents[identifier] = parent
         if labels is not None and keep_label in labels:
+            retained["keep_label"] += 1
             continue
-        candidates.append({"id": identifier, "size": _image_size(row.get("Size"))})
+        if containers != 0:
+            retained["container_referenced"] += 1
+            continue
+        if created >= cutoff:
+            retained["recent"] += 1
+            continue
+        records[identifier] = {"id": identifier, "size": _image_size(row.get("Size")),
+                               "untag": len(tags or []) > 1}
+    # Remove children before parents, and keep every ancestor of an image
+    # that must stay. Do not ask the engine to recursively prune parents:
+    # that bypasses their independent age and keep-label eligibility.
+    children = dict.fromkeys(parents, 0)
+    for parent in parents.values():
+        if parent in children:
+            children[parent] += 1
+    leaves = deque(identifier for identifier, count in children.items() if not count)
+    visited = 0
+    while leaves:
+        identifier = leaves.popleft()
+        visited += 1
+        parent = parents[identifier]
+        if identifier in records:
+            candidates.append(records[identifier])
+        elif parent in records:
+            del records[parent]
+            retained["dependent_image"] += 1
+        if parent in children:
+            children[parent] -= 1
+            if children[parent] == 0:
+                leaves.append(parent)
+    if visited != len(parents):
+        raise _Unknown("invalid_image_ancestry")
     estimate = sum(row["size"] for row in candidates if row["size"] is not None)
-    return candidates, estimate if all(row["size"] is not None for row in candidates) else None
+    return candidates, estimate if all(row["size"] is not None for row in candidates) else None, retained
 
 
 def clean_podman_images(*, apply: bool = False) -> dict:
     """Preview or prune old, unreferenced rootless Podman images safely.
 
-    Native Podman image prune is the only mutation. It rechecks image
-    references atomically and never removes containers, volumes, build cache,
-    tagged images, or images newer than the selected cutoff.
+    Remove abandoned Buildah working containers by exact ID, then native
+    Podman removal rechecks image references atomically. Ordinary containers,
+    volumes, persistent build cache, pinned and recent images are retained.
     """
     if type(apply) is not bool:
         raise TypeError("apply must be a boolean")
     result = _base_result(apply)
     lock_descriptor = None
     locked = False
+    deadline = time.monotonic() + _CLEANUP_SECONDS
     try:
         if any(os.environ.get(key) for key in ("CONTAINER_HOST", "CONTAINER_CONNECTION")):
             return _issue(result, "deferred_unknown", "remote_selection_unsupported")
@@ -238,6 +295,18 @@ def clean_podman_images(*, apply: bool = False) -> dict:
         if executable is None:
             result["status"] = "absent"
             return result
+        def run(args: list[str], *, timeout: int = _COMMAND_TIMEOUT,
+                engine: str = executable, podman: bool = True) -> subprocess.CompletedProcess[str]:
+            remaining = int(deadline - time.monotonic())
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(engine, _CLEANUP_SECONDS)
+            return _command(engine, home, args, timeout=min(timeout, remaining), podman=podman)
+
+        buildah = shutil.which("buildah", path="/usr/local/bin:/usr/bin:/bin")
+        def run_buildah(args: list[str]) -> subprocess.CompletedProcess[str]:
+            if buildah is None:
+                raise _Unknown("builder_tool_unavailable")
+            return run(args, engine=buildah, podman=False)
         if apply:
             lock_descriptor = _lock_file(home, uid)
             try:
@@ -246,7 +315,7 @@ def clean_podman_images(*, apply: bool = False) -> dict:
             except BlockingIOError:
                 return _issue(result, "deferred_active", "cleanup_already_running")
 
-        info_result = _command(executable, home, ["info", "--format", "json"])
+        info_result = run(["info", "--format", "json"])
         if info_result.returncode != 0:
             return _issue(result, "deferred_unknown", "podman_info_failed")
         try:
@@ -290,15 +359,26 @@ def clean_podman_images(*, apply: bool = False) -> dict:
         result.update(pressure=pressure, retention_days=retention, cutoff_epoch=cutoff,
                       pressure_threshold_bytes=threshold)
 
-        images = _command(executable, home, ["image", "ls", "--filter", "dangling=true", "--format", "json"])
-        if images.returncode != 0:
-            return _issue(result, "deferred_unknown", "image_inventory_failed")
-        candidates, estimate = _inventory(images.stdout, keep_label=PODMAN_KEEP_LABEL, cutoff=cutoff)
-        result["candidate_count"] = len(candidates)
-        result["candidate_ids"] = [row["id"] for row in candidates[:_PREVIEW_LIMIT]]
-        result["candidate_preview_truncated"] = len(candidates) > _PREVIEW_LIMIT
-        result["image_estimate_bytes"] = estimate
-        if not apply or not candidates:
+        builders = plan_builders(run, run_buildah if buildah else None, store, cutoff)
+        builder_ids = builders["candidate_ids"]
+        result.update(builder_candidate_count=len(builder_ids),
+                      builder_candidate_ids=builder_ids[:_PREVIEW_LIMIT],
+                      builder_preview_truncated=len(builder_ids) > _PREVIEW_LIMIT,
+                      builder_retained_counts=builders["retained_counts"])
+
+        def inventory_images() -> list[dict]:
+            images = run(["image", "ls", "--all", "--format", "json"])
+            if images.returncode != 0:
+                raise _Unknown("image_inventory_failed")
+            candidates, estimate, retained = _inventory(images.stdout, keep_label=PODMAN_KEEP_LABEL, cutoff=cutoff)
+            result.update(candidate_count=len(candidates),
+                          candidate_ids=[row["id"] for row in candidates[:_PREVIEW_LIMIT]],
+                          candidate_preview_truncated=len(candidates) > _PREVIEW_LIMIT,
+                          image_estimate_bytes=estimate, retained_counts=retained)
+            return candidates
+
+        candidates = inventory_images()
+        if not apply or not (candidates or builder_ids):
             result["status"] = "preview"
             return result
 
@@ -309,14 +389,46 @@ def clean_podman_images(*, apply: bool = False) -> dict:
             return _issue(result, "deferred_active", reason or "active_container_workload")
         if _graph_root(store.get("graphRoot"), home, uid) != root:
             raise _Unknown("graph_root_changed")
-        result["cleanup_attempted"] = True
-        prune = _command(executable, home, [
-            "image", "prune", "--force", "--filter", f"until={cutoff}",
-            "--filter", f"label!={PODMAN_KEEP_LABEL}",
-        ], timeout=_PRUNE_TIMEOUT)
-        if prune.returncode != 0:
-            return _issue(result, "uncertain", "prune_result_uncertain")
-        result["cleanup_executed"] = True
+        for identifier in builder_ids:
+            # Inspect again and refresh activity for every exact builder ID.
+            # A changed/mounted/pinned builder is left for a later run.
+            if not builder_is_removable(run_buildah, identifier):
+                continue
+            activity, reason = _process_activity(uid)
+            if activity != "eligible":
+                return _issue(result, "uncertain" if result["cleanup_attempted"] else "deferred_active",
+                              reason or "active_container_workload")
+            result["cleanup_attempted"] = True
+            removed = run_buildah(["rm", identifier])
+            if removed.returncode != 0:
+                return _issue(result, "uncertain", "builder_removal_uncertain")
+            result["builders_removed"] += 1
+            result["cleanup_executed"] = True
+        if result["builders_removed"]:
+            candidates = inventory_images()
+        if candidates:
+            activity, reason = _process_activity(uid)
+            if activity != "eligible":
+                return _issue(result, "uncertain" if result["cleanup_attempted"] else "deferred_active",
+                              reason or "active_container_workload")
+            # ID removal refuses multiple names without --force. Untag only
+            # that exact eligible image first; never force-delete containers.
+            for candidate in candidates:
+                if candidate["untag"]:
+                    result["cleanup_attempted"] = True
+                    untagged = run(["untag", candidate["id"]])
+                    if untagged.returncode != 0:
+                        return _issue(result, "uncertain", "image_untag_uncertain")
+                    result["cleanup_executed"] = True
+            result["cleanup_attempted"] = True
+            removed = run(["image", "rm", "--no-prune", "--ignore",
+                           *[row["id"] for row in candidates]], timeout=_PRUNE_TIMEOUT)
+            if removed.returncode != 0:
+                return _issue(result, "uncertain", "prune_result_uncertain")
+            result["cleanup_executed"] = True
+        if not result["cleanup_executed"]:
+            result["status"] = "preview"
+            return result
         result["status"] = "cleaned"
         after = _integer(shutil.disk_usage(root).free)
         if after is None:
@@ -332,7 +444,7 @@ def clean_podman_images(*, apply: bool = False) -> dict:
         if result["cleanup_attempted"]:
             return _issue(result, "uncertain", "prune_result_uncertain")
         return _issue(result, "deferred_unknown", "podman_probe_failed")
-    except _Unknown as exc:
+    except (_Unknown, BuilderObservationError) as exc:
         if result["cleanup_attempted"]:
             return _issue(result, "uncertain", "prune_result_uncertain")
         return _issue(result, "deferred_unknown", str(exc))

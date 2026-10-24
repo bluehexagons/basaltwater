@@ -21,7 +21,7 @@ def _completed(argv: list[str], payload: object, returncode: int = 0) -> subproc
 
 
 def _podman_row(identifier: str, *, created: int, state: str = "storage") -> dict:
-    return {"ID": identifier, "Created": created, "State": state}
+    return {"Id": identifier, "Created": created, "State": state}
 
 
 def _inspect(identifier: str, *, mount: str = "", docker_labels=None, oci_labels=None) -> dict:
@@ -78,7 +78,7 @@ class PodmanBuilderPlanTests(unittest.TestCase):
             self.calls.append(argv)
             if argv[:2] == ["containers", "--json"]:
                 return _completed(argv, self.inventory)
-            if argv[:2] == ["info", "--format"]:
+            if argv == ["info"]:
                 return _completed(argv, _buildah_info())
             if argv[:2] == ["inspect", "--type"]:
                 identifier = argv[-1]
@@ -108,7 +108,7 @@ class PodmanBuilderPlanTests(unittest.TestCase):
         original = self.buildah_run
 
         def mismatched(argv):
-            if argv[:2] == ["info", "--format"]:
+            if argv == ["info"]:
                 self.calls.append(argv)
                 return _completed(argv, _buildah_info(graph="/different/graph"))
             return original(argv)
@@ -161,7 +161,7 @@ class PodmanBuilderPlanTests(unittest.TestCase):
 
     def test_builder_inspection_has_a_fixed_limit(self):
         self.rows = [_podman_row(f"{index:064x}", created=1) for index in range(40)]
-        self.inventory = [{"id": row["ID"], "builder": True} for row in self.rows]
+        self.inventory = [{"id": row["Id"], "builder": True} for row in self.rows]
         result = builders.plan_builders(self.podman_run, self.buildah_run, _STORE, 150)
         inspections = [argv for argv in self.calls if argv[:1] == ["inspect"]]
         self.assertEqual(len(inspections), 32)
@@ -180,6 +180,26 @@ class PodmanBuilderPlanTests(unittest.TestCase):
         with self.assertRaises(builders.BuilderObservationError) as caught:
             builders.plan_builders(failed, self.buildah_run, _STORE, 150)
         self.assertEqual(str(caught.exception), "podman_inventory_failed")
+
+    def test_native_null_or_absent_labels_and_duplicate_rows_are_supported(self):
+        self.rows = [_podman_row(self.old, created=100)] * 2
+        original = self.buildah_run
+        def run(argv):
+            if argv[:1] == ["inspect"]:
+                metadata = _inspect(self.old)
+                metadata["Docker"]["config"]["Labels"] = None
+                del metadata["OCIv1"]["config"]["Labels"]
+                return _completed(argv, metadata)
+            return original(argv)
+        result = builders.plan_builders(self.podman_run, run, _STORE, 150)
+        self.assertEqual(result["candidate_ids"], [self.old])
+
+    def test_no_old_storage_needs_no_buildah_probe(self):
+        self.rows = [_podman_row(self.young, created=200)]
+        def unexpected(argv):
+            self.fail("Buildah must not run without an old external container")
+        self.assertEqual(builders.plan_builders(self.podman_run, unexpected, _STORE, 150),
+                         {"candidate_ids": [], "retained_counts": {"young": 1}})
 
 
 if __name__ == "__main__":

@@ -50,7 +50,11 @@ class PodmanCleanupTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
             if command[2:4] == ["image", "ls"]:
                 return subprocess.CompletedProcess(command, 0, json.dumps(self.images), "")
-            if command[2:4] == ["image", "prune"]:
+            if command[2:3] == ["ps"]:
+                return subprocess.CompletedProcess(command, 0, "[]", "")
+            if command[2:4] == ["image", "rm"] or command[2:3] == ["untag"]:
+                return subprocess.CompletedProcess(command, 0, "", "")
+            if command[1:2] == ["rm"]:
                 return subprocess.CompletedProcess(command, 0, "", "")
             raise AssertionError("unexpected mocked Podman command")
 
@@ -59,7 +63,7 @@ class PodmanCleanupTests(unittest.TestCase):
             patch.object(cleanup, "_home_and_identity", return_value=(str(self.home), os.getuid())),
             patch.object(cleanup.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(self.home))),
             patch.object(cleanup, "_mounts", return_value={str(self.home): "ext4"}),
-            patch.object(cleanup.shutil, "which", return_value="/usr/bin/podman"),
+            patch.object(cleanup.shutil, "which", side_effect=lambda name, **_: f"/usr/bin/{name}"),
             patch.object(cleanup, "_process_activity", return_value=("eligible", None)),
             patch.object(cleanup, "run_captured", side_effect=run),
             patch.object(cleanup.time, "time", return_value=self.now),
@@ -74,19 +78,21 @@ class PodmanCleanupTests(unittest.TestCase):
         self.disk_reads += 1
         return SimpleNamespace(total=40 * 1024**3, used=40 * 1024**3 - value, free=value)
 
-    def test_preview_is_read_only_and_filters_old_untagged_unreferenced_unkept_images(self):
+    def test_preview_includes_old_tagged_images_and_explains_retention(self):
         result = cleanup.clean_podman_images()
         self.assertEqual(result["status"], "preview")
         self.assertFalse(result["cleanup_executed"])
-        self.assertEqual(result["candidate_count"], 1)
-        self.assertEqual(result["candidate_ids"], ["a" * 64])
-        self.assertEqual(result["image_estimate_bytes"], 4096)
-        self.assertEqual(len(self.commands), 2)
+        self.assertEqual(result["candidate_count"], 2)
+        self.assertEqual(result["candidate_ids"], ["a" * 64, "b" * 64])
+        self.assertEqual(result["image_estimate_bytes"], 5096)
+        self.assertEqual(result["retained_counts"], {"recent": 1, "container_referenced": 1, "keep_label": 1, "dependent_image": 0})
+        self.assertEqual(result["age_basis"], "created")
+        self.assertEqual(len(self.commands), 3)
         self.assertFalse((self.home / ".local").exists())
         self.assertTrue(all(call[0][:2] == ["/usr/bin/podman", "--remote=false"]
                             for call in self.commands))
 
-    def test_apply_uses_only_native_bounded_safe_prune_flags_and_measures_delta(self):
+    def test_apply_uses_only_exact_ids_without_force_or_parent_pruning_and_measures_delta(self):
         self.free.append(29 * 1024**3)
         result = cleanup.clean_podman_images(apply=True)
         self.assertEqual(result["status"], "cleaned")
@@ -94,15 +100,124 @@ class PodmanCleanupTests(unittest.TestCase):
         self.assertEqual(result["free_bytes_change"], -1024**3)
         command, kwargs = self.commands[-1]
         self.assertEqual(command, [
-            "/usr/bin/podman", "--remote=false", "image", "prune", "--force",
-            "--filter", f"until={self.now - 7 * 86400}",
-            "--filter", f"label!={maintenance_defaults.PODMAN_KEEP_LABEL}",
+            "/usr/bin/podman", "--remote=false", "image", "rm", "--no-prune", "--ignore",
+            "a" * 64, "b" * 64,
         ])
-        self.assertEqual(kwargs["timeout"], cleanup._PRUNE_TIMEOUT)
+        self.assertLessEqual(kwargs["timeout"], cleanup._PRUNE_TIMEOUT)
+        self.assertGreater(kwargs["timeout"], 0)
         self.assertEqual(kwargs["max_bytes"], cleanup._OUTPUT_LIMIT)
-        for unsafe in ("--all", "--external", "--build-cache", "system", "volume", "rmi"):
+        for unsafe in ("--all", "--force", "--external", "--build-cache", "system", "volume", "prune"):
             self.assertNotIn(unsafe, command)
-        self.assertTrue(any("newly dangling" in note for note in result["notes"]))
+        self.assertTrue(any("parent pruning disabled" in note for note in result["notes"]))
+
+    def test_applied_cleanup_preserves_pinned_parent_and_persistent_cache_sentinel(self):
+        cache = self.graph / "cache-mount-sentinel"
+        cache.write_text("keep cached build data")
+        parent = _image("a" * 64, created=self.now - self.cutoff_age,
+                        labels={maintenance_defaults.PODMAN_KEEP_LABEL: ""})
+        child = _image("b" * 64, created=self.now - self.cutoff_age)
+        child["ParentId"] = parent["Id"]
+        self.images = [parent, child]
+        def native_contract(command, **kwargs):
+            if command[2:4] == ["image", "prune"] and "--all" in command:
+                cache.unlink()  # Podman 5.4.2 implicit cache-mount cleanup.
+            if command[2:4] == ["image", "rm"]:
+                if "--no-prune" not in command:
+                    self.images.remove(parent)  # Recursive removal ignores its keep label.
+                self.assertNotIn(parent["Id"], command)
+                self.images.remove(child)
+            return self.run(command, **kwargs)
+        with patch.object(cleanup, "run_captured", side_effect=native_contract):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "cleaned")
+        self.assertIn(parent, self.images)
+        self.assertEqual(cache.read_text(), "keep cached build data")
+
+    def test_children_removed_before_parents_and_ancestors_of_kept_images_retained(self):
+        parent = _image("a" * 64, created=self.now - self.cutoff_age)
+        child = _image("b" * 64, created=self.now - self.cutoff_age)
+        child["ParentId"] = parent["Id"]
+        self.images = [parent, child]
+        result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(self.commands[-1][0][-2:], [child["Id"], parent["Id"]])
+        child["Labels"] = {maintenance_defaults.PODMAN_KEEP_LABEL: ""}
+        result = cleanup.clean_podman_images()
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertEqual(result["retained_counts"]["dependent_image"], 1)
+
+    def test_multi_tag_image_is_untagged_by_exact_id_before_nonforced_removal(self):
+        self.images = [_image("a" * 64, created=self.now - self.cutoff_age,
+                              tags=["localhost/reused:v1", "localhost/reused:v2"])]
+        result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "cleaned")
+        self.assertEqual(self.commands[-2][0], ["/usr/bin/podman", "--remote=false", "untag", "a" * 64])
+        self.assertEqual(self.commands[-1][0], ["/usr/bin/podman", "--remote=false", "image", "rm",
+                                               "--no-prune", "--ignore", "a" * 64])
+
+    def test_native_names_and_duplicate_tags_count_one_image_once(self):
+        self.images = [
+            _image("a" * 64, created=self.now - self.cutoff_age),
+            _image("a" * 64, created=self.now - self.cutoff_age),
+        ]
+        for row in self.images:
+            row["Names"] = ["localhost/reused:v1", "localhost/reused:other"]
+        result = cleanup.clean_podman_images()
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(result["image_estimate_bytes"], 1000)
+        self.images[1]["Containers"] = 1
+        self.assertEqual(cleanup.clean_podman_images()["issue"], "inconsistent_image_inventory")
+
+    def test_old_image_references_are_rechecked_after_builder_removal(self):
+        self.images = [_image("a" * 64, created=self.now - self.cutoff_age, containers=1)]
+        def removing(command, **kwargs):
+            if command[1:2] == ["rm"]:
+                self.images[0]["Containers"] = 0
+            return self.run(command, **kwargs)
+        with patch.object(cleanup, "plan_builders", return_value={"candidate_ids": ["f" * 64], "retained_counts": {}}), \
+                patch.object(cleanup, "builder_is_removable", return_value=True), \
+                patch.object(cleanup, "run_captured", side_effect=removing):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "cleaned")
+        self.assertEqual(result["builders_removed"], 1)
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertIn((["/usr/bin/buildah", "rm", "f" * 64]), [c for c, _ in self.commands])
+        self.assertEqual(self.commands[-1][0][2:4], ["image", "rm"])
+
+    def test_builder_changed_or_activity_started_before_removal_is_retained(self):
+        self.images = []
+        plan = {"candidate_ids": ["f" * 64], "retained_counts": {}}
+        with patch.object(cleanup, "plan_builders", return_value=plan), \
+                patch.object(cleanup, "builder_is_removable", return_value=False):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "preview")
+        self.assertFalse(result["cleanup_attempted"])
+        with patch.object(cleanup, "plan_builders", return_value=plan), \
+                patch.object(cleanup, "builder_is_removable", return_value=True), \
+                patch.object(cleanup, "_process_activity", side_effect=[("eligible", None), ("eligible", None), ("deferred_active", "active_container_workload")]):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "deferred_active")
+        self.assertFalse(result["cleanup_attempted"])
+
+    def test_failed_builder_removal_is_uncertain_and_not_retried(self):
+        def failing(command, **kwargs):
+            if command[1:2] == ["rm"]:
+                self.commands.append((command, kwargs))
+                return subprocess.CompletedProcess(command, 125, "", "private output")
+            return self.run(command, **kwargs)
+        with patch.object(cleanup, "plan_builders", return_value={"candidate_ids": ["f" * 64], "retained_counts": {}}), \
+                patch.object(cleanup, "builder_is_removable", return_value=True), \
+                patch.object(cleanup, "run_captured", side_effect=failing):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "uncertain")
+        self.assertEqual(result["issue"], "builder_removal_uncertain")
+        self.assertEqual(sum(c[1:2] == ["rm"] for c, _ in self.commands), 1)
+
+    def test_cleanup_deadline_stops_before_any_mutation(self):
+        with patch.object(cleanup.time, "monotonic", side_effect=[0, cleanup._CLEANUP_SECONDS + 1]):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "deferred_unknown")
+        self.assertEqual(result["issue"], "podman_probe_timeout")
+        self.assertFalse(self.commands)
 
     def test_low_space_uses_one_day_retention_and_shared_threshold_formula(self):
         self.free[0] = 7 * 1024**3
@@ -117,9 +232,13 @@ class PodmanCleanupTests(unittest.TestCase):
 
     def test_apply_under_pressure_uses_one_day_cutoff(self):
         self.free[0] = 1024**3
+        self.images = [_image("a" * 64, created=self.now - 2 * 86400),
+                       _image("b" * 64, created=self.now - 12 * 3600)]
         result = cleanup.clean_podman_images(apply=True)
         self.assertEqual(result["status"], "cleaned")
-        self.assertIn(f"until={self.now - 86400}", self.commands[-1][0])
+        self.assertEqual(result["cutoff_epoch"], self.now - 86400)
+        self.assertEqual(self.commands[-1][0][-1], "a" * 64)
+        self.assertNotIn("b" * 64, self.commands[-1][0])
 
     def test_native_store_configuration_is_preserved_for_probes_and_prune(self):
         configuration = {"XDG_RUNTIME_DIR": str(self.home / "runtime"),
@@ -236,7 +355,7 @@ class PodmanCleanupTests(unittest.TestCase):
 
         def timeout(command, **kwargs):
             nonlocal attempts
-            if command[2:4] == ["image", "prune"]:
+            if command[2:4] == ["image", "rm"]:
                 attempts += 1
                 raise subprocess.TimeoutExpired(command, kwargs["timeout"])
             return self.run(command, **kwargs)
@@ -249,7 +368,7 @@ class PodmanCleanupTests(unittest.TestCase):
 
         self.commands.clear()
         def failure(command, **kwargs):
-            if command[2:4] == ["image", "prune"]:
+            if command[2:4] == ["image", "rm"]:
                 self.commands.append((command, kwargs))
                 return subprocess.CompletedProcess(command, 125, "", "private provider output")
             return self.run(command, **kwargs)
@@ -258,7 +377,7 @@ class PodmanCleanupTests(unittest.TestCase):
         self.assertEqual(result["status"], "uncertain")
         self.assertEqual(result["issue"], "prune_result_uncertain")
         self.assertNotIn("private provider output", json.dumps(result))
-        self.assertEqual(sum(command[2:4] == ["image", "prune"] for command, _ in self.commands), 1)
+        self.assertEqual(sum(command[2:4] == ["image", "rm"] for command, _ in self.commands), 1)
 
     def test_missing_engine_is_absent_and_invalid_arguments_fail_fast(self):
         with patch.object(cleanup.shutil, "which", return_value=None):

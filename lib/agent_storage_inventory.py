@@ -26,7 +26,7 @@ _ROOTS = (
     (".nvm/versions/node", "node-runtimes", "Check active processes, nvm aliases, project .nvmrc/.node-version/package engines and per-version global packages before approved nvm uninstall of an exact unused version."),
     (".nvm/.cache", "node-downloads", "Downloaded Node archives, separate from installed versions; native nvm cache clear costs future downloads and must not race an installation."),
     ("go/pkg/mod", "go-modules", "Module downloads can include active Go toolchains. Check go env GOMODCACHE/GOTOOLCHAIN and project/offline dependencies; build-cache cleanup does not authorize go clean -modcache."),
-    (".local/share/containers/storage", "container-storage", "Preview agent storage clean-podman for retained dangling images. Preserve tagged images, container references and volumes; never remove overlay storage directly."),
+    (".local/share/containers/storage", "container-storage", "Preview agent storage clean-podman for old unused testing images (including tagged images) and abandoned Buildah builders. Reuse compatible images; preserve active work, ordinary containers and volumes; never remove overlay storage directly."),
     (".local/share/godot/export_templates", "godot-templates", "Preserve versions required by project toolchain locks and exports; these are installed templates, not redundant download archives."),
     (".local/share/basaltwater/t3code", "t3-launcher", "Managed T3 launcher dependencies; preserve active process/service references and use managed updates rather than deleting node_modules."),
     (".local/share/basaltwater/evidence", "development-evidence", "Review and curate project evidence with provenance before selecting removals; preserve milestone captures and verification records."),
@@ -364,10 +364,10 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     go = actions.add_parser("clean-go-build", help="Preview native Go build-cache cleanup with active-build checks")
     go.add_argument("--apply", action="store_true", help="Execute go clean -cache within authorized cleanup scope")
     go.add_argument("--json", action="store_true")
-    podman = actions.add_parser("clean-podman", help="Preview age-limited dangling Podman image cleanup with active-build checks")
+    podman = actions.add_parser("clean-podman", help="Preview age-limited unused test images and abandoned Buildah builders")
     mode = podman.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without deleting (default)")
-    mode.add_argument("--apply", action="store_true", help="Prune eligible dangling images through local rootless Podman")
+    mode.add_argument("--apply", action="store_true", help="Remove eligible abandoned builders and prune unused images, including tagged images")
     podman.add_argument("--json", action="store_true")
 
 

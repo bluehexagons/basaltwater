@@ -24,9 +24,13 @@ cleanup remains separate.
 
 For authorized rootless Podman cleanup, preview
 `basaltw agent storage clean-podman --json` and use `--apply` only after
-reviewing candidates. It targets old dangling untagged images and preserves
-tagged images, Buildah references, containers, volumes, and persistent
-build-cache mounts. The full policy, safety guards, dynamic age threshold, and
+reviewing candidates. It targets old unused testing images, including tagged
+images, and old unmounted abandoned Buildah working containers. Ordinary
+containers, mounted/pinned builders, volumes and persistent cache mounts are
+retained. Tags do not pin images; the explicit `io.basaltwater.keep` label does.
+Retention uses creation time, not last use. Exact native image removal disables
+parent pruning; broad `image prune --all` also clears persistent cache mounts
+on some Podman versions. The full policy, safety guards, dynamic age threshold, and
 verification limits are in the [Podman cleanup reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/storage-cleanup.md#podman-image-cleanup).
 
 Classify only a selected, bounded file list or a few relevant log excerpts.
