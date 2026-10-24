@@ -15,6 +15,7 @@ and backup workflows, see [Storage](../storage/README.md).
 | [Firmware](firmware.md) | Inventory and guarded fwupd updates |
 | [Networking](networking.md) | Network profiles and Proxmox firewall planning |
 | [Proxmox](proxmox.md) | Host registration, VM/LXC lifecycle, and live-host operations |
+| [Proxmox VM templates](proxmox-templates.md) | Immutable vendor-image templates, clone identity, and qualification |
 | [Interrupted operation recovery](transaction-recovery.md) | Recover setup and deployment operations safely |
 
 For command syntax, use the [reference index](../reference/README.md).
