@@ -1,6 +1,7 @@
 """SMB/CIFS mount configuration with systemd."""
 
 from __future__ import annotations
+import errno
 import os
 import shlex
 import grp
@@ -18,6 +19,25 @@ from lib.setup_directories import check_directory_path, directory_fd
 
 SMB_CREDENTIALS_DIR = "/root/.smb"
 SMB_UNIT_DIR = "/etc/systemd/system"
+
+
+def _check_mountpoint_path(mountpoint: str) -> None:
+    """Reject unsafe components without triggering an existing Linux autofs leaf."""
+    try:
+        with directory_fd(os.path.dirname(mountpoint)) as parent:
+            # O_PATH does not trigger an unmounted automount. O_DIRECTORY and
+            # O_NOFOLLOW reject a non-directory or symlink without probing the
+            # remote filesystem's metadata or opening its root for ownership.
+            descriptor = os.open(os.path.basename(mountpoint),
+                                 os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=parent)
+            os.close(descriptor)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ValueError(f"Setup directory contains a symlink or non-directory: {mountpoint}") from exc
+        raise
 
 
 def _write_credentials(directory: str, name: str, content: str) -> None:
@@ -98,7 +118,7 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
     subdir = mount_config['subdir']
     if not validate_username(config.username):
         raise ValueError("Invalid SMB mount owner")
-    check_directory_path(mountpoint)
+    _check_mountpoint_path(mountpoint)
     check_directory_path(SMB_CREDENTIALS_DIR)
     uid = pwd.getpwnam(config.username).pw_uid
     gid = grp.getgrnam(config.username).gr_gid
@@ -113,9 +133,6 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
     unit_name = f"{escaped_mountpoint}.mount"
     automount_name = f"{escaped_mountpoint}.automount"
 
-    with directory_fd(mountpoint, create=True) as descriptor:
-        os.fchown(descriptor, uid, gid)
-
     credentials_dir = SMB_CREDENTIALS_DIR
 
     # Use the already collision-resistant systemd-escaped mount name. The old
@@ -127,7 +144,12 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
 password={password}
 """
     
-    _write_credentials(credentials_dir, os.path.basename(creds_file), creds_content)
+    def prepare_mount() -> None:
+        # The transaction has stopped both the activator and mount. Only now
+        # open/chown the local directory, never the active remote CIFS root.
+        with directory_fd(mountpoint, create=True) as descriptor:
+            os.fchown(descriptor, uid, gid)
+        _write_credentials(credentials_dir, os.path.basename(creds_file), creds_content)
     
     unc_path = f"//{ip}/{share}{subdir}"
     
@@ -150,7 +172,7 @@ Wants=network-online.target
 What={_escape_systemd_value(unc_path)}
 Where={_escape_systemd_value(mountpoint)}
 Type=cifs
-Options=credentials={escaped_credentials},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail
+Options=credentials={escaped_credentials},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3,seal,nofail
 """
 
     automount_content = f"""[Unit]
@@ -170,7 +192,7 @@ WantedBy=multi-user.target
     replace_units(
         {unit_name: unit_content, automount_name: automount_content},
         activate=(automount_name,), deactivate=(automount_name, unit_name),
-        unit_dir=SMB_UNIT_DIR,
+        unit_dir=SMB_UNIT_DIR, prepare=prepare_mount,
     )
     print(f"  ✓ SMB automount configured: {mountpoint} → {unc_path}")
 

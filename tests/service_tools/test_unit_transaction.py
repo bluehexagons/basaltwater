@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from lib import unit_transaction as units
 
@@ -141,6 +141,83 @@ class TestUnitTransaction(unittest.TestCase):
                 units.replace_units({"demo.timer": "new"}, activate=(), deactivate=deactivate, unit_dir=str(self.root))
         self.assertEqual(self.path.read_text(), "old unit")
         self.assertEqual(self.commands, [])
+
+    def test_prepare_runs_after_deactivation_before_publication_with_original_snapshot(self):
+        def prepare():
+            self.assertEqual((self.active, self.enabled), ("inactive", "disabled"))
+            self.assertEqual(self.path.read_text(), "old unit")
+            marker = json.loads((self.root / ".basaltwater-unit-operation.json").read_text())
+            backup = Path(marker["context"]["backup_dir"]) / "previous.json"
+            self.assertEqual(json.loads(backup.read_text())["states"]["demo.timer"]["ActiveState"], "active")
+            self.commands.append(["prepare"])
+
+        callback = Mock(side_effect=prepare)
+        units.replace_units({"demo.timer": "new unit"}, activate=("demo.timer",),
+                            deactivate=("demo.timer",), prepare=callback, unit_dir=str(self.root))
+        callback.assert_called_once_with()
+        self.assertLess(self.commands.index(["systemctl", "disable", "demo.timer"]),
+                        self.commands.index(["prepare"]))
+        self.assertLess(self.commands.index(["prepare"]), self.commands.index(["systemctl", "daemon-reload"]))
+        self.assertEqual(self.path.read_text(), "new unit")
+        self.assertEqual((self.active, self.enabled), ("active", "enabled"))
+
+    def test_prepare_failure_or_interruption_restores_units_but_not_callback_side_effects(self):
+        effect = self.root / "callback-effect"
+        for failure in (OSError("preparation failed"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__):
+                self.commands.clear()
+
+                def prepare():
+                    effect.write_text("not rolled back")
+                    raise failure
+
+                callback = Mock(side_effect=prepare)
+                with self.assertRaises(type(failure)):
+                    units.replace_units({"demo.timer": "new unit"}, activate=("demo.timer",),
+                                        deactivate=("demo.timer",), prepare=callback, unit_dir=str(self.root))
+                callback.assert_called_once_with()
+                self.assertEqual(self.path.read_text(), "old unit")
+                self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
+                self.assertEqual((self.active, self.enabled), ("active", "enabled"))
+                self.assertEqual(effect.read_text(), "not rolled back")
+                self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+                result = json.loads((self.root / ".basaltwater-unit-operation.json.last.json").read_text())
+                self.assertEqual(result["outcome"], "rolled_back")
+
+    def test_prepare_is_skipped_when_validation_or_deactivation_fails(self):
+        for failure in (["systemd-analyze", "verify"], ["systemctl", "stop"], ["systemctl", "disable"]):
+            with self.subTest(failure=failure):
+                self.failure = failure
+                callback = Mock()
+                with self.assertRaises(subprocess.CalledProcessError):
+                    units.replace_units({"demo.timer": "new unit"}, activate=("demo.timer",),
+                                        deactivate=("demo.timer",), prepare=callback, unit_dir=str(self.root))
+                callback.assert_not_called()
+                self.assertEqual(self.path.read_text(), "old unit")
+                self.assertEqual((self.active, self.enabled), ("active", "enabled"))
+
+    def test_prepare_failure_retains_recovery_evidence_when_rollback_fails(self):
+        self.failure = ["systemctl", "daemon-reload"]
+        callback = Mock(side_effect=OSError("preparation failed"))
+        with self.assertRaises(units.UnitRecoveryError) as error:
+            units.replace_units({"demo.timer": "new unit"}, activate=("demo.timer",),
+                                deactivate=("demo.timer",), prepare=callback, unit_dir=str(self.root))
+        self.assertTrue(Path(error.exception.marker_path).is_file())
+        self.assertTrue((Path(error.exception.backup_dir) / "previous.json").is_file())
+        with self.assertRaisesRegex(ValueError, "Unfinished"):
+            units.replace_units({"demo.timer": "new unit"}, activate=("demo.timer",),
+                                deactivate=("demo.timer",), prepare=callback, unit_dir=str(self.root))
+        callback.assert_called_once_with()
+
+    def test_dry_run_skips_prepare_and_creates_no_transaction_files(self):
+        callback = Mock()
+        with patch.object(units, "is_dry_run", return_value=True):
+            units.replace_units({"demo.timer": "new unit"}, activate=("demo.timer",),
+                                deactivate=("demo.timer",), prepare=callback, unit_dir=str(self.root))
+        callback.assert_not_called()
+        self.assertEqual(self.commands, [])
+        self.assertEqual(self.path.read_text(), "old unit")
+        self.assertFalse(list(self.root.glob(".basaltwater-*")))
 
     def test_template_removal_does_not_query_or_stop_an_abstract_service(self):
         (self.root / "shell@.service").write_text("login template")

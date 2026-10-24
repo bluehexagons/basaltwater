@@ -315,7 +315,7 @@ smbclient //fileserver/documents_read -U alice
 
 # Linux client, interactive mount
 sudo mount -t cifs //fileserver/projects_write /mnt/projects \
-  -o username=alice,vers=3.0,seal
+  -o username=alice,vers=3,seal
 ```
 
 For persistent client mounts managed by Basaltwater, use `--mount-smb` on the
@@ -330,6 +330,9 @@ basaltw setup workstation_desktop client admin \
 `--smbclient` and `--mount-smb` also work on headless Debian server profiles.
 Setup installs `cifs-utils` and `smbclient` before configuring mounts; desktop
 profiles additionally install `gvfs-backends` for file-manager integration.
+Mounts use `vers=3` to negotiate SMB 3.0 or newer, including SMB 3.1.1, with
+mandatory encryption (`seal`) and no SMB2 fallback. Pinning `vers=3.0` prevents
+connecting to servers whose minimum dialect is SMB 3.1.1.
 
 The mount `CREDENTIALS` field follows the same rule as share users: use a bare
 username backed by the workspace credential store, or an inline
@@ -344,10 +347,14 @@ the automount is enabled at boot; first access mounts the share after network
 readiness, and `TimeoutIdleSec=60` requests unmount after a minute of inactivity.
 The automount itself has no network dependency, so it can start before the
 network is available. Setup replaces both units together, disabling the old
-boot-enabled mount during migration. Unit validation or activation failures
-restore the previous unit files and activation state; incomplete rollback
-retains the shared systemd recovery marker. Credentials and directory ownership
-changes are outside that unit transaction.
+boot-enabled mount during migration. It checks path components without following
+symlinks or triggering the automount, then stops the automount and mount under
+one unit transaction before opening or changing ownership of the local
+mountpoint and replacing credentials. This lets reruns repair an unavailable
+mount without accessing its remote root. Preparation, publication or activation
+failures restore the previous unit files and activation state; incomplete
+rollback retains the shared systemd recovery marker. Credential and local
+directory changes made during preparation are not rolled back.
 
 Credential filenames retain systemd's literal unit-name escapes (for example,
 `\x2d` for a hyphen) in `Options=`, so mounts with hyphens, spaces or percent

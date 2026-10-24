@@ -26,6 +26,15 @@ activation was never reached. If any prior definition cannot be restored, keep
 the group stopped and retain recovery evidence. Services staged only for a
 timer or socket remain outside activation so executing oneshots are left alone.
 
+`replace_units(..., prepare=callback)` runs preparation after candidate validation
+and grouped deactivation, before publication and activation, under the same
+operation lock. A callback failure restores the original unit files and
+activation state through the existing rollback. Dry runs skip the callback.
+Callers must document callback side effects: filesystem ownership, credentials
+and other application changes are outside unit rollback. Use this boundary for
+mountpoint preparation so an active automount cannot trigger remote access or
+redirect ownership changes onto a mounted remote root.
+
 Recovery decisions made before acquiring operation ownership must pass the
 inspected record as `expected_record` to `OperationStateStore.transition()`.
 Matching only the operation ID can replay a stale checkpoint after another

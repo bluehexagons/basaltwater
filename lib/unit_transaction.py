@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 import re
 import shutil
@@ -63,7 +64,7 @@ def inspect_unit_state(unit: str) -> dict[str, str]:
 
 
 def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str,
-                     deactivate: tuple[str, ...] = ()) -> None:
+                     deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None) -> None:
     validate_filesystem_path(unit_dir, must_exist=False)
     if (not units and not remove) or not (set(activate) | set(deactivate)) <= units.keys():
         raise ValueError("Activation requires staged units")
@@ -142,6 +143,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 state = inspect_unit_state(name)
                 if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Unit removal failed verification: {name}")
+            if prepare is not None:
+                prepare()
             for name in removals:
                 remove_file_durable(os.path.join(unit_dir, name))
             for name, content in units.items():
@@ -246,7 +249,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
 
 
 def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir: str = "/etc/systemd/system",
-                  deactivate: tuple[str, ...] = ()) -> None:
+                  deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None) -> None:
     """Validate, replace, enable and restart units, restoring on any failure.
 
     Only ``activate`` and ``deactivate`` units change running/enabled state. This lets
@@ -256,8 +259,14 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     order (activators before their mount/service), and stay stopped unless also
     in ``activate``. Rollback restores their previous state in reverse order,
     except that an automount is restored before its matching mount.
+
+    ``prepare`` runs once after validation and grouped deactivation, before
+    publication, under the same lock and rollback boundary. It never runs in
+    dry-run mode. Its failures restore unit files and activation state, but its
+    filesystem, credential or other side effects are not rolled back.
     """
-    _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir, deactivate=deactivate)
+    _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir,
+                     deactivate=deactivate, prepare=prepare)
 
 
 def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system") -> None:

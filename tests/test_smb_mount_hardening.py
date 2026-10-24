@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 import subprocess
@@ -33,7 +34,7 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         ):
             self.enterContext(patch.object(smb_mount_steps, target, replacement))
         self.enterContext(patch.object(smb_mount_steps, "validate_smb_mount_specs"))
-        self.enterContext(patch.object(smb_mount_steps.os, "fchown"))
+        self.chown = self.enterContext(patch.object(smb_mount_steps.os, "fchown"))
         self.enterContext(patch.object(smb_mount_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=123)))
         self.enterContext(patch.object(smb_mount_steps.grp, "getgrnam", return_value=MagicMock(gr_gid=456)))
         self.enterContext(patch.object(smb_mount_steps, "run", side_effect=lambda *args, **kwargs: MagicMock(
@@ -96,11 +97,15 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
             path.chmod(0o640)
         return original
 
-    def test_native_pair_pins_smb3_and_enables_only_the_automount(self) -> None:
+    def test_native_pair_negotiates_smb3_or_newer_and_enables_only_the_automount(self) -> None:
         self.configure()
         mount = (self.unit_dir / "mnt-share.mount").read_text()
         automount = (self.unit_dir / "mnt-share.automount").read_text()
-        self.assertIn("vers=3.0,seal,nofail", mount)
+        options = next(line.removeprefix("Options=").split(",") for line in mount.splitlines()
+                       if line.startswith("Options="))
+        self.assertEqual([option for option in options if option.startswith("vers=")], ["vers=3"])
+        self.assertIn("seal", options)
+        self.assertIn("nofail", options)
         self.assertIn("file_mode=0644,dir_mode=0755", mount)
         self.assertNotIn("x-systemd.", mount)
         self.assertNotIn("[Install]", mount)
@@ -129,6 +134,115 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         self.configure()
         self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled"])
 
+    def test_rerun_never_probes_or_chowns_remote_root_before_group_is_stopped(self) -> None:
+        for mount_state in ("active", "failed", "missing"):
+            with self.subTest(mount_state=mount_state):
+                originals = self.seed_old_units(automount=True)
+                self.states["mnt-share.mount"][0] = mount_state
+                if mount_state == "missing":
+                    (self.unit_dir / "mnt-share.mount").unlink()
+                    self.states["mnt-share.mount"] = ["inactive", ""]
+                Path(self.mountpoint).mkdir(exist_ok=True)
+                self.commands.clear()
+                events = []
+                real_open, real_stat = os.open, os.stat
+
+                def quiescent():
+                    return all(self.states[name][0] == "inactive"
+                               for name in ("mnt-share.automount", "mnt-share.mount"))
+
+                def open_directory(path, flags, *args, **kwargs):
+                    if path in (self.mountpoint, os.path.basename(self.mountpoint)):
+                        if flags & os.O_PATH:
+                            self.assertTrue(flags & os.O_NOFOLLOW)
+                            self.assertTrue(flags & os.O_DIRECTORY)
+                            self.assertIsInstance(kwargs.get("dir_fd"), int)
+                            events.append("preflight")
+                        else:
+                            if not quiescent():
+                                raise OSError(errno.ENODEV, "remote mount unavailable")
+                            events.append("local-open")
+                    return real_open(path, flags, *args, **kwargs)
+
+                def stat_path(path, *args, **kwargs):
+                    if path in (self.mountpoint, os.path.basename(self.mountpoint)) and not quiescent():
+                        raise OSError(errno.ENODEV, "remote metadata probe")
+                    return real_stat(path, *args, **kwargs)
+
+                def chown(descriptor, uid, gid):
+                    self.assertTrue(quiescent())
+                    if (uid, gid) == (123, 456):
+                        self.assertEqual(os.fstat(descriptor).st_ino, real_stat(self.mountpoint).st_ino)
+                        self.assertEqual((self.unit_dir / "mnt-share.automount").read_text(),
+                                         originals["mnt-share.automount"])
+                        events.append("local-chown")
+
+                with patch.object(smb_mount_steps.os, "open", side_effect=open_directory), \
+                     patch.object(smb_mount_steps.os, "stat", side_effect=stat_path), \
+                     patch.object(smb_mount_steps.os, "fchown", side_effect=chown):
+                    self.configure(credentials="changed:new-secret", share="new-server-share")
+                self.assertEqual(events, ["preflight", "local-open", "local-chown"])
+                self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled"])
+                self.assertEqual(self.states["mnt-share.mount"][0], "inactive")
+                self.assertEqual((self.creds / "credentials-mnt-share").read_text(),
+                                 "username=changed\npassword=new-secret\n")
+                self.assertFalse(any(command[:2] == ["systemctl", "restart"] and command[-1].endswith(".mount")
+                                     for command in self.commands))
+
+    def test_preparation_failure_restores_original_unit_state(self) -> None:
+        for failed_mount in (False, True):
+            with self.subTest(failed_mount=failed_mount):
+                originals = self.seed_old_units(automount=True)
+                if failed_mount:
+                    self.states["mnt-share.mount"][0] = "failed"
+                expected_states = {name: list(state) for name, state in self.states.items()}
+                with patch.object(smb_mount_steps, "_write_credentials", side_effect=OSError("credential write failed")):
+                    with self.assertRaisesRegex(OSError, "credential write failed"):
+                        self.configure()
+                for name, content in originals.items():
+                    self.assertEqual((self.unit_dir / name).read_text(), content)
+                    self.assertEqual((self.unit_dir / name).stat().st_mode & 0o777, 0o640)
+                    self.assertEqual(self.states[name][1], expected_states[name][1])
+                    self.assertEqual(self.states[name][0] == "active", expected_states[name][0] == "active")
+                self.assertFalse((self.unit_dir / ".basaltwater-unit-operation.json").exists())
+                self.assertFalse(self.creds.exists())
+
+    def test_symlink_swap_after_preflight_is_rejected_while_quiescent(self) -> None:
+        originals = self.seed_old_units(automount=True)
+        Path(self.mountpoint).mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        real_runner = self.run_command
+
+        def swap_after_stop(command, **kwargs):
+            result = real_runner(command, **kwargs)
+            if command == ["systemctl", "stop", "mnt-share.mount"] and not Path(self.mountpoint).is_symlink():
+                Path(self.mountpoint).rmdir()
+                Path(self.mountpoint).symlink_to(outside, target_is_directory=True)
+            return result
+
+        with patch.object(unit_transaction, "run", side_effect=swap_after_stop):
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                self.configure()
+        # Rollback restores unit-file metadata, but never owns the mountpoint
+        # or credentials after the swapped path fails its descriptor check.
+        self.assertFalse(any(call.args[1:] == (123, 456) for call in self.chown.call_args_list))
+        self.assertFalse(self.creds.exists())
+        self.assertEqual(list(outside.iterdir()), [])
+        for name, content in originals.items():
+            self.assertEqual((self.unit_dir / name).read_text(), content)
+        self.assertEqual(self.states["mnt-share.automount"], ["active", "enabled-runtime"])
+        self.assertEqual(self.states["mnt-share.mount"], ["active", "enabled"])
+
+    def test_dry_run_does_not_prepare_mountpoint_or_credentials(self) -> None:
+        with patch.object(unit_transaction, "is_dry_run", return_value=True):
+            self.configure()
+        self.chown.assert_not_called()
+        self.assertFalse(Path(self.mountpoint).exists())
+        self.assertFalse(self.creds.exists())
+        self.assertEqual(list(self.unit_dir.iterdir()), [])
+        self.assertEqual(self.commands, [])
+
     def test_migration_failures_restore_previous_files_modes_and_states(self) -> None:
         for automount in (False, True):
             for action in ("stop", "disable", "daemon-reload", "enable", "restart"):
@@ -137,6 +251,7 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
                         path.unlink()
                     self.states.clear()
                     self.commands.clear()
+                    self.chown.reset_mock()
                     originals = self.seed_old_units(automount=automount)
                     expected_states = {name: list(state) for name, state in self.states.items()}
                     self.failure = ["systemctl", action]
@@ -153,6 +268,8 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
                     if not automount:
                         self.assertFalse((self.unit_dir / "mnt-share.automount").exists())
                     self.assertFalse((self.unit_dir / ".basaltwater-unit-operation.json").exists())
+                    if action in {"stop", "disable"}:
+                        self.assertFalse(any(call.args[1:] == (123, 456) for call in self.chown.call_args_list))
 
     def test_validation_failure_preserves_old_units_without_stopping(self) -> None:
         originals = self.seed_old_units(automount=True)
@@ -164,6 +281,9 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         with patch.object(unit_transaction, "run", side_effect=fail_verify), self.assertRaises(subprocess.CalledProcessError):
             self.configure()
         self.assertFalse(any(command[1] == "stop" for command in self.commands))
+        self.chown.assert_not_called()
+        self.assertFalse(Path(self.mountpoint).exists())
+        self.assertFalse(self.creds.exists())
         for name, content in originals.items():
             self.assertEqual((self.unit_dir / name).read_text(), content)
 
@@ -216,6 +336,17 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
 
 
 class TestSmbMountPreflight(unittest.TestCase):
+    def test_non_directory_mountpoint_is_rejected_without_opening_for_io(self) -> None:
+        for kind in ("file", "fifo"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                mountpoint = os.path.join(directory, "mount")
+                if kind == "fifo":
+                    os.mkfifo(mountpoint)
+                else:
+                    Path(mountpoint).write_text("preserve")
+                with self.assertRaisesRegex(ValueError, "non-directory"):
+                    smb_mount_steps._check_mountpoint_path(mountpoint)
+
     def test_invalid_spec_is_rejected_before_filesystem_changes(self) -> None:
         with patch.object(smb_mount_steps, "run") as run, \
              patch.object(smb_mount_steps, "directory_fd") as directory:
