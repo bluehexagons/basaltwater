@@ -154,8 +154,9 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
                 def open_directory(path, flags, *args, **kwargs):
                     if path in (self.mountpoint, os.path.basename(self.mountpoint)):
                         if flags & os.O_PATH:
+                            if flags & os.O_DIRECTORY:
+                                raise OSError(errno.ENODEV, "O_DIRECTORY triggers unavailable autofs")
                             self.assertTrue(flags & os.O_NOFOLLOW)
-                            self.assertTrue(flags & os.O_DIRECTORY)
                             self.assertIsInstance(kwargs.get("dir_fd"), int)
                             events.append("preflight")
                         else:

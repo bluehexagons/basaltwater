@@ -7,6 +7,7 @@ import shlex
 import grp
 import pwd
 import secrets
+import stat
 from typing import Any, Optional
 
 from lib.config import SetupConfig
@@ -25,13 +26,16 @@ def _check_mountpoint_path(mountpoint: str) -> None:
     """Reject unsafe components without triggering an existing Linux autofs leaf."""
     try:
         with directory_fd(os.path.dirname(mountpoint)) as parent:
-            # O_PATH does not trigger an unmounted automount. O_DIRECTORY and
-            # O_NOFOLLOW reject a non-directory or symlink without probing the
-            # remote filesystem's metadata or opening its root for ownership.
+            # O_DIRECTORY triggers autofs even with O_PATH. Inspect the leaf
+            # descriptor instead; O_NOFOLLOW keeps a symlink from being followed.
             descriptor = os.open(os.path.basename(mountpoint),
-                                 os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC,
                                  dir_fd=parent)
-            os.close(descriptor)
+            try:
+                if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                    raise ValueError(f"Setup directory contains a symlink or non-directory: {mountpoint}")
+            finally:
+                os.close(descriptor)
     except FileNotFoundError:
         pass
     except OSError as exc:
