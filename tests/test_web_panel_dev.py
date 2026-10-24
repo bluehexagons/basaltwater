@@ -19,6 +19,36 @@ from lib.atomic_io import read_json_file
 from lib.github_runner_registration import ENDPOINT as RUNNER_REGISTRATION_ENDPOINT
 from scripts import panel_dev
 from scripts.panel_scenarios import Scenario
+from scripts.panel_specialized import SyntheticDesktop
+
+
+class SyntheticDesktopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_browser_cleanup_preserves_permission_and_refresh_does_not_extend_timer(self) -> None:
+        desktop = SyntheticDesktop("full")
+        with patch("scripts.panel_specialized.time") as clock:
+            clock.time.return_value = 1000
+            with self.assertRaises(PermissionError):
+                await desktop.call("browser-take")
+            taken = await desktop.call("browser-take", human_approved=True)
+            self.assertEqual(taken["override_remaining"], 900)
+            clock.time.return_value = 1100
+            refreshed = await desktop.call("browser-refresh")
+            self.assertEqual(refreshed["override_until"], taken["override_until"])
+            self.assertEqual(refreshed["control_revision"], taken["control_revision"])
+            released = await desktop.call("browser-release")
+            self.assertIsNone(released["browser_pause"])
+            self.assertEqual(released["agent_control"], "human-override")
+            clock.time.return_value = 1900
+            expired = await desktop.call("status")
+            self.assertEqual(expired["agent_control"], "enabled")
+            self.assertNotEqual(expired["control_revision"], taken["control_revision"])
+            await desktop.call("control", mode="disabled", human_approved=True)
+            await desktop.call("browser-logout")
+            restarted = await desktop.call("start")
+            self.assertEqual(restarted["agent_control"], "disabled")
+            indefinite = await desktop.call("browser-take", human_approved=True, override_seconds=None)
+            self.assertIsNone(indefinite["override_until"])
+            self.assertIsNone(indefinite["override_remaining"])
 
 
 class PanelDevelopmentTests(unittest.TestCase):

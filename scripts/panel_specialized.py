@@ -150,21 +150,40 @@ class SyntheticDesktop:
     def __init__(self, scenario: str):
         self.scenario = scenario
         self.state = {"state": "stopped" if scenario == "empty" else "running", "generation": "development-display",
-                      "geometry": [640, 480], "paused": False, "browser_pause": None}
+                      "geometry": [640, 480], "paused": False, "browser_pause": None,
+                      "agent_control": "enabled", "control_revision": uuid.uuid4().hex,
+                      "override_until": None, "override_remaining": None}
+
+    def permission(self, mode: str, seconds: int | None = 900) -> None:
+        self.state.update(agent_control=mode, control_revision=uuid.uuid4().hex,
+                          paused=mode != "enabled", browser_pause=None,
+                          override_until=time.time() + seconds if mode == "human-override" and seconds is not None else None)
 
     async def call(self, action, **kwargs):
         if self.scenario == "degraded":
             raise OSError("Synthetic desktop unavailable")
+        until = self.state["override_until"]
+        if until is not None and time.time() >= until:
+            self.permission("enabled")
         if action == "browser-take":
-            self.state.update(paused=True, browser_pause="f" * 32)
-        elif action in {"resume", "browser-release"}:
-            self.state.update(paused=False, browser_pause=None)
+            if kwargs.get("human_approved") is not True:
+                raise PermissionError("Synthetic takeover requires human approval")
+            self.permission("human-override", kwargs.get("override_seconds", 900))
+            self.state["browser_pause"] = uuid.uuid4().hex
+        elif action == "control":
+            if kwargs.get("human_approved") is not True or kwargs.get("mode") not in {"enabled", "human-override", "disabled"}:
+                raise PermissionError("Synthetic permission change requires human approval")
+            self.permission(kwargs["mode"], kwargs.get("seconds", 900))
+        elif action == "browser-release":
+            self.state["browser_pause"] = None
         elif action == "start":
             self.state["state"] = "running"
         elif action == "browser-logout":
             self.state.update(state="stopped", logout_requested=True)
         elif action not in {"status", "browser-refresh"}:
             raise RuntimeError("Unexpected synthetic desktop action")
+        until = self.state["override_until"]
+        self.state["override_remaining"] = max(0, int(until - time.time())) if until is not None else None
         return dict(self.state)
 
     async def login(self, session):

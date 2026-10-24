@@ -35,6 +35,7 @@ from lib.privilege_auth import password_record
 from lib.atomic_io import write_json_atomic
 from lib.validation import validate_filesystem_path
 from scripts.panel_samples import job_rows
+from scripts.panel_specialized import SyntheticDesktop
 
 
 def create_certificates(directory: Path) -> dict[str, Path]:
@@ -121,8 +122,7 @@ class FixtureEnvironment:
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self.runners = []
-        self.desktop = {"state": "running", "generation": "fixture-generation", "geometry": [640, 480],
-                        "paused": False, "browser_pause": None}
+        self.desktop = SyntheticDesktop("full")
 
     def __enter__(self) -> FixtureEnvironment:
         try:
@@ -132,9 +132,9 @@ class FixtureEnvironment:
             self.stack.enter_context(patch.object(subprocess, "Popen", side_effect=AssertionError("No processes in browser fixtures")))
             self.stack.enter_context(patch.object(panel, "discover_certificate_trust", side_effect=self.certificate_trust))
             self.stack.enter_context(patch.object(panel, "discover_basaltwater_web_services", return_value=[]))
-            self.stack.enter_context(patch.object(guacamole, "desktop_call", side_effect=self.desktop_call))
+            self.stack.enter_context(patch.object(guacamole, "desktop_call", side_effect=self.desktop.call))
             self.stack.enter_context(patch.object(guacamole.Gateway, "navigation", return_value=panel.panel_navigation(current="desktop")))
-            self.stack.enter_context(patch.object(guacamole.Gateway, "login", new=self.protocol_login))
+            self.stack.enter_context(patch.object(guacamole.Gateway, "login", new=self.desktop.login))
             self.thread.start()
             self.stack.callback(self.stop_loop)
             self.client = asyncio.run_coroutine_threadsafe(self.create_client(), self.loop).result(10)
@@ -286,35 +286,6 @@ class FixtureEnvironment:
             self.urls[name] = f"https://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
             if name == "guacamole":
                 config["origins"].append(self.urls[name])
-
-    async def desktop_call(self, action: str, **kwargs) -> dict:
-        if action == "browser-take":
-            self.desktop.update(paused=True, browser_pause="f" * 32)
-        elif action in {"resume", "browser-release"}:
-            self.desktop.update(paused=False, browser_pause=None)
-        elif action not in {"status", "start", "browser-refresh"}:
-            raise AssertionError("Unexpected synthetic desktop action")
-        return dict(self.desktop)
-
-    async def protocol_login(self, session):
-        class Writer:
-            def write(self, data):
-                pass
-            async def drain(self):
-                pass
-            def close(self):
-                pass
-            def is_closing(self):
-                return False
-            async def wait_closed(self):
-                pass
-        reader = asyncio.StreamReader()
-        writer = Writer()
-        session.upstream, session.password = writer, ""
-        reader.feed_data("".join(guacamole.instruction(*row) for row in (
-            ("size", "0", "640", "480"), ("rect", "0", "0", "0", "640", "480"),
-            ("cfill", "14", "0", "64", "128", "192", "255"), ("sync", "1"))).encode())
-        return reader, writer, "fixture-session"
 
     async def cleanup(self) -> None:
         for runner in reversed(self.runners):

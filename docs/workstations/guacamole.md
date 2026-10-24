@@ -49,9 +49,11 @@ starts or reuses the managed desktop. Merely opening the page does not start it.
 The Unix password is used in memory for the RDP handshake and is not saved,
 returned in responses, or written to logs.
 
-**Check desktop status** reads the supervisor's state, geometry and agent pause
+**Check desktop status** reads the supervisor's state, geometry and saved agent permission
 state without starting a desktop or creating a browser session. Opening the
-page itself remains read-only.
+page itself remains read-only. If the supervisor is stopped, saved permission
+is unavailable to the confined gateway until you connect; the owner's native
+control window and CLI can still inspect it.
 
 ## Mobile display and shell access
 
@@ -116,22 +118,26 @@ private Unix login endpoint, described below.
 New browser desktop connections are view-only. The gateway enforces this even if a
 client modifies the JavaScript or sends keyboard/pointer instructions directly.
 
-- **Take control** pauses cooperative agent desktop actions, then enables
-  browser keyboard and pointer input. It is the prominent primary control and
-  changes to **You have control** while active. Click the display to focus keyboard input.
-- **Observe only** disables browser input and retains the agent's pause state.
-- **Resume agent** disables browser input and explicitly resumes agent actions.
+- **Take control** saves a human override, then enables browser keyboard and
+  pointer input. On agent workstations, choose 15 minutes (the default), 5 minutes,
+  1 hour, or **Until I enable agents**. The button changes to **You have control**
+  while active. Click the display to focus keyboard input.
+- **Observe only** disables browser input and keeps the saved permission.
+- **Enable agents** ends the override or disabled state and allows authorized
+  agent actions. **Disable agents** blocks them until an explicit human change.
+  These choices appear on desktops with agent features. Ordinary desktops show
+  **Release control** and use indefinite takeover.
 - **Disconnect** revokes the current browser connection,
   scoped to this page's attachment. A disconnected page can revoke the active
   connection from another tab. A stale page cannot revoke a replacement
   connection with its old attachment. Disconnect releases this browser's control
-  and restores the pause state that existed before takeover. It preserves any
-  separate pause set before or during the connection. The desktop and applications
-  keep running. Closing the tab or losing the stream performs the same cleanup.
-- **Log out desktop** asks for confirmation, takes control, and requests a
+  and keeps saved agent permission and any override deadline. The desktop and
+  applications keep running. Closing the tab or losing the stream performs the
+  same cleanup.
+- **Log out desktop** requires you to take control first, asks for confirmation, and requests a
   normal desktop logout. This ends the desktop and its applications. The browser
   remains usable for unsaved-work dialogs; canceling logout retains control until
-  you observe, resume, or disconnect. Successful logout clears the browser session
+  you observe, enable agents, or disconnect. Successful logout clears the browser session
   automatically, so the next connection can start a new desktop directly.
 - **Fullscreen** changes the browser view. The client scales the display locally;
   it does not request live XRDP resolution changes.
@@ -140,23 +146,23 @@ One browser desktop connection is supported per VM account, alongside one consol
 XRDP also supports only one
 human RDP connection in this configuration; a native RDP client can take over
 the same display and disconnect the browser. Desktop restart or geometry changes
-require reconnecting. Pause is cooperative same-account coordination, not a
-sandbox. Keep sensitive administrator sign-ins and privilege approvals on your
+require reconnecting. Permission is cooperative same-account coordination;
+see [persistent desktop control](desktop-control.md) for approval boundaries,
+migration and storage. Keep sensitive administrator sign-ins and privilege approvals on your
 own device, outside the shared desktop.
 
-The gateway binds pause/resume to the observed desktop generation and geometry;
+The gateway binds permission actions to the observed desktop generation and geometry;
 the desktop supervisor checks these before changing state. Control is available
 only after the native tunnel supplies its first display sync. Canceling a login
 revokes its pending handshake immediately. The page serializes control requests
-and refreshes authoritative status every three seconds, so an external resume
-also clears the browser's control indicator. The gateway independently checks
-pause state and browser ownership before accepting keyboard or pointer input.
-An explicit local pause or resume replaces browser ownership and disables its
-input. Browser ownership has a 45-second lease, refreshed by the gateway while
-the connection is alive. If the gateway crashes or cleanup fails, the supervisor
-expires that lease and restores the previous pause state. Cleanup is conditional
-on the original desktop generation and ownership token; it cannot resume a
-replacement desktop or undo a later administrator pause.
+and refreshes authoritative status every three seconds. The gateway independently
+checks permission, its revision and browser ownership before accepting keyboard
+or pointer input. A human permission change or override expiry invalidates
+browser input. Browser ownership expires after 45 seconds without a gateway
+heartbeat. Heartbeats and cleanup keep the saved permission and its original
+deadline. Timed overrides enable agents at the chosen deadline, including after
+a disconnect or restart; indefinite overrides remain until a human changes them.
+Cleanup is conditional on the original desktop generation and ownership token.
 
 Clipboard, drive/file transfer, printing, audio, SFTP and recording are disabled.
 Browser instructions cannot select hosts, ports, protocols, other users, existing
@@ -184,7 +190,7 @@ Connections expire after one hour, or ten minutes without accepted control
 input or a control action. Network pings and display updates do not extend
 user inactivity. An observation-only connection therefore expires after ten
 minutes unless a control action occurs. Expiry leaves desktop applications running
-and releases any browser-owned control, while preserving separate agent pauses.
+and releases browser input while keeping saved agent permission.
 
 The page displays the remaining session and inactivity limits. Select
 **Observe only** to deliberately continue observing. Status polling does not
@@ -264,9 +270,9 @@ cannot select another host, port, account, private key or startup command.
 Removing Guacamole stops the private socket and active login instances and
 removes its configuration; the host key is retained for a later reinstall.
 Orderly service stops revoke sessions and release held browser keys/buttons
-and browser-owned pauses before terminating native children. Forced termination
-cannot guarantee input release, but the supervisor expires the browser pause
-lease. Disconnect before maintenance when possible.
+before terminating native children. Forced termination cannot guarantee input
+release, but the supervisor expires browser ownership. Saved agent permission
+survives either shutdown path. Disconnect before maintenance when possible.
 
 The gateway and RDP relay report readiness to systemd only after their listeners are
 established. The gateway additionally waits for `guacd` to listen. Setup waits
@@ -327,7 +333,7 @@ basaltw patch 192.168.1.50 agent --no-guacamole
 
 Removal preserves the native package and desktop; it does not remove runtime
 libraries or reset Unix passwords. Stopping browser access releases its control;
-separate agent pauses are preserved. A successful rerun
+saved agent permission is preserved. A successful rerun
 reconciles services and browser ingress. Setup refuses unmanaged service files.
 It checks managed configuration before changing browser ingress during removal.
 
@@ -351,7 +357,7 @@ private SSH socket activation, PAM login, shell permissions, bounded lifetime,
 and grouped removal.
 
 Synthetic browser checks cover view-only behavior, takeover, reconnect,
-external resume, Unicode input, touch/trackpad controls, zoom, panning,
+external permission changes, Unicode input, touch/trackpad controls, zoom, panning,
 terminal input and desktop/mobile layouts. These checks do not qualify a live
 XRDP desktop, a native phone keyboard or fullscreen transition, keyboard-layout
 compatibility, native RDP-client coexistence, GPU applications, or every
