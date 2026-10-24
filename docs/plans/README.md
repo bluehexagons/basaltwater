@@ -9,6 +9,10 @@ The package version is 2.0.0rc1. The v2.0.0-rc.1 tag is not published, and
 the stable release remains gated by the [qualification matrix](../release-qualification.md).
 Further CachyOS enhancements are outside this release pass.
 
+The [test surface and lab coverage ledger](testing-coverage.md) tracks selected
+live workflows, automated-check boundaries and untested areas across the product.
+It supplements the exact-candidate release gate and is updated after each lab batch.
+
 ## Current portfolio
 
 | Area | Current status | Next boundary |
@@ -59,5 +63,7 @@ acceptance. This table keeps a compact current disposition; reports #111 and
 
 Operator guides describe current behavior. The release matrix records required
 qualification. This portfolio and the roadmap describe active or explicitly
-deferred work; GitHub issues own detailed acceptance. Completed audit snapshots
-and implementation chronologies are not maintained as separate documents.
+deferred work; GitHub issues own detailed acceptance. The test coverage ledger
+maintains current workflow coverage and gaps; private records retain raw evidence.
+Completed audit snapshots and implementation chronologies are not maintained as
+separate public documents.
