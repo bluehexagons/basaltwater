@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -9,6 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from lib.atomic_io import write_bytes_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
 from sync.syncthing_steps import (
@@ -164,6 +166,16 @@ class SyncthingDesiredConfigTest(unittest.TestCase):
         self.assertIn("NoNewPrivileges=true", service)
         self.assertIn("ProtectHome=true", service)
         self.assertIn("ProtectSystem=strict", service)
+        self.assertIn("PrivateTmp=true", service)
+        self.assertIn("PrivateDevices=true", service)
+        self.assertEqual(
+            [line for line in service.splitlines() if line.startswith("ReadOnlyPaths=")],
+            ["ReadOnlyPaths=/tmp /var/tmp /dev/shm"],
+        )
+        self.assertEqual(
+            [line for line in service.splitlines() if line.startswith("ReadWritePaths=")],
+            [f'ReadWritePaths="{SYNCTHING_HOME}"', f'ReadWritePaths="{DEFAULT_SYNCTHING_ROOT}"'],
+        )
         self.assertIn("CapabilityBoundingSet=", service)
         self.assertIn("--gui-address=http://127.0.0.1:8384", service)
         self.assertIn(f'ReadWritePaths="{SYNCTHING_HOME}"', service)
@@ -276,6 +288,7 @@ class SyncthingShareRootTest(unittest.TestCase):
             with (
                 self.subTest(failed_probe=failed_probe),
                 patch("sync.syncthing_steps._validate_state_paths"),
+                patch("sync.syncthing_steps._assert_no_syncthing_recovery"),
                 patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
                 patch("sync.syncthing_steps.is_dry_run", return_value=False),
                 patch("sync.syncthing_steps.is_package_installed", return_value=True),
@@ -490,6 +503,7 @@ class SyncthingCompositionTest(unittest.TestCase):
             share_credentials=None,
         )
         with (
+            patch("sync.syncthing_steps._assert_no_syncthing_recovery"),
             patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
             patch("sync.syncthing_steps.is_dry_run", return_value=False),
             patch("sync.syncthing_steps._remove_syncthing_https") as remove_https,
@@ -527,6 +541,7 @@ class SyncthingCompositionTest(unittest.TestCase):
         )
         completed = subprocess.CompletedProcess(args=[], returncode=0)
         with (
+            patch("sync.syncthing_steps._assert_no_syncthing_recovery"),
             patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
             patch("sync.syncthing_steps.is_dry_run", return_value=False),
             patch("sync.syncthing_steps._remove_syncthing_https"),
@@ -555,6 +570,7 @@ class SyncthingCompositionTest(unittest.TestCase):
         ):
             with (
                 self.subTest(disable_rc=disable_rc, state=state, enabled=enabled),
+                patch("sync.syncthing_steps._assert_no_syncthing_recovery"),
                 patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
                 patch("sync.syncthing_steps.is_dry_run", return_value=False),
                 patch("sync.syncthing_steps._remove_syncthing_https"),
@@ -599,93 +615,6 @@ class SyncthingCompositionTest(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "unit preserved"):
                         _disable_before_removal(False)
 
-    def test_setup_hashes_admin_from_stdin_and_preserves_gui_shares(self) -> None:
-        completed = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=LOCAL_DEVICE_ID + "\n",
-            stderr="",
-        )
-        with (
-            patch("sync.syncthing_steps._validate_state_paths"),
-            patch("sync.syncthing_steps._stop_before_configuration"),
-            patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
-            patch("sync.syncthing_steps.is_dry_run", return_value=False),
-            patch("sync.syncthing_steps.is_package_installed", return_value=True),
-            patch("sync.syncthing_steps._account", return_value=(1000, 1000, "agent")),
-            patch("sync.syncthing_steps.os.makedirs"),
-            patch("sync.syncthing_steps.os.chmod"),
-            patch("sync.syncthing_steps.os.chown"),
-            patch("sync.syncthing_steps._prepare_share_root"),
-            patch("sync.syncthing_steps.write_text_atomic"),
-            patch("sync.syncthing_steps.run") as run_command,
-            patch("sync.syncthing_steps._wait_for_api"),
-            patch(
-                "sync.syncthing_steps._run_as_user",
-                return_value=completed,
-            ) as run_as_user,
-            patch(
-                "sync.syncthing_steps._load_current_config",
-                return_value=_current_config(),
-            ),
-            patch("sync.syncthing_steps._put_config") as put_config,
-            patch(
-                "sync.syncthing_steps._configure_syncthing_https",
-                return_value="https://fileserver:8444/",
-            ),
-        ):
-            run_command.return_value = completed
-            setup_syncthing(_config())
-
-        generate_call = run_as_user.call_args_list[0]
-        self.assertIn("--gui-password=-", generate_call.args[1])
-        self.assertEqual(
-            generate_call.kwargs["input_data"],
-            "correct horse battery staple\n",
-        )
-        desired = put_config.call_args.args[0]
-        self.assertEqual(desired["folders"][0]["id"], "shared-work")
-        self.assertEqual(desired["devices"][1]["name"], "alice-laptop")
-
-    def test_setup_disables_service_when_post_start_policy_is_unsafe(self) -> None:
-        completed = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=LOCAL_DEVICE_ID + "\n",
-            stderr="",
-        )
-        with (
-            patch("sync.syncthing_steps._validate_state_paths"),
-            patch("sync.syncthing_steps._stop_before_configuration"),
-            patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
-            patch("sync.syncthing_steps.is_dry_run", return_value=False),
-            patch("sync.syncthing_steps.is_package_installed", return_value=True),
-            patch("sync.syncthing_steps._preflight_existing_folders"),
-            patch("sync.syncthing_steps._account", return_value=(1000, 1000, "agent")),
-            patch("sync.syncthing_steps.os.makedirs"),
-            patch("sync.syncthing_steps.os.chmod"),
-            patch("sync.syncthing_steps.os.chown"),
-            patch("sync.syncthing_steps._prepare_share_root"),
-            patch("sync.syncthing_steps.write_text_atomic"),
-            patch("sync.syncthing_steps.run", return_value=completed) as run_command,
-            patch("sync.syncthing_steps._wait_for_api"),
-            patch("sync.syncthing_steps._run_as_user", return_value=completed),
-            patch(
-                "sync.syncthing_steps._load_current_config",
-                return_value=_current_config(),
-            ),
-            patch("sync.syncthing_steps._put_config") as put_config,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "outside the configured"):
-                setup_syncthing(_config(syncthing_root="/mnt/team-files"))
-
-        put_config.assert_not_called()
-        commands = [call.args[0] for call in run_command.call_args_list]
-        self.assertIn(
-            ["systemctl", "disable", "--now", "basaltwater-syncthing.service"],
-            commands,
-        )
-
     def test_https_route_uses_shared_gateway_and_syncthing_profile(self) -> None:
         completed = subprocess.CompletedProcess(
             args=[],
@@ -719,6 +648,320 @@ class SyncthingCompositionTest(unittest.TestCase):
         command = run_command.call_args.args[0]
         self.assertIn("--to 127.0.0.1:8384", command)
         self.assertIn("--profile syncthing", command)
+
+
+class SyncthingReconciliationTest(unittest.TestCase):
+    """Real private file transactions; all service/CLI/HTTP effects are mocked."""
+
+    old_config = b"<configuration>old login and GUI shares</configuration>\r\n"
+    old_unit = "[Service]\nDescription=prior managed endpoint\n"
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.parent = temporary.name
+        self.home = os.path.join(self.parent, "syncthing")
+        self.unit_dir = os.path.join(self.parent, "units")
+        self.unit = os.path.join(self.unit_dir, "basaltwater-syncthing.service")
+        self.xml = os.path.join(self.home, "config.xml")
+        self.marker = os.path.join(self.parent, ".syncthing-operation.json")
+        os.mkdir(self.home, 0o700)
+        os.mkdir(self.unit_dir, 0o700)
+        write_bytes_atomic(self.xml, self.old_config, mode=0o640)
+        write_text_atomic(self.unit, self.old_unit, mode=0o640)
+        self.original_info = os.stat(self.xml)
+        self.identity = {"cert.pem": b"original cert", "key.pem": b"original key", "index-v0.14.0.db/data": b"database"}
+        for relative, content in self.identity.items():
+            write_bytes_atomic(os.path.join(self.home, relative), content)
+        self.active = True
+        self.enabled = "enabled"
+        self.failure = ""
+        self.failed = False
+        self.recovery_failure = ""
+        self.waits = 0
+        self.commands: list[list[str]] = []
+        for name, value in (("SYNCTHING_HOME", self.home), ("SYNCTHING_SERVICE_FILE", self.unit)):
+            self.enterContext(patch(f"sync.syncthing_steps.{name}", value))
+        for name in ("_prepare_state_home", "_preflight_existing_folders", "_prepare_share_root"):
+            self.enterContext(patch(f"sync.syncthing_steps.{name}"))
+        self.enterContext(patch("sync.syncthing_steps.can_manage_system_services", return_value=True))
+        self.enterContext(patch("sync.syncthing_steps.is_dry_run", return_value=False))
+        self.enterContext(patch("sync.syncthing_steps.is_package_installed", return_value=True))
+        self.enterContext(patch("sync.syncthing_steps._account", return_value=(os.getuid(), os.getgid(), "agent")))
+        self.enterContext(patch("sync.syncthing_steps.run", side_effect=self.command))
+        self.enterContext(patch("lib.unit_transaction.run", side_effect=self.command))
+        self.generator = self.enterContext(patch("sync.syncthing_steps._run_as_user", side_effect=self.generate))
+        self.enterContext(patch("sync.syncthing_steps.write_text_atomic", side_effect=self.write_unit))
+        self.enterContext(patch("sync.syncthing_steps.write_bytes_atomic", side_effect=self.write_config))
+        self.enterContext(patch("sync.syncthing_steps._wait_for_api", side_effect=self.wait_for_api))
+        self.enterContext(patch("sync.syncthing_steps._load_current_config", return_value=_current_config()))
+        self.policy = self.enterContext(patch("sync.syncthing_steps._put_config", side_effect=self.put_config))
+        self.https = self.enterContext(patch("sync.syncthing_steps._configure_syncthing_https", return_value=None))
+
+    def fail(self, stage: str) -> None:
+        if self.failure == stage and not self.failed:
+            self.failed = True
+            raise RuntimeError(f"{stage} failed")
+
+    def command(self, args: list[str], **_kwargs: object) -> SimpleNamespace:
+        self.commands.append(args)
+        stdout = ""
+        rc = 0
+        exists = os.path.exists(self.unit)
+        if args[0] == "systemd-analyze":
+            self.fail("verify")
+        elif args[:2] == ["systemctl", "show"]:
+            load = "loaded" if exists else "not-found"
+            if "--value" in args:
+                stdout = load
+            else:
+                stdout = (f"LoadState={load}\nActiveState={'active' if self.active else 'inactive'}\n"
+                          f"SubState={'running' if self.active else 'dead'}\n"
+                          f"UnitFileState={self.enabled if exists else ''}\n")
+        elif args[:2] == ["systemctl", "stop"]:
+            if self.failed and self.recovery_failure == "stop":
+                raise RuntimeError("rollback stop failed")
+            self.active = False
+            rc = 0 if exists else 1
+            self.fail("stop")  # The daemon may stop before the command fails.
+        elif args[:2] == ["systemctl", "is-active"]:
+            stdout = "active" if self.active else ("inactive" if exists else "unknown")
+            rc = 0 if self.active else (3 if exists else 4)
+        elif args[:2] == ["systemctl", "disable"]:
+            self.enabled = "disabled"
+            if self.failed and self.recovery_failure == "disable":
+                raise RuntimeError("rollback disable failed")
+        elif args[:2] == ["systemctl", "enable"]:
+            self.enabled = "enabled-runtime" if "--runtime" in args else "enabled"
+            if "--now" in args:
+                self.active = True
+                if self.failure == "unverified-enable":
+                    self.enabled = "disabled"
+                self.fail("activation")
+            elif self.failed and self.recovery_failure == "enable":
+                raise RuntimeError("rollback enable failed")
+        elif args[:2] == ["systemctl", "restart"]:
+            self.active = True
+            self.fail("restart")
+        elif args[:2] == ["systemctl", "start"]:
+            # Restoration must publish the prior login and unit before start.
+            self.assertEqual(self.read(self.xml), self.old_config)
+            self.assertEqual(self.read(self.unit).decode(), self.old_unit)
+            if self.recovery_failure == "start":
+                raise RuntimeError("rollback start failed")
+            self.active = True
+            if self.recovery_failure == "verification":
+                self.enabled = "disabled"
+        elif args[:2] == ["systemctl", "daemon-reload"]:
+            self.fail("reload")
+        else:
+            raise AssertionError(f"Unmocked command: {args}")
+        return SimpleNamespace(returncode=rc, stdout=stdout, stderr="")
+
+    def generate(self, _username: str, args: list[str], **_kwargs: object) -> SimpleNamespace:
+        if args[0] == "generate":
+            self.assertFalse(self.active)
+            for name in ("cert.pem", "key.pem"):
+                path = os.path.join(self.home, name)
+                if not os.path.exists(path):
+                    write_bytes_atomic(path, b"first-install " + name.encode())
+            write_bytes_atomic(self.xml, b"rotated login", mode=0o600)
+            self.fail("generation")  # Models a partial credential mutation.
+        else:
+            self.fail("device-id")
+        return SimpleNamespace(returncode=0, stdout=LOCAL_DEVICE_ID + "\n", stderr="")
+
+    def write_unit(self, path: str, content: str, **kwargs: int) -> None:
+        if content == self.old_unit and self.recovery_failure == "unit":
+            raise OSError("unit restore failed")
+        write_text_atomic(path, content, **kwargs)
+        if path == self.unit and content != self.old_unit:
+            self.fail("unit")  # Atomic publication may succeed before fsync fails.
+
+    def write_config(self, path: str, content: bytes, **kwargs: int) -> None:
+        if path == self.xml and content == self.old_config and self.recovery_failure == "config":
+            raise OSError("config restore failed")
+        write_bytes_atomic(path, content, **kwargs)
+
+    def wait_for_api(self, _username: str) -> None:
+        self.waits += 1
+        if self.failed and self.recovery_failure == "health":
+            raise RuntimeError("restored API unavailable")
+        self.fail("initial-health" if self.waits == 1 else "final-health")
+
+    def put_config(self, _desired: dict) -> None:
+        write_bytes_atomic(self.xml, b"new policy and login")
+        self.fail("policy")  # A failed HTTP response can follow a committed PUT.
+
+    @staticmethod
+    def read(path: str) -> bytes:
+        with open(path, "rb") as stream:
+            return stream.read()
+
+    def assert_identity_retained(self) -> None:
+        for relative, content in self.identity.items():
+            self.assertEqual(self.read(os.path.join(self.home, relative)), content)
+
+    def assert_no_recovery(self) -> None:
+        self.assertFalse(os.path.exists(self.marker))
+        self.assertFalse(any(name.startswith(".syncthing-recovery-") for name in os.listdir(self.parent)))
+
+    def test_success_rotates_login_from_stdin_preserves_gui_shares_and_cleans_snapshots(self) -> None:
+        setup_syncthing(_config())
+        generate_call = self.generator.call_args_list[0]
+        self.assertIn("--gui-password=-", generate_call.args[1])
+        self.assertEqual(generate_call.kwargs["input_data"], "correct horse battery staple\n")
+        self.assertNotIn("correct horse battery staple", str(generate_call.args))
+        desired = self.policy.call_args.args[0]
+        self.assertEqual(desired["folders"], _current_config()["folders"])
+        self.assertEqual(desired["devices"], _current_config()["devices"])
+        self.assertTrue(self.active)
+        self.assertEqual(self.enabled, "enabled")
+        self.assertEqual(self.read(self.xml), b"new policy and login")
+        self.assert_identity_retained()
+        self.assert_no_recovery()
+
+    def test_failures_restore_prior_login_unit_metadata_activation_and_identity(self) -> None:
+        for stage in ("stop", "generation", "unit", "verify", "reload", "activation", "initial-health", "device-id", "policy", "restart", "final-health"):
+            with self.subTest(stage=stage):
+                self.failure, self.failed, self.waits = stage, False, 0
+                with self.assertRaisesRegex(RuntimeError, f"{stage} failed"):
+                    setup_syncthing(_config())
+                self.assertEqual(self.read(self.xml), self.old_config)
+                info = os.stat(self.xml)
+                self.assertEqual((info.st_mode, info.st_uid, info.st_gid),
+                                 (self.original_info.st_mode, self.original_info.st_uid, self.original_info.st_gid))
+                self.assertEqual(self.read(self.unit).decode(), self.old_unit)
+                self.assertEqual(os.stat(self.unit).st_mode & 0o777, 0o640)
+                self.assertTrue(self.active)
+                self.assertEqual(self.enabled, "enabled")
+                self.assert_identity_retained()
+                self.assert_no_recovery()
+                self.https.assert_not_called()
+
+    def test_unsafe_post_start_policy_restores_existing_endpoint(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "outside the configured"):
+            setup_syncthing(_config(syncthing_root="/mnt/team-files"))
+        self.policy.assert_not_called()
+        self.assertEqual(self.read(self.xml), self.old_config)
+        self.assertTrue(self.active)
+        self.assertEqual(self.enabled, "enabled")
+        self.assert_no_recovery()
+
+    def test_successful_commands_do_not_hide_unverified_enablement(self) -> None:
+        self.failure = "unverified-enable"
+        with self.assertRaisesRegex(RuntimeError, "not active and enabled"):
+            setup_syncthing(_config())
+        self.assertEqual(self.read(self.xml), self.old_config)
+        self.assertTrue(self.active)
+        self.assertEqual(self.enabled, "enabled")
+        self.assert_no_recovery()
+
+    def test_snapshot_includes_configuration_flushed_by_stop(self) -> None:
+        self.old_config = b"configuration flushed by daemon during shutdown\r\n"
+        self.failure = "generation"
+
+        def flush_on_stop() -> None:
+            _stop_before_configuration()
+            write_bytes_atomic(self.xml, self.old_config, mode=0o640)
+
+        with patch("sync.syncthing_steps._stop_before_configuration", side_effect=flush_on_stop):
+            with self.assertRaisesRegex(RuntimeError, "generation failed"):
+                setup_syncthing(_config())
+        self.assertEqual(self.read(self.xml), self.old_config)
+        self.assertTrue(self.active)
+        self.assert_no_recovery()
+
+    def test_restore_preserves_independent_activation_and_enablement(self) -> None:
+        for active, enabled in ((True, "disabled"), (True, "enabled-runtime"), (False, "enabled"), (False, "disabled")):
+            with self.subTest(active=active, enabled=enabled):
+                self.active, self.enabled = active, enabled
+                self.failure, self.failed = "policy", False
+                with self.assertRaisesRegex(RuntimeError, "policy failed"):
+                    setup_syncthing(_config())
+                self.assertEqual(self.active, active)
+                self.assertEqual(self.enabled, enabled)
+                self.assertEqual(self.read(self.xml), self.old_config)
+                self.assert_no_recovery()
+
+    def test_rollback_failures_retain_private_snapshots_and_block_retry(self) -> None:
+        for failure in ("stop", "disable", "config", "unit", "enable", "start", "health", "verification"):
+            with self.subTest(failure=failure):
+                self.active, self.enabled, self.failed = True, "enabled", False
+                self.failure, self.recovery_failure = "policy", failure
+                write_bytes_atomic(self.xml, self.old_config, mode=0o640)
+                write_text_atomic(self.unit, self.old_unit, mode=0o640)
+                with self.assertRaisesRegex(RuntimeError, "rollback needs recovery"):
+                    setup_syncthing(_config())
+                record = json.loads(self.read(self.marker))
+                self.assertEqual(record["status"], "recovery_required")
+                backup = record["context"]["backup_dir"]
+                self.assertEqual(os.stat(backup).st_mode & 0o777, 0o700)
+                self.assertEqual(self.read(os.path.join(backup, "config.xml")), self.old_config)
+                self.assertEqual(set(os.listdir(backup)), {"config.xml", "config-metadata.json", "previous.json"})
+                for name in os.listdir(backup):
+                    self.assertEqual(os.stat(os.path.join(backup, name)).st_mode & 0o777, 0o600)
+                self.assertNotIn("correct horse battery staple", self.read(self.marker).decode())
+                before = len(self.commands)
+                with self.assertRaisesRegex(ValueError, "Unfinished syncthing-reconciliation"):
+                    setup_syncthing(_config())
+                with self.assertRaisesRegex(ValueError, "Unfinished syncthing-reconciliation"):
+                    setup_syncthing(_config(enable_syncthing=False, disable_syncthing=True))
+                self.assertEqual(len(self.commands), before)
+                self.assert_identity_retained()
+                # Explicit fixture reset models operator recovery between cases;
+                # application code must never bypass this guard automatically.
+                os.unlink(self.marker)
+
+    def test_failed_first_install_is_stopped_disabled_and_retains_generated_identity(self) -> None:
+        os.unlink(os.path.join(self.home, "index-v0.14.0.db/data"))
+        os.rmdir(os.path.join(self.home, "index-v0.14.0.db"))
+        for stage in ("generation", "unit", "activation", "policy", "final-health"):
+            with self.subTest(stage=stage):
+                for name in ("config.xml", "cert.pem", "key.pem"):
+                    os.unlink(os.path.join(self.home, name))
+                if os.path.exists(self.unit):
+                    os.unlink(self.unit)
+                self.active, self.enabled, self.failed, self.waits = False, "disabled", False, 0
+                self.failure = stage
+                with self.assertRaisesRegex(RuntimeError, f"{stage} failed"):
+                    setup_syncthing(_config())
+                self.assertFalse(self.active)
+                self.assertEqual(self.enabled, "disabled")
+                self.assertFalse(os.path.exists(self.unit))
+                for name in ("cert.pem", "key.pem"):
+                    self.assertEqual(self.read(os.path.join(self.home, name)), b"first-install " + name.encode())
+                self.assertTrue(os.path.exists(self.xml))
+                self.assertNotIn(["systemctl", "start", "basaltwater-syncthing.service"], self.commands)
+                self.assert_no_recovery()
+
+    def test_incomplete_identity_refuses_silent_device_regeneration_before_stop(self) -> None:
+        for retained in ("cert.pem", "key.pem", "config.xml", None):
+            with self.subTest(retained=retained):
+                for name in ("cert.pem", "key.pem", "config.xml"):
+                    path = os.path.join(self.home, name)
+                    if name == retained:
+                        write_bytes_atomic(path, b"existing identity fragment")
+                    elif os.path.exists(path):
+                        os.unlink(path)
+                with self.assertRaisesRegex(RuntimeError, "Incomplete Syncthing identity"):
+                    setup_syncthing(_config())
+        self.generator.assert_not_called()
+        self.assertEqual(self.commands, [])
+        self.assertTrue(self.active)
+
+    def test_missing_prior_config_never_reenables_an_unverified_stale_unit(self) -> None:
+        os.unlink(self.xml)
+        self.active = False
+        self.failure = "generation"
+        with self.assertRaisesRegex(RuntimeError, "generation failed"):
+            setup_syncthing(_config())
+        self.assertFalse(self.active)
+        self.assertEqual(self.enabled, "disabled")
+        self.assertEqual(self.read(self.unit).decode(), self.old_unit)
+        self.assertEqual(self.read(self.xml), b"rotated login")
+        self.assert_identity_retained()
+        self.assert_no_recovery()
 
 
 if __name__ == "__main__":

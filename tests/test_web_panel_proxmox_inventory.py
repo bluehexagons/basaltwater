@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -221,6 +222,7 @@ class ProxmoxInventoryTests(unittest.TestCase):
         def start(command, **kwargs):
             self.assertEqual(command, ["/usr/bin/pvesh", "get", "/version", "--output-format", "json"])
             self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["group"], 0)
             self.assertTrue(kwargs["start_new_session"])
             kwargs["stdout"].write(b'{"version":"9.1.0"}')
             return process
@@ -383,6 +385,27 @@ class ProxmoxSnapshotSetupTests(unittest.TestCase):
         self.units.return_value = None
         steps.remove_proxmox_snapshot()
         self.assertEqual(self.remove.call_count, 1)
+
+    def test_removal_preserves_leftover_files_without_blocking_teardown(self) -> None:
+        self.directory.mkdir()
+        leftovers = (self.directory / ".inventory.json-interrupted", self.directory / "operator-note")
+        for leftover in leftovers:
+            leftover.write_text("retain")
+        self.path.write_text("{}")
+        self.units.return_value = {"content": steps._MARKER + "\n"}
+        steps.remove_proxmox_snapshot()
+        self.remove.assert_called_once_with((steps.SNAPSHOT_TIMER, steps.SNAPSHOT_SERVICE))
+        self.assertFalse(self.path.exists())
+        self.units.return_value = None
+        steps.remove_proxmox_snapshot()
+        self.assertEqual(self.remove.call_count, 1)
+        self.assertEqual([leftover.read_text() for leftover in leftovers], ["retain", "retain"])
+
+    def test_removal_does_not_suppress_unrelated_directory_errors(self) -> None:
+        self.directory.mkdir()
+        with patch.object(steps.os, "rmdir", side_effect=PermissionError(errno.EACCES, "denied")):
+            with self.assertRaises(PermissionError):
+                steps.remove_proxmox_snapshot()
 
 
 if __name__ == "__main__":

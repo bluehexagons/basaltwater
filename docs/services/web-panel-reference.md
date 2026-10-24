@@ -143,6 +143,11 @@ and collector. To investigate missing or stale data, inspect
 `systemctl status basaltwater-web-panel-proxmox.timer` and
 `journalctl -u basaltwater-web-panel-proxmox.service` on the host.
 
+The fixed `pvesh` child commands use root's primary group for
+[Proxmox IPC authentication](https://github.com/proxmox/pve-cluster/blob/master/src/pmxcfs/server.c#L106).
+The exporter retains the panel group when publishing the
+snapshot; the web worker receives no additional group memberships or privileges.
+
 Existing host metrics, services, mounted storage, scheduled jobs and service
 diagnostics remain available. The diagnostic allowlist includes `pveproxy`,
 `pvedaemon`, `pvestatd`, `pve-cluster`, `corosync`, `pve-firewall` and
@@ -599,6 +604,10 @@ rules, its Nginx site and systemd isolation drop-in, backend/configuration,
 inventory collector/timer/snapshot and Fail2ban configuration; the shared CA,
 Nginx/OpenSSL packages, native Proxmox UI/configuration, and unowned firewall
 rules remain.
+
+If the inventory directory contains leftover temporary files from an interrupted
+write or other unrecognized files, removal preserves that directory and its
+remaining contents while completing the rest of panel teardown.
 
 The panel renders saved configured access and discovers live `basaltwater-web`
 forwards and static sites. HomeBox status is a loopback readiness probe only;

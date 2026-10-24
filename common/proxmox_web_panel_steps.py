@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 
 from lib.atomic_io import write_text_atomic
@@ -106,8 +107,11 @@ def remove_proxmox_snapshot() -> None:
         pass
     try:
         os.rmdir(SNAPSHOT_DIR)
-    except FileNotFoundError:
-        pass
+    except OSError as exc:
+        # Interrupted atomic writes can leave temporary files. Preserve these
+        # and any unrecognized contents without blocking the rest of teardown.
+        if exc.errno not in {errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST}:
+            raise
 
 
 def preflight_proxmox_panel_nginx() -> dict | None:

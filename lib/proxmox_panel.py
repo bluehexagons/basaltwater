@@ -197,7 +197,10 @@ def _query(path: str, *, timeout: float = 8, local_node: str | None = None) -> o
     with tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
             ["/usr/bin/pvesh", "get", path, "--output-format", "json"],
-            stdout=output, stderr=subprocess.DEVNULL, start_new_session=True, preexec_fn=_limit_output,
+            stdout=output, stderr=subprocess.DEVNULL, start_new_session=True,
+            # pmxcfs authenticates root IPC clients by both UID and primary GID.
+            # Keep the exporter itself in the panel group for snapshot writes.
+            group=0, preexec_fn=_limit_output,
         )
         try:
             returncode = process.wait(timeout=timeout)

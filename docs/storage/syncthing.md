@@ -162,6 +162,20 @@ settings are never reset by a Basaltwater rerun. Versioning is useful recovery
 but is not an independent backup; retain server snapshots or another backup
 for disk loss, administrator mistakes, or compromise.
 
+Versioning archives changes received from another device; it cannot preserve
+the previous contents of a file edited locally on that same endpoint. Staggered
+history keeps the oldest version in each retention interval, starting with
+30-second intervals during the first hour and widening as versions age. A
+one-year maximum age does not guarantee every intermediate edit survives.
+Restore an archived copy on the device holding that history; the restored file
+then synchronizes to its peers. See Syncthing's
+[versioning rules](https://docs.syncthing.net/users/versioning.html).
+
+Concurrent edits can produce a `sync-conflict` copy that also synchronizes to
+peers. Review both copies and resolve the contents deliberately; Syncthing does
+not merge their text. See its
+[conflict behavior](https://docs.syncthing.net/users/syncing.html#conflicting-changes).
+
 ## Administrator credential rotation
 
 Replace the stored credential and reconcile the saved setup:
@@ -196,6 +210,27 @@ Runtime staging makes `/var/lib/basaltwater` private to root. Syncthing setup
 reapplies a traverse-only ACL for the service user on that parent before
 checking the existing endpoint, then verifies access as that user. Its own
 state directory remains mode `0700`; device keys and configuration are retained.
+
+Reconciliation snapshots the managed unit and its activation/enablement state,
+then stops the daemon and privately snapshots the latest `config.xml` before
+changing the login. Generation, unit publication/verification, activation, and
+API policy/health checks share this recovery boundary. A failed replacement
+restores the prior XML bytes, owner, group and mode, the prior unit, and its
+activation/enablement state; a previously active endpoint must also regain API
+health. The certificate, device key, database and synchronized files stay in
+place and are never rolled back. Incomplete certificate/key pairs are refused
+instead of silently generating a different device identity.
+
+A failed first install remains stopped and disabled, with generated identity
+and configuration retained for a later attempt. If rollback cannot be verified,
+setup reports failure and retains a private
+`/var/lib/basaltwater/.syncthing-recovery-*` directory and
+`/var/lib/basaltwater/.syncthing-operation.json` marker. The snapshots contain
+login configuration and must remain private. An unfinished marker blocks another
+reconciliation. Inspect the recorded unit state and snapshots using the
+[transaction recovery guidance](../operations/transaction-recovery.md); verify
+the restored login, device identity, unit and activation state before resolving
+the marker. Do not delete recovery evidence merely to retry setup.
 
 On a combined Samba/Gogs/Syncthing server, use separate sibling roots, such as
 `/srv/shares`, `/srv/gogs`, and `/srv/syncthing`. Do not synchronize or export
@@ -232,8 +267,17 @@ the data is no longer needed.
 - The GUI remains bound to `127.0.0.1:8384`; only the managed HTTPS gateway is
   externally reachable, and its firewall scope follows Basaltwater access
   sources.
-- The service can write only its state directory and configured storage root;
-  GUI folder paths outside that root fail rather than expanding access.
+- The service's ordinary filesystem write allowlist consists of its private
+  state directory and configured storage root. Setup rejects existing GUI
+  folder paths outside the storage root; changing a path in the GUI does not
+  expand the systemd allowlist. Keep synchronized folders in the storage root,
+  separate from the writable application state.
+- `PrivateTmp=true` and `PrivateDevices=true` retain private namespaces.
+  `/tmp`, `/var/tmp`, and `/dev/shm` are explicitly read-only, closing temporary
+  filesystem exceptions to `ProtectSystem=strict`. The unit provides no
+  writable general temporary directory: any temporary-file requirement must
+  use the approved storage root or private service state, rather than widening
+  the sandbox.
 - Automatic router mapping is disabled. Existing routing can permit direct
   device connections; otherwise outbound relay fallback remains enabled.
 - Device IDs grant folder-level Syncthing trust, not Unix or general network

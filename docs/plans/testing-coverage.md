@@ -88,9 +88,10 @@ in the evidence index below; raw logs and host inventories stay outside Git.
 | PANEL-SETUP | Proxmox panel lifecycle | Live slice: setup/rerun/removal/reinstall, private CA/auth persistence, native PVE isolation and firewall preservation | E10 |
 | PANEL-UI | Panel browser behavior | Partial: Chromium/Firefox first-party and synthetic Guacamole suite; selected real-host pages; no native PVE console or Firefox ESR qualification | E10 |
 | PANEL-JOBS | Real timers and journals | Live slice: failure then recovery, filtering/search/escaping/redaction, entry/byte bounds, partial results and historical views after removal | E11 |
-| STO-JOBS | Path mirrors and PAR2 recovery | Live slice: small-file mirrors/PAR2, damage preservation and targeted recovery, unsafe-input rejection, populated rerun/reboot; missing endpoints block dependent jobs while independent jobs continue; absent nested mounts preserve backup subtrees; private mount views survive controlled source/destination detachment at endpoints and nested paths; native QEMU/LXC rsync and denied-namespace refusal checked; worker-discovered exclusions reach warning summaries and hold completion cadence until recovery. Real power loss and network-filesystem failure during transfer remain open | E12, E13 |
-| STO-SMB | Samba server/client | Live slice: encrypted authenticated SMB3.1.1 read/write/rename/delete, readonly/user/anonymous rejection, fast access change/removal preserving data, TCP445-only reconciliation, headless CIFS helpers, failed-automount repair, service-user access, idle reactivation and reboot. Windows/macOS clients and transport-loss recovery remain open | E13 |
-| STO-SYNCTHING | Syncthing | Live slice: direct two-device exchange, disconnected edit recovery/version history, populated reruns, reboot and removal/re-enable preserving identity and folders; private-CA HTTPS/API authentication, unsafe-root and inaccessible-ancestor rejection. Browser GUI, relays/discovery and conflicting edits remain open | E13 |
+| PANEL-PVE | Proxmox inventory snapshot | Partial: real cached API reads, sanitized export under the collector's systemd restrictions, panel-group read permissions and production rendering; primary-group IPC failure reproduced and fixed. The new collector's installed timer, full HTTP/browser path and interrupted teardown remain separate qualification cases | E14 |
+| STO-JOBS | Path mirrors and PAR2 recovery | Live slice: small-file mirrors/PAR2, damage preservation and targeted recovery, unsafe-input rejection, populated rerun/reboot; missing endpoints block dependent jobs while independent jobs continue; absent nested mounts preserve backup subtrees; private mount views survive controlled source/destination detachment at endpoints and nested paths; native QEMU/LXC rsync and denied-namespace refusal checked; worker-discovered exclusions reach warning summaries and hold completion cadence until recovery. An unavailable CIFS source at launch hit a shortened test deadline without losing existing mirror files and synchronized after recovery. Real power loss and mid-transfer network-filesystem failure remain open | E12, E13, E14 |
+| STO-SMB | Samba server/client | Live slice: encrypted authenticated SMB3.1.1 read/write/rename/delete, readonly/user/anonymous rejection, fast access change/removal preserving data, TCP445-only reconciliation, headless CIFS helpers, failed-automount repair, service-user access, idle reactivation and reboot; bounded server-service outage and native reconnect without manual remount. Windows/macOS clients, silent network blackholes and interrupted writes remain open | E13, E14 |
+| STO-SYNCTHING | Syncthing | Live slice: direct two-device exchange, disconnected edits, concurrent edit conflicts retaining both versions, remote replacement/deletion and archived-version restoration to both peers; populated reruns, reboot and removal/re-enable preserving identity and folders; private-CA HTTPS/API authentication and credential rotation; injected generation/unit/policy/interruption failures restore the prior login and active service; runtime GUI folders in temporary paths are refused while approved storage works; unsafe-root and inaccessible-ancestor rejection. Browser GUI and relays/discovery remain open; staggered history coalesces versions within retention intervals | E13, E14 |
 | SYS-USER | Target-user rename | Not run: separate administrator, UID/home/units, interruption/resume | — |
 | SYS-PRIV | Privileged executor | Not run end to end on a disposable target: review/TLS lifecycle, lost response, worker interruption and recovery | — |
 | DEPLOY | Application deployment | Not run: signed webhook, healthy delivery and unhealthy activation rollback | — |
@@ -128,6 +129,7 @@ basaltw agent memory get lab-testing-coverage --project . --json
 | E11 | 2026-10-23 | Real job/journal qualification, `189fbeaa` |
 | E12 | 2026-10-24 | Small-file mirrors/PAR2 and security APT-lock wait, `f9cd844d` |
 | E13 | 2026-10-24 | Samba, Syncthing and native rsync mount lifetime; final populated reruns at `b01be24a` and mount-retry checks through `e24658a4`; reboot checks at `d1b15ff7` plus `bbdbf163` rsync |
+| E14 | 2026-10-24 | CIFS service-outage deadline/reconnect, Syncthing concurrent edits and archived-version restoration at `945b4012`; recovery/sandbox fixes, credential rotation, populated reruns and separate endpoint reboots at `00127f88`; incoming Proxmox panel inventory native collection/export/render and IPC-group regression |
 
 For each new batch, update affected rows and the private evidence mapping.
 Record preconditions, exact source/runtime revisions, expected/observed behavior,
@@ -144,10 +146,10 @@ branch coverage is not a live-feature coverage percentage.
 
 ## Next useful batches
 
-Extend file-service checks with conflicting edits and transport-loss recovery.
-Additional valuable cases are managed-user rename, a local signed
-deployment/rollback, and fresh agent-profile
-setup without account-bound credentials. Off-host restore, external notification
+Next valuable cases are managed-user rename, a local signed deployment/rollback,
+and fresh agent-profile setup without account-bound credentials. Extend
+file-service testing to interrupted writes and silent network blackholes.
+Off-host restore, external notification
 delivery and native desktop qualification need their own explicit test boundary.
 Multi-node migration/HA/Ceph need additional infrastructure. Hardware stress,
 media endurance tests and disk-wide scans are excluded from this lab plan.
