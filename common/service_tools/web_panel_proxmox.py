@@ -31,6 +31,7 @@ STYLE = """
 .proxmox-table .row-action { white-space: normal; }
 .proxmox-table a { color: var(--accent); text-underline-offset: 4px; }
 .proxmox-panel .badge { text-transform: none; }
+.proxmox-panel td .badge { white-space: nowrap; }
 .proxmox-panel h3 { margin: 28px 0 10px; font-size: 1rem; }
 .proxmox-panel h4 { margin: 18px 0 8px; }
 .proxmox-panel .pve-address { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }

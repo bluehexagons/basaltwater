@@ -2223,7 +2223,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         script_policy = f"script-src {CA_SCRIPT_CSP}; " if content_type == "text/html" else ""
-        if content_type == "text/html" and self.state.manifest["system_type"] == "server_proxmox":
+        if content_type == "text/html" and self.state.manifest.get("system_type") == "server_proxmox":
             script_policy = f"script-src {CA_SCRIPT_CSP} {PROXMOX_SCRIPT_CSP}; "
         self.send_header("Content-Security-Policy", f"default-src 'none'; {script_policy}img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
