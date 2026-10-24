@@ -17,6 +17,7 @@ from lib.proxmox_guest import (
     _create_with_vmid_retry,
     _get_guest_gateway,
     _get_host_nameservers,
+    _guest_ssh_reachable_from_controller,
     _parse_corosync_config,
     ProvisionError,
     enroll_provisioned_guest_host_keys,
@@ -208,6 +209,22 @@ class TestGuestSshKeyResolution(unittest.TestCase):
 
 
 class TestWaitForGuestSsh(unittest.TestCase):
+    @patch("lib.proxmox_guest.socket.create_connection")
+    def test_controller_probe_closes_connection(self, mock_connect) -> None:
+        self.assertTrue(_guest_ssh_reachable_from_controller("192.0.2.40"))
+        mock_connect.assert_called_once_with(("192.0.2.40", 22), timeout=3)
+        mock_connect.return_value.__exit__.assert_called_once()
+
+    @patch("lib.proxmox_guest.socket.create_connection", side_effect=TimeoutError)
+    def test_controller_probe_reports_unreachable(self, mock_connect) -> None:
+        self.assertFalse(_guest_ssh_reachable_from_controller("192.0.2.40"))
+
+    @patch("lib.proxmox_guest.socket.create_connection")
+    def test_controller_probe_rejects_invalid_addresses(self, mock_connect) -> None:
+        with self.assertRaisesRegex(ProvisionError, "Invalid guest IPv4"):
+            _guest_ssh_reachable_from_controller("untrusted.example")
+        mock_connect.assert_not_called()
+
     @patch("lib.proxmox_guest._ssh_run")
     def test_returns_when_probe_succeeds(self, mock_run) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="READY\n", stderr="")
@@ -217,10 +234,33 @@ class TestWaitForGuestSsh(unittest.TestCase):
         mock_run.assert_called_once()
         self.assertTrue(mock_run.call_args.kwargs["quiet"])
 
+    @patch("lib.proxmox_guest._guest_ssh_reachable_from_controller", return_value=True)
     @patch("lib.proxmox_guest._ssh_run")
-    def test_dry_run_skips_probe(self, mock_run) -> None:
+    def test_controller_readiness_accepts_node_blocked_by_guest_firewall(
+        self, mock_run, mock_controller,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=124, stdout="", stderr="timeout")
+        _wait_for_guest_ssh("192.0.2.40", "192.0.2.10", "root", [], timeout=3)
+        mock_controller.assert_called_once_with("192.0.2.40")
+
+    @patch("lib.proxmox_guest.time.sleep")
+    @patch("lib.proxmox_guest.time.monotonic", side_effect=[0, 0, 4])
+    @patch("lib.proxmox_guest._guest_ssh_reachable_from_controller", return_value=False)
+    @patch("lib.proxmox_guest._ssh_run")
+    def test_unreachable_from_both_paths_times_out(
+        self, mock_run, mock_controller, _mock_clock, _mock_sleep,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=124, stdout="", stderr="timeout")
+        with self.assertRaisesRegex(ProvisionError, "Timed out after 3s"):
+            _wait_for_guest_ssh("192.0.2.40", "192.0.2.10", "root", [], timeout=3)
+        mock_controller.assert_called_once()
+
+    @patch("lib.proxmox_guest._guest_ssh_reachable_from_controller")
+    @patch("lib.proxmox_guest._ssh_run")
+    def test_dry_run_skips_probe(self, mock_run, mock_controller) -> None:
         _wait_for_guest_ssh("10.0.0.50", "10.0.0.1", "root", [], dry_run=True)
         mock_run.assert_not_called()
+        mock_controller.assert_not_called()
 
 
 class TestProxmoxSshRun(unittest.TestCase):
@@ -268,6 +308,43 @@ class TestProxmoxSshRun(unittest.TestCase):
 
 
 class TestProvisionedGuestHostKeyEnrollment(unittest.TestCase):
+    @patch("lib.proxmox_guest._ssh_opts", return_value=[])
+    @patch("lib.proxmox_guest.replace_scanned_host_keys")
+    @patch("lib.proxmox_guest.is_host_key_enrolled", return_value=True)
+    @patch("lib.proxmox_guest._ssh_run")
+    def test_failed_rescan_preserves_previously_enrolled_workspace_key(
+        self, mock_run, mock_enrolled, mock_replace, _mock_opts,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="timeout")
+        refresh_managed_guest_host_keys("192.0.2.40", "192.0.2.10", "root", None)
+        mock_enrolled.assert_called_once_with("192.0.2.40")
+        mock_replace.assert_not_called()
+
+    @patch("lib.proxmox_guest._ssh_opts", return_value=[])
+    @patch("lib.proxmox_guest.replace_scanned_host_keys")
+    @patch("lib.proxmox_guest.is_host_key_enrolled", return_value=False)
+    @patch("lib.proxmox_guest._ssh_run")
+    def test_failed_rescan_without_workspace_trust_still_fails_closed(
+        self, mock_run, _mock_enrolled, mock_replace, _mock_opts,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="timeout")
+        with self.assertRaisesRegex(ProvisionError, "Could not read"):
+            refresh_managed_guest_host_keys("192.0.2.40", "192.0.2.10", "root", None)
+        mock_replace.assert_not_called()
+
+    @patch("lib.proxmox_guest._ssh_opts", return_value=[])
+    @patch("lib.proxmox_guest.get_workspace_known_hosts_path", return_value="/workspace/known_hosts")
+    @patch("lib.proxmox_guest.is_host_key_enrolled", return_value=True)
+    @patch("lib.proxmox_guest.replace_scanned_host_keys", side_effect=OSError("write failed"))
+    @patch("lib.proxmox_guest._ssh_run")
+    def test_persistence_failure_is_not_treated_as_unavailable_rescan(
+        self, mock_run, _mock_replace, mock_enrolled, _mock_path, _mock_opts,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="192.0.2.40 ssh-ed25519 AAAA", stderr="")
+        with self.assertRaisesRegex(ProvisionError, "Could not enroll"):
+            refresh_managed_guest_host_keys("192.0.2.40", "192.0.2.10", "root", None)
+        mock_enrolled.assert_not_called()
+
     @patch(
         "lib.proxmox_guest.get_workspace_known_hosts_path",
         return_value="/workspace/known_hosts",

@@ -9,6 +9,7 @@ import ipaddress
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -17,7 +18,7 @@ from typing import Any, Callable, Optional
 
 from lib.concurrency import ResourceBusyError, resource_lock
 from lib.proxmox_hosts import ProxmoxHost, ProxmoxHostFacts, ProxmoxStoragePool
-from lib.ssh_enrollment import replace_scanned_host_keys
+from lib.ssh_enrollment import is_host_key_enrolled, replace_scanned_host_keys
 from lib.ssh_utils import (
     build_ssh_command,
     ensure_remote_sudo,
@@ -27,11 +28,15 @@ from lib.ssh_utils import (
     ssh_process_timeout,
 )
 from lib.types import StrList
-from lib.validators import validate_username
+from lib.validators import validate_ip_address, validate_username
 
 
 class ProvisionError(Exception):
     """Raised when guest provisioning fails."""
+
+
+class _GuestHostKeyScanError(ProvisionError):
+    """The authenticated node could not scan the guest's SSH host key."""
 
 
 @contextmanager
@@ -1098,6 +1103,21 @@ def ensure_guest_ipv4_route(
         print(f"  ✓ Guest IPv4 default route already uses {gateway_ip}")
 
 
+def _guest_ssh_reachable_from_controller(target_ip: str) -> bool:
+    """Probe TCP readiness when guest policy excludes node-originated SSH.
+
+    This does not authenticate the guest; the subsequent SSH connection must
+    still verify its enrolled host key.
+    """
+    if not validate_ip_address(target_ip):
+        raise ProvisionError("Invalid guest IPv4 address")
+    try:
+        with socket.create_connection((target_ip, 22), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
 def _wait_for_guest_ssh(
     target_ip: str,
     node_ip: str,
@@ -1135,7 +1155,9 @@ def _wait_for_guest_ssh(
             dry_run=False,
             quiet=True,
         )
-        if result.returncode == 0 and "READY" in result.stdout:
+        if (
+            result.returncode == 0 and "READY" in result.stdout
+        ) or _guest_ssh_reachable_from_controller(target_ip):
             print(f"  ✓ {label} SSH is reachable at {target_ip}:22")
             sys.stdout.flush()
             return
@@ -1186,7 +1208,7 @@ def enroll_provisioned_guest_host_keys(
     scan = (scan_result.stdout or "").strip()
     if scan_result.returncode != 0 or not scan:
         detail = (scan_result.stderr or "").strip() or "no ED25519 key was returned"
-        raise ProvisionError(
+        raise _GuestHostKeyScanError(
             f"Could not read the guest SSH host key for {target_ip}: {detail}"
         )
     workspace_known_hosts = get_workspace_known_hosts_path()
@@ -1227,13 +1249,21 @@ def refresh_managed_guest_host_keys(
     provisioning metadata before using this helper. Unsaved or adopted guests
     must continue through explicit operator-confirmed host-key enrollment.
     """
-    enroll_provisioned_guest_host_keys(
-        target_ip,
-        node_ip,
-        user,
-        _ssh_opts(hosted_key),
-        dry_run=dry_run,
-    )
+    try:
+        enroll_provisioned_guest_host_keys(
+            target_ip,
+            node_ip,
+            user,
+            _ssh_opts(hosted_key),
+            dry_run=dry_run,
+        )
+    except _GuestHostKeyScanError:
+        if not is_host_key_enrolled(target_ip):
+            raise
+        print(
+            f"  ✓ Node could not rescan {target_ip}; retaining its enrolled "
+            "workspace SSH host key for strict verification"
+        )
 
 
 __all__ = [

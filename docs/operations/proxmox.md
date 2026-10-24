@@ -150,10 +150,21 @@ the workspace `known_hosts` file and the invoking user's default
 occurs on a later setup rerun when saved Basaltwater metadata still identifies
 the same address, machine type, and Proxmox node. This lets a managed guest
 recover from a legitimate host-key change before either Basaltwater or plain
-`ssh HOST` performs a strict check. All following guest SSH still uses
+`ssh HOST` performs a strict check. If a saved guest's firewall blocks the node's
+rescan, setup retains an already enrolled workspace key and the following
+direct SSH connection must still match it. It does not discover or replace a
+key through an unauthenticated controller-side scan. A changed guest key in
+this case requires restoring node access or independent verification and
+explicit enrollment. All following guest SSH still uses
 `StrictHostKeyChecking=yes`. Existing or adopted guests without matching saved
 metadata are not trusted automatically; verify them independently and use
 `basaltw ssh-key enroll HOST` when workspace enrollment is required.
+
+Guest SSH readiness accepts TCP reachability from either the Proxmox node or
+the controller, so source-restricted guest firewall rules can permit only the
+controller. Readiness alone does not authenticate a guest; host-key enrollment
+and strict SSH verification remain separate requirements. First provisioning
+still needs node-to-guest SSH access to enroll the new key.
 
 ## Joining a cluster with two-factor authentication
 
@@ -660,7 +671,8 @@ After a guest has been provisioned, a later `setup` invocation can retain
 reuses its recorded Proxmox details and skips the full provider-shape check
 before updating the guest. It still contacts the authenticated Proxmox node to
 rescan and replace the managed guest's workspace and default user SSH host keys
-before the first direct connection. Guest-shape options emitted by a saved
+before the first direct connection, retaining existing workspace trust when
+that rescan is blocked as described above. Guest-shape options emitted by a saved
 reconstructed command are also accepted when they match that metadata. Changing
 any of
 `--machine`, `--bridge`, `--memory`, `--balloon-min`, `--balloon-shares`,
@@ -738,8 +750,8 @@ creating an ambiguous duplicate. Repeating the saved `--name` and `--hostname`
 values is an ordinary idempotent rerun and does not perform a full provider
 check. Changing `--hostname`, or changing `--name` when it supplies the VM
 hostname, performs the identity check. Regardless of whether a full
-provisioning check is needed, the authenticated Proxmox node refreshes the
-saved guest's workspace and default user SSH host keys before Basaltwater checks
+provisioning check is needed, the authenticated Proxmox node attempts to refresh
+the saved guest's workspace and default user SSH host keys before Basaltwater checks
 the guest route or starts remote setup. A guest without matching saved metadata
 still requires explicit host-key enrollment. Use the explicit host and VMID
 forms to inspect or repair provider-side drift and duplicates created by older

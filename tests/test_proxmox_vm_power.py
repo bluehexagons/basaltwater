@@ -33,6 +33,9 @@ class TestOfflineVMSetup(unittest.TestCase):
         self.enterContext(patch("lib.proxmox_vm.guest_provisioning_locks"))
         self.remote_locks = self.enterContext(patch("lib.proxmox_vm.remote_proxmox_locks"))
         self.wait = self.enterContext(patch("lib.proxmox_vm._wait_for_guest_ssh"))
+        self.controller_ready = self.enterContext(
+            patch("lib.proxmox_vm._guest_ssh_reachable_from_controller", return_value=False)
+        )
         self.capacity = self.enterContext(
             patch("lib.proxmox_vm._report_memory_capacity", return_value=True)
         )
@@ -110,6 +113,17 @@ class TestOfflineVMSetup(unittest.TestCase):
         self.wait.assert_not_called()
         self.capacity.assert_not_called()
         self.assertFalse(any(command.startswith(("qm start", "qm resume")) for command in self.events))
+
+    def test_controller_reachable_vm_does_not_wait_for_blocked_node(self) -> None:
+        self.status = "running"
+        self.probe_ready = False
+        self.controller_ready.return_value = True
+
+        ensure_vm_running(_config())
+
+        self.controller_ready.assert_called_once_with("10.0.0.50")
+        self.wait.assert_not_called()
+        self.capacity.assert_not_called()
 
     def test_memory_admission_failure_blocks_start(self) -> None:
         self.capacity.side_effect = None

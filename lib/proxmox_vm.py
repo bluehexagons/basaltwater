@@ -50,6 +50,7 @@ from lib.proxmox_guest import (
     _get_guest_gateway,
     _get_host_nameservers,
     _get_next_vmid,
+    _guest_ssh_reachable_from_controller,
     _resolve_public_key_path,
     _resolve_storage_pool,
     _ssh_opts,
@@ -986,7 +987,9 @@ def _reconcile_existing_vm(
             f"timeout 3 bash -c '</dev/tcp/{shlex.quote(target_ip)}/22' && echo READY",
             dry_run=False,
         )
-        if probe.returncode != 0 or "READY" not in (probe.stdout or ""):
+        if (
+            probe.returncode != 0 or "READY" not in (probe.stdout or "")
+        ) and not _guest_ssh_reachable_from_controller(target_ip):
             if start_existing:
                 _wait_for_guest_ssh(
                     target_ip, node_ip, user, ssh_opts,
