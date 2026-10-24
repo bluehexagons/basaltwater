@@ -86,9 +86,8 @@ configured native address on HTTPS port 8006, including IPv6, and Proxmox's own
 login and certificate.
 
 The overview controls use bounded GET fields `pve_q`, `pve_node`, `pve_type`,
-`pve_state`, `pve_tag` and `pve_sort`. Guest-specific filters affect only the
-guest table; node selection also filters tasks, storage and allocations. A
-state-preserving link retains filters, and a reset link clears them.
+`pve_state`, `pve_tag` and `pve_sort`. Controls retain the selected values; a
+reset link clears them.
 
 Guest addresses and application links are best-effort details from a bounded
 probe of up to 16 local-node guests per collector run, rotated each minute to
@@ -121,17 +120,18 @@ seconds after collection finishes.
 
 Only selected sanitized fields are published. The root collector uses fixed
 read-only GET queries; the web worker and Nginx cannot execute root queries or
-see Proxmox's `/etc/pve` and `/var/lib/pve-cluster`. Root/web isolation from
-pmxcfs is unchanged. The collector uses AF_UNIX, AF_INET and AF_INET6 for
-local Ceph monitor communications; `ProtectHome=true` remains in place. It
-does not use remote-node SSH, scan storage backends, accept arbitrary query
+see Proxmox's `/etc/pve` and `/var/lib/pve-cluster`. The collector uses AF_UNIX,
+AF_INET and AF_INET6 for local Ceph monitor communications; `ProtectHome=true`
+remains in place. It does not use remote-node SSH, scan storage backends, accept
+arbitrary query
 parameters or paths, export raw descriptions/configuration, task errors,
 credentials or command output, or control guests. ZFS health covers only pools
 on the local node; snapshot presence does not mean remote ZFS was collected.
 
-The panel revalidates bounded JSON on read and distinguishes unavailable or
-failed collection from a successfully empty inventory. Unknown metrics remain
-unavailable. Refreshing the dashboard reads the cache and launches no commands.
+The panel revalidates bounded JSON on read, warns when the snapshot is more than
+three minutes old, and distinguishes unavailable or failed collection from a
+successfully empty inventory. Unknown metrics remain unavailable. Refreshing
+the dashboard reads the cache and launches no commands.
 Existing installations must rerun panel setup to install the updated service
 and collector. To investigate missing or stale data, inspect
 `systemctl status basaltwater-web-panel-proxmox.timer` and
