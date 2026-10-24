@@ -131,7 +131,19 @@ class StorageTaskTests(unittest.TestCase):
         self.assertEqual((selected["storage_operation"], selected["max_runs"]), ("go-build-cache", 1))
         account_os = SimpleNamespace(**vars(os))
         account_os.geteuid = lambda: 1000
-        with (patch.object(tasks, "os", account_os), patch.object(tasks, "run_storage_operation", return_value={
+        execute_prompt = tasks.execute_prompt
+
+        def execute_as_account(*args: object, **kwargs: object) -> dict:
+            # Only execution needs a simulated non-root account. The scheduler
+            # must keep the real owner of its temporary state, including in CI.
+            with patch.object(tasks, "os", account_os):
+                return execute_prompt(*args, **kwargs)
+
+        with (patch.object(tasks, "execute_prompt", side_effect=execute_as_account),
+              # Cancellation has separate coverage; avoid a scheduler callback
+              # inside the execution-only identity simulation.
+              patch.object(manager, "_cancel_for_task", return_value=threading.Event()),
+              patch.object(tasks, "run_storage_operation", return_value={
                 "operation": "go-build-cache", "result": {"status": "cleaned"}}) as host):
             manager.tick()
             self.assertFalse(manager.tick())
