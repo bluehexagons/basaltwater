@@ -26,10 +26,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     starting = commands.add_parser("start")
     starting.add_argument("--json", action="store_true")
     starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
-    starting.add_argument("--session-seconds", type=int, default=900, help="Native lifetime, 60–28800 seconds; default 900")
-    renewal = commands.add_parser("renew", help="Renew a running native session without resuming human pause")
+    starting.add_argument("--session-seconds", type=int, default=0, help="Optional native lifetime, 60–28800 seconds; 0 (default) is unlimited")
+    renewal = commands.add_parser("renew", help="Change an optional native backend lifetime without changing agent permission")
     renewal.add_argument("--generation", required=True)
-    renewal.add_argument("--seconds", type=int, default=900)
+    renewal.add_argument("--seconds", type=int, default=0)
     renewal.add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Live Geany edit/save/dialog check in an isolated test instance")
     screenshot = commands.add_parser("screenshot")
@@ -70,11 +70,15 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     launch = commands.add_parser("launch-status")
     launch.add_argument("launch")
     launch.add_argument("--generation", required=True)
-    sequence = commands.add_parser("sequence", help="Run up to 20 short JSON actions under one revocable lease")
+    sequence = commands.add_parser("sequence", help="Run up to 20 short JSON actions while agent control remains enabled")
     sequence.add_argument("path")
     sequence.add_argument("--generation", required=True)
     control = commands.add_parser("control")
-    control.add_argument("operation", choices=("pause", "resume"))
+    control.add_argument("operation", choices=("enabled", "human-override", "disabled"))
+    control.add_argument("--human-approved", action="store_true", help="Confirm explicit human approval for this state change; a desktop task alone is insufficient")
+    duration = control.add_mutually_exclusive_group()
+    duration.add_argument("--seconds", type=int, default=900, help="Human override duration, 60–86400 seconds (default: 900)")
+    duration.add_argument("--indefinite", action="store_true", help="Keep human override until explicitly changed")
     inspect = commands.add_parser("inspect", help="Read a bounded AT-SPI tree for one application")
     inspect.add_argument("--pid", required=True, type=int)
     inspect.add_argument("--name", help="Exact accessible name")
@@ -126,7 +130,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             result = backend.status()
         elif command == "start":
             if backend is runtime:
-                if args.remember or args.session_seconds != 900:
+                if args.remember or args.session_seconds != 0:
                     raise ValueError("Persistent grants and session lifetime require --native")
                 result = backend.start()
             else:
@@ -139,13 +143,18 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             if backend is runtime:
                 raise ValueError("Portal session renewal requires --native")
             backend.validate_session_seconds(args.seconds)
-            result = backend.request({"action": "renew", "generation": args.generation, "seconds": args.seconds})
+            current = backend.status()
+            result = backend.request({"action": "renew", "generation": args.generation, "seconds": args.seconds,
+                                      "control_revision": current["control_revision"]})
         elif command == "stop":
             if backend is runtime:
                 raise RuntimeError("Stop closes a native portal session; use --native stop, or logout for a Debian desktop")
             result = backend.request({"action": "stop"})
         elif command == "control":
-            result = backend.request({"action": args.operation})
+            if args.operation != "human-override" and (args.indefinite or args.seconds != 900):
+                raise ValueError("Duration applies only to human-override")
+            result = backend.set_control(args.operation, seconds=None if args.indefinite else args.seconds,
+                                         human_approved=args.human_approved)
         elif command == "doctor":
             result = backend.doctor() if backend is not runtime else client.doctor()
         else:
@@ -157,7 +166,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if state == "starting":
                     raise RuntimeError(f"Desktop is starting; run '{control_command} start' to wait for readiness")
                 raise RuntimeError(f"Desktop is {state}; inspect '{control_command} status' before retrying")
-            payload = {"action": command, "generation": current["generation"]}
+            payload = {"action": command, "generation": current["generation"],
+                       "control_revision": current["control_revision"]}
             wait_title = getattr(args, "wait_window", None)
             baseline = []
             exclude_titles = getattr(args, "exclude_titles", None)
@@ -229,15 +239,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     client.validate_hold(payload)
                     if args.hold_ms is not None and backend is runtime:
                         raise ValueError("Hold duration requires --native")
-                lease = backend.request({"action": "acquire", "generation": payload["generation"]})
-                payload["lease"] = lease["lease"]
-                try:
-                    result = client.send_action(payload, backend=backend)
-                finally:
-                    try:
-                        backend.request({"action": "release", "generation": payload["generation"], "lease": lease["lease"]})
-                    except (OSError, RuntimeError):
-                        pass  # Logout or human takeover may have revoked the lease.
+                result = client.send_action(payload, backend=backend)
                 if wait_title:
                     try:
                         observed = client.wait_for_window(current["generation"], title=wait_title, backend=backend,

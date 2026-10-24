@@ -1,4 +1,4 @@
-"""Task-scoped CachyOS Wayland automation; never owns or restarts the desktop."""
+"""CachyOS Wayland automation; never owns or restarts the desktop."""
 
 from __future__ import annotations
 
@@ -17,18 +17,18 @@ import subprocess
 import threading
 import time
 
-from desktop import accessibility, client, native_grants, session_runtime
+from desktop import accessibility, client, control_state, native_grants, session_runtime
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
 
 MAX_MESSAGE = 65536
-SESSION_SECONDS = 900
+SESSION_SECONDS = 0
 MAX_SESSION_SECONDS = 28800
 
 
 def validate_session_seconds(seconds):
-    if type(seconds) is not int or not 60 <= seconds <= MAX_SESSION_SECONDS:
-        raise ValueError("Native session lifetime must be 60–28800 seconds (at most 8 hours)")
+    if type(seconds) is not int or (seconds != 0 and not 60 <= seconds <= MAX_SESSION_SECONDS):
+        raise ValueError("Native session lifetime must be 0 (unlimited) or 60–28800 seconds")
 
 
 def runtime_directory(*, create=False):
@@ -85,10 +85,17 @@ def status():
         grant = native_grants.metadata()
         return {**receipt, **grant, "last_state": receipt.get("state"), "state": "stopped",
                 "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
-                "paused": True, "control_active": False, "expires_in": 0,
+                **control_state.status(), "control_active": False, "expires_in": 0,
                 "consent_expires_in": None,
                 "interactive_required": None if grant["grant_saved"] else True,
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
+
+
+def set_control(mode, *, seconds=control_state.DEFAULT_OVERRIDE_SECONDS, human_approved=False):
+    try:
+        return request({"action": "control", "mode": mode, "seconds": seconds, "human_approved": human_approved})
+    except (FileNotFoundError, ConnectionRefusedError):
+        return {"state": "stopped", **control_state.change(mode, seconds=seconds, human_approved=human_approved)}
 
 
 def check_session():
@@ -238,7 +245,7 @@ def keysyms(chord):
 
 
 class NativeSession:
-    def __init__(self, portal, *, receipt=None, remember=False, session_seconds=SESSION_SECONDS, paused=False):
+    def __init__(self, portal, *, receipt=None, remember=False, session_seconds=SESSION_SECONDS):
         validate_session_seconds(session_seconds)
         self.portal = portal
         self.generation = secrets.token_hex(16)
@@ -257,10 +264,7 @@ class NativeSession:
         self.grant_saved = False
         self.restore_attempted = False
         self.session_seconds = session_seconds
-        self.paused = paused
-        self.lease = None
-        self.lease_until = 0
-        self.until = time.monotonic() + session_seconds
+        self.until = time.monotonic() + session_seconds if session_seconds else float("inf")
         self.geometry = None
         self.captured = 0
         self.elements = {}
@@ -270,7 +274,7 @@ class NativeSession:
 
     def snapshot_status(self):
         return {"state": self.state, "generation": self.generation, "desktop": "kde-wayland",
-                "backend": "portal", "origin": "portal", "paused": self.paused,
+                "backend": "portal", "origin": "portal", **control_state.status(),
                 "helper_running": True, "portal_stage": self.portal_stage, "last_failure": self.last_failure,
                 "consent_expires_in": (max(0, int(self.consent_until - time.monotonic()))
                                        if self.state == "awaiting-consent" and self.consent_until is not None else None),
@@ -279,8 +283,8 @@ class NativeSession:
                 "max_session_seconds": MAX_SESSION_SECONDS,
                 "geometry": self.geometry,
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
-                "expires_in": max(0, int(self.until - time.monotonic())) if self.state == "running" else 0,
-                "control_active": self.lease is not None and time.monotonic() < self.lease_until,
+                "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
+                "control_active": self.input_active,
                 "detail": self.detail}
 
     def record(self):
@@ -315,8 +319,6 @@ class NativeSession:
     def close(self):
         with self.lock:
             self.state = "stopped"
-            self.paused = True
-            self.lease = None
             self.elements.clear()
             self.stopping.set()
             self.record()
@@ -338,26 +340,17 @@ class NativeSession:
             raise RuntimeError("Native control is unavailable or expired; inspect desktop status")
         if payload.get("generation") != self.generation:
             raise ValueError("Native session changed; observe again")
-        if self.paused or not self.lease or payload.get("lease") != self.lease or time.monotonic() >= self.lease_until:
-            raise RuntimeError("Control is paused or its lease expired; observe before retrying")
+        control_state.require_enabled(payload)
 
     def handle(self, payload):
         with self.lock:
             action = payload.get("action")
             if action == "status":
                 return self.snapshot_status()
-            if action == "pause":
-                self.paused = True
-                self.lease = None
+            if action == "control":
+                control_state.change(payload.get("mode"), seconds=payload.get("seconds", 900),
+                                     human_approved=payload.get("human_approved", False))
                 self.elements.clear()
-                if self.remember:
-                    native_grants.set_paused(True)
-                self.record()
-                return self.snapshot_status()
-            if action == "resume":
-                if self.remember:
-                    native_grants.set_paused(False)
-                self.paused = False
                 self.record()
                 return self.snapshot_status()
             if action == "stop":
@@ -402,24 +395,11 @@ class NativeSession:
             if action == "renew":
                 seconds = payload.get("seconds", SESSION_SECONDS)
                 validate_session_seconds(seconds)
-                if self.paused:
-                    raise RuntimeError("Human paused native control; renewal cannot resume it")
+                control_state.require_enabled(payload)
                 self.session_seconds = seconds
-                self.until = time.monotonic() + seconds
+                self.until = time.monotonic() + seconds if seconds else float("inf")
                 self.record()
                 return self.snapshot_status()
-            if action == "release":
-                if payload.get("lease") == self.lease:
-                    self.lease = None
-                return {"released": True}
-            if action == "acquire":
-                if self.paused:
-                    raise RuntimeError("Human paused native control")
-                if self.input_active or (self.lease and time.monotonic() < self.lease_until):
-                    raise RuntimeError("Native control is leased by another operation")
-                self.lease = secrets.token_hex(16)
-                self.lease_until = time.monotonic() + 30
-                return {"generation": self.generation, "lease": self.lease, "expires_in": 30}
             if self.input_active:
                 raise RuntimeError("A native input is still releasing; observe before retrying")
             if action == "inspect":
@@ -604,9 +584,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     if remember:
         native_grants.enable()
-    grant = native_grants.metadata()
     session = NativeSession(None, receipt=folder / "status.json", remember=remember,
-                            session_seconds=session_seconds, paused=grant["paused"] if remember else False)
+                            session_seconds=session_seconds)
     session.initialization_done.clear()
     session.record()
     try:
@@ -645,7 +624,7 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
                 if session.stopping.is_set():
                     return
                 session.node, session.logical_size = node, size
-                session.until = time.monotonic() + session_seconds
+                session.until = time.monotonic() + session_seconds if session_seconds else float("inf")
                 session.state, session.detail = "running", "User-approved selected-monitor capture and input"
                 session.portal_stage = "ready"
                 print(datetime.now(timezone.utc).isoformat(), session.detail, flush=True)

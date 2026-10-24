@@ -14,7 +14,7 @@ import time
 # A transient service launches this file by absolute path from any project.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from desktop.development import LOG_LIMIT, _honor_human_pause, load_task
+from desktop.development import LOG_LIMIT, _honor_agent_control, load_task
 from lib.atomic_io import write_json_atomic
 
 
@@ -34,7 +34,7 @@ def run_task(directory: Path) -> int:
     signal.signal(signal.SIGTERM, stopping)
     signal.signal(signal.SIGINT, stopping)
     try:
-        _honor_human_pause()  # The owner may have paused after the client queued the service.
+        _honor_agent_control()  # Recheck the human's choice after the client queued the service.
         descriptor = os.open(directory / "output.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(descriptor, "wb", buffering=0) as log:
             process = subprocess.Popen(task["argv"], cwd=task["project"], stdin=subprocess.DEVNULL,

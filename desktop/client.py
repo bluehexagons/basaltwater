@@ -136,7 +136,7 @@ def wait_for_window(generation: str, *, window: str | None = None,
 def wait_for_element(generation: str, *, pid: int, name: str | None = None,
                      role: str | None = None, state: str = "present", text: str | None = None,
                      timeout: float = 15, root: str | None = None, backend=runtime) -> dict[str, Any]:
-    """Poll semantic observations without a lease; require an unambiguous match."""
+    """Poll semantic observations; require an unambiguous match."""
     query = {"action": "inspect", "generation": generation, "pid": pid, "name": name, "role": role}
     if root is not None:
         query["root"] = root
@@ -210,7 +210,7 @@ def doctor() -> dict[str, Any]:
 
 
 def validate_text_delay(payload: dict[str, Any]) -> None:
-    """Reject invalid paced input before acquiring control or sending characters."""
+    """Reject invalid paced input before sending characters."""
     delay = payload.get("delay_ms")
     if delay is None:
         return
@@ -257,7 +257,7 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
                 time.sleep(delay / 1000)
             if time.monotonic() >= deadline:
                 raise RuntimeError("Paced typing exceeded its 20-second budget")
-            # Every character rechecks generation, geometry, pause and the same lease.
+            # Every character rechecks generation, geometry and the human's control revision.
             result = backend.request({**request, "text": character})
             submitted += 1
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -275,20 +275,23 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         raise ValueError("Desktop sequences require 1 to 20 actions")
     for step in steps:
         if (not isinstance(step, dict) or step.get("action") not in ("input", "window", "screenshot", "windows")
-                or "generation" in step or "lease" in step):
-            raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded leases or generations")
+                or any(key in step for key in ("generation", "control_revision", "lease"))):
+            raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded control metadata")
         validate_text_delay(step)
         validate_hold(step)
         if step.get("hold_ms") is not None and backend is runtime:
             raise ValueError("Hold duration requires the native desktop backend")
-    lease = backend.request({"action": "acquire", "generation": generation})
+    current = backend.status()
+    if current.get("generation") != generation:
+        raise ValueError("Desktop session changed; observe again")
+    revision = current["control_revision"]
     results = []
     deadline = time.monotonic() + 20
     try:
         for step in steps:
             if time.monotonic() >= deadline:
                 raise RuntimeError("Desktop sequence exceeded its 20-second budget")
-            result = send_action({**step, "generation": generation, "lease": lease["lease"]}, deadline=deadline, backend=backend)
+            result = send_action({**step, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
             if "error" in result:
                 return {"generation": generation, "error": result["error"], "completed": len(results),
                         "results": results, "failed_action": result}
@@ -296,8 +299,3 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         return {"generation": generation, "completed": len(results), "results": results}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {"generation": generation, "error": str(exc), "completed": len(results), "results": results}
-    finally:
-        try:
-            backend.request({"action": "release", "generation": generation, "lease": lease["lease"]})
-        except (OSError, RuntimeError, ValueError):
-            pass

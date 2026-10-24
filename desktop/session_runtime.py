@@ -24,7 +24,7 @@ import subprocess
 import time
 from typing import Any, Iterator
 
-from desktop import accessibility
+from desktop import accessibility, control_state
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -124,7 +124,16 @@ def status() -> dict[str, Any]:
     try:
         return request({"action": "status"})
     except (FileNotFoundError, ConnectionRefusedError):
-        return {"state": "stopped", "desktop": config["desktop"], "username": config["username"]}
+        return {"state": "stopped", "desktop": config["desktop"], "username": config["username"],
+                **control_state.status()}
+
+
+def set_control(mode, *, seconds=control_state.DEFAULT_OVERRIDE_SECONDS, human_approved=False):
+    configuration()
+    try:
+        return request({"action": "control", "mode": mode, "seconds": seconds, "human_approved": human_approved})
+    except (FileNotFoundError, ConnectionRefusedError):
+        return {"state": "stopped", **control_state.change(mode, seconds=seconds, human_approved=human_approved)}
 
 
 def start() -> dict[str, Any]:
@@ -286,12 +295,10 @@ class DesktopSession:
         self.config = config
         self.process = process
         self.generation = secrets.token_hex(16)
-        self.paused = False
         self.browser_pause: str | None = None
         self.browser_pause_until = 0.0
-        self.browser_prior_pause = False
-        self.lease: str | None = None
-        self.lease_until = 0.0
+        self.browser_control_revision: str | None = None
+        self.maintenance = False
         self.children: list[subprocess.Popen[Any]] = []
         self.launches: dict[str, subprocess.Popen[Any]] = {}
         self.elements: dict[str, dict[str, Any]] = {}
@@ -313,24 +320,28 @@ class DesktopSession:
             "state": state,
             "generation": self.generation, "desktop": self.config["desktop"],
             "username": self.config["username"], "display": os.environ["DISPLAY"],
-            "geometry": size, "paused": self.paused,
+            "geometry": size, **control_state.status(),
             "browser_pause": self.browser_pause,
             "pid": self.process.pid,
-            "control_active": self.lease is not None and time.monotonic() < self.lease_until,
+            "control_active": False,
         }
         if detail:
             result["detail"] = detail
         return result
 
     def expire_browser_control(self) -> None:
-        """Recover agent access even when the browser gateway dies abruptly."""
-        if self.browser_pause is not None and time.monotonic() >= self.browser_pause_until:
-            self.release_browser_control()
+        """Expire a browser connection without changing the human's durable choice."""
+        if self.browser_pause is not None:
+            current = control_state.status()
+            if (time.monotonic() >= self.browser_pause_until
+                    or current["agent_control"] != "human-override"
+                    or current["control_revision"] != self.browser_control_revision):
+                self.release_browser_control()
 
     def release_browser_control(self) -> None:
-        self.paused = self.browser_prior_pause
         self.browser_pause = None
         self.browser_pause_until = 0.0
+        self.browser_control_revision = None
 
     def logout(self) -> dict[str, Any]:
         """Request normal logout, allowing applications to ask about unsaved work."""
@@ -349,9 +360,9 @@ class DesktopSession:
         if action == "status":
             return self.snapshot_status()
         browser_actions = ("browser-take", "browser-refresh", "browser-release", "browser-logout")
-        if action in browser_actions or (action in ("pause", "resume") and "generation" in payload):
+        if action in browser_actions or (action == "control" and "generation" in payload):
             # Remote human handoffs must not act on a replacement desktop.
-            # The local pause/resume command can still target the current one.
+            # The local human control UI can still target the current one.
             if payload.get("generation") != self.generation:
                 raise ValueError("Desktop session changed; inspect it again")
             # Cleanup is conditional on ownership and generation, even after
@@ -368,10 +379,10 @@ class DesktopSession:
         if action in browser_actions:
             token = payload.get("pause_token")
             if action == "browser-take" and self.browser_pause is None and token is None:
-                self.browser_prior_pause = self.paused
+                current = control_state.change("human-override", seconds=payload.get("override_seconds", 900),
+                                               human_approved=payload.get("human_approved", False))
                 self.browser_pause = secrets.token_hex(16)
-                self.paused = True
-                self.lease = None
+                self.browser_control_revision = current["control_revision"]
                 self.elements.clear()
             elif self.browser_pause is None or token != self.browser_pause:
                 raise ValueError("Browser control expired or belongs to another connection")
@@ -379,22 +390,22 @@ class DesktopSession:
             if action == "browser-logout":
                 return self.logout()
             return self.snapshot_status()
-        if action == "pause":
-            # An explicit local pause replaces browser ownership, so closing
-            # that browser cannot undo the administrator's pause.
-            self.browser_pause = None
-            self.paused = True
-            self.lease = None
+        if action == "control":
+            control_state.change(payload.get("mode"), seconds=payload.get("seconds", 900),
+                                 human_approved=payload.get("human_approved", False))
+            self.release_browser_control()
             self.elements.clear()
-            return self.snapshot_status()
-        if action == "resume":
-            self.browser_pause = None
-            self.paused = False
             return self.snapshot_status()
         if payload.get("generation") != self.generation:
             raise ValueError("Desktop session changed; inspect it again")
         if self.process.poll() is not None:
             raise RuntimeError("Desktop is stopping")
+        if action == "maintenance-logout":
+            # Setup may request normal logout without changing durable permission.
+            self.maintenance = True
+            self.release_browser_control()
+            self.elements.clear()
+            return self.logout()
         if action == "inspect":
             result = accessibility.worker_request({**payload, "operation": "inspect"})
             for row in result["elements"]:
@@ -478,19 +489,9 @@ class DesktopSession:
                 raise
             return {**snapshot, "image_geometry": captured_geometry,
                     "window": window, "output": str(output), "captured_at": datetime.now(timezone.utc).isoformat()}
-        if self.paused:
-            raise RuntimeError("Agent desktop control is paused for human use")
-        if action == "acquire":
-            if self.lease is not None and time.monotonic() < self.lease_until:
-                raise RuntimeError("Desktop control is leased by another operation")
-            self.lease = secrets.token_hex(16)
-            self.lease_until = time.monotonic() + 30
-            return {"lease": self.lease, "generation": self.generation, "expires_in": 30}
-        if self.lease is None or payload.get("lease") != self.lease or time.monotonic() >= self.lease_until:
-            raise ValueError("Acquire a current desktop control lease before changing the desktop")
-        if action == "release":
-            self.lease = None
-            return {"released": True}
+        control_state.require_enabled(payload)
+        if self.maintenance:
+            raise RuntimeError("Desktop is logging out for setup; finish logout and restart the session")
         if action == "element":
             ref = payload.get("ref")
             observed = self.elements.get(ref) if isinstance(ref, str) else None

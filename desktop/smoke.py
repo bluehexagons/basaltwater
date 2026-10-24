@@ -20,16 +20,10 @@ def run_smoke_check(generation: str) -> dict[str, Any]:
         raise RuntimeError("Geany is required for the desktop smoke check; it ships in agent_code_vm")
     report: dict[str, Any] = {"generation": generation, "completed": []}
     stage = "prepare"
+    revision = runtime.status()["control_revision"]
 
     def mutate(action: str, **fields: Any) -> dict[str, Any]:
-        lease = runtime.request({"action": "acquire", "generation": generation})["lease"]
-        try:
-            return runtime.request({"action": action, "generation": generation, "lease": lease, **fields})
-        finally:
-            try:
-                runtime.request({"action": "release", "generation": generation, "lease": lease})
-            except (OSError, ValueError, RuntimeError):
-                pass  # Pause or session loss may have revoked control.
+        return runtime.request({"action": action, "generation": generation, "control_revision": revision, **fields})
 
     def observe(**selectors: Any) -> dict[str, Any]:
         result = client.wait_for_element(generation, pid=report["pid"], **selectors)

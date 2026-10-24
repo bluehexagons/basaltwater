@@ -413,16 +413,10 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     return result
 
 
-def _honor_human_pause() -> None:
-    from desktop import native_grants, native_session
-    if native_grants.metadata()["paused"]:
-        raise RuntimeError("Human paused native control; wait for explicit handback before launching")
-    try:
-        current = native_session.request({"action": "status"})
-    except (FileNotFoundError, ConnectionRefusedError):
-        return
-    if current.get("paused"):
-        raise RuntimeError("Human paused native control; wait for explicit handback before launching")
+def _honor_agent_control() -> None:
+    from desktop import control_state
+    current = control_state.status()
+    control_state.require_enabled(current)
 
 
 def list_tasks(project: str | None = None) -> dict:
@@ -519,7 +513,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     if dry_run or is_dry_run():
         return {"schema_version": 1, "ok": True, "dry_run": True, "kind": kind,
                 "project": str(path), "argv": arguments, "session": "existing-kde-wayland"}
-    _honor_human_pause()
+    _honor_agent_control()
     directory = _root(create=True) / secrets.token_hex(16)
     directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
     _private_directory(directory)
