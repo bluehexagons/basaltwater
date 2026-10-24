@@ -58,8 +58,9 @@ After confirmed T3 disconnection or unavailable automation tools permit fallback
 continue the authorized browser test here without asking the user to reopen T3.
 Check desktop status/doctor and installed applications, then use the managed
 launch and scoped inspection/input commands below. A stopped desktop can be
-started within the test task; do not restart a running session or resume human
-pause automatically. Select the project page without taking over unrelated
+started within the test task when agent control is enabled. Do not restart a
+running session or change human override/disabled without explicit human approval.
+Select the project page without taking over unrelated
 browser windows, verify the resulting interaction, and report which assertions
 were exercised. Pixel-only evidence does not prove DOM or network behavior.
 
@@ -69,5 +70,5 @@ and the client-side T3 browser. Do not copy cookies or assume shared logins.
 For unattended readiness checks, use `desktop status` and `desktop doctor` only
 when accessible. Starting applications, the live smoke check, screenshots, and
 input affect or capture the human's shared session and require that task scope;
-a readiness prompt does not authorize them. Honor human pause and report blocked
+a readiness prompt does not authorize them. Honor human override/disabled and report blocked
 checks without restarting the desktop or acquiring control through another tool.

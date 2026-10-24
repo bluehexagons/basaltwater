@@ -278,6 +278,24 @@ def install_cachyos_packages(config: SetupConfig) -> None:
         configure_cachyos_git_lfs(config)
 
 
+def configure_cachyos_desktop_control(config: SetupConfig) -> None:
+    """Make human state controls reachable even when the portal helper is off."""
+    from lib.remote_utils import is_dry_run
+
+    if config.dry_run or is_dry_run():
+        print("  [DRY-RUN] Would add Agent Desktop Control to the KDE application menu")
+        return
+    source = str(Path(__file__).resolve().parents[1])
+    validate_filesystem_path(source, must_exist=True)
+    # Desktop string values use their own escapes; Exec has no interpolated path.
+    working_directory = source.replace("\\", "\\\\").replace(" ", "\\s")
+    _write_managed(_home(config) / ".local/share/applications/basaltwater-desktop-control.desktop",
+                   "[Desktop Entry]\n" + _MARKER + "\nType=Application\n"
+                   "Name=Agent Desktop Control\nComment=Choose agent access or take control of the desktop\n"
+                   "Exec=/usr/bin/python3 -m desktop.native_handoff\n"
+                   f"Path={working_directory}\nIcon=input-mouse\nTerminal=false\nCategories=System;\n")
+
+
 _LFS_FILTERS = {
     "filter.lfs.clean": "git-lfs clean -- %f",
     "filter.lfs.smudge": "git-lfs smudge -- %f",

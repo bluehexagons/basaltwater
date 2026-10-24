@@ -28,7 +28,7 @@ Read only the reference needed for the current operation:
 | Blender model/material/UV edits, bpy, export round trips | [Blender](references/blender.md) |
 | Vector, raster, audio, video and other native assets | [Media](references/media.md) |
 | Capture backends, Xvfb, high-resolution and post-refresh evidence | [Rendering evidence](references/rendering.md) |
-| Wayland consent, session lifetime, accessibility, input and recovery | [Native control](references/native-control.md) |
+| Persistent agent control, Wayland consent, accessibility, input and recovery | [Native control](references/native-control.md) |
 
 ## Keep the desktop loop focused
 
@@ -59,10 +59,14 @@ session with owner-approved monitor/keyboard/pointer access; background scripts
 and exports can work without capture/input. Never create XRDP, guess another
 session's bus/display, switch KDE to X11, or install global input daemons.
 
-Honor human pause without automatically resuming it. Verify identity, focus,
-mode and current selected-monitor geometry before input; restart the portal
+When `status.agent_control` is `enabled`, use authorized desktop software without
+asking to unpause or acquiring a lease. `human-override` and `disabled` block
+agent mutations; change these states only with explicit human approval or the
+human control UI. A desktop task alone does not authorize a state change.
+Timed override returns automatically at its human-approved deadline.
+Verify identity, focus, mode and current selected-monitor geometry before input; restart the portal
 after monitor/scaling/resolution changes. Review captures before sharing unrelated
-content. Stop native control when finished, preserving KDE and applications.
+content. Leave enabled control available between tasks, preserving KDE and applications.
 For missing/stuck physical keys, stop control and read the native recovery steps.
 
 For web consumers, follow session browser policy and the installed browser skill

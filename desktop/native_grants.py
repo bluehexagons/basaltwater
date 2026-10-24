@@ -101,15 +101,6 @@ def save_token(token):
         write_json_atomic(str(path), {**data, "token": token, "consumed": None})
 
 
-def set_paused(paused):
-    if type(paused) is not bool:
-        raise ValueError("Native pause state must be boolean")
-    with locked() as path:
-        data = load()
-        if data is not None:
-            write_json_atomic(str(path), {**data, "paused": paused})
-
-
 def forget():
     with locked() as path:
         load()  # Reject unsafe state before deletion.

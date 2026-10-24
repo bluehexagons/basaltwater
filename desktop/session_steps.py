@@ -209,7 +209,7 @@ def install_session_runtime(config: SetupConfig) -> None:
                       "#!/bin/sh\nexec /usr/bin/python3 " + shlex.quote(source + "/desktop/handoff.py") + "\n", mode=0o755)
     write_text_atomic(HANDOFF_ENTRY,
                       "[Desktop Entry]\nType=Application\nName=Shared Desktop Control\n"
-                      "Comment=Pause or resume agent input in the shared desktop\n"
+                      "Comment=Choose agent access or take control of the desktop\n"
                       f"Exec={HANDOFF_LAUNCHER}\nIcon=input-mouse\nTerminal=false\nCategories=System;\n", mode=0o644)
     run(["loginctl", "enable-linger", config.username])
     run(["systemctl", "start", f"user@{account.pw_uid}.service"])

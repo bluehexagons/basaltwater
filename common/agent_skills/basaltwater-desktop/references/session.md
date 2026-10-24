@@ -32,7 +32,7 @@ case-sensitive title substrings (up to 16, each at most 512 characters).
 Stability accepts 0–5 seconds, no longer than the timeout, and defaults to zero.
 It requires the same matching identities/titles/PIDs across observations;
 changes or incomplete inventories restart the interval. Polling remains usable
-during human pause and works with existing XRDP/native supervisors. Inspect the
+during human override or disabled control. Inspect the
 actual document afterward; a stable title does not prove that it loaded.
 
 Launch results include a session-local `launch` token and PID. Only the latest
@@ -43,17 +43,18 @@ successfully after asking an existing process to open a document. On timeout,
 inspect before retrying; never automatically launch a duplicate application.
 ## Human handoff and logout
 
-Before the human takes control, run `basaltw desktop control pause`. This
-revokes agent control while preserving screenshots and human RDP input. Resume
-with `basaltw desktop control resume` when the human hands control back.
-Agents must honor pause; it coordinates same-account tools rather than isolating
-untrusted code. Ordinary RDP input does not automatically pause agent input.
+The human can open **Shared Desktop Control** from the application menu and
+choose **Take control** (15 minutes by default, or indefinite), **Enable agents**,
+or **Disable agents**. `desktop handoff` opens the same window while agents are
+enabled. Closing it, disconnecting RDP, logout, and restarting the supervisor
+preserve the choice. Ordinary RDP input does not detect human intervention.
 
-The human can open **Shared Desktop Control** from the application menu to see
-control status and pause/resume agents. `desktop handoff` opens the same window
-while agent control is enabled. Closing it does not resume paused agents; its
-buttons remain available during pause. It is a control window, not an automatic
-mouse-activity detector or permanent tray indicator.
+Only explicit human approval or UI interaction permits changing the state.
+An approved CLI transition uses `desktop control enabled|human-override|disabled
+--human-approved`; override accepts `--seconds 900` or `--indefinite`. Never add
+that flag merely because a desktop task is blocked. Enabled work requires no
+lease or extra approval. See [persistent control](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-control.md)
+for storage, migration, timers, and account-level limits.
 
 The human connects with their RDP client using the setup account's Unix password.
 They can disconnect and reconnect without ending applications. An SSH tunnel

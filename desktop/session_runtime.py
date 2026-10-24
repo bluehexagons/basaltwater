@@ -302,6 +302,14 @@ class DesktopSession:
         self.children: list[subprocess.Popen[Any]] = []
         self.launches: dict[str, subprocess.Popen[Any]] = {}
         self.elements: dict[str, dict[str, Any]] = {}
+        self.control_revision = control_state.status()["control_revision"]
+
+    def sync_control(self):
+        current = control_state.status()
+        if self.control_revision != current["control_revision"]:
+            self.elements.clear()
+            self.control_revision = current["control_revision"]
+        return current
 
     def snapshot_status(self) -> dict[str, Any]:
         self.expire_browser_control()
@@ -320,7 +328,7 @@ class DesktopSession:
             "state": state,
             "generation": self.generation, "desktop": self.config["desktop"],
             "username": self.config["username"], "display": os.environ["DISPLAY"],
-            "geometry": size, **control_state.status(),
+            "geometry": size, **self.sync_control(),
             "browser_pause": self.browser_pause,
             "pid": self.process.pid,
             "control_active": False,
@@ -355,6 +363,7 @@ class DesktopSession:
         return {"logout_requested": True, "generation": self.generation}
 
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.sync_control()
         self.expire_browser_control()
         action = payload.get("action")
         if action == "status":

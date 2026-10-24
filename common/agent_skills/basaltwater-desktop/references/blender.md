@@ -43,7 +43,8 @@ For Blender's Python Console, use `desktop input ... text --delay-ms 10`:
 the default fast typing can drop characters in long commands. Write longer
 trusted operations to a script file and type a short loader command. Inspect
 the entered command before Return, then verify the script's output or saved
-artifact. Paced input keeps pause/session/geometry checks between characters;
+artifact. Paced input checks human control state/revision, session and geometry
+between characters;
 if it fails, inspect the partial command before retrying. Allow at most 20
 seconds per paced entry and use shorter commands as needed.
 
@@ -51,8 +52,9 @@ Save a checkpoint and reopen the saved task copy to verify the edit and required
 dependencies. Verify exports when requested and retain useful before/after
 viewport evidence. Report the saved/exported paths, edits and validation results
 to complete autonomous work; do not wait for human review unless requested.
-For a requested handoff, leave the working scene available and pause agent
-control when transferring the shared desktop. Desktop readiness includes this
+For a requested handoff, leave the working scene available. The human uses
+Take control, or explicitly approves a transition to human override. Desktop
+readiness includes this
 edit/save/reopen workflow; a CPU render alone leaves it unverified.
 
 ## glTF/GLB and OBJ/MTL interchange

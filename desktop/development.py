@@ -365,6 +365,7 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         return {"schema_version": 1, "ok": True, "dry_run": True, "operation": "stop",
                 "task": task_id, "unit": task["unit"]}
     if stop and unit.get("LoadState") != "not-found":
+        _honor_agent_control()
         state, _ = _probe(["/usr/bin/systemctl", "--user", "stop", "--no-block", task["unit"]], uid)
         if state != "ok":
             raise RuntimeError("Task stop was not acknowledged; inspect its status before retrying")

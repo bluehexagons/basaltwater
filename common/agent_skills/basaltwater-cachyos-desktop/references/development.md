@@ -17,7 +17,8 @@ use `develop exec --project PATH -- COMMAND`. Use `--dry-run` to preview.
 These user-systemd tasks survive client disconnection and retain private bounded
 logs; `develop list`, `develop status TASK_ID`, and `develop stop TASK_ID` manage
 only their records/process group. Save changes before stopping an editor.
-Launches honor saved/live human pause; they do not grant capture/input permission.
+Launches require the persistent agent control state to be enabled, including
+after the portal helper stops. They do not grant capture/input permission.
 See the [remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md).
 
 Queue project-declared Godot/Electron/native checks with `develop check RECIPE

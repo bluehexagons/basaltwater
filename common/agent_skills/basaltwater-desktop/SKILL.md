@@ -29,7 +29,11 @@ file, or export checks with `basaltwater-subagents` when useful.
 
 Use the configured account's managed commands, which supply display and bus
 environment. Never guess a display, copy authority cookies, or start another X
-server. Honor human pause; never resume it automatically or bypass denied access.
+server. When `status.agent_control` is `enabled`, perform authorized desktop work
+without asking to unpause or obtaining a control lease. `human-override` and
+`disabled` block mutations. Only explicit human approval or the human control UI
+authorizes a state change; a desktop task alone does not. A timed override's
+return to enabled is approved when the human chooses its timer.
 
 Readiness-only work uses status/doctor. Launches, captures, and input require the
 task scope, affect the shared session, and must target the intended application.

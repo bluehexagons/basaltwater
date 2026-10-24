@@ -45,11 +45,11 @@ fallback to the whole application. Root references can be reused for reads while
 their identity stays valid. Descendant actions still require recent observations.
 
 Use only returned references and action names. Action references expire after 60
-seconds and are cleared by desktop mutations and human pause. Each action
+seconds and are cleared by desktop mutations and human control changes. Each action
 rechecks the element's identity and state. Reinspect after every action or error;
 never retry a timed-out mutation automatically. `set-text` replaces the whole
 editable control (up to 4096 characters); `element focus` requests focus.
-Actions use the same generation and control lease as pointer input.
+Actions check the session generation and current human control revision, as does pointer input.
 
 `wait-element` combines exact name/role selectors with a state and optional
 `--text` equality. Success requires a complete scan and one matching control;
@@ -66,7 +66,7 @@ Run `basaltw desktop smoke` for a live Geany edit/save/scoped-dialog check
 on a running desktop. It uses a private test profile, verifies saved UTF-8 bytes,
 and closes its own window and removes test files on success. On failure it
 reports the stage and retains the test instance/files for inspection; inspect
-and close that instance before rerunning. It never resumes paused control.
+and close that instance before rerunning. It never changes agent permission.
 See the [desktop automation guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-automation.md)
 for smoke-check details and manual steps when needed (or read that file in a
 Basaltwater checkout). Verify ordinary task outputs with file tools as well.
@@ -127,7 +127,7 @@ basaltw desktop input --generation GENERATION --geometry 1280 720 key --key ctrl
 ```
 
 Coordinates are full-display pixels. Buttons 4–7 scroll; `move` moves the pointer.
-Commands acquire a short exclusive control lease. Keep sequences short, inspect
+Commands act while agent control is enabled, without obtaining a lease. Keep sequences short, inspect
 the result, and recapture after reconnect, resize, focus changes or an error.
 A successful input response is not proof that the application changed. Stale
 session or geometry errors require a fresh screenshot; never retry old clicks.

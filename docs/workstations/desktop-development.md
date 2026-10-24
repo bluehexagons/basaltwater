@@ -79,8 +79,9 @@ its required dependencies. Check an exported asset when export is part of the
 task. Retain useful before/after viewport evidence alongside the saved file.
 Complete autonomous tasks by reporting the saved/exported paths, changes and
 validation results; human review is not a completion gate. If human handoff is
-requested, leave the working scene available and pause agent control when
-transferring the shared desktop.
+requested, leave the working scene available. The human chooses Take control
+in the UI or explicitly approves a transition to human override; see
+[persistent control](desktop-control.md).
 
 Desktop readiness therefore includes an edit/save/reopen workflow on the target
 VM. The background CPU smoke check below supplies additional rendering evidence.
@@ -265,7 +266,7 @@ On CachyOS launch the executable directly in KDE, or use
 portal consent. The CachyOS desktop skill covers the same Blender model/UV/
 material and media workflows with native package/API differences. Its
 `references/native-control.md` explains selected-monitor capture, paced input,
-PID-scoped accessibility, human pause and task shutdown.
+PID-scoped accessibility, persistent human control states and backend shutdown.
 
 For repeatable SVG-to-PNG export, check the installed `inkscape --help` and use
 explicit page bounds, output path and size; width preserves the page aspect ratio:

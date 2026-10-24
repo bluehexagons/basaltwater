@@ -6,6 +6,7 @@ import importlib
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -136,6 +137,25 @@ class ControlStateTests(unittest.TestCase):
         logout.assert_called_once()
         self.assertTrue(session.maintenance)
         self.assertEqual(control_state.status(), current)
+
+    def test_cachyos_menu_control_installs_without_starting_or_changing_permission(self):
+        from common import cachyos_steps
+        current = self.change("disabled")
+        config = SimpleNamespace(dry_run=False)
+        with patch.object(cachyos_steps, "_home", return_value=self.home), patch.object(cachyos_steps, "run") as run:
+            cachyos_steps.configure_cachyos_desktop_control(config)
+            path = self.home / ".local/share/applications/basaltwater-desktop-control.desktop"
+            first = path.read_text()
+            self.assertIn("Exec=/usr/bin/python3 -m desktop.native_handoff", first)
+            self.assertNotIn("--human-approved", first)
+            cachyos_steps.configure_cachyos_desktop_control(config)
+            self.assertEqual(path.read_text(), first)
+            run.assert_not_called()
+        self.assertEqual(control_state.status(), current)
+        self.assertFalse((self.home / ".config/autostart").exists())
+        with patch.object(cachyos_steps, "_home") as home:
+            cachyos_steps.configure_cachyos_desktop_control(SimpleNamespace(dry_run=True))
+            home.assert_not_called()
 
 
 if __name__ == "__main__":

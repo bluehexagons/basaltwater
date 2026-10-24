@@ -291,6 +291,11 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
         for step in steps:
             if time.monotonic() >= deadline:
                 raise RuntimeError("Desktop sequence exceeded its 20-second budget")
+            observed = backend.status()
+            if observed.get("generation") != generation or observed.get("control_revision") != revision:
+                raise RuntimeError("Desktop control changed during the sequence; observe before retrying")
+            if observed.get("agent_control") != "enabled":
+                raise RuntimeError("Agent desktop control is " + str(observed.get("agent_control")))
             result = send_action({**step, "generation": generation, "control_revision": revision}, deadline=deadline, backend=backend)
             if "error" in result:
                 return {"generation": generation, "error": result["error"], "completed": len(results),

@@ -32,6 +32,8 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from common.cachyos_cleanup import cleanup_cachyos_packages
     from common.cachyos_steps import (
         install_cachyos_packages,
+        configure_cachyos_desktop_control,
+        desktop_automation_requested,
         install_cachyos_agents,
         configure_cachyos_agent_context,
         install_cachyos_skills,
@@ -56,6 +58,8 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         ("Observing workstation health (read-only)", report_cachyos_host_health),
         ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
     ]
+    if desktop_automation_requested(config):
+        steps.append(("Adding human desktop control to the application menu", configure_cachyos_desktop_control))
     if config.install_node_versions:
         steps.append(("Preparing user-local NVM for project Node versions", install_cachyos_node_versions))
     if firewall_requested(config):

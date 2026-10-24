@@ -14,16 +14,16 @@ it is separate from session lifetime and also appears in the handoff window.
 After helper exit, `status.last_failure` retains the stage, timestamp and detail.
 Stages/errors also remain in the private runtime `helper.log` across restarts.
 
-The task helper uses a private same-user Unix socket, no network listener,
-privileged input daemon, systemd service or login autostart. Its default
-15-minute lifetime starts when control is ready; pending consent does not consume
-it and remains subject to the portal response timeout. It closes on stop, portal
+The helper uses a private same-user Unix socket, no network listener,
+privileged input daemon, systemd service or login autostart. It has no default
+lifetime limit; pending consent remains subject to the portal response timeout.
+It closes on stop, portal
 revocation, bus loss or loss of the session socket.
 It is an account-local control channel, not a sandbox against other programs
 already running as this account.
 
-For autonomous future sessions the owner may opt in with `start --remember
---session-seconds 28800`, explicitly approving one monitor, keyboard, pointer
+For autonomous future sessions the owner may opt in with `start --remember`,
+explicitly approving one monitor, keyboard, pointer
 and KDE's persistence option. This requires RemoteDesktop version 2. Later
 `start` calls use the saved token; KDE may decline restoration or require a new
 prompt. `grant_saved` and `restore_attempted` do not verify prompt-free access.
@@ -31,15 +31,16 @@ The private grant record lives in `~/.local/state/basaltwater/native-desktop`
 (0700 directory, 0600 file), outside projects and logs. Tokens are single-use;
 the returned replacement is saved without exposing it in status or arguments.
 An interrupted restore keeps its consumed identifier solely for revocation.
-Plain `start` preserves the saved opt-in and human pause even without a reusable
+Plain `start` preserves the saved opt-in and agent control state even without a reusable
 token, requesting fresh owner approval if needed. Use `revoke` to remove the
 opt-in before starting temporary access.
 
-`renew --generation GEN --seconds SECONDS` accepts 60–28800 seconds, requires
-running, unpaused, unexpired control, and cannot resume a human pause. Human
-pause persists across grant restoration. After expiry use `start`, inspect
+An optional `start --session-seconds SECONDS` bounds backend lifetime to 60–28800
+seconds. `renew --generation GEN --seconds SECONDS` changes that limit on a
+running, enabled, unexpired backend; `0` (the default) removes it. Neither
+changes human permission. After an explicit limit expires, use `start`, inspect
 the new generation and recapture; initial or withdrawn grants need owner
-approval. There is no automatic renewal or login control. `stop` keeps a grant;
+approval. There is no login autostart. `stop` keeps a grant;
 owner `revoke` closes control, deletes only its portal PermissionStore entries
 and removes the saved record, including while stopped. Retry reported store
 errors; never work around revocation with a different input service.
@@ -71,11 +72,12 @@ basaltw desktop --native input text --generation GEN --geometry 2560 1440 \
 Keys use XKB names such as `Return`, `Shift_L`, `F4`, `ctrl+s`.
 Key chords and pointer buttons 1–3 accept `--hold-ms 0–5000`
 (default 0); use 120 ms for game buttons that actuate during a press animation.
-Pause, stop, expiry and client disconnection interrupt holds and release inputs.
+Human override, disabled state, stop, backend expiry and client disconnection
+interrupt holds and release inputs.
 Hold duration does not apply to text or scroll buttons. Text defaults
 to 10 ms pacing. Replace the example generation, dimensions and coordinates
 with the actual screenshot values. The CLI limits text submission to 20 seconds
-and checks pause between characters. In Blender's console, load a task script through a short
+and checks the human control revision between characters. In Blender's console, load a task script through a short
 `exec(open('/absolute/task/edit.py').read())` command, inspect the typed command,
 then submit Return. Do not type long scripts rapidly into the console.
 
@@ -88,7 +90,7 @@ that file; scan truncation/partial coverage remain authoritative. Counts refer
 to returned items, not all controls. Delete disposable observations when done.
 
 `element OPERATION --ref REF --generation GEN` uses a fresh observed reference from that PID.
-References expire after 60 seconds and are invalidated by mutations and pause.
+References expire after 60 seconds and are invalidated by mutations and human control changes.
 Inspect again after each action. Password controls are excluded. A partial or
 empty accessibility tree is not proof that an application/window is absent.
 
@@ -131,15 +133,28 @@ desktop captures/logs private.
 
 ## Human control and shutdown
 
-Open `handoff` while control is enabled to give the owner Pause, Resume,
-Stop and Revoke saved access buttons. `control pause` revokes the current 30-second operation lease
-and blocks input, launches and semantic mutations. Observation remains
-available. In-flight operations can finish before pause is processed (bounded
-capture/accessibility timeouts); pause is not emergency compositor isolation.
-Do not issue `control resume` to work around a human pause.
+Check `status.agent_control`: `enabled` permits authorized task input without
+asking to unpause or obtaining a lease. `human-override` and `disabled` block
+launches, input and semantic mutations while observation remains available.
+Only explicit human approval or the human UI permits a state change; asking to
+use an application alone is insufficient. Never change the state to bypass a block.
+
+The handoff window offers Take control (15 minutes by default, or indefinite),
+Enable agents, and Disable agents, with backend health shown separately.
+State survives helper restarts, logout and reboot. A timed override stores its
+original deadline and returns to enabled as approved by that human choice.
+Indefinite override and disabled never expire. For an explicitly approved CLI
+change, use `control enabled|human-override|disabled --human-approved`;
+override accepts `--seconds 900` or `--indefinite`. State controls work even while
+the helper is stopped. See [persistent control](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-control.md)
+for migration, storage, and the same-account authorization boundary.
+
+In-flight operations can finish before a human request is processed (bounded
+capture/accessibility timeouts); this is not emergency compositor isolation.
 
 `stop` closes the portal and helper, preserving the desktop and applications.
-The handoff window can be closed independently without resuming input. Close
+Stop, revoke and closing the handoff window do not change agent permission.
+Leave enabled control available between tasks. Close
 only disposable instances created for the task, after confirming saved files.
 Keep editable sources, exports and useful verification logs with the project.
 See the [native desktop guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-desktop.md)

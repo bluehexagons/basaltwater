@@ -14,6 +14,10 @@ its existing logout checks. Save work before rerunning setup.
 This dependency probe neither starts the desktop nor reads application content;
 application accessibility coverage still requires an inspection.
 
+[Agent desktop control](desktop-control.md) defines the persistent enabled,
+human override, and disabled states, UI choices, approved CLI transitions, and
+restart behavior. Enabled agents work without a control lease or unpause request.
+
 Agent-created sessions start at 1600×900 so media editors fit; existing sessions
 and RDP-client resolution choices are retained. `desktop windows` preserves
 Unicode titles for matching and identity checks. Application screenshots require
@@ -105,12 +109,12 @@ unrelated UI.
 ## Act on observed controls
 
 References are retained in a bounded session-local inventory for up to 60 seconds.
-Desktop mutations and human pause clear them. Actions recheck the application's
+Desktop mutations and human control changes clear them. Actions recheck the application's
 D-Bus/object identity, tree position, name, role and enabled/showing state. These
 checks reduce stale targeting; application changes can still race with an action.
 Actions refresh the target's cached identity/state immediately before requesting
-the mutation. All mutations require the existing session generation and exclusive
-control lease.
+the mutation. All mutations require enabled agent control, the existing session
+generation, and the current human control revision, supplied by the CLI.
 
 `element focus` requests keyboard focus. `element set-text --text TEXT` replaces
 the entire editable control with up to 4096 characters, including Unicode and
@@ -139,9 +143,8 @@ Changes, disappearance or an incomplete inventory restart the interval.
 For `--condition absent`, absence must persist across complete observations.
 Polling samples the desktop; changes between samples can go unobserved.
 
-Window waits hold no control lease and remain available during human pause.
-The options work on shared XRDP and native desktop backends, including existing
-supervisors after updating the client code. They do not establish document
+Window waits remain available during human override or disabled control.
+The options work on shared XRDP and native desktop backends. They do not establish document
 readiness: inspect the actual document and verify its files before acting.
 A launch can reuse an existing window. Check returned PIDs and
 `existing_window_ids`; do not assume the launch PID owns every matching window.
@@ -163,7 +166,7 @@ match and a complete scan. Absence means no matching showing control; it cannot
 prove that a document saved or an export finished. Truncated text cannot satisfy
 text equality. Timeout errors include the last observation.
 
-Polling releases control between requests, including during human pause. Each
+Polling remains available while agent mutations are blocked. Each
 accessibility helper has an eight-second limit, so the final observation can
 extend a wait beyond its requested timeout by that amount. A failed helper never
 restarts the application or desktop.
@@ -189,9 +192,9 @@ basaltw desktop input --generation GENERATION --geometry WIDTH HEIGHT \
   text --delay-ms 10 --text "print('desktop check')"
 ```
 
-The delay accepts 1–100 milliseconds. Paced input sends each character under
-the same control lease, rechecking session generation, geometry and pause on
-every request. It works with already-running supervisors. Text remains limited
+The delay accepts 1–100 milliseconds. Paced input rechecks session generation,
+geometry, enabled state and the same human control revision on every request.
+Human intervention invalidates the remaining characters. Text remains limited
 to 1024 characters; pacing has a 20-second budget including request overhead.
 Use shorter commands if it exceeds the budget. Sequence input actions accept
 `"delay_ms": 10` and share that budget across paced actions in the sequence.
@@ -220,7 +223,7 @@ The shared desktop stays running. No packages are installed by this command.
 JSON output lists completed stages. Failure returns a nonzero exit code with the
 failed stage, temporary directory and launch/PID/window identities when known.
 It retains the test instance and files for inspection; it does not retry actions,
-force-close applications, or resume paused control. Inspect and close that test
+force-close applications, or change agent permission. Inspect and close that test
 instance before rerunning. Waits are bounded individually, not by a single overall
 deadline. This is an explicit live check, separate from `doctor` and unit tests.
 

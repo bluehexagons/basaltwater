@@ -268,13 +268,15 @@ class NativeSession:
         self.geometry = None
         self.captured = 0
         self.elements = {}
+        self.control_revision = control_state.status()["control_revision"]
         self.launches = {}
         self.lock = threading.RLock()
         self.stopping = threading.Event()
 
     def snapshot_status(self):
+        permission = self.sync_control()
         return {"state": self.state, "generation": self.generation, "desktop": "kde-wayland",
-                "backend": "portal", "origin": "portal", **control_state.status(),
+                "backend": "portal", "origin": "portal", **permission,
                 "helper_running": True, "portal_stage": self.portal_stage, "last_failure": self.last_failure,
                 "consent_expires_in": (max(0, int(self.consent_until - time.monotonic()))
                                        if self.state == "awaiting-consent" and self.consent_until is not None else None),
@@ -286,6 +288,14 @@ class NativeSession:
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
                 "control_active": self.input_active,
                 "detail": self.detail}
+
+    def sync_control(self):
+        current = control_state.status()
+        if self.control_revision != current["control_revision"]:
+            self.elements.clear()
+            self.captured = 0
+            self.control_revision = current["control_revision"]
+        return current
 
     def record(self):
         if self.receipt:
@@ -344,6 +354,7 @@ class NativeSession:
 
     def handle(self, payload):
         with self.lock:
+            self.sync_control()
             action = payload.get("action")
             if action == "status":
                 return self.snapshot_status()
