@@ -544,6 +544,10 @@ inventory collector/timer/snapshot and Fail2ban configuration; the shared CA,
 Nginx/OpenSSL packages, native Proxmox UI/configuration, and unowned firewall
 rules remain.
 
+If the inventory directory contains leftover temporary files from an interrupted
+write or other unrecognized files, removal preserves that directory and its
+remaining contents while completing the rest of panel teardown.
+
 The panel renders saved configured access and discovers live `basaltwater-web`
 forwards and static sites. HomeBox status is a loopback readiness probe only;
 it does not prove DNS, TLS, browser reachability, or inventory administration.
