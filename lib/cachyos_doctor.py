@@ -38,6 +38,7 @@ PACKAGES = (
 )
 _NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}", re.ASCII)
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:+_~\-]{0,127}", re.ASCII)
+_INVALID_SAVED_SELECTION = object()
 
 
 @dataclass(frozen=True)
@@ -172,12 +173,20 @@ def _observed_version(status: str, output: str) -> str | None:
 
 
 def saved_selection():
-    from lib.cachyos_refresh import load_saved_setup
+    """Return saved setup, None when absent, or a sentinel when unusable."""
+    from lib.cachyos_refresh import _record_path, load_saved_setup
+
+    try:
+        _record_path().lstat()
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return _INVALID_SAVED_SELECTION
 
     try:
         return load_saved_setup()[1]
-    except (OSError, KeyError, ValueError):
-        return None
+    except (OSError, KeyError, UnicodeError, ValueError):
+        return _INVALID_SAVED_SELECTION
 
 
 def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
@@ -199,7 +208,12 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         record("host", "deferred",
                "Run as the existing desktop user on CachyOS x86_64; no desktop probes ran.")
     else:
-        config = config if config is not None else saved_selection()
+        if config is None:
+            config = saved_selection()
+            if config is _INVALID_SAVED_SELECTION:
+                config = None
+                record("configuration.saved-setup", "failed",
+                       "Saved setup record is unreadable or invalid; inspect it locally and rerun setup with your desired flags.")
         home = Path(pwd.getpwuid(uid).pw_dir)
         selected_packages = {"t3code-bin": config.t3code_desktop} if config is not None else {}
         selected_packages.update({package: False for package in BROWSER_PACKAGES})

@@ -182,6 +182,8 @@ class DoctorOutputTests(unittest.TestCase):
 
 
 class DoctorTests(unittest.TestCase):
+    original_saved_selection = staticmethod(doctor.saved_selection)
+
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
@@ -193,13 +195,118 @@ class DoctorTests(unittest.TestCase):
         stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
         self.socket = stack.enter_context(patch.object(doctor, "_owned_socket", return_value=True))
         self.probe = stack.enter_context(patch.object(doctor, "_probe", side_effect=self.healthy_probe))
-        stack.enter_context(patch.object(doctor, "saved_selection", return_value=None))
+        self.saved_selection = stack.enter_context(patch.object(doctor, "saved_selection", return_value=None))
         stack.enter_context(patch("lib.cachyos_health.collect_host_health", return_value=[]))
         stack.enter_context(patch("lib.cachyos_health.collect_network_health", return_value=[]))
         stack.enter_context(patch.dict("os.environ", {
             "XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "wayland-0",
             "TOKEN": "secret-value", "DISPLAY": "secret-display",
         }, clear=True))
+
+    def use_saved_selection(self):
+        self.saved_selection.side_effect = self.original_saved_selection
+        self.saved_selection.return_value = None
+
+    def saved_setup_path(self):
+        path = Path(self.home) / ".local/state/basaltwater/cachyos/last-setup.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def assert_invalid_saved_setup_is_reported(self):
+        self.use_saved_selection()
+        report = doctor.collect_cachyos_doctor()
+        records = {item["name"]: item for item in report["capabilities"]}
+        configuration = records["configuration.saved-setup"]
+        self.assertEqual(configuration["state"], "failed")
+        self.assertEqual(configuration["sensitivity"], "metadata")
+        self.assertIn("inspect it locally", configuration["reason"])
+        self.assertIn("rerun setup", configuration["reason"])
+        self.assertIsNone(records["service.t3code"]["selected"])
+        serialized = json.dumps(report)
+        self.assertNotIn(self.home, serialized)
+        self.assertNotIn("private-argument", serialized)
+        self.assertNotIn("WEBHOOK_TOKEN", serialized)
+        self.assertNotIn("private exception", serialized)
+        return report
+
+    def test_missing_saved_setup_is_normal_absence(self):
+        self.use_saved_selection()
+        report = doctor.collect_cachyos_doctor()
+        names = {item["name"] for item in report["capabilities"]}
+        self.assertNotIn("configuration.saved-setup", names)
+        self.assertIn("service.t3code", names)
+
+    def test_corrupt_and_unsupported_saved_setup_records_are_reported(self):
+        path = self.saved_setup_path()
+        for contents in (
+            '{"arguments":["private-argument","WEBHOOK_TOKEN=secret"]',
+            json.dumps({"schema_version": 2, "arguments": ["private-argument"]}),
+        ):
+            with self.subTest(contents=contents[:20]):
+                path.write_text(contents)
+                path.chmod(0o600)
+                self.assert_invalid_saved_setup_is_reported()
+
+    def test_unsafe_saved_setup_permissions_are_reported(self):
+        path = self.saved_setup_path()
+        path.write_text(json.dumps({"schema_version": 1, "arguments": ["private-argument"]}))
+        path.chmod(0o644)
+        self.assert_invalid_saved_setup_is_reported()
+
+    def test_saved_setup_read_error_is_reported_without_exception_details(self):
+        path = self.saved_setup_path()
+        path.write_text("{}")
+        path.chmod(0o600)
+        self.use_saved_selection()
+        with patch("lib.cachyos_refresh.read_json_file", side_effect=PermissionError("private exception WEBHOOK_TOKEN")):
+            report = doctor.collect_cachyos_doctor()
+        records = {item["name"]: item for item in report["capabilities"]}
+        self.assertEqual(records["configuration.saved-setup"]["state"], "failed")
+        serialized = json.dumps(report)
+        self.assertNotIn("private exception", serialized)
+        self.assertNotIn("WEBHOOK_TOKEN", serialized)
+        self.assertNotIn(self.home, serialized)
+
+    def test_valid_saved_setup_selects_tool_checks(self):
+        from lib.config import SetupConfig
+        path = self.saved_setup_path()
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             install_node=True)
+        path.write_text("valid saved setup fixture")
+        path.chmod(0o600)
+        self.use_saved_selection()
+        with patch("lib.cachyos_refresh.load_saved_setup", return_value=([], config)), \
+                patch.object(doctor.shutil, "which", return_value="/usr/bin/node"):
+            report = doctor.collect_cachyos_doctor()
+        records = {item["name"]: item for item in report["capabilities"]}
+        self.assertNotIn("configuration.saved-setup", records)
+        self.assertTrue(records["tool.node"]["selected"])
+        self.assertEqual(records["tool.node"]["state"], "available")
+
+    def test_explicit_config_skips_invalid_saved_selection(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             install_node=True)
+        self.saved_selection.side_effect = AssertionError("saved selection must not be read")
+        with patch.object(doctor.shutil, "which", return_value="/usr/bin/node"):
+            report = doctor.collect_cachyos_doctor(config=config)
+        records = {item["name"]: item for item in report["capabilities"]}
+        self.assertNotIn("configuration.saved-setup", records)
+        self.assertTrue(records["tool.node"]["selected"])
+
+    def test_attention_summary_counts_invalid_saved_setup_failure(self):
+        path = self.saved_setup_path()
+        path.write_text("not-json")
+        path.chmod(0o600)
+        self.use_saved_selection()
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        args = parser.parse_args(["local", "cachyos-doctor", "--attention", "--json"])
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(doctor.run_cachyos_doctor(args), 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["summary"]["failed"], 1)
+        self.assertEqual(report["capabilities"][0]["name"], "configuration.saved-setup")
 
     @staticmethod
     def healthy_probe(command, _uid):
