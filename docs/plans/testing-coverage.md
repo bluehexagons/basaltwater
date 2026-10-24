@@ -88,9 +88,9 @@ in the evidence index below; raw logs and host inventories stay outside Git.
 | PANEL-SETUP | Proxmox panel lifecycle | Live slice: setup/rerun/removal/reinstall, private CA/auth persistence, native PVE isolation and firewall preservation | E10 |
 | PANEL-UI | Panel browser behavior | Partial: Chromium/Firefox first-party and synthetic Guacamole suite; selected real-host pages; no native PVE console or Firefox ESR qualification | E10 |
 | PANEL-JOBS | Real timers and journals | Live slice: failure then recovery, filtering/search/escaping/redaction, entry/byte bounds, partial results and historical views after removal | E11 |
-| STO-JOBS | Path mirrors and PAR2 recovery | Live slice: small-file `--sync`/`--backup` plus `--scrub` parity, detected damage preserved by mirrors, targeted repair/restore/accept, bad restore and symlink/hardlink rejection, unreadable-findings fallback and corrupt-cadence refusal; data/parity/schedule retained through setup rerun and reboot; missing mounts and real power loss remain open | E12 |
-| STO-SMB | Samba server/client | Not run: authenticated SMB3, service-user access, mount ordering/failure and reruns | — |
-| STO-SYNCTHING | Syncthing | Not run: two-device exchange, identity, removal/re-enable and disconnected recovery | — |
+| STO-JOBS | Path mirrors and PAR2 recovery | Live slice: small-file mirrors/PAR2, damage preservation and targeted recovery, unsafe-input rejection, populated rerun/reboot; missing endpoints block dependent jobs while independent jobs continue; absent nested mounts preserve backup subtrees; private mount views survive controlled source/destination detachment at endpoints and nested paths; native QEMU/LXC rsync and denied-namespace refusal checked; worker-discovered exclusions reach warning summaries and hold completion cadence until recovery. Real power loss and network-filesystem failure during transfer remain open | E12, E13 |
+| STO-SMB | Samba server/client | Live slice: encrypted authenticated SMB3.1.1 read/write/rename/delete, readonly/user/anonymous rejection, fast access change/removal preserving data, TCP445-only reconciliation, headless CIFS helpers, failed-automount repair, service-user access, idle reactivation and reboot. Windows/macOS clients and transport-loss recovery remain open | E13 |
+| STO-SYNCTHING | Syncthing | Live slice: direct two-device exchange, disconnected edit recovery/version history, populated reruns, reboot and removal/re-enable preserving identity and folders; private-CA HTTPS/API authentication, unsafe-root and inaccessible-ancestor rejection. Browser GUI, relays/discovery and conflicting edits remain open | E13 |
 | SYS-USER | Target-user rename | Not run: separate administrator, UID/home/units, interruption/resume | — |
 | SYS-PRIV | Privileged executor | Not run end to end on a disposable target: review/TLS lifecycle, lost response, worker interruption and recovery | — |
 | DEPLOY | Application deployment | Not run: signed webhook, healthy delivery and unhealthy activation rollback | — |
@@ -127,6 +127,7 @@ basaltw agent memory get lab-testing-coverage --project . --json
 | E10 | 2026-10-23 | Panel install/auth/TLS and browser checks, through `35c50a8b` |
 | E11 | 2026-10-23 | Real job/journal qualification, `189fbeaa` |
 | E12 | 2026-10-24 | Small-file mirrors/PAR2 and security APT-lock wait, `f9cd844d` |
+| E13 | 2026-10-24 | Samba, Syncthing and native rsync mount lifetime; final populated reruns at `b01be24a` and mount-retry checks through `e24658a4`; reboot checks at `d1b15ff7` plus `bbdbf163` rsync |
 
 For each new batch, update affected rows and the private evidence mapping.
 Record preconditions, exact source/runtime revisions, expected/observed behavior,
@@ -143,9 +144,9 @@ branch coverage is not a live-feature coverage percentage.
 
 ## Next useful batches
 
-Test missing/nested storage mounts, then Samba and Syncthing with independent
-disposable endpoints. Additional valuable cases are
-managed-user rename, a local signed deployment/rollback, and fresh agent-profile
+Extend file-service checks with conflicting edits and transport-loss recovery.
+Additional valuable cases are managed-user rename, a local signed
+deployment/rollback, and fresh agent-profile
 setup without account-bound credentials. Off-host restore, external notification
 delivery and native desktop qualification need their own explicit test boundary.
 Multi-node migration/HA/Ceph need additional infrastructure. Hardware stress,

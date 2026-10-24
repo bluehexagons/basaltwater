@@ -59,9 +59,11 @@ Share reconciliation and global hardening validate a private candidate with
 `testparm` before atomically replacing `smb.conf`, preserving its permissions
 and ownership. Validation errors, exceptions and interruptions leave the live
 file untouched. If publishing the validated file, installing the mount drop-in,
-reloading systemd or reloading Samba fails, the previous `smb.conf` is restored
-and the error propagates. Retry the same operation to repeat activation; unchanged
-successful configurations skip the Samba reload. Account, password, permission,
+reloading systemd or activating Samba fails, the previous `smb.conf` is restored
+and the error propagates. Global hardening restarts `smbd` when settings change
+and stops and disables `nmbd` on every run; share-only updates reload `smbd`.
+Retry the same operation to repeat activation; unchanged successful
+configurations skip the Samba restart or reload. Account, password, permission,
 cache-directory and mount drop-in changes are outside this file rollback. This
 is bounded exception recovery, without a durable Samba transaction marker:
 after a hard kill, failed restoration or an uncertain reload, inspect the live
@@ -230,7 +232,7 @@ The generated global Samba configuration:
 - disables guest access and anonymous enumeration;
 - removes the deprecated `null passwords` setting from the managed global
   section; and
-- validates candidate `smb.conf` content with `testparm` before reload.
+- validates candidate `smb.conf` content with `testparm` before activation.
 
 On machines that enforce their own firewall, setup also configures a fail2ban
 jail for failed Samba authentication. A share's internal directories
