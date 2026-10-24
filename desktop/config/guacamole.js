@@ -26,11 +26,12 @@
     let pageActive = true;
 
     function controls(connected) {
-        for (const id of ["take", "observe", "resume", "logout", "confirm-logout", "cancel-logout"])
-            byId(id).disabled = !connected || busy;
+        for (const id of ["take", "observe", "resume", "disable", "override-duration", "logout", "confirm-logout", "cancel-logout"])
+            if (byId(id)) byId(id).disabled = !connected || busy;
         byId("take").disabled = !connected || busy || controlled;
         byId("take").setAttribute("aria-pressed", String(controlled));
         byId("take").textContent = controlled ? "You have control" : "Take control";
+        byId("logout").disabled = !connected || !controlled || busy;
         byId("fullscreen").disabled = !connected;
         byId("disconnect").disabled = busy;
         byId("connect").disabled = connected || busy || client !== null;
@@ -81,22 +82,39 @@
         // Reuse input listeners between connections, changing their client.
         screen.replaceChildren();
         controls(false);
+        scheduleStatus();
     }
 
     function showState(result) {
         if (!result.controlled) observe();
         controlled = result.controlled;
         controls(connected);
+        showPermission(result);
         status.textContent = !agents ? (controlled ? "You control the desktop." : "Observing only.")
-            : controlled ? "You control the desktop. Agent desktop actions are paused."
-            : result.paused ? "Observing only. Agent desktop actions remain paused."
-            : "Observing only. Agent desktop actions are enabled.";
+            : controlled ? "Browser connected · You control the desktop." : "Browser connected · Observing only.";
         lifetime.textContent = `Session expires in ${Math.ceil(result.expires_in / 60)} min; inactivity expires in ${Math.ceil(result.idle_expires_in / 60)} min. Select Observe only to keep observing.`;
+    }
+
+    function showPermission(result) {
+        if (!agents) return;
+        byId("agent-control-status").textContent = permissionText(result);
+        byId("agent-control-status").dataset.mode = result.agent_control || "unknown";
+    }
+
+    function permissionText(result) {
+        if (result.agent_control === "disabled") return "Agents disabled until you enable them.";
+        if (result.agent_control === "human-override") {
+            if (result.override_remaining === null) return "Human override until you enable agents.";
+            const seconds = Math.max(0, Number(result.override_remaining));
+            return `Human override: ${Math.floor(seconds / 60)} min ${Math.floor(seconds % 60)} sec remaining.`;
+        }
+        if (result.agent_control === "enabled") return "Agents enabled.";
+        return "Agent permission unavailable. Check desktop status.";
     }
 
     function scheduleStatus() {
         clearTimeout(pollTimer);
-        if (connected) pollTimer = setTimeout(refreshStatus, 3000);
+        if (pageActive && (connected || agents)) pollTimer = setTimeout(refreshStatus, 3000);
     }
 
     async function refreshStatus() {
@@ -107,11 +125,19 @@
             if (!busy && connected) {
                 const result = await post("status", {session: ticket});
                 if (client === current && revision === observedRevision) showState(result);
+            } else if (!busy && agents && pageActive) {
+                const result = await post("inspect");
+                if (client === current && revision === observedRevision) showPermission(result);
             }
         } catch (error) {
             if (client === current && revision === observedRevision) {
-                reset();
-                status.textContent = error.message;
+                if (connected) {
+                    reset();
+                    status.textContent = error.message;
+                } else if (agents) {
+                    byId("agent-control-status").textContent = "Agent permission unavailable. Check desktop status.";
+                    byId("agent-control-status").dataset.mode = "unknown";
+                }
             }
         } finally { scheduleStatus(); }
     }
@@ -205,7 +231,7 @@
                 if (state === 3) {
                     connected = true;
                     status.textContent = agents
-                        ? "Observing only. Select Take control to pause agent desktop actions."
+                        ? "Observing only. Check agent permission or select Take control."
                         : "Observing only. Select Take control to use the desktop.";
                     controls(true);
                     scale();
@@ -235,8 +261,8 @@
         }
     });
 
-    for (const action of ["take", "observe", "resume"]) {
-        byId(action).addEventListener("click", async () => {
+    for (const action of ["take", "observe", "resume", "disable"]) {
+        byId(action)?.addEventListener("click", async () => {
             if (!attachment || !connected || busy) return;
             const current = client;
             const ticket = attachment;
@@ -245,7 +271,12 @@
             busy = true;
             controls(connected);
             try {
-                const result = await post("control", {session: ticket, action});
+                const data = {session: ticket, action: !agents && action === "resume" ? "observe" : action};
+                if (action === "take") {
+                    const duration = agents ? byId("override-duration").value : "indefinite";
+                    data.override_seconds = duration === "indefinite" ? null : Number(duration);
+                }
+                const result = await post("control", data);
                 if (client !== current || attachment !== ticket) return;
                 showState(result);
                 if (controlled) screen.focus({preventScroll: true});
@@ -267,7 +298,7 @@
             await post("disconnect", {session: attachment});
             reset();
             status.textContent = agents
-                ? "Disconnected. The desktop remains running. Browser control released; any separate agent pause is preserved."
+                ? "Disconnected. The desktop remains running. Saved agent permission is preserved."
                 : "Disconnected. The desktop remains running. Browser control released.";
         } catch (error) { status.textContent = error.message; }
         finally { busy = false; controls(connected); }
@@ -370,10 +401,13 @@
         });
     }
     byId("inspect").addEventListener("click", async () => {
+        const observedRevision = revision;
         byId("inspect").disabled = true;
         try {
             const result = await post("inspect");
-            byId("desktop-status").textContent = `Desktop: ${result.state}${result.geometry ? ` · ${result.geometry.join(" × ")}` : ""}${agents && result.state === "running" ? result.paused ? " · agent paused" : " · agent enabled" : ""}.`;
+            if (revision !== observedRevision) return;
+            showPermission(result);
+            byId("desktop-status").textContent = `Desktop: ${result.state}${result.geometry ? ` · ${result.geometry.join(" × ")}` : ""}. ${agents ? permissionText(result) : ""}`;
         } catch (error) { byId("desktop-status").textContent = error.message; }
         finally { byId("inspect").disabled = false; }
     });
@@ -410,12 +444,14 @@
         reset();
         status.textContent = "Disconnected. Browser control released. Connect again to rejoin the desktop.";
         // Also revoke a pending attachment before its WebSocket is ready.
-        // The server handles dropped sockets and lease expiry independently.
+        // Dropped sockets release browser ownership; permission stays saved.
         if (ticket) fetch("/desktop/disconnect", {
             method: "POST", credentials: "same-origin", cache: "no-store", keepalive: true,
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({csrf, session: ticket})
         }).catch(() => {});
     });
-    window.addEventListener("pageshow", () => { pageActive = true; controls(connected); });
+    window.addEventListener("pageshow", () => { pageActive = true; controls(connected); scheduleStatus(); });
+    if (agents) byId("inspect").click();
+    scheduleStatus();
 })();

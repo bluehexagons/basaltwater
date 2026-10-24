@@ -69,7 +69,9 @@ def load_configuration(path: str) -> dict:
 
 
 async def desktop_call(action: str, *, generation: str | None = None, geometry: list[int] | None = None,
-                       pause_token: str | None = None) -> dict:
+                       pause_token: str | None = None, mode: str | None = None,
+                       seconds: int | None = 900, human_approved: bool = False,
+                       override_seconds: int | None = 900) -> dict:
     payload = {"action": action}
     if generation is not None:
         payload["generation"] = generation
@@ -77,6 +79,10 @@ async def desktop_call(action: str, *, generation: str | None = None, geometry: 
             payload["geometry"] = geometry
     if action.startswith("browser-"):
         payload["pause_token"] = pause_token
+    if action == "browser-take":
+        payload.update(human_approved=human_approved, override_seconds=override_seconds)
+    if action == "control":
+        payload.update(mode=mode, seconds=seconds, human_approved=human_approved)
     function = desktop.start if action == "start" else desktop.status if action == "status" else lambda: desktop.request(payload)
     return await asyncio.wait_for(asyncio.to_thread(function), 65 if action == "start" else 35)
 
@@ -94,6 +100,7 @@ class Session:
     ready: bool = False
     controlled: bool = False
     pause_token: str | None = field(default=None, repr=False)
+    control_revision: str | None = None
     keys: set[str] = field(default_factory=set)
     pointer: list[str] | None = None
     socket: web.WebSocketResponse | None = None
@@ -156,7 +163,7 @@ class Gateway:
                 or (origin and request.headers.get("Origin") != expected)):
             raise web.HTTPForbidden(text="Browser access denied")
 
-    async def form(self, request: web.Request, allowed: set[str]) -> dict:
+    async def form(self, request: web.Request, allowed: set[str], *, optional: frozenset[str] | set[str] = frozenset()) -> dict:
         self.authenticate(request, origin=True)
         if request.query or request.content_type != "application/json":
             raise web.HTTPBadRequest(text="Invalid browser request")
@@ -172,7 +179,8 @@ class Gateway:
             value = json.loads(await request.text(), object_pairs_hook=pairs)
         except (ValueError, UnicodeError):
             raise web.HTTPBadRequest(text="Invalid browser request") from None
-        if (not isinstance(value, dict) or set(value) != allowed | {"csrf"}
+        if (not isinstance(value, dict) or not (allowed | {"csrf"}) <= set(value)
+                or not set(value) <= allowed | optional | {"csrf"}
                 or not isinstance(value.get("csrf"), str)
                 or not secrets.compare_digest(value["csrf"].encode("utf-8"), self.csrf.encode("ascii"))):
             raise web.HTTPForbidden(text="Invalid browser request")
@@ -194,10 +202,22 @@ class Gateway:
         navigation = self.navigation("desktop")
         agents = any(href == "/agents" for href, _label, _current in navigation)
         connection_help = (
-            "Connect to observe the agent. Take control pauses agent desktop actions. Disconnect releases your browser control."
+            "Enable agents, take control for a chosen duration, or disable agents. Your choice is saved when you disconnect."
             if agents else "Connect to view the shared desktop. Take control to use its keyboard and pointer. Disconnect releases your browser control."
         )
-        resume_label = "Resume agent" if agents else "Release control"
+        take_button = '<button id="take" class="primary-control" aria-pressed="false" disabled>Take control</button>'
+        permission_controls = (f'''<section class="agent-permission" aria-labelledby="permission-heading">
+<div class="permission-heading"><h3 id="permission-heading">Agent permission</h3>
+<span id="agent-control-status" role="status" aria-live="polite" data-mode="unknown">Checking agent permission…</span></div>
+<p id="permission-help">Your choice stays saved when you close this page or the backend restarts.
+A timed override enables agents when its timer ends.</p>
+<div class="desktop-controls permission-actions">{take_button}<label>Take control duration<select id="override-duration" aria-describedby="permission-help">
+<option value="900">15 minutes</option><option value="300">5 minutes</option><option value="3600">1 hour</option>
+<option value="indefinite">Until I enable agents</option></select></label>
+<button id="resume" disabled>Enable agents</button><button id="disable" disabled>Disable agents</button></div>
+<p class="permission-note">Connect to use these controls. Observe only and Disconnect release browser input and keep your saved choice.</p></section>'''
+                               if agents else "")
+        ordinary_controls = "" if agents else take_button + '<button id="resume" disabled>Release control</button>'
         console_link = ('<p><a href="/console/">Open browser console</a> to log into a shell here without starting the desktop.</p>'
                         if "ssh_host_key" in self.config else "")
         content = f'''<section class="desktop-panel" data-agent-features="{str(agents).lower()}"><h2>Shared desktop</h2>
@@ -209,15 +229,16 @@ class Gateway:
 <label>Unix account password <input id="password" type="password" required maxlength="1024" autocomplete="off"></label>
 <button id="connect">Connect to desktop</button></form>
 <div id="desktop-view">
-<div class="desktop-controls"><button id="take" class="primary-control" aria-pressed="false" disabled>Take control</button>
-<button id="observe" disabled>Observe only</button><button id="resume" disabled>{resume_label}</button>
+{permission_controls}
+<div class="desktop-controls" role="group" aria-label="Browser connection controls">{ordinary_controls}
+<button id="observe" disabled>Observe only</button>
 <button id="disconnect" type="button" aria-label="Disconnect browser session">Disconnect</button><button id="fullscreen" disabled>Fullscreen</button>
 <button id="keyboard-toggle" type="button" aria-expanded="false" aria-controls="keyboard-panel" disabled>Keyboard</button></div>
 <details id="display-options"><summary>Display &amp; touch settings</summary><div class="desktop-controls">
 <label>Display size<select id="zoom"><option value="fit">Fit screen</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
 <label>Touch input<select id="touch-mode"><option value="trackpad">Trackpad</option><option value="direct">Direct touch</option><option value="pan">Pan display</option></select></label>
 </div></details>
-<div class="logout-controls"><button id="logout" type="button" disabled>Log out desktop</button>
+<div class="logout-controls"><button id="logout" type="button" disabled>Log out desktop</button><span>Take control before logging out.</span>
 <span id="logout-confirmation" hidden>Log out and close desktop applications?
 <button id="confirm-logout" type="button">Log out desktop now</button><button id="cancel-logout" type="button">Cancel</button></span></div>
 <p id="status" role="status" aria-live="polite">Disconnected</p>
@@ -309,10 +330,11 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
 
     def state(self, session: Session, snapshot: dict) -> dict:
         self.check_snapshot(session, snapshot)
-        if (snapshot.get("paused") is not True
+        if (snapshot.get("agent_control") != "human-override"
+                or snapshot.get("control_revision") != session.control_revision
+                or snapshot.get("paused") is not True
                 or snapshot.get("browser_pause") != session.pause_token):
             session.release_input()
-        if snapshot.get("browser_pause") != session.pause_token:
             session.pause_token = None
         now = time.monotonic()
         remaining = max(0, int(MAX_SESSION - (now - session.created)))
@@ -321,18 +343,23 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             session.revoke()
             raise web.HTTPConflict(text="Desktop session expired; reconnect")
         return {"controlled": session.controlled, "paused": snapshot.get("paused") is True,
+                **self.permission_state(snapshot),
                 "expires_in": remaining, "idle_expires_in": idle}
 
+    @staticmethod
+    def permission_state(snapshot: dict) -> dict:
+        """Expose permission status without exposing browser ownership tokens."""
+        return {key: snapshot.get(key) for key in
+                ("agent_control", "override_until", "override_remaining", "control_revision")}
+
     async def retire(self, session: Session) -> None:
-        """Invalidate before conditionally releasing this connection's pause."""
+        """Release connection ownership without changing durable permission."""
         session.revoke()
         if self.session is session:
             self.session = None
         token, session.pause_token = session.pause_token, None
         if token is not None:
-            # A replaced desktop, explicit local pause, or later browser owner
-            # cannot be resumed by this session's cleanup. The supervisor's
-            # short lease also recovers from failed cleanup or a gateway crash.
+            # Token cleanup never enables agents, including after a crash.
             with contextlib.suppress(OSError, ValueError, RuntimeError, asyncio.TimeoutError):
                 await desktop_call("browser-release", generation=session.generation, pause_token=token)
 
@@ -344,13 +371,16 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             self.state(session, snapshot)
         return snapshot
 
-    async def take_control(self, session: Session) -> dict:
+    async def take_control(self, session: Session, *, seconds: int | None = 900) -> dict:
         snapshot = await desktop_call("browser-take", generation=session.generation,
-                                      geometry=session.geometry, pause_token=session.pause_token)
+                                      geometry=session.geometry, pause_token=None,
+                                      human_approved=True, override_seconds=seconds)
         token = snapshot.get("browser_pause")
-        if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+        if (not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token)
+                or not isinstance(snapshot.get("control_revision"), str)):
             raise RuntimeError("Desktop supervisor needs updating before browser control")
         session.pause_token = token
+        session.control_revision = snapshot.get("control_revision")
         self.check_snapshot(session, snapshot)
         session.controlled = snapshot.get("paused") is True
         return snapshot
@@ -364,19 +394,24 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             return web.json_response(self.state(session, await desktop_call("status")))
 
     async def inspect(self, request: web.Request) -> web.Response:
-        """Report readiness without creating a session or exposing its lease."""
+        """Report readiness and durable permission without creating a session."""
         await self.form(request, set())
         snapshot = await desktop_call("status")
         geometry = snapshot.get("geometry")
         if not isinstance(geometry, list) or len(geometry) != 2 or any(type(n) is not int or not 1 <= n <= 16384 for n in geometry):
             geometry = None
         return web.json_response({"state": str(snapshot.get("state", "unknown"))[:40],
+                                  **self.permission_state(snapshot),
                                   "paused": snapshot.get("paused") is True, "geometry": geometry})
 
     async def control(self, request: web.Request) -> web.Response:
-        value = await self.form(request, {"session", "action"})
-        if not isinstance(value["action"], str) or value["action"] not in {"take", "observe", "resume"}:
+        value = await self.form(request, {"session", "action"}, optional={"override_seconds"})
+        if not isinstance(value["action"], str) or value["action"] not in {"take", "observe", "resume", "disable"}:
             raise web.HTTPBadRequest(text="Invalid desktop action")
+        seconds = value.get("override_seconds", 900)
+        if ("override_seconds" in value and value["action"] != "take") or (
+                seconds is not None and (type(seconds) is not int or not 60 <= seconds <= 86400)):
+            raise web.HTTPBadRequest(text="Choose a takeover duration from 1 minute to 24 hours, or indefinite")
         async with self.lock:
             session = self.selected_session(value["session"])
             if not session.ready:
@@ -386,11 +421,20 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             self.state(session, snapshot)
             action = value["action"]
             if action == "take":
-                snapshot = await self.take_control(session)
-            elif action == "resume":
-                snapshot = await desktop_call("resume",
+                # Every take is an explicit human choice. A heartbeat uses
+                # browser-refresh instead and never renews the override.
+                if session.pause_token is not None:
+                    await desktop_call("browser-release", generation=session.generation, pause_token=session.pause_token)
+                    session.pause_token = None
+                snapshot = await self.take_control(session, seconds=seconds)
+            elif action in {"resume", "disable"}:
+                snapshot = await desktop_call("control", mode="enabled" if action == "resume" else "disabled",
+                                              seconds=900, human_approved=True,
                                               generation=session.generation, geometry=session.geometry)
                 self.check_snapshot(session, snapshot)
+                session.pause_token = None
+            elif session.pause_token is not None:
+                snapshot = await desktop_call("browser-release", generation=session.generation, pause_token=session.pause_token)
                 session.pause_token = None
             session.controlled = action == "take" and snapshot.get("paused") is True
             session.activity = time.monotonic()
@@ -418,9 +462,12 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             session = self.selected_session(value["session"])
             if not session.ready:
                 raise web.HTTPConflict(text="Connect before logging out the desktop")
+            snapshot = await desktop_call("status")
+            self.state(session, snapshot)
+            if not session.controlled:
+                raise web.HTTPConflict(text="Take control before logging out the desktop")
             session.release_input()
-            self.state(session, await desktop_call("status"))
-            snapshot = await self.take_control(session)
+            session.controlled = True
             result = await desktop_call("browser-logout", generation=session.generation,
                                         geometry=session.geometry, pause_token=session.pause_token)
             session.activity = time.monotonic()
@@ -568,6 +615,13 @@ input,select,textarea{color:var(--text);background:var(--bg);min-width:0}button{
 a{color:var(--accent)}label{min-width:0}#connect-form label{flex:1 1 220px}#ssh-command{width:100%;font-family:monospace}
 .desktop-inspection,.keyboard-keys{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0}
 #desktop-view{min-width:0}.desktop-controls{align-items:center}.desktop-controls label{font-size:.9rem}
+.agent-permission{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:16px;margin:16px 0}
+.permission-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.permission-heading h3{margin:0}
+#agent-control-status{font-weight:700;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+#agent-control-status[data-mode="human-override"]{border-color:var(--accent);color:var(--accent)}
+#agent-control-status[data-mode="disabled"]{border-style:double;border-width:3px}
+.permission-actions{align-items:end}.permission-actions .primary-control{min-height:52px}
+.agent-permission p{margin:10px 0}.agent-permission .permission-note{color:var(--muted);font-size:.9rem;margin-bottom:0}
 #display-options summary{min-height:44px;padding:10px 0;cursor:pointer;color:var(--accent)}
 #keyboard-panel{padding:12px 0}#desktop-keyboard{width:100%;resize:vertical}
 .keyboard-keys button[aria-pressed=true]{background:var(--accent);color:var(--panel)}
@@ -588,6 +642,7 @@ button:disabled{opacity:.5;cursor:default}#screen{position:relative;overflow:aut
 #desktop-view:fullscreen #status{font-size:.85rem;margin:6px 0}
 footer{padding:20px;color:var(--muted)}@media(max-width:900px){.sidebar{position:static;width:auto}.nav-links{display:flex;overflow:auto}.nav-links a{flex:none}.nav-group{display:none}main{margin:0;padding:12px}}
 @media(max-width:560px){header,.desktop-panel{padding:14px}.desktop-controls{gap:8px}.primary-control{font-size:1rem;padding:10px 14px}#connect-form button{width:100%}#desktop-view:fullscreen{padding:8px}}
+@media(max-width:560px){.agent-permission{padding:12px}.permission-actions>label{flex:1 1 100%}.permission-actions>.primary-control{flex:1 1 100%}.permission-actions>button:not(.primary-control){flex:1 1 0;min-width:0}.permission-heading{align-items:start;flex-direction:column}}
 """
 
 GATEWAY_KEY = web.AppKey("gateway", Gateway)
