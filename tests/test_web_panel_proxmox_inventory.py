@@ -150,6 +150,7 @@ class ProxmoxInventoryTests(unittest.TestCase):
         def run(command, **kwargs):
             self.assertEqual(command, ["/usr/bin/pvesh", "get", "/version", "--output-format", "json"])
             self.assertEqual(kwargs["timeout"], 8)
+            self.assertEqual(kwargs["group"], 0)
             self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
             kwargs["stdout"].write(b'{"version":"9.1.0"}')
             return subprocess.CompletedProcess(command, 0)

@@ -121,7 +121,9 @@ def _query(path: str) -> object:
         result = subprocess.run(
             ["/usr/bin/pvesh", "get", path, "--output-format", "json"],
             stdout=output, stderr=subprocess.DEVNULL, timeout=8, check=False,
-            preexec_fn=_limit_output,
+            # pmxcfs authenticates root IPC clients by both UID and primary GID.
+            # Keep the exporter itself in the panel group for snapshot writes.
+            group=0, preexec_fn=_limit_output,
         )
         output.seek(0)
         raw = output.read(MAX_BYTES + 1)

@@ -87,6 +87,11 @@ on an existing host. To investigate missing or stale data, inspect
 `systemctl status basaltwater-web-panel-proxmox.timer` and
 `journalctl -u basaltwater-web-panel-proxmox.service` on the host.
 
+The fixed `pvesh` child commands use root's primary group for
+[Proxmox IPC authentication](https://github.com/proxmox/pve-cluster/blob/master/src/pmxcfs/server.c#L106).
+The exporter retains the panel group when publishing the
+snapshot; the web worker receives no additional group memberships or privileges.
+
 Existing host metrics, services, mounted storage, scheduled jobs and service
 diagnostics remain available. The diagnostic allowlist includes `pveproxy`,
 `pvedaemon`, `pvestatd`, `pve-cluster`, `corosync`, `pve-firewall` and
