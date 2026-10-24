@@ -22,6 +22,13 @@ verified waiting `go run` wrappers from builds; follow reported deferrals rather
 than treating every Go process as a build or bypassing the guard. Module-cache
 cleanup remains separate.
 
+For authorized rootless Podman cleanup, preview
+`basaltw agent storage clean-podman --json` and use `--apply` only after
+reviewing candidates. It targets old dangling untagged images and preserves
+tagged images, Buildah references, containers, volumes, and persistent
+build-cache mounts. The full policy, safety guards, dynamic age threshold, and
+verification limits are in the [Podman cleanup reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/storage-cleanup.md#podman-image-cleanup).
+
 Classify only a selected, bounded file list or a few relevant log excerpts.
 Prefer metadata, counters, and app-owned inventories before content. Where
 delegation is supported, use Luna at medium reasoning and standard service for

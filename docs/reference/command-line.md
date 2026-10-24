@@ -90,6 +90,7 @@ basaltw agent resources [--json]
 basaltw agent storage inspect [--path ABSOLUTE_DIRECTORY]... [--max-entries N] [--timeout SECONDS] [--json]
 basaltw agent storage project ABSOLUTE_PROJECT [--policy RELATIVE_JSON] [--max-entries N] [--timeout SECONDS] [--json]
 basaltw agent storage clean-generated ABSOLUTE_PROJECT --rule NAME [--policy RELATIVE_JSON] [--dry-run | --apply]
+basaltw agent storage clean-podman [--dry-run | --apply] [--json]
 basaltw agent containers inspect [--engine podman|docker]... [--json]
 basaltw agent containers preflight --engine podman|docker --image-bytes N [options]
 basaltw agent graphics doctor --context xvfb|display [--json]
@@ -1080,6 +1081,7 @@ basaltw agent doctor --all-capabilities --json
 basaltw agent doctor --capability development --json
 basaltw agent resources --json
 basaltw agent storage inspect --json
+basaltw agent storage clean-podman --json
 basaltw agent containers inspect --engine podman --json
 basaltw agent graphics doctor --context xvfb --json
 basaltw agent doctor --tool codex --tool opencode --capability browser
@@ -1207,6 +1209,32 @@ entries shared across roots, up to 50000 per default root, a cooperative
 accepts 1–60 seconds. Partial and unavailable evidence is explicit; allocated
 usage is not a savings guarantee. See [storage cleanup](../agents/storage-cleanup.md)
 for retention checks and approved follow-ups.
+
+`agent storage clean-podman` previews by default and operates only on the
+current user's local rootless Podman store. Use `--apply` after reviewing the
+candidate IDs; `--dry-run` explicitly selects preview and `--json` returns
+structured evidence. It targets only untagged, unreferenced dangling images
+older than seven days, or 24 hours when graph-root filesystem headroom is low.
+The low-headroom threshold follows the dynamic user-cache target
+`min(8 GiB, max(2 GiB, total filesystem size / 5))`. Tagged images, regular or
+external Buildah container references, all containers, volumes, and persistent
+build-cache mounts are preserved. Any value of the
+`io.basaltwater.keep` label excludes an image; add a tag or build label to
+protect a useful disposable image. The implementation uses native safe image
+prune without `--all`, `--external`, or `--build-cache`, and uses `--force` only
+to suppress interactive confirmation.
+
+The helper refuses rootful, remote, or unsafe stores, defers when build or
+mutation processes are active or evidence is incomplete, and serializes work
+with a lock. A timeout leaves completion uncertain; inspect store state before
+retrying. Preview IDs and savings are preflight estimates: shared layers and
+parents that become dangling during prune can change actual removals. Reports
+show actual filesystem free bytes before and after separately from reported
+image size. Readonly container inspection and preflight remain readonly. Daily
+full user-cache maintenance invokes this helper automatically; its
+`--agent-storage-only` mode does not. Broader removal of tagged SDK images,
+containers, or volumes requires a separately chosen retention policy.
+See [authorized Podman cleanup](../agents/storage-cleanup.md#podman-image-cleanup).
 
 `agent storage project ABSOLUTE_PROJECT` reads optional project cleanup JSON
 and measures declared roots without executing any repository command. The

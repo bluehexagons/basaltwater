@@ -91,6 +91,7 @@ Labels identify review guidance, never deletion eligibility or verified disuse.
 | Convention | Checks and retention |
 | --- | --- |
 | `go-build` | Preview `basaltw agent storage clean-go-build --json`; use `--apply` within approved scope. The shared guard distinguishes completed `go run` wrappers from builds. Keep modules and source; later builds recompile. |
+| `containers` (rootless Podman) | Use `basaltw agent storage clean-podman --json`; review the targeted dangling untagged images. Tagged images, containers, volumes, Buildah references and persistent build-cache mounts are retained. |
 | `playwright-browsers` (`ms-playwright`) | Match `.links` package registrations, their `browsers.json` revisions and live browser/MCP references. Keep latest testing browsers and older revisions still required by projects or managed tools. Use owner-native unused-version cleanup only after checking dependencies; sorting revision numbers or modification times is insufficient. |
 | `project-toolchain` (`*-toolchain`) | A name-based review hint for project caches such as build/release toolchain pairs. Read project installers and version/checksum locks; separate download archives from installed editors, SDKs, export templates and evidence. Confirm duplicate content by checksum and active use before choosing exact archive removals. Preserve required installed tools and a verified archive copy; installers may download missing archives again. |
 
@@ -147,6 +148,42 @@ cleanup. The CLI exits zero for preview, successful cleanup or an absent cache;
 deferral, unavailable tooling and failures exit nonzero. `cleanup_executed`
 records a successful native command even if subsequent verification fails.
 Cache bytes and free-space changes can differ because other jobs share the VM.
+
+## Podman image cleanup
+
+Preview the current user's local rootless Podman store, then apply only after
+reviewing the candidate list:
+
+```bash
+basaltw agent storage clean-podman --json
+basaltw agent storage clean-podman --apply --json
+```
+
+Preview is the default; `--dry-run` explicitly requests it. The policy selects
+only untagged, unreferenced dangling images older than seven days. When free
+space at the graph root is below the existing dynamic user-cache target,
+the age threshold becomes 24 hours. That target is
+`min(8 GiB, max(2 GiB, total filesystem size / 5))`. Every tagged image is
+preserved. Regular and external Buildah container references are retained, as
+are all containers, volumes and persistent build-cache mounts. An image with
+the `io.basaltwater.keep` label (any value) is excluded. To keep a useful
+disposable image, add a tag or build label.
+
+Cleanup calls Podman's native safe image-prune operation. It does not use
+`--all`, `--external`, or `--build-cache`, and never deletes storage files
+directly. `--force` is internal and suppresses only Podman's interactive
+confirmation. The command refuses rootful, remote or unsafe stores; active
+build/mutation processes and incomplete evidence defer cleanup. A lock
+serializes runs. Timeouts leave the outcome uncertain, so inspect Podman state
+before retrying.
+
+Preview IDs and savings are preflight estimates. Shared layers and parents
+that become dangling during pruning can change the actual removal set and
+space reclaimed. Reports distinguish actual filesystem free bytes before and
+after from Podman's reported image size. Readonly container inspection and
+preflight remain readonly. Daily full user-cache maintenance calls the same
+helper automatically; `--agent-storage-only` skips it. Removing tagged SDK
+images, containers or volumes requires a separately selected retention policy.
 
 ## Inspect project conventions economically
 
