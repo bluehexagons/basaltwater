@@ -9,13 +9,17 @@ import unittest
 import tempfile
 import subprocess
 import signal
+import io
+import json
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, call, mock_open, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from sync.service_tools import sync_rsync
+from lib.runtime_config import RuntimeConfig
+from lib.state_read import StateReadError
 
 
 class _FakeStream:
@@ -50,6 +54,9 @@ class TestSyncRsyncLogging(unittest.TestCase):
         self.logger = logging.getLogger(f"test.sync_rsync.{self._testMethodName}")
         self.logger.handlers.clear()
         self.logger.propagate = True
+        saved = patch('lib.machine_state.load_setup_config', return_value={})
+        saved.start()
+        self.addCleanup(saved.stop)
         source_check = patch.object(sync_rsync.os.path, "isdir", return_value=True)
         source_check.start()
         self.addCleanup(source_check.stop)
@@ -66,31 +73,25 @@ class TestSyncRsyncLogging(unittest.TestCase):
         expected = b'/file\\[1]\\?.bin\0/literal\\name\0/wild\\\\\\*.bin\0/nested/+ file\0/#comment\0'
         filter_paths = []
 
-        def popen(command, **kwargs):
+        with sync_rsync._rsync_command('/src', '/dst', paths, False) as command:
             self.assertIn('--delete-delay', command)
             self.assertIn('--from0', command)
             path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
             filter_paths.append(Path(path))
             self.assertEqual(Path(path).read_bytes(), expected)
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
-            return _FakeProcess(0)
-
-        def output(process):
             self.assertTrue(filter_paths[0].exists())
-            yield True, ''
-
-        with patch.object(sync_rsync.subprocess, 'Popen', side_effect=popen), patch.object(sync_rsync, '_output_lines', side_effect=output), patch.object(sync_rsync, 'get_service_logger'):
-            self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, excluded_paths=paths), 0)
+            descriptor = int(path.rsplit('/', 1)[1])
+            self.assertTrue(os.get_inheritable(descriptor))
         self.assertFalse(filter_paths[0].exists())
 
     def test_copy_new_only_disables_deletion_and_existing_file_updates(self):
-        with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)) as popen, patch.object(sync_rsync, 'get_service_logger'), patch.object(sync_rsync.os, 'walk', return_value=iter(())):
-            self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, copy_new_only=True), 0)
-        command = popen.call_args.args[0]
-        self.assertIn('--ignore-existing', command)
-        self.assertIn('--partial-dir=.rsync-partial', command)
-        self.assertNotIn('--delete', command)
-        self.assertNotIn('--delete-delay', command)
+        with patch.object(sync_rsync.os, 'walk', return_value=iter(())):
+            with sync_rsync._rsync_command('/src', '/dst', (), True) as command:
+                self.assertIn('--ignore-existing', command)
+                self.assertIn('--partial-dir=.rsync-partial', command)
+                self.assertNotIn('--delete', command)
+                self.assertNotIn('--delete-delay', command)
 
     def test_conflicting_ancestors_are_excluded_before_rsync_runs(self):
         for kind in ('source-file', 'source-symlink', 'destination-file', 'destination-symlink'):
@@ -107,15 +108,10 @@ class TestSyncRsyncLogging(unittest.TestCase):
                     else:
                         folder.mkdir()
                         (folder / 'flagged').write_text('preserve')
-                def popen(command, **kwargs):
+                with sync_rsync._rsync_command(str(source), str(destination),
+                        ('folder/flagged', 'healthy-folder/flagged'), False) as command:
                     path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
                     self.assertEqual(Path(path).read_bytes(), b'/folder\0/healthy-folder/flagged\0')
-                    self.assertTrue(kwargs['start_new_session'])
-                    return _FakeProcess(0)
-                with patch.object(sync_rsync.subprocess, 'Popen', side_effect=popen), patch.object(sync_rsync, 'get_service_logger'):
-                    result = sync_rsync.run_rsync_with_notifications(str(source), str(destination), True,
-                        excluded_paths=('folder/flagged', 'healthy-folder/flagged'))
-                self.assertEqual(result, 0)
 
     def test_timeout_is_an_operational_failure(self):
         with patch.object(sync_rsync.subprocess, 'Popen', return_value=_FakeProcess(0)), patch.object(sync_rsync, '_output_lines', side_effect=subprocess.TimeoutExpired('rsync', 14400)), patch.object(sync_rsync, 'get_service_logger', return_value=self.logger):
@@ -163,24 +159,20 @@ class TestSyncRsyncLogging(unittest.TestCase):
                 for entry in walk(*args, **kwargs):
                     visited.append(entry[0])
                     yield entry
-            def popen(command, **kwargs):
-                path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
-                self.assertEqual(set(Path(path).read_bytes().split(b'\0')[:-1]),
-                                 {b'/file', b'/link', b'/dangling', b'/offline'})
-                return _FakeProcess(0)
-            with patch.object(sync_rsync.os, 'walk', side_effect=inventory), patch.object(sync_rsync.subprocess, 'Popen', side_effect=popen), patch.object(sync_rsync, 'get_service_logger'):
-                result = sync_rsync.run_rsync_with_notifications(str(source), str(destination), True,
-                    excluded_paths=('offline',), copy_new_only=True)
-            self.assertEqual(result, 0)
+            with patch.object(sync_rsync.os, 'walk', side_effect=inventory):
+                with sync_rsync._rsync_command(str(source), str(destination), ('offline',), True) as command:
+                    path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
+                    self.assertEqual(set(Path(path).read_bytes().split(b'\0')[:-1]),
+                                     {b'/file', b'/link', b'/dangling', b'/offline'})
             self.assertNotIn(str(source / 'offline'), visited)
             self.assertNotIn(str(source / 'file'), visited)
             self.assertIn(str(source / 'normal'), visited)
 
     def test_invalid_exclusions_never_start_rsync(self):
         for path in ('/absolute', '../outside', 'nested/../outside', '.', 'line\nbreak'):
-            with self.subTest(path=path), patch.object(sync_rsync.subprocess, 'Popen') as popen, patch.object(sync_rsync, 'get_service_logger'):
-                self.assertEqual(sync_rsync.run_rsync_with_notifications('/src', '/dst', True, excluded_paths=(path,)), 1)
-                popen.assert_not_called()
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                with sync_rsync._rsync_command('/src', '/dst', (path,), False):
+                    self.fail('Invalid filter accepted')
 
     @patch("sync.service_tools.sync_rsync.datetime")
     @patch("sync.service_tools.sync_rsync.subprocess.Popen")
@@ -261,6 +253,201 @@ class TestSyncRsyncLogging(unittest.TestCase):
         self.assertIn("Failed to send success notification | error='notify boom'", "\n".join(logs.output))
 
 
+class TestMountNamespace(unittest.TestCase):
+    """Model host unmounts without creating namespaces, mounts, or real rsyncs."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.source, self.destination = Path(temporary.name) / 'source', Path(temporary.name) / 'backup'
+        self.source.mkdir()
+        self.destination.mkdir()
+        self.host_mounts = set()
+        self.in_worker = False
+        self.before_namespace = lambda: None
+        self.after_validation = lambda _command: None
+        self.mountinfo = '36 25 0:32 / / rw - ext4 /dev/root rw\n'
+        self.child_namespace = 'mnt:[child]'
+        self.config = {}
+        for target, kwargs in (
+            ('lib.machine_state.load_setup_config', {'side_effect': lambda: self.config}),
+            ('sync.service_tools.sync_rsync.get_service_logger', {}),
+            ('sync.service_tools.sync_rsync.os.readlink', {'side_effect': lambda path: self.child_namespace if self.in_worker and path == '/proc/self/ns/mnt' else 'mnt:[parent]'}),
+            ('sync.service_tools.sync_rsync.subprocess.Popen', {'side_effect': self.spawn}),
+            ('sync.service_tools.sync_rsync._output_lines', {'side_effect': lambda process: [(False, process.stderr.read())]}),
+        ):
+            mock = patch(target, **kwargs)
+            mock.start()
+            self.addCleanup(mock.stop)
+        execute = patch.object(sync_rsync.os, 'execv', side_effect=self.execute)
+        self.exec = execute.start()
+        self.addCleanup(execute.stop)
+
+    def spawn(self, command, **kwargs):
+        self.assertEqual(command[:6], ['/usr/bin/unshare', '--mount', '--propagation', 'private', '--', sys.executable])
+        self.assertEqual(command[-1], '--mount-worker')
+        self.assertTrue(kwargs['start_new_session'])
+        request = json.load(kwargs['stdin'])
+        self.request = request
+        self.before_namespace()
+        # unshare snapshots the tree and recursively detaches propagation
+        # before Python can perform any mount validation or traversal.
+        self.view = self.host_mounts.copy()
+        mountinfo = self.mountinfo
+        for root in sorted(self.view):
+            escaped = root.replace('\\', '\\134').replace(' ', '\\040')
+            mountinfo += f'37 36 0:33 / {escaped} rw - ext4 /dev/data rw\n'
+        self.in_worker = True
+        errors = io.StringIO()
+        try:
+            with patch.object(sync_rsync.sys, 'stdin', io.StringIO(json.dumps(request))), patch.object(sync_rsync.sys, 'stderr', errors), patch.object(sync_rsync, 'open', mock_open(read_data=mountinfo), create=True), patch.object(sys, 'argv', ['sync_rsync.py', '--mount-worker']):
+                result = sync_rsync.main()
+        finally:
+            self.in_worker = False
+        return _FakeProcess(result, stderr=errors.getvalue())
+
+    def execute(self, executable, command):
+        self.assertTrue(self.in_worker)
+        self.assertEqual(executable, '/usr/bin/rsync')
+        self.after_validation(command)
+
+    def run_sync(self, **kwargs):
+        return sync_rsync.run_rsync_with_notifications(str(self.source), str(self.destination), True, **kwargs)
+
+    def test_standalone_guards_endpoints_and_nested_smb_and_storage_mounts(self):
+        for smb in (False, True):
+            for endpoint in (self.source, self.destination):
+                for nested in (False, True):
+                    root = endpoint / 'disk' if nested else endpoint
+                    self.config = ({'smb_mounts': [[str(root), 'host', 'secret-reference', 'share']]} if smb else
+                                   {'storage_mounts': [['data', str(root)]]})
+                    with self.subTest(smb=smb, endpoint=endpoint, nested=nested):
+                        self.exec.reset_mock()
+                        with patch.object(sys, 'argv', ['sync_rsync.py', str(self.source), str(self.destination)]):
+                            result = sync_rsync.main()
+                        self.assertEqual(result, 0 if nested else 1)
+                        if nested:
+                            self.exec.assert_called_once()
+                        else:
+                            self.exec.assert_not_called()
+                        self.assertNotIn('secret-reference', json.dumps(self.request))
+
+    def test_unmount_after_preflight_before_namespace_is_revalidated(self):
+        for endpoint in (self.source, self.destination):
+            for nested in (False, True):
+                root = str(endpoint / 'disk' if nested else endpoint)
+                self.config = {'storage_mounts': [['data', root]]}
+                self.host_mounts = {root}
+                self.before_namespace = lambda: self.host_mounts.clear()
+                filters = []
+                def inspect(command):
+                    path = next(arg.split('=', 1)[1] for arg in command if arg.startswith('--exclude-from='))
+                    filters.append(Path(path).read_bytes())
+                self.after_validation = inspect
+                with self.subTest(endpoint=endpoint, nested=nested):
+                    self.exec.reset_mock()
+                    self.assertEqual(self.run_sync(), 0 if nested else 1)
+                    if nested:
+                        self.assertEqual(filters, [b'/disk\0'])
+                    else:
+                        self.exec.assert_not_called()
+
+    def test_mount_view_survives_host_unmount_after_child_validation(self):
+        for endpoint in (self.source, self.destination):
+            for nested in (False, True):
+                root = str(endpoint / 'disk' if nested else endpoint)
+                self.config = {'storage_mounts': [['data', root]]}
+                self.host_mounts = {root}
+                def traverse(command):
+                    self.host_mounts.clear()
+                    self.assertIn(root, self.view)
+                    self.assertIn('--delete', command)
+                    self.assertFalse(any(arg.startswith('--exclude-from=') for arg in command))
+                self.after_validation = traverse
+                with self.subTest(endpoint=endpoint, nested=nested):
+                    self.assertEqual(self.run_sync(), 0)
+
+    def test_invalid_or_missing_saved_state_cannot_start_worker(self):
+        for saved in (None, StateReadError('/state/setup.json', 'malformed'), {'storage_mounts': [['incomplete']]}, {'smb_mounts': 'invalid'}):
+            with self.subTest(saved=saved), patch('lib.machine_state.load_setup_config', side_effect=saved if isinstance(saved, Exception) else None, return_value=saved), patch.object(sync_rsync.subprocess, 'Popen') as launch:
+                self.assertEqual(self.run_sync(), 1)
+                launch.assert_not_called()
+
+    def test_namespace_failure_has_no_fallback_and_reports_requirement(self):
+        for failure in (FileNotFoundError('unshare missing'), PermissionError('not permitted'), _FakeProcess(1, stderr='unshare: unshare failed: Operation not permitted')):
+            logger = Mock()
+            with self.subTest(failure=failure), patch.object(sync_rsync, 'get_service_logger', return_value=logger), patch.object(sync_rsync.subprocess, 'Popen', side_effect=failure if isinstance(failure, Exception) else None, return_value=failure) as launch:
+                self.assertEqual(self.run_sync(), 1)
+                launch.assert_called_once()
+                self.exec.assert_not_called()
+                self.assertIn('CAP_SYS_ADMIN', str(logger.log.call_args_list))
+
+    def test_worker_rejects_same_namespace_and_nonprivate_propagation(self):
+        for namespace, optional in (('mnt:[parent]', ''), ('mnt:[child]', 'shared:1 '), ('mnt:[child]', 'master:1 '), ('mnt:[child]', 'propagate_from:1 ')):
+            self.child_namespace = namespace
+            self.mountinfo = f'36 25 0:32 / / rw {optional}- ext4 /dev/root rw\n'
+            with self.subTest(namespace=namespace, optional=optional):
+                self.assertEqual(self.run_sync(), 1)
+                self.exec.assert_not_called()
+
+    def test_autofs_placeholder_is_unavailable_until_real_filesystem_is_in_snapshot(self):
+        for endpoint in (self.source, self.destination):
+            for nested in (False, True):
+                root = str(endpoint / 'disk name' if nested else endpoint)
+                self.config = {'smb_mounts': [[root]]}
+                escaped = root.replace(' ', '\\040')
+                self.mountinfo = f'36 25 0:32 / / rw - ext4 /dev/root rw\n38 36 0:34 / {escaped} rw - autofs systemd-1 rw\n'
+                self.host_mounts.clear()
+                with self.subTest(endpoint=endpoint, nested=nested), patch.object(sync_rsync.os.path, 'ismount', return_value=True):
+                    self.exec.reset_mock()
+                    self.assertEqual(self.run_sync(), 0 if nested else 1)
+                    if nested:
+                        self.exec.assert_called_once()
+                    else:
+                        self.exec.assert_not_called()
+                    # A real filesystem stacked on autofs is an active mount.
+                    self.host_mounts.add(root)
+                    self.assertEqual(self.run_sync(), 0)
+
+    def test_undeclared_mnt_endpoint_requires_real_mounted_ancestor(self):
+        self.destination = Path('/mnt/offline/new-backup')
+        self.mountinfo += '38 36 0:34 / /mnt/offline rw - autofs systemd-1 rw\n'
+        with patch.object(sync_rsync.os.path, 'realpath', side_effect=lambda path: os.fspath(path)):
+            self.assertEqual(self.run_sync(), 1)
+            self.exec.assert_not_called()
+            self.host_mounts.add('/mnt/offline')
+            self.assertEqual(self.run_sync(), 0)
+
+    def test_setup_uses_current_config_and_probes_only_inside_namespace(self):
+        self.config = None  # A new setup has not saved configuration yet.
+        config = RuntimeConfig.from_dict({'username': 'agent', 'smb_mounts': [[str(root)] for root in (self.source, self.destination)]})
+        self.host_mounts = {str(self.source), str(self.destination)}
+        created = set()
+        def ensure(path, username):
+            self.assertTrue(self.in_worker)
+            self.assertEqual(username, 'agent')
+            created.add(path)
+        def probe(path, *, writable=True):
+            self.assertTrue(self.in_worker)
+            self.assertIn(path, created)
+            self.assertEqual(writable, path == str(self.destination))
+            return True
+        with patch('lib.machine_state.load_setup_config', side_effect=AssertionError('stale config lookup')), patch.object(sync_rsync, 'ensure_directory', side_effect=ensure), patch.object(sync_rsync, 'validate_smb_connectivity', side_effect=probe) as probes:
+            self.assertEqual(self.run_sync(config=config, initial_setup=True), 0)
+        self.assertEqual(probes.call_count, 2)
+
+    def test_setup_mount_loss_prevents_preparation_and_failed_probe_prevents_rsync(self):
+        config = RuntimeConfig.from_dict({'username': 'agent', 'smb_mounts': [[str(self.destination)]]})
+        with patch.object(sync_rsync, 'ensure_directory') as mkdir, patch.object(sync_rsync, 'validate_smb_connectivity', return_value=False) as probe:
+            self.assertEqual(self.run_sync(config=config, initial_setup=True), 1)
+            mkdir.assert_not_called()
+            probe.assert_not_called()
+            self.host_mounts.add(str(self.destination))
+            self.assertEqual(self.run_sync(config=config, initial_setup=True), 1)
+            probe.assert_called_once_with(str(self.destination))
+            self.exec.assert_not_called()
+
+
 class TestRsyncDeadline(unittest.TestCase):
     def test_deadline_stops_stalled_and_noisy_process_groups(self):
         for noisy in (False, True):
@@ -317,7 +504,8 @@ class TestSyncPathSafety(unittest.TestCase):
             os.symlink(source, alias)
             for destination in (source, root, os.path.join(source, "mirror"), alias):
                 with self.subTest(destination=destination), patch.object(sync_rsync.subprocess, "Popen") as popen, patch.object(sync_rsync, "get_service_logger"):
-                    self.assertEqual(sync_rsync.run_rsync_with_notifications(source, destination, True), 1)
+                    self.assertEqual(sync_rsync.run_rsync_with_notifications(source, destination, True,
+                                     config=RuntimeConfig.from_dict({})), 1)
                     popen.assert_not_called()
             with self.assertRaisesRegex(ValueError, "equal or nested"):
                 parse_sync_spec([source, source + "/../source/mirror", "daily"])
@@ -328,7 +516,8 @@ class TestSyncPathSafety(unittest.TestCase):
             with open(source, "w") as stream:
                 stream.write("data")
             with patch.object(sync_rsync.subprocess, "Popen") as popen, patch.object(sync_rsync, "get_service_logger"):
-                self.assertEqual(sync_rsync.run_rsync_with_notifications(source, root + "-dest", True), 1)
+                self.assertEqual(sync_rsync.run_rsync_with_notifications(source, root + "-dest", True,
+                                 config=RuntimeConfig.from_dict({})), 1)
                 popen.assert_not_called()
 
 
