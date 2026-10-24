@@ -50,6 +50,8 @@ from lib.validation import validate_runner_registration_token
 from common.service_tools.web_panel_host import (
     FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
 )
+from common.service_tools.web_panel_proxmox import STYLE as PROXMOX_STYLE, render_proxmox
+from lib.proxmox_panel import load_snapshot as load_proxmox_snapshot
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agent_activity, render_agents
 from common.service_tools.web_panel_templates import (
     BRAND_NETWORK, NavigationItem, panel_navigation, render_document, render_favicon, render_heading, render_icon,
@@ -2084,6 +2086,10 @@ def render_page(state: WebPanelState) -> str:
         if pressure_cards else ""
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
+    proxmox_section = (
+        render_proxmox(load_proxmox_snapshot(), manifest, _format_bytes, _format_uptime)
+        if manifest["system_type"] == "server_proxmox" else ""
+    )
     if filesystem_section:
         filesystem_section += '<p><a class="refresh-link" href="/storage">Explore storage usage →</a></p>'
     trust = (discover_certificate_trust(manifest) if manifest["system_type"] == "server_proxmox"
@@ -2120,6 +2126,8 @@ def render_page(state: WebPanelState) -> str:
 <div><dt>User</dt><dd>{username}</dd></div></dl></div>
 <a class="refresh-link" href="/">Refresh dashboard</a></header>'''
     dashboard_sections = [("overview-heading", "System overview")]
+    if proxmox_section:
+        dashboard_sections.append(("proxmox-heading", "Proxmox"))
     if filesystem_section:
         dashboard_sections.append(("filesystems-heading", "Mounted storage"))
     if features.prompts:
@@ -2147,7 +2155,7 @@ def render_page(state: WebPanelState) -> str:
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
-{filesystem_section}
+{proxmox_section}{filesystem_section}
 {render_agent_activity(state) if features.prompts else ""}
 {services_section}
 {audit_section}{notification_section}
@@ -2156,7 +2164,7 @@ def render_page(state: WebPanelState) -> str:
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
     return render_document(
         title=f"Web panel · {title}",
-        style=_PAGE_STYLE + FILESYSTEM_STYLE + CA_STYLE,
+        style=_PAGE_STYLE + FILESYSTEM_STYLE + CA_STYLE + (PROXMOX_STYLE if proxmox_section else ""),
         header=header,
         content=body,
         navigation=state.navigation("dashboard"),

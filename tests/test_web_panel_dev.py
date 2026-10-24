@@ -157,6 +157,15 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.assertEqual(self.request("/agents")[0], 404)
         self.assertNotIn('href="/credentials"', self.request("/")[2])
 
+    def test_proxmox_scenario_renders_inventory_without_host_commands(self) -> None:
+        self.serve("proxmox")
+        status, _, body = self.request("/")
+        self.assertEqual(status, 200)
+        for text in ("Proxmox overview", "build-agent", "web-services", "debian-template", "85% used", "Standalone"):
+            self.assertIn(text, body)
+        self.assertNotIn('href="/admin"', body)
+        self.assertEqual(self.request("/agents")[0], 404)
+
     def test_maintenance_and_readiness_forms_show_simulated_results(self) -> None:
         self.serve()
         csrf = self.state.csrf_token

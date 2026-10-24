@@ -66,12 +66,17 @@ The matching `.pub` file must sit beside the private key, and the Proxmox
 ## Optional host web panel
 
 Add `--web-panel` to install the authenticated Basaltwater panel on this
-Proxmox host. It is optional and provides host monitoring only: host metrics,
-services, mounted storage, scheduled jobs, and service diagnostics, including
-installed Proxmox services and native firewall diagnostics. It does not manage
-VMs, containers, cluster membership, or Proxmox configuration. It uses neither
-a privileged Proxmox API nor a guest-operation broker. See the [web panel
-reference](../services/web-panel-reference.md#access-controls-and-scope).
+Proxmox host. Its dashboard shows local VMs, LXC containers and templates,
+guest state and resource use, Proxmox storage capacity, installed version,
+cluster quorum and online-node counts. Guest and storage links open their
+native Proxmox summary, and **Open Proxmox VE** opens the full panel. A separate
+root collector publishes sanitized inventory about every minute; the web
+worker remains unprivileged. Host metrics, services, mounted storage,
+scheduled jobs and Proxmox service/firewall diagnostics are also available.
+See the [web panel reference](../services/web-panel-reference.md#host-snapshot)
+for collection limits and troubleshooting. Rerun panel setup to add the
+collector to an existing installation. Guest management uses Proxmox's own UI
+and login.
 
 The port is optional: without `--ssl`, it defaults to 80; with `--ssl`, it
 defaults to 443. Choose another available panel port with
@@ -111,9 +116,9 @@ firewall policy remains operator-managed.
 
 Remove the panel with `--no-web-panel`. This removes only the owned panel
 firewall rules, Nginx site, Nginx systemd isolation drop-in, panel backend and
-configuration, and Fail2ban configuration. It preserves the shared CA,
-Nginx/OpenSSL packages, native Proxmox UI and configuration, and unowned
-firewall rules.
+configuration, Proxmox inventory collector/timer/snapshot and Fail2ban
+configuration. It preserves the shared CA, Nginx/OpenSSL packages, native
+Proxmox UI and configuration, and unowned firewall rules.
 
 New VM provisioning uses an SSH identity's `.pub` file for cloud-init. The key
 is installed for both root and the configured guest setup username. Cloud-init

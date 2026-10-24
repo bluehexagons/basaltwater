@@ -216,7 +216,7 @@ def worker(directory: Path, descriptor: int) -> int:
         }, agent_home=str(home), audit_snapshot_path=str(home / "audit.json"),
             notification_log_path=str(home / "notifications.json"), ingest_token_path=str(home / "ingest-token"))
         Scenario(state, settings["scenario"], stack)
-        if settings["scenario"] not in {"minimal", "empty"}:
+        if settings["scenario"] not in {"minimal", "empty", "proxmox"}:
             state.manifest["services"] = [{"label": "Synthetic project", "url": settings["url"] + "/__dev__/project",
                                             "description": "Disposable local destination"}]
         generation = uuid.uuid4().hex

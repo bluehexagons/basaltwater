@@ -78,6 +78,8 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
             stack.enter_context(patch("web.github_runner_registration_steps.remove_registration_service"))
             stack.enter_context(patch.object(isolation, "preflight_proxmox_panel_nginx"))
             mocks["isolate"] = stack.enter_context(patch.object(isolation, "configure_proxmox_panel_nginx"))
+            stack.enter_context(patch.object(isolation, "preflight_proxmox_snapshot"))
+            mocks["snapshot"] = stack.enter_context(patch.object(isolation, "configure_proxmox_snapshot"))
             mocks["firewall"] = stack.enter_context(patch(
                 "security.proxmox_web_panel_firewall.configure_proxmox_web_panel_firewall"))
             stack.enter_context(patch.object(tls, "discover_local_web_identities", return_value=[]))
@@ -94,6 +96,7 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
         mocks["certificate"].assert_called_once()
         mocks["full_host"].assert_not_called()
         mocks["isolate"].assert_called_once()
+        mocks["snapshot"].assert_called_once_with(991)
         mocks["firewall"].assert_called_once_with(selected)
         mocks["configure_nginx_auth_failure_ban"].assert_called_once_with(
             "web-panel", steps.WEB_PANEL_AUTH_FAILURE_LOG, port=9443)
