@@ -465,6 +465,43 @@ must match their `Where=` path. Use `--keep-home` for a home-local mount, or
 remove and recreate the mount/automount pair outside the home before renaming.
 The rename command does not migrate mount unit names.
 
+Home-moving renames also reject discoverable rootless container storage under
+the old home before services stop. Podman can persist absolute static-directory
+paths in its database; moving an initialized store can cause a database
+configuration mismatch even when UID/GID and subordinate ID ranges survive.
+Use `--keep-home` to retain those paths, or plan and validate a deliberate,
+operator-owned container migration before requesting a home move. Rename does
+not run Podman, reset or export stores, or modify application databases.
+
+The storage guard checks the conventional
+`~/.local/share/containers/storage`, plus paths found in static
+`XDG_DATA_HOME`, `XDG_CONFIG_HOME`, and `CONTAINERS_STORAGE_CONF` assignments in
+the old home's `.config/environment.d/*.conf`. It reads `storage.conf` from
+both the conventional and configured XDG containers configuration directories,
+plus `/usr/share/containers/storage.conf` and `/etc/containers/storage.conf`,
+and checks their `[storage]` `graphroot` and `rootless_storage_path` values.
+An explicit `CONTAINERS_STORAGE_CONF` must name a file called `storage.conf`.
+Only absolute, normalized paths with literal values or simple `$HOME`,
+`${HOME}`, `$USER`, or known XDG variable substitutions are supported. Each
+configuration file is limited to 64 KiB and the environment directory to 64
+entries; conflicting assignments and environment values with escapes or inline
+comments are rejected.
+Configuration and store paths are opened without following symlinks.
+Malformed, unreadable, oversized, or unsupported configuration blocks the move;
+user `containers.conf`, `containers.conf.d`, and `storage.conf.d` also require
+operator inspection because their path/precedence rules are outside this guard.
+
+A discovered store is allowed only when absent or completely empty. Any entry,
+including an empty metadata subdirectory or lock file, conservatively blocks
+the move; neither database contents nor `auth.json` are read. Stores configured
+outside the old home are not moved and are outside this check. This is bounded
+discovery, not a universal rootless migration check: shell startup scripts,
+per-session environment, command-line overrides, arbitrary configuration
+locations, and other container engines are not discovered. Operators using
+those must inspect their own storage locations and use `--keep-home` or manage
+the migration themselves. The guard does not certify external stores for a
+username change.
+
 Interrupted operations retain their original login shell and managed service
 activation snapshots in the private target operation directory under
 `/var/lib/basaltwater/user-renames/OPERATION_ID/`. Resume rechecks safety before
@@ -485,6 +522,9 @@ missing homes, or both home paths existing, block recovery for inspection
 rather than replaying an uncertain move. These checks preserve the original
 shell and service snapshots. Concurrent logins can still make native account
 tools reject a busy user; keep the affected account logged out during recovery.
+The container storage guard is rechecked before any pending home move on
+resume. Historical operations whose home has already moved can continue
+reconciliation; that does not establish that their container databases work.
 
 Each resume records a durable attempt ID before starting the detached job;
 the controller waits for that attempt's

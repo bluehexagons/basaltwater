@@ -16,18 +16,21 @@ import json
 import os
 import pwd
 import re
+import shlex
 import shutil
 import signal
 import stat
 import subprocess
 import sys
 import time
+import tomllib
 from typing import Any, Iterable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.machine_state import STATE_FILE, SETUP_CONFIG_FILE
+from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -49,6 +52,10 @@ SMB_CREDENTIAL_DIR = "/root/.smb"
 STATUS_MODE = 0o644
 ROOT_MODE = 0o700
 _OPERATION_ID_RE = re.compile(r"^[0-9a-f]{16,64}$")
+_CONTAINER_CONFIG_LIMIT = 64 * 1024
+_CONTAINER_SYSTEM_STORAGE_CONFIGS = (
+    "/usr/share/containers/storage.conf", "/etc/containers/storage.conf",
+)
 
 MANAGED_UNIT_NAMES = {
     "auto-update-node",
@@ -508,6 +515,157 @@ def _reject_concurrent_operation(operation_id: str) -> None:
             )
 
 
+def _container_config_text(path: str) -> Optional[str]:
+    """Read only a bounded regular configuration file, never following links."""
+
+    validate_filesystem_path(path)
+    with directory_fd(os.path.dirname(path)) as parent:
+        try:
+            descriptor = os.open(
+                os.path.basename(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=parent,
+            )
+        except FileNotFoundError:
+            return None
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError(f"Container configuration is not a regular file: {path}")
+            content = stream.read(_CONTAINER_CONFIG_LIMIT + 1)
+    if len(content) > _CONTAINER_CONFIG_LIMIT:
+        raise ValueError(f"Container configuration exceeds 64 KiB: {path}")
+    return content.decode("utf-8")
+
+
+def _container_path(value: Any, variables: dict[str, str]) -> str:
+    """Expand a small static variable set without evaluating user commands."""
+
+    if not isinstance(value, str):
+        raise ValueError("Container storage paths must be strings")
+    value = re.sub(
+        r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))",
+        lambda match: variables.get(match[1] or match[2], "$"), value,
+    )
+    if any(character in value for character in "$`~*?;|&<>()"):
+        raise ValueError("Container storage path uses unsupported expansion")
+    validate_filesystem_path(value)
+    if not os.path.isabs(value) or os.path.normpath(value) != value:
+        raise ValueError("Container storage paths must be absolute and normalized")
+    return value
+
+
+def _reject_rootless_container_home_move(old_home: str, new_home: str, username: str) -> None:
+    """Refuse moving discoverable rootless storage; do not open application data.
+
+    Only absent or completely empty store directories establish uninitialized
+    storage. Session/shell environment and arbitrary config locations are outside
+    this bounded check; see the operator documentation for the discovery limit.
+    """
+
+    if old_home == new_home:
+        return
+    advice = "Use --keep-home or perform a deliberate operator-owned container migration."
+    try:
+        variables = {
+            "HOME": old_home, "USER": username,
+            "XDG_DATA_HOME": os.path.join(old_home, ".local/share"),
+            "XDG_CONFIG_HOME": os.path.join(old_home, ".config"),
+        }
+        stores = {os.path.join(old_home, ".local/share/containers/storage")}
+        environment_dir = os.path.join(old_home, ".config/environment.d")
+        try:
+            with directory_fd(environment_dir) as descriptor:
+                with os.scandir(descriptor) as entries:
+                    names = []
+                    for entry in entries:
+                        names.append(entry.name)
+                        if len(names) > 64:
+                            raise ValueError("Too many environment.d entries to inspect safely")
+        except FileNotFoundError:
+            names = []
+        assignments: dict[str, str] = {}
+        for name in sorted(names):
+            if not name.endswith(".conf"):
+                continue
+            text = _container_config_text(os.path.join(environment_dir, name))
+            if text is None:
+                continue
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if not re.search(r"\b(?:HOME|USER|XDG_DATA_HOME|XDG_CONFIG_HOME|CONTAINERS_\w+)\b", line):
+                    continue
+                key, separator, value = line.partition("=")
+                if not separator or key not in {
+                    "XDG_DATA_HOME", "XDG_CONFIG_HOME", "CONTAINERS_STORAGE_CONF",
+                }:
+                    raise ValueError("Unsupported container environment configuration")
+                if "\\" in value or "#" in value:
+                    raise ValueError("Container environment paths cannot use escapes or inline comments")
+                words = shlex.split(value)
+                if len(words) != 1:
+                    raise ValueError("Container environment paths must be single static values")
+                path = _container_path(words[0], variables)
+                if key in assignments and assignments[key] != path:
+                    raise ValueError("Conflicting container environment path assignments")
+                assignments[key] = variables[key] = path
+        stores.add(os.path.join(variables["XDG_DATA_HOME"], "containers/storage"))
+        config_directories = {
+            os.path.join(old_home, ".config/containers"),
+            os.path.join(variables["XDG_CONFIG_HOME"], "containers"),
+        }
+        configs = set(_CONTAINER_SYSTEM_STORAGE_CONFIGS)
+        for directory in config_directories:
+            # Engine configuration can redirect static metadata, and drop-ins
+            # require more precedence rules than this guard supports.
+            configs.add(os.path.join(directory, "storage.conf"))
+            try:
+                with directory_fd(directory) as descriptor:
+                    for name in ("containers.conf", "containers.conf.d", "storage.conf.d"):
+                        try:
+                            os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue
+                        raise ValueError(f"Unsupported container configuration: {directory}/{name}")
+            except FileNotFoundError:
+                continue
+        if "CONTAINERS_STORAGE_CONF" in variables:
+            if os.path.basename(variables["CONTAINERS_STORAGE_CONF"]) != "storage.conf":
+                raise ValueError("Explicit container storage configuration must be named storage.conf")
+            configs.add(variables["CONTAINERS_STORAGE_CONF"])
+        for path in sorted(configs):
+            try:
+                text = _container_config_text(path)
+            except FileNotFoundError:
+                continue
+            if text is None:
+                continue
+            try:
+                config = tomllib.loads(text)
+            except (ValueError, RecursionError) as exc:
+                raise ValueError(f"Cannot interpret container storage configuration: {path}") from exc
+            storage = config.get("storage", {})
+            if not isinstance(storage, dict):
+                raise ValueError(f"Invalid container storage configuration: {path}")
+            for key in ("graphroot", "rootless_storage_path"):
+                if key in storage:
+                    stores.add(_container_path(storage[key], variables))
+        for path in sorted(stores):
+            if path != old_home and not path.startswith(old_home + "/"):
+                continue
+            try:
+                with directory_fd(path) as descriptor:
+                    with os.scandir(descriptor) as entries:
+                        if next(entries, None) is not None:
+                            raise RenameError(
+                                f"Rootless container storage would move with the home: {path}. {advice}"
+                            )
+            except FileNotFoundError:
+                continue
+    except (OSError, ValueError) as exc:
+        raise RenameError(f"Cannot safely rule out rootless container storage under {old_home}: {exc}. {advice}") from exc
+
+
 def _preflight(manifest: dict[str, Any]) -> dict[str, Any]:
     _require_root()
     old_username = manifest["old_username"]
@@ -548,6 +706,7 @@ def _preflight(manifest: dict[str, Any]) -> dict[str, Any]:
         raise RenameError("Account home is not owned by the requested account")
     if os.path.ismount(old_home):
         raise RenameError("Moving a mounted home directory is not supported")
+    _reject_rootless_container_home_move(old_home, new_home, old_username)
     if not os.path.exists("/run/systemd/system") or shutil.which("systemctl") is None:
         raise RenameError("Target user rename requires a running systemd target")
 
@@ -1368,6 +1527,8 @@ def _validate_renamed_account(manifest: dict[str, Any]) -> pwd.struct_passwd:
             raise RenameError("Moving a mounted home directory is not supported")
         if home == old_home and not os.path.isdir(os.path.dirname(new_home)):
             raise RenameError("Destination home parent is not a directory")
+        if home == old_home:
+            _reject_rootless_container_home_move(old_home, new_home, manifest["old_username"])
     return account
 
 
@@ -1421,6 +1582,7 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
 
         if phase not in {"configuration-updated", "services-reconciled", "verified"}:
             if phase != "identity-renamed":
+                _reject_rootless_container_home_move(old_home, new_home, old_username)
                 _write_marker(manifest, "identity-starting")
                 command = ["usermod", "-l", new_username]
                 if old_home != new_home:

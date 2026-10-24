@@ -150,8 +150,8 @@ class TestUserRenameHelpers(unittest.TestCase):
             with patch.object(user_rename, "SYSTEMD_DIR", str(local)), patch.object(user_rename, "SYSTEMD_EXTRA_DIRS", (str(vendor),)):
                 self.assertEqual(user_rename._unsupported_systemd_references("alice", "/home/alice"), sorted(expected))
 
-    def test_preflight_rejects_mounts_and_dropins_before_any_cutover_effects(self):
-        for blocker in ("mount", "dropin"):
+    def test_preflight_rejects_mounts_dropins_and_rootless_storage_before_cutover(self):
+        for blocker in ("mount", "dropin", "rootless"):
             with self.subTest(blocker=blocker), tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
                 root = Path(tmpdir)
                 home, units = root / "alice", root / "units"
@@ -162,16 +162,22 @@ class TestUserRenameHelpers(unittest.TestCase):
                         f"Where={home}/share\nOptions=uid=alice,credentials=/root/.smb/credentials-home-alice-share\n"
                     )
                     expected_error = "mountpoint would change"
-                else:
+                elif blocker == "dropin":
                     dropin = units / "custom.service.d/override.conf"
                     dropin.parent.mkdir()
                     dropin.write_text("User=alice\n")
                     expected_error = "Unmanaged systemd.*override.conf"
+                else:
+                    database = home / ".local/share/containers/storage/libpod/bolt_state.db"
+                    database.parent.mkdir(parents=True)
+                    database.touch()
+                    expected_error = "Rootless container storage.*--keep-home"
                 account = pwd.struct_passwd(("alice", "x", 1000, 1000, "", str(home), "/bin/bash"))
                 real_stat, real_exists = os.stat, os.path.exists
                 for name, value in (("SYSTEMD_DIR", str(units)), ("SYSTEMD_EXTRA_DIRS", ())):
                     stack.enter_context(patch.object(user_rename, name, value))
                 stack.enter_context(patch.object(user_rename, "_require_root"))
+                stack.enter_context(patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", ()))
                 stack.enter_context(patch.object(user_rename, "_reject_concurrent_operation"))
                 stack.enter_context(patch.object(user_rename, "_account", return_value=account))
                 stack.enter_context(patch.object(user_rename, "_is_local_account", return_value=True))
@@ -191,6 +197,135 @@ class TestUserRenameHelpers(unittest.TestCase):
                 backup.assert_not_called()
                 marker.assert_not_called()
 
+    def test_rootless_storage_absent_and_empty_allowed_but_any_entry_blocks_move(self):
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", ()):
+            home = Path(tmpdir, "alice")
+            home.mkdir()
+            store = home / ".local/share/containers/storage"
+            guard = lambda: user_rename._reject_rootless_container_home_move(str(home), str(Path(tmpdir, "alice2")), "alice")
+            with patch.object(user_rename, "_run") as run:
+                guard()
+                store.mkdir(parents=True)
+                guard()
+                for name in ("libpod", "db.sql", "overlay-images", "storage.lock", "unknown-metadata"):
+                    with self.subTest(name=name):
+                        entry = store / name
+                        entry.mkdir() if name == "libpod" else entry.touch()
+                        with self.assertRaisesRegex(user_rename.RenameError, "Rootless container storage.*--keep-home"):
+                            guard()
+                        user_rename._reject_rootless_container_home_move(str(home), str(home), "alice")
+                        entry.rmdir() if entry.is_dir() else entry.unlink()
+                run.assert_not_called()
+
+    def test_rootless_storage_configured_paths_are_checked_without_reading_app_data(self):
+        cases = ("user-graphroot", "system-rootless", "xdg-data", "xdg-config", "explicit-config", "external-store")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmpdir:
+                home = Path(tmpdir, "alice")
+                home.mkdir()
+                store = home / "custom-store"
+                configs = []
+                environment = home / ".config/environment.d/10-storage.conf"
+                config = home / ".config/containers/storage.conf"
+                contents = '[storage]\ngraphroot = "${HOME}/custom-store"\n'
+                if case == "system-rootless":
+                    config = Path(tmpdir, "system/storage.conf")
+                    configs = [str(config)]
+                    contents = f'[storage]\nrootless_storage_path = "{store}"\n'
+                elif case == "xdg-data":
+                    environment.parent.mkdir(parents=True)
+                    environment.write_text('XDG_DATA_HOME="${HOME}/data"\n')
+                    store = home / "data/containers/storage"
+                elif case == "xdg-config":
+                    environment.parent.mkdir(parents=True)
+                    environment.write_text('XDG_CONFIG_HOME=$HOME/settings\n')
+                    config = home / "settings/containers/storage.conf"
+                elif case == "explicit-config":
+                    environment.parent.mkdir(parents=True)
+                    environment.write_text('CONTAINERS_STORAGE_CONF=$HOME/custom/storage.conf\n')
+                    config = home / "custom/storage.conf"
+                elif case == "external-store":
+                    store = Path(tmpdir, "external-store")
+                    contents = f'[storage]\ngraphroot = "{store}"\n'
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(contents if case != "xdg-data" else "")
+                store.mkdir(parents=True)
+                (store / "db.sql").touch()
+                auth = home / ".config/containers/auth.json"
+                auth.parent.mkdir(parents=True, exist_ok=True)
+                auth.touch()
+                real_open = os.open
+                opened = []
+
+                def observed_open(path, flags, *args, **kwargs):
+                    opened.append(os.fspath(path))
+                    self.assertNotIn(os.path.basename(path), {"auth.json", "db.sql"})
+                    return real_open(path, flags, *args, **kwargs)
+
+                with (
+                    patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", tuple(configs)),
+                    patch.object(user_rename.os, "open", side_effect=observed_open),
+                    patch.object(user_rename, "_run") as run,
+                ):
+                    if case == "external-store":
+                        user_rename._reject_rootless_container_home_move(str(home), str(home) + "2", "alice")
+                    else:
+                        with self.assertRaisesRegex(user_rename.RenameError, "Rootless container storage.*custom-store|Rootless container storage.*data/containers/storage"):
+                            user_rename._reject_rootless_container_home_move(str(home), str(home) + "2", "alice")
+                    run.assert_not_called()
+                self.assertIn("storage.conf", opened)
+
+    def test_ambiguous_rootless_configuration_fails_closed_and_keep_home_skips_reads(self):
+        for case in ("toml", "oversize", "relative", "unknown-variable", "environment", "environment-escape", "environment-limit", "environment-conflict", "engine", "dropins", "symlink", "fifo", "store-symlink", "auth-override", "unreadable"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmpdir:
+                home = Path(tmpdir, "alice")
+                config = home / ".config/containers/storage.conf"
+                config.parent.mkdir(parents=True)
+                contents = {
+                    "toml": "[storage", "oversize": "#" * (64 * 1024 + 1),
+                    "relative": '[storage]\ngraphroot="relative"',
+                    "unknown-variable": '[storage]\ngraphroot="$UNKNOWN/store"',
+                }
+                if case in contents:
+                    config.write_text(contents[case])
+                elif case in {"environment", "environment-escape", "environment-limit", "environment-conflict", "auth-override"}:
+                    environment = home / ".config/environment.d/10-storage.conf"
+                    environment.parent.mkdir()
+                    environment.write_text({
+                        "environment": 'XDG_DATA_HOME=$(command)\n',
+                        "environment-escape": 'XDG_DATA_HOME=$HOME/path\\ name\n',
+                        "environment-limit": "",
+                        "environment-conflict": 'XDG_DATA_HOME=$HOME/first\nXDG_DATA_HOME=$HOME/second\n',
+                        "auth-override": 'CONTAINERS_STORAGE_CONF=$HOME/.config/containers/auth.json\n',
+                    }[case])
+                    if case == "environment-limit":
+                        for index in range(64):
+                            (environment.parent / f"extra-{index}.conf").touch()
+                elif case == "engine":
+                    config.with_name("containers.conf").write_text("[engine]\n")
+                elif case == "dropins":
+                    config.with_name("storage.conf.d").mkdir()
+                elif case == "symlink":
+                    config.symlink_to(home / "missing")
+                elif case == "fifo":
+                    os.mkfifo(config)
+                elif case == "store-symlink":
+                    store = home / ".local/share/containers/storage"
+                    store.parent.mkdir(parents=True)
+                    store.symlink_to(home / "missing")
+                with (
+                    patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", ()),
+                    patch.object(user_rename, "_run") as run,
+                    ExitStack() as stack,
+                ):
+                    if case == "unreadable":
+                        stack.enter_context(patch.object(user_rename, "_container_config_text", side_effect=PermissionError("unreadable config")))
+                    with self.assertRaisesRegex(user_rename.RenameError, "Cannot safely rule out.*--keep-home"):
+                        user_rename._reject_rootless_container_home_move(str(home), str(home) + "2", "alice")
+                    with patch.object(user_rename, "_container_config_text", side_effect=AssertionError("keep-home must skip inspection")):
+                        user_rename._reject_rootless_container_home_move(str(home), str(home), "alice")
+                    run.assert_not_called()
+
     def test_interrupted_pre_cutover_resume_preserves_original_shell_units_and_backups(self):
         for phase in ("prepared", "quiescing", "identity-starting"):
             with self.subTest(phase=phase):
@@ -208,6 +343,13 @@ class TestUserRenameHelpers(unittest.TestCase):
                 with self.subTest(phase=phase, home_moved=home_moved):
                     self._exercise_resume(phase, move_home=True, renamed=True, home_moved=home_moved)
 
+    def test_partial_cutover_rootless_storage_blocks_pending_move_but_allows_historical_move(self):
+        for phase in ("identity-renamed", "identity-starting"):
+            for home_moved in (False, True):
+                with self.subTest(phase=phase, home_moved=home_moved):
+                    self._exercise_resume(phase, move_home=True, renamed=True, home_moved=home_moved, container_store=True)
+        self._exercise_resume("identity-renamed", renamed=True, container_store=True)
+
     def test_rejected_external_shell_drift_does_not_run_usermod_or_stop_services(self):
         for renamed in (False, True):
             with self.subTest(renamed=renamed):
@@ -218,7 +360,7 @@ class TestUserRenameHelpers(unittest.TestCase):
             with self.subTest(drift=drift):
                 self._exercise_resume("identity-renamed", move_home=True, renamed=True, drift=drift)
 
-    def _exercise_resume(self, phase, *, fail_identity=False, move_home=False, renamed=False, home_moved=False, drift=None):
+    def _exercise_resume(self, phase, *, fail_identity=False, move_home=False, renamed=False, home_moved=False, drift=None, container_store=False):
         with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
             root = Path(tmpdir)
             home = root / "home"
@@ -226,6 +368,10 @@ class TestUserRenameHelpers(unittest.TestCase):
             new_home = root / "alice2" if move_home else home
             if home_moved:
                 home.rename(new_home)
+            if container_store:
+                store = (new_home if home_moved else home) / ".local/share/containers/storage/libpod"
+                store.mkdir(parents=True)
+                (store / "bolt_state.db").touch()
             if drift == "both-homes":
                 new_home.mkdir()
             if drift == "missing-home":
@@ -278,6 +424,7 @@ class TestUserRenameHelpers(unittest.TestCase):
             if phase is not None:
                 user_rename._write_marker(manifest, phase)
             stack.enter_context(patch.object(user_rename, "_require_root"))
+            stack.enter_context(patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", ()))
             stack.enter_context(patch.object(user_rename, "_account", side_effect=account))
             stack.enter_context(patch.object(user_rename, "_run", side_effect=run))
             current = {**facts, "old_shell": accounts[initial_name].pw_shell,
@@ -291,7 +438,8 @@ class TestUserRenameHelpers(unittest.TestCase):
                          "_rewrite_managed_home_files", "_restore_t3_user_service", "_verify_managed_rewrites", "_verify_group_memberships",
                          "_verify_subordinate_id_files", "_cleanup_operation"):
                 stack.enter_context(patch.object(user_rename, name))
-            self.assertEqual(user_rename._run_migration_locked(manifest if phase is None else {"operation_id": operation_id}), int(fail_identity or bool(drift)))
+            storage_blocked = container_store and move_home and not home_moved
+            self.assertEqual(user_rename._run_migration_locked(manifest if phase is None else {"operation_id": operation_id}), int(fail_identity or bool(drift) or storage_blocked))
             if renamed:
                 preflight.assert_not_called()
             else:
@@ -300,9 +448,12 @@ class TestUserRenameHelpers(unittest.TestCase):
             saved = user_rename._read_json(user_rename._marker_path(operation_id))
             self.assertEqual(saved["old_shell"], "/bin/bash")
             self.assertEqual(saved["managed_units"], units)
-            if drift:
+            if drift or storage_blocked:
                 self.assertEqual(events, [] if renamed else ["preflight"])
                 self.assertEqual(accounts[initial_name].pw_shell, current["old_shell"])
+                if storage_blocked:
+                    status = user_rename._read_json(user_rename._status_path(operation_id))
+                    self.assertIn("Rootless container storage would move", status["error"])
                 return
             if not renamed:
                 self.assertLess(events.index("preflight"), events.index(("systemctl", "stop", "unit.service")))
