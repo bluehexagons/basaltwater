@@ -225,6 +225,11 @@ class DoctorTests(unittest.TestCase):
     def saved_setup_path(self):
         path = Path(self.home) / ".local/state/basaltwater/cachyos/last-setup.json"
         path.parent.mkdir(parents=True, exist_ok=True)
+        # A permissive developer umask must not make the valid fixture's
+        # ancestors fail ownership/permission checks before the selected file.
+        for directory in path.parents:
+            if directory.is_relative_to(self.home):
+                directory.chmod(0o700)
         return path
 
     def assert_invalid_saved_setup_is_reported(self):
@@ -265,16 +270,24 @@ class DoctorTests(unittest.TestCase):
     def test_unsafe_saved_setup_permissions_are_reported(self):
         path = self.saved_setup_path()
         path.write_text(json.dumps({"schema_version": 1, "arguments": ["private-argument"]}))
-        path.chmod(0o644)
-        self.assert_invalid_saved_setup_is_reported()
+        path.chmod(0o600)
+        for target, mode, restored in ((path, 0o644, 0o600),
+                                       (path.parent, 0o770, 0o700),
+                                       (path.parent.parent, 0o777, 0o700)):
+            with self.subTest(target=target.name), patch("lib.cachyos_refresh.load_saved_setup") as load:
+                target.chmod(mode)
+                self.assert_invalid_saved_setup_is_reported()
+                load.assert_not_called()
+            target.chmod(restored)
 
     def test_saved_setup_read_error_is_reported_without_exception_details(self):
         path = self.saved_setup_path()
         path.write_text("{}")
         path.chmod(0o600)
         self.use_saved_selection()
-        with patch("lib.cachyos_refresh.read_json_file", side_effect=PermissionError("private exception WEBHOOK_TOKEN")):
+        with patch("lib.cachyos_refresh.read_json_file", side_effect=PermissionError("private exception WEBHOOK_TOKEN")) as read:
             report = doctor.collect_cachyos_doctor()
+        read.assert_called_once_with(str(path), max_bytes=65536)
         records = {item["name"]: item for item in report["capabilities"]}
         self.assertEqual(records["configuration.saved-setup"]["state"], "failed")
         serialized = json.dumps(report)
