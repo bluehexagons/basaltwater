@@ -27,6 +27,7 @@ def _private(info, *, directory=False):
 @contextmanager
 def _locked():
     folder = Path.home()
+    directories = []
     for component in (".local", "state", "basaltwater", "desktop-control"):
         folder /= component
         validate_filesystem_path(str(folder))
@@ -35,10 +36,20 @@ def _locked():
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
                 or info.st_mode & (0o077 if component == "desktop-control" else 0o022)):
             raise RuntimeError("Unsafe desktop control state directory")
+        directories.append(folder)
     descriptor = os.open(folder / "state.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         _private(os.fstat(descriptor))
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        if not (folder / "state.json").exists():
+            # Persist the entire first-time hierarchy before acknowledging a
+            # human choice. Retry this after interrupted directory creation.
+            for directory in directories:
+                parent = os.open(directory.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    os.fsync(parent)
+                finally:
+                    os.close(parent)
         yield folder / "state.json"
     finally:
         os.close(descriptor)

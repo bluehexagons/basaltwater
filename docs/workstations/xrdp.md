@@ -102,7 +102,6 @@ basaltw desktop status
 basaltw desktop start
 basaltw desktop exec -- thunar
 basaltw desktop screenshot --output /tmp/desktop-1.png
-basaltw desktop control enabled --human-approved
 basaltw desktop logout
 ```
 

@@ -222,8 +222,8 @@ an implicit shell. Arguments are limited to 100 entries, 4096 characters each,
 and 48 KiB serialized in total. `--dry-run` validates prerequisites/arguments
 without creating task records or services.
 
-Screen capture and input retain their separate portal consent, generation,
-geometry, and stale-generation checks; see [native desktop control](cachyos-desktop.md)
+Screen capture and input retain their separate portal consent, session generation,
+geometry, and human control revision checks; see [native desktop control](cachyos-desktop.md)
 and [persistent desktop control](desktop-control.md). Agent launches and
 mutations follow the remembered enabled, human-override, or disabled state.
 Before the owner playtests through Moonlight, the owner must explicitly choose

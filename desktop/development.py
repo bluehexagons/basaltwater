@@ -296,7 +296,7 @@ def _private_json(path: Path) -> dict:
 def load_task(directory: Path) -> dict:
     _private_directory(directory)
     value = _private_json(directory / "task.json")
-    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id", "recipe"}
+    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id", "recipe", "control_revision"}
             or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("task") != directory.name or not TASK_ID.fullmatch(directory.name)
             or value.get("unit") != f"{UNIT_PREFIX}{directory.name}.service"
@@ -308,6 +308,9 @@ def load_task(directory: Path) -> dict:
         raise ValueError("Invalid development task timestamp")
     if "invocation_id" in value and (not isinstance(value["invocation_id"], str) or not TASK_ID.fullmatch(value["invocation_id"])):
         raise ValueError("Invalid development task invocation")
+    if "control_revision" in value and (not isinstance(value["control_revision"], str)
+                                        or not TASK_ID.fullmatch(value["control_revision"])):
+        raise ValueError("Invalid development task control revision")
     if value["kind"] == "check":
         recipe = value.get("recipe")
         if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
@@ -414,10 +417,11 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     return result
 
 
-def _honor_agent_control() -> None:
+def _honor_agent_control(revision: str | None = None) -> str:
     from desktop import control_state
     current = control_state.status()
-    control_state.require_enabled(current)
+    control_state.require_enabled({"control_revision": revision if revision is not None else current["control_revision"]})
+    return current["control_revision"]
 
 
 def list_tasks(project: str | None = None) -> dict:
@@ -514,7 +518,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     if dry_run or is_dry_run():
         return {"schema_version": 1, "ok": True, "dry_run": True, "kind": kind,
                 "project": str(path), "argv": arguments, "session": "existing-kde-wayland"}
-    _honor_agent_control()
+    revision = _honor_agent_control()
     directory = _root(create=True) / secrets.token_hex(16)
     directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
     _private_directory(directory)
@@ -524,6 +528,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     task = {"schema_version": 1, "task": directory.name, "unit": f"{UNIT_PREFIX}{directory.name}.service",
             "kind": kind, "project": str(path), "argv": arguments, "owner_uid": uid,
             "created_at": datetime.now(timezone.utc).isoformat()}
+    task["control_revision"] = revision
     if kind == "check":
         task["recipe"] = recipe
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)

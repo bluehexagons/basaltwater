@@ -518,10 +518,16 @@ class NativeSession:
     def hold(self, milliseconds, payload):
         """Keep human stop/pause responsive while a bounded input is pressed."""
         deadline = time.monotonic() + milliseconds / 1000
-        while time.monotonic() < deadline:
+        first = True
+        while first or time.monotonic() < deadline:
+            first = False
             self.lock.release()
             try:
-                self.stopping.wait(min(.02, max(0, deadline - time.monotonic())))
+                remaining = max(0, deadline - time.monotonic())
+                if remaining:
+                    self.stopping.wait(min(.02, remaining))
+                else:
+                    time.sleep(0)  # Let queued human requests interrupt unpaced text too.
             finally:
                 self.lock.acquire()
             self.guard(payload)

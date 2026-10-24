@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -137,6 +140,76 @@ class ControlStateTests(unittest.TestCase):
         logout.assert_called_once()
         self.assertTrue(session.maintenance)
         self.assertEqual(control_state.status(), current)
+
+    def test_pointer_move_cannot_finish_with_click_after_human_intervention(self):
+        process = Mock(pid=1)
+        process.poll.return_value = None
+        session = session_runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, process)
+        current = control_state.status()
+
+        def move(argv):
+            if "mousemove" in argv:
+                self.change("disabled")
+                return "X=20\nY=30"
+            return ""
+
+        with patch.object(session_runtime, "geometry", return_value=[800, 600]), patch.object(
+                session_runtime, "run_tool", side_effect=move) as tool:
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                session.handle({"action": "input", "generation": session.generation,
+                                "geometry": [800, 600], "kind": "click", "x": 20, "y": 30, **current})
+        self.assertFalse(any("click" in call.args[0] for call in tool.call_args_list))
+
+    def test_unpaced_native_text_yields_to_human_disable_and_releases_key(self):
+        portal = Mock()
+        session = native_session.NativeSession(portal)
+        session.state = "running"
+        session.geometry = [800, 600]
+        session.captured = time.monotonic()
+        completed = threading.Event()
+
+        def interrupt(_seconds):
+            def human():
+                session.handle({"action": "control", "mode": "disabled", "human_approved": True})
+                completed.set()
+            worker = threading.Thread(target=human)
+            worker.start()
+            self.assertTrue(completed.wait(2), "Human request could not acquire the session lock")
+            worker.join(2)
+
+        payload = {"action": "input", "generation": session.generation, "geometry": session.geometry,
+                   "kind": "text", "text": "abc", **control_state.status()}
+        with patch.object(native_session.time, "sleep", side_effect=interrupt):
+            with self.assertRaisesRegex(RuntimeError, "disabled"):
+                session.handle(payload)
+        keys = [call.args[-2:] for call in portal.notify.call_args_list]
+        self.assertEqual(keys, [(ord("a"), 1), (ord("a"), 0)])
+        self.assertTrue(completed.is_set())
+
+    def test_first_permission_write_syncs_ancestor_entries_before_restart(self):
+        synced = []
+        real_sync = os.fsync
+
+        def sync(descriptor):
+            synced.append(Path(os.readlink(f"/proc/self/fd/{descriptor}")))
+            real_sync(descriptor)
+
+        with patch.object(control_state.os, "fsync", side_effect=sync):
+            self.change("disabled")
+        for ancestor in (self.home, self.home / ".local", self.home / ".local/state",
+                         self.home / ".local/state/basaltwater"):
+            self.assertIn(ancestor, synced)
+        self.assertEqual(control_state.status()["agent_control"], "disabled")
+
+    def test_external_state_changes_invalidate_native_capture_and_element_references(self):
+        session = native_session.NativeSession(Mock())
+        session.elements["old"] = {}
+        session.captured = time.monotonic()
+        self.change("human-override")
+        self.change("enabled")
+        session.sync_control()
+        self.assertEqual(session.elements, {})
+        self.assertEqual(session.captured, 0)
 
     def test_cachyos_menu_control_installs_without_starting_or_changing_permission(self):
         from common import cachyos_steps

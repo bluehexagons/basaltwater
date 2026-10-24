@@ -566,6 +566,7 @@ class DesktopSession:
                 if actual_x is None or actual_y is None or (int(actual_x[1]), int(actual_y[1])) != (x, y):
                     raise RuntimeError("Pointer did not reach the requested coordinates; inspect the desktop before retrying")
                 if kind == "click":
+                    control_state.require_enabled(payload)
                     run_tool(["xdotool", "click", str(button)])
             else:
                 raise ValueError("Unknown desktop input kind")
