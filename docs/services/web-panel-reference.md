@@ -190,6 +190,11 @@ the selected service and literal message search. Notices distinguish missing
 units, journal permission failures, unavailable user service managers, and
 missing diagnostic commands. A successful empty query is distinct from an
 unavailable collector; reaching 100 entries shows an explicit limit notice.
+The journal can omit an individual binary or oversized message while retaining
+its timestamp and severity. The panel labels that entry
+`[Binary or oversized message omitted by the journal]`; use the SSH inspection
+command for further investigation. This is separate from the panel's total
+collection limit.
 Logs can contain sensitive application data; redaction covers common credentials
 and keys, including quoted JSON credential fields and escaped quoted values,
 but cannot identify every secret. The panel service receives the
