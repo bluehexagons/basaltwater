@@ -102,7 +102,12 @@ change the launcher. Keep installer options such as `--channel dev` before
 launcher and prerequisites.
 
 After setup, open a new terminal, complete `codex login` and `gh auth login`,
-then open T3 Code from KDE and verify a Codex thread and terminal. If T3 cannot
+then open T3 Code from KDE and verify a Codex thread and terminal. Refresh setup
+queues a detached user worker that gracefully closes and relaunches a running
+desktop app after setup exits; if it was stopped, it stays stopped and starts
+at the next KDE login. Check the printed user journal unit if the worker fails.
+Queueing does not prove provider readiness: verify an authenticated thread and
+terminal. If T3 cannot
 discover Codex, set its provider **Binary path** to the absolute path printed
 by setup, typically `/home/USER/.local/bin/codex`. Use
 **Settings → Connections** for desktop connection settings.

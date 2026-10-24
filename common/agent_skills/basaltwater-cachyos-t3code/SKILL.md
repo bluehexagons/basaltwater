@@ -32,20 +32,28 @@ and Shelly's configured AUR policy; do not switch helpers to bypass a failure.
 Every desktop setup requires a helper. Failed queries, failed updates, and
 updates leaving the installed version unchanged stop setup before startup
 changes. `cachy-update` may skip AUR checks with only Shelly installed; use
-`shelly list-updates aur` for routine checks. Quit/reopen T3 after updating to
-load its new embedded server. Setup disables the Basaltwater web service;
+`shelly list-updates aur` for routine checks. Install selected skills before
+refreshing T3. Desktop setup/refresh queues a detached user worker: after a
+short delay it gracefully sends SIGTERM to a running same-user `t3code-bin`,
+waits for exit, and relaunches the packaged app with its original environment
+and arguments. It never force-kills. If the app was stopped, it stays stopped;
+KDE login autostart remains enabled. The worker reloads provider configuration
+and skills while preserving `~/.t3` data and credentials. Queue acceptance does
+not prove readiness; on failure inspect the printed unit with
+`journalctl --user -u UNIT`, then verify an authenticated provider turn and
+terminal. Setup disables the Basaltwater web service;
 an inactive service is expected in this mode. Setup retains all application data.
 The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
 the selection. Do not launch another backend to repair a working desktop.
 
 Desktop setup enables KDE login startup through the managed
 `~/.config/autostart/basaltwater-cachyos-t3.desktop` entry (or absolute
-`$XDG_CONFIG_HOME`). It uses `/usr/bin/t3code`, skips an absent executable, and
-does not launch the app during setup. Normal quit leaves it stopped for this
-session. KDE's Autostart settings can disable it; desktop setup/refresh re-enables
-it. Custom entries and symlinks at the managed destination are refused before
-changes. Doctor checks startup configuration and executable presence without
-launching Electron; verify a later login plus a provider thread and terminal.
+`$XDG_CONFIG_HOME`). It uses `/usr/bin/t3code` and skips an absent executable.
+Normal quit leaves it stopped for this session. KDE's Autostart settings can
+disable it; desktop setup/refresh re-enables it. Custom entries and symlinks at
+the managed destination are refused before changes. Doctor checks startup
+configuration and executable presence without launching Electron; verify a
+provider thread and terminal after setup's worker runs or at a later login.
 
 Use the app's provider settings, local provider login, and absolute provider
 binary paths if KDE's PATH differs from the shell. Verify a thread and terminal
@@ -118,8 +126,12 @@ to install a second upstream `t3code.service`. Use `connect unlink` or
 user deliberately enables systemd lingering.
 
 Rerunning setup with T3 selected stages the latest runtime, validates its CLI,
-native PTY shell, and unit, then restarts the service. Finish active work first,
-and retain the chosen host, port, and workspace options on the command. Use
+native PTY shell, and unit, then stops and starts the service after selected
+skills install. Saved threads can continue on a new message. Automatic
+continuation of interrupted active turns depends on T3's existing **Continue
+threads after server update** setting; queued turns still need user Resume, and
+approvals may not survive. Finish active work first and retain the chosen host,
+port, and workspace options on the command. Use
 setup for updates; direct npm installs into the managed root bypass staging.
 The stable `bin/t3` link remains the entry point for pairing and Connect.
 

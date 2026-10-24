@@ -2,8 +2,10 @@
 
 Basaltwater targets stable T3 releases. When T3 Code is selected, a setup
 rerun checks npm's `t3@latest` stable channel and updates the upstream service
-when a newer stable release is available. A healthy service is
-restarted only when the runtime or managed configuration changes. Prefer the
+when a newer stable release is available. An explicit setup refresh restarts
+the healthy service even when runtime and managed configuration are unchanged;
+if the updater already started a fresh service, setup does not restart it again.
+A healthy non-refresh setup reuses the running service. Prefer the
 connected client's explicit **Update server** action when an update should be
 performed outside setup. For a host-side update, set `T3_RELEASE` to the exact
 stable version required by the stable client, or `latest` when both should

@@ -182,8 +182,12 @@ Reinstalling the same release does not advance the review date.
 
 The next setup/refresh restores unchanged owned Codex and Claude settings that
 the old age-based policy reduced. Untracked or edited user policies remain
-untouched, including an explicit 80K budget. Restart/resume provider processes
-to load refreshed settings; an existing thread does not change automatically.
+untouched, including an explicit 80K budget. Managed T3 setup refreshes reload
+provider configuration and skills through the selected provider lifecycle;
+standalone provider CLIs must be exited and resumed manually. Existing saved T3
+threads can continue when sent a new message. Continuation of an interrupted
+active turn depends on T3's **Continue threads after server update** setting;
+queued turns still require user resume, and approvals may not survive a restart.
 
 Before advancing that date, check the official sources above for every reviewed
 model and the current native configuration controls. Update prices, thresholds,

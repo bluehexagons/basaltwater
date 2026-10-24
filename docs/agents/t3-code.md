@@ -81,8 +81,17 @@ and HTTPS-gateway guidance. See
 Selected Claude Code receives the catalog under `~/.claude/skills`; Codex and
 OpenCode share `~/.agents/skills`. Bundled references ship with the entrypoint,
 so host-side migration instructions remain available outside this repository.
-Finish the current turn and restart the agent session after setup refreshes
-its skills.
+Setup refreshes provider configuration and installs selected skills before
+refreshing T3. A managed Debian T3 setup explicitly refreshes the shared service
+even when its version and unit are unchanged; it avoids a second restart if the
+updater already started a fresh service. A healthy non-refresh setup reuses the
+running service. On CachyOS desktop, setup queues a detached user worker to
+gracefully close and relaunch a running app after setup exits; it leaves a
+stopped app stopped. The worker's short delay lets it survive provider shutdown.
+Queue acceptance does not prove the app or provider is ready. Check its printed
+user journal unit on failure, then verify an authenticated provider turn and
+terminal. On CachyOS managed web, refresh stops and starts the service after
+skills install.
 
 When Codex is selected, root-owned Codex defaults make direct CLI sessions use
 auto-reviewed workspace access. They do not restrict explicit user or client
@@ -281,16 +290,19 @@ systemctl --user restart t3code.service
 Reconnect the client and retry one status/open cycle. Prefer managed Playwright
 when session policy permits fallback, or continue non-browser checks. Restart the service
 before considering a whole-VM reboot so VM-side T3 state is isolated.
-Basaltwater does not automatically restart a healthy T3 service on a normal
-setup rerun or maintenance schedule because that could terminate the agent
-session performing the setup; refresh/update paths already restart when the
-managed runtime or service configuration actually changes.
+Refresh setup restarts the managed service so refreshed provider configuration
+and skills take effect, including when runtime and unit versions are unchanged.
+The updater's own fresh service start is reused to avoid a duplicate restart.
+Healthy non-refresh setup keeps the current service. Desktop and standalone
+provider lifecycle behavior differs by profile; see the corresponding setup
+guide.
 
 Basaltwater targets stable T3 Code releases. When T3 Code is selected, every
 setup run checks npm's `t3@latest` stable channel for a newer release.
-A healthy service is restarted only when the
-runtime changes or its managed configuration needs it, so routine reruns do
-not interrupt an unchanged session. The T3 client can also offer an explicit
+A healthy service is explicitly restarted by a setup refresh, even when runtime
+and managed configuration are unchanged; routine non-refresh setup does not
+interrupt an unchanged session. If the updater already started a fresh service,
+setup reuses it. The T3 client can also offer an explicit
 **Update server** action for this background service; prefer that action after
 active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
@@ -556,12 +568,21 @@ app. Use native `delegate_task` for child work inside a T3 session and keep
 top-level thread creation within the user's requested scope. See the
 [upstream host CLI guide](https://github.com/pingdotgg/t3code/blob/v0.1.2/docs/user/outside-agents.md#scripts-on-the-host).
 
-After installing or updating Basaltwater's managed skills, use **Restart agent
-session** from T3's command palette (`Ctrl+K` on Linux/Windows, `Cmd+K` on
-macOS). The next message resumes the conversation in a fresh provider process
-that reloads skills, plugins, and MCP servers. Finish the current turn first.
-This provides a per-thread way to load configuration changes while keeping
-the background T3 service running.
+Managed setup refreshes reload selected provider configuration and skills. On
+CachyOS desktop, a detached user worker gracefully sends SIGTERM to a running
+same-user `t3code-bin` app, waits for exit, then relaunches the packaged app
+with its original environment and arguments. It does not force-kill; if the app
+was stopped, it stays stopped and KDE login autostart remains available. Check
+the worker's printed `journalctl --user` unit if it fails; queueing is not proof
+of readiness. Verify an authenticated provider turn and terminal.
+
+Saved T3 threads can continue on their next message. Automatic continuation of
+an interrupted active turn depends on the existing **Continue threads after
+server update** setting. Persistent queued turns still need user Resume, and
+approvals may not survive. Standalone provider CLIs cannot be safely restarted
+by setup: finish and exit them, then resume manually. For a single thread or
+context-only override, use native **Restart agent session** or a launch override
+without restarting the shared T3 service.
 
 Use the **Update all** control at the bottom of T3's sidebar for a requested
 bulk update across connected environments. It updates outdated providers,
