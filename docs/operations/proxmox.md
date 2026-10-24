@@ -619,6 +619,11 @@ the saved layout. If one attachment succeeds before a later provider response
 fails, a retry recognizes the attached identity and continues safely; saved
 setup metadata changes only after remote setup succeeds.
 
+Saved swap declarations and policy are retained when omitted, including on
+`--verify-provider` reruns. Explicit swap options keep their normal replacement
+and clearing semantics; one-time `--swap-initialize` authorization is never
+inherited.
+
 This additive path does not adopt a manually attached disk, replace a missing
 saved disk, attach data storage to LXC, add `/home` to an existing VM, create
 new cache or swap media, or detach or resize a disk. Supported empty mount
