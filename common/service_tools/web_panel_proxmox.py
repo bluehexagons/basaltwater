@@ -16,6 +16,10 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.service_tools.web_panel_templates import render_heading
+from common.service_tools.web_panel_proxmox_views import (
+    SCRIPT, SCRIPT_CSP, ProxmoxQuery, filter_guests, render_allocations,
+    render_filters, render_guest_details, render_health, render_tasks,
+)
 from lib.proxmox_panel import export_snapshot
 from lib.validators import validate_host
 
@@ -27,6 +31,15 @@ STYLE = """
 .proxmox-table .row-action { white-space: normal; }
 .proxmox-table a { color: var(--accent); text-underline-offset: 4px; }
 .proxmox-panel .badge { text-transform: none; }
+.proxmox-panel h3 { margin: 28px 0 10px; font-size: 1rem; }
+.proxmox-panel h4 { margin: 18px 0 8px; }
+.proxmox-panel .pve-address { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.proxmox-panel .pve-address input { width: 100%; min-width: 0; max-width: 23rem; padding: 8px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; }
+.proxmox-panel .pve-address button { min-height: 44px; padding: 8px; font-size: .8rem; }
+.proxmox-panel .pve-address [role="status"] { flex-basis: 100%; }
+.proxmox-panel .proxmox-table tbody th { width: auto; }
+.proxmox-panel .pve-tags { margin-top: 4px; }
 @media (max-width: 560px) {
   .proxmox-panel .section-heading { align-items: start; }
 }
@@ -61,15 +74,16 @@ def native_url(manifest: dict) -> str | None:
     return f"https://{host}:8006/"
 
 
-def _resource_url(base: str, resource: str, kind: str) -> str:
+def _resource_url(base: str, resource: str, kind: str, *, tasks: bool = False) -> str:
     # Proxmox StateProvider v1: view, resource, task tab, then resource tabs.
     tokens = ["0", "=" + urllib.parse.quote(resource, safe=""), "4", "", "", "", "", "", "", ""]
-    tokens[{"node": 3, "storage": 4, "qemu": 7, "lxc": 8}[kind]] = "5"
+    tokens[{"node": 3, "storage": 4, "qemu": 7, "lxc": 8}[kind]] = "4" if tasks else "5"
     return base + "#v1:" + ":".join(tokens)
 
 
 def _badge(status: str) -> str:
-    tone = "success" if status in {"running", "available"} else "" if status in {"stopped", "Template"} else "warning"
+    tone = ("success" if status in {"running", "available", "online", "success"} else "error"
+            if status in {"failed", "offline", "unavailable"} else "" if status in {"stopped", "Template"} else "warning")
     return f'<span class="badge {tone}">{html.escape(status.capitalize())}</span>'
 
 
@@ -84,15 +98,21 @@ def _link(base: str | None, resource: str, kind: str, label: str) -> str:
     return f'<a class="row-action" href="{html.escape(_resource_url(base, resource, kind), quote=True)}">{html.escape(label)} <span aria-hidden="true">↗</span></a>'
 
 
-def render_proxmox(snapshot: dict, manifest: dict, format_size: Callable[[int], str], format_uptime: Callable[[float], str]) -> str:
-    """Render sanitized local inventory with useful empty and failure states."""
+def render_proxmox(snapshot: dict, manifest: dict, format_size: Callable[[int], str],
+                   format_uptime: Callable[[float], str], *, query: ProxmoxQuery | None = None) -> str:
+    """Render cached cluster inventory; filters never collect or mutate data."""
+    query = query or ProxmoxQuery()
     base = native_url(manifest)
     open_panel = f'<a class="refresh-link" href="{html.escape(base, quote=True)}">Open Proxmox VE ↗</a>' if base else ""
     content = ""
     if snapshot["available"]:
         guests, storage, cluster = snapshot["guests"], snapshot["storage"], snapshot["cluster"]
         stamp = datetime.fromtimestamp(snapshot["generated_at"], timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        content += f'<p class="endpoint">Local node <code>{html.escape(snapshot["node"])}</code> · Snapshot {stamp} · refreshed every minute</p>'
+        scope = "Cluster inventory" if snapshot.get("scope") == "cluster" else "Local node inventory"
+        content += f'<p class="endpoint">{scope} · Collector <code>{html.escape(snapshot["node"])}</code> · Snapshot {stamp} · refreshed every minute</p>'
+        complete = snapshot.get("inventory_complete", False)
+        if not complete:
+            content += '<p class="audit-issues" role="status">Partial inventory: some resource records are missing or omitted. Counts and allocations cover only reported records.</p>'
         running = sum(row["status"] == "running" and not row["template"] for row in guests)
         templates = sum(row["template"] is True for row in guests)
         guest_value = f"{running} running" if snapshot["inventory"] else "Unavailable"
@@ -107,13 +127,19 @@ def render_proxmox(snapshot: dict, manifest: dict, format_size: Callable[[int], 
                 cluster_description += f' · {cluster["unknown"]} unknown'
             if cluster["name"]:
                 cluster_description = cluster["name"] + " · " + cluster_description
-        content += '<dl class="overview-grid">' + _metric("Guests on this node", guest_value, guest_description)
+        content += '<dl class="overview-grid">' + _metric("Reported guests" if not complete else "Cluster guests" if snapshot.get("scope") == "cluster" else "Guests on this node", guest_value, guest_description)
         content += _metric("Cluster", cluster_value, cluster_description)
-        content += _metric("Proxmox VE", snapshot["version"] or "Unavailable", "Installed version") + '</dl>'
+        content += _metric("Proxmox VE", snapshot["version"] or "Unavailable", "Local collector version") + '</dl>'
         if cluster is not None and (cluster["quorate"] is False or cluster["online"] != cluster["nodes"]):
             content += '<p class="audit-issues" role="status">Cluster needs attention. Review quorum and node status in Proxmox VE.</p>'
+        content += render_filters(snapshot, query)
+        content += render_allocations(snapshot, query, lambda resource, kind, label: _link(base, resource, kind, label), _badge, format_size)
+        filtered = filter_guests(guests, query)
+        content += '<h3>Guests</h3>'
+        content += f'<p class="count">Showing {len(filtered)} of {len(guests)} reported guests and templates{" · partial inventory" if not complete else ""}</p>'
+        content += f'<p class="filesystem-note">Addresses and saved Notes links cover local node <code>{html.escape(snapshot["node"])}</code> only. Remote guests have no readings here. Addresses are selectable for copying.</p>'
         rows = []
-        for guest in guests:
+        for guest in filtered:
             identity, kind = guest["vmid"], guest["type"]
             name = guest["name"] or f"Guest {identity}"
             label = f"{identity} · {name}"
@@ -127,17 +153,23 @@ def render_proxmox(snapshot: dict, manifest: dict, format_size: Callable[[int], 
             if active and guest["mem"] is not None and guest["maxmem"]:
                 memory = f'{format_size(guest["mem"])} / {format_size(guest["maxmem"])}'
             uptime = format_uptime(guest["uptime"]) if active and guest["uptime"] is not None else "Unavailable" if active else "—"
-            rows.append(f'<tr><th scope="row">{_link(base, f"{kind}/{identity}", kind, label)}<span class="metric-description">{html.escape(details)}</span></th>'
+            tags = ' '.join(f'<span class="badge">{html.escape(tag)}</span>' for tag in guest.get("tags", []))
+            rows.append(f'<tr><th scope="row">{_link(base, f"{kind}/{identity}", kind, label)}<span class="metric-description">{html.escape(details)}</span><span class="pve-tags">{tags}</span></th>'
+                        f'<td data-label="Node">{_link(base, "node/" + guest["node"], "node", guest["node"])}</td>'
                         f'<td data-label="State">{_badge("Template" if guest["template"] else guest["status"])}</td>'
                         f'<td data-label="CPU">{cpu}<span class="metric-description">{cores}</span></td>'
-                        f'<td data-label="Memory">{memory}</td><td data-label="Uptime">{uptime}</td></tr>')
+                        f'<td data-label="Memory">{memory}</td><td data-label="Uptime">{uptime}</td>'
+                        f'<td data-label="Addresses / applications">{render_guest_details(guest, snapshot)}</td></tr>')
         if rows:
-            content += '<table class="filesystem-table proxmox-table" role="table"><caption>VMs and containers on this node</caption><thead><tr><th scope="col">Guest</th><th scope="col">State</th><th scope="col">CPU</th><th scope="col">Memory</th><th scope="col">Uptime</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>'
+            content += '<table class="filesystem-table proxmox-table" role="table"><caption>VMs, containers and templates</caption><thead><tr><th scope="col">Guest</th><th scope="col">Node</th><th scope="col">State</th><th scope="col">CPU</th><th scope="col">Memory</th><th scope="col">Uptime</th><th scope="col">Addresses / applications</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>'
             content += '<p class="filesystem-note">CPU is a share of the guest’s assigned vCPUs. Memory is Proxmox-reported use / allocation; disk capacity is allocated size, not free space inside the guest.</p>'
         elif snapshot["inventory"]:
-            content += '<p class="empty">No VMs or containers are assigned to this node.</p>'
+            content += '<p class="empty">No VMs or containers match these filters.</p>' if guests else '<p class="empty">No VMs or containers were reported.</p>'
+        content += '<h3>Proxmox storage</h3>'
         rows = []
         for pool in storage:
+            if query.node != "all" and pool["node"] != query.node:
+                continue
             name = pool["storage"]
             used, total = pool["disk"], pool["maxdisk"]
             capacity = "Unavailable"
@@ -148,13 +180,25 @@ def render_proxmox(snapshot: dict, manifest: dict, format_size: Callable[[int], 
                             f'<meter min="0" max="100" low="80" high="95" optimum="0" value="{percent}" aria-label="{html.escape(name, quote=True)} storage used">{percent}%</meter>'
                             f'<span class="metric-description">{format_size(total - used)} free of {format_size(total)}</span>')
             details = (pool["plugintype"] or "Type unavailable") + (" · Shared" if pool["shared"] else "")
-            rows.append(f'<tr><th scope="row">{_link(base, "storage/" + snapshot["node"] + "/" + name, "storage", name)}<span class="metric-description">{html.escape(details)}</span></th>'
+            rows.append(f'<tr><th scope="row">{_link(base, "storage/" + pool["node"] + "/" + name, "storage", name)}<span class="metric-description">{html.escape(details)}</span></th>'
+                        f'<td data-label="Node">{_link(base, "node/" + pool["node"], "node", pool["node"])}</td>'
                         f'<td data-label="State">{_badge(pool["status"])}</td><td data-label="Capacity">{capacity}</td></tr>')
         if rows:
-            content += '<table class="filesystem-table proxmox-table" role="table"><caption>Proxmox storage on this node</caption><thead><tr><th scope="col">Storage pool</th><th scope="col">State</th><th scope="col">Capacity</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>'
+            content += '<table class="filesystem-table proxmox-table" role="table"><caption>Proxmox storage on selected nodes</caption><thead><tr><th scope="col">Storage pool</th><th scope="col">Node</th><th scope="col">State</th><th scope="col">Capacity</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table>'
             content += '<p class="filesystem-note">Storage pools can share backing capacity; their totals should not be added together.</p>'
         elif snapshot["inventory"]:
-            content += '<p class="empty">No Proxmox storage pools were reported for this node.</p>'
+            content += '<p class="empty">No Proxmox storage pools were reported for the selected nodes.</p>'
+        def task_link(task: dict, guest: dict | None) -> str:
+            kind = guest["type"] if guest else "node"
+            resource = f'{kind}/{guest["vmid"]}' if guest else 'node/' + task["node"]
+            label = task["node"] + (f' · Guest {task["vmid"]}' if task["vmid"] is not None else '')
+            if base is None:
+                return html.escape(label)
+            url = _resource_url(base, resource, kind, tasks=True)
+            return f'<a class="row-action" href="{html.escape(url, quote=True)}">{html.escape(label)} · Tasks ↗</a>'
+        content += render_tasks(snapshot, query, task_link, _badge)
+        content += render_health(snapshot, query, _badge)
+        content += f'<script>{SCRIPT}</script>'
     notices = ''.join(f'<li>{html.escape(issue)}</li>' for issue in snapshot["issues"])
     if notices:
         content = f'<aside class="audit-issues" role="status"><strong>Proxmox collection needs attention</strong><ul>{notices}</ul></aside>' + content

@@ -25,12 +25,74 @@ from lib.agent_inbox import AgentInbox
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.github_runner_config import VERSION as RUNNER_VERSION, validate_policy as validate_runner_policy
 from lib.maintenance_agent_config import DEFAULTS, validate_policy
-from lib.proxmox_panel import sanitize_cluster, sanitize_resources
+from lib.proxmox_panel import sanitize_cluster
 from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token, validate_runner_registration_token
 from scripts.panel_samples import job_rows
 from scripts.panel_storage_samples import storage_snapshot
 
 SCENARIOS = ("minimal", "full", "empty", "degraded", "proxmox")
+
+
+def proxmox_snapshot() -> dict:
+    """Use public snapshot literals so the fixture never probes a Proxmox host."""
+    gib = 1024**3
+    guests = [
+        {"node": node, "type": kind, "vmid": vmid, "name": name, "status": status, "template": template,
+         "tags": tags, "cpu": cpu, "maxcpu": cores, "mem": used * gib if used is not None else None,
+         "maxmem": ram * gib if ram is not None else None, "disk": None,
+         "maxdisk": 64 * gib, "uptime": 86400 if status == "running" else None}
+        for node, kind, vmid, name, status, template, tags, cpu, cores, used, ram in (
+            ("pve1", "qemu", 100, "build-agent", "running", False, ["ci", "production"], .64, 12, 20, 32),
+            ("pve1", "lxc", 101, "web-services", "running", False, ["production", "web"], .14, 4, 3, 8),
+            ("pve1", "qemu", 102, "test-workstation", "stopped", False, ["lab"], None, 8, None, 32),
+            ("pve1", "qemu", 9000, "debian-template", "stopped", True, ["template"], None, 2, None, 2),
+            ("pve2", "qemu", 200, "database-primary", "running", False, ["production", "database"], .36, 8, 18, 32),
+            ("pve2", "lxc", 201, "metrics", "running", False, ["monitoring"], None, 2, 1, 4),
+            ("pve3", "qemu", 300, "archive-worker", "unknown", False, ["lab"], None, None, None, None),
+        )
+    ]
+    pools = [{"node": node, "type": "storage", "storage": name, "status": status,
+              "plugintype": kind, "shared": shared, "disk": used * gib, "maxdisk": total * gib}
+             for node, name, status, kind, shared, used, total in (
+                 ("pve1", "local-lvm", "available", "lvmthin", False, 85, 100),
+                 ("pve1", "shared-ceph", "available", "rbd", True, 620, 1000),
+                 ("pve2", "shared-ceph", "available", "rbd", True, 620, 1000),
+                 ("pve3", "local-zfs", "unknown", "zfspool", False, 200, 500))]
+    nodes = [{"type": "node", "node": node, "status": status, "cpu": cpu, "maxcpu": cores,
+              "mem": used * gib if used is not None else None, "maxmem": ram * gib,
+              "disk": None, "maxdisk": None, "uptime": 172800 if status == "online" else None}
+             for node, status, cpu, cores, used, ram in (
+                 ("pve1", "online", .72, 16, 40, 64), ("pve2", "online", .38, 16, 28, 64),
+                 ("pve3", "offline", None, 8, None, 32))]
+    now = int(time.time())
+    return {
+        "available": True, "scope": "cluster", "inventory": True, "inventory_complete": True,
+        "generated_at": now, "node": "pve1", "version": "9.1.0", "guests": guests, "storage": pools,
+        "nodes": nodes, "issues": [],
+        "cluster": sanitize_cluster([{"type": "cluster", "name": "development-lab", "quorate": 1},
+                                    *[{"type": "node", "name": row["node"], "local": int(row["node"] == "pve1"),
+                                       "online": int(row["status"] == "online")} for row in nodes]]),
+        "tasks": {"available": True, "items": [
+            {"upid": "synthetic-" + str(index), "node": node, "type": kind, "vmid": vmid,
+             "starttime": now - age, "endtime": None if status == "running" else now - age + 30, "status": status}
+            for index, (node, kind, vmid, age, status) in enumerate((
+                ("pve1", "qmigrate", 100, 120, "running"), ("pve2", "qmstart", 200, 600, "failed"),
+                ("pve1", "vzstart", 101, 900, "success"), ("pve2", "cephcreateosd", None, 1800, "warning")))]},
+        "guest_details": [
+            {"node": "pve1", "type": "qemu", "vmid": 100, "address_status": "available",
+             "addresses": ["192.0.2.100", "2001:db8::100"],
+             "links": [{"label": "Build dashboard", "url": "https://build.example.test/"}]},
+            {"node": "pve1", "type": "lxc", "vmid": 101, "address_status": "available",
+             "addresses": ["192.0.2.101"], "links": [{"label": "Application", "url": "https://app.example.test/"}]},
+            {"node": "pve1", "type": "qemu", "vmid": 102, "address_status": "not_running", "addresses": [], "links": []},
+        ],
+        "health": {
+            "zfs": {"status": "available", "node": "pve1", "pools": [
+                {"name": "rpool", "state": "DEGRADED", "scan": "scrub repaired 0B; one device needs attention",
+                 "read": 2, "write": 0, "cksum": 1}]},
+            "ceph": {"status": "available", "state": "HEALTH_WARN", "checks": ["1 host is down", "Reduced data availability"]},
+        },
+    }
 
 
 class Scenario:
@@ -81,21 +143,8 @@ class Scenario:
         self.replace(panel, "discover_basaltwater_web_services", return_value=[])
         self.replace(panel, "discover_certificate_trust", return_value=None)
         if self.name == "proxmox":
-            state.manifest.update(system_type="server_proxmox", title="Proxmox development node")
-            guests, pools, _issues = sanitize_resources([
-                {"node": "pve1", "type": kind, "vmid": vmid, "name": name, "status": status, "template": template,
-                 "cpu": .14, "maxcpu": 4, "mem": 3 * 1024**3, "maxmem": 8 * 1024**3,
-                 "maxdisk": 64 * 1024**3, "uptime": 86400}
-                for kind, vmid, name, status, template in (
-                    ("qemu", 100, "build-agent", "running", 0), ("lxc", 101, "web-services", "running", 0),
-                    ("qemu", 102, "test-workstation", "stopped", 0), ("qemu", 9000, "debian-template", "stopped", 1))
-            ] + [{"node": "pve1", "type": "storage", "storage": "local-lvm", "status": "available",
-                  "plugintype": "lvmthin", "shared": 0, "disk": 85 * 1024**3, "maxdisk": 100 * 1024**3}], "pve1")
-            self.replace(panel, "load_proxmox_snapshot", return_value={
-                "available": True, "inventory": True, "generated_at": time.time(), "node": "pve1", "version": "9.1.0",
-                "guests": guests, "storage": pools, "issues": [],
-                "cluster": sanitize_cluster([{"type": "node", "name": "pve1", "local": 1, "online": 1}]),
-            })
+            state.manifest.update(system_type="server_proxmox", title="Proxmox development cluster")
+            self.replace(panel, "load_proxmox_snapshot", return_value=proxmox_snapshot())
         self.replace(state, "t3_update_available", return_value=self.features.t3)
         self.replace(state, "trigger_t3_update", side_effect=self.update)
         self.replace(jobs, "collect_jobs", return_value=jobs.JobSnapshot(

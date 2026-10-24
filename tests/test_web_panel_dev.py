@@ -15,6 +15,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode
 
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_proxmox_views import SCRIPT_CSP as PROXMOX_SCRIPT_CSP
 from lib.atomic_io import read_json_file
 from lib.github_runner_registration import ENDPOINT as RUNNER_REGISTRATION_ENDPOINT
 from scripts import panel_dev
@@ -161,10 +162,43 @@ class PanelDevelopmentTests(unittest.TestCase):
         self.serve("proxmox")
         status, _, body = self.request("/")
         self.assertEqual(status, 200)
-        for text in ("Proxmox overview", "build-agent", "web-services", "debian-template", "85% used", "Standalone"):
+        for text in ("Proxmox overview", "build-agent", "web-services", "debian-template", "85% used", "Quorate",
+                     "Cluster inventory", "database-primary", "pve3", "Offline", "1.50× host", "192.0.2.100",
+                     "Build dashboard", "DEGRADED", "HEALTH_WARN", "1 running · 1 failed"):
             self.assertIn(text, body)
         self.assertNotIn('href="/admin"', body)
         self.assertEqual(self.request("/agents")[0], 404)
+
+    def test_proxmox_http_filters_preserve_state_and_only_change_guest_rows(self) -> None:
+        self.serve("proxmox")
+        status, headers, body = self.request("/?pve_q=WEB&pve_node=pve1&pve_type=lxc&pve_state=running&pve_tag=web&pve_sort=cpu")
+        self.assertEqual(status, 200)
+        self.assertIn('value="WEB"', body)
+        self.assertIn('value="pve1" selected', body)
+        self.assertIn('value="cpu" selected', body)
+        self.assertIn("Showing 1 of 7 reported", body)
+        self.assertIn("lxc%2F101", body)
+        self.assertNotIn("qemu%2F200", body)
+        self.assertNotIn("storage%2Fpve2", body)
+        self.assertIn("24 vCPUs · 1.50× host", body)
+        self.assertIn("72.0 GiB · 1.12× host", body)
+        self.assertIn(PROXMOX_SCRIPT_CSP, headers["Content-Security-Policy"])
+        self.assertNotIn("script-src 'unsafe-inline'", headers["Content-Security-Policy"])
+
+    def test_proxmox_http_query_rejects_ambiguous_or_unbounded_input(self) -> None:
+        self.serve("proxmox")
+        for query in ("pve_q=x&pve_q=y", "unknown=1", "pve_q=%00", "pve_q=%7F", "pve_node=../pve1",
+                      "pve_type=other", "pve_state=online", "pve_sort=uptime", "pve_tag=two%20words",
+                      "pve_q=" + "x" * 129, "pve_q=%FF", "pve_q=%ZZ", "pve_q"):
+            with self.subTest(query=query):
+                self.assertEqual(self.request("/?" + query)[0], 400)
+
+    def test_ordinary_dashboard_keeps_query_behavior_and_copy_policy_unchanged(self) -> None:
+        self.serve("minimal")
+        status, headers, body = self.request("/?unrelated=1")
+        self.assertEqual(status, 200)
+        self.assertNotIn(PROXMOX_SCRIPT_CSP, headers["Content-Security-Policy"])
+        self.assertNotIn("data-pve-copy", body)
 
     def test_maintenance_and_readiness_forms_show_simulated_results(self) -> None:
         self.serve()
