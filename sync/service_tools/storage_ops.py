@@ -315,7 +315,8 @@ class SyncIntegrity:
     copy_new_only: bool = False
 
 
-def run_sync(source: str, destination: str, logger, *, integrity: SyncIntegrity = SyncIntegrity()) -> tuple[bool, str]:
+def run_sync(source: str, destination: str, logger, *, config: RuntimeConfig,
+             integrity: SyncIntegrity = SyncIntegrity()) -> tuple[bool, str]:
     """Execute rsync sync operation."""
     from sync.service_tools.sync_rsync import run_rsync_with_notifications
     
@@ -325,6 +326,7 @@ def run_sync(source: str, destination: str, logger, *, integrity: SyncIntegrity 
         result = run_rsync_with_notifications(
             source, destination, suppress_notifications=True,
             excluded_paths=integrity.excluded_paths, copy_new_only=integrity.copy_new_only,
+            config=config,
         )
         return result == 0, f"Sync {'completed' if result == 0 else 'failed'} with exit code {result}"
     except Exception as e:
@@ -553,7 +555,7 @@ def execute_storage_operations() -> dict:
         if integrity.warning:
             log_event(logger, "Sync continuing with integrity precautions", level=WARNING,
                       source=source, destination=destination, warning=integrity.warning)
-        success, message = run_sync(source, destination, logger, integrity=integrity)
+        success, message = run_sync(source, destination, logger, config=config, integrity=integrity)
         results["syncs"].append({
             "source": source,
             "destination": destination,

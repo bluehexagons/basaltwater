@@ -168,7 +168,7 @@ class TestRunSync(unittest.TestCase):
     def test_sync_exception_logs_structured_failure(self, _mock_sync):
         logger = MagicMock()
 
-        success, message = run_sync("/src", "/dst", logger)
+        success, message = run_sync("/src", "/dst", logger, config=RuntimeConfig.from_dict({}))
 
         self.assertFalse(success)
         self.assertEqual(message, "boom")

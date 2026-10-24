@@ -92,6 +92,34 @@ Mount checks also resolve endpoint aliases. An unavailable configured mount
 below either mirror root is excluded from both transfer and deletion, with a
 warning, so healthy subtrees continue and existing backup content is preserved.
 These nested mount protections also apply to custom inline sync setup steps.
+The standalone `sync_rsync.py SOURCE DESTINATION` entry point applies the same
+endpoint and nested mount guards using the saved setup configuration. Missing,
+unreadable, or invalid configuration stops standalone sync; inline setup uses
+its current declarations before they have been saved.
+
+Every rsync runs in a new Linux mount namespace created by util-linux
+`unshare --mount --propagation private`. The worker validates required mounts
+and computes nested exclusions after propagation is detached, then executes
+rsync in that same namespace. Host unmounts after validation cannot expose an
+underlying directory to that traversal. A mount removed before namespace
+creation is rejected or excluded by the worker. Inline setup's directory
+creation and SMB probes also run inside this boundary.
+An autofs placeholder alone does not satisfy a declared mount: the backing
+filesystem must already be mounted when the namespace is created. Otherwise
+the worker rejects the endpoint or excludes the nested subtree. Activate the
+mount on the host before retrying; host-side activations after isolation are
+visible only to subsequent workers.
+
+Creating the namespace requires `CAP_SYS_ADMIN` in the governing user namespace
+(normally root). LXC, non-root execution, and service sandbox restrictions can
+deny it even when other storage work is allowed. Missing `unshare`, namespace
+creation failure, or unverifiable private propagation fails the sync with no
+unprotected fallback. Check the worker's journal error and host policy. New host
+mounts are visible to the next run; the current run retains its original mount
+view. This is not a data snapshot: concurrent file changes and filesystem or
+network errors can still affect the run. Keep endpoint paths stable; namespace
+isolation does not prevent another writer replacing paths or symlinks. Scrub
+retains its separate mount checks.
 
 Managed SMB client mounts use native systemd automount units, with a 60-second
 idle timeout. Access triggers the matching network-ordered mount; enabling the

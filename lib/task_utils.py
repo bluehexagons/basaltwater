@@ -31,10 +31,20 @@ def validate_sync_paths(source: str, destination: str, *, resolve: bool = True) 
         raise ValueError("Sync source and destination must not be equal or nested")
 
 
-def _configured_storage_mounts(config: Any) -> list[str]:
+def configured_storage_mounts(config: Any) -> list[str]:
     """Normalize declared mounts without following potentially unsafe aliases."""
-    roots = [spec[0] for spec in getattr(config, "smb_mounts", None) or [] if spec]
-    roots += [spec[1] for spec in getattr(config, "storage_mounts", None) or [] if len(spec) >= 2]
+    roots: list[str] = []
+    for name, index in (("smb_mounts", 0), ("storage_mounts", 1)):
+        specs = getattr(config, name, None)
+        if specs is None:
+            continue
+        if not isinstance(specs, (list, tuple)):
+            raise ValueError(f"Invalid configured {name}")
+        for spec in specs:
+            if (not isinstance(spec, (list, tuple)) or len(spec) <= index
+                    or not isinstance(spec[index], str)):
+                raise ValueError(f"Invalid configured {name} declaration")
+            roots.append(spec[index])
     for root in roots:
         validate_filesystem_path(root)
         if not os.path.isabs(root):
@@ -42,30 +52,39 @@ def _configured_storage_mounts(config: Any) -> list[str]:
     return sorted({os.path.abspath(root) for root in roots})
 
 
-def validate_configured_storage_mounts(path: str, config: Any) -> None:
+def _storage_mount_available(root: str, mounted_roots: frozenset[str] | None) -> bool:
+    """Use an isolated worker's mount table when supplied (excluding autofs)."""
+    return root in mounted_roots if mounted_roots is not None else os.path.ismount(root)
+
+
+def validate_configured_storage_mounts(
+    path: str, config: Any, *, mounted_roots: frozenset[str] | None = None,
+) -> None:
     """Require the exact declared mount, including access through aliases."""
     paths = {os.path.abspath(path), os.path.realpath(path)}
-    for root in _configured_storage_mounts(config):
+    for root in configured_storage_mounts(config):
         resolved = os.path.realpath(root)
         if any(os.path.commonpath([candidate, mount]) == mount
                for candidate in paths for mount in {root, resolved}):
-            if resolved != root or not os.path.ismount(root):
+            if resolved != root or not _storage_mount_available(root, mounted_roots):
                 raise RuntimeError(f"Required configured mount is unavailable: {root}")
 
 
-def unavailable_sync_subtrees(source: str, destination: str, config: Any) -> tuple[str, ...]:
+def unavailable_sync_subtrees(
+    source: str, destination: str, config: Any, *, mounted_roots: frozenset[str] | None = None,
+) -> tuple[str, ...]:
     """Preserve offline nested mounts on both sides of a recursive mirror."""
     endpoints = {os.path.abspath(path) for path in (source, destination)}
     endpoints.update(os.path.realpath(path) for path in (source, destination))
     excluded: set[str] = set()
-    for root in _configured_storage_mounts(config):
+    for root in configured_storage_mounts(config):
         resolved = os.path.realpath(root)
         relatives = {
             os.path.relpath(candidate, endpoint)
             for endpoint in endpoints for candidate in {root, resolved}
             if candidate != endpoint and os.path.commonpath([candidate, endpoint]) == endpoint
         }
-        if relatives and (resolved != root or not os.path.ismount(root)):
+        if relatives and (resolved != root or not _storage_mount_available(root, mounted_roots)):
             excluded.update(relatives)
     return tuple(sorted(excluded))
 

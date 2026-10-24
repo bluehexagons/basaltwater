@@ -83,23 +83,14 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
 class TestSetupFailurePropagation(unittest.TestCase):
     """Initial sync and scrub failures must reach the setup orchestrator."""
 
-    def test_smb_sync_creates_new_destination_before_probing(self):
+    def test_inline_sync_delegates_preparation_with_current_declarations(self):
         from sync import sync_steps
 
-        created = set()
-        def ensure(path, _username):
-            created.add(path)
-
-        def probe(path, *, writable=True):
-            if path == '/source':
-                self.assertFalse(writable)
-            else:
-                self.assertIn(path, created)
-            return True
-
-        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_filesystem_path'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'ensure_directory', side_effect=ensure), patch.object(sync_steps, 'check_path_on_smb_mount', return_value=True), patch.object(sync_steps, 'validate_smb_connectivity', side_effect=probe), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('sync.service_tools.sync_rsync.run_rsync_with_notifications', return_value=0) as sync:
-            sync_steps.create_sync_service(SimpleNamespace(username='agent'), ['/source', '/destination', 'daily'])
-            sync.assert_called_once()
+        config = SimpleNamespace(username='agent', smb_mounts=[['/source'], ['/destination']])
+        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_filesystem_path'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('lib.task_utils.os.path.ismount', return_value=True), patch('sync.service_tools.sync_rsync.run_rsync_with_notifications', return_value=0) as sync:
+            sync_steps.create_sync_service(config, ['/source', '/destination', 'daily'])
+            self.assertIs(sync.call_args.kwargs['config'], config)
+            self.assertTrue(sync.call_args.kwargs['initial_setup'])
 
     def test_mount_failure_prevents_initial_work(self):
         from sync import scrub_steps, sync_steps
@@ -114,7 +105,8 @@ class TestSetupFailurePropagation(unittest.TestCase):
                     patch.object(module, 'create_operation_logger'),
                     patch.object(module, 'validate_filesystem_path'),
                     patch.object(module, 'validate_mount_for_sync', side_effect=checks),
-                    patch.object(module, 'ensure_directory') as mkdir,
+                    patch('sync.scrub_steps.ensure_directory' if module is scrub_steps else
+                          'sync.service_tools.sync_rsync.ensure_directory') as mkdir,
                     patch('sync.service_tools.sync_rsync.run_rsync_with_notifications') as sync,
                     patch.object(scrub_par2, 'scrub_directory') as scrub,
                 ):
@@ -132,8 +124,6 @@ class TestSetupFailurePropagation(unittest.TestCase):
             patch.object(sync_steps, 'create_operation_logger', return_value=logger),
             patch.object(sync_steps, 'validate_filesystem_path') as validate_path,
             patch.object(sync_steps, 'validate_mount_for_sync') as validate_mount,
-            patch.object(sync_steps, 'ensure_directory'),
-            patch.object(sync_steps, 'check_path_on_smb_mount', return_value=False),
             patch.object(sync_steps, 'get_disk_usage_details') as disk_usage,
             patch(
                 'sync.service_tools.sync_rsync.run_rsync_with_notifications',
@@ -153,6 +143,8 @@ class TestSetupFailurePropagation(unittest.TestCase):
             '/destination',
             suppress_notifications=True,
             excluded_paths=(),
+            config=SimpleNamespace(username='agent'),
+            initial_setup=True,
         )
         disk_usage.assert_not_called()
         logger.complete.assert_called_once()

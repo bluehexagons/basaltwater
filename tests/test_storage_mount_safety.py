@@ -81,13 +81,14 @@ class StorageMountSafetyTests(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertIn('unavailable configured mounts', result['syncs'][0]['warning'])
         run.assert_called_once_with(str(self.source), str(self.destination), suppress_notifications=True,
-                                    excluded_paths=('disk',), copy_new_only=False)
+                                    excluded_paths=('disk',), copy_new_only=False,
+                                    config=RuntimeConfig.from_dict(config))
         self.assertIn(storage_ops.get_sync_op_id(str(self.source), str(self.destination)), state)
 
     def test_inline_sync_preserves_offline_nested_mounts(self):
         config = self.config(self.source / 'disk')
         config.username = 'agent'
-        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'ensure_directory'), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('lib.task_utils.os.path.ismount', return_value=False), patch.object(sync_rsync, 'run_rsync_with_notifications', return_value=0) as run:
+        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('lib.task_utils.os.path.ismount', return_value=False), patch.object(sync_rsync, 'run_rsync_with_notifications', return_value=0) as run:
             sync_steps.create_sync_service(config, [str(self.source), str(self.destination), 'daily'])
         run.assert_called_once_with(str(self.source), str(self.destination), suppress_notifications=True,
-                                    excluded_paths=('disk',))
+                                    excluded_paths=('disk',), config=config, initial_setup=True)

@@ -356,6 +356,13 @@ failures restore the previous unit files and activation state; incomplete
 rollback retains the shared systemd recovery marker. Credential and local
 directory changes made during preparation are not rolled back.
 
+Sync and backup workers retain a private mount view for the entire rsync run,
+so a host-side idle unmount cannot redirect an active mirror onto the underlying
+local directory. The mount must be available when the worker validates it;
+namespace creation requires `CAP_SYS_ADMIN` (normally root), and denied
+isolation fails the sync. See [storage mount safety](storage-operations.md#sync-behavior)
+for endpoint checks, nested exclusions, and standalone behavior.
+
 Credential filenames retain systemd's literal unit-name escapes (for example,
 `\x2d` for a hyphen) in `Options=`, so mounts with hyphens, spaces or percent
 signs reference the actual root-only credential file. Percent signs in unit

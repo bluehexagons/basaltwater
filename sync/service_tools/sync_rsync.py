@@ -13,17 +13,31 @@ import signal
 import stat
 import tempfile
 import time
+import json
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from logging import ERROR, WARNING
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 # Add lib directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 from lib.logging_utils import get_service_logger, log_event
 from lib.progress_utils import ProgressTracker, ProgressMessage
-from lib.task_utils import validate_sync_paths
+from lib.task_utils import (
+    check_path_on_smb_mount, configured_storage_mounts, ensure_directory,
+    needs_mount_check, unavailable_sync_subtrees,
+    validate_configured_storage_mounts, validate_sync_paths,
+)
+from lib.mount_utils import validate_smb_connectivity
+from lib.runtime_config import RuntimeConfig
 from lib.validation import validate_filesystem_path
+from lib.validators import validate_username
+
+if TYPE_CHECKING:
+    from lib.config import SetupConfig
 
 # Conversion constants
 BYTES_TO_MB = 1024 * 1024
@@ -142,9 +156,129 @@ def _copy_new_conflicts(source: str, destination: str, protected: tuple[str, ...
     return tuple(conflicts)
 
 
+@contextmanager
+def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...],
+                   copy_new_only: bool) -> Iterator[list[str]]:
+    """Build filters inside the pinned mount view and retain them through exec."""
+    protected_paths = _protected_paths(source, destination, excluded_paths)
+    options = [] if copy_new_only else ['--delete', '--delete-delay']
+    if copy_new_only:
+        options.extend(['--ignore-existing', '--partial-dir=.rsync-partial'])
+        protected_paths += _copy_new_conflicts(source, destination, protected_paths)
+    with tempfile.TemporaryFile() as filters:
+        if protected_paths:
+            for path in protected_paths:
+                if any(char in path for char in '*?['):
+                    path = re.sub(r'([\\*?\[])', r'\\\1', path)
+                filters.write(os.fsencode('/' + path) + b'\0')
+            filters.flush()
+            filters.seek(0)
+            # Anonymous file: no pathname cleanup is needed after exec. Both
+            # rsync's local processes inherit the descriptor until completion.
+            os.set_inheritable(filters.fileno(), True)
+            options.extend(['--from0', f'--exclude-from=/proc/self/fd/{filters.fileno()}'])
+        yield [
+            '/usr/bin/rsync', '-av', *options, '--partial', '--mkpath',
+            '--exclude=.git', '--info=progress2', '--stats', '--',
+            f'{source}/', f'{destination}/',
+        ]
+
+
+def _mount_worker() -> int:
+    """Validate and exec only after unshare has detached mount propagation."""
+    try:
+        request = json.load(sys.stdin)
+        if os.readlink('/proc/self/ns/mnt') == os.readlink(f'/proc/{os.getppid()}/ns/mnt'):
+            raise RuntimeError('Sync worker requires a new private mount namespace')
+        mountpoints: set[str] = set()
+        with open('/proc/self/mountinfo', encoding='utf-8') as mounts:
+            for line in mounts:
+                mount, filesystem = line.split(' - ', 1)
+                fields = mount.split()
+                optional = fields[6:]
+                if any(field.startswith(('shared:', 'master:', 'propagate_from:')) for field in optional):
+                    raise RuntimeError('Sync worker mount propagation is not private')
+                if filesystem.split()[0] != 'autofs':
+                    # mountinfo escapes whitespace and backslashes in paths.
+                    mountpoints.add(re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), fields[4]))
+        if not mountpoints:
+            raise RuntimeError('Cannot verify private mount table')
+        mounted_roots = frozenset(mountpoints)
+
+        source, destination = request['source'], request['destination']
+        config = RuntimeConfig.from_dict({
+            'storage_mounts': [['', root] for root in request['mounts']],
+            'smb_mounts': [[root] for root in request['smb_mounts']],
+        })
+        validate_sync_paths(source, destination)
+        for path, label in ((source, 'source'), (destination, 'destination')):
+            validate_configured_storage_mounts(path, config, mounted_roots=mounted_roots)
+            resolved = os.path.realpath(path)
+            needs_mount = needs_mount_check(path, config) or needs_mount_check(resolved, config)
+            if needs_mount and not any(root != '/' and os.path.commonpath([resolved, root]) == root
+                                       for root in mounted_roots):
+                raise RuntimeError(f'Required {label} mount is unavailable: {path}')
+        if not os.path.isdir(source):
+            raise ValueError(f'Sync source is not an existing directory: {source}')
+        username = request['setup_username']
+        if username is not None:
+            if not validate_username(username):
+                raise ValueError('Invalid initial sync username')
+            ensure_directory(source, username)
+            ensure_directory(os.path.dirname(destination), username)
+            if check_path_on_smb_mount(source, config) and not validate_smb_connectivity(source, writable=False):
+                raise RuntimeError(f'Source SMB connectivity failed: {source}')
+            if check_path_on_smb_mount(destination, config):
+                ensure_directory(destination, username)
+                if not validate_smb_connectivity(destination):
+                    raise RuntimeError(f'Destination SMB connectivity failed: {destination}')
+        unavailable = unavailable_sync_subtrees(source, destination, config, mounted_roots=mounted_roots)
+        if unavailable:
+            print(f'Preserving unavailable mount subtrees: {", ".join(unavailable[:5])}', file=sys.stderr)
+        excluded = tuple(dict.fromkeys([*request['excluded_paths'], *unavailable]))
+        with _rsync_command(source, destination, excluded, request['copy_new_only']) as command:
+            # No extra supervisor: rsync retains the parent's private session,
+            # pipes and deadline, and this namespace for its entire traversal.
+            os.execv(command[0], command)
+    except Exception as exc:
+        print(f'Sync mount worker refused to run: {exc}', file=sys.stderr)
+        return 1
+    return 0
+
+
+def _start_rsync(source: str, destination: str, config: SetupConfig | RuntimeConfig,
+                 excluded_paths: tuple[str, ...], copy_new_only: bool,
+                 initial_setup: bool) -> subprocess.Popen[str]:
+    """Transfer declarations, never credentials, to a namespace-isolated worker."""
+    request = {
+        'source': source, 'destination': destination,
+        'mounts': configured_storage_mounts(config),
+        'smb_mounts': [spec[0] for spec in getattr(config, 'smb_mounts', None) or []],
+        'setup_username': config.username if initial_setup else None,
+        'excluded_paths': excluded_paths, 'copy_new_only': copy_new_only,
+    }
+    # A regular anonymous file avoids argv limits and pipe writes that could
+    # block outside the output reader's deadline for large exclusion reports.
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as stream:
+        json.dump(request, stream)
+        stream.seek(0)
+        try:
+            return subprocess.Popen(
+                ['/usr/bin/unshare', '--mount', '--propagation', 'private', '--',
+                 sys.executable, '-u', os.path.abspath(__file__), '--mount-worker'],
+                stdin=stream, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, start_new_session=True, bufsize=1,
+            )
+        except OSError as exc:
+            raise RuntimeError('Cannot start private mount namespace; sync requires '
+                               'util-linux unshare and CAP_SYS_ADMIN (normally root)') from exc
+
+
 def run_rsync_with_notifications(
     source: str, destination: str, suppress_notifications: bool = False, *,
     excluded_paths: tuple[str, ...] = (), copy_new_only: bool = False,
+    config: SetupConfig | RuntimeConfig | None = None,
+    initial_setup: bool = False,
 ) -> int:
     """Run rsync and send notifications on completion or failure.
     
@@ -154,6 +288,8 @@ def run_rsync_with_notifications(
         suppress_notifications: If True, skip sending notifications (caller will handle)
         excluded_paths: Literal paths relative to the mirror root to preserve on both sides
         copy_new_only: Add new files without replacing or deleting existing destination data
+        config: Current declarations for setup/runtime; None strictly loads saved state
+        initial_setup: Prepare directories and probe SMB within the private namespace
         
     Returns:
         Exit code (0 for success, non-zero for failure)
@@ -200,50 +336,17 @@ def run_rsync_with_notifications(
     total_bytes = 0
     percent_done = 0
     
-    filter_file = None
     try:
+        if config is None:
+            from lib.machine_state import load_setup_config
+            saved_config = load_setup_config()
+            if saved_config is None:
+                raise RuntimeError('Saved setup configuration is required for standalone sync mount guards')
+            config = RuntimeConfig.from_dict(saved_config)
         validate_sync_paths(source, destination)
         if not os.path.isdir(source):
             raise ValueError(f"Sync source is not an existing directory: {source}")
-        protected_paths = _protected_paths(source, destination, excluded_paths)
-        options = [] if copy_new_only else ['--delete', '--delete-delay']
-        if copy_new_only:
-            # Keep interrupted new files out of their final names so the next
-            # --ignore-existing run can finish them instead of skipping them.
-            options.extend(['--ignore-existing', '--partial-dir=.rsync-partial'])
-            protected_paths += _copy_new_conflicts(source, destination, protected_paths)
-        if protected_paths:
-            # Use a private file to avoid argv limits for large reports. Anchored
-            # excludes hide source paths and protect their destination copies,
-            # including absent source files and replaced directory ancestors.
-            filter_file = tempfile.NamedTemporaryFile(prefix='sync-excludes-')
-            for path in protected_paths:
-                if any(char in path for char in '*?['):
-                    path = re.sub(r'([\\*?\[])', r'\\\1', path)
-                filter_file.write(os.fsencode('/' + path) + b'\0')
-            filter_file.flush()
-            options.extend(['--from0', f'--exclude-from={filter_file.name}'])
-        # Run rsync with progress information
-        process = subprocess.Popen(
-            [
-                '/usr/bin/rsync',
-                '-av',
-                *options,
-                '--partial',
-                '--mkpath',  # Create destination directory if it doesn't exist
-                '--exclude=.git',
-                '--info=progress2',  # Overall progress without per-file output
-                '--stats',
-                '--',
-                f'{source}/',
-                f'{destination}/'
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-            bufsize=1  # Line buffered
-        )
+        process = _start_rsync(source, destination, config, excluded_paths, copy_new_only, initial_setup)
         
         # Collect output for stats parsing
         stdout_lines = deque(maxlen=4096)
@@ -310,12 +413,17 @@ def run_rsync_with_notifications(
             # Rsync failed
             stderr_output = '\n'.join(stderr_lines)
             stdout_output = '\n'.join(stdout_lines)
+            if 'unshare:' in stderr_output:
+                stderr_output += ('\nPrivate mount namespace unavailable; sync refused. '
+                                  'Requires CAP_SYS_ADMIN (normally root); check container/service restrictions.')
             raise subprocess.CalledProcessError(
                 returncode, 
                 'rsync', 
                 output=stdout_output, 
                 stderr=stderr_output
             )
+        if stderr_lines:
+            log_event(logger, 'Sync worker warnings', level=WARNING, stderr='\n'.join(stderr_lines))
         
         duration = (datetime.now() - start_time).total_seconds()
         
@@ -455,13 +563,12 @@ Duration: {duration:.1f}s
                 log_event(logger, "Failed to send failure notification", level=ERROR, error=str(notify_error))
         
         return 1
-    finally:
-        if filter_file is not None:
-            filter_file.close()
 
 
 def main():
     """Main entry point."""
+    if sys.argv[1:] == ['--mount-worker']:
+        return _mount_worker()
     if len(sys.argv) != 3:
         print("Usage: sync_rsync.py <source> <destination>")
         return 1
