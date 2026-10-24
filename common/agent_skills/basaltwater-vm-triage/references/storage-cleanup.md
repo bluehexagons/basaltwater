@@ -8,6 +8,23 @@ for metadata-only size, age, and owner evidence, then read the full
 Use `--summary --json` for the initial inventory, then inspect selected `--path`
 roots without `--summary` for ownership and other details before cleanup.
 
+Read `inspection_context` before comparing owners across CLI/MCP views. Numeric
+owners and ID maps describe the observer and its parent namespace, not
+necessarily the host. A `1000 0 1` map alone does not prove host-root ownership.
+`proc_self_pid_matches=false` can explain `ps` failing with `lookup self`; it
+does not prove an idle host. Go installation metadata and Podman can also be
+unavailable inside a sandbox. Keep safety guards and request the specific
+authorized host-side check instead of repeating a follow-up with unchanged
+access or recommending chown/reinstallation from namespace evidence.
+
+`npm cache verify` is a mutation: it garbage-collects cache entries, even when
+called offline. Use metadata inspection of the exact `_cacache` for read-only
+reviews. Within approved cleanup scope, `npm --cache /exact/cache cache clean
+--force` evicts downloaded content; preserve configuration and active `_npx`
+installations and check for package-manager activity first. An EROFS failure
+does not authorize retrying through another integration; unchanged total bytes
+do not establish that no entry changed.
+
 ## Bounded classification
 
 Use the inventory's `cleanup_convention` labels and referenced checks for Go,

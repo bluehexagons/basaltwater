@@ -26,6 +26,8 @@ class StorageInventoryTests(unittest.TestCase):
         self.enterContext(patch.object(inventory, "_ROOTS", tuple(row for row in inventory._ROOTS if not row[0].startswith("/"))))
         self.enterContext(patch.object(inventory.shutil, "disk_usage", return_value=SimpleNamespace(total=1000000, used=900000, free=100000)))
         self.enterContext(patch.object(inventory.os, "statvfs", return_value=SimpleNamespace(f_favail=100, f_files=1000)))
+        self.context = {"ownership_scope": "observer_user_namespace", "effective_uid": os.geteuid()}
+        self.enterContext(patch.object(inventory, "_inspection_context", return_value=self.context))
 
     def inspect(self, *paths: Path, **options: int) -> dict:
         return inventory.inspect_storage(home=str(self.home), paths=list(map(str, paths)) if paths else None, **options)
@@ -64,6 +66,7 @@ class StorageInventoryTests(unittest.TestCase):
         self.assertGreater(row["largest_children"][0]["allocated_bytes"], row["largest_children"][1]["allocated_bytes"])
         self.assertEqual(row["status"], "measured")
         self.assertTrue(report["read_only"])
+        self.assertEqual(report["inspection_context"], self.context)
         self.assertTrue(any(row["category"] == "project-checkouts" for row in report["candidates"]))
         self.assertTrue(any("not guaranteed reclaimable" in note for note in report["notes"]))
 
@@ -219,6 +222,7 @@ class StorageInventoryTests(unittest.TestCase):
         self.assertEqual((len(selected["largest_children"]), selected["ranked_children_omitted"]), (3, 5))
         self.assertIn(unavailable["issues"], [row["issues"] for row in summary["candidates"]])
         self.assertEqual(summary["limits"], report["limits"])
+        self.assertEqual(summary["inspection_context"], report["inspection_context"])
         self.assertEqual(summary["session_state"]["issues"], report["session_state"]["issues"])
         self.assertEqual(summary["session_state"]["files"][0]["allocated_bytes"], report["session_state"]["files"][0]["allocated_bytes"])
         self.assertEqual(summary["session_state"]["retention"], [report["session_state"]["files"][0]["retention"]])
@@ -272,6 +276,17 @@ class StorageInventoryTests(unittest.TestCase):
             report = self.inspect(path)
             self.assertNotIn("cleanup_convention", report["candidates"][0])
             self.assertEqual(report["cleanup_conventions"], {})
+
+    def test_npm_guidance_covers_content_cache_without_classifying_npx_as_disposable(self) -> None:
+        cache = self.home / ".npm"
+        content, npx = cache / "_cacache", cache / "_npx"
+        content.mkdir(parents=True)
+        npx.mkdir()
+        for path in (cache, content):
+            report = self.inspect(path)
+            self.assertEqual(report["candidates"][0]["cleanup_convention"], "npm-content")
+            self.assertIn("npm-content", report["cleanup_conventions"])
+        self.assertNotIn("cleanup_convention", self.inspect(npx)["candidates"][0])
 
     def test_cache_convention_keeps_partial_measurement_and_shared_scan_limits(self) -> None:
         cache = self.home / ".cache" / "ms-playwright"
@@ -341,6 +356,44 @@ class StorageInventoryTests(unittest.TestCase):
             with self.subTest(options=options), patch.object(inventory, "_scan") as scan, self.assertRaises(ValueError):
                 inventory.inspect_storage(home=str(self.home), **options)
             scan.assert_not_called()
+
+
+class InspectionContextTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.proc = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.process = self.proc / "42"
+        self.process.mkdir()
+        (self.proc / "self").symlink_to("42")
+        self.enterContext(patch.object(inventory.os, "getpid", return_value=42))
+        for name in ("getuid", "geteuid", "getgid", "getegid"):
+            self.enterContext(patch.object(inventory.os, name, return_value=1000))
+
+    def test_nested_mapping_is_reported_to_parent_without_claiming_host_ownership(self) -> None:
+        (self.process / "uid_map").write_text("1000 0 1\n65534 1000 1\n")
+        (self.process / "gid_map").write_text("1000 0 1\n")
+        result = inventory._inspection_context(str(self.proc))
+        self.assertEqual(result["uid_map_to_parent"], [[1000, 0, 1], [65534, 1000, 1]])
+        self.assertEqual(result["gid_map_to_parent"], [[1000, 0, 1]])
+        self.assertEqual(result["ownership_scope"], "observer_user_namespace")
+        self.assertEqual([result[key] for key in ("uid", "effective_uid", "gid", "effective_gid")], [1000] * 4)
+        self.assertTrue(result["proc_self_pid_matches"])
+        self.assertEqual(result["issues"], [])
+        with patch.object(inventory.os, "getpid", return_value=2):
+            self.assertFalse(inventory._inspection_context(str(self.proc))["proc_self_pid_matches"])
+
+    def test_missing_malformed_and_oversized_maps_stay_unknown(self) -> None:
+        for value in (None, "", "0 0\n", "0 0 0\n", "-1 0 1\n", "invalid", "\N{SNOWMAN}", "0 0 1\n" * 1000):
+            with self.subTest(value=value):
+                if value is not None:
+                    (self.process / "uid_map").write_text(value)
+                result = inventory._inspection_context(str(self.proc))
+                self.assertIsNone(result["uid_map_to_parent"])
+                self.assertIsNone(result["gid_map_to_parent"])
+                self.assertEqual(result["issues"], ["uid_map_unavailable", "gid_map_unavailable"])
+        (self.proc / "self").unlink()
+        result = inventory._inspection_context(str(self.proc))
+        self.assertIsNone(result["proc_self_pid_matches"])
+        self.assertIn("proc_self_pid_unavailable", result["issues"])
 
 
 if __name__ == "__main__":

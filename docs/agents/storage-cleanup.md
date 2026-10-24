@@ -60,6 +60,25 @@ scans and unavailable default roots retain their existing success status unless
 a top-level collection issue occurred. Neither view sums overlapping roots into
 a reclamation estimate.
 
+Both views include `inspection_context`: the observer's numeric UID/GID,
+effective IDs, bounded `uid_map_to_parent`/`gid_map_to_parent` entries and
+`proc_self_pid_matches`. Ownership values belong to that observer's user
+namespace. A map describes its parent namespace, which may itself be nested;
+`1000 0 1` does not establish host-root ownership. Do not compare numeric owners
+from different CLI/MCP observers without establishing their namespace context.
+Unavailable maps remain null with explicit context issues; these do not erase
+usable filesystem measurements or change their existing exit-status policy.
+
+If `proc_self_pid_matches` is false, the mounted proc view and the process's
+PID namespace disagree. This can explain a `ps` failure such as `lookup self`;
+it does not establish that no jobs are active. Even a matching PID does not
+prove complete process access. A sandbox can also hide root-owned Go installation
+metadata or block rootless Podman operations. Report those checks as unavailable,
+not broken installations. Do not change ownership, reinstall tools or relax
+cleanup guards on that evidence. Request an authorized check in the cache
+owner's host session when the sandbox cannot establish ownership or active use;
+another follow-up with unchanged access will repeat the failure.
+
 Session-state metadata collection continues after a disappearing or unreadable
 database/WAL entry and reports incomplete coverage. A missing session root is
 silently absent; a failed directory listing remains a reported collection issue.
@@ -90,6 +109,7 @@ Labels identify review guidance, never deletion eligibility or verified disuse.
 
 | Convention | Checks and retention |
 | --- | --- |
+| `npm-content` (`~/.npm`, `~/.npm/_cacache`) | Inspect content-cache metadata and active package managers. `npm cache verify` garbage-collects data and requires write authorization. Approved `npm --cache /exact/cache cache clean --force` evicts downloaded content; preserve configuration and active npx installations. Later installs may need network downloads. |
 | `go-build` | Preview `basaltw agent storage clean-go-build --json`; use `--apply` within approved scope. The shared guard distinguishes completed `go run` wrappers from builds. Keep modules and source; later builds recompile. |
 | `containers` (rootless Podman) | Use `basaltw agent storage clean-podman --json`; review old unused testing images, including tagged images, and abandoned Buildah builders. Reuse compatible images first; ordinary containers, volumes, mounted/pinned builders and persistent cache mounts are retained. |
 | `playwright-browsers` (`ms-playwright`) | Match `.links` package registrations, their `browsers.json` revisions and live browser/MCP references. Keep latest testing browsers and older revisions still required by projects or managed tools. Use owner-native unused-version cleanup only after checking dependencies; sorting revision numbers or modification times is insufficient. |
@@ -100,6 +120,15 @@ browser revisions or project release. Recheck current dependencies on each
 system. Custom cache locations can still be inspected with `--path`; unrecognized
 paths retain generic review guidance. Do not infer disposability from a cache
 name, equal sizes or an old timestamp.
+
+The npm label covers the content-cache review, not disposal of every child of
+`~/.npm`. In particular, `_npx` can contain installed tools still in use.
+For metadata-only reviews use `storage inspect --path /exact/cache/_cacache`;
+neither `npm cache verify` nor its description as an offline verification makes
+it read-only. npm documents its garbage collection in the
+[cache command reference](https://docs.npmjs.com/cli/v11/commands/npm-cache/).
+Do not retry an EROFS failure through another integration or assume an unchanged
+byte count proves that no cache entry changed.
 
 ## Go build cache cleanup
 

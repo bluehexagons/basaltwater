@@ -50,6 +50,11 @@ _ROOTS = (
 )
 
 _CACHE_REVIEWS = {
+    "npm-content": {
+        "check": "Inspect exact _cacache metadata and active package managers. npm cache verify garbage-collects data and is a mutation, not a read-only check.",
+        "preserve": "Keep npm configuration and active npx installations. Within approved scope use npm --cache /exact/cache cache clean --force for content-cache eviction.",
+        "cost": "Later installs download packages again; offline installation can be affected.",
+    },
     "go-build": {
         "check": "Preview basaltw agent storage clean-go-build --json; within approved cleanup scope add --apply. It checks builds and distinguishes verified waiting go run wrappers.",
         "preserve": "Keep module downloads, source and running programs; do not add -modcache.",
@@ -71,6 +76,8 @@ _CACHE_REVIEWS = {
 def _cache_convention(path: str, home: str) -> str | None:
     """Recognize conventional cache roots, not deletion eligibility or versions."""
     target = Path(path)
+    if target in (Path(home) / ".npm", Path(home) / ".npm/_cacache"):
+        return "npm-content"
     if target.parent != Path(home) / ".cache":
         return None
     if target.name == "go-build":
@@ -80,6 +87,31 @@ def _cache_convention(path: str, home: str) -> str | None:
     if target.name.endswith("-toolchain"):
         return "project-toolchain"
     return None
+
+
+def _inspection_context(proc_root: str = "/proc") -> dict:
+    """Describe this observer's numeric IDs and proc view, never infer host IDs."""
+    result = {"uid": os.getuid(), "effective_uid": os.geteuid(),
+              "gid": os.getgid(), "effective_gid": os.getegid(),
+              "ownership_scope": "observer_user_namespace",
+              "uid_map_to_parent": None, "gid_map_to_parent": None,
+              "proc_self_pid_matches": None, "issues": []}
+    for name in ("uid", "gid"):
+        try:
+            with open(os.path.join(proc_root, "self", name + "_map"), encoding="ascii") as stream:
+                data = stream.read(4097)
+            mappings = [list(map(int, line.split())) for line in data.splitlines()]
+            if (len(data) > 4096 or not mappings or any(
+                    len(row) != 3 or min(row) < 0 or row[2] == 0 for row in mappings)):
+                raise ValueError("Invalid ID map")
+            result[name + "_map_to_parent"] = mappings
+        except (OSError, ValueError, UnicodeError):
+            result["issues"].append(name + "_map_unavailable")
+    try:
+        result["proc_self_pid_matches"] = int(os.readlink(os.path.join(proc_root, "self"))) == os.getpid()
+    except (OSError, ValueError):
+        result["issues"].append("proc_self_pid_unavailable")
+    return result
 
 
 def _mounts() -> dict[str, str]:
@@ -278,6 +310,7 @@ def inspect_storage(*, home: str | None = None, paths: list[str] | None = None,
             if not os.path.isabs(path) or os.path.normpath(path) != path:
                 raise ValueError("Storage paths must be absolute and normalized")
     result = {"read_only": True, "candidates": [], "filesystems": [], "issues": [], "cleanup_conventions": {},
+              "inspection_context": _inspection_context(),
               "limits": {"max_entries": max_entries, "timeout_seconds": timeout},
               "notes": ["Allocated bytes are observed usage, not guaranteed reclaimable space.",
                         "Partial sizes are lower bounds; missing evidence is not zero usage.",

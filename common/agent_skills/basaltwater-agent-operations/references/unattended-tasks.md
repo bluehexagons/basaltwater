@@ -75,6 +75,16 @@ workspace or permitted temporary directories; do not change global tool settings
 Tool presence and saved setup flags establish availability, not authentication,
 service health, or tool access in this session.
 
+Storage inspection reports `inspection_context` for its own observer. ID maps
+describe the parent user namespace, which may be nested; do not translate
+`1000 0 1` directly into host-root ownership or mix CLI/MCP numeric owners.
+A mismatched proc PID view can make `ps` fail with `lookup self`. Missing Go
+installation metadata or inaccessible Podman info inside the sandbox does not
+establish broken host tooling. Report the exact missing host-side check and
+avoid an unchanged blocked follow-up; keep ownership and process guards intact.
+`npm cache verify` performs garbage collection and is a write operation, not
+an inspection command. Use exact cache-directory metadata for read-only review.
+
 Keep source changes, external messages, publication, and privileged requests
 within the explicit task prompt. A health check should recommend a repair rather
 than perform it. A privileged request may outlive the prompt; stopping the Codex
