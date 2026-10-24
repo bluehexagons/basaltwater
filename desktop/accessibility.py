@@ -12,6 +12,11 @@ import sys
 import time
 from typing import Any
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from desktop import control_state
+
 MAX_NODES = 512
 MAX_RESULTS = 128
 MAX_OUTPUT = 48000
@@ -233,6 +238,7 @@ def perform(payload: dict[str, Any], api: Any) -> dict[str, Any]:
         raise ValueError("Unknown accessibility operation")
     if operation != "inspect":
         reference_path(payload.get("ref"))
+        control_state.require_enabled(payload)
     if operation == "set-text":
         text = payload.get("text")
         if not isinstance(text, str) or len(text) > 4096 or "\0" in text:
@@ -255,15 +261,21 @@ def perform(payload: dict[str, Any], api: Any) -> dict[str, Any]:
         action = payload.get("action_name")
         if not isinstance(action, str) or row["actions"].count(action) != 1:
             raise ValueError("Choose one exact action name from the inspected element")
-        accepted = node.get_action_iface().do_action(row["actions"].index(action))
+        interface = node.get_action_iface()
+        control_state.require_enabled(payload)
+        accepted = interface.do_action(row["actions"].index(action))
     elif operation == "set-text":
         if "editable" not in row["states"] or not node.is_editable_text():
             raise ValueError("Element does not support editable text")
-        accepted = node.get_editable_text_iface().set_text_contents(payload["text"])
+        interface = node.get_editable_text_iface()
+        control_state.require_enabled(payload)
+        accepted = interface.set_text_contents(payload["text"])
     else:
         if not node.is_component():
             raise ValueError("Element does not support focus")
-        accepted = node.get_component_iface().grab_focus()
+        interface = node.get_component_iface()
+        control_state.require_enabled(payload)
+        accepted = interface.grab_focus()
     if not accepted:
         raise RuntimeError("Application rejected the accessibility action; inspect before retrying")
     return {"pid": payload["pid"], "ref": ref, "requested": operation}

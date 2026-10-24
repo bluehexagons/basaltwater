@@ -134,6 +134,14 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             if backend is runtime:
                 raise ValueError("Display wake requires --native in the existing KDE Wayland session")
             result = backend.wake()
+        elif command == "handoff" and backend is not runtime:
+            backend.check_session()
+            process = subprocess.Popen(
+                ["/usr/bin/python3", str(Path(backend.__file__).with_name("native_handoff.py"))],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            result = {"pid": process.pid, "control_window_requested": True, "desktop_preserved": True}
         elif command == "start":
             if backend is runtime:
                 if args.remember or args.session_seconds != 0:
@@ -228,9 +236,6 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     payload.update(action="exec", argv=["xdg-open", str(path.parent if args.reveal else path)], cwd=str(Path.cwd()))
                 elif command == "handoff":
                     payload.update(action="exec", argv=["/usr/bin/python3", str(Path(runtime.__file__).with_name("handoff.py"))])
-                    if backend is not runtime:
-                        payload["argv"] = ["/usr/bin/python3", str(Path(runtime.__file__).with_name("native_handoff.py"))]
-                        payload["cwd"] = str(Path.cwd())
                 elif command == "window":
                     payload.update({name: getattr(args, name) for name in
                                     ("generation", "identity", "window", "operation", "x", "y", "width", "height")})

@@ -22,6 +22,9 @@ Open **Agent Desktop Control** from KDE's application menu on CachyOS, or
 **Shared Desktop Control** on XRDP. These launchers also work while agents are
 blocked; they do not change permission until the human selects an action.
 Its return to enabled is approved when the human chooses that timer.
+From the local KDE terminal, `basaltw desktop --native handoff` opens the same
+control window even with a stopped backend or blocked agents. Opening the
+window does not start a portal or change permission.
 
 Closing the window, selecting observation, losing a browser connection, stopping
 the native helper, or restarting a backend never changes this durable permission.
@@ -61,7 +64,9 @@ State lives in `~/.local/state/basaltwater/desktop-control/state.json`, with a
 0700 directory, 0600 file, atomic writes, and a lock for concurrent updates.
 Invalid or unsafe records fail closed rather than silently enabling agents.
 Each transition changes `control_revision`; managed input and sequences stop
-when a human intervenes, even if agents are subsequently enabled again. Existing
+when a human intervenes, even if agents are subsequently enabled again.
+Accessibility workers recheck this revision after lookup and immediately before
+invoking an action, replacing text, or requesting focus. Existing
 session, geometry, observed identity, and bounded-operation checks still apply.
 
 These controls coordinate trusted programs sharing the desktop account. The CLI

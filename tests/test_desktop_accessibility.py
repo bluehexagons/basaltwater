@@ -18,6 +18,9 @@ from lib.desktop_cli import add_desktop_subparser, run_desktop_command
 
 class BackendTests(unittest.TestCase):
     def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
+        self.revision = control_state.status()["control_revision"]
         self.api = SimpleNamespace(
             Role=SimpleNamespace(PASSWORD_TEXT="password text"),
             StateType=SimpleNamespace(**{state.upper(): state for state in a11y.STATES}),
@@ -48,7 +51,7 @@ class BackendTests(unittest.TestCase):
         return node
 
     def inspect(self, **kwargs):
-        return a11y.perform({"pid": 42, **kwargs}, self.api)
+        return a11y.perform({"pid": 42, "control_revision": self.revision, **kwargs}, self.api)
 
     def test_filtered_inspection_and_unicode_edit(self):
         row = self.inspect(role="text")["elements"][0]
@@ -107,6 +110,41 @@ class BackendTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "changed"):
             self.inspect(operation="set-text", ref=ref, text="must not be written")
         self.field.get_editable_text_iface.assert_not_called()
+
+    def test_human_intervention_during_lookup_or_interface_resolution_blocks_mutation(self):
+        self.field.is_action.return_value = True
+        action = self.field.get_action_iface.return_value
+        action.get_n_actions.return_value = 1
+        action.get_action_name.return_value = "activate"
+        ref = self.inspect(role="text")["elements"][0]["ref"]
+        for operation, attribute, method in (
+                ("invoke", "get_action_iface", "do_action"),
+                ("set-text", "get_editable_text_iface", "set_text_contents"),
+                ("focus", "get_component_iface", "grab_focus")):
+            for stage in ("lookup", "interface"):
+                for handback in (False, True):
+                    with self.subTest(operation=operation, stage=stage, handback=handback):
+                        self.revision = control_state.change("enabled", human_approved=True)["control_revision"]
+                        interface = getattr(self.field, attribute).return_value
+                        mutation = getattr(interface, method)
+                        mutation.reset_mock()
+
+                        def intervene(*_args):
+                            control_state.change("disabled", human_approved=True)
+                            if handback:
+                                control_state.change("enabled", human_approved=True)
+                            return interface
+
+                        def lookup():
+                            intervene()
+                            return 42
+                        target = self.app if stage == "lookup" else self.field
+                        name = "get_process_id" if stage == "lookup" else attribute
+                        with patch.object(target, name, side_effect=lookup if stage == "lookup" else intervene):
+                            expected = ValueError if handback else RuntimeError
+                            with self.assertRaises(expected):
+                                self.inspect(operation=operation, ref=ref, text="replacement", action_name="activate")
+                        mutation.assert_not_called()
 
     def test_action_lookup_ignores_output_limit_for_unrelated_controls(self):
         ref = self.inspect(role="text")["elements"][0]["ref"]

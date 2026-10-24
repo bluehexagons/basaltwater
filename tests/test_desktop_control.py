@@ -188,6 +188,31 @@ class ControlStateTests(unittest.TestCase):
             session.capture({"output": str(output)})
         self.assertFalse(output.exists())
 
+    def test_native_handoff_cli_opens_without_backend_or_permission_changes(self):
+        from lib import desktop_cli
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "--native", "handoff"])
+        with patch.object(native_session, "check_session") as check, \
+                patch.object(native_session, "status", side_effect=AssertionError("No backend required")), \
+                patch.object(native_session, "request", side_effect=AssertionError("No agent operation")), \
+                patch.object(native_session, "start", side_effect=AssertionError("No portal required")), \
+                patch.object(desktop_cli.subprocess, "Popen", return_value=Mock(pid=42)) as spawn:
+            for mode in control_state.MODES:
+                with self.subTest(mode=mode):
+                    before = self.change(mode, seconds=None)
+                    with redirect_stdout(StringIO()) as output:
+                        self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+                    self.assertTrue(json.loads(output.getvalue())["control_window_requested"])
+                    self.assertEqual(control_state.status(), before)
+                    self.assertEqual(Path(spawn.call_args.args[0][1]).name, "native_handoff.py")
+            self.assertEqual(check.call_count, len(control_state.MODES))
+            spawn.reset_mock()
+            check.side_effect = RuntimeError("Run locally from the graphical session")
+            with redirect_stdout(StringIO()):
+                self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+            spawn.assert_not_called()
+
     def test_runtime_actions_need_enabled_state_and_current_revision(self):
         process = Mock(pid=1)
         process.poll.return_value = None

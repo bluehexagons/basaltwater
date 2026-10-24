@@ -693,16 +693,20 @@ service and supported safe efforts; fast service, `max`, and `ultra` require an
 explicit user selection. See [subagent workflows and model choices](../agents/agent-subagents.md).
 
 Selecting a supported desktop application installs Python GObject, AT-SPI,
-GStreamer, its base/PipeWire plugins and GTK3 prerequisites. Setup starts no
-control helper. From KDE, use `basaltw desktop --native doctor`, then
+GStreamer, its base/PipeWire plugins, GTK3, libxkbcommon and libkscreen
+prerequisites. Setup starts no control helper. From KDE, use `basaltw desktop --native doctor`, then
 `basaltw desktop --native start`; the owner must select one monitor and allow
-keyboard/pointer access in KDE's portal dialog. `handoff` provides human
-pause/resume/stop/revoke controls. `stop` closes only automation, preserving KDE
-and applications. The default lifetime is 15 minutes, with explicit renewal up
-to eight hours. `start --remember` opts into a reusable portal grant where KDE
-supports it, after initial owner approval. Human pause persists across restored
-sessions; `revoke` removes saved access. There is no login autostart.
-See [native control and limitations](cachyos-desktop.md).
+keyboard/pointer access in KDE's portal dialog. `handoff` opens the human control
+window even while the helper is stopped or agents are blocked. It offers enabled,
+human override, and disabled states, plus separate stop/revoke controls. Human
+override defaults to 15 minutes, with an indefinite option; permission survives
+restarts. Backend lifetime is unlimited by default, with optional expiry through
+`start --session-seconds` or `renew`. `stop` closes only automation, preserving KDE,
+applications and agent permission. `start --remember` opts into a reusable portal
+grant where KDE supports it, after initial owner approval; `revoke` removes saved
+access. There is no login autostart. Enabled agents can request display wake with
+`basaltw desktop --native wake`, then verify a fresh capture. See
+[persistent control](desktop-control.md) and [native control and limitations](cachyos-desktop.md).
 
 The read-only desktop doctor reports package versions, user-bus sockets, and
 PipeWire, WirePlumber, the `t3code-bin` package, and managed/upstream T3 unit state.
@@ -729,6 +733,9 @@ inventoried, and the doctor does not launch a browser to test it.
 
 The doctor loads the validated saved selection: a missing selected T3 package,
 inactive selected web service, or broken selected CLI is reported as failed.
+An invalid or unreadable saved selection produces a failed configuration
+observation; missing setup history remains normal absence. Inspect the local
+record and rerun an explicit setup selection to restore selection-aware checks.
 Desktop selections also check the native T3 executable and managed login startup;
 an active managed web service in desktop mode or active upstream T3 service
 alongside a selected Basaltwater T3 mode is reported as a conflict.
