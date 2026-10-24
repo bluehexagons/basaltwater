@@ -72,6 +72,7 @@ in the evidence index below; raw logs and host inventories stay outside Git.
 | PVE-LXC | Unprivileged containers | Partial: provision, stopped recovery, grow, rollback and replacement restore passed; CRIU suspend failed with nested UTS namespace and remains unqualified | E2 |
 | PVE-CTL | VM control and inspection | Live slice: start/shutdown/reboot, pause/resume, autostart/delays, status/stats/health and JSON/error output | E1, E6, E7 |
 | PVE-DISK | Disk and resource flags | Live slice: root/data growth, ext4/XFS, SSD/discard/backup flags, CPU, balloon minimum/shares, additive disk and swap reruns; block and directory-backed import | E1, E4, E8 |
+| PVE-COLD | [HDD parking](../operations/proxmox-hdd-parking.md) | Partial: verified stopped-guest backup, full-clone root/cloud-init move from thin SSD to directory-backed HDD, native task outcomes, boot/identity/file checks, saved storage adoption and unchanged-setup wake from stopped; stale SSD declarations rejected. Reverse moves, linked clones, snapshot history and EFI/TPM layouts remain open | E15 |
 | PVE-SNAP | Snapshots | Live slice: QEMU/LXC and native thin linked-clone rollback, content and identity checks; snapshot removal | E1, E2, E7 |
 | PVE-BACKUP | VM archives and restore | Partial: QEMU/LXC snapshot/zstd backup and selected same-host native restores checked; no Basaltwater restore CLI, off-host copy or retention qualification | E1, E2, E8 |
 | PVE-ORPHAN | Orphan deletion safety | Partial: actual referenced local files/LVs/storage aliases refused; selected disposable orphan removed; remote-node/RBD/VirtioFS cases have mocked safeguards | E3 |
@@ -79,11 +80,11 @@ in the evidence index below; raw logs and host inventories stay outside Git.
 | PVE-HOST | Host storage and maintenance | Partial: storage reboot persistence, passive thin-capacity audit, services and maintenance guards; no interrupted host upgrade or reboot with running guests | E1, E3, E8 |
 | NET-ACL | Guest firewall and trust | Partial: source allowlists, node excluded/controller allowed, custom web port, strict SSH and private CA; selected rejection paths checked | E5, E6 |
 | NET-ISOLATION | Lab management isolation | Not run as an isolated-network qualification; the physical bridge/subnet permits guest access to management ports | E1, E2 |
-| APP-GOGS | Git hosting | Live slice: HTTPS/SSH clone/push, LFS digest, server ACL rejection, forced-command restrictions, populated rerun and reboot; no Gogs application restore | E6 |
+| APP-GOGS | Git hosting | Live slice: HTTPS/SSH clone/push, LFS digest, server ACL rejection, forced-command restrictions, populated rerun and reboot; retained private repository/API and managed client fetch/LFS digest rechecked in E15; no Gogs application restore | E6, E15 |
 | APP-HOMEBOX | Asset management | Partial: login/API, entity/attachment digest, native backup/restore, traversal rejection, disable/re-enable, mounted data and reboot; browser/WebSocket and upgrade rollback remain open | E5 |
 | DEV-GIT | Managed Git client | Live slice: workspace with spaces, scoped CA/credentials, read/write server ACL, password rotation, removal/re-enable and reboot | E6 |
 | DEV-TOOLS | Optional CLI tools | Partial: `--debug-tools`, `--container-tools`, Git LFS, busybox-static and selected extra packages; GDB/strace/Valgrind/Ninja runtime checks, ccache statistics only | E5, E6, E7 |
-| DEV-CONTAINER | Rootless container lifecycle | Live slice: native image/build cleanup, keep/reference protection, active-work deferral, local-engine restriction, default pasta DNS/HTTP, loopback port publication and failed-build cleanup | E9, E7 |
+| DEV-CONTAINER | Rootless container lifecycle | Live slice: native image/build cleanup, keep/reference protection, active-work deferral, local-engine restriction, default pasta DNS/HTTP, loopback port publication and failed-build cleanup; cold namespace-helper denial under maintenance restrictions reproduced, with a specific security deferral and conditional retry after normal user initialization | E9, E7, E15 |
 | DEV-SKILLS | Skill delivery and output capture | Live slice: idempotence, interrupted atomic replacement, cross-version retry, edited-file protection; bounded output, exit status and process-group cleanup | E9 |
 | PANEL-SETUP | Proxmox panel lifecycle | Live slice: setup/rerun/removal/reinstall, private CA/auth persistence, native PVE isolation and firewall preservation | E10 |
 | PANEL-UI | Panel browser behavior | Partial: Chromium/Firefox first-party and synthetic Guacamole suite; selected real-host pages; no native PVE console or Firefox ESR qualification | E10 |
@@ -130,6 +131,7 @@ basaltw agent memory get lab-testing-coverage --project . --json
 | E12 | 2026-10-24 | Small-file mirrors/PAR2 and security APT-lock wait, `f9cd844d` |
 | E13 | 2026-10-24 | Samba, Syncthing and native rsync mount lifetime; final populated reruns at `b01be24a` and mount-retry checks through `e24658a4`; reboot checks at `d1b15ff7` plus `bbdbf163` rsync |
 | E14 | 2026-10-24 | CIFS service-outage deadline/reconnect, Syncthing concurrent edits and archived-version restoration at `945b4012`; recovery/sandbox fixes, credential rotation, populated reruns and separate endpoint reboots at `00127f88`; incoming Proxmox panel inventory native collection/export/render and IPC-group regression |
+| E15 | 2026-10-24 | Native HDD parking, storage-declaration verification/adoption, stopped-guest setup wake and retained Git/LFS regression checks; controller source `78789105`; cold Podman maintenance diagnostics through `e1340e95` |
 
 For each new batch, update affected rows and the private evidence mapping.
 Record preconditions, exact source/runtime revisions, expected/observed behavior,
