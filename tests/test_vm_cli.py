@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from lib.config import SetupConfig
@@ -18,6 +19,7 @@ from lib.proxmox_manage import (
     GuestAutostart,
     GuestStats,
     HealthReport,
+    ProxmoxManageError,
     SnapshotInfo,
 )
 from lib.vm_cli import add_vm_subparser, run_vm_command
@@ -67,6 +69,90 @@ class VMCLITest(unittest.TestCase):
         self.assertEqual(payload["provider"], "proxmox")
         self.assertEqual(payload["operation"], "list")
         self.assertEqual(payload["resources"][1]["kind"], "vm")
+
+    @patch("lib.vm_cli.list_containers")
+    def test_json_inventory_keeps_provider_diagnostics_on_stderr(self, mock_list) -> None:
+        def inventory(_host):
+            print("Running guest inventory")
+            print("Provider warning", file=sys.stderr)
+            return [ContainerInfo(101, "running", "build", guest_type="vm")]
+
+        mock_list.side_effect = inventory
+        diagnostics = io.StringIO()
+        with redirect_stderr(diagnostics):
+            result, output = self._run("list", "pve1", "--json")
+
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(output)["resources"][0]["id"], "101")
+        self.assertEqual(
+            diagnostics.getvalue(), "Running guest inventory\nProvider warning\n"
+        )
+
+    @patch("lib.vm_cli.get_container_status")
+    @patch("lib.vm_cli.start_container")
+    @patch("lib.vm_cli.list_containers")
+    def test_json_lifecycle_separates_mutation_and_observation_progress(
+        self, mock_list, mock_start, mock_status
+    ) -> None:
+        mock_list.return_value = [
+            ContainerInfo(101, "stopped", "build", guest_type="vm")
+        ]
+        mock_start.side_effect = lambda *_: print("Starting guest")
+
+        def observe(*_):
+            print("Checking resulting state")
+            return "running"
+
+        mock_status.side_effect = observe
+        diagnostics = io.StringIO()
+        with redirect_stderr(diagnostics):
+            result, output = self._run("start", "pve1", "101", "--json")
+
+        self.assertEqual(result, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["operation"], "start")
+        self.assertEqual(payload["resources"][0]["state"], "running")
+        self.assertEqual(
+            diagnostics.getvalue(), "Starting guest\nChecking resulting state\n"
+        )
+
+    @patch("lib.vm_cli.list_containers")
+    def test_json_failure_leaves_stdout_empty_and_restores_text_output(
+        self, mock_list
+    ) -> None:
+        def fail(_host):
+            print("Reading guest inventory")
+            raise ProxmoxManageError("Inventory unavailable")
+
+        mock_list.side_effect = fail
+        diagnostics = io.StringIO()
+        with redirect_stderr(diagnostics):
+            result, output = self._run("list", "pve1", "--json")
+            mock_list.side_effect = None
+            mock_list.return_value = []
+            text_result, text_output = self._run("list", "pve1")
+
+        self.assertEqual(result, 1)
+        self.assertEqual(output, "")
+        self.assertEqual(
+            diagnostics.getvalue(),
+            "Reading guest inventory\nError: Inventory unavailable\n",
+        )
+        self.assertEqual(text_result, 0)
+        self.assertIn("No guests found.", text_output)
+
+    @patch("lib.vm_cli.list_containers")
+    def test_json_output_stream_is_restored_after_unexpected_error(self, mock_list) -> None:
+        mock_list.side_effect = RuntimeError("unexpected provider failure")
+        with self.assertRaisesRegex(RuntimeError, "unexpected provider failure"):
+            self._run("list", "pve1", "--json")
+        mock_list.side_effect = None
+        mock_list.return_value = []
+
+        result, output = self._run("list", "pve1", "--json")
+
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(output)["resources"], [])
 
     @patch("lib.vm_cli.get_container_config", return_value={"cores": "2"})
     @patch("lib.vm_cli.get_container_status", return_value="running")

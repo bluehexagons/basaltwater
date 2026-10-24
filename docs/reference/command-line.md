@@ -2132,8 +2132,12 @@ basaltw proxmox add pve1 10.0.0.10 --user root --key ~/.ssh/proxmox_ed25519
 The provider-neutral `basaltw vm ...` commands provide stable inventory,
 inspection, health, power-state lifecycle, snapshot, and backup-list output,
 plus confirmed QEMU VM destruction. Their JSON envelope includes
-`schema_version`, `provider`, `host`, `operation`, and `resources`. In the
-command shapes above, `<target> [<id>]` means either `<host> <id>` or the exact
+`schema_version`, `provider`, `host`, `operation`, and `resources`. With
+`--json`, stdout contains only the JSON result; provider progress, warnings,
+and errors go to stderr. A failure before a result is available leaves stdout
+empty and returns a nonzero exit status. Health checks can return a JSON
+result with a nonzero status when the guest is unhealthy. In the command
+shapes above, `<target> [<id>]` means either `<host> <id>` or the exact
 friendly `--name` (or saved IP address) of a Basaltwater setup with the ID
 omitted. Name resolution is fail-closed: the saved setup must identify a QEMU
 VM and a registered provider host, and both its expected Proxmox name and

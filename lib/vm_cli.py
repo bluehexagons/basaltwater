@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from contextlib import nullcontext, redirect_stdout
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TextIO
 
 from lib.cache import load_all_setup_commands
 from lib.config import SetupConfig
@@ -35,6 +38,9 @@ from lib.proxmox_manage import (
     suspend_guest,
 )
 from lib.vm_models import VMAutostart, VMHealth, VMRecord, VMStats, envelope
+
+
+_JSON_OUTPUT: ContextVar[Optional[TextIO]] = ContextVar("vm_json_output", default=None)
 
 
 @dataclass(frozen=True)
@@ -291,7 +297,7 @@ def _resolve_host(target: str, workspace: Optional[str]) -> ProxmoxHost:
 
 def _print_result(payload: dict, *, json_output: bool) -> None:
     if json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        print(json.dumps(payload, indent=2, sort_keys=True), file=_JSON_OUTPUT.get())
 
 
 def _find_guest(host: ProxmoxHost, vmid: int) -> ContainerInfo:
@@ -917,11 +923,19 @@ def run_vm_command(args: argparse.Namespace) -> int:
         print("Use 'basaltw vm --help' for available commands.")
         return 0
     workspace = getattr(args, "workspace", None)
+    json_output = bool(getattr(args, "json", False))
+    output_token = _JSON_OUTPUT.set(sys.stdout if json_output else None)
     try:
-        return handler(args, workspace)
-    except (ProxmoxBackupError, ProxmoxManageError, ValueError) as exc:
-        print(f"Error: {exc}")
-        return 1
+        # Providers emit progress while inspecting and mutating guests. Keep it
+        # off the JSON stream, including diagnostics from failed commands.
+        with redirect_stdout(sys.stderr) if json_output else nullcontext():
+            try:
+                return handler(args, workspace)
+            except (ProxmoxBackupError, ProxmoxManageError, ValueError) as exc:
+                print(f"Error: {exc}")
+                return 1
+    finally:
+        _JSON_OUTPUT.reset(output_token)
 
 
 __all__ = ["add_vm_subparser", "run_vm_command"]
