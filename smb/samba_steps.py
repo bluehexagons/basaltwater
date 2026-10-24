@@ -539,9 +539,11 @@ SAMBA_GLOBAL_HARDENED_SETTINGS: dict[str, str] = {
     "server signing": "mandatory",
     "client signing": "mandatory",
     "smb encrypt": "required",
-    # Disable the legacy NetBIOS-over-TCP transport entirely; modern SMB
-    # only uses 445/tcp. This also prevents nmbd from binding 137/138/139.
+    # Disable NetBIOS name service in Samba's configuration. The nmbd unit is
+    # managed separately because package defaults can start it independently.
     "disable netbios": "yes",
+    # Do not expose the legacy SMB-over-NetBIOS listener on TCP 139.
+    "smb ports": "445",
     "workgroup": "WORKGROUP",
     "server string": "Samba Server",
     # Per-machine log files following the upstream `log.%m` template so
@@ -583,8 +585,7 @@ journalmatch = _SYSTEMD_UNIT=smbd.service
 """
 
 
-# 445/tcp only — port 139 is no longer opened by configure_samba_firewall
-# and `disable netbios = yes` keeps nmbd from binding the legacy ports.
+# 445/tcp only — port 139 is no longer opened by configure_samba_firewall.
 SAMBA_FAIL2BAN_JAIL = """[samba-auth]
 enabled = true
 port = 445
@@ -698,11 +699,13 @@ def configure_samba_global_settings(config: SetupConfig) -> None:
     
     desired_content = _render_hardened_global_settings(content, settings)
     if desired_content == content:
+        run("systemctl disable --now nmbd")
         print("  ✓ Global Samba configuration already up to date")
         return
 
     with _validated_smb_config(smb_conf, content, desired_content):
-        run("systemctl reload smbd")
+        run("systemctl disable --now nmbd")
+        run("systemctl restart smbd")
     print("  ✓ Updated global Samba configuration with security hardening")
 
 
@@ -760,8 +763,7 @@ def configure_samba_fail2ban(config: SetupConfig) -> None:
     # counted toward the ban threshold.
     fail2ban_samba_filter = SAMBA_FAIL2BAN_FILTER
 
-    # 445/tcp only — port 139 is no longer opened by configure_samba_firewall
-    # and `disable netbios = yes` keeps nmbd from binding the legacy ports.
+    # 445/tcp only — port 139 is no longer opened by configure_samba_firewall.
     fail2ban_samba_jail = SAMBA_FAIL2BAN_JAIL
 
     os.makedirs("/etc/fail2ban/filter.d", exist_ok=True)
