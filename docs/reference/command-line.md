@@ -1219,23 +1219,30 @@ graph-root filesystem headroom. The low-headroom threshold follows the dynamic
 user-cache target `min(8 GiB, max(2 GiB, total filesystem size / 5))`. Age is
 based on image creation metadata, not last use or pull time. The explicit
 `io.basaltwater.keep` image label retains an image; tags do not pin images.
-Pruning uses native image prune with `--all`, never `--external` or
-`--build-cache`.
+Podman v5.4.2 `image prune --all` can clear persistent cache mounts
+implicitly, and recursive pruning can remove keep-labelled parent images. The
+helper therefore selects eligible images from age, label, and reference
+inventory and removes exact full 64-character image IDs, children before
+parents, while preserving ancestors of retained images. If an eligible image
+has multiple names, it first untags that exact ID with `podman untag ID`, since
+image removal otherwise refuses multiple names. It then uses native
+`podman image rm --no-prune --ignore ID...` without `--force` or `--all`.
+Native non-forced removal protects images referenced by containers; no broad
+prune, parent recursion, or storage deletion is used.
 
 Old, unmounted abandoned Buildah working containers may also be removed by
 matching exact IDs with `buildah rm`, only after native metadata and same-store
 validation and quiet process checks; they use the same container-creation-age
-cutoff. Mounted builders, keep-labelled builders, ordinary Podman containers,
-volumes, and persistent cache mounts are preserved. Rootful, remote, or unsafe
-stores are refused. Active build or mutation processes, incomplete evidence,
-or failed checks defer cleanup; running work is never forced. Work in disposable
-test stores should be considered temporary because cleanup may remove its
-resources, and sessions must recreate them as needed.
+cutoff. Mounted builders and keep-labelled builders are preserved. Rootful,
+remote, or unsafe stores are refused. Active build or mutation processes,
+incomplete evidence, or failed checks defer cleanup; running work is never
+forced. Work in disposable test stores should be considered temporary because
+cleanup may remove its resources, and sessions must recreate them as needed.
 
 The helper serializes work with a lock. A timeout leaves completion uncertain;
 inspect store state before retrying. Preview IDs and savings are preflight
-estimates: shared layers and parents that become eligible during prune can
-change actual removals. Reports show actual filesystem free bytes before and
+estimates: shared layers and reference changes can affect actual removals.
+Reports show actual filesystem free bytes before and
 after separately from reported image size. Readonly container inspection and
 preflight remain readonly. Daily full user-cache maintenance invokes this
 helper automatically; its `--agent-storage-only` mode does not.
