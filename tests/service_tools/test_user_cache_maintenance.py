@@ -401,7 +401,9 @@ class TestUserCachePolicies(unittest.TestCase):
         helper = types.ModuleType("lib.podman_cleanup")
         helper.clean_podman_images = unittest.mock.Mock(return_value={
             "status": "preview", "candidate_count": 3, "retention_days": 7,
+            "builder_candidate_count": 2, "builders_removed": 1,
             "free_bytes_before": 1234, "free_bytes_after": 5678,
+            "invalid_builder_count": "4", "bool_builder_count": True,
             "image_metadata": "must not be logged", "output": "private output",
         })
         with patch.dict(sys.modules, {"lib.podman_cleanup": helper}), patch.object(
@@ -414,6 +416,7 @@ class TestUserCachePolicies(unittest.TestCase):
         helper.clean_podman_images.assert_called_once_with(apply=False)
         self.assertEqual(log.call_args.kwargs, {
             "status": "preview", "candidate_count": 3, "retention_days": 7,
+            "builder_candidate_count": 2, "builders_removed": 1,
             "free_bytes_before": 1234, "free_bytes_after": 5678,
         })
 
@@ -433,6 +436,10 @@ class TestUserCachePolicies(unittest.TestCase):
         for status, expected in (
             ("deferred_unknown", "Podman image cleanup: deferred_unknown"),
             ("failed", "Podman image cleanup: failed"),
+            (
+                "uncertain",
+                "Podman image cleanup: outcome uncertain; inspect Podman state before retrying",
+            ),
             ("future_status", "Podman image cleanup: unrecognized result status"),
         ):
             with self.subTest(status=status):

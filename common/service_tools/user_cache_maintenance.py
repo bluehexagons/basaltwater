@@ -1175,7 +1175,14 @@ def cleanup_podman_images(context: UserContext, *, dry_run: bool) -> list[str]:
     result = clean_podman_images(apply=not dry_run)
     status = result.get("status")
     fields = {"status": status}
-    for key in ("candidate_count", "retention_days", "free_bytes_before", "free_bytes_after"):
+    for key in (
+        "candidate_count",
+        "builder_candidate_count",
+        "builders_removed",
+        "retention_days",
+        "free_bytes_before",
+        "free_bytes_after",
+    ):
         value = result.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             fields[key] = value
@@ -1183,6 +1190,10 @@ def cleanup_podman_images(context: UserContext, *, dry_run: bool) -> list[str]:
 
     if status in ("preview", "cleaned", "absent", "deferred_active"):
         return []
+    if status == "uncertain":
+        return [
+            "Podman image cleanup: outcome uncertain; inspect Podman state before retrying"
+        ]
     if status in ("deferred_unknown", "failed"):
         return [f"Podman image cleanup: {status}"]
     return ["Podman image cleanup: unrecognized result status"]
