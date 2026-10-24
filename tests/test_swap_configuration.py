@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from argparse import Namespace
+from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 from common.swap_steps import (
@@ -20,7 +21,7 @@ import basaltwater
 from lib.config import SetupConfig
 from lib.proxmox_vm import _disk_hardware_value, _warn_zfs_swap_storage
 from lib.swap_config import swap_devices, swap_files, swap_zram
-from lib.validation import validate_swap_settings
+from lib.validation import validate_swap_settings, validate_vm_storage_settings
 from lib.vm_storage import VMDataDisk, VMDiskHardware, disk_hardware
 
 
@@ -286,3 +287,178 @@ class TestSwapConfiguration(unittest.TestCase):
             )
 
         self.assertIn("not yet qualified", mock_print.call_args.args[0])
+
+
+class TestCachedSwapConfiguration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.key = os.path.join(self.directory.name, "id_test")
+        for path in (self.key, self.key + ".pub"):
+            with open(path, "w", encoding="utf-8") as key_file:
+                key_file.write("test key\n")
+        self.cached = SetupConfig(
+            host="10.100.0.100",
+            username="agent",
+            system_type="server_lite",
+            machine_type="vm",
+            hosted_node="pve1",
+            ssh_key=self.key,
+            container_memory="1.5G",
+            vm_balloon_min="1G",
+            vm_cpu_type="x86-64-v2",
+            container_storage=[
+                ["root", "lab-ssd", "10G"],
+                ["home-data", "lab-ssd", "1G"],
+                ["xfs-data", "local-lvm", "1G"],
+                ["swap-fast", "lab-ssd", "1G"],
+            ],
+            storage_mounts=[
+                ["home-data", "/home", "ext4"],
+                ["xfs-data", "/srv/test-xfs", "xfs"],
+            ],
+            swap_devices=[["fast", "swap-fast", "priority=200", "discard=once"]],
+            swappiness=20,
+            zswap=False,
+            static_ipv4="10.100.0.100/24",
+            network_gateway4="10.100.0.1",
+            network_dns=["10.100.0.1"],
+        )
+
+    def _args(self, *options):
+        return self.parser.parse_args([
+            "setup", "server_lite", "10.100.0.100", "agent",
+            "--provision-on", "pve1", "--timezone", "UTC", "--dry-run",
+            *options,
+        ])
+
+    def test_additive_setup_replay_and_verification_preserve_saved_swap(self):
+        from lib.proxmox_vm import VMAlreadyExists
+
+        additive_options = (
+            "--storage", "extra-data", "lab-ssd", "1G",
+            "--storage-mount", "extra-data", "/srv/test-add", "ext4", "empty",
+        )
+        for options, attached in (
+            (additive_options, {"extra-data"}),
+            (additive_options, set()),
+            (("--verify-provider",), set()),
+        ):
+            with self.subTest(options=options, attached=attached), ExitStack() as stack:
+                stack.enter_context(patch("basaltwater.load_setup_command", return_value=self.cached))
+                stack.enter_context(patch("basaltwater.prompt_for_missing_passwords"))
+                stack.enter_context(patch("basaltwater._apply_hosted_proxmox_defaults"))
+                stack.enter_context(patch("basaltwater.prepare_runtime_config", side_effect=lambda config: config))
+                for name in (
+                    "print_setup_summary", "print_service_access_summary",
+                    "_refresh_existing_managed_guest_host_keys", "ensure_guest_ipv4_route",
+                    "register_proxmox_setup_host", "save_setup_command",
+                ):
+                    stack.enter_context(patch(f"basaltwater.{name}"))
+                stack.enter_context(patch("basaltwater.adopt_verified_network_host", return_value=None))
+                stack.enter_context(patch("lib.proxmox_vm.ensure_vm_running"))
+                provision = stack.enter_context(patch("lib.proxmox_vm.provision_vm", side_effect=VMAlreadyExists))
+                remote = stack.enter_context(patch("basaltwater.run_remote_setup", return_value=0))
+
+                self.assertEqual(basaltwater.run_setup_command(self._args(*options)), 0)
+
+                config = remote.call_args.args[0]
+                self.assertEqual(config.swap_devices, self.cached.swap_devices)
+                self.assertEqual(config.swappiness, 20)
+                self.assertIs(config.zswap, False)
+                self.assertIsNone(config.swap_initialize)
+                validate_vm_storage_settings(config, require_provisioning=True)
+                if attached or "--verify-provider" in options:
+                    self.assertTrue(provision.call_args.kwargs["verify_existing_storage"])
+                    self.assertTrue(provision.call_args.kwargs["require_existing_vm"])
+                    self.assertEqual(provision.call_args.kwargs.get("attach_missing_data_disks", set()), attached)
+                else:
+                    provision.assert_not_called()
+                self.cached = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+
+    def test_saved_swap_merge_respects_explicit_replacement_and_clear(self):
+        self.cached.swap_files = [["slow", "/swapfile", "1G"]]
+        self.cached.swap_zram = [["memory", "512M"]]
+        self.cached.swap_resume = "fast"
+        self.cached.swap_initialize = ["fast"]
+        fields = (
+            "swap_mode", "swap_files", "swap_devices", "swap_zram",
+            "swappiness", "zswap", "zswap_max_pool_percent", "swap_resume",
+        )
+        inherited = {field: getattr(self.cached, field) for field in fields}
+        for options, overrides in (
+            ((), {}),
+            (("--swappiness", "0"), {"swappiness": 0}),
+            (("--swap-device", "fast", "swap-fast", "priority=100"),
+             {"swap_devices": [["fast", "swap-fast", "priority=100"]]}),
+            (("--swap-file", "other", "/other-swap", "2G"),
+             {"swap_files": [["other", "/other-swap", "2G"]]}),
+            (("--swap-zram", "other", "1G"), {"swap_zram": [["other", "1G"]]}),
+            (("--no-swap-resume",), {"swap_resume": ""}),
+            (("--swap-mode", "auto"),
+             {"swap_mode": "auto", "swap_files": None, "swap_devices": None,
+              "swap_zram": None, "swap_resume": None}),
+            (("--swap-mode", "preserve"),
+             {"swap_mode": "preserve", "swap_files": None, "swap_devices": None,
+              "swap_zram": None, "swap_resume": None}),
+            (("--swap-mode", "none"), {field: None for field in fields[1:]} | {"swap_mode": "none"}),
+        ):
+            with self.subTest(options=options):
+                args = self._args(*options)
+                config = SetupConfig.from_args(args, args.system_type)
+                basaltwater._reuse_cached_provisioning_metadata(config, args, self.cached)
+                self.assertEqual({field: getattr(config, field) for field in fields}, inherited | overrides)
+                self.assertIsNone(config.swap_initialize)
+
+        self.cached.swap_zram = None
+        self.cached.zswap = True
+        self.cached.zswap_max_pool_percent = 20
+        args = self._args("--no-zswap")
+        config = SetupConfig.from_args(args, args.system_type)
+        basaltwater._reuse_cached_provisioning_metadata(config, args, self.cached)
+        self.assertIs(config.zswap, False)
+        self.assertIsNone(config.zswap_max_pool_percent)
+        validate_swap_settings(config)
+
+        args = self._args("--swap-initialize", "fast")
+        config = SetupConfig.from_args(args, args.system_type)
+        basaltwater._reuse_cached_provisioning_metadata(config, args, self.cached)
+        self.assertEqual(config.swap_initialize, ["fast"])
+
+    def test_omitted_mode_preserves_saved_preserve_policy(self):
+        self.cached.swap_mode = "preserve"
+        self.cached.swap_devices = None
+        args = self._args()
+        config = SetupConfig.from_args(args, args.system_type)
+        basaltwater._reuse_cached_provisioning_metadata(config, args, self.cached)
+        self.assertEqual(config.swap_mode, "preserve")
+        self.assertEqual(config.swappiness, 20)
+        validate_swap_settings(config)
+
+    def test_additive_merge_cannot_introduce_new_swap_media(self):
+        for mount in ((), ("--storage-mount", "new-swap", "/srv/new", "ext4", "empty")):
+            with self.subTest(mount=mount):
+                args = self._args(
+                    "--storage", "new-swap", "lab-ssd", "1G", *mount,
+                    "--swap-device", "new", "new-swap",
+                )
+                config = SetupConfig.from_args(args, args.system_type)
+                added = basaltwater._merge_additive_vm_storage(config, self.cached, args)
+                if added is None:
+                    self.assertIn("--storage", basaltwater._unsupported_cached_provisioning_changes(config, self.cached, args))
+                else:
+                    basaltwater._reuse_cached_provisioning_metadata(config, args, self.cached)
+                    with self.assertRaisesRegex(ValueError, "swap.*mount|mount.*swap"):
+                        validate_vm_storage_settings(config, require_provisioning=True)
+
+    def test_inherited_swap_still_requires_machine_capability(self):
+        self.cached.machine_type = "unprivileged"
+        args = self._args("--machine", "unprivileged")
+        config = SetupConfig.from_args(args, args.system_type)
+        basaltwater._reuse_cached_provisioning_metadata(config, args, self.cached)
+        with self.assertRaisesRegex(ValueError, "not supported inside containers"):
+            validate_swap_settings(config)

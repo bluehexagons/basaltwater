@@ -1099,12 +1099,9 @@ def _execute_patch_config(config: SetupConfig) -> int:
     return 0
 
 
-def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
+def _swap_preserve_keys(args: argparse.Namespace) -> set[str]:
+    """Preserve omitted swap policy without undoing explicit replacements or clears."""
     preserve_keys: set[str] = set()
-    if getattr(args, "privilege_broker", None) is None and not getattr(args, "disable_privilege_broker", False):
-        preserve_keys.update({"privilege_broker_port", "disable_privilege_broker"})
-    if getattr(args, "nopasswd", None) is None:
-        preserve_keys.add("nopasswd")
     explicit_swap_mode = getattr(args, "swap_mode", None)
     if explicit_swap_mode is None:
         preserve_keys.add("swap_mode")
@@ -1129,6 +1126,15 @@ def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
             continue
         if getattr(args, field, None) is None:
             preserve_keys.add(field)
+    return preserve_keys
+
+
+def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
+    preserve_keys = _swap_preserve_keys(args)
+    if getattr(args, "privilege_broker", None) is None and not getattr(args, "disable_privilege_broker", False):
+        preserve_keys.update({"privilege_broker_port", "disable_privilege_broker"})
+    if getattr(args, "nopasswd", None) is None:
+        preserve_keys.add("nopasswd")
     if getattr(args, "proxmox_balloon_target", None) is None:
         preserve_keys.add("proxmox_balloon_target")
     if getattr(args, "machine_type", None) is None:
@@ -1634,6 +1640,12 @@ def _reuse_cached_provisioning_metadata(
             and getattr(args, field, None) is not None
         ):
             continue
+        setattr(config, field, getattr(cached_config, field))
+
+    # Saved disk layouts include dedicated swap media. Restore their omitted
+    # declarations before validation, including on additive and verify reruns.
+    # Match patch replacement/clear semantics; never reuse swap_initialize.
+    for field in _swap_preserve_keys(args):
         setattr(config, field, getattr(cached_config, field))
 
     if config.ssh_key is None:
