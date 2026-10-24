@@ -204,7 +204,8 @@ class ProxmoxPanelTrustTest(unittest.TestCase):
             manifest["certificate_trust"] = {"certificate": "/tmp/server.crt", "local_ca": True}
 
             def collect(command, **kwargs):
-                self.assertEqual(command[:2], [sys.executable, web_panel_tls.__file__])
+                self.assertEqual(command[0], sys.executable)
+                self.assertEqual(os.path.realpath(command[1]), os.path.realpath(web_panel_tls.__file__))
                 self.assertEqual(kwargs["timeout"], 10)
                 output = io.StringIO()
                 with redirect_stdout(output):
