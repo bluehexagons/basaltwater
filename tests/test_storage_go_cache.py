@@ -51,6 +51,8 @@ class TestGoActivity(unittest.TestCase):
         (directory / "cmdline").write_bytes(b"\0".join(os.fsencode(arg) for arg in args) + b"\0")
         if not (directory / "exe").is_symlink():
             (directory / "exe").symlink_to(executable)
+        if not (directory / "root").is_symlink():
+            (directory / "root").symlink_to("/", target_is_directory=True)
         return directory
 
     def children(self, pid, tid, children):
@@ -64,6 +66,33 @@ class TestGoActivity(unittest.TestCase):
     def test_completed_run_child_on_nonleader_thread_is_exempt(self):
         self.assertEqual(self.activity(), {"state": "eligible", "blocking_pids": [],
                                           "waiting_run_pids": [10], "reason": None})
+
+    def test_completed_program_is_verified_in_its_own_mount_view(self):
+        child = self.proc / "20"
+        root = self.root / "child-root"
+        virtual = "/tmp/go-build987/b001/exe/server"
+        program = root / virtual.lstrip("/")
+        program.parent.mkdir(parents=True, mode=0o755)
+        program.write_bytes(b"\x7fELFserver")
+        program.chmod(0o755)
+        for path in (root, root / "tmp", program.parent.parent.parent, program.parent.parent, program.parent):
+            path.chmod(0o755)
+        (root / "tmp").chmod(0o1777)
+        (child / "exe").unlink()
+        (child / "exe").symlink_to(program)
+        (child / "root").unlink()
+        (child / "root").symlink_to(root, target_is_directory=True)
+        (child / "cmdline").write_bytes(virtual.encode() + b"\0")
+        readlink = os.readlink
+
+        def link(path):
+            return virtual if str(path) == str(child / "exe") else readlink(path)
+
+        with (patch.object(go.os, "readlink", side_effect=link),
+              patch.object(go, "_TEMP_PROGRAM", re.compile(r"^/tmp/go-build[0-9]+/b[0-9]+/exe/[^/]+$"))):
+            self.assertEqual(self.activity()["waiting_run_pids"], [10])
+            (child / "root").unlink()
+            self.assertEqual(self.activity()["state"], "deferred_unknown")
 
     def test_builds_before_compiler_start_and_other_tools_block(self):
         for name in ("go", "compile", "link", "asm", "cgo", "gopls"):

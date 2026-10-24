@@ -20,7 +20,6 @@ from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks
 from lib.agent_task_context import validate_report
-from lib.agent_task_followups import decide_follow_up
 
 
 class TaskForm(HTMLParser):
@@ -197,23 +196,25 @@ class AgentPanelToolsTest(unittest.TestCase):
         self.assertEqual((self.source / "inventory.csv").read_text(), "id,name\n001,Example\n")
 
     def test_storage_entrypoints_retain_ranked_summary_and_approve_exact_cleanup_scope(self) -> None:
-        cache = Path(self.home) / ".cache" / "test-tool"
+        cache = Path(self.home) / ".npm" / "_cacache"
         cache.mkdir(parents=True, mode=0o700)
         cache.parent.chmod(0o700)
-        summary = "Best candidate: test-tool cache, 1 GiB observed; rebuild needs downloads."
+        summary = "Best candidate: npm content cache, 1 GiB observed; rebuild needs downloads."
         report = validate_report({"outcome": "progress", "summary": summary, "checkpoint": "Cleanup awaits approval",
             "evidence": ["Exact cache path and retention reviewed"], "retry_after_minutes": None,
-            "environment_feedback": "", "follow_up": {"title": "Clean the reviewed test-tool cache",
+            "environment_feedback": "", "follow_up": {"title": "Clean the reviewed npm content cache",
                 "reason": "Measured rebuildable cache is the best low-value candidate",
-                "prompt": "Recheck active use, clean only the reviewed cache with its native tool and verify capacity. Deletion is irreversible.",
-                "directory": self.home, "mode": "workspace", "workspace": "run-directory",
-                "network": False, "temporary_files": False, "writable_directories": [str(cache)],
+                "prompt": "Apply the fixed npm content cache cleanup and verify capacity. Deletion is irreversible.",
+                "storage_operation": "npm-content-cache",
+                "directory": self.home, "mode": "workspace", "workspace": "existing",
+                "network": False, "temporary_files": False, "writable_directories": [],
                 "operator_requirements": [], "service_restarts": []}})
         for settings in (tools.prepare_tool({"tool": "storage"}, self.home),
                          {**agents.PROMPT_TEMPLATES["storage"], "directory": self.home}):
             with self.subTest(title=settings["title"]):
                 (cache / "download").write_text("Retain until approved")
-                self.assertIn("basaltw agent storage inspect --json", settings["prompt"])
+                self.assertEqual(settings["storage_operation"], "review")
+                self.assertLessEqual(len(settings["prompt"].encode()), agent_tasks.MAX_PROMPT_BYTES)
                 task_id = self.state.agent_tasks.create(settings, run_now=True)
                 with patch.object(agent_tasks, "execute_prompt", return_value={
                     "status": "completed", "output": "", "message": "Done", **report,
@@ -222,10 +223,24 @@ class AgentPanelToolsTest(unittest.TestCase):
                 run = self.state.agent_tasks.snapshot()["runs"][-1]
                 self.assertEqual(run["summary"], summary)
                 self.assertTrue((cache / "download").exists())
-                child_id = decide_follow_up(self.state.agent_tasks, task_id, run["id"], "approve")
+                before_review = self.state.agent_tasks.snapshot()
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {"run": run["id"]})
+                self.assertIn("~/.npm/_cacache", page)
+                self.assertIn("inert until approved", page)
+                self.assertIn("without model commands", page)
+                review = agents.render_agents(self.state, panel._PAGE_STYLE, {"follow-up": task_id + "." + run["id"]})
+                form = TaskForm(review).values
+                self.assertEqual(form["storage_operation"], "npm-content-cache")
+                self.assertEqual(self.state.agent_tasks.snapshot(), before_review)
+                form["submit"] = "run"
+                approval = self.handler("/actions/agent-task/save", form)
+                approval.do_POST()
+                approval.send_response.assert_called_once_with(303)
+                child_id = self.state.agent_tasks.snapshot()["tasks"][-1]["id"]
                 child = next(task for task in self.state.agent_tasks.snapshot()["tasks"] if task["id"] == child_id)
-                self.assertEqual(child["writable_directories"], [str(cache)])
-                self.assertEqual((child["workspace"], child["max_runs"], child["queued"]), ("run-directory", 1, True))
+                self.assertEqual(child["storage_operation"], "npm-content-cache")
+                self.assertEqual(child["writable_directories"], [])
+                self.assertEqual((child["workspace"], child["max_runs"], child["queued"]), ("existing", 1, True))
                 self.assertEqual(child["mode"], "workspace")
                 def apply_cleanup(task, home, cancel):
                     self.assertEqual(task["source_run_id"], run["id"])
@@ -242,6 +257,80 @@ class AgentPanelToolsTest(unittest.TestCase):
                 self.assertEqual(result["outcome"], "complete")
                 self.assertIsNone(result["follow_up"])
                 self.assertIn("available space verified", self.state.agent_tasks.contexts.receipt(child_id, result["id"])["summary"])
+
+    def test_storage_selector_survives_prepare_draft_edit_and_invalid_submit(self) -> None:
+        for operation in ("none", "review", "npm-content-cache", "go-build-cache", "podman-images"):
+            with self.subTest(operation=operation), patch.object(agent_tasks, "execute_prompt") as execute:
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"}, submitted={
+                    "title": "Storage task", "prompt": "Describe the selected action.", "mode": "workspace",
+                    "storage_operation": operation,
+                })
+                form = TaskForm(page).values
+                self.assertEqual(form["storage_operation"], operation)
+                form["submit"] = "draft"
+                save = self.handler("/actions/agent-task/save", form)
+                save.do_POST()
+                save.send_response.assert_called_once_with(303)
+                task = self.state.agent_tasks.snapshot()["tasks"][-1]
+                self.assertEqual(task["storage_operation"], operation)
+                self.assertFalse(task["queued"])
+                edit = TaskForm(agents.render_agents(self.state, panel._PAGE_STYLE, {"edit": task["id"]})).values
+                self.assertEqual(edit["storage_operation"], operation)
+                edit.update(submit="save", title="Edited storage task")
+                update = self.handler("/actions/agent-task/save", edit)
+                update.do_POST()
+                update.send_response.assert_called_once_with(303)
+                saved = self.state.agent_tasks.snapshot()["tasks"][-1]
+                self.assertEqual(saved["storage_operation"], operation)
+                edit.update(prompt="é" * 2001)
+                invalid = self.handler("/actions/agent-task/save", edit)
+                invalid.do_POST()
+                self.assertEqual(invalid._send.call_args.args[0].value, 422)
+                self.assertEqual(TaskForm(invalid._send.call_args.args[1]).values["storage_operation"], operation)
+                self.assertEqual(self.state.agent_tasks.snapshot()["tasks"][-1], saved)
+                edit.update(prompt="Describe action", storage_operation="arbitrary-command")
+                invalid = self.handler("/actions/agent-task/save", edit)
+                invalid.do_POST()
+                self.assertEqual(invalid._send.call_args.args[0].value, 422)
+                self.assertEqual(self.state.agent_tasks.snapshot()["tasks"][-1], saved)
+            execute.assert_not_called()
+
+    def test_fixed_cleanup_can_be_approved_without_codex_installation(self) -> None:
+        settings = {"title": "Clean npm content", "prompt": "Apply the fixed cleanup.",
+                    "mode": "workspace", "storage_operation": "npm-content-cache"}
+        with patch.object(agents, "_tool_path", return_value=None), patch.object(agent_tasks, "_tool_path", return_value=None), patch.object(agent_tasks, "execute_prompt") as execute:
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"}, submitted=settings)
+            self.assertIn('<button name="submit" value="run">Start task</button>', page)
+            form = TaskForm(page).values
+            form["submit"] = "run"
+            save = self.handler("/actions/agent-task/save", form)
+            save.do_POST()
+            save.send_response.assert_called_once_with(303)
+            self.assertTrue(self.state.agent_tasks.snapshot()["tasks"][-1]["queued"])
+        execute.assert_not_called()
+
+    def test_follow_up_approval_shows_fixed_storage_targets_and_policy(self) -> None:
+        expected = {
+            "npm-content-cache": ("~/.npm/_cacache", "Preserve npx tools, custom caches and configuration"),
+            "go-build-cache": ("go clean -cache", "GOCACHE", "Preserve the module cache and source"),
+            "podman-images": ("7 days", "1 day under pressure", "creation time", "container-referenced",
+                              "io.basaltwater.keep", "Buildah", "without forced removal or parent pruning",
+                              "Preserve ordinary containers, volumes and persistent build caches"),
+        }
+        for operation, phrases in expected.items():
+            with self.subTest(operation=operation):
+                run = {"id": "b" * 32, "task": {"id": "a" * 32}, "follow_up": {
+                    "title": "Cleanup", "reason": "Reviewed", "prompt": "Describe operation <script>",
+                    "directory": self.home, "mode": "workspace", "workspace": "existing",
+                    "network": False, "temporary_files": False, "writable_directories": [],
+                    "operator_requirements": [], "service_restarts": [], "storage_operation": operation}}
+                with patch.object(agents, "_follow_up_status", return_value={"status": "pending", "requests": {}}):
+                    page = agents._render_follow_up(run, self.state.agent_tasks, self.state.csrf_token)
+                for phrase in (*phrases, operation, "non-root host worker", "without model commands", "inert until approved"):
+                    self.assertIn(phrase, page)
+                self.assertIn("Approve once", page)
+                self.assertNotIn("<script>", page)
+                self.assertIn("&lt;script&gt;", page)
 
     def test_log_tool_prefers_installed_sources_and_retains_historical_links(self) -> None:
         with patch.object(self.state, "diagnostic_sources", return_value={"ssh.service": "SSH"}):

@@ -11,6 +11,7 @@ import sys
 from typing import Any, TextIO
 
 from lib.agent_task_api import TaskAPI
+from lib.agent_task_storage import STORAGE_OPERATIONS
 from lib.atomic_io import parse_json
 
 
@@ -25,6 +26,7 @@ _TASK_PROPERTIES = {
     "persistence": {"type": "string", "enum": ["fresh", "checkpoint", "conversation"]},
     "workspace": {"type": "string", "enum": ["existing", "directory", "worktree", "run-directory"]},
     "executor": {"type": "string", "enum": ["codex"]},
+    "storage_operation": {"type": "string", "enum": list(STORAGE_OPERATIONS)},
     "web_search": {"type": "string", "enum": ["disabled", "cached", "live"]},
     **{name: {"type": "boolean"} for name in ("network", "temporary_files", "session_history", "continue_until_done")},
     **{name: {"type": "integer", "minimum": 0} for name in (

@@ -9,6 +9,54 @@ decisions, rather than just saying that the review finished. Opening a template 
 running the review does not authorize deletion. Existing saved tasks keep their
 prompts; create a fresh review to use the updated guidance.
 
+## Host evidence and approved cache operations
+
+New storage templates select `storage_operation: "review"`. Before Codex starts,
+the non-root task worker gathers a bounded host inventory and npm, Go and
+Podman previews. It supplies timestamped evidence to the sandboxed review and
+retains it in the run log. Numeric owners and process activity come from that
+observer; they must not be mixed with sandbox observations. Unavailable probes
+remain explicit. The host child rejects nested user namespaces and mismatched
+proc views rather than treating their incomplete observations as host evidence.
+Native probes can create their normal locks/metadata; review never evicts caches.
+
+An inert follow-up can select one fixed operation for **Approve once**:
+
+| `storage_operation` | Approved scope |
+| --- | --- |
+| `npm-content-cache` | Remove only `~/.npm/_cacache`, after a complete owned local inventory and package-manager activity checks. Preserve `_npx`, configuration, logs and custom cache locations. |
+| `go-build-cache` | Run the existing validated native `go clean -cache` helper; retain modules, toolchains and running temporary programs. |
+| `podman-images` | Apply the existing age/reference/keep-label policy below to the account's rootless store, including eligible abandoned builders. Approval covers this policy at execution time, rather than a frozen preview's IDs or sizes. |
+
+These tasks execute deterministic code on the host without starting Codex or
+interpreting their prompt as commands. They accept no custom paths or argv.
+Use `mode: "workspace"`, `workspace: "existing"`, `persistence: "fresh"`,
+`interval: "once"`, network/temporary writes/session history off, web search
+disabled and no additional writable directories. The runner caps them at one
+attempt. Service restarts cannot accompany a cleanup proposal. Known local
+administrator-policy conflicts and unresolved operator prerequisites still
+block launch. Creating or approving the task explicitly selects this separate
+account-level operation; an inspection does not activate it.
+
+Each operation rechecks host ownership and activity immediately before mutation
+and reports coverage, status and available bytes. npm checks ordinary package
+manager process identities and bounded Node arguments privately; deliberately
+renamed package managers are outside that observation boundary. npm content
+eviction uses identity-checked isolation of this fixed rebuildable cache, rather
+than `npm cache verify` or generic removal of the npm root. This specialized
+operation does not inspect unrelated daemons' file descriptors. None of these
+snapshots prevents a new build/install starting afterwards: choose a quiet
+development window when necessary.
+
+The host child and its native commands share a supervised process group, a
+six-minute ceiling within the task's remaining runtime/deadline, and a 128 KiB
+evidence limit. Cancellation, expiry or unavailable evidence never claims
+successful cleanup or automatically retries an uncertain mutation. Inspect the
+retained evidence and current cache/store state first. Native operations consume
+zero model tokens. Existing saved tasks default to `none`; deliberately create
+a new review or select the host operation in task settings. Browser revisions,
+project outputs and other custom cleanups retain their reviewed owner workflows.
+
 ## Gather evidence
 
 Run as the account whose caches and projects need inspection:
@@ -160,6 +208,10 @@ historic `GOFLAGS`. Other Go commands, compiler/linker/language-server activity,
 unrecognized layouts, cache-resident executable children and incomplete process
 observations still defer. Only relevant process arguments are inspected privately;
 raw arguments and environments are never returned.
+The temporary child's file identity and directory ownership are checked through
+its own `/proc/PID/root`, so the managed worker's private temporary mount does
+not hide a completed login-session program. Missing/denied process-root access
+still defers; worker namespace and service hardening remain in place.
 
 This native cache operation does not inspect every unrelated process's file
 descriptors, so a protected login daemon does not itself block it. Generic raw
@@ -304,8 +356,9 @@ cleanup proposal or name the specific retention decision needed from the operato
 Large totals alone are insufficient.
 
 Select **Approve once**, **Review follow-up task**, or **Block** on the report.
-A cleanup task uses workspace mode, a private run directory, and only the exact
-necessary additional write directories. Do not grant the whole home. Protected
+A custom cleanup task with `storage_operation: "none"` uses workspace mode, a
+private run directory, and only the exact necessary additional write directories.
+Fixed host cache operations use the separate settings above. Do not grant the whole home. Protected
 agent directories and system paths cannot receive ordinary task write grants;
 use managed retention or separately authorized administrator work. The review
 should explain such prerequisites rather than send another agent into the same

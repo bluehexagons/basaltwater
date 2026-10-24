@@ -5,6 +5,8 @@ review agent activity, run saved prompts, continue a bounded goal, or wake sched
 external event. Terminal Codex and agents inside T3 Code can use the same CLI
 or stdio MCP API. All three surfaces share account-local state and controls.
 Current execution uses Codex; installing T3 does not change the executor.
+Fixed host storage operations run without a model, as described in the
+[storage cleanup workflow](storage-cleanup.md#host-evidence-and-approved-cache-operations).
 The managed `basaltwater-agent-tasks` skill makes scheduling and goal handoffs
 discoverable in agent catalogs. Agents can schedule necessary follow-ups within
 the user's authorized scope; an indefinite recurring job needs authorization
@@ -97,7 +99,9 @@ service-manager sockets and loopback readiness probes that inspection mode can
 block. Each run receives an empty private writable directory rather than write
 access to the source home or checkout; temporary writes remain disabled. These
 prompts request read-only diagnostics and recommendations, without host repairs.
-Filesystem-only storage reviews retain inspection mode. The
+Filesystem-only storage reviews retain inspection mode and select
+`storage_operation: "review"` for bounded host inventory/native preview evidence
+before the sandboxed model starts. The
 [storage cleanup workflow](storage-cleanup.md) gathers bounded metadata,
 ranks concrete candidates and proposes a separately approved follow-up.
 Saved tasks keep their original settings; create a new task from the refreshed
@@ -245,7 +249,8 @@ For example, a restricted check can request live diagnostics:
   "temporary_files": false,
   "writable_directories": [],
   "operator_requirements": [],
-  "service_restarts": []
+  "service_restarts": [],
+  "storage_operation": "none"
 }
 ```
 
@@ -307,6 +312,13 @@ approval of the proposal itself; selecting **Approve once** supplies that
 authorization. Confirmation cannot grant extra write paths, override policy, or
 satisfy a service restart that has not succeeded through the broker.
 Workspace/network access does not supply root approval.
+`storage_operation` defaults to `none` for older tasks/proposals. New reports
+include it explicitly. A fixed cleanup proposal selects `npm-content-cache`,
+`go-build-cache` or `podman-images` and uses the constrained settings documented
+in the storage workflow. Approval queues one deterministic host operation;
+its prompt cannot supply shell commands or expand its target. `review` only
+adds host evidence before the ordinary Codex invocation. Capabilities and compact
+task listings expose these selections; CLI JSON and MCP use the same validation.
 Do not repeat unchanged blocked proposals; report environmental difficulties
 as feedback instead. The receipt is also readable through CLI/MCP; agents must
 not activate a request needing additional authorization themselves.

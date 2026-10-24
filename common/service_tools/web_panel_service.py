@@ -2606,7 +2606,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             "/actions/agent-task/save": {
                 "csrf", "id", "title", "prompt", "directory", "mode", "interval", "model",
                 "custom_model", "network", "submit", "effort", "timeout_minutes",
-                "web_search", "session_history", "temporary_files",
+                "web_search", "session_history", "temporary_files", "storage_operation",
                 "failure_limit", "repeat_minutes",
                 "persistence", "workspace", "continue_until_done", "completion_criteria",
                 "continuation_minutes", "max_runs", "deadline_at", "token_budget", "daily_limit",

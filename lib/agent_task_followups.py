@@ -167,6 +167,8 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
             return None
         candidate = dict(prepared if settings is None else settings)
         restarts = candidate.pop("service_restarts", [])
+        if candidate.get("storage_operation", "none") not in {"none", "review"} and restarts:
+            raise ValueError("Host cleanup cannot include service restarts")
         # Use the same exact-unit validation for edited reviews as reports.
         original = manager.contexts.receipt(identifier, run_id)["follow_up"]
         validate_follow_up({**original, "service_restarts": restarts})

@@ -17,6 +17,19 @@ unavailable inside a sandbox. Keep safety guards and request the specific
 authorized host-side check instead of repeating a follow-up with unchanged
 access or recommending chown/reinstallation from namespace evidence.
 
+New storage task templates use `storage_operation=review`: the account host
+worker supplies timestamped inventory and native previews before the sandboxed
+model starts. Use those observations with their own coverage limits. Propose
+one fixed `storage_operation` (`npm-content-cache`, `go-build-cache`, or
+`podman-images`) for operator approval when appropriate. These execute on the
+host without interpreting prompt commands, accept no custom paths/argv, and
+recheck activity before mutation. Use workspace mode, existing workspace, fresh
+persistence, once, no network/temp writes/additional write grants. npm selects
+only default `~/.npm/_cacache`; Go preserves modules/toolchains; Podman approval
+covers the documented age/reference policy at execution time. Keep custom
+generated/evidence/browser cleanup with its reviewed owner workflow. See
+[host storage operations](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/storage-cleanup.md#host-evidence-and-approved-cache-operations).
+
 `npm cache verify` is a mutation: it garbage-collects cache entries, even when
 called offline. Use metadata inspection of the exact `_cacache` for read-only
 reviews. Within approved cleanup scope, `npm --cache /exact/cache cache clean

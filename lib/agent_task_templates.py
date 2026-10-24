@@ -37,15 +37,13 @@ HOST_REVIEW_PROMPT = (
 
 STORAGE_REVIEW_PROMPT = (
     "Goal: reclaim storage with an approved cleanup follow_up. "
-    "Read-only: basaltw agent storage inspect --json --summary; focus --path without --summary on large children. "
+    "Use the supplied host inventory and native previews; focus storage inspect --path on large children. "
     "Metadata only; no private transcript, credential or database reads. Partial sizes are lower bounds. "
     "npm cache verify garbage-collects data; it requires write authorization. "
     "Check inspection_context: owners/proc reflect this observer; ID maps describe a parent namespace, not necessarily the host. "
     "Unavailable ownership/process checks or Go/Podman previews need host-side verification, not chown/reinstallation. "
     "Follow project instructions, native cleanup rules and VM-triage storage guidance. "
-    "Inspect rules: basaltw agent storage project /absolute/repo --json; review scripts before even previews. "
-    "basaltw agent storage clean-generated /absolute/repo --rule NAME previews a generated rule; "
-    "approved --apply needs target/parent write grants. "
+    "Inspect project rules with storage project /absolute/repo --json; review scripts before previews. "
     "Classify exact children now; preserve ambiguous mixed build/evidence roots and select a smaller proven disposable target. "
     "Preserve source, Git data, dirty/unmerged worktrees, sessions, attachments, backups and active runtimes. "
     "Age, size, ignore rules and archiving alone never authorize deletion. No removal or retention changes in this pass. "
@@ -53,9 +51,14 @@ STORAGE_REVIEW_PROMPT = (
     "Prefer one cleanup follow_up: recheck ownership, active use and retention, apply exact reviewed commands, "
     "report removed targets, failures and filesystem available bytes before/after. Approval authorizes cleanup; "
     "do not inherit this pass's no-removal restriction. "
-    "Use mode=workspace, workspace=run-directory, exact writable_directories, never the whole home. "
+    "Prefer fixed storage_operation cleanup: npm-content-cache evicts only ~/.npm/_cacache; go-build-cache cleans "
+    "only GOCACHE; podman-images applies the native age/reference policy to rootless images and abandoned builders. "
+    "Their prompts are descriptive: the host worker executes only the selected fixed operation, rechecks activity, "
+    "and preserves npx installs, modules, source, containers and volumes. Choose none for other cleanup proposals "
+    "with exact write grants and a run-directory; never the whole home. "
     "If unsafe, name the missing retention/access decision; investigations must end with an apply-ready proposal or specific operator decision. "
     "Protected paths need managed/admin work. Verify archives/checksums/capacity; same-disk moves free no space. Deletion is irreversible. "
+    "Fixed host cleanup requires mode=workspace, workspace=existing, network=false, temporary_files=false and writable_directories=[]. "
     + FOLLOW_UP_PROMPT
 )
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import codecs
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
 import selectors
 import subprocess
@@ -12,6 +14,23 @@ from typing import Callable
 from lib.remote_utils import (
     CommandTimeoutError, _command_text, _terminate_timed_out_process, _validate_timeout,
 )
+
+
+_CALLER_OWNS_GROUP = ContextVar("streamed_process_caller_owns_group", default=False)
+
+
+@contextmanager
+def caller_process_group():
+    """Keep nested commands in a disposable worker's supervised process group.
+
+    Only a caller whose parent kills the entire group on every exit may use
+    this. Ordinary commands retain independent timeout/cancellation groups.
+    """
+    token = _CALLER_OWNS_GROUP.set(True)
+    try:
+        yield
+    finally:
+        _CALLER_OWNS_GROUP.reset(token)
 
 
 def run_streamed(
@@ -39,11 +58,12 @@ def run_streamed(
     if bound is None and not interactive:
         raise ValueError("Streaming requires a finite deadline")
     deadline = time.monotonic() + bound if bound is not None else None
+    isolated = not interactive and not _CALLER_OWNS_GROUP.get()
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE if input_data is not None or on_input_request is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL if discard_stderr else subprocess.PIPE if on_error is not None else subprocess.STDOUT,
-        bufsize=0, cwd=cwd, env=env, start_new_session=not interactive,
+        bufsize=0, cwd=cwd, env=env, start_new_session=isolated,
     )
     offset = 0
     pending_input = input_data or b""
@@ -118,7 +138,7 @@ def run_streamed(
     except BaseException:
         # Interactive SSH shares the caller's process group. Never signal that
         # group on cancellation or callback failure: it includes the caller.
-        _terminate_timed_out_process(process, isolated=not interactive)
+        _terminate_timed_out_process(process, isolated=isolated)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:

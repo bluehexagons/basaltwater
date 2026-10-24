@@ -45,13 +45,14 @@ def _process(directory: str) -> tuple[int, int, str]:
     return int(fields[1]), int(fields[19]), fields[0]
 
 
-def _executable(directory: str) -> tuple[str, tuple[int, int]]:
+def _executable(directory: str, *, process_root: bool = False) -> tuple[str, tuple[int, int]]:
     target = os.readlink(os.path.join(directory, "exe"))
     validate_filesystem_path(target)
     if not os.path.isabs(target) or os.path.normpath(target) != target:
         raise _Unknown("unrecognized_executable")
     opened = os.stat(os.path.join(directory, "exe"))
-    named = os.stat(target, follow_symlinks=False)
+    named_path = os.path.join(directory, "root", target.lstrip("/")) if process_root else target
+    named = os.stat(named_path, follow_symlinks=False)
     identity = (opened.st_dev, opened.st_ino)
     if not stat.S_ISREG(named.st_mode) or identity != (named.st_dev, named.st_ino):
         raise _Unknown("executable_changed")
@@ -104,14 +105,18 @@ def _waiting_run(directory: str, uid: int, deadline: float, proc_root: str) -> b
         return False
     if os.stat(child, follow_symlinks=False).st_uid != uid:
         return False
-    program, identity = _executable(child)
+    program, identity = _executable(child, process_root=True)
     if not _TEMP_PROGRAM.fullmatch(program) or _arguments(child) != [program]:
         return False
-    with open(program, "rb") as stream:
+    # A managed worker's PrivateTmp hides the login session's temporary files.
+    # Verify this one owned child's executable through its own proc root; do
+    # not broaden the worker mount namespace or inspect unrelated processes.
+    program_path = os.path.join(child, "root", program.lstrip("/"))
+    with open(program_path, "rb") as stream:
         if stream.read(4) != b"\x7fELF":
             return False
     # Check the entire temporary program subtree without following links.
-    current = Path(program)
+    current = Path(program_path)
     for _ in range(4):
         info = os.stat(current, follow_symlinks=False)
         if info.st_uid != uid or stat.S_ISLNK(info.st_mode) or info.st_mode & 0o022:
@@ -125,7 +130,7 @@ def _waiting_run(directory: str, uid: int, deadline: float, proc_root: str) -> b
     final_parent, final_child = _process(directory), _process(child)
     return (original[:2] == final_parent[:2] and executable == _executable(directory)
             and child_state[:2] == final_child[:2] and final_child[2] not in ("Z", "X")
-            and (program, identity) == _executable(child))
+            and (program, identity) == _executable(child, process_root=True))
 
 
 def go_build_activity(*, proc_root: str = "/proc") -> dict:

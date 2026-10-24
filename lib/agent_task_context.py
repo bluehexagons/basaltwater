@@ -11,6 +11,7 @@ from typing import Any
 
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.agent_task_access import text_requirements
+from lib.agent_task_storage import STORAGE_OPERATIONS, validate_storage_operation
 from lib.privilege_policy import UNIT_PATTERN
 from lib.validation import validate_filesystem_path
 
@@ -44,9 +45,11 @@ FOLLOW_UP_SCHEMA = {
         "writable_directories": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
         "operator_requirements": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
         "service_restarts": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+        "storage_operation": {"type": "string", "enum": list(STORAGE_OPERATIONS),
+            "description": "Default none. Fixed cleanup requires workspace mode, existing workspace, no network/temp writes/write grants. The approved host worker executes only the selected operation, never prompt commands."},
     },
     "required": ["title", "reason", "prompt", "directory", "mode", "workspace", "network", "temporary_files",
-                 "writable_directories", "operator_requirements", "service_restarts"],
+                 "writable_directories", "operator_requirements", "service_restarts", "storage_operation"],
 }
 
 REPORT_SCHEMA = {
@@ -68,7 +71,7 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     """Validate a bounded proposal, which never grants authority or queues work."""
     if value is None:
         return None
-    legacy = set(FOLLOW_UP_SCHEMA["required"]) - {"writable_directories", "operator_requirements", "service_restarts"}
+    legacy = set(FOLLOW_UP_SCHEMA["required"]) - {"writable_directories", "operator_requirements", "service_restarts", "storage_operation"}
     if not isinstance(value, dict) or not legacy <= set(value) or set(value) - set(FOLLOW_UP_SCHEMA["properties"]):
         raise ValueError("Invalid task follow-up request")
     for name, limit in (("title", 120), ("reason", 2000), ("prompt", 3800), ("directory", 4096)):
@@ -99,6 +102,10 @@ def validate_follow_up(value: object) -> dict[str, Any] | None:
     if (not isinstance(restarts, list) or len(restarts) > 4
             or any(not isinstance(unit, str) or not UNIT_PATTERN.fullmatch(unit) for unit in restarts)):
         raise ValueError("Follow-up service restarts require up to four exact service units")
+    validate_storage_operation({"interval": "once", "persistence": "fresh", "continue_until_done": False,
+                                "writable_directories": [], **value})
+    if value.get("storage_operation", "none") not in {"none", "review"} and restarts:
+        raise ValueError("Host cleanup cannot include service restarts")
     return value
 
 

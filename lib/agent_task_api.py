@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.agent_tasks import AgentTasks
+from lib.agent_task_storage import STORAGE_OPERATIONS
 from lib.atomic_io import read_json_file
 from lib.t3code_runtime import is_t3_service_version
 
@@ -72,6 +73,7 @@ def task_capabilities(manager: AgentTasks) -> dict[str, Any]:
     except (OSError, ValueError):
         pass
     return {"version": 1, "available": manager.available(), "executors": ["codex"],
+            "storage_operations": list(STORAGE_OPERATIONS),
             "persistence": ["fresh", "checkpoint", "conversation"],
             "workspaces": ["existing", "directory", "worktree", "run-directory"],
             "triggers": ["interval", "manual", "event", "scheduled-once"], "worker": worker_status(manager),
@@ -114,7 +116,7 @@ class TaskAPI:
                 fields = {"id", "title", "directory", "interval", "persistence", "workspace", "executor", "start_at",
                           "enabled", "queued", "draft", "auto_paused", "next_run", "not_before", "attempts",
                           "tokens_used", "consecutive_failures", "stop_reason", "max_runs", "deadline_at", "token_budget", "last_run_id",
-                          "source_task_id", "source_run_id", "keep"}
+                          "source_task_id", "source_run_id", "keep", "storage_operation"}
                 state["tasks"] = [{key: value for key, value in task.items() if key in fields} for task in state["tasks"]]
                 run_fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "usage", "summary"}
                 compact = []

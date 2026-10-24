@@ -85,6 +85,20 @@ avoid an unchanged blocked follow-up; keep ownership and process guards intact.
 `npm cache verify` performs garbage collection and is a write operation, not
 an inspection command. Use exact cache-directory metadata for read-only review.
 
+Refreshed storage reviews select `storage_operation=review`; the host worker
+supplies bounded timestamped inventory and npm/Go/Podman previews before Codex
+starts. This evidence has the worker's namespace and coverage limits. Approved
+fixed cleanup operations (`npm-content-cache`, `go-build-cache`, `podman-images`)
+run as the account on the host without a model or prompt commands. They require
+one fresh workspace task with an existing directory, no network/temp writes,
+session history, web search or extra write grants. They preserve source and
+agent state and revalidate activity. The npm target is only default
+`~/.npm/_cacache`; Podman approval covers its age/reference policy at execution
+time. Older saved tasks retain `none`. These controls do not authorize agents
+to activate their own proposals or bypass administrator restrictions. See the
+[storage workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/storage-cleanup.md#host-evidence-and-approved-cache-operations)
+for exact scope, approval, cancellation and uncertain-result handling.
+
 Keep source changes, external messages, publication, and privileged requests
 within the explicit task prompt. A health check should recommend a repair rather
 than perform it. A privileged request may outlive the prompt; stopping the Codex

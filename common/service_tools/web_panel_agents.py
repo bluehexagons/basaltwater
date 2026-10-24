@@ -23,6 +23,10 @@ from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
 from lib.agent_task_followups import follow_up_requires_review, follow_up_state, prepare_follow_up
 from lib.agent_task_policy import task_policy_issues
+from lib.maintenance_defaults import (
+    PODMAN_IMAGE_PRESSURE_RETENTION_DAYS, PODMAN_IMAGE_RETENTION_DAYS, PODMAN_KEEP_LABEL,
+    USER_CACHE_FREE_MAX_BYTES, USER_CACHE_FREE_MIN_BYTES,
+)
 from lib.agent_task_templates import ACTIONABLE_RESULT_PROMPT, HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, STORAGE_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.agent_tasks import (
     AgentTasks, DEFAULT_FAILURE_LIMIT, DEFAULT_TIMEOUT_MINUTES, EFFORTS, MAX_FAILURE_LIMIT,
@@ -100,6 +104,7 @@ PROMPT_TEMPLATES = {
         "scope": "host", "title": "Review storage cleanup",
         "description": "Select a safe cleanup, request approval to apply it, and verify reclaimed space.",
         "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 15,
+        "storage_operation": "review",
         "prompt": STORAGE_REVIEW_PROMPT,
     },
     "incident": {
@@ -201,6 +206,38 @@ PROMPT_TEMPLATES["daily-maintenance"] = {
 for _template in PROMPT_TEMPLATES.values():
     _template["prompt"] += " " + ACTIONABLE_RESULT_PROMPT
 del _template
+
+_STORAGE_OPERATIONS = {
+    "none": ("None (default)", "No fixed host storage operation."),
+    "review": ("Review host storage", "Collect bounded host storage metadata and native Go, Podman and npm cleanup previews as evidence for sandboxed Codex. No cleanup."),
+    "npm-content-cache": ("Delete npm downloaded content cache", "Delete only ~/.npm/_cacache in the worker account's home after ownership and activity checks. Preserve npx tools, custom caches and configuration. Future installs may download packages again."),
+    "go-build-cache": ("Clean Go build cache", "Run native go clean -cache against the account's validated GOCACHE after ownership and activity checks. Preserve the module cache and source; future builds may recompile."),
+    "podman-images": ("Clean rootless Podman images", (
+        f"Apply the existing rootless Podman age/reference-aware policy: images older than {PODMAN_IMAGE_RETENTION_DAYS} days, "
+        f"or {PODMAN_IMAGE_PRESSURE_RETENTION_DAYS} day under pressure (free bytes below 20% of filesystem capacity, "
+        f"clamped to {USER_CACHE_FREE_MIN_BYTES}–{USER_CACHE_FREE_MAX_BYTES} bytes). Age uses creation time. "
+        f"Retain container-referenced images, {PODMAN_KEEP_LABEL}-labelled images and their required parents. "
+        "Remove eligible old, unmounted, unpinned abandoned Buildah builders, then eligible images by exact ID without forced removal or parent pruning. "
+        "Preserve ordinary containers, volumes and persistent build caches; defer for active workloads."
+    )),
+}
+
+
+def _render_storage_operation(operation: str, *, approval: bool = False) -> str:
+    """Show the fixed host scope independently of model-written prompt text."""
+    if operation == "none":
+        return ""
+    description = _STORAGE_OPERATIONS.get(operation, ("Unsupported operation", "Cannot run an unsupported operation."))[1]
+    execution = ("A non-root host worker collects evidence; Codex reviews it in its sandbox."
+                 if operation == "review" else
+                 "A non-root host worker runs this fixed operation deterministically, without model commands. "
+                 "The prompt cannot choose paths or argv. Cleanup requires Workspace changes, selected directory, "
+                 "command network off, temporary writes off, no additional writable directories, fresh persistence, "
+                 "Once, no goal continuation and one run attempt. Deletion is irreversible.")
+    pending = " This proposal is inert until approved; approval authorizes only the selected fixed operation and policy." if approval else ""
+    return (f'<p class="agent-help"><strong>Host storage operation: <code>{_escape(operation)}</code></strong> '
+            f'{_escape(description)} {_escape(execution + pending)}</p>')
+
 
 _STYLE = """
 .agent-columns { display: grid; gap: 16px; max-width: 960px; margin: 18px 0; }
@@ -597,6 +634,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     templates = _available_templates(state.manifest, manager.home, features)
     defaults: dict[str, Any] = {"title": "", "prompt": "", "directory": manager.home,
                                "mode": "inspect", "interval": "once", "model": "", "network": False, "id": "",
+                               "storage_operation": "none",
                                "effort": "", "timeout_minutes": DEFAULT_TIMEOUT_MINUTES,
                                "web_search": "disabled", "session_history": False, "custom_model": "", "temporary_files": False,
                                "failure_limit": DEFAULT_FAILURE_LIMIT, "repeat_minutes": 60,
@@ -682,7 +720,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         alert += f'<aside class="status" role="status"><strong>Service approval</strong><p>{_escape(notice)}</p></aside>'
     if not account_ready:
         alert += '<p class="empty">Prompt execution requires a non-root panel account with its own home directory. Diagnostics remain available.</p>'
-    elif not codex_installed:
+    elif not codex_installed and defaults["storage_operation"] in {"none", "review"}:
         alert += '<p class="empty">Install and sign in to Codex as the panel account to run prompts. T3 Code is optional.</p>'
     policy_issues = task_policy_issues(defaults)
     if composing and policy_issues:
@@ -690,7 +728,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         alert += ('<aside class="status failed" role="alert"><strong>Execution policy conflict</strong>'
                   f'<ul>{notices}</ul><p>These settings cannot launch under the local policy. '
                   'Adjust the task settings or save a draft for review. The runner preserves administrator restrictions.</p></aside>')
-    disabled = " disabled" if not ready or not codex_installed else ""
+    disabled = " disabled" if not ready or not codex_installed and defaults["storage_operation"] in {"none", "review"} else ""
     save_disabled = " disabled" if not ready else ""
     service_approval = ""
     approve_label = "Approve once"
@@ -712,6 +750,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         ("once", "Once"), ("event", "On external event"), ("hourly", "Every hour"), ("daily", "Every 24 hours"), ("weekly", "Every 7 days"), ("custom", "Custom interval")))
     modes = "".join(f'<option value="{key}"{" selected" if key == defaults["mode"] else ""}>{label}</option>' for key, label in (
         ("inspect", "Inspect only"), ("workspace", "Workspace changes")))
+    storage_options = "".join(f'<option value="{key}"{" selected" if key == defaults["storage_operation"] else ""}>{_escape(label)}</option>'
+                              for key, (label, _) in _STORAGE_OPERATIONS.items())
     models = [("", "Configured default")] + [(model["slug"], model["name"]) for model in codex_models(manager.home)]
     if defaults["model"] and defaults["model"] not in {key for key, _ in models}:
         models.append((defaults["model"], "Custom · " + str(defaults["model"])))
@@ -741,6 +781,9 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <label>Working directory<input name="directory" value="{_escape(defaults['directory'])}" required placeholder="~/repos/project"></label></div>
 <label>Prompt<textarea name="prompt" maxlength="{MAX_PROMPT_BYTES}" required placeholder="Describe the task and what a successful result should include.">{_escape(defaults['prompt'])}</textarea></label>
 <fieldset><legend>Access and permissions</legend>
+<label>Host storage operation<select name="storage_operation">{storage_options}</select></label>
+{_render_storage_operation(defaults['storage_operation'], approval=bool(defaults['source_task_id']) and not editing)}
+<details><summary>Storage targets and policy</summary>{''.join(_render_storage_operation(key) for key in _STORAGE_OPERATIONS if key != 'none')}</details>
 <label>Execution mode<select name="mode">{modes}</select></label>
 <label class="agent-check"><input type="checkbox" name="network" value="1"{" checked" if defaults['network'] else ""}><span>Allow command network access for workspace changes, including downloading dependencies.</span></label>
 <label class="agent-check"><input type="checkbox" name="temporary_files" value="1"{" checked" if defaults['temporary_files'] else ""}><span>Allow temporary file writes for workspace changes (/tmp and TMPDIR). Needed by many test and package tools.</span></label>
@@ -836,6 +879,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 {stop_note}{_render_inspection_access(task)}<dl class="agent-task-facts"><div><dt>Schedule</dt><dd>{_escape(interval_label)}</dd></div><div><dt>Next run · UTC</dt><dd>{due_label}</dd></div><div><dt>Latest result</dt><dd>{last.capitalize()}<small>{last_timing}</small></dd></div></dl>
 <div class="agent-buttons">{controls}</div>{run_note}
 <details><summary>Task settings and more actions</summary><p class="agent-help">{'Inspect only' if task['mode'] == 'inspect' else 'Workspace changes'} · command network {"on" if task['network'] else "off"} · {_escape(task['timeout_minutes'])} min cap · {_escape(task['model'] or 'Configured model')} · effort {_escape(task['effort'] or 'default')}</p>
+{_render_storage_operation(task.get('storage_operation', 'none'))}
 <p class="agent-help">{failure_note} · {_escape(task['persistence'])} · {_escape(task['workspace'])} · {task['attempts']} attempts · {task['tokens_used']} reported tokens</p><div class="agent-buttons">{more}</div><p class="agent-help">Remove deletes the saved task; retained run history stays available. Reset context keeps workspace files and receipts.</p></details></article></li>''')
     schedules = '<ul class="agent-task-list">' + "".join(rows) + '</ul>' if rows else '''<div class="agent-panel agent-start"><p><strong>No prompt tasks yet.</strong><br>Write a prompt, choose a starting template, or use Agent tools for a guided system or data task.</p><a class="refresh-link agent-primary" href="/agents?view=new">New task</a><a class="refresh-link" href="/agents?view=templates">Browse templates</a></div>'''
     if completed_rows and not rows:
@@ -855,6 +899,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         history.append(f'''<details id="run-{run['id']}" class="agent-panel agent-run"{' open' if query.get('run') == run['id'] else ''}><summary><span class="event-head"><strong>{_escape(run['task']['title'])}</strong><span><span class="badge {tone}">{_escape(outcome_label)}</span>{'<span class="badge warning">Follow-up requested</span>' if follow_status == 'pending' else ''}</span></span><span class="agent-help">{_time(run['started_at'])} · {_escape(run['task']['directory'])}</span><span class="agent-result-preview">{_escape(_redact_log_message(run.get('summary') or run.get('output') or run.get('message') or '')[:350])}</span></summary>
 <p>{_escape(_redact_log_message(run['message']))}</p><p class="agent-help">{timing}{exit_note} · Finished {_time(run['finished_at'])}</p>
 <h3>Report</h3><pre>{_escape(_redact_log_message(run['output'])) if run['output'] else 'Output will appear when the run finishes.' if run['status'] == 'running' else 'No output recorded.'}</pre>
+{_render_storage_operation(run['task'].get('storage_operation', 'none'))}
 <details><summary>Execution settings</summary><p class="agent-help">{_escape(run['task']['mode'])} · model {_escape(run['task']['model'] or 'configured default')} · effort {_escape(run['task']['effort'] or 'default')} · {_escape(run['task']['timeout_minutes'])} min cap · command network {'on' if run['task']['network'] else 'off'} · temporary writes {'on' if run['task']['temporary_files'] else 'off'} · web search {_escape(run['task']['web_search'])} · Codex history {'kept' if run['task']['session_history'] or run['task']['persistence'] == 'conversation' else 'ephemeral'}</p></details>
 <p class="agent-help">Process: {_escape(run['status'])} · Task outcome: {_escape(run.get('outcome') or 'Not reported by this older run')} · context {_escape(run['task']['persistence'])} · workspace {_escape(run.get('execution_directory') or run['task']['directory'])}</p>
 <a class="refresh-link" href="/agents?reuse={run['id']}">Reuse run settings</a>
@@ -1058,6 +1103,7 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
 <strong>{_escape(proposal.get('title', ''))}</strong>
 <p>{_escape(_redact_log_message(str(proposal.get('reason', ''))))}</p>
 <p class="agent-help">Requested access: {_escape(proposal.get('mode'))} · {_escape(proposal.get('workspace'))} · command network {'on' if proposal.get('network') else 'off'} · temporary writes {'on' if proposal.get('temporary_files') else 'off'} · <code>{_escape(proposal.get('directory'))}</code></p>
+{_render_storage_operation(proposal.get('storage_operation', 'none'), approval=pending)}
 {''.join(access_details)}{requests}<div class="agent-buttons">{actions}</div>
 <details><summary>Proposed actions and verification</summary><pre>{_escape(_redact_log_message(proposal.get('prompt', '')))}</pre></details>
 <p class="agent-help">Approval queues one attempt. Service requests use the separate privilege portal and must succeed before launch. Blocking stops this proposal; it cannot undo a service action already executed.</p></aside>'''
