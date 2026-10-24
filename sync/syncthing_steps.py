@@ -9,19 +9,22 @@ import os
 import pwd
 import re
 import shlex
+import stat
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
-from common.storage_steps import assert_declared_storage_mount
+from common.storage_steps import STORAGE_MARKER, assert_declared_storage_mount
 from lib.atomic_io import write_text_atomic
 from lib.config import DEFAULT_SYNCTHING_ROOT, SetupConfig
 from lib.credentials import get_runtime_credential
 from lib.local_http import open_loopback
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run, is_package_installed, run
-from lib.validation import validate_filesystem_path
+from lib.setup_directories import directory_fd
+from lib.validation import _validate_syncthing_root, validate_filesystem_path
+from lib.vm_storage import storage_mounts
 
 
 SYNCTHING_HOME = "/var/lib/basaltwater/syncthing"
@@ -334,6 +337,7 @@ def _remove_syncthing_https(config: SetupConfig) -> None:
 
 def _prepare_share_root(config: SetupConfig, group_name: str) -> None:
     share_root = _share_root(config)
+    _validate_syncthing_root(share_root)
     if os.path.lexists(share_root) and (
         os.path.islink(share_root)
         or not os.path.isdir(share_root)
@@ -344,18 +348,90 @@ def _prepare_share_root(config: SetupConfig, group_name: str) -> None:
             f"Refusing Syncthing share root with symbolic-link traversal: {share_root}"
         )
     assert_declared_storage_mount(config, share_root)
-    run(
-        [
-            "install",
-            "-d",
-            "-m",
-            "0770",
-            "-o",
-            config.username,
-            "-g",
-            group_name,
-            share_root,
-        ]
+    uid, gid, _group = _account(config.username)
+    declared_mount = any(mount.path == share_root for mount in storage_mounts(config))
+    try:
+        # Parents belong to the operator or mount provisioning, never to this
+        # service. Require them to exist instead of creating or changing them.
+        with directory_fd(os.path.dirname(share_root)) as parent:
+            try:
+                os.mkdir(os.path.basename(share_root), mode=0o770, dir_fd=parent)
+                created = True
+            except FileExistsError:
+                created = False
+        with directory_fd(share_root) as descriptor:
+            observed = os.fstat(descriptor)
+            mode = stat.S_IMODE(observed.st_mode)
+            prepared = (
+                observed.st_uid == uid
+                and observed.st_gid == gid
+                and mode & 0o700 == 0o700
+                and mode & 0o007 == 0
+            )
+            entries = set(os.listdir(descriptor))
+            fresh_mount = declared_mount and entries <= {STORAGE_MARKER, "lost+found"}
+            if fresh_mount and "lost+found" in entries:
+                # A recovery directory containing recovered files is data,
+                # not evidence of a fresh filesystem. Do not follow a link.
+                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+                recovery = os.open("lost+found", flags, dir_fd=descriptor)
+                try:
+                    fresh_mount = not os.listdir(recovery)
+                finally:
+                    os.close(recovery)
+            if entries and not prepared and not fresh_mount:
+                raise RuntimeError(
+                    f"Refusing to adopt nonempty Syncthing root: {share_root}. "
+                    "Choose a dedicated directory; after reviewing its contents, "
+                    f"explicitly prepare only that directory with chown "
+                    f"{config.username}:{group_name} and chmod 0770, then rerun. "
+                    "Do not change ownership recursively or use live service data."
+                )
+            if created or not prepared:
+                os.fchown(descriptor, uid, gid)
+                os.fchmod(descriptor, 0o770)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not prepare Syncthing root {share_root}; prepare its parent "
+            "directory or mount explicitly, then rerun"
+        ) from exc
+
+    for permission in ("-r", "-x", "-w"):
+        access = run(
+            ["runuser", "-u", config.username, "--", "/usr/bin/test", permission, share_root],
+            check=False,
+            capture_output=True,
+        )
+        if access.returncode != 0:
+            raise RuntimeError(
+                f"Syncthing user {config.username} cannot read, traverse or write "
+                f"{share_root}. Explicitly grant traversal on its ancestors and "
+                "access to the dedicated root using permissions or an ACL, then "
+                "rerun; setup does not change parent permissions."
+            )
+
+
+def _disable_before_removal(unit_exists: bool) -> None:
+    """Require confirmed stopped and disabled states before deleting the unit."""
+    unit = f"{SYNCTHING_SERVICE_NAME}.service"
+    disabled = run(["systemctl", "disable", "--now", unit], check=False)
+    active = run(["systemctl", "is-active", unit], check=False, capture_output=True)
+    enabled = run(["systemctl", "is-enabled", unit], check=False, capture_output=True)
+    stopped = active.returncode == 3 and str(active.stdout or "").strip() in {"inactive", "failed"}
+    unenabled = enabled.returncode == 1 and str(enabled.stdout or "").strip() == "disabled"
+    if disabled.returncode == 0 and stopped and unenabled:
+        return
+    if (
+        not unit_exists
+        and (stopped or (active.returncode == 4 and str(active.stdout or "").strip() == "unknown"))
+        and enabled.returncode == 4 and str(enabled.stdout or "").strip() == "not-found"
+    ):
+        loaded = run(["systemctl", "show", unit, "--property=LoadState", "--value"], check=False, capture_output=True)
+        if loaded.returncode == 0 and str(loaded.stdout or "").strip() == "not-found":
+            return
+    raise RuntimeError(
+        "Could not confirm managed Syncthing service stopped and disabled; "
+        "unit preserved. Check systemctl status and is-enabled, then retry."
     )
 
 
@@ -439,16 +515,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
                 f"Refusing to remove unsafe Syncthing unit path: "
                 f"{SYNCTHING_SERVICE_FILE}"
             )
-        run(
-            ["systemctl", "disable", "--now", f"{SYNCTHING_SERVICE_NAME}.service"],
-            check=False,
-        )
-        active = run(
-            ["systemctl", "is-active", "--quiet", f"{SYNCTHING_SERVICE_NAME}.service"],
-            check=False,
-        )
-        if active.returncode == 0:
-            raise RuntimeError("Managed Syncthing service did not stop")
+        _disable_before_removal(unit_exists)
         if unit_exists:
             os.unlink(SYNCTHING_SERVICE_FILE)
         run(["systemctl", "daemon-reload"])

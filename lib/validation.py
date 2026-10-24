@@ -206,6 +206,23 @@ def _validate_syncthing_root(storage_root: object) -> None:
         raise ValueError(
             "--syncthing-root must be /data or below /data, /mnt, /srv, or /var/lib"
         )
+    # Reject whole system trees, including empty or not-yet-created children.
+    # Emptiness and ownership cannot make package-manager state safe to share.
+    reserved_trees = (
+        "/var/lib/apt", "/var/lib/dpkg", "/var/lib/rpm", "/var/lib/pacman",
+        "/var/lib/dnf", "/var/lib/yum", "/var/lib/ucf", "/var/lib/dkms",
+        "/var/lib/systemd", "/var/lib/dbus", "/var/lib/polkit-1",
+        "/var/lib/private", "/var/lib/sudo", "/var/lib/AccountsService",
+        "/var/lib/NetworkManager", "/var/lib/initramfs-tools",
+    )
+    if any(
+        storage_root == root or storage_root.startswith(root + os.sep)
+        for root in reserved_trees
+    ):
+        raise ValueError(
+            "--syncthing-root must use a dedicated directory outside reserved "
+            f"system trees: {storage_root}"
+        )
     state_root = "/var/lib/basaltwater/syncthing"
     if (
         storage_root == state_root

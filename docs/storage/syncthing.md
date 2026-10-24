@@ -43,18 +43,46 @@ disable certificate verification.
 
 The default storage root is `/srv/syncthing`. Select another bounded service
 path with `--syncthing-root`; `/data` and paths below `/data`, `/mnt`, `/srv`,
-or `/var/lib` are accepted:
+or `/var/lib` are accepted, except reserved system trees (including their
+empty or nonexistent descendants), such as `/var/lib/dpkg`, `/var/lib/apt`,
+and `/var/lib/systemd`, and the managed Syncthing state directory:
 
 ```bash
 basaltw setup server_lite fileserver admin \
   --syncthing --syncthing-root /mnt/team-files
 ```
 
-Basaltwater creates the root for the setup user and confines the systemd
+Basaltwater creates a missing root below an existing parent, or prepares an
+empty root for the setup user with mode `0770`, and confines the systemd
 service to that root. Setup verifies any Basaltwater-declared VM data mount
 before writing to it, and the generated service also uses `RequiresMountsFor=`
 for declared or separately managed mounts. This prevents a missing disk from
 redirecting setup or synchronization writes into the root filesystem.
+
+Setup refuses to adopt a nonempty directory unless it is already explicitly
+prepared: owned by the setup user and their primary group, with owner read,
+write and traversal permissions and no access for other users. Such roots
+retain their existing mode, group permissions and ACLs on reruns, including
+re-enabling a removed service. A verified declared mount can be initialized
+with only its provisioning marker and an empty `lost+found`; a mount declaration
+does not authorize adopting other existing data.
+
+For a deliberately selected existing data directory, review its contents and
+confirm it contains only Syncthing data before preparing the directory itself
+on the server. For example, with setup user and primary group both `admin`:
+
+```bash
+sudo chown admin:admin /mnt/team-files
+sudo chmod 0770 /mnt/team-files
+```
+
+Do not apply these commands recursively or to another service's live state.
+Existing files may need a separate, deliberate permissions migration. Setup
+never changes ancestor ownership, permissions or ACLs. Before stopping or
+replacing the service, it checks root read, traversal and write access as the
+actual service user. If a private ancestor blocks access, explicitly grant
+that user traversal on the selected ancestor (for example with a targeted
+`setfacl -m u:admin:--x /mnt/private`), or choose an accessible root, then rerun.
 
 ### Provision a VM with dedicated Syncthing storage
 
@@ -181,6 +209,11 @@ To remove the service and HTTPS route while preserving state and files:
 ```bash
 basaltw patch fileserver --no-syncthing
 ```
+
+Removal requires a successful disable operation and confirmed terminal stopped
+and disabled states. Bus errors, transitional states and uncertain enablement
+preserve the unit for diagnosis; check `systemctl status` and `systemctl
+is-enabled` and retry after resolving the failure.
 
 Re-enabling the endpoint retains the configured storage root, device ID, and
 GUI-managed sharing state. Delete `/var/lib/basaltwater/syncthing` or the
