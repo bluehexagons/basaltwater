@@ -739,7 +739,7 @@ def add_setup_arguments(
                        metavar="PACKAGE",
                        help="Install package via apt (can be used multiple times)")
     for flag, packages, description in (
-        ("--container-tools", ("podman", "uidmap", "slirp4netns", "fuse-overlayfs"),
+        ("--container-tools", ("podman", "uidmap", "passt", "slirp4netns", "fuse-overlayfs"),
          "Install rootless Podman and its user-namespace/network/storage helpers (Debian APT setup)"),
         ("--debug-tools", ("gdb", "strace", "valgrind", "ccache", "ninja-build"),
          "Install native debugging and build-cache tools (Debian APT setup)"),

@@ -104,7 +104,7 @@ class DevelopmentToolBundleTests(unittest.TestCase):
             "--apt-install", "linux-perf",
         ])
         self.assertEqual(args.apt_packages, [
-            "podman", "uidmap", "slirp4netns", "fuse-overlayfs",
+            "podman", "uidmap", "passt", "slirp4netns", "fuse-overlayfs",
             "gdb", "strace", "valgrind", "ccache", "ninja-build", "linux-perf",
         ])
         self.assertIsNone(parser.parse_args(["vm.example", "agent"]).apt_packages)

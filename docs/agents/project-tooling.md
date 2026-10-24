@@ -553,9 +553,11 @@ Antistatic's `npm run package:linux` builds in its pinned Steam Runtime SDK;
 its normal source builds remain independent of Basaltwater.
 
 For managed Debian coding VMs that need container builds, add `--container-tools`
-to the saved setup. It expands to `podman`, `uidmap`, `slirp4netns`, and
-`fuse-overlayfs` through the existing `--apt-install` package path. Verify
-subordinate UID/GID mappings and run `podman info`
+to the saved setup. It expands to `podman`, `uidmap`, `passt`, `slirp4netns`, and
+`fuse-overlayfs` through the existing `--apt-install` package path. `passt`
+provides the `pasta` helper used by Podman's default rootless network mode;
+`slirp4netns` remains available when explicitly selected with
+`--network slirp4netns`. Verify subordinate UID/GID mappings and run `podman info`
 as the login user. Rootless Podman does not require a Docker daemon or adding
 the coding account to a privileged Docker group. The images and build cache
 consume several GB; include their storage in VM capacity planning.
