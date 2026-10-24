@@ -92,6 +92,101 @@ class TestGogsHealthParser(unittest.TestCase):
 
 
 class TestRemoteGogsHealth(unittest.TestCase):
+    def _probe(self, *, missing=(), non_directories=(), denied=()):
+        from lib.config import SetupConfig
+        from web.gogs_steps import generate_gogs_app_ini
+
+        config = SetupConfig(
+            host="10.100.0.100", username="agent", system_type="server_web",
+            gogs=[":3000"], enable_ssl=True, gogs_sources=["192.168.0.45/32"],
+        )
+        with patch("web.gogs_steps._load_or_create_gogs_secret_key", return_value="test-secret"):
+            app_ini = generate_gogs_app_ini(
+                config, git_home="/home/git", data_path="/srv/gogs",
+                domain="", port=3000, backend_port=13000,
+            )
+        files = {
+            "/opt/basaltwater/state/gogs.json": json.dumps({
+                "data_path": "/srv/gogs", "config_path": "/srv/gogs/custom/conf/app.ini",
+            }),
+            "/srv/gogs/custom/conf/app.ini": app_ini,
+            "/etc/nginx/sites-enabled/gogs_test": (
+                "listen 3000 ssl; ssl_certificate /test.crt; client_max_body_size 512M;"
+            ),
+        }
+
+        def read_file(path, **kwargs):
+            return io.StringIO(files[path])
+
+        def run(args, **kwargs):
+            stdout = ""
+            if args[0] == "runuser" and args[-1] in denied:
+                return SimpleNamespace(returncode=1, stdout="", stderr="")
+            if args[:2] == ("systemctl", "is-active"):
+                stdout = "active\n"
+            elif args[0] == "findmnt":
+                stdout = json.dumps({"filesystems": [{"source": "/dev/sdb", "fstype": "ext4", "target": "/srv/gogs"}]})
+            elif args[0] == "sqlite3":
+                stdout = "ok\n"
+            elif args[0] == "du":
+                stdout = "1024 /srv/gogs\n"
+            elif args[:3] == ("systemctl", "show", "auto-update-gogs.service"):
+                stdout = "ActiveState=inactive\nResult=success\n"
+            elif args[:3] == ("systemctl", "show", "auto-update-gogs.timer"):
+                stdout = "ActiveState=active\nNextElapseUSecRealtime=tomorrow\n"
+            return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+        output = io.StringIO()
+        with (
+            patch("builtins.open", side_effect=read_file),
+            patch("subprocess.run", side_effect=run) as runner,
+            patch("glob.glob", return_value=["/etc/nginx/sites-enabled/gogs_test"]),
+            patch("os.path.exists", side_effect=lambda path: not path.endswith("gogs_update.json")),
+            patch("os.path.lexists", side_effect=lambda path: path not in missing),
+            patch("os.path.isdir", side_effect=lambda path: path not in (*missing, *non_directories)),
+            patch("os.path.getmtime", return_value=1000),
+            patch("os.statvfs", return_value=SimpleNamespace(f_bavail=1000, f_frsize=4096, f_favail=1000)),
+            patch("time.time", return_value=1000),
+            redirect_stdout(output),
+        ):
+            exec(_remote_health_script(100, 10), {})
+        return json.loads(output.getvalue()), runner
+
+    def test_probe_reads_generated_sectionless_ini(self):
+        result, runner = self._probe()
+        self.assertTrue(result["healthy"])
+        self.assertEqual(result["external_url"], "https://10.100.0.100:3000/")
+        self.assertTrue(result["remote_lfs_endpoint_configured"])
+        self.assertEqual(runner.call_args.args[0][-1], result["external_url"])
+
+    def test_removed_lfs_staging_directory_checks_existing_parent(self):
+        temporary = "/srv/gogs/data/tmp/lfs-objects"
+        result, runner = self._probe(missing=(temporary, "/srv/gogs/data/tmp"))
+
+        self.assertTrue(result["healthy"])
+        self.assertTrue(result["storage"]["paths_healthy"][temporary])
+        self.assertEqual(result["storage"]["lfs_temp_access_path"], "/srv/gogs/data")
+        self.assertTrue(any(
+            call.args[0] == (
+                "runuser", "-u", "git", "--", "test", "-r", "/srv/gogs/data",
+                "-a", "-w", "/srv/gogs/data", "-a", "-x", "/srv/gogs/data",
+            ) for call in runner.call_args_list
+        ))
+
+    def test_staging_and_persistent_directory_failures_remain_unhealthy(self):
+        temporary = "/srv/gogs/data/tmp/lfs-objects"
+        cases = [
+            {"denied": (temporary,)},
+            {"missing": (temporary,), "denied": ("/srv/gogs/data/tmp",)},
+            {"missing": (temporary,), "non_directories": ("/srv/gogs/data/tmp",)},
+            {"non_directories": (temporary,)},
+            {"missing": ("/srv/gogs/data/lfs-objects",)},
+        ]
+        for options in cases:
+            with self.subTest(options=options):
+                result, _ = self._probe(**options)
+                self.assertFalse(result["healthy"])
+
     def test_remote_probe_uses_noninteractive_sudo_and_parses_json(self):
         payload = _healthy_result()
         completed = SimpleNamespace(

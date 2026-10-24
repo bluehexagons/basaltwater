@@ -613,8 +613,14 @@ class SetupConfig:
     include_pc_dev_apps: bool = False
     include_web_server: bool = False
     include_web_firewall: bool = False
+    target_host: MaybeStr = None  # Client-facing identity retained during target-local setup
 
     def __post_init__(self) -> None:
+        if self.target_host is not None:
+            from lib.validators import validate_host
+
+            if not validate_host(self.target_host):
+                raise ValueError("Invalid target host")
         if self.cloudflare_allow_direct is not None and not isinstance(self.cloudflare_allow_direct, bool):
             raise ValueError("cloudflare_allow_direct must be a boolean")
         if self.disable_web_panel:
@@ -1101,6 +1107,14 @@ class SetupConfig:
     def to_remote_args(self) -> StrList:
         """Generate command line arguments for remote execution."""
         args: StrList = []
+        if self.gogs:
+            target_host = (
+                self.target_host
+                if self.host in {"localhost", "127.0.0.1", "::1"}
+                else self.host
+            )
+            if target_host:
+                args.append(f"--target-host {shlex.quote(target_host)}")
         args.extend(self._homebox_args())
         args.extend(self._ssh_args())
         from lib.maintenance_agent_config import setup_policy_args
@@ -2716,6 +2730,7 @@ class SetupConfig:
         
         return cls(
             host=args.host,
+            target_host=_optional_str_arg(args, 'target_host'),
             username=username,
             system_type=system_type,
             machine_type=machine_type,

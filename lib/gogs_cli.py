@@ -156,9 +156,21 @@ paths = [
     data_path + "/log",
 ]
 path_health = {{}}
+lfs_temp_path = data_path + "/data/tmp/lfs-objects"
+lfs_temp_access_path = lfs_temp_path
+# Gogs removes staging directories at startup and recreates them on upload.
+while not os.path.lexists(lfs_temp_access_path):
+    parent = os.path.dirname(lfs_temp_access_path)
+    if parent == lfs_temp_access_path:
+        break
+    lfs_temp_access_path = parent
 for path in paths:
-    access = run("runuser", "-u", "git", "--", "test", "-r", path, "-a", "-w", path)
-    path_health[path] = os.path.isdir(path) and access.returncode == 0
+    access_path = lfs_temp_access_path if path == lfs_temp_path else path
+    access = run(
+        "runuser", "-u", "git", "--", "test",
+        "-r", access_path, "-a", "-w", access_path, "-a", "-x", access_path,
+    )
+    path_health[path] = os.path.isdir(access_path) and access.returncode == 0
 
 database_path = data_path + "/data/gogs.db"
 database = run("sqlite3", database_path, "PRAGMA quick_check;")
@@ -219,7 +231,8 @@ update_check_stale = (
 )
 
 app = configparser.ConfigParser(interpolation=None)
-app.read(config_path)
+with open(config_path, encoding="utf-8") as source:
+    app.read_string("[DEFAULT]\\n" + source.read())
 external_url = app.get("server", "EXTERNAL_URL", fallback="")
 remote_lfs_endpoint_configured = bool(external_url) and not bool(
     re.match(r"^https?://(?:127\\.0\\.0\\.1|localhost)(?::|/)", external_url)
@@ -308,6 +321,7 @@ print(json.dumps({{
         "min_free_bytes": MIN_FREE_BYTES,
         "min_free_inodes": MIN_FREE_INODES,
         "paths_healthy": path_health,
+        "lfs_temp_access_path": lfs_temp_access_path,
         "usage_bytes": usage,
     }},
     "sqlite_healthy": sqlite_healthy,

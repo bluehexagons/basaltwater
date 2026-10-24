@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -81,6 +81,73 @@ class TestParseGogsSpec(unittest.TestCase):
         self.assertEqual(config.gogs_sources, ["192.168.0.0/24", "10.0.0.5"])
         self.assertIn("--gogs-source 192.168.0.0/24", config.to_remote_args())
         self.assertIn("--gogs-source 10.0.0.5", config.to_setup_command())
+
+
+class TestRemoteGogsIdentity(unittest.TestCase):
+    def test_remote_setup_and_refresh_retain_client_address(self):
+        from remote_setup import config_from_remote_args
+
+        controller = SetupConfig(
+            host="10.100.0.100", username="agent", system_type="server_web",
+            gogs=[":3000", "/srv/gogs"], enable_ssl=True,
+            gogs_sources=["192.168.0.45/32"],
+        )
+        parser = argparse.ArgumentParser()
+        add_setup_arguments(parser, for_remote=True, include_host=False)
+        with patch("remote_setup.resolve_machine_type", return_value="vm"):
+            remote = config_from_remote_args(
+                parser.parse_args(shlex.split(" ".join(controller.to_remote_args())))
+            )
+        self.assertEqual(remote.host, "localhost")
+        self.assertEqual(remote.target_host, controller.host)
+
+        saved = SetupConfig.from_dict("localhost", "server_web", remote.to_dict())
+        with patch("remote_setup.resolve_machine_type", return_value="vm"):
+            refreshed = config_from_remote_args(
+                parser.parse_args(shlex.split(" ".join(saved.to_remote_args())))
+            )
+        for config in (remote, refreshed):
+            with patch("web.gogs_steps._load_or_create_gogs_secret_key", return_value="secret"):
+                content = gogs_steps.generate_gogs_app_ini(
+                    config, git_home="/home/git", data_path="/srv/gogs",
+                    domain="", port=3000, backend_port=13000,
+                )
+            self.assertIn("EXTERNAL_URL = https://10.100.0.100:3000/", content)
+            self.assertIn("SSH_DOMAIN = 10.100.0.100", content)
+            with (
+                patch("web.gogs_steps.generate_self_signed_cert") as certificate,
+                patch("web.gogs_steps._remove_stale_gogs_nginx_sites"),
+                patch("web.gogs_steps.configure_nginx_auth_failure_ban"),
+                patch("web.gogs_steps.os.path.exists", return_value=True),
+                patch("builtins.open", mock_open()) as writer,
+                patch("web.gogs_steps.run", return_value=SimpleNamespace(returncode=0)) as runner,
+            ):
+                gogs_steps._write_gogs_nginx_config(config, "", 3000, 13000)
+                gogs_steps._wait_for_gogs_frontend(config, "", 3000)
+            certificate.assert_called_once_with("10.100.0.100", [])
+            self.assertIn("server_name 10.100.0.100;", writer().write.call_args.args[0])
+            self.assertIn("10.100.0.100:3000:127.0.0.1", runner.call_args.args[0])
+
+    def test_named_and_tunnel_modes_preserve_address_rules(self):
+        config = SetupConfig(
+            host="localhost", target_host="10.100.0.100", username="agent",
+            system_type="server_web", gogs=[":3000"], enable_ssl=True,
+        )
+        self.assertEqual(gogs_steps._gogs_public_host(config, "git.example.test"), "git.example.test")
+        self.assertEqual(gogs_steps._gogs_external_url(config, "", 3000), "https://127.0.0.1:3000/")
+        self.assertEqual(gogs_steps._gogs_public_host(config, ""), "10.100.0.100")
+
+    def test_current_target_replaces_saved_address(self):
+        config = SetupConfig(
+            host="10.100.0.101", target_host="10.100.0.100", username="agent",
+            system_type="server_web", gogs=[":3000"],
+        )
+        self.assertIn("--target-host 10.100.0.101", config.to_remote_args())
+
+    def test_invalid_target_address_is_rejected(self):
+        for host in ("", "10.0.0.1/24", "bad host", "host;id", 123):
+            with self.subTest(host=host), self.assertRaisesRegex(ValueError, "Invalid target host"):
+                SetupConfig(host="localhost", username="agent", system_type="server_web", target_host=host)
 
 
 class TestFetchPreferredGogsRelease(unittest.TestCase):
@@ -1042,6 +1109,30 @@ class TestGogsGitUser(unittest.TestCase):
                     self.assertIn(f"chown -R git:git {shlex.quote(home + '/.ssh')}", commands)
                     self.assertNotIn(f"chown -R git:git {shlex.quote(home)}", commands)
 
+    def test_gogs_dispatch_shell_and_existing_ssh_group_on_create_and_rerun(self):
+        with tempfile.TemporaryDirectory() as home:
+            for existing, group_exists in ((False, True), (True, True), (True, False)):
+                with (
+                    self.subTest(existing=existing, group_exists=group_exists),
+                    patch.object(gogs_steps, "_get_git_home", return_value=home),
+                    patch.object(gogs_steps, "user_exists", return_value=existing),
+                    patch.object(gogs_steps, "run", return_value=SimpleNamespace(
+                        returncode=0 if group_exists else 2,
+                    )) as runner,
+                ):
+                    gogs_steps._ensure_git_user()
+                commands = [call.args[0] for call in runner.call_args_list]
+                if existing:
+                    self.assertIn("usermod -s /bin/sh git", commands)
+                else:
+                    self.assertIn(
+                        f"useradd --create-home --home-dir {shlex.quote(home)} --shell /bin/sh git",
+                        commands,
+                    )
+                self.assertEqual("usermod -aG remoteusers git" in commands, group_exists)
+                self.assertIn("passwd -l git", commands)
+                self.assertFalse(any("git-shell" in command for command in commands))
+
     def test_symlinked_home_or_ssh_paths_are_rejected_before_mutations(self):
         with tempfile.TemporaryDirectory() as directory:
             target = os.path.join(directory, "target")
@@ -1328,6 +1419,15 @@ class TestGogsRequiredSetupSteps(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "Could not reload SSH"):
                 gogs_steps._configure_git_ssh_access()
+            with open(os.path.join(directory, "gogs.conf"), encoding="utf-8") as source:
+                content = source.read()
+            self.assertIn("Match User git\n", content)
+            for restriction in (
+                "PasswordAuthentication no", "KbdInteractiveAuthentication no",
+                "PermitTTY no", "AllowAgentForwarding no", "AllowTcpForwarding no",
+                "X11Forwarding no", "PermitTunnel no",
+            ):
+                self.assertIn(restriction, content)
 
     def test_post_setup_hook_refresh_failure_is_fatal(self):
         failed = SimpleNamespace(returncode=1, stdout="", stderr="failed")

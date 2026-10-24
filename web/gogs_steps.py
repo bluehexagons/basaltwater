@@ -114,7 +114,7 @@ def _gogs_data_path(config: SetupConfig) -> str:
 
 
 def _gogs_public_host(config: SetupConfig, domain: str) -> str:
-    return domain or config.host
+    return domain or config.target_host or config.host
 
 
 def effective_gogs_ipv4_sources(config: SetupConfig) -> list[str]:
@@ -146,7 +146,8 @@ def _gogs_backend_port(config: SetupConfig, public_port: int) -> int:
 def _gogs_external_url(config: SetupConfig, domain: str, port: int) -> str:
     scheme = "https" if config.enable_ssl or config.enable_cloudflare else "http"
     host = domain or (
-        config.host if effective_gogs_ipv4_sources(config) else "127.0.0.1"
+        _gogs_public_host(config, domain)
+        if effective_gogs_ipv4_sources(config) else "127.0.0.1"
     )
     if domain and config.enable_cloudflare:
         return f"{scheme}://{host}/"
@@ -349,13 +350,20 @@ def _ensure_git_user() -> str:
     if not user_exists(GOGS_GIT_USER):
         run(
             f"useradd --create-home --home-dir {shlex.quote(git_home)} "
-            f"--shell /usr/bin/git-shell {shlex.quote(GOGS_GIT_USER)}"
+            f"--shell /bin/sh {shlex.quote(GOGS_GIT_USER)}"
         )
         print(f"  ✓ Created system user: {GOGS_GIT_USER}")
     else:
         run(f"usermod -d {shlex.quote(git_home)} {shlex.quote(GOGS_GIT_USER)}")
-        run(f"usermod -s /usr/bin/git-shell {shlex.quote(GOGS_GIT_USER)}")
+        run(f"usermod -s /bin/sh {shlex.quote(GOGS_GIT_USER)}")
         print(f"  ✓ Using existing system user: {GOGS_GIT_USER}")
+
+    # Gogs forces its own `serv` command for every enrolled key. git-shell
+    # rejects that command before Gogs can authorize the repository operation.
+    # Honor the shared SSH AllowGroups policy without relaxing it globally.
+    group_result = run("getent group remoteusers", check=False)
+    if group_result.returncode == 0:
+        run(f"usermod -aG remoteusers {shlex.quote(GOGS_GIT_USER)}")
 
     run(f"mkdir -p {shlex.quote(ssh_dir)}")
     run(f"touch {shlex.quote(ssh_dir)}/authorized_keys")
@@ -738,7 +746,7 @@ def _write_gogs_nginx_config(
     public_port: int,
     backend_port: int,
 ) -> None:
-    server_name = domain or config.host
+    server_name = _gogs_public_host(config, domain)
     public_tls_port = public_port if config.enable_ssl else None
     loopback_only = not domain and not effective_gogs_ipv4_sources(config)
     if public_tls_port is not None:
@@ -816,6 +824,7 @@ Match User {GOGS_GIT_USER}
     PubkeyAuthentication yes
     PermitTTY no
     X11Forwarding no
+    AllowAgentForwarding no
     AllowTcpForwarding no
     PermitTunnel no
     GatewayPorts no
@@ -1135,9 +1144,10 @@ def _wait_for_gogs_frontend(
         )
     elif config.enable_ssl:
         client_host = domain or (
-            config.host if effective_gogs_ipv4_sources(config) else "127.0.0.1"
+            _gogs_public_host(config, domain)
+            if effective_gogs_ipv4_sources(config) else "127.0.0.1"
         )
-        cert_file, _key_file = get_ssl_cert_path(domain or config.host)
+        cert_file, _key_file = get_ssl_cert_path(_gogs_public_host(config, domain))
         resolve = f"{client_host}:{public_port}:127.0.0.1"
         url = f"https://{client_host}:{public_port}/"
         command = (
@@ -1324,7 +1334,7 @@ def _complete_gogs_setup(
     if not domain and not effective_gogs_ipv4_sources(config):
         print(
             f"  Connect with: ssh -L {port}:127.0.0.1:{port} "
-            f"{config.username}@{config.host}"
+            f"{config.username}@{_gogs_public_host(config, domain)}"
         )
 
 
@@ -1378,11 +1388,11 @@ def setup_gogs(config: SetupConfig) -> None:
     data_path = _gogs_data_path(config)
     if config.enable_cloudflare:
         listen_label = (
-            f"https://{domain or config.host} via Cloudflare "
+            f"https://{_gogs_public_host(config, domain)} via Cloudflare "
             f"-> 127.0.0.1:{backend_port}"
         )
     elif config.enable_ssl:
-        public_host = domain or config.host
+        public_host = _gogs_public_host(config, domain)
         listen_label = f"https://{public_host}:{port} -> 127.0.0.1:{backend_port}"
     elif domain:
         listen_label = f"{domain}:{port} -> 127.0.0.1:{backend_port}"

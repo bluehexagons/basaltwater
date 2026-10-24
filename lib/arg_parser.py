@@ -642,6 +642,7 @@ def add_setup_arguments(
                            help="Friendly name for this configuration")
     
     if for_remote:
+        parser.add_argument("--target-host", default=None, help=argparse.SUPPRESS)
         parser.add_argument("--system-type", dest="system_type", 
                            choices=get_system_type_names(),
                            help="System type to setup")

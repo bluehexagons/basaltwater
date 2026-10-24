@@ -2,8 +2,8 @@
 
 `--gogs` installs a minimal self-hosted Gogs instance with Git-over-SSH, Git
 LFS over HTTP/HTTPS, SQLite storage, nginx integration when a hostname is
-supplied, and a managed weekly release update. The setup creates the `git`
-system account with `git-shell`; it cannot be used as a general login account.
+supplied, and a managed weekly release update. The setup creates a locked
+`git` account. Gogs restricts each enrolled SSH key to its repository dispatcher.
 
 ## Choose a deployment mode
 
@@ -58,6 +58,10 @@ remaining lifetime on rerun and replaces it when fewer than 30 days remain.
 Trust `/etc/nginx/ssl/192.168.1.10.crt` explicitly on each client, or use a
 hostname with Let's Encrypt to avoid certificate warnings. The resulting URL
 is `https://192.168.1.10:3000/`.
+Remote setup retains the target address for certificates, Git clone URLs and
+SSH URLs while running setup commands locally on the target. Saved target
+configuration retains this address for refreshes. An explicit Gogs hostname
+overrides it; tunnel-only mode continues to advertise the loopback web URL.
 
 Source-restricted mode requires active UFW. Setup stops the existing Gogs
 service, installs and verifies replacement source rules, removes obsolete
@@ -67,8 +71,9 @@ public IPv4 sources from either `--gogs-source` or the generic
 unmanaged allow rules for the same port. Generic IPv6 sources remain available
 to other managed services but do not expose Gogs. Omit `--ssl` only when
 plaintext HTTP is intentional on a trusted network. Hostname mode requires
-`--ssl` or `--cloudflare`; a literal IP is hostless mode, and Cloudflare also
-requires a hostname. Let's Encrypt hostname mode rejects source restrictions
+`--ssl` or `--cloudflare`. Use `:PORT` for hostless mode rather than placing a
+literal IP in the Gogs specification. Cloudflare requires a hostname.
+Let's Encrypt hostname mode rejects source restrictions
 because its HTTP-01 renewal listener on port 80 must remain publicly reachable.
 Switching between hostless, hostname, direct TLS, and Cloudflare modes removes
 obsolete managed firewall rules and Gogs nginx sites, including the former
@@ -107,6 +112,11 @@ Setup also checks an existing `git` account's home before changing it. System or
 shared roots and symlinks in the home, `.ssh`, or `authorized_keys` path are
 refused. Ownership changes cover the home directory itself and the managed SSH
 subtree; other contents of an existing home retain their ownership.
+The account uses `/bin/sh` to execute Gogs' forced authorized-key command;
+`git-shell` rejects that dispatcher. When the managed `remoteusers` group
+exists, setup adds `git` to it so the shared SSH group restriction permits
+Git connections. It preserves the global group restriction and locks the
+account password on every rerun.
 
 Reverse-proxied deployments, including hostless `--ssl`, throttle password and
 MFA submission endpoints to five requests per minute per client with a small
@@ -135,7 +145,9 @@ git clone git@git.example.com:team/project.git
 
 The SSH drop-in at `/etc/ssh/sshd_config.d/99-gogs-git-user.conf` permits
 public-key Git operations for `git` while disabling passwords, forwarding, and
-interactive sessions. Keep TCP port 22 reachable when SSH cloning is needed.
+PTY allocation. Gogs writes forced commands into `authorized_keys` to prevent
+shell access; enroll keys through Gogs rather than adding unrestricted keys
+to that file. Keep TCP port 22 reachable when SSH cloning is needed.
 
 ## Data, service, and updates
 
@@ -182,7 +194,11 @@ Run `basaltw gogs health` on the control system. It reads the root-owned
 managed state through non-interactive sudo and reports service and SQLite
 health, the backing filesystem, free bytes and inodes, per-category usage,
 directory access as `git`, the update service/timer, nginx's upload limit, and
-whether a non-loopback LFS HTTP endpoint is configured. For reverse-proxied
+whether a non-loopback LFS HTTP endpoint is configured. Gogs removes its LFS
+staging directory at startup and recreates it on upload. When that directory
+is absent, health checks read, write and traversal access to its nearest
+existing parent and reports that path as `storage.lfs_temp_access_path` in JSON.
+Persistent data directories must still exist. For reverse-proxied
 deployments it also validates nginx configuration and performs a target-local
 request through the configured TLS listener or Cloudflare origin route. It
 does not perform an external client or authentication probe, so a healthy
