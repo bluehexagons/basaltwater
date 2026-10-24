@@ -170,9 +170,10 @@ class NativeControlTests(PrivateHomeTestCase):
             worker.join(1)
 
     def test_cancelled_hold_releases_all_keys_and_invalid_holds_deliver_nothing(self):
-        cancelled = Mock(side_effect=[False, False, False, True])
+        cancelled = threading.Event()
+        self.portal.notify.side_effect = lambda *args: cancelled.set() if args == ("NotifyKeyboardKeysym", "iu", 101, 1) else None
         with patch.object(native, "keysyms", return_value=[100, 101]), self.assertRaisesRegex(RuntimeError, "disconnected"):
-            self.session.handle({**self.payload, "action": "input", "kind": "key", "key": "ctrl+s", "hold_ms": 100, "_cancelled": cancelled})
+            self.session.handle({**self.payload, "action": "input", "kind": "key", "key": "ctrl+s", "hold_ms": 100, "_cancelled": cancelled.is_set})
         self.assertEqual(self.portal.notify.call_args_list[-2:], [call("NotifyKeyboardKeysym", "iu", 101, 0), call("NotifyKeyboardKeysym", "iu", 100, 0)])
         self.portal.reset_mock()
         for hold in (-1, 5001, True, "120"):

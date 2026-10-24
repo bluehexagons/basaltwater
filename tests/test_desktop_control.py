@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -79,6 +80,19 @@ class ControlStateTests(unittest.TestCase):
         self.change("enabled")
         self.assertEqual(control_state.status()["agent_control"], "enabled")
 
+    def test_offline_revoke_migrates_legacy_pause_before_removing_grant(self):
+        native_grants.enable()
+        path = native_grants.directory() / "grant.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "paused": True}))
+        folder = self.home / "runtime"
+        folder.mkdir()
+        with patch.object(native_session, "runtime_directory", return_value=folder), \
+                patch.object(native_session, "request", side_effect=FileNotFoundError):
+            native_session.revoke()
+        self.assertIsNone(native_grants.load())
+        self.assertEqual(control_state.status()["agent_control"], "human-override")
+        self.assertIsNone(control_state.status()["override_until"])
+
     def test_invalid_duration_state_and_unsafe_storage_are_rejected(self):
         for seconds in (True, 0, 59, 86401, 1.5, "900"):
             with self.subTest(seconds=seconds), self.assertRaises(ValueError):
@@ -141,6 +155,24 @@ class ControlStateTests(unittest.TestCase):
         self.assertTrue(session.maintenance)
         self.assertEqual(control_state.status(), current)
 
+    def test_confined_gateway_can_inspect_stopped_backend_without_writing_home(self):
+        from common.service_tools import guacamole_service
+        with patch.object(session_runtime, "configuration", return_value={"desktop": "xfce", "username": "agent"}), \
+                patch.object(session_runtime, "request", side_effect=FileNotFoundError), \
+                patch.object(control_state, "status", side_effect=AssertionError("Gateway has no writable home")):
+            result = asyncio.run(guacamole_service.desktop_call("status"))
+        self.assertEqual(result["state"], "stopped")
+        self.assertNotIn("agent_control", result)
+
+    def test_start_does_not_need_caller_home_before_supervisor_is_running(self):
+        with patch.object(session_runtime, "configuration", return_value={"desktop": "xfce", "username": "agent"}), \
+                patch.object(session_runtime, "session_lock"), \
+                patch.object(session_runtime, "request", side_effect=[FileNotFoundError, {"state": "running"}]), \
+                patch.object(session_runtime.subprocess, "run", return_value=Mock(returncode=0)) as launch, \
+                patch.object(control_state, "status", side_effect=AssertionError("Gateway has no writable home")):
+            self.assertEqual(session_runtime.start()["state"], "running")
+        launch.assert_called_once()
+
     def test_pointer_move_cannot_finish_with_click_after_human_intervention(self):
         process = Mock(pid=1)
         process.poll.return_value = None
@@ -185,6 +217,36 @@ class ControlStateTests(unittest.TestCase):
         keys = [call.args[-2:] for call in portal.notify.call_args_list]
         self.assertEqual(keys, [(ord("a"), 1), (ord("a"), 0)])
         self.assertTrue(completed.is_set())
+
+    def test_native_pointer_and_chord_events_recheck_permission_between_notifications(self):
+        for kind, button in (("click", 1), ("click", 4), ("key", None)):
+            with self.subTest(kind=kind, button=button):
+                self.change("enabled")
+                portal = Mock()
+                session = native_session.NativeSession(portal)
+                session.state = "running"
+                session.node = 17
+                session.logical_size = [800, 600]
+                session.geometry = [800, 600]
+                session.captured = time.monotonic()
+
+                def interrupt(event, *args):
+                    if event == "NotifyPointerMotionAbsolute" or (event == "NotifyKeyboardKeysym" and args[-1] == 1):
+                        self.change("disabled")
+
+                portal.notify.side_effect = interrupt
+                payload = {"action": "input", "generation": session.generation, "geometry": session.geometry,
+                           "kind": kind, "x": 20, "y": 30, "key": "ctrl+a", **control_state.status()}
+                if button is not None:
+                    payload["button"] = button
+                with patch.object(native_session, "keysyms", return_value=[65507, 97]):
+                    with self.assertRaisesRegex(RuntimeError, "disabled"):
+                        session.handle(payload)
+                events = [call.args for call in portal.notify.call_args_list]
+                if kind == "click":
+                    self.assertEqual([args[0] for args in events], ["NotifyPointerMotionAbsolute"])
+                else:
+                    self.assertEqual([args[-2:] for args in events], [(65507, 1), (65507, 0)])
 
     def test_first_permission_write_syncs_ancestor_entries_before_restart(self):
         synced = []

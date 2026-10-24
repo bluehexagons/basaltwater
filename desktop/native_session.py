@@ -172,6 +172,7 @@ def start(*, remember=False, session_seconds=SESSION_SECONDS):
 
 def revoke():
     """Close current control and remove its saved grant through the portal store."""
+    control_state.status()  # Migrate any legacy human pause before deleting its grant.
     folder = runtime_directory(create=True)
     fd = os.open(folder / "start.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
@@ -546,6 +547,7 @@ class NativeSession:
                 raise ValueError("Button must be 1 through 7")
             self.portal.notify("NotifyPointerMotionAbsolute", "udd", self.node,
                 x * self.logical_size[0] / self.geometry[0], y * self.logical_size[1] / self.geometry[1])
+            self.guard(payload)
             if kind == "click":
                 if button >= 4:
                     axis, steps = {4:(0,-1), 5:(0,1), 6:(1,-1), 7:(1,1)}[button]
@@ -575,6 +577,7 @@ class NativeSession:
                 pressed = []
                 try:
                     for key in chord:
+                        self.guard(payload)
                         pressed.append(key)
                         self.portal.notify("NotifyKeyboardKeysym", "iu", key, 1)
                     self.hold(hold_ms, payload)

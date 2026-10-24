@@ -18,9 +18,8 @@ DEFAULT_OVERRIDE_SECONDS = 900
 MODES = ("enabled", "human-override", "disabled")
 
 
-def _private(info, *, directory=False):
-    kind = stat.S_ISDIR if directory else stat.S_ISREG
-    if not kind(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+def _private(info):
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("Unsafe desktop control state; expected private owner-only storage")
 
 

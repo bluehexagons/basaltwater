@@ -119,13 +119,13 @@ def request(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def status() -> dict[str, Any]:
+def status(*, include_control: bool = True) -> dict[str, Any]:
     config = configuration()
     try:
         return request({"action": "status"})
     except (FileNotFoundError, ConnectionRefusedError):
         return {"state": "stopped", "desktop": config["desktop"], "username": config["username"],
-                **control_state.status()}
+                **(control_state.status() if include_control else {})}
 
 
 def set_control(mode, *, seconds=control_state.DEFAULT_OVERRIDE_SECONDS, human_approved=False):
@@ -140,7 +140,9 @@ def start() -> dict[str, Any]:
     """Authenticate to sesman with Unix peer credentials, never a saved password."""
     configuration()
     with session_lock("start.lock"):
-        current = status()
+        # The confined browser gateway has no writable home. A stopped
+        # display needs no local permission read to start its supervisor.
+        current = status(include_control=False)
         if current["state"] == "running":
             return current
         if current["state"] not in {"stopped", "starting"}:
@@ -160,7 +162,7 @@ def start() -> dict[str, Any]:
             # Even a failed/timed-out sesrun request may have created a session.
         deadline = time.monotonic() + START_READY_TIMEOUT
         while time.monotonic() < deadline:
-            current = status()
+            current = status(include_control=False)
             if current["state"] == "running":
                 return current
             time.sleep(0.2)

@@ -83,7 +83,14 @@ async def desktop_call(action: str, *, generation: str | None = None, geometry: 
         payload.update(human_approved=human_approved, override_seconds=override_seconds)
     if action == "control":
         payload.update(mode=mode, seconds=seconds, human_approved=human_approved)
-    function = desktop.start if action == "start" else desktop.status if action == "status" else lambda: desktop.request(payload)
+    # Permission is authoritative in the supervisor. When it is stopped,
+    # this confined gateway cannot initialize or lock the owner's state file.
+    if action == "start":
+        function = desktop.start
+    elif action == "status":
+        function = lambda: desktop.status(include_control=False)
+    else:
+        function = lambda: desktop.request(payload)
     return await asyncio.wait_for(asyncio.to_thread(function), 65 if action == "start" else 35)
 
 
