@@ -48,6 +48,9 @@ to discover existing conventions and close concrete gaps. The
 covers scoped changes, checks and waiting for jobs. Projects do not need every
 manifest, standard directory or optional service.
 
+For reusable rootless Podman test images and task container cleanup, follow the
+[container lifecycle reference](../../common/agent_skills/basaltwater-project-development/references/containers.md).
+
 For artifacts, distinguish reproducible output from review evidence and curated
 history. Follow [project cleanup conventions](project-cleanup.md), preserving
 existing layouts when useful. Reuse the shared generated-output remover instead

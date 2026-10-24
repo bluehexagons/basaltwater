@@ -17,6 +17,8 @@ Keep changes scoped and follow the project's patterns. Update docs for changed
 behavior and durable decisions; put task progress in tracking tools. Keep native
 build/test commands usable without Basaltwater. Reuse shared environment tools
 while retaining project-specific behavior and a documented manual setup route.
+For disposable rootless Podman testing assets, follow the
+[container lifecycle reference](references/containers.md).
 See [project standards](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-standards.md)
 when adopting these conventions.
 
