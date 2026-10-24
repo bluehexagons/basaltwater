@@ -456,6 +456,10 @@ including an earlier attempt's status while waiting for a resumed worker.
 The new username is a fallback when status cannot be read through the
 administrative identity. On resume, either identity can read the staged
 operation; home-selection options and `--dry-run` cannot be changed.
+An authenticated session whose status command is temporarily unavailable waits
+without guessing another login. Once polling reaches the new identity, it
+keeps using it instead of repeatedly trying the retired login and triggering
+failed-login protection.
 
 Preflight also rejects unmanaged systemd fragments and drop-ins that reference
 the old login or home, including overrides of managed services. Reconcile those

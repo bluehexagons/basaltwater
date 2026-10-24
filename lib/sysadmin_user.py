@@ -340,7 +340,9 @@ def _read_status(
     command = shell_join(["sudo", "-n", "cat", _remote_status_path(operation_id)])
     result = _run_ssh(host, username, ssh_key, command, timeout=30)
     if result.returncode != 0:
-        return None
+        # SSH authenticated and the remote command failed (for example while
+        # nologin is installed). Do not guess another login before cutover.
+        return None if result.returncode == 255 else {"status": "unavailable"}
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -424,6 +426,10 @@ def _wait_for_completion(
             status = _read_status(host, username, ssh_key, operation_id)
             if status is None:
                 continue
+            # Once the destination can authenticate, the old login is retired.
+            # Repeated probes would count as failed logins on hardened hosts.
+            if username == new_username:
+                users = [new_username]
             if attempt_id is not None and status.get("attempt_id") != attempt_id:
                 # This identity can read the operation. A stale result means
                 # wait for the worker, not open another PAM session as its user.

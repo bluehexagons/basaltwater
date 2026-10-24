@@ -14,6 +14,24 @@ from lib import sysadmin_user
 
 
 class TestSysadminUser(unittest.TestCase):
+    def test_poll_retains_authenticated_identity_without_reprobing_retired_login(self):
+        progress = {"status": "in_progress", "phase": "configuration-starting"}
+        complete = {"status": "success", "phase": "complete"}
+        with (
+            patch.object(sysadmin_user, "_run_ssh", side_effect=[
+                subprocess.CompletedProcess([], 1, "This account is currently not available.\n", ""),
+                subprocess.CompletedProcess([], 255, "", "Permission denied"),
+                subprocess.CompletedProcess([], 0, json.dumps(progress), ""),
+                subprocess.CompletedProcess([], 0, json.dumps(complete), ""),
+            ]) as ssh,
+            patch.object(sysadmin_user.time, "sleep"),
+        ):
+            self.assertEqual(sysadmin_user._wait_for_completion(
+                "host.example", "olduser", "newuser", None, "0123456789abcdef",
+            ), complete)
+        self.assertEqual([call.args[1] for call in ssh.call_args_list],
+                         ["olduser", "olduser", "newuser", "newuser"])
+
     def test_admin_status_poll_never_opens_new_login_for_progress_or_stale_attempt(self):
         for initial in (
             {"status": "in_progress", "phase": "quiescing", "attempt_id": "new"},
@@ -35,7 +53,7 @@ class TestSysadminUser(unittest.TestCase):
 
     def test_poll_falls_back_to_new_login_only_when_admin_has_no_valid_status(self):
         terminal = {"status": "success", "phase": "complete"}
-        for unavailable in (subprocess.CompletedProcess([], 1, "", "unreachable"), subprocess.CompletedProcess([], 0, "invalid JSON", "")):
+        for unavailable in (subprocess.CompletedProcess([], 255, "", "unreachable"), subprocess.CompletedProcess([], 0, "invalid JSON", "")):
             with self.subTest(unavailable=unavailable), patch.object(sysadmin_user, "_run_ssh", side_effect=[
                 unavailable, subprocess.CompletedProcess([], 0, json.dumps(terminal), ""),
             ]) as ssh:
