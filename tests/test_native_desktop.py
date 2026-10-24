@@ -20,14 +20,21 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 from desktop import native_session as native
-from desktop import native_grants, native_handoff
+from desktop import control_state, native_grants, native_handoff
 from desktop import client
 from desktop.portal import Portal, REMOTE, SCREENCAST
 from lib import desktop_cli
 
 
-class NativeControlTests(unittest.TestCase):
+class PrivateHomeTestCase(unittest.TestCase):
     def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
+
+
+class NativeControlTests(PrivateHomeTestCase):
+    def setUp(self):
+        super().setUp()
         self.portal = Mock(fd=42)
         self.session = native.NativeSession(self.portal)
         self.session.state = "running"
@@ -35,9 +42,9 @@ class NativeControlTests(unittest.TestCase):
         self.session.logical_size = [1280, 720]
         self.session.geometry = [2560, 1440]
         self.session.captured = time.monotonic()
-        self.payload = {"generation": self.session.generation}
-        self.lease = self.session.handle({**self.payload, "action": "acquire"})["lease"]
-        self.payload.update(lease=self.lease, geometry=self.session.geometry)
+        self.payload = {"generation": self.session.generation,
+                        "control_revision": control_state.status()["control_revision"],
+                        "geometry": self.session.geometry}
 
     def test_scaled_pointer_targets_the_consent_selected_stream(self):
         result = self.session.handle({**self.payload, "action": "input", "kind": "click", "x": 400, "y": 200})
@@ -46,20 +53,46 @@ class NativeControlTests(unittest.TestCase):
         self.portal.notify.assert_any_call("NotifyPointerButton", "iu", 272, 1)
         self.portal.notify.assert_any_call("NotifyPointerButton", "iu", 272, 0)
 
-    def test_pause_revokes_lease_and_references_without_stopping_desktop(self):
+    def test_override_revokes_revision_and_references_without_stopping_desktop(self):
         self.session.elements["ref"] = {"pid":42, "observed_at":time.monotonic()}
-        self.session.handle({"action":"pause"})
+        self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
         self.assertFalse(self.session.elements)
-        with self.assertRaisesRegex(RuntimeError, "paused"):
+        with self.assertRaisesRegex(RuntimeError, "human-override"):
             self.session.handle({**self.payload, "action":"input", "kind":"key", "key":"Return"})
-        self.session.handle({"action":"resume"})
-        with self.assertRaisesRegex(RuntimeError, "lease"):
+        self.session.handle({"action": "control", "mode": "enabled", "human_approved": True})
+        with self.assertRaisesRegex(ValueError, "control changed"):
             self.session.handle({**self.payload, "action":"input", "kind":"key", "key":"Return"})
         self.portal.notify.assert_not_called()
 
-    def test_stale_generation_lease_capture_and_out_of_bounds_reject_input(self):
+    def test_control_changes_require_human_approval_and_legacy_actions_are_rejected(self):
+        before = control_state.status()
+        for mode in control_state.MODES:
+            with self.subTest(mode=mode), self.assertRaises(PermissionError):
+                self.session.handle({"action": "control", "mode": mode})
+            self.assertEqual(control_state.status(), before)
+        for action in ("acquire", "release", "pause", "resume"):
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                self.session.handle({**self.payload, "action": action})
+        self.assertEqual(control_state.status(), before)
+        self.portal.notify.assert_not_called()
+
+    def test_blocked_modes_keep_observations_available_and_never_deliver_mutations(self):
+        for mode in ("human-override", "disabled"):
+            self.session.handle({"action": "control", "mode": mode, "human_approved": True})
+            with patch.object(native.accessibility, "worker_request", return_value={"windows": []}) as worker:
+                self.assertEqual(self.session.handle({**self.payload, "action": "windows"})["windows"], [])
+                worker.assert_called_once()
+            with patch.object(native.subprocess, "Popen") as launch:
+                for action in ("input", "element", "exec", "renew"):
+                    with self.subTest(mode=mode, action=action), self.assertRaisesRegex(RuntimeError, mode):
+                        self.session.handle({**self.payload, "action": action})
+                launch.assert_not_called()
+            self.assertEqual(self.session.handle({"action": "status"})["agent_control"], mode)
+        self.portal.notify.assert_not_called()
+
+    def test_stale_generation_revision_capture_and_out_of_bounds_reject_input(self):
         cases = [
-            {"generation":"old"}, {"lease":"old"}, {"geometry":[1280,720]},
+            {"generation":"old"}, {"control_revision":"old"}, {"geometry":[1280,720]},
             {"x":-1}, {"x":2560}, {"button":8},
         ]
         for fields in cases:
@@ -70,6 +103,22 @@ class NativeControlTests(unittest.TestCase):
             self.session.handle({**self.payload,"action":"input","kind":"click","x":1,"y":1})
         self.portal.notify.assert_not_called()
 
+    def test_external_handback_invalidates_accessibility_and_pointer_observations(self):
+        for mode in ("human-override", "disabled", "enabled"):
+            self.session.elements["old"] = {"pid": 42, "observed_at": time.monotonic()}
+            self.session.captured = time.monotonic()
+            current = control_state.change(mode, seconds=None, human_approved=True)
+            self.assertEqual(self.session.snapshot_status()["control_revision"], current["control_revision"])
+            self.assertFalse(self.session.elements)
+            self.assertEqual(self.session.captured, 0)
+        payload = {**self.payload, "control_revision": current["control_revision"]}
+        with self.assertRaisesRegex(ValueError, "recent screenshot"):
+            self.session.handle({**payload, "action": "input", "kind": "click", "x": 1, "y": 1})
+        with patch.object(native.accessibility, "worker_request") as worker, self.assertRaisesRegex(ValueError, "stale"):
+            self.session.handle({**payload, "action": "element", "ref": "old", "operation": "focus"})
+        worker.assert_not_called()
+        self.portal.notify.assert_not_called()
+
     def test_expiration_and_portal_revocation_block_further_actions(self):
         self.session.until = time.monotonic() - 1
         with self.assertRaisesRegex(RuntimeError, "not ready"):
@@ -77,7 +126,7 @@ class NativeControlTests(unittest.TestCase):
         self.session.close()
         self.assertTrue(self.session.stopping.is_set())
         self.assertEqual(self.session.state,"stopped")
-        self.assertIsNone(self.session.lease)
+        self.assertEqual(control_state.status()["agent_control"], "enabled")
         self.portal.notify.assert_not_called()
 
     def test_text_releases_pressed_keys_on_failed_delivery(self):
@@ -97,7 +146,7 @@ class NativeControlTests(unittest.TestCase):
         self.assertGreaterEqual(delivered[-1][0] - delivered[0][0], .119)
         self.assertEqual(delivered[-1][1][-1], 0)
 
-    def test_pause_interrupts_held_pointer_and_releases_before_new_control(self):
+    def test_override_interrupts_held_pointer_and_releases_before_new_control(self):
         pressed = threading.Event()
         errors = []
         self.portal.notify.side_effect = lambda *args: pressed.set() if args == ("NotifyPointerButton", "iu", 272, 1) else None
@@ -110,10 +159,10 @@ class NativeControlTests(unittest.TestCase):
         worker.start()
         try:
             self.assertTrue(pressed.wait(1))
-            self.session.handle({"action": "pause"})
+            self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
             worker.join(1)
             self.assertFalse(worker.is_alive())
-            self.assertIn("paused", errors[0])
+            self.assertIn("human-override", errors[0])
             self.assertEqual(self.portal.notify.call_args.args, ("NotifyPointerButton", "iu", 272, 0))
             self.assertFalse(self.session.input_active)
         finally:
@@ -215,90 +264,184 @@ class NativeControlTests(unittest.TestCase):
             self.session.handle({**self.payload,"deadline":time.monotonic()-1,"action":"input","kind":"text","text":"late"})
         self.portal.notify.assert_not_called()
 
-    def test_renewal_is_bounded_and_cannot_restore_paused_expired_or_old_session(self):
-        result = self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": 28800})
+    def test_default_lifetime_is_unlimited_and_renewal_requires_current_permission(self):
+        self.assertEqual(self.session.session_seconds, 0)
+        self.assertIsNone(self.session.snapshot_status()["expires_in"])
+        result = self.session.handle({**self.payload, "action": "renew", "seconds": 28800})
         self.assertGreater(result["expires_in"], 28790)
-        for seconds in (0, 59, 28801, True, "900"):
+        result = self.session.handle({**self.payload, "action": "renew"})
+        self.assertIsNone(result["expires_in"])
+        for seconds in (-1, 59, 28801, True, "900"):
             with self.subTest(seconds=seconds), self.assertRaises(ValueError):
-                self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": seconds})
+                self.session.handle({**self.payload, "action": "renew", "seconds": seconds})
         with self.assertRaisesRegex(ValueError, "changed"):
-            self.session.handle({"action": "renew", "generation": "old", "seconds": 900})
-        self.session.handle({"action": "pause"})
+            self.session.handle({**self.payload, "action": "renew", "generation": "old", "seconds": 900})
+        self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
         deadline = self.session.until
-        with self.assertRaisesRegex(RuntimeError, "paused"):
-            self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": 900})
+        with self.assertRaisesRegex(RuntimeError, "human-override"):
+            self.session.handle({**self.payload, "action": "renew", "seconds": 900})
         self.assertEqual(self.session.until, deadline)
         self.session.until = time.monotonic() - 1
         with self.assertRaisesRegex(RuntimeError, "not ready"):
             self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": 900})
 
+    def test_override_expiry_enables_fresh_input_without_another_control_request(self):
+        clock = Mock(time=Mock(return_value=1000))
+        with patch.object(control_state, "time", clock):
+            override = self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
+            self.assertEqual(override["override_until"], 1900)
+            clock.time.return_value = 1900
+            current = self.session.handle({"action": "status"})
+            self.assertEqual(current["agent_control"], "enabled")
+            self.assertFalse(current["paused"])
+            self.assertIsNone(current["override_remaining"])
+            with self.assertRaisesRegex(ValueError, "control changed"):
+                self.session.handle({**self.payload, "action": "input", "kind": "text", "text": "a"})
+            # Model a fresh screenshot after expiry invalidates earlier captures.
+            self.session.captured = time.monotonic()
+            self.session.handle({**self.payload, "action": "input", "kind": "text", "text": "a",
+                                 "control_revision": current["control_revision"]})
+            self.assertEqual(control_state.status()["control_revision"], current["control_revision"])
+        self.assertEqual(self.portal.notify.call_args_list,
+                         [call("NotifyKeyboardKeysym", "iu", ord("a"), 1),
+                          call("NotifyKeyboardKeysym", "iu", ord("a"), 0)])
 
-class NativeHandoffTests(unittest.TestCase):
-    def test_only_live_running_session_reports_enabled_input(self):
+
+class NativeHandoffTests(PrivateHomeTestCase):
+    def test_permission_and_backend_availability_are_described_separately(self):
         cases = [
             ({"state": "awaiting-consent", "detail": "Approve KDE"}, "Waiting for KDE response: Approve KDE"),
             ({"state": "awaiting-consent", "detail": "Approve KDE", "consent_expires_in": 45}, "Waiting for KDE response (45 seconds remaining): Approve KDE"),
             ({"state": "initializing", "portal_stage": "CreateSession.request"}, "Initializing native control: CreateSession.request"),
-            ({"state": "failed", "detail": "Permission denied", "paused": True}, "Native desktop control failed: Permission denied"),
-            ({"state": "stopped", "paused": True}, "Automation stopped; KDE and applications are preserved"),
+            ({"state": "failed", "detail": "Permission denied"}, "Native desktop control failed: Permission denied"),
+            ({"state": "stopped"}, "Automation stopped; KDE and applications are preserved"),
             ({"stopped": True}, "Automation stopped; KDE and applications are preserved"),
             ({"state": "running", "expires_in": 0}, "Automation expired; start and inspect KDE permission status"),
-            ({"state": "running", "expires_in": 30, "paused": True}, "Agent input paused — you have control"),
-            ({"state": "running", "expires_in": 30}, "Agent input enabled (30 seconds remaining)"),
-            ({"error": "Socket closed"}, "Native desktop control unavailable: Socket closed"),
+            ({"state": "running", "expires_in": None}, "Native desktop backend running"),
+            ({"state": "running", "expires_in": 30}, "Native desktop backend running"),
             ({}, "Native desktop control unavailable: Inspect desktop status"),
         ]
         for status, expected in cases:
             with self.subTest(status=status):
-                self.assertEqual(native_handoff.describe(status), expected)
+                self.assertEqual(native_handoff.describe({**status, "agent_control": "enabled"}),
+                                 "Agents enabled\n" + expected)
+        for permission, label in (({"agent_control": "enabled", "paused": True}, "Agents enabled"),
+                                  ({"agent_control": "disabled", "paused": False}, "Agents disabled"),
+                                  ({"agent_control": "human-override", "override_remaining": 900}, "Human override — 15 min remaining"),
+                                  ({"agent_control": "human-override", "override_remaining": None}, "Human override — until you enable agents")):
+            with self.subTest(permission=permission):
+                self.assertEqual(native_handoff.describe({"state": "running", "expires_in": None, **permission}),
+                                 label + "\nNative desktop backend running")
+        error = native_handoff.describe({"error": "Socket closed"})
+        self.assertIn("Native desktop control unavailable: Socket closed", error)
+        self.assertNotIn("Agents enabled", error)
 
     def test_human_requests_wait_for_poll_instead_of_being_discarded(self):
-        gtk, glib = Mock(), Mock()
-        label = Mock()
-        gtk.Label.side_effect = [label, Mock()]
-        buttons = [Mock(), Mock(), Mock(), Mock()]
-        gtk.Button.side_effect = buttons
-        workers, responses = [], []
-        glib.idle_add.side_effect = lambda callback, result: responses.append((callback, result))
+        for selection, seconds in (("900", 900), ("indefinite", None)):
+            with self.subTest(selection=selection):
+                gtk, glib = Mock(), Mock()
+                labels, buttons, workers, responses = {}, {}, [], []
+                gtk.Label.side_effect = lambda **kwargs: labels.setdefault(kwargs.get("label", ""), Mock())
+                gtk.Button.side_effect = lambda **kwargs: buttons.setdefault(kwargs["label"], Mock())
+                glib.idle_add.side_effect = lambda callback, result: responses.append((callback, result))
 
-        def thread(*, target, daemon):
-            return Mock(start=lambda: workers.append(target))
+                def thread(*, target, daemon):
+                    return Mock(start=lambda: workers.append(target))
 
-        def interact():
-            # The initial status poll is still in flight when the human clicks.
-            for button in (buttons[0], buttons[2]):
-                button.connect.call_args.args[1](button)
-            self.assertEqual(len(workers), 1)
-            self.assertEqual(label.set_text.call_args.args, ("Control request pending: stop",))
-            # Another poll must neither start nor displace the queued controls.
-            glib.timeout_add_seconds.call_args.args[1]()
-            workers.pop(0)()
-            callback, result = responses.pop(0)
-            callback(result)
-            self.assertEqual(label.set_text.call_args.args, ("Updating desktop control: pause",))
-            workers.pop(0)()
-            callback, result = responses.pop(0)
-            callback(result)
-            self.assertEqual(label.set_text.call_args.args, ("Updating desktop control: stop",))
-            workers.pop(0)()
-            callback, result = responses.pop(0)
-            callback(result)
-            self.assertEqual(label.set_text.call_args.args, ("Automation stopped; KDE and applications are preserved",))
-            self.assertFalse(workers)
+                def change(mode, **options):
+                    return {"state": "running", "expires_in": None, **control_state.change(mode, **options)}
 
-        gtk.main.side_effect = interact
-        with patch.dict(sys.modules, {"gi": Mock(), "gi.repository": SimpleNamespace(Gtk=gtk, GLib=glib)}), \
-                patch.object(native_handoff.threading, "Thread", side_effect=thread), \
-                patch.object(native, "status", return_value={"state": "running", "expires_in": 30}) as status, \
-                patch.object(native, "request", side_effect=[
-                    {"state": "running", "expires_in": 30, "paused": True}, {"stopped": True}
-                ]) as request:
-            self.assertEqual(native_handoff.main(), 0)
-        status.assert_called_once_with()
-        self.assertEqual(request.call_args_list, [call({"action": "pause"}), call({"action": "stop"})])
+                def interact():
+                    duration = gtk.ComboBoxText.return_value
+                    duration.set_active_id.assert_called_once_with("900")
+                    duration.get_active_id.return_value = selection
+                    # The initial poll stays in flight while all human actions queue.
+                    for title in ("Take control", "Enable agents", "Disable agents", "Stop backend"):
+                        button = buttons[title]
+                        button.connect.call_args.args[1](button)
+                    self.assertEqual(len(workers), 1)
+                    glib.timeout_add_seconds.call_args.args[1]()
+                    for _ in range(5):
+                        workers.pop(0)()
+                        callback, result = responses.pop(0)
+                        callback(result)
+                    self.assertFalse(workers)
+                    self.assertFalse(responses)
+                    self.assertEqual(labels["Checking agent permission…"].set_text.call_args.args, ("Agents disabled",))
+                    self.assertEqual(labels["Checking backend…"].set_text.call_args.args,
+                                     ("Automation stopped; KDE and applications are preserved",))
+
+                gtk.main.side_effect = interact
+                with patch.dict(sys.modules, {"gi": Mock(), "gi.repository": SimpleNamespace(Gtk=gtk, GLib=glib)}), \
+                        patch.object(native_handoff.threading, "Thread", side_effect=thread), \
+                        patch.object(native, "status", return_value={"state": "running", "expires_in": None,
+                                                                    **control_state.status()}) as status, \
+                        patch.object(native, "set_control", side_effect=change) as set_control, \
+                        patch.object(native, "request", return_value={"stopped": True}) as request:
+                    self.assertEqual(native_handoff.main(), 0)
+                status.assert_called_once_with()
+                self.assertEqual(set_control.call_args_list, [
+                    call("human-override", seconds=seconds, human_approved=True),
+                    call("enabled", seconds=seconds, human_approved=True),
+                    call("disabled", seconds=seconds, human_approved=True)])
+                request.assert_called_once_with({"action": "stop"})
 
 
-class NativeCliTests(unittest.TestCase):
+class NativeCliTests(PrivateHomeTestCase):
+    def test_control_cli_routes_approved_states_and_override_durations_to_selected_backend(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        for backend, prefix in ((native, ["--native"]), (desktop_cli.runtime, [])):
+            for mode, duration, seconds in (("enabled", [], 900), ("disabled", [], 900),
+                                            ("human-override", [], 900),
+                                            ("human-override", ["--seconds", "60"], 60),
+                                            ("human-override", ["--indefinite"], None)):
+                with self.subTest(backend=backend.__name__, mode=mode, seconds=seconds), \
+                        patch.object(backend, "set_control", return_value={"state": "stopped", "agent_control": mode}) as change, \
+                        patch.object(backend, "start") as start, redirect_stdout(StringIO()):
+                    args = parser.parse_args(["desktop", *prefix, "control", mode, "--human-approved", *duration])
+                    self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+                    change.assert_called_once_with(mode, seconds=seconds, human_approved=True)
+                    start.assert_not_called()
+
+    def test_control_cli_cannot_change_permission_without_approval_even_when_stopped(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        before = control_state.change("disabled", human_approved=True)
+        for backend, prefix in ((native, ["--native"]), (desktop_cli.runtime, [])):
+            for mode in control_state.MODES:
+                with self.subTest(backend=backend.__name__, mode=mode), \
+                        patch.object(desktop_cli.runtime, "configuration"), \
+                        patch.object(backend, "request", side_effect=FileNotFoundError), redirect_stdout(output := StringIO()):
+                    args = parser.parse_args(["desktop", *prefix, "control", mode])
+                    self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+                    self.assertIn("explicit human approval", json.loads(output.getvalue())["error"])
+                    self.assertEqual(control_state.status(), before)
+
+    def test_control_cli_rejects_legacy_states_and_invalid_duration_combinations(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        for mode in ("pause", "resume", "acquire", "release"):
+            with self.subTest(mode=mode), patch("sys.stderr", new_callable=StringIO), self.assertRaises(SystemExit):
+                parser.parse_args(["desktop", "control", mode])
+        for mode, duration in (("enabled", ["--indefinite"]), ("disabled", ["--seconds", "60"])):
+            with self.subTest(mode=mode), patch.object(native, "set_control") as change, redirect_stdout(StringIO()):
+                args = parser.parse_args(["desktop", "--native", "control", mode, "--human-approved", *duration])
+                self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+                change.assert_not_called()
+
+    def test_default_start_and_renewal_use_unlimited_native_lifetime(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        with patch.object(native, "start", return_value={"state": "running"}) as start, redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(parser.parse_args(["desktop", "--native", "start"])), 0)
+        start.assert_called_once_with(remember=False, session_seconds=0)
+        with patch.object(native, "status", return_value={"control_revision": "r"}), \
+                patch.object(native, "request", return_value={"state": "running"}) as request, redirect_stdout(StringIO()):
+            args = parser.parse_args(["desktop", "--native", "renew", "--generation", "g"])
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+        request.assert_called_once_with({"action": "renew", "generation": "g", "control_revision": "r", "seconds": 0})
+
     def test_persistent_start_and_renewal_arguments_reach_only_native_backend(self):
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers())
@@ -307,9 +450,9 @@ class NativeCliTests(unittest.TestCase):
             self.assertEqual(desktop_cli.run_desktop_command(args), 0)
         start.assert_called_once_with(remember=True, session_seconds=28800)
         args = parser.parse_args(["desktop", "--native", "renew", "--generation", "current", "--seconds", "3600"])
-        with patch.object(native, "request", return_value={"state": "running"}) as request, redirect_stdout(StringIO()):
+        with patch.object(native, "status", return_value={"control_revision": "r"}), patch.object(native, "request", return_value={"state": "running"}) as request, redirect_stdout(StringIO()):
             self.assertEqual(desktop_cli.run_desktop_command(args), 0)
-        request.assert_called_once_with({"action": "renew", "generation": "current", "seconds": 3600})
+        request.assert_called_once_with({"action": "renew", "generation": "current", "seconds": 3600, "control_revision": "r"})
         args = parser.parse_args(["desktop", "start", "--remember"])
         with patch.object(desktop_cli.runtime, "start") as xrdp, redirect_stdout(StringIO()):
             self.assertEqual(desktop_cli.run_desktop_command(args), 1)
@@ -370,12 +513,40 @@ class NativeCliTests(unittest.TestCase):
 
     def test_paced_input_uses_the_selected_backend_and_is_revocable(self):
         backend=Mock()
-        backend.request.side_effect=[{},RuntimeError("human paused")]
+        backend.request.side_effect=[{},RuntimeError("human-override")]
         with patch.object(client.time,"sleep"):
-            result=client.send_action({"action":"input","generation":"g","lease":"l","geometry":[1280,720],"kind":"text","text":"abc","delay_ms":10},backend=backend)
+            result=client.send_action({"action":"input","generation":"g","control_revision":"r","geometry":[1280,720],"kind":"text","text":"abc","delay_ms":10},backend=backend)
         self.assertEqual(result["submitted_characters"],1)
-        self.assertIn("human paused",result["error"])
+        self.assertIn("human-override",result["error"])
         self.assertEqual(backend.request.call_count,2)
+
+
+class BackendControlTests(PrivateHomeTestCase):
+    def test_stopped_backends_change_persistent_permission_without_starting(self):
+        for backend in (native, desktop_cli.runtime):
+            for error in (FileNotFoundError, ConnectionRefusedError):
+                with self.subTest(backend=backend.__name__, error=error.__name__), \
+                        patch.object(desktop_cli.runtime, "configuration"), \
+                        patch.object(backend, "request", side_effect=error) as request, \
+                        patch.object(backend, "start") as start:
+                    result = backend.set_control("human-override", seconds=None, human_approved=True)
+                    self.assertEqual(result["state"], "stopped")
+                    self.assertEqual(result["agent_control"], "human-override")
+                    self.assertIsNone(result["override_until"])
+                    self.assertEqual(result["control_revision"], control_state.status()["control_revision"])
+                    request.assert_called_once_with({"action": "control", "mode": "human-override",
+                                                    "seconds": None, "human_approved": True})
+                    start.assert_not_called()
+
+    def test_lost_control_reply_does_not_replay_or_replace_persistent_choice(self):
+        before = control_state.status()
+        for backend in (native, desktop_cli.runtime):
+            with self.subTest(backend=backend.__name__), patch.object(desktop_cli.runtime, "configuration"), \
+                    patch.object(backend, "request", side_effect=ConnectionResetError("reply lost")) as request:
+                with self.assertRaises(ConnectionResetError):
+                    backend.set_control("disabled", human_approved=True)
+                request.assert_called_once()
+                self.assertEqual(control_state.status(), before)
 
 
 class PortalContractTests(unittest.TestCase):
@@ -518,11 +689,7 @@ class PortalContractTests(unittest.TestCase):
         calls.assert_called_once_with("org.freedesktop.portal.Session", "Close", "()", (), path="session")
 
 
-class NativeGrantTests(unittest.TestCase):
-    def setUp(self):
-        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.enterContext(patch.object(native_grants.Path, "home", return_value=self.home))
-
+class NativeGrantTests(PrivateHomeTestCase):
     def test_tokens_are_private_consumed_once_rotated_and_omitted_from_metadata(self):
         native_grants.enable()
         native_grants.save_token("first-token")
@@ -537,20 +704,23 @@ class NativeGrantTests(unittest.TestCase):
         self.assertEqual(native_grants.consume(), "next-token")
         self.assertIsNone(native_grants.consume())
 
-    def test_saved_pause_survives_restart_and_cannot_be_resumed_by_renewal(self):
+    def test_indefinite_override_survives_restart_and_cannot_be_changed_by_renewal(self):
         native_grants.enable()
         native_grants.save_token("token")
         session = native.NativeSession(Mock(), remember=True)
-        session.handle({"action": "pause"})
-        self.assertTrue(native_grants.metadata()["paused"])
-        restored = native.NativeSession(Mock(), remember=True, paused=native_grants.metadata()["paused"])
+        session.handle({"action": "control", "mode": "human-override", "seconds": None, "human_approved": True})
+        current = control_state.status()
+        session.close()
+        restored = native.NativeSession(Mock(), remember=True)
         restored.state = "running"
-        with self.assertRaisesRegex(RuntimeError, "paused"):
-            restored.handle({"action": "acquire", "generation": restored.generation})
-        with self.assertRaisesRegex(RuntimeError, "paused"):
-            restored.handle({"action": "renew", "generation": restored.generation})
-        restored.handle({"action": "resume"})
-        self.assertFalse(native_grants.metadata()["paused"])
+        self.assertEqual(restored.snapshot_status()["agent_control"], "human-override")
+        self.assertIsNone(restored.snapshot_status()["override_until"])
+        with self.assertRaisesRegex(RuntimeError, "human-override"):
+            restored.handle({"action": "renew", "generation": restored.generation,
+                             "control_revision": current["control_revision"]})
+        self.assertEqual(control_state.status(), current)
+        restored.handle({"action": "control", "mode": "enabled", "human_approved": True})
+        self.assertFalse(control_state.status()["paused"])
 
     def test_stop_retains_grant_but_revoke_deletes_portal_permission_and_saved_token(self):
         native_grants.enable()
@@ -653,7 +823,8 @@ class NativeGrantTests(unittest.TestCase):
     def test_plain_start_keeps_remembered_pause_after_interrupted_restoration(self):
         native_grants.enable()
         native_grants.save_token("consumed-token")
-        native_grants.set_paused(True)
+        path = native_grants.directory() / "grant.json"
+        path.write_text(json.dumps({**native_grants.load(), "paused": True}))
         native_grants.consume()
         runtime = self.home / "runtime"
         runtime.mkdir(mode=0o700)
@@ -693,8 +864,9 @@ class NativeGrantTests(unittest.TestCase):
         self.assertNotIn("private-token", json.dumps(session.snapshot_status()))
 
 
-class NativeReceiptTests(unittest.TestCase):
+class NativeReceiptTests(PrivateHomeTestCase):
     def setUp(self):
+        super().setUp()
         self.enterContext(patch.object(native_grants, "metadata", return_value={"remember_requested": False, "grant_saved": False, "paused": False}))
 
     def test_initializing_and_last_failure_remain_available_after_helper_exit(self):

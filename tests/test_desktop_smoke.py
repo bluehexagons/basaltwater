@@ -20,6 +20,7 @@ class SmokeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name) / "smoke"
         self.directory.mkdir()
+        self.enterContext(patch.object(smoke.runtime, "status", return_value={"control_revision": "r"}))
         self.calls = []
         self.save = True
         self.window = {"id": "0x42", "pid": 42, "identity": "fresh"}
@@ -36,8 +37,6 @@ class SmokeTests(unittest.TestCase):
 
     def handle_request(self, payload):
         self.calls.append(payload)
-        if payload["action"] == "acquire":
-            return {"lease": "lease"}
         if payload["action"] == "exec":
             return {"pid": 42, "launch": "launch"}
         if payload.get("ref") == "Save" and self.save:
@@ -62,6 +61,8 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual((close["window"], close["identity"]), ("0x42", "fresh"))
         self.wait_for_window.assert_called_with("g", pid=42, condition="absent")
         self.assertTrue(all(p["generation"] == "g" for p in self.calls))
+        self.assertTrue(all(p["control_revision"] == "r" for p in self.calls))
+        self.assertFalse(any(p["action"] in ("control", "acquire", "release", "pause", "resume") for p in self.calls))
 
     def test_failed_save_preserves_files_and_never_claims_success_or_closes(self):
         self.save = False
@@ -85,7 +86,7 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(result["stage"], "edit")
         self.assertFalse(any(p["action"] == "element" for p in self.calls))
 
-    def test_mutation_failure_releases_lease_and_is_not_retried(self):
+    def test_mutation_failure_is_not_retried_or_followed_by_more_mutations(self):
         def fail(payload):
             if payload["action"] == "element":
                 raise RuntimeError("human paused")
@@ -96,7 +97,7 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(result["error"], "human paused")
         actions = [c.args[0]["action"] for c in self.request_mock.call_args_list]
         self.assertEqual(actions.count("element"), 1)
-        self.assertEqual(actions[-1], "release")
+        self.assertEqual(actions, ["exec", "element"])
 
     def test_missing_geany_does_not_create_files_or_launch(self):
         self.which.return_value = None

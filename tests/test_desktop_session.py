@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from desktop import session_runtime as runtime
-from desktop import client
+from desktop import client, control_state
 from desktop import setup_logout
 from desktop.session_steps import assert_desktop_idle, configure_session_service, install_session_runtime, prepare_shared_desktop
 from lib.config import SetupConfig
@@ -25,6 +25,8 @@ from lib.setup_report import SetupReport
 
 class DesktopControlTests(unittest.TestCase):
     def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
         ready = patch.object(runtime, "window_manager_ready", return_value=True)
         ready.start()
         self.addCleanup(ready.stop)
@@ -38,30 +40,80 @@ class DesktopControlTests(unittest.TestCase):
         self.process.poll.return_value = None
         self.session = runtime.DesktopSession({"desktop": "xfce", "username": "agent"}, self.process)
 
-    def acquire(self):
-        return self.session.handle({"action": "acquire", "generation": self.session.generation})
+    def mutation_context(self):
+        return {"generation": self.session.generation,
+                "control_revision": control_state.status()["control_revision"]}
 
-    def test_human_takeover_revokes_lease_but_keeps_observation(self):
-        lease = self.acquire()
-        self.session.handle({"action": "pause"})
-        with self.assertRaisesRegex(RuntimeError, "paused"):
-            self.session.handle({"action": "exec", **lease, "argv": ["editor"]})
+    def test_human_takeover_revokes_revision_but_keeps_observation(self):
+        context = self.mutation_context()
+        self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
+        with self.assertRaisesRegex(RuntimeError, "human-override"):
+            self.session.handle({"action": "exec", **context, "argv": ["editor"]})
         self.assertEqual(self.session.handle({"action": "status"})["state"], "running")
-        self.session.handle({"action": "resume"})
-        with self.assertRaisesRegex(ValueError, "lease"):
-            self.session.handle({"action": "exec", **lease, "argv": ["editor"]})
+        self.session.handle({"action": "control", "mode": "enabled", "human_approved": True})
+        with self.assertRaisesRegex(ValueError, "control changed"):
+            self.session.handle({"action": "exec", **context, "argv": ["editor"]})
 
-    def test_second_agent_cannot_interleave_control(self):
-        lease = self.acquire()
-        with self.assertRaisesRegex(RuntimeError, "leased"):
-            self.acquire()
-        self.session.handle({"action": "release", **lease})
-        self.assertNotEqual(self.acquire()["lease"], lease["lease"])
+    @patch.object(runtime.subprocess, "Popen", return_value=Mock(pid=42))
+    def test_enabled_tasks_launch_without_acquiring_or_releasing_control(self, popen):
+        context = self.mutation_context()
+        for _ in range(2):
+            self.session.handle({"action": "exec", **context, "argv": ["editor"]})
+        self.assertEqual(popen.call_count, 2)
+        self.assertEqual(self.mutation_context(), context)
+
+    def test_observation_discards_references_after_external_control_change(self):
+        for mode in ("disabled", "human-override", "enabled"):
+            self.session.elements["old"] = {"pid": 42, "observed_at": 1}
+            current = control_state.change(mode, seconds=None, human_approved=True)
+            observed = self.session.handle({"action": "status"})
+            self.assertEqual(observed["control_revision"], current["control_revision"])
+            self.assertFalse(self.session.elements)
+
+    @patch.object(runtime, "run_tool")
+    @patch.object(runtime.subprocess, "Popen")
+    def test_maintenance_logout_preserves_each_mode_and_blocks_later_input(self, popen, tool):
+        for mode in control_state.MODES:
+            with self.subTest(mode=mode):
+                current = control_state.change(mode, seconds=None, human_approved=True)
+                result = self.session.handle({"action": "maintenance-logout", "generation": self.session.generation})
+                self.assertTrue(result["logout_requested"])
+                self.assertEqual(control_state.status(), current)
+                for action in ("input", "exec", "logout"):
+                    with self.assertRaises(RuntimeError):
+                        self.session.handle({"action": action, **self.mutation_context(),
+                                             "geometry": [1280, 720], "kind": "key", "key": "Return"})
+        self.assertEqual(popen.call_count, len(control_state.MODES))
+        tool.assert_not_called()
+        self.process.terminate.assert_not_called()
+
+    @patch.object(runtime, "run_tool")
+    @patch.object(runtime.subprocess, "Popen", side_effect=OSError("logout unavailable"))
+    def test_failed_maintenance_logout_still_blocks_inputs_and_preserves_permission(self, popen, tool):
+        current = control_state.status()
+        with self.assertRaisesRegex(OSError, "logout unavailable"):
+            self.session.handle({"action": "maintenance-logout", "generation": self.session.generation})
+        with self.assertRaisesRegex(RuntimeError, "logging out"):
+            self.session.handle({"action": "input", **self.mutation_context(), "kind": "key", "key": "Return"})
+        self.assertEqual(control_state.status(), current)
+        tool.assert_not_called()
+
+    @patch.object(runtime.subprocess, "Popen")
+    def test_unapproved_control_and_legacy_actions_do_not_change_permission(self, popen):
+        before = control_state.status()
+        for mode in control_state.MODES:
+            with self.subTest(mode=mode), self.assertRaises(PermissionError):
+                self.session.handle({"action": "control", "mode": mode})
+        for action in ("acquire", "release", "pause", "resume"):
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                self.session.handle({"action": action, **self.mutation_context()})
+        self.assertEqual(control_state.status(), before)
+        popen.assert_not_called()
 
     @patch.object(runtime, "run_tool")
     def test_stale_session_and_geometry_never_send_input(self, tool):
-        lease = self.acquire()
-        payload = {"action": "input", **lease, "geometry": [800, 600], "kind": "click", "x": 20, "y": 30}
+        context = self.mutation_context()
+        payload = {"action": "input", **context, "geometry": [800, 600], "kind": "click", "x": 20, "y": 30}
         with self.assertRaisesRegex(ValueError, "geometry changed"):
             self.session.handle(payload)
         payload["generation"] = "old-session"
@@ -72,7 +124,7 @@ class DesktopControlTests(unittest.TestCase):
     @patch.object(runtime.subprocess, "Popen")
     def test_application_launch_uses_argv_and_desktop_process_group(self, popen):
         popen.return_value.pid = 42
-        result = self.session.handle({"action": "exec", **self.acquire(), "argv": ["editor", "$(not-a-shell)"]})
+        result = self.session.handle({"action": "exec", **self.mutation_context(), "argv": ["editor", "$(not-a-shell)"]})
         self.assertEqual(result["pid"], 42)
         self.assertEqual(popen.call_args.args[0], ["editor", "$(not-a-shell)"])
         self.assertEqual(popen.call_args.kwargs["process_group"], self.process.pid)
@@ -80,7 +132,7 @@ class DesktopControlTests(unittest.TestCase):
     @patch.object(runtime.subprocess, "Popen")
     def test_application_launch_preserves_caller_directory(self, popen):
         with tempfile.TemporaryDirectory() as directory:
-            self.session.handle({"action": "exec", **self.acquire(),
+            self.session.handle({"action": "exec", **self.mutation_context(),
                                  "argv": ["editor", "relative.txt"], "cwd": directory})
             self.assertEqual(popen.call_args.kwargs["cwd"], directory)
 
@@ -88,8 +140,8 @@ class DesktopControlTests(unittest.TestCase):
     def test_launch_exit_status_remains_observable_during_pause(self, popen):
         popen.return_value.pid = 42
         popen.return_value.poll.return_value = 7
-        result = self.session.handle({"action": "exec", **self.acquire(), "argv": ["editor"]})
-        self.session.handle({"action": "pause"})
+        result = self.session.handle({"action": "exec", **self.mutation_context(), "argv": ["editor"]})
+        self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})
         observed = self.session.handle({"action": "launch-status", "generation": self.session.generation,
                                         "launch": result["launch"]})
         self.assertEqual(observed["returncode"], 7)
@@ -104,17 +156,19 @@ class DesktopControlTests(unittest.TestCase):
 
     @patch.object(runtime.subprocess, "Popen")
     def test_invalid_application_directory_does_not_launch(self, popen):
-        lease = self.acquire()
+        context = self.mutation_context()
         for cwd in ("relative", 12):
             with self.subTest(cwd=cwd), self.assertRaisesRegex(ValueError, "absolute directory"):
-                self.session.handle({"action": "exec", **lease, "argv": ["editor"], "cwd": cwd})
+                self.session.handle({"action": "exec", **context, "argv": ["editor"], "cwd": cwd})
         popen.assert_not_called()
 
-    def test_expired_lease_is_rejected(self):
-        lease = self.acquire()
-        self.session.lease_until = 0
-        with self.assertRaisesRegex(ValueError, "lease"):
-            self.session.handle({"action": "exec", **lease, "argv": ["editor"]})
+    @patch.object(runtime.subprocess, "Popen")
+    def test_missing_or_stale_revision_is_rejected_before_launch(self, popen):
+        for revision in (None, "old"):
+            with self.subTest(revision=revision), self.assertRaisesRegex(ValueError, "control changed"):
+                self.session.handle({"action": "exec", "generation": self.session.generation,
+                                     "control_revision": revision, "argv": ["editor"]})
+        popen.assert_not_called()
 
     @patch.object(runtime, "window_manager_ready", return_value=False)
     def test_starting_desktop_is_not_reported_ready(self, ready):
@@ -126,7 +180,7 @@ class DesktopControlTests(unittest.TestCase):
         self.assertEqual(result["state"], "starting")
         self.assertIsNone(result["geometry"])
         self.assertEqual(result["detail"], "display initializing")
-        self.assertTrue(self.session.handle({"action": "pause"})["paused"])
+        self.assertTrue(self.session.handle({"action": "control", "mode": "human-override", "human_approved": True})["paused"])
 
     @patch.object(runtime, "geometry")
     def test_stopping_status_does_not_query_dead_display(self, geometry):
@@ -145,47 +199,47 @@ class DesktopControlTests(unittest.TestCase):
             return ""
 
         tool.side_effect = respond
-        lease = self.acquire()
+        context = self.mutation_context()
         for kind in ("move", "move", "click", "click"):
-            result = self.session.handle({"action": "input", **lease,
+            result = self.session.handle({"action": "input", **context,
                 "geometry": [1280, 720], "kind": kind, "x": 10, "y": 20})
             self.assertEqual(result["geometry"], [1280, 720])
         self.assertEqual(sum(call.args[0][1] == "click" for call in tool.call_args_list), 2)
 
     @patch.object(runtime, "run_tool")
     def test_unconfirmed_pointer_destination_never_clicks(self, tool):
-        lease = self.acquire()
+        context = self.mutation_context()
         for location in ("X=11\nY=20", "X=10\nY=21", "X=10", "invalid"):
             with self.subTest(location=location):
                 tool.reset_mock()
                 tool.return_value = location
                 with self.assertRaisesRegex(RuntimeError, "Pointer did not reach"):
-                    self.session.handle({"action": "input", **lease,
+                    self.session.handle({"action": "input", **context,
                         "geometry": [1280, 720], "kind": "click", "x": 10, "y": 20})
                 self.assertEqual(tool.call_count, 1)
 
     @patch.object(runtime, "run_tool")
     def test_invalid_pointer_coordinates_never_move(self, tool):
-        lease = self.acquire()
+        context = self.mutation_context()
         for x, y in ((-1, 20), (1280, 20), (10, 720), (True, 20)):
             with self.subTest(x=x, y=y), self.assertRaisesRegex(ValueError, "outside"):
-                self.session.handle({"action": "input", **lease,
+                self.session.handle({"action": "input", **context,
                     "geometry": [1280, 720], "kind": "move", "x": x, "y": y})
         tool.assert_not_called()
 
     @patch.object(runtime, "run_tool")
     def test_invalid_click_does_not_even_move_pointer(self, tool):
         with self.assertRaisesRegex(ValueError, "Button"):
-            self.session.handle({"action": "input", **self.acquire(), "geometry": [1280, 720],
+            self.session.handle({"action": "input", **self.mutation_context(), "geometry": [1280, 720],
                                  "kind": "click", "x": 10, "y": 10, "button": 9})
         tool.assert_not_called()
 
     @patch.object(runtime, "run_tool")
     def test_malformed_input_kind_is_rejected_without_losing_session(self, tool):
-        lease = self.acquire()
+        context = self.mutation_context()
         for kind in ([], {}, None):
             with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "input kind"):
-                self.session.handle({"action": "input", **lease,
+                self.session.handle({"action": "input", **context,
                                      "geometry": [1280, 720], "kind": kind})
         self.assertEqual(self.session.snapshot_status()["state"], "running")
         tool.assert_not_called()
@@ -207,7 +261,7 @@ class DesktopControlTests(unittest.TestCase):
     def test_window_capture_preserves_desktop_coordinates_and_does_not_focus(self, tool, details, ids):
         details.return_value = {"id": "0x123", "title": "Editor", "origin": [10, 20],
                                 "geometry": [640, 480], "visible": True}
-        self.session.paused = True
+        control_state.change("human-override", human_approved=True)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "app.png"
             tool.side_effect = lambda argv: path.write_bytes(
@@ -339,22 +393,26 @@ xwininfo: Window id: 0x123 "Editor"
 
     @patch.object(runtime.subprocess, "Popen")
     def test_logout_requests_desktop_logout_without_killing_other_services(self, popen):
-        result = self.session.handle({"action": "logout", **self.acquire()})
+        result = self.session.handle({"action": "logout", **self.mutation_context()})
         self.assertTrue(result["logout_requested"])
         popen.assert_called_once_with(["xfce4-session-logout", "--logout"], process_group=self.process.pid)
         self.process.terminate.assert_not_called()
 
 
 class DesktopProductivityTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(runtime, "status", return_value={
+            "state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}))
+
     @patch.object(client.time, "sleep")
     @patch.object(runtime, "request", return_value={"generation": "g", "geometry": [1280, 720]})
-    def test_paced_text_preserves_unicode_and_reuses_guarded_lease(self, request, sleep):
-        payload = {"action": "input", "generation": "g", "lease": "l", "geometry": [1280, 720],
+    def test_paced_text_preserves_unicode_and_reuses_observed_revision(self, request, sleep):
+        payload = {"action": "input", "generation": "g", "control_revision": "r", "geometry": [1280, 720],
                    "kind": "text", "text": "Aé中", "delay_ms": 10}
         self.assertEqual(client.send_action(payload)["submitted_characters"], 3)
         self.assertEqual([call.args[0]["text"] for call in request.call_args_list], list("Aé中"))
         for call in request.call_args_list:
-            self.assertEqual(call.args[0]["lease"], "l")
+            self.assertEqual(call.args[0]["control_revision"], "r")
             self.assertEqual(call.args[0]["geometry"], [1280, 720])
             self.assertNotIn("delay_ms", call.args[0])
         self.assertEqual(sleep.call_count, 2)
@@ -362,7 +420,7 @@ class DesktopProductivityTests(unittest.TestCase):
     @patch.object(client.time, "sleep")
     @patch.object(runtime, "request", side_effect=[{"generation": "g"}, RuntimeError("paused")])
     def test_paced_text_stops_after_takeover_without_replaying(self, request, sleep):
-        result = client.send_action({"action": "input", "generation": "g", "lease": "l",
+        result = client.send_action({"action": "input", "generation": "g", "control_revision": "r",
             "geometry": [1280, 720], "kind": "text", "text": "abc", "delay_ms": 10})
         self.assertEqual(result["submitted_characters"], 1)
         self.assertIn("paused", result["error"])
@@ -372,7 +430,7 @@ class DesktopProductivityTests(unittest.TestCase):
     @patch.object(client.time, "monotonic", side_effect=[0, 21])
     @patch.object(runtime, "request")
     def test_paced_text_deadline_prevents_more_input(self, request, clock):
-        result = client.send_action({"action": "input", "generation": "g", "lease": "l",
+        result = client.send_action({"action": "input", "generation": "g", "control_revision": "r",
             "geometry": [1280, 720], "kind": "text", "text": "abc", "delay_ms": 10})
         self.assertEqual(result["submitted_characters"], 0)
         self.assertIn("budget", result["error"])
@@ -389,9 +447,8 @@ class DesktopProductivityTests(unittest.TestCase):
         request.assert_not_called()
 
     @patch.object(client.time, "sleep")
-    @patch.object(runtime, "request", side_effect=[{"lease": "l"}, {"generation": "g"},
-                                                 RuntimeError("geometry changed"), {}])
-    def test_paced_sequence_stops_and_releases_lease_on_partial_input(self, request, sleep):
+    @patch.object(runtime, "request", side_effect=[{"generation": "g"}, RuntimeError("geometry changed")])
+    def test_paced_sequence_stops_on_partial_input_without_replaying(self, request, sleep):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "steps.json"
             path.write_text(json.dumps([{"action": "input", "kind": "text", "text": "abc",
@@ -400,7 +457,8 @@ class DesktopProductivityTests(unittest.TestCase):
             result = client.run_sequence(str(path), "g")
         self.assertEqual(result["completed"], 0)
         self.assertEqual(result["failed_action"]["submitted_characters"], 1)
-        self.assertEqual(request.call_args.args[0]["action"], "release")
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(all(call.args[0]["control_revision"] == "r" for call in request.call_args_list))
         self.assertFalse(any(call.args[0].get("key") == "Return" for call in request.call_args_list))
 
     @patch.object(client, "check_dependencies", return_value={"available": True})
@@ -471,23 +529,42 @@ class DesktopProductivityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Timed out"):
             client.wait_for_window("g", window="0x123", condition="absent", timeout=1)
 
-    @patch.object(runtime, "request", side_effect=[{"lease": "l"}, {"ok": True}, RuntimeError("paused"), {}])
-    def test_sequence_releases_control_and_reports_partial_completion(self, request):
+    @patch.object(runtime, "request", side_effect=[{"ok": True}, RuntimeError("human-override")])
+    def test_sequence_reports_partial_completion_without_further_mutations(self, request):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "steps.json"
             path.write_text(json.dumps([{"action": "windows"}, {"action": "input"}]))
             result = client.run_sequence(str(path), "g")
         self.assertEqual(result["completed"], 1)
-        self.assertEqual(result["error"], "paused")
-        self.assertEqual(request.call_args.args[0], {"action": "release", "generation": "g", "lease": "l"})
+        self.assertEqual(result["error"], "human-override")
+        self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["windows", "input"])
+
+    @patch.object(runtime, "request", return_value={"output": "/private/first.png"})
+    def test_sequence_stops_even_read_only_steps_after_control_or_session_changes(self, request):
+        before = {"state": "running", "generation": "g", "control_revision": "r", "agent_control": "enabled"}
+        for change in ({"generation": "new"}, {"control_revision": "new"},
+                       {"agent_control": "human-override"}, {"agent_control": "disabled"}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "steps.json"
+                path.write_text(json.dumps([{"action": "screenshot", "output": "/private/first.png"},
+                                            {"action": "windows"}]))
+                request.reset_mock()
+                with patch.object(runtime, "status", side_effect=[before, before, {**before, **change}]):
+                    result = client.run_sequence(str(path), "g")
+                self.assertEqual(result["completed"], 1)
+                self.assertIn("error", result)
+                request.assert_called_once_with({"action": "screenshot", "output": "/private/first.png",
+                                                "generation": "g", "control_revision": "r"})
 
     @patch.object(runtime, "request")
-    def test_sequence_rejects_embedded_control_before_acquiring(self, request):
+    def test_sequence_rejects_embedded_control_before_sending_actions(self, request):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "steps.json"
-            path.write_text('[{"action":"input","lease":"other"}]')
-            with self.assertRaisesRegex(ValueError, "embedded"):
-                client.run_sequence(str(path), "g")
+            for field in ("generation", "control_revision", "lease"):
+                with self.subTest(field=field):
+                    path.write_text(json.dumps([{"action": "input", field: "other"}]))
+                    with self.assertRaisesRegex(ValueError, "embedded"):
+                        client.run_sequence(str(path), "g")
         request.assert_not_called()
 
     def test_capture_artifact_paths_are_private_unique_and_reject_symlinks(self):
@@ -500,7 +577,7 @@ class DesktopProductivityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "owned by you"):
                 client.artifact_path()
 
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"})
     @patch.object(runtime, "request")
     def test_invalid_launch_wait_does_not_start_an_application(self, request, status):
         parser = argparse.ArgumentParser()
@@ -705,11 +782,47 @@ class DesktopMigrationTests(unittest.TestCase):
 
 class DesktopSetupLogoutTests(unittest.TestCase):
     def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
         for patcher in (patch.object(runtime, "configuration"), patch.object(runtime, "session_lock"),
                         patch.object(setup_logout.Path, "exists", return_value=True),
                         patch.object(setup_logout.time, "sleep")):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_new_protocol_logs_out_once_without_changing_any_permission_mode(self):
+        for mode in control_state.MODES:
+            with self.subTest(mode=mode):
+                current = control_state.change(mode, seconds=None, human_approved=True)
+                with patch.object(runtime, "status", side_effect=[{"state": "running", "generation": "g", **current},
+                                                                  {"state": "stopping", "generation": "g", **current},
+                                                                  {"state": "stopped", **current}]), \
+                        patch.object(runtime, "request", return_value={"logout_requested": True}) as request:
+                    self.assertTrue(setup_logout.logout_for_setup())
+                request.assert_called_once_with({"action": "maintenance-logout", "generation": "g"})
+                self.assertEqual(control_state.status(), current)
+
+    def test_new_protocol_lost_reply_waits_without_replaying_or_changing_permission(self):
+        for error in (ConnectionResetError("reset"), BrokenPipeError("pipe"),
+                      ValueError("Incomplete desktop request")):
+            with self.subTest(error=type(error).__name__):
+                current = control_state.change("disabled", human_approved=True)
+                with patch.object(runtime, "status", side_effect=[{"state": "running", "generation": "g", **current},
+                                                                  {"state": "stopped", **current}]), \
+                        patch.object(runtime, "request", side_effect=error) as request:
+                    self.assertTrue(setup_logout.logout_for_setup())
+                request.assert_called_once_with({"action": "maintenance-logout", "generation": "g"})
+                self.assertEqual(control_state.status(), current)
+
+    def test_new_protocol_canceled_logout_fails_without_enabling_agents(self):
+        current = control_state.change("human-override", seconds=None, human_approved=True)
+        with patch.object(runtime, "status", return_value={"state": "running", "generation": "g", **current}), \
+                patch.object(runtime, "request", return_value={"logout_requested": True}) as request, \
+                patch.object(setup_logout.time, "monotonic", side_effect=[0, 61]):
+            with self.assertRaisesRegex(RuntimeError, "did not finish"):
+                setup_logout.logout_for_setup()
+        request.assert_called_once_with({"action": "maintenance-logout", "generation": "g"})
+        self.assertEqual(control_state.status(), current)
 
     @patch.object(runtime, "status", side_effect=[{"state": "running", "generation": "g"},
                                                  ConnectionResetError(104, "Connection reset by peer"),
@@ -903,6 +1016,10 @@ class DesktopServiceTests(unittest.TestCase):
 
 
 class DesktopSupervisorTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(Path, "home", return_value=self.home))
+
     def test_failed_desktop_launch_removes_control_socket(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(runtime, "configuration", return_value={"desktop": "xfce", "username": "agent"}), \
@@ -948,9 +1065,9 @@ class DesktopSupervisorTests(unittest.TestCase):
 
 
 class DesktopCliTests(unittest.TestCase):
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
-    @patch.object(runtime, "request", side_effect=[{"lease": "l"}, RuntimeError("paused"), {}])
-    def test_cli_paced_input_reports_failure_and_releases_lease(self, request, status):
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"})
+    @patch.object(runtime, "request", side_effect=RuntimeError("human-override"))
+    def test_cli_paced_input_reports_failure_without_replaying(self, request, status):
         parser = argparse.ArgumentParser()
         add_desktop_subparser(parser.add_subparsers())
         args = parser.parse_args(["desktop", "input", "--generation", "g", "--geometry", "1280", "720",
@@ -959,13 +1076,14 @@ class DesktopCliTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(run_desktop_command(args), 1)
         self.assertEqual(json.loads(output.getvalue())["submitted_characters"], 0)
-        self.assertEqual(request.call_args.args[0]["action"], "release")
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["control_revision"], "r")
 
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
-    @patch.object(runtime, "request", side_effect=[{"windows": []}, {"lease": "l"},
-                                                 {"pid": 42, "launch": "token", "generation": "g"}, {}])
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"})
+    @patch.object(runtime, "request", side_effect=[{"windows": []},
+                                                 {"pid": 42, "launch": "token", "generation": "g"}])
     @patch.object(client, "wait_for_window", side_effect=RuntimeError("Timed out"))
-    def test_launch_wait_failure_preserves_pid_and_releases_control(self, wait, request, status):
+    def test_launch_wait_failure_preserves_pid_without_relaunching(self, wait, request, status):
         parser = argparse.ArgumentParser()
         add_desktop_subparser(parser.add_subparsers())
         args = parser.parse_args(["desktop", "exec", "--wait-window", "Editor", "--", "editor"])
@@ -976,9 +1094,9 @@ class DesktopCliTests(unittest.TestCase):
         self.assertEqual(result["launch"], "token")
         self.assertEqual(result["pid"], 42)
         self.assertEqual(result["error"], "Timed out")
-        self.assertEqual(request.call_args.args[0]["action"], "release")
+        self.assertEqual([call.args[0]["action"] for call in request.call_args_list], ["windows", "exec"])
 
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "current"})
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "current", "control_revision": "r"})
     @patch.object(runtime, "request", return_value={"output": "/tmp/app.png"})
     def test_window_screenshot_routes_without_acquiring_control(self, request, status):
         parser = argparse.ArgumentParser()
@@ -986,7 +1104,7 @@ class DesktopCliTests(unittest.TestCase):
         args = parser.parse_args(["desktop", "screenshot", "--window", "0x123", "--output", "/tmp/app.png"])
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(run_desktop_command(args), 0)
-        request.assert_called_once_with({"action": "screenshot", "generation": "current",
+        request.assert_called_once_with({"action": "screenshot", "generation": "current", "control_revision": "r",
                                         "window": "0x123", "active_window": False, "output": "/tmp/app.png"})
 
     @patch.object(runtime, "status", return_value={"state": "starting"})
@@ -999,14 +1117,15 @@ class DesktopCliTests(unittest.TestCase):
         self.assertIn("starting", json.loads(output.getvalue())["error"])
         request.assert_not_called()
 
-    @patch.object(runtime, "status", return_value={"state": "running", "generation": "current"})
-    @patch.object(runtime, "request", side_effect=[{"lease": "mine"}, {"pid": 42}, {"released": True}])
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "current", "control_revision": "r"})
+    @patch.object(runtime, "request", return_value={"pid": 42})
     def test_exec_sends_the_invoking_shell_directory(self, request, status):
         args = argparse.Namespace(desktop_command="exec", argv=["--", "editor", "relative.txt"])
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(run_desktop_command(args), 0)
-        self.assertEqual(request.call_args_list[1].args[0]["cwd"], str(Path.cwd()))
-        self.assertEqual(request.call_args_list[1].args[0]["argv"], ["editor", "relative.txt"])
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0]["cwd"], str(Path.cwd()))
+        self.assertEqual(request.call_args.args[0]["argv"], ["editor", "relative.txt"])
 
     def test_lite_server_reconciles_firewall_before_enabling_rdp(self):
         from plugins.server import build_server_steps
