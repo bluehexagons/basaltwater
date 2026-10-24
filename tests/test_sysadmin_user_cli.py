@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from basaltwater import create_basaltwater_parser
@@ -10,6 +11,18 @@ from lib import sysadmin_user
 
 
 class TestSysadminUserCli(unittest.TestCase):
+    def test_default_admin_remains_saved_account_with_explicit_admin_override(self):
+        parser, _, _ = create_basaltwater_parser()
+        config = SimpleNamespace(username="olduser", ssh_key=None)
+        for options, expected_admin in (([], "olduser"), (["--admin-user", "root"], "root")):
+            with self.subTest(options=options):
+                args = parser.parse_args(["user", "rename", "server.example", "newuser", *options])
+                with patch.object(sysadmin_user, "load_setup_command", return_value=config):
+                    admin, key, saved = sysadmin_user._resolve_credentials(args.host, args.admin_user, None)
+                self.assertEqual(admin, expected_admin)
+                self.assertIsNone(key)
+                self.assertIs(saved, config)
+
     def test_rename_parser(self):
         parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args(

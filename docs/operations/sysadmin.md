@@ -449,9 +449,13 @@ mounted or symlinked homes, conflicting cron/mail or managed SMB credential
 files, and unmanaged system configuration references are rejected. Historical
 setup records are not rewritten. The target user's SSH session is expected to
 disconnect during the migration, so the systemd start request is detached
-from that session. On resume, the controller tries both the configured
-administrative identity and the new username; home-selection options and
-`--dry-run` cannot be changed during a resume.
+from that session. Prefer a separate administrative account with
+`--admin-user` to observe the job without starting sessions for the account
+being renamed. Polling uses that identity while it can read a valid status,
+including an earlier attempt's status while waiting for a resumed worker.
+The new username is a fallback when status cannot be read through the
+administrative identity. On resume, either identity can read the staged
+operation; home-selection options and `--dry-run` cannot be changed.
 
 Preflight also rejects unmanaged systemd fragments and drop-ins that reference
 the old login or home, including overrides of managed services. Reconcile those
@@ -465,9 +469,25 @@ Interrupted operations retain their original login shell and managed service
 activation snapshots in the private target operation directory under
 `/var/lib/basaltwater/user-renames/OPERATION_ID/`. Resume rechecks safety before
 identity cutover without replacing those recovery facts with the temporary
-`nologin` shell or stopped service state. An identity or managed-unit inventory
-change blocks recovery for inspection. Each resume records a durable attempt
-ID before starting the detached job; the controller waits for that attempt's
+`nologin` shell or stopped service state. An identity, external login shell, or
+managed-unit inventory change blocks recovery for inspection. Failure cleanup
+restores the original shell only after the current worker installed its
+temporary shell, and only while that shell and the recorded UID/GID still
+match; a rejected external shell change is preserved.
+
+Fresh cutover changes the login and home with one native `usermod` invocation.
+If interrupted after the login changed, resume checks the renamed account's
+UID, primary GID, shell, and current home before stopping its managed units and
+terminating its live sessions and user manager again. It moves the home only
+when the account still points to the recorded original directory and the
+destination is absent. An already moved home is retained. Unexpected or
+missing homes, or both home paths existing, block recovery for inspection
+rather than replaying an uncertain move. These checks preserve the original
+shell and service snapshots. Concurrent logins can still make native account
+tools reject a busy user; keep the affected account logged out during recovery.
+
+Each resume records a durable attempt ID before starting the detached job;
+the controller waits for that attempt's
 result, so an earlier failed status cannot terminate the new wait. If the new
 worker cannot start or acknowledge the attempt, the command reports the
 operation as in progress or unreachable and retains the same `--resume` path.

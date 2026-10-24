@@ -199,19 +199,51 @@ class TestUserRenameHelpers(unittest.TestCase):
     def test_resume_failure_restores_durable_original_shell(self):
         self._exercise_resume("identity-starting", fail_identity=True)
 
-    def _exercise_resume(self, phase, *, fail_identity=False):
+    def test_fresh_login_and_home_cutover_uses_one_native_command(self):
+        self._exercise_resume(None, move_home=True)
+
+    def test_partial_cutover_requiesces_live_renamed_account_and_only_moves_missing_home(self):
+        for phase in ("identity-renamed", "identity-starting"):
+            for home_moved in (False, True):
+                with self.subTest(phase=phase, home_moved=home_moved):
+                    self._exercise_resume(phase, move_home=True, renamed=True, home_moved=home_moved)
+
+    def test_rejected_external_shell_drift_does_not_run_usermod_or_stop_services(self):
+        for renamed in (False, True):
+            with self.subTest(renamed=renamed):
+                self._exercise_resume("identity-renamed" if renamed else "prepared", renamed=renamed, drift="shell")
+
+    def test_partial_identity_or_home_drift_is_rejected_before_mutation(self):
+        for drift in ("uid", "gid", "home", "both-homes", "missing-home"):
+            with self.subTest(drift=drift):
+                self._exercise_resume("identity-renamed", move_home=True, renamed=True, drift=drift)
+
+    def _exercise_resume(self, phase, *, fail_identity=False, move_home=False, renamed=False, home_moved=False, drift=None):
         with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
             root = Path(tmpdir)
             home = root / "home"
             home.mkdir()
+            new_home = root / "alice2" if move_home else home
+            if home_moved:
+                home.rename(new_home)
+            if drift == "both-homes":
+                new_home.mkdir()
+            if drift == "missing-home":
+                home.rmdir()
             operation_id = "0123456789abcdef"
             units = [{"path": str(root / "unit.service"), "unit": "unit.service", "kind": "service", "enabled": True, "active": True}]
-            facts = dict(old_uid=os.getuid(), old_gid=os.getgid(), old_shell="/bin/bash", old_home=str(home), new_home=str(home),
+            facts = dict(old_uid=os.getuid(), old_gid=os.getgid(), old_shell="/bin/bash", old_home=str(home), new_home=str(new_home),
                          primary_group="users", rename_primary_group=False, managed_units=units,
                          machine_state_present=False, setup_config_present=False, linger_enabled=False)
-            manifest = dict(operation_id=operation_id, old_username="alice", new_username="alice2", keep_home=True, **facts)
+            manifest = dict(operation_id=operation_id, old_username="alice", new_username="alice2", keep_home=not move_home, **facts)
             events = []
-            accounts = {"alice": pwd.struct_passwd(("alice", "x", os.getuid(), os.getgid(), "", str(home), "/usr/sbin/nologin"))}
+            initial_name = "alice2" if renamed else "alice"
+            accounts = {initial_name: pwd.struct_passwd((
+                initial_name, "x", os.getuid() + int(drift == "uid"), os.getgid() + int(drift == "gid"), "",
+                str(root / "external") if drift == "home" else str(new_home if home_moved else home),
+                "/bin/zsh" if drift == "shell" else "/bin/bash" if renamed or phase is None else "/usr/sbin/nologin",
+            ))}
+            live = True
 
             def account(username):
                 if username not in accounts:
@@ -219,12 +251,21 @@ class TestUserRenameHelpers(unittest.TestCase):
                 return accounts[username]
 
             def run(argv, **_kwargs):
+                nonlocal live
                 events.append(tuple(argv))
+                if argv[:2] == ["systemctl", "stop"] and argv[-1].startswith("user@"):
+                    live = False
                 if argv[:2] == ["usermod", "-l"]:
+                    self.assertFalse(live, "native rename must follow user manager termination")
                     if fail_identity:
                         raise user_rename.RenameError("identity interrupted")
                     old = accounts.pop("alice")
                     accounts["alice2"] = pwd.struct_passwd(("alice2", *old[1:]))
+                if argv[:1] == ["usermod"] and "-d" in argv:
+                    self.assertFalse(live, "native home move must follow user manager termination")
+                    home.rename(new_home)
+                    old = accounts["alice2"]
+                    accounts["alice2"] = pwd.struct_passwd((*old[:5], str(new_home), old.pw_shell))
                 if argv[:2] == ["usermod", "-s"]:
                     old = accounts[argv[-1]]
                     accounts[argv[-1]] = pwd.struct_passwd((*old[:-1], argv[2]))
@@ -234,28 +275,48 @@ class TestUserRenameHelpers(unittest.TestCase):
                                 ("SETUP_CONFIG_FILE", str(root / "setup.json")), ("LINGER_DIR", str(root / "linger"))):
                 stack.enter_context(patch.object(user_rename, name, value))
             Path(user_rename._operation_dir(operation_id)).mkdir(parents=True)
-            user_rename._write_marker(manifest, phase)
+            if phase is not None:
+                user_rename._write_marker(manifest, phase)
             stack.enter_context(patch.object(user_rename, "_require_root"))
             stack.enter_context(patch.object(user_rename, "_account", side_effect=account))
             stack.enter_context(patch.object(user_rename, "_run", side_effect=run))
-            current = {**facts, "old_shell": "/usr/sbin/nologin", "managed_units": [{**units[0], "active": False, "enabled": False}]}
+            current = {**facts, "old_shell": accounts[initial_name].pw_shell,
+                       "managed_units": [{**units[0], "active": False, "enabled": False}] if phase else units}
             preflight = stack.enter_context(patch.object(user_rename, "_preflight", side_effect=lambda _m: events.append("preflight") or current))
             backup = stack.enter_context(patch.object(user_rename, "_backup_files"))
-            stack.enter_context(patch.object(user_rename, "_terminate_user", side_effect=lambda _a: events.append("terminate")))
+            stack.enter_context(patch.object(user_rename, "_processes_for_uid", side_effect=lambda _uid: [12345] if live else []))
+            stack.enter_context(patch.object(user_rename.os, "kill", side_effect=AssertionError("manager stop must drain fixture processes")))
             for name in ("_rename_cron_and_mail", "_rename_linger", "_rewrite_group_memberships", "_rewrite_state_files",
                          "_rewrite_subordinate_id_files", "_rewrite_sudoers", "_rename_managed_credentials", "_rewrite_managed_units",
                          "_rewrite_managed_home_files", "_restore_t3_user_service", "_verify_managed_rewrites", "_verify_group_memberships",
                          "_verify_subordinate_id_files", "_cleanup_operation"):
                 stack.enter_context(patch.object(user_rename, name))
-            self.assertEqual(user_rename._run_migration_locked({"operation_id": operation_id}), int(fail_identity))
-            preflight.assert_called_once()
-            backup.assert_not_called()
+            self.assertEqual(user_rename._run_migration_locked(manifest if phase is None else {"operation_id": operation_id}), int(fail_identity or bool(drift)))
+            if renamed:
+                preflight.assert_not_called()
+            else:
+                preflight.assert_called_once()
+            self.assertEqual(backup.call_count, int(phase is None))
             saved = user_rename._read_json(user_rename._marker_path(operation_id))
             self.assertEqual(saved["old_shell"], "/bin/bash")
             self.assertEqual(saved["managed_units"], units)
-            self.assertLess(events.index("preflight"), events.index(("systemctl", "stop", "unit.service")))
-            self.assertLess(events.index(("systemctl", "stop", "unit.service")), events.index("terminate"))
-            self.assertLess(events.index("terminate"), events.index(("usermod", "-l", "alice2", "alice")))
+            if drift:
+                self.assertEqual(events, [] if renamed else ["preflight"])
+                self.assertEqual(accounts[initial_name].pw_shell, current["old_shell"])
+                return
+            if not renamed:
+                self.assertLess(events.index("preflight"), events.index(("systemctl", "stop", "unit.service")))
+            shell_change = ("usermod", "-s", "/usr/sbin/nologin", initial_name)
+            manager_stop = ("systemctl", "stop", f"user@{os.getuid()}.service")
+            self.assertLess(events.index(("systemctl", "stop", "unit.service")), events.index(shell_change))
+            self.assertLess(events.index(shell_change), events.index(manager_stop))
+            identity_commands = [event for event in events if isinstance(event, tuple) and event[0] == "usermod" and ("-l" in event or "-d" in event)]
+            expected = [] if renamed else [("usermod", "-l", "alice2", *(["-d", str(new_home), "-m"] if move_home else []), "alice")]
+            if renamed and move_home and not home_moved:
+                expected = [("usermod", "-d", str(new_home), "-m", "alice2")]
+            self.assertEqual(identity_commands, expected)
+            for command in identity_commands:
+                self.assertLess(events.index(manager_stop), events.index(command))
             final_name = "alice" if fail_identity else "alice2"
             self.assertEqual(accounts[final_name].pw_shell, "/bin/bash")
             if not fail_identity:
@@ -547,6 +608,7 @@ class TestUserRenameHelpers(unittest.TestCase):
                     "old_username": "olduser",
                     "new_username": "newuser",
                     "old_uid": 1000,
+                    "old_gid": 1000,
                     "old_shell": "/bin/bash",
                 }
             )
@@ -555,6 +617,20 @@ class TestUserRenameHelpers(unittest.TestCase):
             ["usermod", "-s", "/bin/bash", "newuser"],
             check=False,
         )
+
+    def test_failure_shell_restore_preserves_external_shell_or_identity_changes(self):
+        for uid, gid, shell in ((1000, 1000, "/bin/zsh"), (2000, 1000, "/usr/sbin/nologin"), (1000, 2000, "/usr/sbin/nologin")):
+            with self.subTest(uid=uid, gid=gid, shell=shell):
+                account = pwd.struct_passwd(("newuser", "x", uid, gid, "", "/home/newuser", shell))
+                with (
+                    patch.object(user_rename, "_account", return_value=account),
+                    patch.object(user_rename, "_run") as run,
+                ):
+                    user_rename._restore_login_shell_after_failure({
+                        "old_username": "olduser", "new_username": "newuser", "old_uid": 1000,
+                        "old_gid": 1000, "old_shell": "/bin/bash",
+                    })
+                run.assert_not_called()
 
     def test_preflight_rejects_root(self):
         account = pwd.struct_passwd(

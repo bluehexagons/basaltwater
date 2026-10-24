@@ -425,13 +425,16 @@ def _wait_for_completion(
             if status is None:
                 continue
             if attempt_id is not None and status.get("attempt_id") != attempt_id:
-                continue
+                # This identity can read the operation. A stale result means
+                # wait for the worker, not open another PAM session as its user.
+                break
             phase = status.get("phase")
             if isinstance(phase, str) and phase != last_phase:
                 print(f"  Rename {operation_id}: {phase}")
                 last_phase = phase
             if status.get("status") in {"success", "failed"}:
                 return status
+            break
         time.sleep(POLL_INTERVAL_SECONDS)
     return None
 

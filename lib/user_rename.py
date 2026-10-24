@@ -739,7 +739,8 @@ def _restore_t3_user_service(username: str, uid: int, home: str) -> None:
 
 
 def _terminate_user(account: pwd.struct_passwd) -> None:
-    _run(["usermod", "-s", "/usr/sbin/nologin", account.pw_name])
+    """Drain processes after the caller has installed the temporary shell."""
+
     _run(["loginctl", "terminate-user", account.pw_name], check=False)
     _run(["systemctl", "stop", f"user@{account.pw_uid}.service"], check=False)
     deadline = time.monotonic() + 30
@@ -1313,7 +1314,7 @@ def _run_migration(manifest: dict[str, Any]) -> int:
 
 
 def _restore_login_shell_after_failure(manifest: dict[str, Any]) -> None:
-    """Best-effort restoration of whichever account name owns the old UID."""
+    """Restore an attempt-owned temporary shell, preserving external changes."""
 
     old_shell = manifest.get("old_shell")
     old_uid = manifest.get("old_uid")
@@ -1327,16 +1328,54 @@ def _restore_login_shell_after_failure(manifest: dict[str, Any]) -> None:
             account = _account(username)
         except RenameError:
             continue
-        if account.pw_uid != old_uid:
+        if (
+            account.pw_uid != old_uid
+            or account.pw_gid != manifest.get("old_gid")
+            or account.pw_shell != "/usr/sbin/nologin"
+        ):
             continue
         _run(["usermod", "-s", old_shell, username], check=False)
         return
+
+
+def _validate_renamed_account(manifest: dict[str, Any]) -> pwd.struct_passwd:
+    """Inspect a partial native cutover before applying any missing steps."""
+
+    try:
+        _account(manifest["old_username"])
+    except RenameError:
+        pass
+    else:
+        raise RenameError("Old account name still exists during rename recovery")
+    account = _account(manifest["new_username"])
+    if account.pw_uid != manifest["old_uid"] or account.pw_gid != manifest["old_gid"]:
+        raise RenameError("Renamed account UID or primary GID does not match the recorded identity")
+    if account.pw_shell not in {manifest["old_shell"], "/usr/sbin/nologin"}:
+        raise RenameError("Account shell changed outside the rename operation")
+    old_home, new_home = manifest["old_home"], manifest["new_home"]
+    if account.pw_dir not in {old_home, new_home}:
+        raise RenameError("Renamed account home does not match either recorded path")
+    home = account.pw_dir
+    if os.path.islink(home) or not os.path.isdir(home):
+        raise RenameError("Recorded account home must be a regular directory")
+    if os.stat(home, follow_symlinks=False).st_uid != account.pw_uid:
+        raise RenameError("Recorded account home is not owned by the account")
+    if old_home != new_home:
+        other_home = new_home if home == old_home else old_home
+        if os.path.lexists(other_home):
+            raise RenameError("Both recorded home paths exist; inspect the interrupted home move")
+        if os.path.ismount(home):
+            raise RenameError("Moving a mounted home directory is not supported")
+        if home == old_home and not os.path.isdir(os.path.dirname(new_home)):
+            raise RenameError("Destination home parent is not a directory")
+    return account
 
 
 def _run_migration_locked(manifest: dict[str, Any]) -> int:
     _require_root()
     operation_id = manifest["operation_id"]
     _write_status(operation_id, "starting", "in_progress")
+    temporary_shell_owned = False
     try:
         saved_manifest = _read_json(_marker_path(operation_id))
         if saved_manifest:
@@ -1346,12 +1385,7 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
             try:
                 _account(manifest["old_username"])
             except RenameError:
-                try:
-                    renamed_account = _account(manifest["new_username"])
-                except RenameError:
-                    raise
-                if renamed_account.pw_uid != int(manifest.get("old_uid", -1)):
-                    raise RenameError("Existing destination account does not match the recorded UID")
+                _validate_renamed_account(manifest)
                 phase = "identity-renamed"
                 manifest["phase"] = phase
                 _write_marker(manifest, phase)
@@ -1373,25 +1407,37 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
         new_username = manifest["new_username"]
         old_home = manifest["old_home"]
         new_home = manifest["new_home"]
-        old_account: Optional[pwd.struct_passwd] = None
-        if phase not in {"identity-renamed", "configuration-updated", "services-reconciled", "verified"}:
-            old_account = _account(old_username)
-
-        if phase not in {"identity-renamed", "configuration-updated", "services-reconciled", "verified"}:
-            _write_marker(manifest, "quiescing")
+        if phase not in {"configuration-updated", "services-reconciled", "verified"}:
+            cutover_account = (
+                _validate_renamed_account(manifest)
+                if phase == "identity-renamed" else _account(old_username)
+            )
+            _write_marker(manifest, "identity-renamed" if phase == "identity-renamed" else "quiescing")
             _write_status(operation_id, "quiescing", "in_progress")
             _stop_managed_units(manifest.get("managed_units", []))
-            if old_account is None:
-                raise RenameError("Cannot quiesce without the original account")
-            _terminate_user(old_account)
+            _run(["usermod", "-s", "/usr/sbin/nologin", cutover_account.pw_name])
+            temporary_shell_owned = True
+            _terminate_user(cutover_account)
 
         if phase not in {"configuration-updated", "services-reconciled", "verified"}:
             if phase != "identity-renamed":
                 _write_marker(manifest, "identity-starting")
-                _run(["usermod", "-l", new_username, old_username])
+                command = ["usermod", "-l", new_username]
+                if old_home != new_home:
+                    command.extend(["-d", new_home, "-m"])
+                _run([*command, old_username])
+                current_account = _validate_renamed_account(manifest)
+                if current_account.pw_dir != new_home:
+                    raise RenameError("Native login/home cutover is incomplete; inspect before resuming")
                 phase = "identity-renamed"
                 _write_marker(manifest, phase)
                 _write_status(operation_id, phase, "in_progress")
+            else:
+                current_account = _validate_renamed_account(manifest)
+                if current_account.pw_dir != new_home:
+                    _run(["usermod", "-d", new_home, "-m", new_username])
+                    if _validate_renamed_account(manifest).pw_dir != new_home:
+                        raise RenameError("Native home move is incomplete; inspect before resuming")
             if manifest.get("rename_primary_group"):
                 try:
                     grp.getgrnam(old_username)
@@ -1399,11 +1445,8 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
                     pass
                 else:
                     _run(["groupmod", "-n", new_username, old_username])
-            if old_home != new_home:
-                current_account = _account(new_username)
-                if current_account.pw_dir != new_home:
-                    _run(["usermod", "-d", new_home, "-m", new_username])
             _run(["usermod", "-s", manifest["old_shell"], new_username])
+            temporary_shell_owned = False
             _rename_cron_and_mail(old_username, new_username, int(manifest["old_uid"]))
             _rename_linger(
                 old_username,
@@ -1498,7 +1541,8 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
         if isinstance(status.get("phase"), str):
             phase = status["phase"]
         try:
-            _restore_login_shell_after_failure(manifest)
+            if temporary_shell_owned:
+                _restore_login_shell_after_failure(manifest)
         except Exception:
             pass
         _write_status(operation_id, phase, "failed", error=str(exc))
