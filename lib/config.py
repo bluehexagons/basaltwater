@@ -6,7 +6,7 @@ import argparse
 import ipaddress
 import shlex
 import socket
-from dataclasses import dataclass, asdict, field
+from dataclasses import InitVar, dataclass, asdict, field
 from functools import lru_cache
 from typing import Optional, cast
 from lib.plugin_registry import get_system_type_definition, get_system_type_names
@@ -614,8 +614,11 @@ class SetupConfig:
     include_web_server: bool = False
     include_web_firewall: bool = False
     target_host: MaybeStr = None  # Client-facing identity retained during target-local setup
+    # Construction-only: never persist or inherit a saved-root policy exception
+    # when merge_setup_configs constructs the effective patch configuration.
+    _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _loading_saved_config: bool = False) -> None:
         if self.target_host is not None:
             from lib.validators import validate_host
 
@@ -737,7 +740,7 @@ class SetupConfig:
             self.notification_strict_https, bool
         ):
             raise ValueError("notification_strict_https must be boolean")
-        validate_syncthing_settings(self)
+        validate_syncthing_settings(self, loading_saved_config=_loading_saved_config)
         selected_godot_bundles = list(dict.fromkeys(self.godot_bundles or []))
         from lib.publishing_config import validate_publishing_tools
 
@@ -1106,6 +1109,11 @@ class SetupConfig:
 
     def to_remote_args(self) -> StrList:
         """Generate command line arguments for remote execution."""
+        from lib.validation import validate_syncthing_settings
+
+        # Loading legacy settings for inspection/correction must not authorize
+        # sending an unchanged reserved root to the target for activation.
+        validate_syncthing_settings(self)
         args: StrList = []
         if self.gogs:
             target_host = (
@@ -2324,6 +2332,7 @@ class SetupConfig:
     
     @classmethod
     def from_dict(cls, host: str, system_type: str, data: JSONDict) -> 'SetupConfig':
+        """Decode saved settings, deferring only the reserved Syncthing tree policy."""
         validate_current_setup_fields(data)
         data = dict(data)
         # Older cache entries may contain this one-shot flag. Never replay a
@@ -2410,7 +2419,7 @@ class SetupConfig:
         if 'friendly_name' not in data:
             data['friendly_name'] = None
             
-        return cls(host=host, system_type=system_type, **data)
+        return cls(host=host, system_type=system_type, _loading_saved_config=True, **data)
     
     @classmethod
     def from_args(cls, args: argparse.Namespace, system_type: str) -> 'SetupConfig':
