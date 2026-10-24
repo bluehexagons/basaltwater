@@ -84,10 +84,11 @@ so host-side migration instructions remain available outside this repository.
 Setup refreshes provider configuration and installs selected skills before
 refreshing T3. A managed Debian T3 setup explicitly refreshes the shared service
 even when its version and unit are unchanged; it avoids a second restart if the
-updater already started a fresh service. A healthy non-refresh setup reuses the
-running service. On CachyOS desktop, setup queues a detached user worker to
-gracefully close and relaunch a running app after setup exits; it leaves a
-stopped app stopped. The worker's short delay lets it survive provider shutdown.
+updater already started a fresh service. Internal non-refresh service checks reuse
+a healthy running service. On CachyOS desktop, setup queues a detached user
+worker after saving its result. After a short delay the worker gracefully closes
+and relaunches a running app; it leaves a stopped app stopped. Its independent
+user unit survives provider shutdown.
 Queue acceptance does not prove the app or provider is ready. Check its printed
 user journal unit on failure, then verify an authenticated provider turn and
 terminal. On CachyOS managed web, refresh stops and starts the service after
@@ -164,8 +165,9 @@ are shared by Debian, CachyOS, and WSL. They cover retries, cancellation,
 questions, workspace preparation, scheduler ownership, webhook signatures and
 private secret entry. They use T3's injected tools rather than a second
 Basaltwater orchestration service. Tool availability still depends on the active
-provider session. Finish the current turn and use **Restart agent session**
-after managed setup refreshes these resources.
+provider session. Managed setup reloads these resources by refreshing T3.
+For changes outside setup, finish the current turn and use **Restart agent
+session** to reload one thread.
 
 Inspect project overrides and environment settings before relying on tracked
 `t3.json`: repository defaults have lower precedence than both. Preserve setup
@@ -293,15 +295,15 @@ before considering a whole-VM reboot so VM-side T3 state is isolated.
 Refresh setup restarts the managed service so refreshed provider configuration
 and skills take effect, including when runtime and unit versions are unchanged.
 The updater's own fresh service start is reused to avoid a duplicate restart.
-Healthy non-refresh setup keeps the current service. Desktop and standalone
-provider lifecycle behavior differs by profile; see the corresponding setup
-guide.
+Internal non-refresh service checks keep a healthy current service. Desktop and
+standalone provider lifecycle behavior differs by profile; see the corresponding
+setup guide.
 
 Basaltwater targets stable T3 Code releases. When T3 Code is selected, every
 setup run checks npm's `t3@latest` stable channel for a newer release.
 A healthy service is explicitly restarted by a setup refresh, even when runtime
-and managed configuration are unchanged; routine non-refresh setup does not
-interrupt an unchanged session. If the updater already started a fresh service,
+and managed configuration are unchanged; internal non-refresh service checks
+reuse a healthy session. If the updater already started a fresh service,
 setup reuses it. The T3 client can also offer an explicit
 **Update server** action for this background service; prefer that action after
 active agent work and terminal commands finish. Keep the client open while the

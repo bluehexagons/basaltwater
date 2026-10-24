@@ -95,7 +95,7 @@ class CachyOSSetupTests(unittest.TestCase):
         functions = [function for _, function in get_steps_for_system_type(config)]
         self.assertIn(steps.install_cachyos_t3_desktop, functions)
         self.assertNotIn(steps.install_cachyos_t3, functions)
-        self.assertLess(functions.index(steps.install_cachyos_t3_desktop), functions.index(steps.install_cachyos_skills))
+        self.assertLess(functions.index(steps.install_cachyos_skills), functions.index(steps.install_cachyos_t3_desktop))
 
     def test_desktop_rejects_web_mode_other_profiles_and_missing_provider(self):
         with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):

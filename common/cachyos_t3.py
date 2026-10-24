@@ -207,7 +207,7 @@ def install_desktop(config: SetupConfig) -> None:
     print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
     print("  Default ~/.t3 desktop state is private; existing credential contents retained")
     print("  T3 Code enabled at KDE login; normal quit stays stopped until the next login")
-    print("  Quit/reopen T3 Code when convenient to load package updates; verify a provider thread and terminal")
+    print("  Setup queues a graceful reload of a running T3 desktop after saving its result")
     for tool in config.selected_agent_tools():
         if tool != "gh":
             binary = shutil.which(tool, path=_tool_path(home))

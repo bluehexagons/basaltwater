@@ -41,7 +41,10 @@ KDE login autostart remains enabled. The worker reloads provider configuration
 and skills while preserving `~/.t3` data and credentials. Queue acceptance does
 not prove readiness; on failure inspect the printed unit with
 `journalctl --user -u UNIT`, then verify an authenticated provider turn and
-terminal. Setup disables the Basaltwater web service;
+terminal. Saved threads continue on the next message; automatic continuation
+of interrupted turns follows T3's existing **Continue threads after server
+update** setting, and queued turns still need user Resume.
+Setup disables the Basaltwater web service;
 an inactive service is expected in this mode. Setup retains all application data.
 The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
 the selection. Do not launch another backend to repair a working desktop.
