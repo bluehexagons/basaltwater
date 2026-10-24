@@ -123,6 +123,64 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(doctor._owned_socket(Path("/run/user/1000/bus"), 1000), expected)
 
 
+class DoctorOutputTests(unittest.TestCase):
+    def setUp(self):
+        self.parser, _, _ = basaltwater.create_basaltwater_parser()
+        self.report = {
+            "schema_version": 1,
+            "observed_at": "2026-09-14T12:00:00+00:00",
+            "capabilities": [
+                doctor.CapabilityResult(name, state, reason, "alice", "wayland",
+                                        "2026-09-14T12:00:00+00:00").to_dict()
+                for name, state, reason in (
+                    ("host", "available", "Supported host."),
+                    ("desktop.portal", "deferred", "Consent pending."),
+                    ("tool.codex", "failed", "Selected tool missing."),
+                    ("session.bus", "available", "User bus present."),
+                )
+            ],
+        }
+
+    def run_doctor(self, *options):
+        args = self.parser.parse_args(["local", "cachyos-doctor", *options])
+        with patch.object(doctor, "collect_cachyos_doctor", return_value=self.report) as collect, \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(run_local_command(args), 0)
+        collect.assert_called_once_with()
+        return output.getvalue()
+
+    def test_default_json_retains_the_complete_report(self):
+        self.assertEqual(json.loads(self.run_doctor("--json")), self.report)
+
+    def test_attention_preserves_all_unavailable_records_and_full_counts(self):
+        original = json.loads(json.dumps(self.report))
+        report = json.loads(self.run_doctor("--attention", "--json"))
+        self.assertEqual(report, {
+            **original,
+            "summary": {"total": 4, "available": 2, "deferred": 1, "failed": 1},
+            "capabilities": original["capabilities"][1:3],
+        })
+        self.assertEqual(self.report, original)
+        text = self.run_doctor("--attention")
+        self.assertIn("4 observations: 2 available (omitted), 1 deferred, 1 failed", text)
+        self.assertIn("desktop.portal: deferred — Consent pending.", text)
+        self.assertIn("tool.codex: failed — Selected tool missing.", text)
+        self.assertNotIn("Supported host", text)
+        self.assertNotIn("User bus present", text)
+
+    def test_attention_reports_counts_even_when_nothing_needs_attention(self):
+        for capabilities in ([], self.report["capabilities"][:1]):
+            with self.subTest(capabilities=capabilities):
+                self.report["capabilities"] = capabilities
+                report = json.loads(self.run_doctor("--attention", "--json"))
+                self.assertEqual(report["capabilities"], [])
+                self.assertEqual(report["summary"], {
+                    "total": len(capabilities), "available": len(capabilities),
+                    "deferred": 0, "failed": 0,
+                })
+                self.assertEqual(len(self.run_doctor("--attention").splitlines()), 1)
+
+
 class DoctorTests(unittest.TestCase):
     def setUp(self):
         stack = ExitStack()

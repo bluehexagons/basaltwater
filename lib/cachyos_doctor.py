@@ -460,9 +460,23 @@ def run_cachyos_doctor(args: argparse.Namespace) -> int:
     except (OSError, KeyError, ValueError):
         print("Error: could not resolve the invoking desktop account or diagnostic contract.")
         return 1
+    if getattr(args, "attention", False):
+        capabilities = report["capabilities"]
+        counts = dict.fromkeys(("available", "deferred", "failed"), 0)
+        for item in capabilities:
+            counts[item["state"]] += 1
+        report = {
+            **report,
+            "summary": {"total": len(capabilities), **counts},
+            "capabilities": [item for item in capabilities if item["state"] != "available"],
+        }
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
+        if "summary" in report:
+            summary = report["summary"]
+            print(f"{summary['total']} observations: {summary['available']} available (omitted), "
+                  f"{summary['deferred']} deferred, {summary['failed']} failed")
         for item in report["capabilities"]:
             print(f"{item['name']}: {item['state']} — {item['reason']}")
     return 0

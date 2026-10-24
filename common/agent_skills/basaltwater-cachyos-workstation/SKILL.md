@@ -108,10 +108,13 @@ can build, render, capture, or publish.
 Start with the unprivileged, read-only workstation diagnosis:
 
 ```fish
-basaltw local cachyos-doctor --json
+basaltw local cachyos-doctor --attention --json
 ```
 
-It does not activate services, launch applications, capture content, or prove
+This runs the full inventory, shows all deferred/failed observations and counts
+omitted successes. Deferred observations can be expected; omit `--attention`
+when successful-check details or versions are needed. It does not activate
+services, launch applications, capture content, or prove
 that a listed socket, package, or permission works. For project-specific
 Godot prerequisites use `basaltw desktop --native develop doctor --project
 PATH --json`; then run only the project's declared checks. Keep observed

@@ -5,6 +5,26 @@ This reference covers an established Basaltwater installation. Run commands
 in fish from the KDE session as the same desktop account, without `sudo`
 unless a specific command requires elevation.
 
+## Read-only diagnostics
+
+Start with an attention-only inventory for routine agent diagnosis:
+
+```fish
+basaltw local cachyos-doctor --attention --json
+```
+
+It performs the full read-only inventory, returns every deferred or failed
+observation, and adds `summary` counts (`total`, `available`, `deferred`,
+`failed`). Available observations are omitted from `capabilities`; the retained
+records keep their complete metadata. Deferred observations include expected
+conditions such as unselected packages and task-scoped portal consent, so they
+are not necessarily faults. The exit status still reports whether diagnosis
+completed, rather than whether every capability is available.
+
+Omit `--json` for readable counts and findings. Omit `--attention` to obtain the
+complete inventory, including successful checks and versions. Neither form
+starts applications, activates services, or verifies effective firewall rules.
+
 ## Privileged checks from an agent
 
 On an existing KDE desktop with a registered polkit authentication agent, an

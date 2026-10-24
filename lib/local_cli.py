@@ -124,6 +124,10 @@ def add_local_subparser(subparsers: argparse._SubParsersAction) -> None:
         "cachyos-doctor", help="Read-only CachyOS desktop qualification prerequisites",
     )
     doctor_parser.add_argument("--json", action="store_true", help="Emit versioned capability metadata")
+    doctor_parser.add_argument(
+        "--attention", action="store_true",
+        help="Show all deferred/failed observations and counts for the full inventory",
+    )
 
     install_parser = commands.add_parser("install", help="Install one or more APT packages")
     install_parser.add_argument("packages", nargs="+", metavar="PACKAGE")
