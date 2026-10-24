@@ -1211,29 +1211,34 @@ usage is not a savings guarantee. See [storage cleanup](../agents/storage-cleanu
 for retention checks and approved follow-ups.
 
 `agent storage clean-podman` previews by default and operates only on the
-current user's local rootless Podman store. Use `--apply` after reviewing the
-candidate IDs; `--dry-run` explicitly selects preview and `--json` returns
-structured evidence. It targets only untagged, unreferenced dangling images
-older than seven days, or 24 hours when graph-root filesystem headroom is low.
-The low-headroom threshold follows the dynamic user-cache target
-`min(8 GiB, max(2 GiB, total filesystem size / 5))`. Tagged images, regular or
-external Buildah container references, all containers, volumes, and persistent
-build-cache mounts are preserved. Any value of the
-`io.basaltwater.keep` label excludes an image; add a tag or build label to
-protect a useful disposable image. The implementation uses native safe image
-prune without `--all`, `--external`, or `--build-cache`, and uses `--force` only
-to suppress interactive confirmation.
+current user's local, nonroot rootless Podman image cache. Use `--apply` after
+reviewing the candidate IDs; `--dry-run` explicitly selects preview and `--json`
+returns structured evidence. It removes unused images, including tagged images,
+when their image creation age exceeds seven days, or 24 hours during low
+graph-root filesystem headroom. The low-headroom threshold follows the dynamic
+user-cache target `min(8 GiB, max(2 GiB, total filesystem size / 5))`. Age is
+based on image creation metadata, not last use or pull time. The explicit
+`io.basaltwater.keep` image label retains an image; tags do not pin images.
+Pruning uses native image prune with `--all`, never `--external` or
+`--build-cache`.
 
-The helper refuses rootful, remote, or unsafe stores, defers when build or
-mutation processes are active or evidence is incomplete, and serializes work
-with a lock. A timeout leaves completion uncertain; inspect store state before
-retrying. Preview IDs and savings are preflight estimates: shared layers and
-parents that become dangling during prune can change actual removals. Reports
-show actual filesystem free bytes before and after separately from reported
-image size. Readonly container inspection and preflight remain readonly. Daily
-full user-cache maintenance invokes this helper automatically; its
-`--agent-storage-only` mode does not. Broader removal of tagged SDK images,
-containers, or volumes requires a separately chosen retention policy.
+Old, unmounted abandoned Buildah working containers may also be removed by
+matching exact IDs with `buildah rm`, only after native metadata and same-store
+validation and quiet process checks; they use the same container-creation-age
+cutoff. Mounted builders, keep-labelled builders, ordinary Podman containers,
+volumes, and persistent cache mounts are preserved. Rootful, remote, or unsafe
+stores are refused. Active build or mutation processes, incomplete evidence,
+or failed checks defer cleanup; running work is never forced. Work in disposable
+test stores should be considered temporary because cleanup may remove its
+resources, and sessions must recreate them as needed.
+
+The helper serializes work with a lock. A timeout leaves completion uncertain;
+inspect store state before retrying. Preview IDs and savings are preflight
+estimates: shared layers and parents that become eligible during prune can
+change actual removals. Reports show actual filesystem free bytes before and
+after separately from reported image size. Readonly container inspection and
+preflight remain readonly. Daily full user-cache maintenance invokes this
+helper automatically; its `--agent-storage-only` mode does not.
 See [authorized Podman cleanup](../agents/storage-cleanup.md#podman-image-cleanup).
 
 `agent storage project ABSOLUTE_PROJECT` reads optional project cleanup JSON
