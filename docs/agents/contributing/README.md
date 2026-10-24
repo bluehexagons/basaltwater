@@ -100,6 +100,9 @@ git diff --check
 
 Tests run on Debian and must not modify the local system. Use `--dry-run` for
 setup-plan validation; never run a test against a real target.
+Debian CI runs as root inside its container. When a fixture mocks a desktop
+user's UID, model ownership of its temporary files consistently while retaining
+the permission and file-type checks being tested.
 When running those tests from a CachyOS workstation, fixtures must mock the
 target distribution, package-manager discovery, and account privileges. A
 Debian test must not accidentally enter the local CachyOS setup path or inspect

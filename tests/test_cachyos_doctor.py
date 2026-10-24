@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import tempfile
@@ -190,6 +191,20 @@ class DoctorTests(unittest.TestCase):
         self.uid = stack.enter_context(patch.object(doctor.os, "getuid", return_value=1000))
         stack.enter_context(patch.object(doctor.os, "geteuid", return_value=1000))
         self.home = stack.enter_context(tempfile.TemporaryDirectory())
+        original_stat = Path.stat
+
+        def desktop_owned_stat(path, *args, **kwargs):
+            observed = original_stat(path, *args, **kwargs)
+            if path.is_relative_to(self.home):
+                # CI creates fixtures as root; model the mocked desktop user's
+                # ownership while retaining real file types and permissions.
+                fields = list(observed)
+                fields[4] = 1000
+                return os.stat_result(fields)
+            return observed
+
+        stack.enter_context(patch.object(Path, "stat", autospec=True,
+                                        side_effect=desktop_owned_stat))
         stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice", pw_dir=self.home)))
         self.supported = stack.enter_context(patch.object(doctor, "is_cachyos", return_value=True))
         stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
