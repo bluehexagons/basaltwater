@@ -397,6 +397,27 @@ Root setup invokes the same launcher directly, including setup's
 `no-new-privs` before starting the worker. All cache inspection and deletion
 remain unprivileged.
 
+Full user-cache maintenance also applies the rootless Podman image policy
+described in [storage cleanup](../agents/storage-cleanup.md#podman-image-cleanup).
+On first setup or after reboot, the restricted worker may be unable to initialize
+Podman's user namespace. Only an initial `podman info` failure with matching
+`newuidmap`/`newgidmap` map-write `Operation not permitted` and namespace-helper
+diagnostics, together with a bounded kernel observation of `NoNewPrivs=1` and an
+empty capability bounding set, returns `deferred_restricted` with fixed issue
+`namespace_helper_restricted`. Maintenance logs this as informational and
+explicitly says Podman cleanup was skipped. Both cleanup flags remain false;
+there is no inventory, removal or immediate retry after that failed probe.
+Other unknown or failed Podman observations still fail maintenance. Diagnostic
+logs and failure details include only allowlisted issue codes, without raw vendor
+output or metadata. The direct cleanup CLI still exits nonzero for every deferral.
+
+A later scheduled pass may succeed after normal Podman use by the same account
+has initialized its user namespace. This is conditional: initialization is not
+performed by maintenance, and the namespace disappears across reboot. Repeating
+the same restricted pass alone does not guarantee recovery. Successful restricted
+probes proceed through the normal cleanup checks. Keep launcher restrictions and
+the privileged observer's fixed protocol intact.
+
 The worker inherits a private observer socket. The privileged parent reads only
 fixed `/proc` executable metadata for that account, freshly collected for each
 inventory and disposal check; worker requests cannot select paths, PIDs, or

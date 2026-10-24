@@ -20,6 +20,15 @@ def _image(identifier: str, *, created: int, tags=None, containers=0, labels=Non
             "Labels": labels, "Size": size}
 
 
+def _map_denial(helper="newuidmap", mapping="uid_map") -> str:
+    return (f'running `/usr/bin/{helper} 783 0 1000 1 1 100000 65536`: '
+            f'{helper}: write to {mapping} failed: Operation not permitted\n'
+            f'Error: cannot set up namespace using "/usr/bin/{helper}": exit status 1\n')
+
+
+_RESTRICTED_STATUS = b"Name:\tpython3\nNoNewPrivs:\t1\nCapBnd:\t0000000000000000\n"
+
+
 class PodmanCleanupTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -272,6 +281,93 @@ class PodmanCleanupTests(unittest.TestCase):
         self.assertEqual(result["status"], "deferred_unknown")
         self.assertEqual(result["issue"], "invalid_podman_info")
         self.assertFalse(result["cleanup_attempted"])
+
+    def test_restricted_map_denial_stops_after_initial_probe_without_leaking_output(self):
+        for apply, helper, mapping in ((False, "newuidmap", "uid_map"),
+                                       (True, "newuidmap", "uid_map"),
+                                       (True, "newgidmap", "gid_map")):
+            with self.subTest(apply=apply, helper=helper), \
+                    patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(
+                        [], 125, "stdout secret",
+                        _map_denial(helper, mapping).replace("exit status 1", "exit status1") + "stderr secret\n",
+                    )) as command, patch("builtins.open", mock_open(read_data=_RESTRICTED_STATUS)) as source, \
+                    patch.object(cleanup, "plan_builders") as builders, \
+                    patch.object(cleanup, "_process_activity") as activity:
+                result = cleanup.clean_podman_images(apply=apply)
+            self.assertEqual(result["status"], "deferred_restricted")
+            self.assertEqual(result["issue"], "namespace_helper_restricted")
+            self.assertEqual(result["issues"], ["namespace_helper_restricted"])
+            self.assertIs(result["cleanup_attempted"], False)
+            self.assertIs(result["cleanup_executed"], False)
+            self.assertEqual(result["candidate_count"], 0)
+            self.assertNotIn("secret", json.dumps(result))
+            command.assert_called_once()
+            self.assertEqual(command.call_args.args[2], ["info", "--format", "json"])
+            source.assert_called_once_with("/proc/self/status", "rb")
+            source().read.assert_called_once_with(cleanup._SELF_STATUS_LIMIT + 1)
+            builders.assert_not_called()
+            activity.assert_not_called()
+            self.assertEqual(self.disk_reads, 0)
+
+    def test_unrelated_info_diagnostics_are_not_expected_security_deferrals(self):
+        for diagnostic in (
+            "Operation not permitted", "database unavailable", "",
+            "newuidmap: write to uid_map failed: Operation not permitted\n",
+            'Error: cannot set up namespace using "/usr/bin/newuidmap": exit status 1\n',
+            _map_denial().replace("uid_map", "gid_map"),
+            _map_denial().replace("Operation not permitted", "Permission denied"),
+            _map_denial().replace('using "/usr/bin/newuidmap"', 'using "/usr/bin/newgidmap"'),
+        ):
+            with self.subTest(diagnostic=diagnostic), \
+                    patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(
+                        [], 125, "", diagnostic,
+                    )) as command, patch("builtins.open", mock_open(read_data=_RESTRICTED_STATUS)) as source:
+                result = cleanup.clean_podman_images(apply=True)
+            self.assertEqual(result["status"], "deferred_unknown")
+            self.assertEqual(result["issue"], "podman_info_failed")
+            self.assertFalse(result["cleanup_attempted"])
+            self.assertFalse(result["cleanup_executed"])
+            command.assert_called_once()
+            source.assert_not_called()
+
+    def test_map_denial_needs_complete_current_kernel_restriction_evidence(self):
+        for raw in (
+            _RESTRICTED_STATUS.replace(b"NoNewPrivs:\t1", b"NoNewPrivs:\t0"),
+            _RESTRICTED_STATUS.replace(b"0000000000000000", b"0000000000000001"),
+            b"NoNewPrivs:\t1\n", b"CapBnd:\t0000000000000000\n",
+            _RESTRICTED_STATUS + b"NoNewPrivs:\t1\n",
+            _RESTRICTED_STATUS + b"CapBnd:\t0000000000000000\n",
+            _RESTRICTED_STATUS.replace(b"0000000000000000", b"0x0"),
+            _RESTRICTED_STATUS.replace(b"NoNewPrivs:\t1", b"NoNewPrivs:\ttrue"),
+            _RESTRICTED_STATUS.rstrip(b"\n"),
+            _RESTRICTED_STATUS + b"x" * cleanup._SELF_STATUS_LIMIT,
+            PermissionError(), FileNotFoundError(),
+        ):
+            source = mock_open(read_data=raw if isinstance(raw, bytes) else b"")
+            if isinstance(raw, OSError):
+                source.side_effect = raw
+            with self.subTest(raw=repr(raw)[:100]), \
+                    patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(
+                        [], 125, "", _map_denial(),
+                    )) as command, patch("builtins.open", source):
+                result = cleanup.clean_podman_images(apply=True)
+            self.assertEqual(result["status"], "deferred_unknown")
+            self.assertEqual(result["issue"], "podman_info_failed")
+            self.assertFalse(result["cleanup_attempted"])
+            self.assertFalse(result["cleanup_executed"])
+            command.assert_called_once()
+
+    def test_successful_restricted_probe_continues_to_inventory_and_cleanup(self):
+        for apply in (False, True):
+            self.commands.clear()
+            with self.subTest(apply=apply), \
+                    patch("builtins.open", mock_open(read_data=_RESTRICTED_STATUS)) as source:
+                result = cleanup.clean_podman_images(apply=apply)
+            self.assertEqual(result["status"], "cleaned" if apply else "preview")
+            self.assertEqual(result["cleanup_executed"], apply)
+            self.assertEqual(result["candidate_count"], 2)
+            self.assertTrue(any(command[2:4] == ["image", "ls"] for command, _ in self.commands))
+            source.assert_not_called()
 
     def test_candidate_preview_is_bounded_while_count_remains_complete(self):
         self.images = [

@@ -288,6 +288,28 @@ serializes runs. Native probes and mutations share a five-minute command budget.
 Timeouts leave the outcome uncertain, so inspect Podman state
 before retrying.
 
+On cold startup, including after reboot, a worker with `NoNewPrivs=1` and an
+empty capability bounding set can be denied initial user-namespace setup.
+The helper recognizes this only after the initial `podman info` fails, when
+bounded `/proc/self/status` observations confirm both restrictions and the
+diagnostics name the same `newuidmap`/`newgidmap` helper's `uid_map`/`gid_map`
+write failure with `Operation not permitted` and failure to set up the namespace.
+It reports `deferred_restricted` and fixed issue `namespace_helper_restricted`,
+with `cleanup_attempted=false` and `cleanup_executed=false`. No inventory,
+pruning or immediate retry follows. Generic permission errors, NNP alone,
+unreadable/malformed restriction evidence and unrelated probe failures remain
+`deferred_unknown`; a successful restricted probe proceeds normally.
+
+Daily maintenance treats only that exact recognized result with false cleanup
+flags as an informational Podman cleanup skip. Other unknown/failed/uncertain
+results still fail; logs and failure details expose only allowlisted fixed issue
+codes, never raw Podman diagnostics or metadata. The direct CLI exits nonzero
+for deferrals, including `deferred_restricted`. A later pass may succeed after
+normal Podman use by the same user initializes its namespace, but maintenance
+does not perform that initialization or guarantee recovery on its next schedule.
+The namespace disappears across reboot. Preserve launcher hardening and the
+privileged observer boundary; this skip does not establish a disk failure.
+
 Preview IDs and savings are preflight estimates. Images retained by candidate
 builders can become eligible after those builders are removed. Shared layers
 affect space reclaimed. Reports distinguish actual filesystem free bytes before and

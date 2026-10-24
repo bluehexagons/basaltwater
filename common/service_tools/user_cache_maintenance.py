@@ -57,6 +57,27 @@ from lib.validation import validate_filesystem_path
 
 logger = get_service_logger("user_cache_maintenance", "common", use_syslog=True)
 _TOOL_NOT_FOUND_EXIT = 77
+_PODMAN_STATUSES = frozenset((
+    "preview", "cleaned", "absent", "deferred_active", "deferred_restricted",
+    "deferred_unknown", "failed", "uncertain",
+))
+_PODMAN_ISSUE_CODES = frozenset((
+    "namespace_helper_restricted", "podman_info_failed", "invalid_podman_info",
+    "podman_probe_timeout", "podman_probe_failed", "cleanup_observation_failed",
+    "prune_result_uncertain", "builder_removal_uncertain", "image_untag_uncertain",
+    "post_cleanup_measurement_unavailable", "image_inventory_failed",
+    "process_inventory_incomplete", "process_inventory_limit", "process_metadata_limit",
+    "active_container_workload", "cleanup_already_running", "running_containers",
+    "remote_selection_unsupported", "rootful_engine_unsupported", "unsafe_graph_root",
+    "unsafe_account", "unsafe_home", "unsafe_lock_path", "unsafe_lock_file",
+    "invalid_graph_root", "graph_root_changed", "filesystem_measurement_unavailable",
+    "invalid_image_inventory", "inconsistent_image_inventory", "invalid_image_ancestry",
+    "builder_tool_unavailable", "invalid_identifier", "buildah_inspect_failed",
+    "invalid_builder_metadata", "invalid_buildah_info", "invalid_store_metadata",
+    "buildah_store_mismatch", "invalid_cutoff", "podman_inventory_failed",
+    "invalid_podman_inventory", "buildah_inventory_failed", "invalid_buildah_inventory",
+    "buildah_info_failed",
+))
 
 
 @dataclass(frozen=True)
@@ -1173,8 +1194,26 @@ def cleanup_podman_images(context: UserContext, *, dry_run: bool) -> list[str]:
     from lib.podman_cleanup import clean_podman_images
 
     result = clean_podman_images(apply=not dry_run)
-    status = result.get("status")
+    if not isinstance(result, dict):
+        log_event(logger, "Podman image cleanup", status="unrecognized")
+        return ["Podman image cleanup: unrecognized result status"]
+    raw_status = result.get("status")
+    status = raw_status if isinstance(raw_status, str) and raw_status in _PODMAN_STATUSES else "unrecognized"
+    raw_issue = result.get("issue")
+    issue = raw_issue if isinstance(raw_issue, str) and raw_issue in _PODMAN_ISSUE_CODES else None
     fields = {"status": status}
+    if issue is not None:
+        fields["issue"] = issue
+    restricted = (
+        status == "deferred_restricted" and issue == "namespace_helper_restricted"
+        and result.get("issues") == ["namespace_helper_restricted"]
+        and result.get("cleanup_attempted") is False
+        and result.get("cleanup_executed") is False
+    )
+    if restricted:
+        log_event(logger, "Podman cleanup was skipped: namespace helper blocked by worker restrictions",
+                  level=INFO, **fields, cleanup_attempted=False, cleanup_executed=False)
+        return []
     for key in (
         "candidate_count",
         "builder_candidate_count",
@@ -1188,15 +1227,16 @@ def cleanup_podman_images(context: UserContext, *, dry_run: bool) -> list[str]:
             fields[key] = value
     log_event(logger, "Podman image cleanup", **fields)
 
+    detail = f" ({issue})" if issue is not None else ""
     if status in ("preview", "cleaned", "absent", "deferred_active"):
         return []
     if status == "uncertain":
         return [
-            "Podman image cleanup: outcome uncertain; inspect Podman state before retrying"
+            "Podman image cleanup: outcome uncertain; inspect Podman state before retrying" + detail
         ]
     if status in ("deferred_unknown", "failed"):
-        return [f"Podman image cleanup: {status}"]
-    return ["Podman image cleanup: unrecognized result status"]
+        return [f"Podman image cleanup: {status}{detail}"]
+    return ["Podman image cleanup: unrecognized result status" + detail]
 
 
 def run_user_cache_maintenance(context: UserContext, *, dry_run: bool) -> list[str]:

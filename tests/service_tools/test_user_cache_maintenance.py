@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 import os
 import subprocess
 import sys
@@ -468,6 +469,68 @@ class TestUserCachePolicies(unittest.TestCase):
             )
         podman.assert_called_once_with(self.context, dry_run=True)
 
+    def test_exact_restricted_deferral_is_informational_and_explicitly_skipped(self):
+        result = {
+            "status": "deferred_restricted", "issue": "namespace_helper_restricted",
+            "issues": ["namespace_helper_restricted"],
+            "cleanup_attempted": False, "cleanup_executed": False,
+            "stderr": "private secret", "metadata": {"token": "private secret"},
+        }
+        for dry_run in (False, True):
+            with self.subTest(dry_run=dry_run), patch(
+                "lib.podman_cleanup.clean_podman_images", return_value=result,
+            ) as helper, patch.object(user_cache_maintenance, "log_event") as log:
+                self.assertEqual(user_cache_maintenance.cleanup_podman_images(
+                    self.context, dry_run=dry_run,
+                ), [])
+            helper.assert_called_once_with(apply=not dry_run)
+            self.assertIn("Podman cleanup was skipped", log.call_args.args[1])
+            self.assertEqual(log.call_args.kwargs, {
+                "status": "deferred_restricted", "issue": "namespace_helper_restricted",
+                "level": user_cache_maintenance.INFO,
+                "cleanup_attempted": False, "cleanup_executed": False,
+            })
+
+    def test_malformed_restricted_results_and_private_diagnostics_still_fail_safely(self):
+        restricted = {
+            "status": "deferred_restricted", "issue": "namespace_helper_restricted",
+            "issues": ["namespace_helper_restricted"],
+            "cleanup_attempted": False, "cleanup_executed": False,
+        }
+        variants = [None, [], {}, {"status": "private secret"}, {"status": ["private secret"]}]
+        for key, values in (
+            ("issue", (None, "podman_info_failed", "private secret", [])),
+            ("issues", (None, [], ["namespace_helper_restricted", "private secret"])),
+            ("cleanup_attempted", (None, True, 0, "false")),
+            ("cleanup_executed", (None, True, 0, "false")),
+            ("status", ("deferred_unknown", "failed", "uncertain", "future_status")),
+        ):
+            variants.extend(dict(restricted, **{key: value}) for value in values)
+        for result in variants:
+            with self.subTest(result=result), patch(
+                "lib.podman_cleanup.clean_podman_images", return_value=result,
+            ), patch.object(user_cache_maintenance, "log_event") as log:
+                failures = user_cache_maintenance.cleanup_podman_images(self.context, dry_run=False)
+            self.assertTrue(failures)
+            self.assertNotIn("private secret", str(failures) + str(log.call_args_list))
+            self.assertFalse(any("was skipped" in call.args[1] for call in log.call_args_list))
+
+    def test_only_allowlisted_issue_codes_reach_logs_and_failure_details(self):
+        for issue in ("podman_info_failed", "private secret", ["private secret"]):
+            result = {"status": "deferred_unknown", "issue": issue,
+                      "issues": ["private secret"], "stderr": "private secret"}
+            with self.subTest(issue=issue), patch(
+                "lib.podman_cleanup.clean_podman_images", return_value=result,
+            ), patch.object(user_cache_maintenance, "log_event") as log:
+                failures = user_cache_maintenance.cleanup_podman_images(self.context, dry_run=False)
+            self.assertTrue(failures)
+            self.assertNotIn("private secret", str(failures) + str(log.call_args_list))
+            if issue == "podman_info_failed":
+                self.assertEqual(log.call_args.kwargs["issue"], issue)
+                self.assertIn(issue, failures[0])
+            else:
+                self.assertNotIn("issue", log.call_args.kwargs)
+
     @patch("common.service_tools.user_cache_maintenance.run_cleanup_command", return_value=None)
     @patch("common.service_tools.user_cache_maintenance.process_uses_path", return_value=False)
     @patch("common.service_tools.user_cache_maintenance.cleanup_managed_directory", return_value=[])
@@ -689,6 +752,26 @@ class TestUserCachePolicies(unittest.TestCase):
 
 
 class TestUserCacheMain(unittest.TestCase):
+    def test_restricted_podman_skip_preserves_other_policy_failure_exit(self):
+        context = user_cache_maintenance.UserContext("agent", "/fixture-home", 1000)
+        result = {
+            "status": "deferred_restricted", "issue": "namespace_helper_restricted",
+            "issues": ["namespace_helper_restricted"],
+            "cleanup_attempted": False, "cleanup_executed": False,
+        }
+        for other_errors in ([], ["npm failed"]):
+            with self.subTest(other_errors=other_errors), ExitStack() as stack:
+                stack.enter_context(patch.object(user_cache_maintenance, "resolve_user_context", return_value=context))
+                stack.enter_context(patch("lib.podman_cleanup.clean_podman_images", return_value=result))
+                log = stack.enter_context(patch.object(user_cache_maintenance, "log_event"))
+                for policy in ("cleanup_agent_storage", "cleanup_electron_downloads", "cleanup_uv_cache",
+                               "cleanup_pip_cache", "cleanup_go_cache", "cleanup_agent_caches"):
+                    stack.enter_context(patch.object(user_cache_maintenance, policy, return_value=[]))
+                stack.enter_context(patch.object(user_cache_maintenance, "cleanup_npm_cache", return_value=other_errors))
+                self.assertEqual(user_cache_maintenance.main([]), int(bool(other_errors)))
+                if other_errors:
+                    self.assertEqual(log.call_args.kwargs["details"], "npm failed")
+
     def test_safety_deferral_does_not_fail_setup_or_daily_job_but_other_failures_do(self):
         context = user_cache_maintenance.UserContext("agent", "/fixture-home", 1000)
         result = CodexCleanupResult(errors=("process inventory unavailable",), deferred=True)

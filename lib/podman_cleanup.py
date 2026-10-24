@@ -31,6 +31,7 @@ _COMMAND_TIMEOUT = 30
 _PRUNE_TIMEOUT = 300
 _CLEANUP_SECONDS = 300
 _OUTPUT_LIMIT = 256 * 1024
+_SELF_STATUS_LIMIT = 16 * 1024
 _PROCESS_LIMIT = 16384
 _PROCESS_SECONDS = 3
 _PREVIEW_LIMIT = 12
@@ -165,6 +166,35 @@ def _command(executable: str, home: str, args: list[str], *,
     prefix = [executable, "--remote=false"] if podman else [executable]
     return run_captured([*prefix, *args], cwd=home, env=environment,
                         timeout=timeout, max_bytes=_OUTPUT_LIMIT)
+
+
+def _namespace_helper_restricted(stderr: str) -> bool:
+    """Recognize a map-helper denial only with current kernel restrictions."""
+    if not isinstance(stderr, str) or len(stderr) > _OUTPUT_LIMIT:
+        return False
+    denied = any(
+        re.search(rf'(?:^|: ){helper}: write to {mapping} failed: Operation not permitted$',
+                  stderr, re.MULTILINE)
+        and re.search(rf'^Error: cannot set up namespace using "(?:/[A-Za-z0-9_.-]+)*/{helper}": exit status ?1$',
+                      stderr, re.MULTILINE)
+        for helper, mapping in (("newuidmap", "uid_map"), ("newgidmap", "gid_map"))
+    )
+    if not denied:
+        return False
+    try:
+        with open("/proc/self/status", "rb") as source:
+            raw = source.read(_SELF_STATUS_LIMIT + 1)
+    except OSError:
+        return False
+    if len(raw) > _SELF_STATUS_LIMIT or not raw.endswith(b"\n"):
+        return False
+    # Require exactly one well-formed instance of both kernel fields. Unknown
+    # or incomplete observations retain the ordinary failed-probe contract.
+    nnp = [line for line in raw.splitlines() if line.startswith(b"NoNewPrivs:")]
+    bounding = [line for line in raw.splitlines() if line.startswith(b"CapBnd:")]
+    return (len(nnp) == len(bounding) == 1
+            and re.fullmatch(rb"NoNewPrivs:[ \t]+1", nnp[0]) is not None
+            and re.fullmatch(rb"CapBnd:[ \t]+0{16}", bounding[0]) is not None)
 
 
 def _process_activity(uid: int) -> tuple[str, str | None]:
@@ -317,6 +347,8 @@ def clean_podman_images(*, apply: bool = False) -> dict:
 
         info_result = run(["info", "--format", "json"])
         if info_result.returncode != 0:
+            if _namespace_helper_restricted(info_result.stderr):
+                return _issue(result, "deferred_restricted", "namespace_helper_restricted")
             return _issue(result, "deferred_unknown", "podman_info_failed")
         try:
             info = json.loads(info_result.stdout)

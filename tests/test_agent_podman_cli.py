@@ -35,7 +35,7 @@ class PodmanCleanupCommandTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())["status"], "cleaned")
 
     def test_failure_and_deferral_exit_nonzero(self):
-        for status in ("deferred_active", "deferred_unknown", "failed"):
+        for status in ("deferred_active", "deferred_restricted", "deferred_unknown", "failed", "uncertain"):
             with self.subTest(status=status), \
                     patch("lib.podman_cleanup.clean_podman_images", return_value={"status": status}), \
                     redirect_stdout(io.StringIO()) as output:
