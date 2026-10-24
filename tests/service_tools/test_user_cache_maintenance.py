@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -395,6 +396,70 @@ class TestUserCachePolicies(unittest.TestCase):
             patcher = patch(f"common.service_tools.user_cache_maintenance.{name}", return_value=False)
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_podman_policy_maps_safe_statuses_and_logs_only_fixed_fields(self):
+        helper = types.ModuleType("lib.podman_cleanup")
+        helper.clean_podman_images = unittest.mock.Mock(return_value={
+            "status": "preview", "candidate_count": 3, "retention_days": 7,
+            "free_bytes_before": 1234, "free_bytes_after": 5678,
+            "image_metadata": "must not be logged", "output": "private output",
+        })
+        with patch.dict(sys.modules, {"lib.podman_cleanup": helper}), patch.object(
+            user_cache_maintenance, "log_event",
+        ) as log:
+            self.assertEqual(
+                user_cache_maintenance.cleanup_podman_images(self.context, dry_run=True),
+                [],
+            )
+        helper.clean_podman_images.assert_called_once_with(apply=False)
+        self.assertEqual(log.call_args.kwargs, {
+            "status": "preview", "candidate_count": 3, "retention_days": 7,
+            "free_bytes_before": 1234, "free_bytes_after": 5678,
+        })
+
+        with patch.dict(sys.modules, {"lib.podman_cleanup": helper}):
+            for status in ("cleaned", "absent", "deferred_active"):
+                with self.subTest(status=status):
+                    helper.clean_podman_images.return_value = {"status": status}
+                    with patch.object(user_cache_maintenance, "log_event"):
+                        self.assertEqual(
+                            user_cache_maintenance.cleanup_podman_images(self.context, dry_run=False),
+                            [],
+                        )
+                    helper.clean_podman_images.assert_called_with(apply=True)
+
+    def test_podman_unknown_and_failed_statuses_surface_as_failures(self):
+        helper = types.ModuleType("lib.podman_cleanup")
+        for status, expected in (
+            ("deferred_unknown", "Podman image cleanup: deferred_unknown"),
+            ("failed", "Podman image cleanup: failed"),
+            ("future_status", "Podman image cleanup: unrecognized result status"),
+        ):
+            with self.subTest(status=status):
+                helper.clean_podman_images = unittest.mock.Mock(return_value={"status": status})
+                with patch.dict(sys.modules, {"lib.podman_cleanup": helper}), patch.object(
+                    user_cache_maintenance, "log_event",
+                ):
+                    self.assertEqual(
+                        user_cache_maintenance.cleanup_podman_images(self.context, dry_run=False),
+                        [expected],
+                    )
+
+    def test_full_maintenance_aggregates_podman_and_other_policy_failures(self):
+        with patch.object(user_cache_maintenance, "cleanup_agent_storage", return_value=[]), patch.object(
+            user_cache_maintenance, "cleanup_podman_images", return_value=["Podman failed"],
+        ) as podman, patch.object(
+            user_cache_maintenance, "cleanup_electron_downloads", return_value=[],
+        ), patch.object(user_cache_maintenance, "cleanup_uv_cache", return_value=[]), patch.object(
+            user_cache_maintenance, "cleanup_npm_cache", return_value=["npm failed"],
+        ), patch.object(user_cache_maintenance, "cleanup_pip_cache", return_value=[]), patch.object(
+            user_cache_maintenance, "cleanup_go_cache", return_value=[],
+        ), patch.object(user_cache_maintenance, "cleanup_agent_caches", return_value=[]):
+            self.assertEqual(
+                user_cache_maintenance.run_user_cache_maintenance(self.context, dry_run=True),
+                ["Podman failed", "npm failed"],
+            )
+        podman.assert_called_once_with(self.context, dry_run=True)
 
     @patch("common.service_tools.user_cache_maintenance.run_cleanup_command", return_value=None)
     @patch("common.service_tools.user_cache_maintenance.process_uses_path", return_value=False)

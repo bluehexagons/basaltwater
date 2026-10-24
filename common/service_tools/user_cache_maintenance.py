@@ -1166,9 +1166,32 @@ def cleanup_agent_storage(context: UserContext, *, dry_run: bool) -> list[str]:
     return failures
 
 
+def cleanup_podman_images(context: UserContext, *, dry_run: bool) -> list[str]:
+    """Prune only safe rootless Podman images through the dedicated helper."""
+    # Keep this optional integration lazy so systems without the helper can
+    # still import and run the rest of user cache maintenance.
+    from lib.podman_cleanup import clean_podman_images
+
+    result = clean_podman_images(apply=not dry_run)
+    status = result.get("status")
+    fields = {"status": status}
+    for key in ("candidate_count", "retention_days", "free_bytes_before", "free_bytes_after"):
+        value = result.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            fields[key] = value
+    log_event(logger, "Podman image cleanup", **fields)
+
+    if status in ("preview", "cleaned", "absent", "deferred_active"):
+        return []
+    if status in ("deferred_unknown", "failed"):
+        return [f"Podman image cleanup: {status}"]
+    return ["Podman image cleanup: unrecognized result status"]
+
+
 def run_user_cache_maintenance(context: UserContext, *, dry_run: bool) -> list[str]:
     """Run each independent user cache policy and collect failures."""
     failures = cleanup_agent_storage(context, dry_run=dry_run)
+    failures.extend(cleanup_podman_images(context, dry_run=dry_run))
     failures.extend(cleanup_electron_downloads(context, dry_run=dry_run))
     failures.extend(cleanup_uv_cache(context, dry_run=dry_run))
     failures.extend(cleanup_npm_cache(context, dry_run=dry_run))
