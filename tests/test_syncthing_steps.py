@@ -15,6 +15,7 @@ from sync.syncthing_steps import (
     DEFAULT_SYNCTHING_ROOT,
     SYNCTHING_HOME,
     _configure_syncthing_https,
+    _disable_before_removal,
     _preflight_existing_folders,
     _prepare_share_root,
     _prepare_state_home,
@@ -183,7 +184,179 @@ class SyncthingDesiredConfigTest(unittest.TestCase):
         self.assertNotIn(f'ReadWritePaths="{DEFAULT_SYNCTHING_ROOT}"', service)
 
 
+class SyncthingShareRootTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.parent = os.path.join(temporary.name, "private")
+        self.root = os.path.join(self.parent, "sync")
+        os.mkdir(self.parent, 0o700)
+        self.config = SimpleNamespace(username="agent", syncthing_root=self.root, storage_mounts=None)
+        # Only temporary test paths bypass the CLI prefix policy. Reserved
+        # paths have separate tests that exercise the real validator first.
+        self.enterContext(patch("sync.syncthing_steps._validate_syncthing_root"))
+        self.enterContext(patch("sync.syncthing_steps._account", return_value=(os.getuid(), os.getgid(), "agent")))
+        self.mount = self.enterContext(patch("sync.syncthing_steps.assert_declared_storage_mount"))
+        self.chown = self.enterContext(patch("sync.syncthing_steps.os.fchown"))
+        self.run_command = self.enterContext(patch("sync.syncthing_steps.run", return_value=SimpleNamespace(returncode=0)))
+
+    def test_new_leaf_changes_only_leaf_and_owned_nonempty_rerun_preserves_acl_mode(self) -> None:
+        _prepare_share_root(self.config, "agent")
+        self.chown.assert_called_once()
+        self.assertEqual(os.stat(self.parent).st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(self.root).st_mode & 0o777, 0o770)
+        with open(os.path.join(self.root, "data"), "w") as stream:
+            stream.write("preserved data")
+        # A deliberately prepared root can retain a setgid/group ACL mask.
+        os.chmod(self.root, 0o2750)
+        self.chown.reset_mock()
+        _prepare_share_root(self.config, "agent")
+        self.chown.assert_not_called()
+        self.assertEqual(os.stat(self.root).st_mode & 0o7777, 0o2750)
+        self.assertEqual(os.stat(self.parent).st_mode & 0o777, 0o700)
+        with open(os.path.join(self.root, "data")) as stream:
+            self.assertEqual(stream.read(), "preserved data")
+
+    def test_unmanaged_nonempty_root_requires_explicit_preparation(self) -> None:
+        os.mkdir(self.root, 0o755)
+        with open(os.path.join(self.root, ".hidden-data"), "w") as stream:
+            stream.write("unmanaged data")
+        for uid, gid, mode in (
+            (os.getuid() + 1, os.getgid(), 0o40770),
+            (os.getuid(), os.getgid() + 1, 0o40770),
+            (os.getuid(), os.getgid(), 0o40777),
+            (os.getuid(), os.getgid(), 0o40660),
+        ):
+            with self.subTest(uid=uid, gid=gid, mode=mode), patch(
+                "sync.syncthing_steps.os.fstat",
+                return_value=SimpleNamespace(st_uid=uid, st_gid=gid, st_mode=mode),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "explicitly prepare only that directory with chown agent:agent and chmod 0770"):
+                    _prepare_share_root(self.config, "agent")
+        self.chown.assert_not_called()
+        self.run_command.assert_not_called()
+        self.assertEqual(os.stat(self.root).st_mode & 0o777, 0o755)
+
+    def test_verified_fresh_mount_allows_only_metadata_and_empty_recovery_directory(self) -> None:
+        os.mkdir(self.root, 0o755)
+        with open(os.path.join(self.root, ".basaltwater-storage.json"), "w") as stream:
+            stream.write("mount marker checked by the mocked mount verifier")
+        os.mkdir(os.path.join(self.root, "lost+found"), 0o700)
+        self.config.storage_mounts = [["data", self.root, "ext4", "empty"]]
+        _prepare_share_root(self.config, "agent")
+        self.chown.assert_called_once()
+        self.mount.assert_called_once_with(self.config, self.root)
+        self.assertEqual(os.stat(self.root).st_mode & 0o777, 0o770)
+
+    def test_mount_declaration_does_not_authorize_unmanaged_data(self) -> None:
+        os.mkdir(self.root, 0o755)
+        self.config.storage_mounts = [["data", self.root, "ext4", "empty"]]
+        for relative in ("foreign-data", "lost+found/recovered-data"):
+            with self.subTest(relative=relative):
+                path = os.path.join(self.root, relative)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as stream:
+                    stream.write("do not adopt")
+                with self.assertRaisesRegex(RuntimeError, "Refusing to adopt nonempty"):
+                    _prepare_share_root(self.config, "agent")
+                os.unlink(path)
+        self.chown.assert_not_called()
+        self.run_command.assert_not_called()
+
+    def test_missing_parent_requires_operator_preparation(self) -> None:
+        self.config.syncthing_root = os.path.join(self.parent, "missing", "sync")
+        with self.assertRaisesRegex(RuntimeError, "prepare its parent directory or mount explicitly"):
+            _prepare_share_root(self.config, "agent")
+        self.assertFalse(os.path.exists(os.path.join(self.parent, "missing")))
+        self.chown.assert_not_called()
+
+    def test_inaccessible_ancestor_or_root_aborts_setup_before_stop_or_config_changes(self) -> None:
+        os.mkdir(self.root, 0o770)
+        for failed_probe in (0, 1, 2):
+            with (
+                self.subTest(failed_probe=failed_probe),
+                patch("sync.syncthing_steps._validate_state_paths"),
+                patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
+                patch("sync.syncthing_steps.is_dry_run", return_value=False),
+                patch("sync.syncthing_steps.is_package_installed", return_value=True),
+                patch("sync.syncthing_steps._prepare_state_home"),
+                patch("sync.syncthing_steps._preflight_existing_folders"),
+                patch("sync.syncthing_steps._stop_before_configuration") as stop,
+                patch("sync.syncthing_steps._run_as_user") as generate,
+                patch("sync.syncthing_steps.write_text_atomic") as write_unit,
+            ):
+                self.run_command.reset_mock()
+                self.run_command.side_effect = [SimpleNamespace(returncode=0)] * failed_probe + [SimpleNamespace(returncode=1)]
+                config = _config()
+                config.syncthing_root = self.root
+                with self.assertRaisesRegex(RuntimeError, "Explicitly grant traversal on its ancestors"):
+                    setup_syncthing(config)
+                stop.assert_not_called()
+                generate.assert_not_called()
+                write_unit.assert_not_called()
+                self.assertEqual(self.run_command.call_args.args[0], [
+                    "runuser", "-u", "agent", "--", "/usr/bin/test", ("-r", "-x", "-w")[failed_probe], self.root,
+                ])
+                self.assertEqual(os.stat(self.parent).st_mode & 0o777, 0o700)
+
+
 class SyncthingCompositionTest(unittest.TestCase):
+    def test_reserved_share_root_is_rejected_before_any_host_observation(self) -> None:
+        for root in ("/var/lib/dpkg", "/var/lib/dpkg/updates", "/var/lib/apt/empty"):
+            with (
+                self.subTest(root=root),
+                patch("sync.syncthing_steps.os.path.lexists") as exists,
+                patch("sync.syncthing_steps.assert_declared_storage_mount") as mount,
+                patch("sync.syncthing_steps.run") as run_command,
+            ):
+                with self.assertRaisesRegex(ValueError, "reserved system trees"):
+                    _prepare_share_root(SimpleNamespace(syncthing_root=root), "agent")
+                exists.assert_not_called()
+                mount.assert_not_called()
+                run_command.assert_not_called()
+
+    def test_native_roots_fresh_mount_and_owned_rerun_do_not_change_parents(self) -> None:
+        for root in ("/srv/lab-data/syncthing", "/srv/syncthing"):
+            for owned in (False, True):
+                with (
+                    self.subTest(root=root, owned=owned),
+                    patch("sync.syncthing_steps.os.path.lexists", return_value=True),
+                    patch("sync.syncthing_steps.os.path.isdir", return_value=True),
+                    patch("sync.syncthing_steps.os.path.islink", return_value=False),
+                    patch("sync.syncthing_steps.os.path.realpath", side_effect=lambda path: path),
+                    patch("sync.syncthing_steps.assert_declared_storage_mount") as mount,
+                    patch("sync.syncthing_steps._account", return_value=(1000, 1000, "agent")),
+                    patch("sync.syncthing_steps.directory_fd") as open_directory,
+                    patch("sync.syncthing_steps.os.mkdir", side_effect=FileExistsError if owned else None) as mkdir,
+                    patch("sync.syncthing_steps.os.fstat", return_value=SimpleNamespace(st_uid=1000 if owned else 0, st_gid=1000 if owned else 0, st_mode=0o40770 if owned else 0o40755)),
+                    patch("sync.syncthing_steps.os.listdir", return_value=["team-data"] if owned else []),
+                    patch("sync.syncthing_steps.os.fchown") as chown,
+                    patch("sync.syncthing_steps.os.fchmod") as chmod,
+                    patch("sync.syncthing_steps.run", return_value=SimpleNamespace(returncode=0)) as run_command,
+                ):
+                    config = SimpleNamespace(
+                        username="agent", syncthing_root=root,
+                        storage_mounts=[["data", root, "ext4", "empty"]],
+                    )
+                    _prepare_share_root(config, "agent")
+                    mount.assert_called_once_with(config, root)
+                    self.assertEqual(open_directory.call_args_list[0].args, (os.path.dirname(root),))
+                    self.assertEqual(open_directory.call_args_list[0].kwargs, {})
+                    self.assertEqual(open_directory.call_args_list[1].args, (root,))
+                    self.assertEqual(open_directory.call_args_list[1].kwargs, {})
+                    mkdir.assert_called_once_with(os.path.basename(root), mode=0o770, dir_fd=open_directory.return_value.__enter__.return_value)
+                    if owned:
+                        chown.assert_not_called()
+                        chmod.assert_not_called()
+                    else:
+                        descriptor = open_directory.return_value.__enter__.return_value
+                        chown.assert_called_once_with(descriptor, 1000, 1000)
+                        chmod.assert_called_once_with(descriptor, 0o770)
+                    self.assertEqual([call.args[0] for call in run_command.call_args_list], [
+                        ["runuser", "-u", "agent", "--", "/usr/bin/test", permission, root]
+                        for permission in ("-r", "-x", "-w")
+                    ])
+
     def test_state_home_restores_traversal_without_replacing_identity(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             parent = os.path.join(root, "private")
@@ -255,6 +428,7 @@ class SyncthingCompositionTest(unittest.TestCase):
                 storage_mounts=None,
             )
             with (
+                patch("sync.syncthing_steps._validate_syncthing_root"),
                 patch("sync.syncthing_steps.assert_declared_storage_mount"),
                 patch("sync.syncthing_steps.run") as run_command,
             ):
@@ -325,7 +499,12 @@ class SyncthingCompositionTest(unittest.TestCase):
             patch("sync.syncthing_steps.os.unlink") as unlink,
             patch("sync.syncthing_steps.run") as run_command,
         ):
-            run_command.return_value = subprocess.CompletedProcess(args=[], returncode=3)
+            run_command.side_effect = [
+                SimpleNamespace(returncode=0),
+                SimpleNamespace(returncode=3, stdout="inactive\n"),
+                SimpleNamespace(returncode=1, stdout="disabled\n"),
+                SimpleNamespace(returncode=0),
+            ]
             setup_syncthing(config)
 
         remove_https.assert_called_once_with(config)
@@ -336,7 +515,7 @@ class SyncthingCompositionTest(unittest.TestCase):
             commands,
         )
         self.assertIn(
-            ["systemctl", "is-active", "--quiet", "basaltwater-syncthing.service"],
+            ["systemctl", "is-active", "basaltwater-syncthing.service"],
             commands,
         )
 
@@ -357,9 +536,68 @@ class SyncthingCompositionTest(unittest.TestCase):
             patch("sync.syncthing_steps.os.unlink") as unlink,
             patch("sync.syncthing_steps.run", return_value=completed),
         ):
-            with self.assertRaisesRegex(RuntimeError, "did not stop"):
+            with self.assertRaisesRegex(RuntimeError, "stopped and disabled"):
                 setup_syncthing(config)
         unlink.assert_not_called()
+
+    def test_disable_preserves_unit_for_errors_transitions_and_enabled_states(self) -> None:
+        # Exit codes alone are not enough: bus errors and transitional states
+        # must never be interpreted as a stopped daemon.
+        for disable_rc, active_rc, state, enabled_rc, enabled in (
+            (1, 3, "inactive", 1, "disabled"),
+            (0, 1, "", 1, "disabled"),
+            (0, 1, "inactive", 1, "disabled"),
+            (0, 3, "deactivating", 1, "disabled"),
+            (0, 3, "activating", 1, "disabled"),
+            (0, 4, "unknown", 4, "not-found"),
+            (0, 3, "inactive", 0, "enabled"),
+            (0, 3, "failed", 1, ""),
+        ):
+            with (
+                self.subTest(disable_rc=disable_rc, state=state, enabled=enabled),
+                patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
+                patch("sync.syncthing_steps.is_dry_run", return_value=False),
+                patch("sync.syncthing_steps._remove_syncthing_https"),
+                patch("sync.syncthing_steps.os.path.lexists", return_value=True),
+                patch("sync.syncthing_steps.os.path.islink", return_value=False),
+                patch("sync.syncthing_steps.os.path.isfile", return_value=True),
+                patch("sync.syncthing_steps.os.unlink") as unlink,
+                patch("sync.syncthing_steps.run", side_effect=[
+                    SimpleNamespace(returncode=disable_rc),
+                    SimpleNamespace(returncode=active_rc, stdout=state),
+                    SimpleNamespace(returncode=enabled_rc, stdout=enabled),
+                ]) as run_command,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "unit preserved"):
+                    setup_syncthing(_config(enable_syncthing=False, disable_syncthing=True))
+                unlink.assert_not_called()
+                self.assertNotIn(["systemctl", "daemon-reload"], [call.args[0] for call in run_command.call_args_list])
+
+    def test_disable_allows_failed_terminal_state_and_confirmed_absent_rerun(self) -> None:
+        with patch("sync.syncthing_steps.run", side_effect=[
+            SimpleNamespace(returncode=0),
+            SimpleNamespace(returncode=3, stdout="failed"),
+            SimpleNamespace(returncode=1, stdout="disabled"),
+        ]):
+            _disable_before_removal(True)
+        for active_rc, state, load_rc, load_state, allowed in (
+            (4, "unknown", 0, "not-found", True),
+            (3, "inactive", 0, "not-found", True),
+            (3, "deactivating", 0, "not-found", False),
+            (4, "unknown", 1, "", False),
+            (4, "unknown", 0, "loaded", False),
+        ):
+            with self.subTest(state=state, load_state=load_state), patch("sync.syncthing_steps.run", side_effect=[
+                SimpleNamespace(returncode=1),
+                SimpleNamespace(returncode=active_rc, stdout=state),
+                SimpleNamespace(returncode=4, stdout="not-found"),
+                SimpleNamespace(returncode=load_rc, stdout=load_state),
+            ]):
+                if allowed:
+                    _disable_before_removal(False)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "unit preserved"):
+                        _disable_before_removal(False)
 
     def test_setup_hashes_admin_from_stdin_and_preserves_gui_shares(self) -> None:
         completed = subprocess.CompletedProcess(

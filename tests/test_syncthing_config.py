@@ -206,6 +206,13 @@ class SyncthingConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not overlap"):
             self._config(syncthing_root="/var/lib/basaltwater")
 
+    def test_storage_root_rejects_reserved_system_trees_without_host_probes(self) -> None:
+        for tree in ("dpkg", "apt", "systemd", "dbus", "private", "polkit-1"):
+            for suffix in ("", "/empty", "/not-created-yet"):
+                with self.subTest(tree=tree, suffix=suffix):
+                    with self.assertRaisesRegex(ValueError, "reserved system trees"):
+                        self._config(syncthing_root=f"/var/lib/{tree}{suffix}")
+
     def test_root_and_oci_targets_are_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-root"):
             self._config(username="root")
