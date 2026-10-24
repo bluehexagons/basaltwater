@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,8 +16,14 @@ from lib import sysadmin_user
 class TestSysadminUser(unittest.TestCase):
     def test_unit_start_is_detached_from_the_renamed_users_session(self):
         completed = subprocess.CompletedProcess([], 0, "", "")
+        staged = {}
+
+        def scp_command(_host, _username, local_path, *_args, **_kwargs):
+            staged["unit"] = Path(local_path).read_text()
+            return ["scp"]
+
         with (
-            patch.object(sysadmin_user, "build_scp_command", return_value=["scp"]),
+            patch.object(sysadmin_user, "build_scp_command", side_effect=scp_command),
             patch.object(sysadmin_user.subprocess, "run", return_value=completed),
             patch.object(sysadmin_user, "_run_ssh", return_value=completed) as run_ssh,
         ):
@@ -28,6 +36,13 @@ class TestSysadminUser(unittest.TestCase):
 
         remote_command = run_ssh.call_args.args[3]
         self.assertIn("systemctl enable --now --no-block", remote_command)
+        self.assertIn("ExecStart=/usr/bin/python3 -I " + sysadmin_user.TARGET_HELPER, staged["unit"])
+
+    def test_preflight_uses_isolated_python_to_avoid_sibling_types_module(self):
+        completed = subprocess.CompletedProcess([], 0, json.dumps({"ok": True, "manifest": {}}), "")
+        with patch.object(sysadmin_user, "_run_ssh", return_value=completed) as run_ssh:
+            sysadmin_user._preflight("host.example", "root", None, "0123456789abcdef")
+        self.assertIn("/usr/bin/python3 -I " + sysadmin_user.TARGET_HELPER, run_ssh.call_args.args[3])
 
     def test_resume_unit_start_is_non_blocking(self):
         completed = subprocess.CompletedProcess([], 0, "", "")
@@ -47,6 +62,7 @@ class TestSysadminUser(unittest.TestCase):
         self.assertIn("systemctl enable --now --no-block", remote_command)
         self.assertEqual(attempt_id, "fedcba9876543210")
         self.assertIn("--prepare-resume --attempt-id fedcba9876543210", remote_command)
+        self.assertIn("/usr/bin/python3 -I " + sysadmin_user.TARGET_HELPER, remote_command)
         self.assertLess(remote_command.index("--prepare-resume"), remote_command.index("systemctl enable"))
 
     def test_resume_poll_waits_for_matching_attempt_even_if_new_worker_finishes_immediately(self):

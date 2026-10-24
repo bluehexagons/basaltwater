@@ -218,7 +218,7 @@ def _stage_unit(
         "After=local-fs.target\n\n"
         "[Service]\n"
         "Type=oneshot\n"
-        "ExecStart=/usr/bin/python3 /opt/basaltwater/lib/user_rename.py "
+        "ExecStart=/usr/bin/python3 -I /opt/basaltwater/lib/user_rename.py "
         f"--manifest {manifest_path} --run\n"
         "TimeoutStartSec=infinity\n"
         "StandardOutput=journal\n"
@@ -307,6 +307,7 @@ def _preflight(
             "sudo",
             "-n",
             "/usr/bin/python3",
+            "-I",
             TARGET_HELPER,
             "--manifest",
             _remote_manifest_path(operation_id),
@@ -382,7 +383,7 @@ def _start_resume_unit(
             [
                 ["sudo", "-n", "test", "-f", _remote_unit_path(operation_id)],
                 [
-                    "sudo", "-n", "/usr/bin/python3", TARGET_HELPER,
+                    "sudo", "-n", "/usr/bin/python3", "-I", TARGET_HELPER,
                     "--manifest", _remote_manifest_path(operation_id),
                     "--prepare-resume", "--attempt-id", attempt_id,
                 ],
