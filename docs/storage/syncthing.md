@@ -162,6 +162,20 @@ settings are never reset by a Basaltwater rerun. Versioning is useful recovery
 but is not an independent backup; retain server snapshots or another backup
 for disk loss, administrator mistakes, or compromise.
 
+Versioning archives changes received from another device; it cannot preserve
+the previous contents of a file edited locally on that same endpoint. Staggered
+history keeps the oldest version in each retention interval, starting with
+30-second intervals during the first hour and widening as versions age. A
+one-year maximum age does not guarantee every intermediate edit survives.
+Restore an archived copy on the device holding that history; the restored file
+then synchronizes to its peers. See Syncthing's
+[versioning rules](https://docs.syncthing.net/users/versioning.html).
+
+Concurrent edits can produce a `sync-conflict` copy that also synchronizes to
+peers. Review both copies and resolve the contents deliberately; Syncthing does
+not merge their text. See its
+[conflict behavior](https://docs.syncthing.net/users/syncing.html#conflicting-changes).
+
 ## Administrator credential rotation
 
 Replace the stored credential and reconcile the saved setup:
