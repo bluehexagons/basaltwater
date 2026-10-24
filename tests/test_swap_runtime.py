@@ -128,17 +128,34 @@ class TestSwapRuntimeSafety(unittest.TestCase):
         self, _resolve, mock_find, _signatures, _uuid, mock_inventory, mock_run
     ):
         area = SwapDevice("fast", "UUID=11111111-1111", 200, "once")
-        for fields in (
-            {"mountpoint": "[SWAP]"},
-            {"mountpoints": ["[SWAP]"]},
-            {"mountpoints": "[SWAP]"},
-            {"mountpoints": [None, ""], "mountpoint": "[SWAP]"},
+        for discard, option, active_name, fields in (
+            ("off", "", "/dev/sda", {"mountpoint": "[SWAP]"}),
+            ("once", " --discard=once", "/dev/sda", {"mountpoints": ["[SWAP]"]}),
+            ("pages", " --discard=pages", "/dev/sda", {"mountpoints": "[SWAP]"}),
+            (
+                "both", " --discard", "/dev/disk/by-uuid/11111111-1111",
+                {"mountpoints": [None, ""], "mountpoint": "[SWAP]"},
+            ),
         ):
-            with self.subTest(fields=fields):
+            with self.subTest(discard=discard, fields=fields):
+                adopted = SwapDevice("fast", area.source, 200, discard)
+                mock_inventory.return_value = {active_name: 200}
                 mock_find.return_value = {"path": "/dev/sda", "fstype": "swap", **fields}
-                prior = _ensure_swap_device(self._config(), area, None)
+                prior = _ensure_swap_device(self._config(), adopted, None)
                 self.assertFalse(prior["provider_owned"])
-                _ensure_swap_device(self._config(), area, prior)
+                self.assertEqual(prior["uuid"], "11111111-1111")
+                self.assertEqual(prior["discard"], discard)
+                self.assertEqual(
+                    mock_run.call_args_list,
+                    [
+                        call("swapoff /dev/sda"),
+                        call(f"swapon --priority 200{option} /dev/sda"),
+                    ],
+                )
+                mock_run.reset_mock()
+                self.assertEqual(_ensure_swap_device(self._config(), adopted, prior), prior)
+                # Recovering the same owned device through its identity is idle too.
+                _ensure_swap_device(self._config(), adopted, None, [prior])
                 mock_run.assert_not_called()
 
         for observed_priority, prior_discard in ((10, "once"), (200, "off")):
@@ -157,6 +174,49 @@ class TestSwapRuntimeSafety(unittest.TestCase):
                     ],
                 )
                 mock_run.reset_mock()
+
+    @patch("common.swap_steps._configure_resume")
+    @patch("common.swap_steps._configure_zswap")
+    @patch("common.swap_steps._configure_swappiness")
+    @patch("common.swap_steps._reconcile_zram", return_value=[])
+    @patch("common.swap_steps._active_swap_inventory", return_value={"/dev/sda": 200})
+    @patch("common.swap_steps._swap_uuid", return_value="11111111-1111")
+    @patch("common.swap_steps._wipefs_signatures", return_value=["swap"])
+    @patch(
+        "common.swap_steps._find_device_by_path",
+        return_value={"path": "/dev/sda", "fstype": "swap", "mountpoints": ["[SWAP]"]},
+    )
+    @patch("common.swap_steps._resolve_direct_device", return_value="/dev/sda")
+    @patch("common.swap_steps.can_manage_swap", return_value=True)
+    @patch("common.swap_steps.is_dry_run", return_value=False)
+    def test_failed_first_active_adoption_does_not_record_requested_policy(self, *_mocks):
+        config = self._config(
+            swap_devices=[["fast", "UUID=11111111-1111", "priority=200", "discard=once"]]
+        )
+        for failure, commands in (
+            ([RuntimeError("swapoff failed")], [call("swapoff /dev/sda")]),
+            (
+                [None, RuntimeError("swapon failed"), None],
+                [
+                    call("swapoff /dev/sda"),
+                    call("swapon --priority 200 --discard=once /dev/sda"),
+                    call("swapon --priority 200 /dev/sda"),
+                ],
+            ),
+        ):
+            with (
+                self.subTest(failure=commands[-1]),
+                tempfile.TemporaryDirectory() as directory,
+                patch("common.swap_steps.SWAP_STATE_FILE", os.path.join(directory, "swap.json")),
+                patch("common.swap_steps._write_state") as write_state,
+                patch("common.swap_steps._replace_fstab") as replace_fstab,
+                patch("common.swap_steps.run", side_effect=failure) as mock_run,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "failed"):
+                    configure_swap(config)
+                self.assertEqual(mock_run.call_args_list, commands)
+                write_state.assert_not_called()
+                replace_fstab.assert_not_called()
 
     @patch("common.swap_steps.run")
     @patch("common.swap_steps._wipefs_signatures")
