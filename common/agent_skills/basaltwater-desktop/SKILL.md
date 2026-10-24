@@ -9,7 +9,14 @@ metadata:
 
 One setup-account XRDP/Xorg session is shared with the human and persists through
 client disconnection. Check `basaltw desktop status` for its current state.
-Discover installed applications with the project manifest; presence is not readiness.
+Discover only the needed application, for example
+`basaltw agent manifest . --application blender --json`; presence is not readiness.
+
+Prefer repeatable application scripts/exports for bulk edits, then verify saved
+artifacts and the relevant UI result. Use exact PID/name/role/root filters for
+controls; add `--save-output` to broad observations to retain full JSON privately.
+Keep one worker in control of the shared desktop. Delegate independent script,
+file, or export checks with `basaltwater-subagents` when useful.
 
 | Task | Read |
 | --- | --- |

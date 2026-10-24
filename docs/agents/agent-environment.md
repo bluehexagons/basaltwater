@@ -12,8 +12,14 @@ not establish health; use the reported doctor command for that separate check.
 Use repeatable `--capability` filters for smaller responses, for example
 `basaltw agent manifest . --capability web --json` for Node/web work or
 `--capability browser --capability skills` for browser guidance. Scopes include
-`installation`, `workspace`, `skills`, `browser`, `development`, `publishing`,
-and the `web` combination. Unrelated application and publishing prose is omitted.
+`installation`, `workspace`, `skills`, `browser`, `desktop`, `development`,
+`publishing`, and the `web` combination. For one desktop application, use
+`basaltw agent manifest . --application blender --json`; repeat `--application`
+for additional applications. This implies the desktop scope and limits the
+application/tool inventory to those names. Combine it with
+`--capability development` when project recipes are also needed. An application
+missing from PATH is omitted; an empty inventory does not establish readiness.
+Unrelated application and publishing prose is omitted.
 Every scope retains `basaltwater`, using the same provenance contract as the
 support bundle. `setup_snapshot` describes a recorded setup receipt, while
 `running_source` describes an observed Git root executing the CLI. Each is

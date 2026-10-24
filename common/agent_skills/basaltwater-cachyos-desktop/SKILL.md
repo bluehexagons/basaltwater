@@ -1,135 +1,74 @@
 ---
 name: basaltwater-cachyos-desktop
-description: Run and verify Godot, Electron and native development tasks, and edit Blender models and vector, raster, audio or video assets on a CachyOS KDE workstation using application scripts, exports and user-approved Wayland capture/input. Use for native application workflows, not workstation installation or VM XRDP control.
+description: Edit and verify native application assets, scripts, and exports in an existing CachyOS KDE session, including user-approved Wayland capture/input.
 metadata:
   managed-by: basaltwater
 ---
 
 # Native CachyOS application work
 
-Use the existing desktop account, project and KDE Wayland session. Start with
-`basaltw agent manifest --json`: applications include active executables,
-launch argument vectors, workflows and guidance. PATH presence is discovery;
-it does not establish editing, export, GPU or audio readiness.
+Use the existing desktop account, project and KDE Wayland session. Discover
+only what the task needs: `basaltw agent manifest . --application blender --json`
+for Blender, or `--capability development` for Godot/Electron/native project
+recipes. Repeat `--application NAME` for another app. PATH presence is discovery,
+not editing, export, GPU or audio readiness.
 
-Complete requested asset edits autonomously using application scripting,
-repeatable CLI exports and available native UI tools. Save editable task copies,
-reopen saved results and verify delivery files in the consuming project. Human
-review is optional when requested. Report any required UI check that cannot be
-performed with the session's available tools; a successful file export does not
-establish native interaction coverage.
+Complete requested edits using repeatable application scripts/exports and
+available native UI tools. Save editable task copies, reopen saved results and
+verify delivery files in the consuming project. Use UI checks where the task
+requires them; report checks unavailable in the session. A successful export
+does not establish native interaction coverage. Human review is optional when
+requested.
 
-Read the reference for the task:
+Read only the reference needed for the current operation:
 
-- [Blender](references/blender.md): model/material/UV edits, `bpy`, textured
-  glTF/GLB and OBJ/MTL round trips, rendering and private test preferences.
-- [Media](references/media.md): Inkscape object actions and SVG/PNG exports,
-  GIMP/Krita editable sources, Audacity/Shotcut audio/video verification,
-  and the other supported creative and engineering applications.
-- [Rendering evidence](references/rendering.md): capture backend selection,
-  parallel Xvfb launches, high-resolution content checks and post-refresh evidence.
+| Task | Read |
+| --- | --- |
+| Godot/Electron/native launches, project checks, task logs | [Development tasks](references/development.md) |
+| Blender model/material/UV edits, bpy, export round trips | [Blender](references/blender.md) |
+| Vector, raster, audio, video and other native assets | [Media](references/media.md) |
+| Capture backends, Xvfb, high-resolution and post-refresh evidence | [Rendering evidence](references/rendering.md) |
+| Wayland consent, session lifetime, accessibility, input and recovery | [Native control](references/native-control.md) |
 
-## Launch and observe
+## Keep the desktop loop focused
 
-For remote Godot development, check project prerequisites with
-`basaltw desktop --native develop doctor --project PATH --json`. Use `develop
-editor --project PATH` or `develop run --project PATH --scene res://SCENE` to
-launch explicitly in the owned logged-in KDE session from T3 or SSH. Use
-`develop import --project PATH` for explicit headless asset preparation; wait
-for completion before dependent checks. Editor/run accept `--headless`,
-`--quit-after ITERATIONS`, and `--rendering-method METHOD`; iteration bounds
-are not wall-clock deadlines, and headless success does not verify GPU/input.
-For Electron, use `develop node SCRIPT --project PATH -- ARGUMENTS` to execute
-one declared package script with the selected installed project Node runtime
-and npm/pnpm/yarn policy. It installs no dependencies and disables implicit
-Corepack downloads. Preserve the project's sandbox policy. For native commands,
-use `develop exec --project PATH -- COMMAND`. Use
-`--dry-run` to preview. These user-systemd tasks survive client disconnection
-and retain private bounded logs; `develop list`, `develop status TASK_ID`, and
-`develop stop TASK_ID` manage only their records/process group. Save changes
-before stopping an editor. Launches honor saved/live human pause; they do not
-grant capture/input permission. See the
-[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md).
+Use scripts for bulk edits and file tools for export/content checks. Observe
+before and after a bounded operation; use exact PID/name/role/root selectors
+for controls and fresh monitor captures for custom canvases. Add
+`--save-output` to `windows`, `inspect`, `wait`, or `wait-element` to retain
+full JSON in a private temporary file with a short preview. Read needed fields
+from its artifact path. Partial/empty AT-SPI inventories do not establish
+window absence or compositor focus; shortened output never implies completeness.
 
-Queue project-declared Godot/Electron/native checks with `develop check RECIPE
---project PATH --settings SETTINGS.json --timeout SECONDS`. Use the existing
-`basaltwater-agent.json` recipes; the project harness owns import ordering,
-actions, assertions and actual renderer/runtime observations. It reads
-`BASALTWATER_VISUAL_SETTINGS` and writes `BASALTWATER_VISUAL_EVIDENCE`. Native
-status returns the private `check_report` path with revision/settings/outcome
-evidence and a bounded check log. Record what the harness actually exercised;
-exit status alone does not verify GPU, audio, input or complete UI behavior.
+Keep scripts and verbose logs in task files/private artifacts. Use the
+project-development skill's capture helper for verbose commands; return status,
+actionable excerpts and paths. Maintain a short current task note with decisions,
+unresolved issues, job handles and validation rather than copying full histories.
+Do not relaunch a mutation after timeout without checking its state.
 
-Launch the active executable directly from the invoking graphical session:
+Use `basaltwater-subagents` for independent bounded script, geometry, export or
+test tasks. Luna medium is a provisional starting point; choose effort from
+task complexity and the live catalog. Give each worker files, acceptance checks
+and a short handoff. Only one worker controls the shared desktop.
 
-```fish
-blender /absolute/project/model.blend
-inkscape /absolute/project/assets/icon.svg
-gimp /absolute/project/assets/banner.xcf
-krita /absolute/project/assets/sprite.kra
-audacity /absolute/project/assets/sound.wav
-shotcut /absolute/project/assets/clip.mlt
-```
+## Native control
 
-Use the manifest's actual executable when PATH shadows or multiple installations
-exist. Normal project work uses its intended preferences and add-ons. Disposable
-checks should use isolated profiles and synthetic files, preserving personal
-settings and unrelated running applications.
+Use `basaltw desktop --native` explicitly; ordinary `desktop` is Debian XRDP.
+Read the native control reference before input. Start locally from the graphical
+session with owner-approved monitor/keyboard/pointer access; background scripts
+and exports can work without capture/input. Never create XRDP, guess another
+session's bus/display, switch KDE to X11, or install global input daemons.
 
-Use `basaltw desktop --native` explicitly for KDE Wayland. The ordinary
-`basaltw desktop` backend remains Debian XRDP/Xorg. Start locally from the
-graphical session; background scripts/exports can work without it. Do not
-create XRDP, guess another session's bus/display, change KDE to X11 or install global
-input daemons. See the [native control reference](references/native-control.md).
+Honor human pause without automatically resuming it. Verify identity, focus,
+mode and current selected-monitor geometry before input; restart the portal
+after monitor/scaling/resolution changes. Review captures before sharing unrelated
+content. Stop native control when finished, preserving KDE and applications.
+For missing/stuck physical keys, stop control and read the native recovery steps.
 
-```fish
-basaltw desktop --native doctor
-basaltw desktop --native start
-# The desktop owner selects one monitor and grants keyboard/pointer access in KDE.
-basaltw desktop --native status
-basaltw desktop --native handoff
-basaltw desktop --native exec -- inkscape /absolute/task/icon.svg
-basaltw desktop --native screenshot --output /absolute/task/observe-1.png
-```
+For web consumers, follow session browser policy and `basaltwater-browser-testing`.
+Use the permitted available browser after confirmed T3 unavailability; preserve
+profiles and existing sessions. Report browser, origin and observed checks;
+editor previews and desktop pixels do not establish DOM/network or game fidelity.
 
-Prefer PID-scoped accessible controls where usable; use fresh selected-monitor
-captures for custom canvases such as Blender. Monitor capture can include
-unrelated content: inspect locally and share only reviewed evidence. Check
-window identity, focus, mode and bounds before shortcuts. `windows` is a partial
-AT-SPI inventory, not a complete compositor/focus inventory. Keep captures
-recent and coordinates within the selected monitor; new files are never
-overwritten. Restart the portal after monitor/scaling/resolution changes.
-Honor human pause without automatically resuming it. Stop with
-`basaltw desktop --native stop` when finished; KDE and applications keep running.
-The default lifetime is 15 minutes; explicit starts/renewals allow up to eight
-hours. For unattended future work, the owner can opt in once with `start
---remember` and approve KDE's monitor/device and persistence choices. Later
-`start` calls reuse the saved grant where KDE permits; inspect status and never
-claim a prompt is absent based only on a token. Human pause persists across
-restoration and must not be resumed automatically. `renew --generation GEN
---seconds 28800` cannot renew paused or expired control. Owner `revoke` removes
-saved access; `stop` preserves it. No session starts or renews at login.
-Package/portal observations in `basaltw local cachyos-doctor --json` do not
-grant or prove automation. Report unavailable checks accurately.
-
-If a physical key stops working or appears stuck, stop native control and read
-[keyboard input recovery](references/native-control.md#missing-or-stuck-physical-keys).
-Other virtual keyboards can retain input state even after a streaming client
-disconnects; a successful portal press does not prove physical input works.
-
-For web consumers, follow the session's browser policy and choose a ready option
-that covers the task: collaborative T3, configured Playwright/project tests, or
-the native desktop browser for visual interaction and integration. If T3 is
-confirmed unavailable and policy permits fallback, continue in an available
-alternative instead of waiting for the client to reopen. Native browser input
-still requires the existing KDE portal grant and must honor human pause; do not
-create XRDP or restart KDE/T3 to recover browser testing. Profiles are separate.
-Report the browser, network origin, and observed checks. A desktop editor preview
-does not prove browser/game rendering fidelity or DOM/network assertions.
-Keep output paths, versions, export settings and useful evidence with the task;
-avoid including unrelated desktop content in captures.
-
-Native packages and their dependencies stay under normal CachyOS maintenance.
-Use `basaltwater-cachyos-workstation` for installation and diagnostics, and the
-[desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md)
-for shared application recipes and the distinction between artifact and UI checks.
+Use `basaltwater-cachyos-workstation` for installation/diagnostics. Keep output
+paths, versions, export settings and useful evidence with the task.

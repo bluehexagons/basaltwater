@@ -37,8 +37,10 @@
     }
   ],
   "tasks": {
-    "classification": {"family": "luna", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
-    "documentation": {"family": "luna", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "classification": {"family": "luna", "effort": "medium", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "documentation": {"family": "luna", "effort": "medium", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "bounded_test": {"family": "luna", "effort": "medium", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "app_validation": {"family": "luna", "effort": "medium", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
     "coding": {"family": "sol", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
     "review": {"family": "sol", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
     "specialist": {"family": "astra", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000}

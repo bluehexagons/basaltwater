@@ -5,6 +5,33 @@ context can increase both the number of tokens billed and the price per token.
 The defaults aim to stay below known pricing thresholds, with user-controlled
 overrides for a task phase or the rest of a session.
 
+## Reduce context growth
+
+Load one applicable skill entrypoint, then only references needed for the current
+operation. Use [scoped discovery](agent-environment.md), such as
+`basaltw agent manifest . --application blender --json`, instead of repeatedly
+loading the complete environment and skill inventory.
+
+Keep verbose output in private local artifacts. The project-development skill's
+`scripts/capture_output.py` runs a command after `--` and returns only status,
+duration, byte counts and log paths; use the script from the active skill's
+directory. Retrieve bounded failure excerpts rather than complete logs.
+[Desktop observations](../workstations/desktop-automation.md#keep-observation-output-small)
+support `--save-output` for full JSON artifacts and short previews, preserving
+errors and incomplete-scan indicators.
+
+Keep a short current task note with objective, decisions, unresolved issues,
+job handles, validation and artifact paths. Handoffs and repeated review rounds
+should carry a self-contained brief and relevant findings, responses and
+unresolved objections, with detailed evidence in files. Delegate independent
+[bounded work](agent-subagents.md) with explicit ownership and acceptance checks;
+only one worker controls a shared desktop session.
+
+Also check effective provider settings and policy freshness. The managed defaults
+below can become smaller when the pricing review expires; that is separate from
+how quickly observations and history fill the window. A repository default alone
+does not establish the settings used by an existing session.
+
 ## What setup installs and configures
 
 Agent VM and workstation profiles normally select GitHub CLI and Codex. Claude

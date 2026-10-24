@@ -26,7 +26,7 @@ actual capture. Capability discovery and rendering checks are separate.
 After a workstation refresh, discover declared project recipes:
 
 ```fish
-basaltw agent manifest /absolute/project --json
+basaltw agent manifest /absolute/project --capability development --json
 basaltw agent visuals check graphics-smoke --repository /absolute/project \
   --settings /absolute/capture-settings.json --json
 ```

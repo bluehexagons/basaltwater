@@ -49,6 +49,32 @@ Exact name/role filters reduce returned rows but do not remove the traversal
 limit. A showing control may still be occluded. Use screenshots for visual
 judgment and when an application exposes insufficient accessibility information.
 
+## Keep observation output small
+
+Use exact name/role selectors and a scoped root when possible. Add `--save-output`
+to `windows`, `inspect`, `wait`, or `wait-element` when a broader observation is
+needed:
+
+```bash
+basaltw desktop inspect --pid PID --save-output
+basaltw desktop wait-element --pid PID --role dialog --generation GENERATION --save-output
+```
+
+The command saves the full JSON result in a private temporary `observation.json`
+and prints its `artifact` path, byte size, returned row counts, and at most three
+preview rows per collection. Read only needed fields or excerpts from that file.
+The summary retains available generation, root, coverage, truncation and error
+fields; the exit status is unchanged. Counts describe returned rows, not all
+controls or windows. Shortening output does not make a partial scan complete,
+extend a reference's lifetime, or change wait semantics. Without the flag, the
+existing full JSON output is preserved. Delete disposable artifacts when done.
+The flag also works with `basaltw desktop --native` on CachyOS.
+
+Prefer application scripts for bulk edits and file checks for exports, with
+focused UI observations to verify the relevant state. Only one worker should
+control the shared desktop; independent script or file validation can run
+separately.
+
 ## Scope to a dialog or subtree
 
 Inspect the application to find a dialog, panel, or other container, then use its

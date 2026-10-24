@@ -5,19 +5,19 @@ under Windows Subsystem for Linux (WSL). The commands below use Bash or fish
 syntax; run them in the corresponding Linux shell and use the actual project
 path for that environment.
 
-Use OpenAI models currently exposed by the session. Start with Luna for file
-classification, extraction, and bounded documentation edits; use Sol for coding,
-integration reasoning, and substantive reviews. Reserve Astra for a specialized
-task where its expected benefit justifies its cost. A small independent task
-does not need the parent's model.
+Use OpenAI models currently exposed by the session. Luna is a provisional
+starting point at `medium` for bounded classification, extraction, documentation,
+small fixes, focused tests, and app-script or export validation. Explicit,
+deterministic trivial work may use `low` when inputs and verification are
+straightforward. Use Luna `high` or `xhigh` only for a concrete complex task.
+Keep broad coding, integration, ambiguous cross-file changes, and substantive
+reviews on Sol `high`; use Astra only when a specialist capability has a stated
+benefit. These suggestions are not performance proof. Preserve existing project
+policy, check the live session, and record actual outcomes. A small independent
+task does not need the parent's model.
 
-Use `high` reasoning normally, including for inexpensive Luna workers. Consider
-supported `xhigh` for demanding Luna analysis or reviews. Use `medium` as the
-usual minimum when a bounded task justifies less reasoning. Reserve `low` or
-`none` for explicitly scoped trivial work with straightforward verification;
-classification as a broad category does not qualify by itself. Check that the
-exact model **and the delegation tool** expose the chosen setting. These are
-starting points, not a claim that a model family always wins on every project. Current
+Check that the exact model **and the delegation tool** expose the chosen
+setting. Current
 [OpenAI model selection](https://developers.openai.com/api/docs/guides/model-selection)
 and [reasoning guidance](https://developers.openai.com/api/docs/guides/reasoning)
 describe model-dependent support. Plan/account access and the runtime tool's
@@ -67,7 +67,7 @@ Stage the two reviewed files explicitly. Do not force-add the whole directory.
 ```bash
 basaltw agent models init ~/repos/PROJECT --json
 basaltw agent models recommend ~/repos/PROJECT classification --available SESSION_MODELS.json --json
-basaltw agent models record ~/repos/PROJECT --task classification --model gpt-6-luna --effort high --outcome accepted --validation 'Parent checked every category against the agreed rules' --json
+basaltw agent models record ~/repos/PROJECT --task classification --model gpt-6-luna --effort medium --outcome accepted --validation 'Parent checked every category against the agreed rules' --json
 basaltw agent models report ~/repos/PROJECT --json
 ```
 
@@ -88,9 +88,9 @@ Codex selection; use it only when it represents the task's actual interface.
 Do not substitute a broad API model list for a subagent tool's availability.
 
 Only models with fresh verified metadata and a supported safe effort are
-eligible. The task's requested effort is a minimum; shipped task classes start
-at `high`. Existing project policies and explicit operator selections are
-preserved. Review older policies that still select low or disabled thinking.
+eligible. The task's requested effort is a minimum; shipped bounded Luna task
+classes start at `medium`, while broad coding and review start at Sol `high`.
+Existing project policies and explicit operator selections are preserved.
 A provisional setting uses the lowest supported safe effort at or above the
 task minimum. Proven settings at higher supported efforts also compete using
 their own evidence and costs, so
@@ -123,6 +123,14 @@ classes when their acceptance requirements differ. Old versions remain visible
 in `report` but do not drive current choices.
 Split easy file classification from ambiguous classification rather than average
 them into a misleading score.
+
+For bounded Luna work, assign one owner and state the deliverable, owned files
+or checks, and acceptance criteria. Active examples include a small fix with
+focused tests, a named test selection, or validation of an app script/export.
+For script/export validation, return the process status and only bounded,
+actionable failure excerpts. Do not let workers compete for desktop or app
+session control. A timeout does not prove a desktop mutation failed: inspect
+completion and state before deciding what to do next; never blindly relaunch it.
 
 ## Adapt to newly available models
 

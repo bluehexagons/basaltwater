@@ -172,8 +172,10 @@ def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
                         help="Compare invoked and managed source, receipts and observed service context")
     parser.add_argument("--managed-source", metavar="PATH",
                         help="Explicit managed source directory for installation context (implies --installation-context)")
-    parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "development", "publishing", "web"),
+    parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "desktop", "development", "publishing", "web"),
                         help="Return only relevant discovery fields; repeat as needed")
+    parser.add_argument("--application", action="append", choices=tuple(DESKTOP_APPLICATIONS),
+                        help="Show only named desktop applications; repeat as needed, implies desktop scope")
 
 
 def _text(value: object, label: str) -> str:
@@ -445,6 +447,9 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
     if "browser" in scopes:
         fields.add("browser")
         tools.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
+    if "desktop" in scopes:
+        fields.update(("desktop_applications", "desktop_skills"))
+        tools.update(result["desktop_applications"])
     if "development" in scopes:
         fields.update(("development", "required_tools", "recipes", "project_source"))
         tools.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make", "cmake", "godot", "godot-mono", "dotnet"))
@@ -473,7 +478,12 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         else:
             print(f"Error: {exc}")
         return 1
-    capabilities = getattr(args, "capability", None)
+    capabilities = list(getattr(args, "capability", None) or [])
+    applications = getattr(args, "application", None)
+    if applications:
+        result["desktop_applications"] = {name: app for name, app in result["desktop_applications"].items()
+                                          if name in applications}
+        capabilities.append("desktop")
     if capabilities:
         result = scoped_environment(result, capabilities)
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"{key}: {json.dumps(value)}" for key, value in result.items()))

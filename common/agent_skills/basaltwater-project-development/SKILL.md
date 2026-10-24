@@ -34,6 +34,22 @@ Do not print both structured data and its duplicate text envelope. Never
 discard failure details or treat truncated evidence as a complete result.
 Retrieve a bounded relevant excerpt when investigating a failure.
 
+For a verbose local command, use
+`python3 <skill-directory>/scripts/capture_output.py --timeout 300 -- COMMAND [ARGS...]`.
+It runs argv without a shell, closes stdin, and keeps stdout/stderr in private
+temporary logs; its JSON summary reports log paths, byte counts, status, return
+code, and duration. It returns the child status, `124` on timeout, or `130` on
+interrupt. Keep the summary and only bounded failure excerpts in context; logs
+are retained for follow-up. A timeout does not establish whether a desktop
+mutation completed, so inspect its status/state before any further action and
+never blindly relaunch it.
+
+Before a handoff or context limit, save a short task note outside source files:
+objective, current decisions, unresolved issues, job handles, validation status,
+and artifact paths. Return that note plus new findings; leave full logs and
+earlier review rounds in artifacts. A new worker still needs a self-contained
+brief with the constraints and unresolved objections relevant to its task.
+
 ## Work and verify
 
 Use `basaltwater-frontend-design` for new screens, substantial redesigns, or

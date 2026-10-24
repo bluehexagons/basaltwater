@@ -66,13 +66,16 @@ class AgentModelsTests(unittest.TestCase):
         policy["tasks"][task]["effort"] = effort
         self._write(self.policy_path, policy)
 
-    def test_seed_uses_high_and_trivial_exception_requires_explicit_policy(self) -> None:
+    def test_seed_uses_medium_for_bounded_luna_and_low_requires_explicit_policy(self) -> None:
         result = self._recommend()
         self.assertEqual(result["selection"]["model"], "gpt-6-luna")
-        self.assertEqual(result["selection"]["effort"], "high")
+        self.assertEqual(result["selection"]["effort"], "medium")
         self.assertEqual(result["service"], "standard")
         self.assertTrue(result["provisional"])
-        for task in ("documentation", "coding", "review"):
+        for task in ("documentation", "bounded_test", "app_validation"):
+            self.assertEqual(self._recommend(task)["selection"]["model"], "gpt-6-luna")
+            self.assertEqual(self._recommend(task)["selection"]["effort"], "medium")
+        for task in ("coding", "review"):
             self.assertEqual(self._recommend(task)["selection"]["effort"], "high")
         self._minimum("classification", "none")
         self.assertEqual(self._recommend()["selection"]["effort"], "low")
@@ -106,10 +109,10 @@ class AgentModelsTests(unittest.TestCase):
 
     def test_failure_evidence_escalates_and_actual_costs_include_failed_attempts(self) -> None:
         for _ in range(3):
-            self._record(outcome="failed", cost=1)
+            self._record(effort="medium", outcome="failed", cost=1)
         self.assertEqual(self._recommend()["selection"]["model"], "gpt-6.1-sol")
         for _ in range(17):
-            self._record(cost=0.1)
+            self._record(effort="medium", cost=0.1)
         for _ in range(3):
             self._record("gpt-6.1-sol", cost=0.2)
         result = self._recommend()

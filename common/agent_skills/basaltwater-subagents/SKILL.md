@@ -16,19 +16,34 @@ for catalog inspection; presence does not prove session access.
 ## Choose and brief a worker
 
 Use the live session's provider/model catalog and option descriptors. Start
-with Luna for classification or bounded documentation, Sol for coding and
-reviews, and Astra only for a justified specialized task. Normally use high
-reasoning; consider supported xhigh for demanding Luna work. Medium is the
-usual minimum; low/disabled thinking needs an explicitly scoped trivial task.
-Choose standard service. Never autonomously select or inherit fast service
-(including Codex `priority`),
+with Luna for provisional, bounded work such as classification, documentation,
+small fixes, focused tests, and app-script or export validation. Use medium by
+default for these tasks. Explicit deterministic, trivial tasks may use low when
+their inputs and checks are narrow. Use high or xhigh for Luna only when the
+task has concrete complexity that warrants it. Use Sol high for broad coding,
+integration, ambiguous cross-file work, and reviews; use Astra only for a
+justified specialist task. These are guidance suggestions, not performance
+proof: retain project policy and record actual outcomes. Choose standard service.
+Never autonomously select or inherit fast service (including Codex `priority`),
 `max`, or `ultra`; honor explicit confirmed user selections. Apply settings
 through the tool and check the returned provider, model, and options.
+
+For a Luna assignment, name one bounded deliverable, its owned files or checks,
+and observable acceptance criteria. Suitable active work includes a small,
+well-scoped fix with its focused tests; running and interpreting a named test
+selection; or validating a named app script/export and reporting status plus
+bounded failure excerpts. Do not assign simultaneous control of the same
+desktop or app session to multiple workers. Never blindly time out and relaunch
+a desktop mutation; first establish whether it completed and inspect its state.
 
 Give a self-contained brief: objective, findings, absolute project/skill paths,
 allowed files, constraints, acceptance checks, and required handoff. Children
 may lack the parent's conversation, loaded skills, tools, or browser. Request
 bounded findings and evidence rather than complete logs or catalogs.
+For repeated reviews, include the original brief plus a concise account of prior
+findings, responses, and unresolved objections; reference detailed artifacts
+instead of copying every earlier handoff. Request changes since the last round,
+remaining blockers, acceptance evidence, and paths in the return.
 
 Editors and checks that write files need isolated worktrees; read-only reviewers
 may share the checkout. Assign one owner for shared config/lockfiles. Require

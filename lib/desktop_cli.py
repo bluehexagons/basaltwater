@@ -19,7 +19,10 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     from desktop.development import add_development_parser
     add_development_parser(commands)
     for name in ("status", "stop", "logout", "windows", "doctor", "handoff", "revoke"):
-        commands.add_parser(name).add_argument("--json", action="store_true")
+        command = commands.add_parser(name)
+        command.add_argument("--json", action="store_true")
+        if name == "windows":
+            command.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     starting = commands.add_parser("start")
     starting.add_argument("--json", action="store_true")
     starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
@@ -58,6 +61,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     waiting.add_argument("--condition", choices=("present", "visible", "absent", "active"), default="visible")
     waiting.add_argument("--timeout", type=float, default=15)
     waiting.add_argument("--generation")
+    waiting.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     for waiter in (execute, opening, waiting):
         waiter.add_argument("--exclude-title", dest="exclude_titles", action="append", metavar="TEXT",
                             help="Ignore titles containing this literal substring; repeat up to 16 times")
@@ -77,6 +81,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     inspect.add_argument("--role", help="Exact accessible role")
     inspect.add_argument("--root", help="Inspect only this observed element and its descendants")
     inspect.add_argument("--generation", help="Required with --root; use the observed session generation")
+    inspect.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     element = commands.add_parser("element", help="Act on a recent accessibility reference")
     element.add_argument("operation", choices=("invoke", "set-text", "focus"))
     element.add_argument("--ref", required=True)
@@ -92,6 +97,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     semantic_wait.add_argument("--text", help="Exact complete text to wait for")
     semantic_wait.add_argument("--timeout", type=float, default=15)
     semantic_wait.add_argument("--generation", required=True)
+    semantic_wait.add_argument("--save-output", action="store_true", help="Save full JSON privately and print a bounded preview")
     action = commands.add_parser("input", help="Apply a bounded input using screenshot generation/geometry")
     action.add_argument("--generation", required=True)
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
@@ -244,9 +250,13 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         result.update(windows=observed["windows"], launch_status=observed["launch_status"],
                                       existing_window_ids=[item["id"] for item in observed["windows"] if item["id"] in previous],
                                       window_association="title substring; inspect PID/class before acting")
+        exit_code = int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
+                        or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
+        if getattr(args, "save_output", False):
+            from desktop.observations import save_observation
+            result = save_observation(result)
         print(json.dumps(result, indent=2))
-        return int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
-                   or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
+        return exit_code
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1

@@ -81,12 +81,16 @@ merge, validation, and removal in one example.
 
 The shared subagent skill also ships
 [model selection and learning](../../common/agent_skills/basaltwater-subagents/references/model-selection.md).
-Start with Luna for simple categorization or extraction, Sol for coding and
-reviews, and rarely Astra for a justified specialized task. Use high reasoning
-normally, including for Luna, and consider supported xhigh for demanding Luna
-work. Medium is the usual minimum; low or disabled thinking needs an explicitly
-scoped trivial exception. Verify the exact model and effort supported by the
-current session. Use standard service and
+Start with Luna at medium for bounded classification, documentation, small
+fixes, focused tests, and app-script or export validation. Explicit deterministic
+trivial work may use low with straightforward checks. Use Luna high or xhigh
+only when concrete complexity justifies it. Keep broad coding, integration,
+ambiguous cross-file tasks, and reviews on Sol high; use Astra only for a
+justified specialist task. These are provisional suggestions, not performance
+proof; preserve existing project policy and record actual outcomes. Give each
+worker clear ownership and acceptance criteria. Do not assign competing control
+of a desktop/app session, and do not blindly time out and relaunch desktop
+mutations. Verify the exact model and effort supported by the current session. Use standard service and
 exclude fast mode, `max`, and `ultra` unless explicitly selected by the user.
 
 These local commands create a per-project policy, recommend a setting from an
@@ -120,9 +124,9 @@ for the same task, evaluation version, model ID, and effort. Untested candidates
 are exposed for trials; they do not displace a proven choice automatically.
 Proven higher efforts remain eligible even when a lower supported default has
 failed. Provisional choices use the lowest supported effort meeting the task's
-minimum, and do not automatically retry with untested higher effort. The shipped
-task minimums are high; initialization preserves older project policies, which
-should be reviewed if they still select low or disabled thinking.
+minimum, and do not automatically retry with untested higher effort. Shipped
+bounded Luna classes start at medium; broad coding/review starts at Sol high.
+Initialization preserves older project policies and explicit operator choices.
 An empty eligible set returns nonzero and a null selection.
 
 The starter catalog is dated **2026-10-09**, with standard API token rates and

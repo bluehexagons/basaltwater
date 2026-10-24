@@ -79,7 +79,14 @@ and checks pause between characters. In Blender's console, load a task script th
 `exec(open('/absolute/task/edit.py').read())` command, inspect the typed command,
 then submit Return. Do not type long scripts rapidly into the console.
 
-For semantic controls use `inspect --pid PID` and bounded name/role filters;
+For semantic controls use `inspect --pid PID --name NAME --role ROLE` with
+exact selectors; scope repeated reads to an observed `--root` where possible.
+Use `--save-output` for a broad `inspect`, `windows`, `wait` or `wait-element`:
+the full JSON is stored privately and the response contains counts, at most
+three preview entries, and an `artifact` path. Read only needed fields from
+that file; scan truncation/partial coverage remain authoritative. Counts refer
+to returned items, not all controls. Delete disposable observations when done.
+
 `element OPERATION --ref REF --generation GEN` uses a fresh observed reference from that PID.
 References expire after 60 seconds and are invalidated by mutations and pause.
 Inspect again after each action. Password controls are excluded. A partial or
