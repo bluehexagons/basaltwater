@@ -25,8 +25,9 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
 
-# Review the linked prices in docs/agents/agent-context.md before advancing this date.
-POLICY_VERIFIED_ON = date(2026, 10, 15)
+# Review the linked prices in docs/agents/agent-context.md before advancing this
+# advisory date. Review age must never change a context budget.
+POLICY_VERIFIED_ON = date(2026, 10, 24)
 POLICY_REVIEW_DAYS = 7
 CODEX_CONTEXT_DEFAULTS = {
     "model_auto_compact_token_limit": 240_000,
@@ -47,27 +48,20 @@ _REVIEWED_OPENAI = {
     "gpt-6-astra": (10.0, 50.0),
     "gpt-6-luna": (0.1, 0.5),
 }
-_FALLBACK_INPUT = 80_000
 _MAX_BYTES = 1024 * 1024
 _CODEX_BEGIN = "# Begin Basaltwater context defaults\n"
 _CODEX_END = "# End Basaltwater context defaults\n"
 
 
 def _policy_fresh() -> bool:
+    """Report whether a pricing reminder is due, without selecting defaults."""
     age = (datetime.now(timezone.utc).date() - POLICY_VERIFIED_ON).days
     return 0 <= age <= POLICY_REVIEW_DAYS
 
 
-def _codex_defaults() -> JSONDict:
-    value = dict(CODEX_CONTEXT_DEFAULTS)
-    if not _policy_fresh():
-        value["model_auto_compact_token_limit"] = _FALLBACK_INPUT
-    return value
-
-
 def codex_context_defaults_toml() -> str:
     """Render top-level defaults without declaring a model's native capacity."""
-    return "".join(f"{key} = {json.dumps(value)}\n" for key, value in _codex_defaults().items())
+    return "".join(f"{key} = {json.dumps(value)}\n" for key, value in CODEX_CONTEXT_DEFAULTS.items())
 
 
 def _read(path: Path, uid: int) -> str | None:
@@ -101,12 +95,7 @@ def _prepare_path(path: Path, home: Path, uid: int, gid: int) -> None:
 
 
 def _defaults(tool: str) -> JSONDict:
-    if tool == "codex":
-        return _codex_defaults()
-    defaults = copy.deepcopy(CLAUDE_CONTEXT_DEFAULTS)
-    if not _policy_fresh():
-        defaults.pop("modelSettings", None)
-    return defaults
+    return copy.deepcopy(CODEX_CONTEXT_DEFAULTS if tool == "codex" else CLAUDE_CONTEXT_DEFAULTS)
 
 
 def _merge(value: JSONDict, defaults: JSONDict) -> None:
@@ -238,7 +227,7 @@ def _install_opencode_context(config: SetupConfig, account: pwd.struct_passwd) -
             print(f"  ! Preserved personal or removed OpenCode context plugin: {path}; managed refresh is disabled")
             return
         _check_opencode_context_support(config, account)
-        content = plugin_content(POLICY_VERIFIED_ON.isoformat(), POLICY_REVIEW_DAYS, _REVIEWED_OPENAI)
+        content = plugin_content(POLICY_VERIFIED_ON.isoformat(), _REVIEWED_OPENAI)
         updated = context_digest({"plugin": content})
         if previous != content:
             state["pending"] = updated
@@ -261,7 +250,7 @@ def configure_agent_context_defaults(config: SetupConfig) -> None:
     if not any((config.install_codex, config.install_claude, config.install_opencode)):
         return
     if not _policy_fresh():
-        print(f"  ! Context pricing review is stale (verified {POLICY_VERIFIED_ON}); using conservative managed defaults. Review docs/agents/agent-context.md.")
+        print(f"  ! Context pricing review is stale (verified {POLICY_VERIFIED_ON}); retaining managed context budgets. Review docs/agents/agent-context.md.")
     account = pwd.getpwnam(config.username)
     home = Path(account.pw_dir)
     if config.install_codex and config.system_type in {"agent_cachyos", "server_wsl"}:

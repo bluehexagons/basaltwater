@@ -57,7 +57,7 @@ class OpenCodeContextHookTests(unittest.TestCase):
     def evaluate(self, models, *, config=None, provider="openai", now="2026-10-15"):
         with tempfile.TemporaryDirectory() as temporary:
             plugin = Path(temporary) / "context.mjs"
-            plugin.write_text(plugin_content("2026-10-15", 7, context._REVIEWED_OPENAI))
+            plugin.write_text(plugin_content("2026-10-15", context._REVIEWED_OPENAI))
             script = r'''
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -110,15 +110,15 @@ process.stdout.write(JSON.stringify({models:result, config:data.config, exports:
         self.assertEqual(set(result), set(models))
         self.assertTrue(all(model["limit"]["input"] == 80_000 for model in result.values()))
 
-    def test_changed_prices_stale_reviews_and_future_dates_use_fallback(self):
-        for now, cost in (("2026-10-23", {"input": 2, "output": 10}),
-                          ("2026-10-14", {"input": 2, "output": 10}),
-                          ("2026-10-15", {"input": 4, "output": 20})):
-            with self.subTest(now=now, cost=cost):
-                result = self.evaluate({"gpt-6.1-sol": self.model(cost=cost)}, now=now)
-                self.assertEqual(result["models"]["gpt-6.1-sol"]["limit"]["input"], 80_000)
-        result = self.evaluate({"gpt-6.1-sol": self.model()}, now="2026-10-22")
-        self.assertEqual(result["models"]["gpt-6.1-sol"]["limit"]["input"], 240_000)
+    def test_review_age_and_clock_skew_never_reduce_reviewed_budgets(self):
+        for now in ("2026-10-14", "2026-10-15", "2026-10-22", "2026-10-23", "2030-10-24"):
+            with self.subTest(now=now):
+                result = self.evaluate({"gpt-6.1-sol": self.model()}, now=now)
+                self.assertEqual(result["models"]["gpt-6.1-sol"]["limit"]["input"], 240_000)
+
+    def test_changed_prices_still_use_fallback(self):
+        result = self.evaluate({"gpt-6.1-sol": self.model(cost={"input": 4, "output": 20})})
+        self.assertEqual(result["models"]["gpt-6.1-sol"]["limit"]["input"], 80_000)
 
     def test_metadata_lowers_budget_for_input_output_cache_and_legacy_price_tiers(self):
         for increase in ({"input": 4}, {"output": 15}, {"cache": {"read": 1}}):

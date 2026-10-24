@@ -12,8 +12,8 @@
       "efforts": ["none", "low", "medium", "high", "xhigh"],
       "input_usd_per_million": 0.1,
       "output_usd_per_million": 0.5,
-      "verified_on": "2026-10-09",
-      "source": "https://developers.openai.com/api/docs/models"
+      "verified_on": "2026-10-24",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna"
     },
     {
       "id": "gpt-6.1-sol",
@@ -22,8 +22,8 @@
       "efforts": ["low", "medium", "high", "xhigh"],
       "input_usd_per_million": 2,
       "output_usd_per_million": 10,
-      "verified_on": "2026-10-09",
-      "source": "https://developers.openai.com/api/docs/models"
+      "verified_on": "2026-10-24",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
     },
     {
       "id": "gpt-6-astra",
@@ -32,8 +32,8 @@
       "efforts": ["low", "medium", "high", "xhigh"],
       "input_usd_per_million": 10,
       "output_usd_per_million": 50,
-      "verified_on": "2026-10-09",
-      "source": "https://developers.openai.com/api/docs/models"
+      "verified_on": "2026-10-24",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
     }
   ],
   "tasks": {

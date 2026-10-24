@@ -5,17 +5,13 @@ from __future__ import annotations
 import json
 
 
-def plugin_content(verified_on: str, review_days: int, reviewed: dict[str, tuple[float, float]]) -> str:
-    policy = {"verifiedOn": verified_on, "reviewDays": review_days, "reviewed": reviewed}
+def plugin_content(verified_on: str, reviewed: dict[str, tuple[float, float]]) -> str:
+    policy = {"verifiedOn": verified_on, "reviewed": reviewed}
     return "// Managed by Basaltwater context setup.\nconst policy = " + json.dumps(policy) + ";\n" + _SOURCE
 
 
 _SOURCE = r'''
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
-const fresh = () => {
-  const age = (Date.now() - Date.parse(policy.verifiedOn + "T00:00:00Z")) / 86400000;
-  return age >= 0 && Math.floor(age) <= policy.reviewDays;
-};
 const increased = (next, base) =>
   ["input", "output"].some((key) => Number.isFinite(next?.[key]) && Number.isFinite(base?.[key]) && next[key] > base[key]) ||
   ["read", "write"].some((key) => Number.isFinite(next?.cache?.[key]) && Number.isFinite(base?.cache?.[key]) && next.cache[key] > base.cache[key]);
@@ -28,7 +24,7 @@ function budgetFor(providerID, id, model) {
   }
   let budget = 80000;
   const cost = model.cost;
-  const reviewed = providerID === "openai" && fresh() && Object.hasOwn(policy.reviewed, id) && policy.reviewed[id];
+  const reviewed = providerID === "openai" && Object.hasOwn(policy.reviewed, id) && policy.reviewed[id];
   if (reviewed && cost?.input === reviewed[0] && cost?.output === reviewed[1]) budget = 240000;
   if (cost?.tiers !== undefined && !Array.isArray(cost.tiers)) {
     throw new Error("Basaltwater does not recognize OpenCode context pricing metadata");

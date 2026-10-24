@@ -280,17 +280,48 @@ class AgentContextDefaultsTests(unittest.TestCase):
         self.assertEqual(value["mcp_servers"]["personal"]["command"], "mine")
         self.assertIn("# personal", path.read_text())
 
-    def test_stale_review_reduces_managed_preferences_and_warns(self):
-        config = self.config(install_claude=True)
+    def test_stale_review_warns_without_changing_managed_preferences(self):
+        config = self.config(system_type="agent_cachyos", install_codex=True, install_claude=True)
         configure_agent_context_defaults(config)
+        paths = [self.home / ".codex/config.toml", self.home / ".claude/settings.json"]
+        previous = [path.read_bytes() for path in paths]
         with patch.object(context, "_policy_fresh", return_value=False), patch("sys.stdout", new_callable=io.StringIO) as output:
             configure_agent_context_defaults(config)
             codex = tomllib.loads(context.codex_context_defaults_toml())
-        value = json.loads((self.home / ".claude/settings.json").read_text())
-        self.assertNotIn("modelSettings", value)
-        self.assertEqual(value["autoCompactWindow"], 100_000)
-        self.assertEqual(codex["model_auto_compact_token_limit"], 80_000)
+        self.assertEqual([path.read_bytes() for path in paths], previous)
+        self.assertEqual(codex["model_auto_compact_token_limit"], 240_000)
         self.assertIn("review is stale", output.getvalue())
+        self.assertIn("retaining managed context budgets", output.getvalue())
+
+    def test_initial_defaults_are_stable_for_expired_and_future_review_dates(self):
+        for verified in (date(2020, 1, 1), date(2030, 1, 1)):
+            with self.subTest(verified=verified), patch.object(context, "POLICY_VERIFIED_ON", verified), \
+                    patch.object(context, "_policy_fresh", return_value=False):
+                self.assertEqual(context._defaults("codex")["model_auto_compact_token_limit"], 240_000)
+                self.assertEqual(context._defaults("claude")["modelSettings"]["claude-sonnet-5-5"]["autoCompactWindow"], 200_000)
+                for hardened in (False, True):
+                    value = tomllib.loads(_codex_config_content(hardened=hardened))
+                    self.assertEqual(value["model_auto_compact_token_limit"], 240_000)
+
+    def test_refresh_restores_owned_budgets_previously_reduced_by_review_age(self):
+        config = self.config(system_type="agent_cachyos", install_codex=True, install_claude=True)
+        old_codex = {**context.CODEX_CONTEXT_DEFAULTS, "model_auto_compact_token_limit": 80_000}
+        old_claude = {key: value for key, value in context.CLAUDE_CONTEXT_DEFAULTS.items() if key != "modelSettings"}
+        with patch.object(context, "CODEX_CONTEXT_DEFAULTS", old_codex), \
+                patch.object(context, "CLAUDE_CONTEXT_DEFAULTS", old_claude):
+            configure_agent_context_defaults(config)
+        with patch.object(context, "_policy_fresh", return_value=False):
+            configure_agent_context_defaults(config)
+        codex = tomllib.loads((self.home / ".codex/config.toml").read_text())
+        claude = json.loads((self.home / ".claude/settings.json").read_text())
+        self.assertEqual(codex["model_auto_compact_token_limit"], 240_000)
+        self.assertEqual(claude["modelSettings"], context.CLAUDE_CONTEXT_DEFAULTS["modelSettings"])
+
+    def test_untracked_small_user_budget_is_preserved_during_migration(self):
+        path = self.write(".codex/config.toml", 'model_auto_compact_token_limit = 80000\n')
+        previous = path.read_bytes()
+        configure_agent_context_defaults(self.config(system_type="agent_cachyos", install_codex=True))
+        self.assertEqual(path.read_bytes(), previous)
 
     def test_interrupted_writes_recover_before_and_after_configuration_replacement(self):
         for after in (False, True):

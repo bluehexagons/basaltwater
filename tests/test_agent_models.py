@@ -35,6 +35,12 @@ class AgentModelsTests(unittest.TestCase):
         self.addCleanup(clock.stop)
         init_model_policy(str(self.repository))
         self.policy_path = self.repository / ".basaltwater/agent-models.json"
+        # Catalog-review updates must not move fixture prices into the future
+        # relative to this suite's fixed clock. Age behavior is exercised below.
+        policy = self._policy()
+        for model in policy["models"]:
+            model["verified_on"] = "2026-10-09"
+        self._write(self.policy_path, policy)
         self.results_path = self.repository / ".basaltwater/agent-model-results.json"
         self.available_path = self.repository / "session-models.json"
         self.available = [

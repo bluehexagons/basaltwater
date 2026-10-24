@@ -69,10 +69,10 @@ shells, web search, apps, plugins, MCP servers, or browser features. Shell
 network access still begins outside the workspace boundary and can be requested
 through the normal approval flow instead of being silently enabled.
 
-System defaults also compact the full active Codex context at 240,000 tokens
-while the pricing review is fresh, falling back to 80,000 when setup detects a
-stale review. This leaves room before known long-context price tiers and is an overridable
-cost preference in both security postures. See [Agent context budgets](agent-context.md)
+System defaults also compact the full active Codex context at 240,000 tokens.
+Pricing review reminders never change this budget. This leaves room before
+known long-context price tiers and is an overridable cost preference in both
+security postures. See [Agent context budgets](agent-context.md)
 for provider-specific thresholds and temporary or session-scoped user approval.
 
 Standard defaults also expose the account-local `basaltwater-tasks` MCP server

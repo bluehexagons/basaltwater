@@ -27,10 +27,10 @@ unresolved objections, with detailed evidence in files. Delegate independent
 [bounded work](agent-subagents.md) with explicit ownership and acceptance checks;
 only one worker controls a shared desktop session.
 
-Also check effective provider settings and policy freshness. The managed defaults
-below can become smaller when the pricing review expires; that is separate from
-how quickly observations and history fill the window. A repository default alone
-does not establish the settings used by an existing session.
+Also check effective provider settings. Pricing review dates are advisory and
+never shrink a context budget. How quickly observations and history fill the
+window is a separate concern. A repository default alone does not establish the
+settings used by an existing session.
 
 ## What setup installs and configures
 
@@ -82,7 +82,7 @@ verification. CachyOS setup rejects a custom `CODEX_HOME`.
 
 ## Verified pricing boundaries
 
-Checked **2026-10-15**. These are direct-provider Standard API prices in USD per
+Checked **2026-10-24**. These are direct-provider Standard API prices in USD per
 million uncached input/output tokens, not subscription or gateway quotes.
 
 | Model | Native context | Short-context input / output | Higher-price trigger and rates |
@@ -174,13 +174,16 @@ reviewed.
 
 The single `POLICY_VERIFIED_ON` date and seven-day review interval live in
 `common/agent_context_steps.py`. After seven days, or if the date is in the
-future, setup reports a stale review. Owned Codex defaults then use an 80K
-compact threshold; Claude drops its reviewed larger per-model windows;
-OpenCode checks the embedded review date at backend initialization and uses its
-conservative fallback instead of the larger reviewed budget, even without a
-setup rerun.
-Explicit user preferences remain untouched. Reinstalling the same release does
-not advance the review date.
+future, setup reports a stale review and retains the reviewed defaults. The
+reminder is advisory: neither setup nor the OpenCode runtime changes budgets
+because time passed. Price or model-capacity changes still require review;
+OpenCode also retains its checks against native pricing and capacity metadata.
+Reinstalling the same release does not advance the review date.
+
+The next setup/refresh restores unchanged owned Codex and Claude settings that
+the old age-based policy reduced. Untracked or edited user policies remain
+untouched, including an explicit 80K budget. Restart/resume provider processes
+to load refreshed settings; an existing thread does not change automatically.
 
 Before advancing that date, check the official sources above for every reviewed
 model and the current native configuration controls. Update prices, thresholds,
@@ -234,7 +237,7 @@ codex resume SESSION_ID -c model_context_window=800000 -c model_auto_compact_tok
 These commands are examples for an approved larger window, not setup defaults.
 For a temporary phase, use `/compact`, exit that provider process, and resume
 the same session with the previous settings (the managed compact threshold is
-240000 while pricing guidance is fresh, otherwise 80000). Remove the
+240000). Remove the
 context-window override to return to the model's native default. Raising a
 configured window never grants access to a larger model.
 
