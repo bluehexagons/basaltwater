@@ -173,8 +173,14 @@ for path in paths:
     path_health[path] = os.path.isdir(access_path) and access.returncode == 0
 
 database_path = data_path + "/data/gogs.db"
-database = run("sqlite3", database_path, "PRAGMA quick_check;")
-sqlite_healthy = database.returncode == 0 and database.stdout.strip() == "ok"
+sqlite_healthy = False
+if os.path.isfile(database_path) and not os.path.islink(database_path):
+    database = run(
+        "sqlite3", "-readonly", database_path,
+        "PRAGMA quick_check; SELECT COUNT(*) FROM sqlite_master "
+        "WHERE type = 'table' AND name IN ('user', 'repository');",
+    )
+    sqlite_healthy = database.returncode == 0 and database.stdout.splitlines() == ["ok", "2"]
 
 usage = {{
     "repositories": directory_size(data_path + "/repositories"),
@@ -259,8 +265,21 @@ nginx_service = run("systemctl", "is-active", "nginx")
 nginx_active = nginx_service.returncode == 0 and nginx_service.stdout.strip() == "active"
 nginx_validation = run("nginx", "-t") if nginx_required else None
 nginx_config_valid = not nginx_required or nginx_validation.returncode == 0
-frontend_healthy = not nginx_required
+frontend_healthy = False
 frontend_mode = "direct"
+if not nginx_required:
+    try:
+        backend_port = app.getint("server", "HTTP_PORT")
+    except (ValueError, configparser.Error):
+        backend_port = 0
+    if 1 <= backend_port <= 65535:
+        frontend = run(
+            "curl", "--fail", "--silent", "--output", "/dev/null",
+            "--write-out", "%{{http_code}}",
+            "--noproxy", "*", "--connect-timeout", "3", "--max-time", "5",
+            f"http://127.0.0.1:{{backend_port}}/",
+        )
+        frontend_healthy = frontend.returncode == 0 and frontend.stdout.strip() == "200"
 if nginx_required and nginx_active and nginx_config_valid and nginx_site_path:
     parsed_url = urllib.parse.urlsplit(external_url)
     hostname = parsed_url.hostname or ""

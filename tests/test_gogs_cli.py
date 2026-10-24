@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
+import sqlite3
+import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -92,19 +96,25 @@ class TestGogsHealthParser(unittest.TestCase):
 
 
 class TestRemoteGogsHealth(unittest.TestCase):
-    def _probe(self, *, missing=(), non_directories=(), denied=()):
+    def _probe(
+        self, *, missing=(), non_directories=(), denied=(), sqlite_path=None,
+        sqlite_failed=False, enable_ssl=True, http_port="13000",
+        curl_returncode=0, curl_status="200",
+    ):
         from lib.config import SetupConfig
         from web.gogs_steps import generate_gogs_app_ini
 
         config = SetupConfig(
             host="10.100.0.100", username="agent", system_type="server_web",
-            gogs=[":3000"], enable_ssl=True, gogs_sources=["192.168.0.45/32"],
+            gogs=[":3000"], enable_ssl=enable_ssl, gogs_sources=["192.168.0.45/32"],
         )
         with patch("web.gogs_steps._load_or_create_gogs_secret_key", return_value="test-secret"):
             app_ini = generate_gogs_app_ini(
                 config, git_home="/home/git", data_path="/srv/gogs",
                 domain="", port=3000, backend_port=13000,
             )
+        app_ini = app_ini.replace("HTTP_PORT = 13000", f"HTTP_PORT = {http_port}")
+        database_exists = os.path.isfile(sqlite_path) if sqlite_path is not None else True
         files = {
             "/opt/basaltwater/state/gogs.json": json.dumps({
                 "data_path": "/srv/gogs", "config_path": "/srv/gogs/custom/conf/app.ini",
@@ -127,7 +137,18 @@ class TestRemoteGogsHealth(unittest.TestCase):
             elif args[0] == "findmnt":
                 stdout = json.dumps({"filesystems": [{"source": "/dev/sdb", "fstype": "ext4", "target": "/srv/gogs"}]})
             elif args[0] == "sqlite3":
-                stdout = "ok\n"
+                self.assertEqual(args[1], "-readonly")
+                if sqlite_failed:
+                    return SimpleNamespace(returncode=1, stdout="", stderr="query failed")
+                stdout = "ok\n2\n"
+                if sqlite_path is not None:
+                    with closing(sqlite3.connect(Path(sqlite_path).as_uri() + "?mode=ro", uri=True)) as database:
+                        stdout = "\n".join(
+                            str(row[0]) for query in args[3].split(";") if query.strip()
+                            for row in database.execute(query)
+                        ) + "\n"
+            elif args[0] == "curl":
+                return SimpleNamespace(returncode=curl_returncode, stdout=curl_status, stderr="")
             elif args[0] == "du":
                 stdout = "1024 /srv/gogs\n"
             elif args[:3] == ("systemctl", "show", "auto-update-gogs.service"):
@@ -144,6 +165,8 @@ class TestRemoteGogsHealth(unittest.TestCase):
             patch("os.path.exists", side_effect=lambda path: not path.endswith("gogs_update.json")),
             patch("os.path.lexists", side_effect=lambda path: path not in missing),
             patch("os.path.isdir", side_effect=lambda path: path not in (*missing, *non_directories)),
+            patch("os.path.isfile", return_value=database_exists),
+            patch("os.path.islink", return_value=False),
             patch("os.path.getmtime", return_value=1000),
             patch("os.statvfs", return_value=SimpleNamespace(f_bavail=1000, f_frsize=4096, f_favail=1000)),
             patch("time.time", return_value=1000),
@@ -151,6 +174,58 @@ class TestRemoteGogsHealth(unittest.TestCase):
         ):
             exec(_remote_health_script(100, 10), {})
         return json.loads(output.getvalue()), runner
+
+    def test_database_must_exist_and_have_core_gogs_tables(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = os.path.join(directory, "gogs.db")
+            result, runner = self._probe(sqlite_path=database_path)
+            self.assertFalse(result["sqlite_healthy"])
+            self.assertFalse(result["healthy"])
+            self.assertFalse(os.path.exists(database_path))
+            self.assertFalse(any(call.args[0][0] == "sqlite3" for call in runner.call_args_list))
+            for schema, healthy in (
+                ("", False),
+                ("CREATE TABLE user (id INTEGER, name TEXT);", False),
+                ("CREATE TABLE repository (id INTEGER, name TEXT);", True),
+            ):
+                with self.subTest(schema=schema):
+                    with closing(sqlite3.connect(database_path)) as database:
+                        database.executescript(schema)
+                    before = Path(database_path).read_bytes()
+                    result, _ = self._probe(sqlite_path=database_path)
+                    self.assertEqual(Path(database_path).read_bytes(), before)
+                    self.assertEqual(result["sqlite_healthy"], healthy)
+                    self.assertEqual(result["healthy"], healthy)
+
+    def test_failed_database_query_is_unhealthy(self):
+        result, _ = self._probe(sqlite_failed=True)
+        self.assertFalse(result["sqlite_healthy"])
+        self.assertFalse(result["healthy"])
+
+    def test_direct_http_requires_a_successful_200_response(self):
+        for returncode, status in ((7, "000"), (22, "503"), (0, "302"), (0, "200")):
+            with self.subTest(returncode=returncode, status=status):
+                result, runner = self._probe(
+                    enable_ssl=False, http_port="4321", curl_returncode=returncode,
+                    curl_status=status,
+                )
+                healthy = returncode == 0 and status == "200"
+                self.assertEqual(result["frontend"], {"healthy": healthy, "mode": "direct"})
+                self.assertEqual(result["healthy"], healthy)
+                self.assertEqual(result["service_active"], True)
+                command = next(call.args[0] for call in runner.call_args_list if call.args[0][0] == "curl")
+                self.assertEqual(command[-1], "http://127.0.0.1:4321/")
+                self.assertIn("--noproxy", command)
+                self.assertEqual(command[command.index("--max-time") + 1], "5")
+                self.assertIn("Public web endpoint: " + ("ok" if healthy else "FAILED"), _format_health(result, "host"))
+
+    def test_invalid_direct_backend_port_does_not_probe_http(self):
+        for port in ("", "invalid", "0", "65536", "3000;id"):
+            with self.subTest(port=port):
+                result, runner = self._probe(enable_ssl=False, http_port=port)
+                self.assertFalse(result["frontend"]["healthy"])
+                self.assertFalse(result["healthy"])
+                self.assertFalse(any(call.args[0][0] == "curl" for call in runner.call_args_list))
 
     def test_probe_reads_generated_sectionless_ini(self):
         result, runner = self._probe()

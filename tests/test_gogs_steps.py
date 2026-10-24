@@ -6,10 +6,13 @@ import argparse
 import json
 import os
 import shlex
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import mock_open, patch
 
@@ -1459,6 +1462,48 @@ class TestGogsRequiredSetupSteps(unittest.TestCase):
 
 
 class TestGogsStorageHealth(unittest.TestCase):
+    def test_first_install_checks_database_after_initialization(self):
+        with tempfile.TemporaryDirectory() as data_path:
+            os.mkdir(os.path.join(data_path, "data"))
+            database_path = Path(data_path) / "data/gogs.db"
+            config = SetupConfig(host="host", username="admin", system_type="server_web", gogs=[":3000", data_path])
+
+            def initialize(*args):
+                self.assertFalse(database_path.exists())
+                with closing(sqlite3.connect(database_path)) as database:
+                    database.executescript("CREATE TABLE user (id INTEGER); CREATE TABLE repository (id INTEGER);")
+
+            def run(command, **kwargs):
+                if command.startswith("sqlite3 "):
+                    self.assertTrue(database_path.is_file())
+                    return SimpleNamespace(returncode=0, stdout="ok\n2\n")
+                if command.startswith("df "):
+                    return SimpleNamespace(returncode=0, stdout="Avail IAvail\n1048576 2048\n")
+                return SimpleNamespace(returncode=0)
+
+            with (
+                patch.object(gogs_steps, "generate_gogs_app_ini", return_value="[server]\nHTTP_PORT = 3000\n"),
+                patch.object(gogs_steps, "write_gogs_state"),
+                patch.object(gogs_steps, "_configure_git_ssh_access"),
+                patch.object(gogs_steps, "_remove_stale_gogs_nginx_sites", return_value=False),
+                patch.object(gogs_steps, "generate_gogs_service", return_value="unit"),
+                patch.object(gogs_steps, "replace_units"),
+                patch.object(gogs_steps, "is_service_active", return_value=True),
+                patch.object(gogs_steps, "_wait_for_gogs_ready", side_effect=lambda port: self.assertFalse(database_path.exists())),
+                patch.object(gogs_steps, "_ensure_gogs_admin_account", side_effect=initialize),
+                patch.object(gogs_steps, "_run_gogs_post_setup_commands"),
+                patch.object(gogs_steps, "_gogs_backing_filesystem", return_value=("/dev/test", "ext4", data_path)),
+                patch.object(gogs_steps, "_gogs_directory_usage", return_value=0),
+                patch.object(gogs_steps, "_maybe_configure_firewall"),
+                patch.object(gogs_steps, "run", side_effect=run) as runner,
+            ):
+                gogs_steps._complete_gogs_setup(
+                    config, domain="", port=3000, backend_port=3000, data_path=data_path,
+                    git_home="/home/git", config_path=os.path.join(data_path, "app.ini"),
+                    tag_name="v1.2.4", archive_sha256="a" * 64,
+                )
+            self.assertTrue(any(call.args[0].startswith("sqlite3 -readonly ") for call in runner.call_args_list))
+
     def test_reports_local_capacity_and_usage(self):
         with tempfile.TemporaryDirectory() as data_path:
             for relative in (
@@ -1468,13 +1513,20 @@ class TestGogsStorageHealth(unittest.TestCase):
                 "log",
             ):
                 os.makedirs(os.path.join(data_path, relative), exist_ok=True)
-            open(os.path.join(data_path, "data", "gogs.db"), "a", encoding="utf-8").close()
+            with closing(sqlite3.connect(os.path.join(data_path, "data", "gogs.db"))) as database:
+                database.executescript("CREATE TABLE user (id INTEGER); CREATE TABLE repository (id INTEGER);")
 
             def result_for(command: str, **_kwargs):
                 if command.startswith("findmnt "):
                     stdout = "/dev/vdb1 ext4 /srv/gogs\n"
                 elif command.startswith("sqlite3 "):
-                    stdout = "ok\n"
+                    tokens = shlex.split(command)
+                    self.assertEqual(tokens[1], "-readonly")
+                    with closing(sqlite3.connect(Path(tokens[2]).as_uri() + "?mode=ro", uri=True)) as database:
+                        stdout = "\n".join(
+                            str(row[0]) for query in tokens[3].split(";") if query.strip()
+                            for row in database.execute(query)
+                        ) + "\n"
                 elif command.startswith("df "):
                     stdout = " Avail IAvail\n 1048576 2048\n"
                 elif command.startswith("du "):
@@ -1502,6 +1554,61 @@ class TestGogsStorageHealth(unittest.TestCase):
         )
         self.assertIn(" -a -x ", repository_check)
 
+    def test_missing_or_nonregular_database_is_rejected_without_creation(self):
+        with tempfile.TemporaryDirectory() as data_path:
+            os.mkdir(os.path.join(data_path, "data"))
+            database_path = os.path.join(data_path, "data/gogs.db")
+            target = os.path.join(data_path, "other.db")
+            Path(target).touch()
+            for kind in ("missing", "directory", "symlink"):
+                with self.subTest(kind=kind):
+                    if kind == "directory":
+                        os.mkdir(database_path)
+                    elif kind == "symlink":
+                        os.rmdir(database_path)
+                        os.symlink(target, database_path)
+                    with (
+                        patch.object(gogs_steps, "_gogs_backing_filesystem", return_value=("/dev/test", "ext4", data_path)),
+                        patch.object(gogs_steps, "run", return_value=SimpleNamespace(returncode=0)) as runner,
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "existing regular file"):
+                            gogs_steps.check_gogs_storage_health(data_path)
+                    self.assertFalse(any(call.args[0].startswith("sqlite3 ") for call in runner.call_args_list))
+                    if kind == "missing":
+                        self.assertFalse(os.path.exists(database_path))
+
+    def test_empty_or_incomplete_schema_and_failed_query_are_unhealthy(self):
+        for schema, failed in (("", False), ("CREATE TABLE user (id INTEGER);", False),
+                               ("CREATE TABLE unrelated (id INTEGER);", False), ("", True)):
+            with self.subTest(schema=schema, failed=failed), tempfile.TemporaryDirectory() as data_path:
+                os.mkdir(os.path.join(data_path, "data"))
+                database_path = Path(data_path) / "data/gogs.db"
+                with closing(sqlite3.connect(database_path)) as database:
+                    database.executescript(schema)
+                before = database_path.read_bytes()
+
+                def run(command, **kwargs):
+                    if not command.startswith("sqlite3 "):
+                        return SimpleNamespace(returncode=0)
+                    tokens = shlex.split(command)
+                    self.assertEqual(tokens[1], "-readonly")
+                    if failed:
+                        return SimpleNamespace(returncode=1, stdout="", stderr="query failed")
+                    with closing(sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True)) as database:
+                        stdout = "\n".join(
+                            str(row[0]) for query in tokens[3].split(";") if query.strip()
+                            for row in database.execute(query)
+                        ) + "\n"
+                    return SimpleNamespace(returncode=0, stdout=stdout)
+
+                with (
+                    patch.object(gogs_steps, "_gogs_backing_filesystem", return_value=("/dev/test", "ext4", data_path)),
+                    patch.object(gogs_steps, "run", side_effect=run),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "integrity or core schema"):
+                        gogs_steps.check_gogs_storage_health(data_path)
+                self.assertEqual(database_path.read_bytes(), before)
+
     def test_rejects_cifs_live_data(self):
         result = SimpleNamespace(
             returncode=0,
@@ -1521,6 +1628,7 @@ class TestGogsSetupRollback(unittest.TestCase):
             patch("web.gogs_steps.run", return_value=completed) as runner,
             patch("web.gogs_steps.write_gogs_state") as write_state,
             patch("web.gogs_steps.is_service_active", return_value=True),
+            patch("builtins.open", mock_open(read_data="RUN_USER = git\n[server]\nHTTP_PORT = 4321\n[security]\nSECRET_KEY = %secret\n")),
         ):
             gogs_steps._rollback_failed_gogs_setup(
                 "v1.2.3",
@@ -1531,12 +1639,14 @@ class TestGogsSetupRollback(unittest.TestCase):
 
         commands = [call.args[0] for call in runner.call_args_list]
         self.assertEqual(
-            commands,
+            commands[:2],
             [
                 f"ln -sfn /opt/gogs/releases/v1.2.3-{'b' * 12} /opt/gogs/current",
                 "systemctl restart gogs",
             ],
         )
+        self.assertIn("http://127.0.0.1:4321/", commands[2])
+        self.assertIn("--retry-max-time 30", commands[2])
         write_state.assert_called_once_with(
             "v1.2.3",
             "/srv/gogs",
@@ -1589,6 +1699,72 @@ class TestGogsSetupRollback(unittest.TestCase):
                     "v1.2.3", "b" * 64, "/srv/gogs", "/srv/gogs/custom/conf/app.ini",
                 )
         output.assert_not_called()
+
+    def test_active_but_http_unready_rollback_does_not_report_restoration(self):
+        def run(command, **kwargs):
+            return SimpleNamespace(returncode=7 if command.startswith("curl ") else 0)
+
+        with (
+            patch("web.gogs_steps.os.path.exists", return_value=True),
+            patch("web.gogs_steps.run", side_effect=run) as runner,
+            patch("web.gogs_steps.write_gogs_state") as state,
+            patch("web.gogs_steps.is_service_active", return_value=True),
+            patch("builtins.open", mock_open(read_data="[server]\nHTTP_PORT = 13000\n")),
+            patch("builtins.print") as output,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "HTTP-ready"):
+                gogs_steps._rollback_failed_gogs_setup(
+                    "v1.2.3", "b" * 64, "/srv/gogs", "/srv/gogs/custom/conf/app.ini",
+                )
+        self.assertIn("http://127.0.0.1:13000/", runner.call_args.args[0])
+        state.assert_called_once_with("v1.2.3", "/srv/gogs", "/srv/gogs/custom/conf/app.ini", "b" * 64)
+        output.assert_not_called()
+
+    def test_invalid_rollback_backend_port_never_probes_or_reports_restored(self):
+        for value in ("invalid", "0", "65536", ""):
+            with (
+                self.subTest(value=value),
+                patch("web.gogs_steps.os.path.exists", return_value=True),
+                patch("web.gogs_steps.run") as runner,
+                patch("web.gogs_steps.write_gogs_state"),
+                patch("web.gogs_steps.is_service_active", return_value=True),
+                patch("builtins.open", mock_open(read_data=f"[server]\nHTTP_PORT = {value}\n")),
+                patch("builtins.print") as output,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "valid backend HTTP port"):
+                    gogs_steps._rollback_failed_gogs_setup(
+                        "v1.2.3", "b" * 64, "/srv/gogs", "/srv/gogs/custom/conf/app.ini",
+                    )
+            self.assertFalse(any(call.args[0].startswith("curl ") for call in runner.call_args_list))
+            output.assert_not_called()
+
+    def test_setup_preserves_failure_or_cancellation_with_rollback_evidence(self):
+        config = SetupConfig(host="host", username="admin", system_type="server_web", gogs=[":3000", "/srv/gogs"])
+        for failure_type, recovery_type in ((RuntimeError, None), (RuntimeError, RuntimeError),
+                                             (KeyboardInterrupt, RuntimeError), (SystemExit, None),
+                                             (RuntimeError, KeyboardInterrupt)):
+            failure = failure_type("setup activation failed")
+            recovery = recovery_type("HTTP recovery failed") if recovery_type else None
+            expected = recovery if recovery is not None and not isinstance(recovery, Exception) else failure
+            with (
+                self.subTest(failure=failure_type, recovery=recovery_type),
+                patch("common.storage_steps.assert_declared_storage_mount"),
+                patch.object(gogs_steps, "_gogs_backing_filesystem"),
+                patch.object(gogs_steps, "_reconcile_gogs_direct_firewall"),
+                patch.object(gogs_steps, "_ensure_gogs_dependencies"),
+                patch.object(gogs_steps, "_ensure_git_user", return_value="/home/git"),
+                patch.object(gogs_steps, "_ensure_gogs_data_dirs", return_value="/srv/gogs/custom/conf/app.ini"),
+                patch.object(gogs_steps, "_load_gogs_state", return_value={"tag_name": "v1.2.3", "archive_sha256": "b" * 64}),
+                patch.object(gogs_steps, "install_or_update_gogs_release", return_value=("v1.2.4", True, "a" * 64)),
+                patch.object(gogs_steps, "_complete_gogs_setup", side_effect=failure),
+                patch.object(gogs_steps, "_rollback_failed_gogs_setup", side_effect=recovery) as rollback,
+            ):
+                with self.assertRaises(type(expected)) as error:
+                    gogs_steps.setup_gogs(config)
+            self.assertIs(error.exception, expected)
+            rollback.assert_called_once_with("v1.2.3", "b" * 64, "/srv/gogs", "/srv/gogs/custom/conf/app.ini")
+            if recovery:
+                self.assertIn("HTTP recovery failed", "\n".join(error.exception.__notes__))
 
 
 class TestConfigureAutoUpdateGogs(unittest.TestCase):

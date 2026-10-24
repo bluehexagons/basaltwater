@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import hashlib
 import ipaddress
 import json
@@ -31,7 +32,7 @@ from lib.remote_utils import generate_password, is_service_active, run, user_exi
 from lib.unit_transaction import replace_units
 from lib.validation import (
     validate_filesystem_path, validate_gogs_owned_directory, validate_gogs_settings,
-    validate_no_control_characters,
+    validate_network_port, validate_no_control_characters,
 )
 from web.cloudflare_steps import run_cloudflare_tunnel_setup
 from web.ssl_steps import install_certbot, obtain_letsencrypt_certificate, setup_certificate_renewal
@@ -1114,6 +1115,7 @@ def _run_gogs_post_setup_commands(config_path: str) -> None:
 def _wait_for_gogs_ready(port: int) -> None:
     result = run(
         "curl --fail --silent --output /dev/null "
+        "--noproxy '*' "
         "--connect-timeout 2 --max-time 2 --retry 15 --retry-delay 1 "
         "--retry-max-time 30 --retry-all-errors "
         f"http://127.0.0.1:{port}/",
@@ -1231,13 +1233,19 @@ def check_gogs_storage_health(data_path: str) -> Mapping[str, Any]:
             )
 
     database_path = f"{data_path}/data/gogs.db"
+    if not os.path.isfile(database_path) or os.path.islink(database_path):
+        raise RuntimeError("Gogs SQLite database must be an existing regular file")
+    query = (
+        "PRAGMA quick_check; SELECT COUNT(*) FROM sqlite_master "
+        "WHERE type = 'table' AND name IN ('user', 'repository');"
+    )
     database_result = run(
-        f"sqlite3 {shlex.quote(database_path)} 'PRAGMA quick_check;'",
+        f"sqlite3 -readonly {shlex.quote(database_path)} {shlex.quote(query)}",
         check=False,
         capture_output=True,
     )
-    if database_result.returncode != 0 or (database_result.stdout or "").strip() != "ok":
-        raise RuntimeError("Gogs SQLite quick check failed")
+    if database_result.returncode != 0 or (database_result.stdout or "").splitlines() != ["ok", "2"]:
+        raise RuntimeError("Gogs SQLite integrity or core schema check failed")
 
     capacity_result = run(
         f"df -B1 --output=avail,iavail {shlex.quote(data_path)}",
@@ -1372,7 +1380,17 @@ def _rollback_failed_gogs_setup(
             run(f"systemctl restart {GOGS_SERVICE}")
             if not is_service_active(GOGS_SERVICE):
                 raise RuntimeError("Gogs rollback did not restore a running service")
-            print(f"  ⚠ Restored Gogs {safe_previous_tag} after setup failure")
+            parser = configparser.ConfigParser(interpolation=None)
+            try:
+                with open(config_path, encoding="utf-8") as source:
+                    parser.read_string("[DEFAULT]\n" + source.read())
+                backend_port = validate_network_port(
+                    parser.getint("server", "HTTP_PORT"), "Gogs HTTP port",
+                )
+            except (OSError, ValueError, configparser.Error) as exc:
+                raise RuntimeError("Gogs rollback cannot read a valid backend HTTP port") from exc
+            _wait_for_gogs_ready(backend_port)
+            print(f"  ⚠ Restored Gogs binary {safe_previous_tag} after setup failure")
             return
     run(f"systemctl stop {GOGS_SERVICE}")
 
@@ -1428,16 +1446,26 @@ def setup_gogs(config: SetupConfig) -> None:
             tag_name=tag_name,
             archive_sha256=archive_sha256,
         )
-    except Exception:
+    except BaseException as setup_error:
         if changed:
-            _rollback_failed_gogs_setup(
-                previous_tag if isinstance(previous_tag, str) else None,
-                (
-                    previous_archive_sha256
-                    if isinstance(previous_archive_sha256, str)
-                    else None
-                ),
-                data_path,
-                config_path,
-            )
+            try:
+                _rollback_failed_gogs_setup(
+                    previous_tag if isinstance(previous_tag, str) else None,
+                    (
+                        previous_archive_sha256
+                        if isinstance(previous_archive_sha256, str)
+                        else None
+                    ),
+                    data_path,
+                    config_path,
+                )
+            except BaseException as recovery_error:
+                message = (
+                    f"Gogs setup failed: {type(setup_error).__name__}: {setup_error}; "
+                    f"rollback failed: {type(recovery_error).__name__}: {recovery_error}"
+                )
+                if isinstance(setup_error, Exception) and not isinstance(recovery_error, Exception):
+                    recovery_error.add_note(message)
+                    raise recovery_error from setup_error
+                setup_error.add_note(message)
         raise

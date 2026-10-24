@@ -176,8 +176,13 @@ both the publication and recovery errors, including the affected link path and
 its previous target. Cancellation remains a cancellation, with recovery details
 attached as exception notes; inspect those paths and the saved state before
 retrying. This interruption recovery covers release-link publication only.
-Setup and patch also run a SQLite quick check, verify that the `git` user can
-read and write each managed
+Setup and patch require an existing regular `data/gogs.db`, open it read-only
+for a SQLite quick check, and require the core `user` and `repository` tables.
+An absent, empty, or schema-less database fails health; the probe never creates
+one. On first install this check runs after Gogs startup and administrator
+initialization. These checks establish basic integrity and schema presence,
+not repository/LFS completeness or migration compatibility.
+Setup and patch also verify that the `git` user can read and write each managed
 directory, reject CIFS/SMB live storage, and print the backing filesystem, free
 bytes, free inodes, and repository/LFS/attachment/log usage. Useful checks are:
 
@@ -198,7 +203,11 @@ whether a non-loopback LFS HTTP endpoint is configured. Gogs removes its LFS
 staging directory at startup and recreates it on upload. When that directory
 is absent, health checks read, write and traversal access to its nearest
 existing parent and reports that path as `storage.lfs_temp_access_path` in JSON.
-Persistent data directories must still exist. For reverse-proxied
+Persistent data directories must still exist. SQLite health uses the same
+existing-file, read-only integrity and core-table checks as setup. Direct HTTP
+mode requires a target-local HTTP 200 response on the validated backend port
+from `app.ini`, with bounded connection and request timeouts. An active systemd
+service alone is insufficient. For reverse-proxied
 deployments it also validates nginx configuration and performs a target-local
 request through the configured TLS listener or Cloudflare origin route. It
 does not perform an external client or authentication probe, so a healthy
@@ -221,7 +230,14 @@ This is binary/link recovery only: it does not undo database migrations or
 other application data writes, and HTTP readiness does not prove schema
 compatibility. Keep a consistent pre-update backup; restoring SQLite or
 downgrading its schema requires an explicit operator recovery decision.
-Every completed check records a root-owned
+Setup rollback likewise requires an active service and bounded HTTP readiness
+on the backend port read from the current `app.ini` before reporting the prior
+release restored. The saved release state follows the selected binary even
+when recovery is unready; it is not a health-success record. Setup still fails
+or propagates cancellation after recovery, and includes recovery failure details
+in exception notes. Setup rollback also covers binary/link recovery only; it
+does not restore earlier configuration, database migrations, or application data.
+Every completed scheduled update check records a root-owned
 result in `/opt/basaltwater/state/gogs_update.json`; health fails when the last
 result failed or the record (falling back to initial setup state before the
 first timer run) is older than nine days.
