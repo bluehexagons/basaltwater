@@ -106,10 +106,17 @@ def skill_resources_ready(directory: Path, uid: int) -> bool:
 
 
 def _inventory(directory: Path, uid: int) -> tuple[dict[str, str], bool]:
+    """Return recorded resources and readiness for read-only catalog consumers."""
+    files, _pending, complete = _inventory_state(directory, uid)
+    return files, complete
+
+
+def _inventory_state(directory: Path, uid: int) -> tuple[dict[str, str], dict[str, str], bool]:
+    """Read old inventories and validate pending digests before trusting any state."""
     path = directory / _INVENTORY
     check_skill_path(path, uid)
     if not os.path.lexists(path):
-        return {}, True
+        return {}, {}, True
     try:
         value = read_json_file(str(path))
     except (OSError, ValueError) as exc:
@@ -117,14 +124,37 @@ def _inventory(directory: Path, uid: int) -> tuple[dict[str, str], bool]:
     if (not isinstance(value, dict) or value.get("version") != 1
             or type(value.get("complete", True)) is not bool):
         raise RuntimeError(f"Invalid managed agent skill inventory: {path}")
-    files = value.get("files")
-    if not isinstance(files, dict) or any(
-        not isinstance(name, str) or not _resource_name(name)
-        or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
-        for name, digest in files.items()
-    ):
+    complete = value.get("complete", True)
+    files, pending = value.get("files"), value.get("pending", {})
+    if "pending" in value and complete:
         raise RuntimeError(f"Invalid managed agent skill inventory: {path}")
-    return files, value.get("complete", True)
+    for resources in (files, pending):
+        if not isinstance(resources, dict) or any(
+            not isinstance(name, str) or not _resource_name(name)
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            for name, digest in resources.items()
+        ):
+            raise RuntimeError(f"Invalid managed agent skill inventory: {path}")
+    return files, pending, complete
+
+
+def _managed_resources(directory: Path, recorded: dict[str, str], pending: dict[str, str],
+                       uid: int) -> dict[str, str]:
+    """Snapshot recognized actual digests without adopting personal modifications.
+
+    Each checkpoint needs only the recognized on-disk version and its next target,
+    even across repeated interrupted attempts with different source versions.
+    Missing or edited files retain a known digest for safe removal comparisons.
+    Read every tracked path here so unsafe obsolete paths fail before any writes.
+    """
+    managed = {**pending, **recorded}
+    for name in managed:
+        content = _read(directory / name, uid)
+        if content is not None:
+            digest = _digest(content)
+            if digest in {recorded.get(name), pending.get(name)}:
+                managed[name] = digest
+    return managed
 
 
 def _source_bundle(source: Path) -> dict[str, tuple[bytes, int]]:
@@ -198,7 +228,8 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
     check_skill_path(directory, uid)
     if directory.exists() and not directory.is_dir():
         raise RuntimeError(f"Refusing unsafe agent skill directory: {directory}")
-    recorded, complete = _inventory(directory, uid)
+    recorded, pending, complete = _inventory_state(directory, uid)
+    recorded = _managed_resources(directory, recorded, pending, uid)
     previous: dict[str, bytes | None] = {}
     for name, (content, _mode) in files.items():
         path = directory / name
@@ -217,14 +248,10 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
         elif name not in recorded or _digest(previous[name]) not in {recorded[name], _digest(content)}:
             raise RuntimeError(f"Refusing to replace personal or modified agent skill resource: {path}")
     stale = {name: digest for name, digest in recorded.items() if name not in files}
-    # Inspect obsolete paths before writing too: a symlink must never turn a
-    # catalog refresh into a deletion outside the skill directory.
-    for name in stale:
-        _read(directory / name, uid)
     changed = ensure_skill_directory(directory, uid, gid)
-    # Mark the bundle incomplete before publishing any files. Keep existing
-    # digests and claim preflighted new resources so retries recognize both old
-    # contents and files already updated to the current source.
+    # Persist recognized actual contents and the next target before publishing
+    # any files. A retry may use a newer source or roll back, so it cannot rely
+    # on the source still containing the digests of this attempt's writes.
     inventory = {name: _digest(content) for name, (content, _mode) in files.items() if name != "SKILL.md"}
     claimed = {
         **recorded,
@@ -237,7 +264,8 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
     )
     if updating:
         write_json_atomic(str(directory / _INVENTORY),
-                          {"version": 1, "complete": False, "files": claimed}, uid=uid, gid=gid)
+                          {"version": 1, "complete": False, "files": claimed,
+                           "pending": inventory}, uid=uid, gid=gid)
         changed = True
     for name, (content, mode) in files.items():
         path = directory / name
@@ -271,9 +299,8 @@ def remove_skill_bundle(directory: Path, uid: int) -> bool:
     content = _read(entrypoint, uid)
     if content is None or _MARKER not in content:
         return False
-    recorded, _complete = _inventory(directory, uid)
-    for name in recorded:
-        _read(directory / name, uid)
+    recorded, pending, _complete = _inventory_state(directory, uid)
+    recorded = _managed_resources(directory, recorded, pending, uid)
     _remove_resources(directory, recorded, uid)
     entrypoint.unlink()
     inventory = directory / _INVENTORY
