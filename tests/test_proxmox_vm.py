@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,18 @@ from lib.proxmox_vm import (
 )
 from lib.config import SetupConfig
 from lib.vm_storage import VMDataDisk, VMDiskHardware, disk_hardware
+
+
+_RESIZE_UPID = "UPID:pve1:00000001:00000002:00000003:resize:101:root@pam:"
+
+
+def _resize_results(exitstatus: str = "OK") -> list[subprocess.CompletedProcess[str]]:
+    return [
+        subprocess.CompletedProcess([], 0, "worker log\n" + json.dumps(_RESIZE_UPID), ""),
+        subprocess.CompletedProcess([], 0, json.dumps({
+            "upid": _RESIZE_UPID, "status": "stopped", "exitstatus": exitstatus,
+        }), ""),
+    ]
 
 
 class TestImageStorage(unittest.TestCase):
@@ -419,7 +432,11 @@ class TestVMHardwareProfile(unittest.TestCase):
 
     @patch("lib.proxmox_vm._ssh_run")
     def test_graphical_vm_uses_virtio_gpu_and_disk_iothread(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run.side_effect = [
+            *[MagicMock(returncode=0, stdout="", stderr="") for _ in range(3)],
+            *_resize_results(),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
 
         _create_vm(
             vmid=101,
@@ -539,7 +556,7 @@ class TestVMCleanup(unittest.TestCase):
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=1, stdout="", stderr="cannot shrink disk"),
+            *_resize_results("cannot shrink disk"),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
@@ -572,6 +589,51 @@ class TestVMCleanup(unittest.TestCase):
             "qm stop 101 --skiplock 1",
             "qm destroy 101 --purge 1 --skiplock 1",
         ])
+        self.assertNotIn("qm start 101", commands)
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_uncertain_resize_preserves_partial_vm_without_starting_or_replaying(self, mock_run):
+        failures = [
+            [subprocess.TimeoutExpired("ssh", 3660)],
+            [OSError("connection lost")],
+            [subprocess.CompletedProcess([], 124, "", "")],
+            [subprocess.CompletedProcess([], 0, "not a task ID", "")],
+            [_resize_results()[0], subprocess.TimeoutExpired("ssh", 50)],
+            [_resize_results()[0], subprocess.CompletedProcess([], 0, json.dumps({
+                "upid": _RESIZE_UPID, "status": "running",
+            }), "")],
+            [_resize_results()[0], subprocess.CompletedProcess([], 0, json.dumps({
+                "upid": _RESIZE_UPID, "status": "stopped", "exitstatus": 1,
+            }), "")],
+        ]
+        for failure in failures:
+            with self.subTest(failure=failure):
+                mock_run.reset_mock()
+                mock_run.side_effect = [
+                    MagicMock(returncode=0, stdout="", stderr=""),
+                    MagicMock(returncode=0, stdout="", stderr=""),
+                    *failure,
+                ]
+                with self.assertRaisesRegex(ProvisionError, "preserved for inspection"):
+                    _create_vm(
+                        vmid=101, target_ip="10.0.0.50", image_remote_path=None,
+                        storage_ref="local:import/test.img", memory_mb=2048,
+                        balloon_min_mb=2048, cores=2, root_pool="local-lvm",
+                        disk_size_gib=20, data_disk_specs=[], cidr_prefix="24",
+                        bridge="vmbr0", gateway="10.0.0.1", nameservers=["10.0.0.1"],
+                        hostname="agent-vm", user_data_path=None,
+                        user_data_ref="local:snippets/test.yaml", graphical_console=False,
+                        node_ip="10.0.0.10", user="root", ssh_opts=[],
+                    )
+                commands = [call.args[3] for call in mock_run.call_args_list]
+                self.assertEqual(sum("pvesh set" in cmd for cmd in commands), 1)
+                self.assertFalse(any(
+                    cmd.startswith(("qm start ", "qm stop ", "qm destroy "))
+                    for cmd in commands
+                ))
+                self.assertEqual(mock_run.call_args_list[2].kwargs["timeout"], 3660)
+                if len(failure) == 2:
+                    self.assertEqual(mock_run.call_args_list[3].kwargs["timeout"], 50)
 
 
 class TestCloudInitBootstrap(unittest.TestCase):
@@ -676,6 +738,15 @@ class TestCloudInitBootstrap(unittest.TestCase):
             "qm stop 101 --skiplock 1", "qm destroy 101 --purge 1 --skiplock 1",
         ])
 
+    def test_uncertain_preboot_creation_preserves_snippet_and_does_not_retry(self):
+        with patch("lib.proxmox_vm._create_vm", side_effect=ProvisionError(
+            "qm resize 101 scsi0 12G completion is uncertain: file already exists"
+        )) as create:
+            with self.assertRaisesRegex(ProvisionError, "completion is uncertain"):
+                _provision_vm_locked(self.config)
+        create.assert_called_once()
+        self.assertEqual(self.events, [])
+
 
 class TestVMDataDisks(unittest.TestCase):
     @patch("lib.proxmox_vm._ssh_run")
@@ -684,7 +755,7 @@ class TestVMDataDisks(unittest.TestCase):
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
+            *_resize_results(),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(
                 returncode=0,
@@ -738,6 +809,10 @@ class TestVMDataDisks(unittest.TestCase):
         )
         self.assertNotIn("bulk-lvm:128G", "\n".join(commands))
         self.assertLess(commands.index("qm config 101"), commands.index("qm start 101"))
+        self.assertLess(
+            next(i for i, cmd in enumerate(commands) if "/tasks/" in cmd),
+            commands.index("qm config 101"),
+        )
 
     @patch("lib.proxmox_vm._ssh_run")
     def test_attach_failure_destroys_partial_vm(self, mock_run):
@@ -745,7 +820,7 @@ class TestVMDataDisks(unittest.TestCase):
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),
-            MagicMock(returncode=0, stdout="", stderr=""),
+            *_resize_results(),
             MagicMock(returncode=1, stdout="", stderr="pool full"),
             MagicMock(returncode=0, stdout="", stderr=""),
             MagicMock(returncode=0, stdout="", stderr=""),

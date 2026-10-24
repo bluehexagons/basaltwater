@@ -63,22 +63,36 @@ class TestProvisioningConcurrency(unittest.TestCase):
                 pass
 
     def test_vmid_collisions_are_retried_until_creation_succeeds(self) -> None:
-        attempts: list[int] = []
-        next_ids = iter([101, 102])
+        for prefix in ("qm create {} failed:", "Container creation failed for VMID {}:"):
+            with self.subTest(prefix=prefix):
+                attempts: list[int] = []
+                next_ids = iter([101, 102])
 
-        def create_guest(*, vmid: int) -> None:
-            attempts.append(vmid)
-            if vmid < 102:
-                raise ProvisionError(f"guest {vmid} already exists")
+                def create_guest(*, vmid: int) -> None:
+                    attempts.append(vmid)
+                    if vmid < 102:
+                        raise ProvisionError(
+                            f"{prefix.format(vmid)} guest {vmid} already exists"
+                        )
 
-        vmid = _create_with_vmid_retry(
-            create_guest,
-            lambda: next(next_ids),
-            {"vmid": 100},
-        )
+                vmid = _create_with_vmid_retry(
+                    create_guest,
+                    lambda: next(next_ids),
+                    {"vmid": 100},
+                )
 
-        self.assertEqual(vmid, 102)
-        self.assertEqual(attempts, [100, 101, 102])
+                self.assertEqual(vmid, 102)
+                self.assertEqual(attempts, [100, 101, 102])
+
+    def test_post_creation_failure_containing_collision_text_is_not_retried(self) -> None:
+        create = MagicMock(side_effect=ProvisionError(
+            "qm resize 100 scsi0 20G completion is uncertain: file already exists"
+        ))
+        next_id = MagicMock(return_value=101)
+        with self.assertRaisesRegex(ProvisionError, "completion is uncertain"):
+            _create_with_vmid_retry(create, next_id, {"vmid": 100})
+        create.assert_called_once_with(vmid=100)
+        next_id.assert_not_called()
 
     def test_non_collision_creation_error_is_not_retried(self) -> None:
         with self.assertRaisesRegex(ProvisionError, "storage unavailable"):

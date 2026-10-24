@@ -595,8 +595,9 @@ class TestGuestMemoryCapacity(unittest.TestCase):
             any("Continuing" in str(item) for item in mock_print.call_args_list)
         )
 
+    @patch("lib.proxmox_vm.resize_vm_disk")
     @patch("lib.proxmox_vm._ssh_run")
-    def test_vm_creation_sets_relative_balloon_shares(self, mock_run):
+    def test_vm_creation_sets_relative_balloon_shares(self, mock_run, _resize):
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
         _create_vm(

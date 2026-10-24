@@ -162,7 +162,15 @@ def _create_with_vmid_retry(
             create_guest(**create_kwargs)
             return vmid
         except ProvisionError as exc:
-            if "already exists" not in str(exc).lower() or attempt + 1 == attempts:
+            message = str(exc).lower()
+            creation_failed = message.startswith((
+                f"qm create {vmid} failed:",
+                f"container creation failed for vmid {vmid}:",
+            ))
+            if (
+                not creation_failed or "already exists" not in message
+                or attempt + 1 == attempts
+            ):
                 raise
             print(
                 f"  ⚠ VMID {vmid} was allocated concurrently; "

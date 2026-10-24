@@ -67,6 +67,7 @@ from lib.proxmox_memory import (
     parse_guest_memory_config,
     parse_guest_memory_mib,
 )
+from lib.proxmox_tasks import ProxmoxTaskError, resize_vm_disk, vm_disk_resize_command
 from lib.types import NestedStrList, StrList
 from lib.validation import parse_memory_mib, validate_filesystem_path
 from lib.validators import validate_host, validate_ip_address, validate_username
@@ -2016,15 +2017,28 @@ def _create_vm(
             f"{(set_result.stderr or set_result.stdout or '').strip() or 'unknown error'}"
         )
 
-    resize_cmd = f"qm resize {vmid} scsi0 {disk_size_gib}G"
-    resize_result = _ssh_run(node_ip, user, ssh_opts, resize_cmd, dry_run=dry_run)
-    if resize_result.returncode != 0:
-        if not dry_run and created:
-            _destroy_vm_best_effort(vmid, node_ip, user, ssh_opts)
-        raise ProvisionError(
-            f"qm resize for VM {vmid} failed: "
-            f"{(resize_result.stderr or resize_result.stdout or '').strip() or 'the requested disk may be smaller than the image'}"
+    if dry_run:
+        _ssh_run(
+            node_ip, user, ssh_opts,
+            vm_disk_resize_command(vmid, "scsi0", f"{disk_size_gib}G"),
+            dry_run=True,
         )
+    else:
+        try:
+            resize_vm_disk(
+                vmid, "scsi0", f"{disk_size_gib}G",
+                lambda command, *, timeout: _ssh_run(
+                    node_ip, user, ssh_opts, command, timeout=timeout
+                ),
+            )
+        except ProxmoxTaskError as exc:
+            if not exc.uncertain:
+                _destroy_vm_best_effort(vmid, node_ip, user, ssh_opts)
+            preserved = (
+                f" VM {vmid} and any referenced snippet were preserved for inspection."
+                if exc.uncertain else ""
+            )
+            raise ProvisionError(f"{exc}{preserved}") from exc
 
     for index, disk in enumerate(data_disk_specs, 1):
         data_size_gib = _parse_disk_size_gib(disk.size)

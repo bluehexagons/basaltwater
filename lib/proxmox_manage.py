@@ -31,6 +31,7 @@ import urllib.parse
 
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_guest import _proxmox_ssh_command, _ssh_opts, _ssh_run
+from lib.proxmox_tasks import ProxmoxTaskError, resize_vm_disk, vm_disk_resize_command
 from lib.types import StrList
 from lib.validation import validate_positive_integer
 
@@ -847,18 +848,21 @@ def resize_container_disk(
         )
     size = size.upper()
     pct_cmd = shlex.join(["pct", "resize", str(vmid), volume, size])
-    # qm resize omits the CLI task-exit callback: its worker can fail while
-    # qm exits zero. pvesh exposes the same API's UPID for explicit verification.
-    vm_cmd = shlex.join([
-        "pvesh", "set", f"/nodes/localhost/qemu/{vmid}/resize",
-        "--disk", volume, "--size", size, "--output-format", "json",
-    ])
+    vm_cmd = vm_disk_resize_command(vmid, volume, size)
     if dry_run:
         _run_guest_command(host, vmid, pct_cmd, vm_cmd, dry_run=True)
         return
     guest_type, _status = _get_guest_status(host, vmid)
-    cmd = vm_cmd if guest_type == "vm" else pct_cmd
-    label = f"{'qm' if guest_type == 'vm' else 'pct'} resize {vmid} {volume} {size}"
+    if guest_type == "vm":
+        try:
+            resize_vm_disk(
+                vmid, volume, size,
+                lambda command, *, timeout: _run_on_host(host, command, timeout=timeout),
+            )
+        except ProxmoxTaskError as exc:
+            raise ProxmoxManageError(f"{exc} Host: {host.address}.") from exc
+        return
+    label = f"pct resize {vmid} {volume} {size}"
     recovery = (
         "Inspect the Proxmox task log and disk state before retrying; "
         "the resize was not replayed."
@@ -867,7 +871,7 @@ def resize_container_disk(
     # terminal where the shared SSH helper deliberately allows passphrase waits.
     try:
         result = _run_on_host(
-            host, f"timeout --kill-after=10s 3600s {cmd}", timeout=3660
+            host, f"timeout --kill-after=10s 3600s {pct_cmd}", timeout=3660
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ProxmoxManageError(
@@ -877,46 +881,6 @@ def resize_container_disk(
         raise ProxmoxManageError(
             f"{label} failed on {host.address}; completion may be uncertain: "
             f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}. {recovery}"
-        )
-    if guest_type != "vm":
-        return
-    try:
-        # Synchronous CLI worker logs precede pvesh's final JSON return value.
-        upid = json.loads((result.stdout or "").strip().splitlines()[-1])
-        if not isinstance(upid, str) or not re.fullmatch(
-            rf"UPID:[^:\s/]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:[0-9A-Fa-f]+:resize:{vmid}:[^:\s/]+:",
-            upid,
-        ):
-            raise ValueError("missing or invalid resize task ID")
-    except (ValueError, IndexError) as exc:
-        detail = (result.stderr or "").strip()
-        raise ProxmoxManageError(
-            f"{label} completion is uncertain: no valid native task ID. {detail} {recovery}"
-        ) from exc
-    status_cmd = shlex.join([
-        "pvesh", "get", f"/nodes/localhost/tasks/{upid}/status",
-        "--output-format", "json",
-    ])
-    try:
-        task_result = _run_on_host(
-            host, f"timeout --kill-after=10s 30s {status_cmd}", timeout=50
-        )
-        if task_result.returncode != 0:
-            raise ValueError((task_result.stderr or task_result.stdout or "no output").strip())
-        task = json.loads(task_result.stdout)
-        if not isinstance(task, dict) or task.get("upid") != upid:
-            raise ValueError("missing or mismatched task status")
-        # pvesh runs this CLI worker synchronously. A running/malformed result
-        # cannot establish completion and must not trigger another mutation.
-        if task.get("status") != "stopped" or not task.get("exitstatus"):
-            raise ValueError("native task has no final outcome")
-    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-        raise ProxmoxManageError(
-            f"{label} completion is uncertain for task {upid}: {exc}. {recovery}"
-        ) from exc
-    if task["exitstatus"] != "OK":
-        raise ProxmoxManageError(
-            f"{label} failed: task {upid}: {task['exitstatus']}. {recovery}"
         )
 
 

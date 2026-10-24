@@ -804,9 +804,16 @@ and current-versus-pending reads follow the
 [QEMU configuration schema](https://pve.proxmox.com/pve-docs/qm.conf.5.html) and
 [`qm config` reference](https://pve.proxmox.com/pve-docs/qm.1.html).
 Imported images retain the native format selected by the destination storage
-backend,
-and provisioning rejects a requested disk smaller than the source image. The
-cloud-init snippet is detached from the VM before its temporary file is
+backend. Before booting a new VM, provisioning verifies that the root-disk resize
+task finished with native status `OK`; this rejects requests smaller than the
+source image even when Proxmox's CLI exits zero. A confirmed task failure triggers
+cleanup of the new VM. An unknown outcome (including a timeout, lost connection,
+or unavailable task status) preserves the VM and its referenced snippet for
+inspection. Check its task log and disk state before recovery; setup does not
+replay the resize or allocate a replacement VMID after a post-creation failure.
+Only an initial guest-creation collision may retry with another VMID. Resize and
+verification use the bounded deadlines described under `resize-disk` below.
+The cloud-init snippet is detached from the VM before its temporary file is
 removed, preventing a stale `cicustom` reference. Before detaching, Basaltwater
 waits up to 180 seconds for successful cloud-init completion through the guest
 agent and verifies `/etc/cloud/cloud.cfg.d/99-basaltwater-instance.cfg` contains
