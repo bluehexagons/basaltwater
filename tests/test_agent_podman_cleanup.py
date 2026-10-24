@@ -20,10 +20,12 @@ def _image(identifier: str, *, created: int, tags=None, containers=0, labels=Non
             "Labels": labels, "Size": size}
 
 
-def _map_denial(helper="newuidmap", mapping="uid_map") -> str:
-    return (f'running `/usr/bin/{helper} 783 0 1000 1 1 100000 65536`: '
-            f'{helper}: write to {mapping} failed: Operation not permitted\n'
-            f'Error: cannot set up namespace using "/usr/bin/{helper}": exit status 1\n')
+def _map_denial(helper="newuidmap", mapping="uid_map", *, wrapped=False) -> str:
+    message = (f'running `/usr/bin/{helper} 783 0 1000 1 1 100000 65536`: '
+               f'{helper}: write to {mapping} failed: Operation not permitted\n')
+    if wrapped:
+        message = 'time="2026-10-24T16:09:41-05:00" level=error msg=' + json.dumps(message) + '\n'
+    return message + f'Error: cannot set up namespace using "/usr/bin/{helper}": exit status 1\n'
 
 
 _RESTRICTED_STATUS = b"Name:\tpython3\nNoNewPrivs:\t1\nCapBnd:\t0000000000000000\n"
@@ -283,13 +285,16 @@ class PodmanCleanupTests(unittest.TestCase):
         self.assertFalse(result["cleanup_attempted"])
 
     def test_restricted_map_denial_stops_after_initial_probe_without_leaking_output(self):
-        for apply, helper, mapping in ((False, "newuidmap", "uid_map"),
-                                       (True, "newuidmap", "uid_map"),
-                                       (True, "newgidmap", "gid_map")):
-            with self.subTest(apply=apply, helper=helper), \
+        for apply, helper, mapping, wrapped in ((False, "newuidmap", "uid_map", False),
+                                                (True, "newuidmap", "uid_map", False),
+                                                (True, "newgidmap", "gid_map", False),
+                                                (False, "newuidmap", "uid_map", True),
+                                                (True, "newuidmap", "uid_map", True),
+                                                (True, "newgidmap", "gid_map", True)):
+            with self.subTest(apply=apply, helper=helper, wrapped=wrapped), \
                     patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(
                         [], 125, "stdout secret",
-                        _map_denial(helper, mapping).replace("exit status 1", "exit status1") + "stderr secret\n",
+                        _map_denial(helper, mapping, wrapped=wrapped).replace("exit status 1", "exit status1") + "stderr secret\n",
                     )) as command, patch("builtins.open", mock_open(read_data=_RESTRICTED_STATUS)) as source, \
                     patch.object(cleanup, "plan_builders") as builders, \
                     patch.object(cleanup, "_process_activity") as activity:
@@ -317,6 +322,9 @@ class PodmanCleanupTests(unittest.TestCase):
             _map_denial().replace("uid_map", "gid_map"),
             _map_denial().replace("Operation not permitted", "Permission denied"),
             _map_denial().replace('using "/usr/bin/newuidmap"', 'using "/usr/bin/newgidmap"'),
+            _map_denial(wrapped=True).replace("level=error", "level=warning"),
+            _map_denial(wrapped=True).replace("msg=", "message="),
+            _map_denial(wrapped=True).replace('msg="running', 'msg="\\q running'),
         ):
             with self.subTest(diagnostic=diagnostic), \
                     patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(

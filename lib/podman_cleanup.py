@@ -172,11 +172,24 @@ def _namespace_helper_restricted(stderr: str) -> bool:
     """Recognize a map-helper denial only with current kernel restrictions."""
     if not isinstance(stderr, str) or len(stderr) > _OUTPUT_LIMIT:
         return False
+    messages = []
+    for line in stderr.splitlines():
+        # Podman's native logrus formatter quotes the helper's multiline
+        # output. Decode only its complete error-message field; leave other
+        # formats untouched so ambiguous diagnostics still fail closed.
+        wrapped = re.fullmatch(r'time="[^"\r\n]+" level=error msg=("(?:[^"\\]|\\.)*")', line)
+        if wrapped:
+            try:
+                line = json.loads(wrapped[1])
+            except ValueError:
+                return False
+        messages.append(line)
+    diagnostic = "\n".join(messages)
     denied = any(
         re.search(rf'(?:^|: ){helper}: write to {mapping} failed: Operation not permitted$',
-                  stderr, re.MULTILINE)
+                  diagnostic, re.MULTILINE)
         and re.search(rf'^Error: cannot set up namespace using "(?:/[A-Za-z0-9_.-]+)*/{helper}": exit status ?1$',
-                      stderr, re.MULTILINE)
+                      diagnostic, re.MULTILINE)
         for helper, mapping in (("newuidmap", "uid_map"), ("newgidmap", "gid_map"))
     )
     if not denied:
