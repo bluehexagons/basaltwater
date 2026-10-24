@@ -111,9 +111,11 @@ The worker sends a bounded precaution report through a separate anonymous file
 descriptor before executing rsync; ordinary rsync output is never interpreted
 as that report. Missing or malformed reports fail the operation. Worker-discovered
 unavailable subtrees appear in scheduled results and warning notifications, as
-well as standalone notifications. When the worker preserves unavailable mount
-subtrees, the sync does not advance its completion timestamp: it retries using the same
-one-hour-to-twenty-four-hour backoff as incomplete operations. Every retry uses
+well as standalone notifications. Mount exclusions retained from preflight also
+require a retry, even if that mount returns before the worker starts. When either
+stage preserves mount subtrees, the sync does not advance its completion timestamp:
+it retries with the backoff used for incomplete operations, from one hour up to
+twenty-four hours. Every retry uses
 the private namespace and rechecks mounts; no unprotected retry is attempted.
 Once mount coverage is restored, completion clears the retry history and the
 configured interval resumes. Recorded integrity findings alone retain their

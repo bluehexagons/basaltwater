@@ -314,6 +314,7 @@ class SyncIntegrity:
     excluded_paths: tuple[str, ...] = ()
     warning: str = ""
     copy_new_only: bool = False
+    mount_excluded_paths: tuple[str, ...] = ()
 
 
 def run_sync(source: str, destination: str, logger, *, config: RuntimeConfig,
@@ -386,7 +387,8 @@ def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig
         warnings.append(f"Preserved {len(unavailable)} subtree(s) on unavailable configured mounts: {', '.join(unavailable[:5])}")
     if copy_new_only:
         warnings.append("Copying new files only; existing destination files and deletions are preserved until findings are available")
-    return SyncIntegrity(tuple(sorted(excluded_paths)), "; ".join(warnings), copy_new_only)
+    return SyncIntegrity(tuple(sorted(excluded_paths)), "; ".join(warnings), copy_new_only,
+                         mount_excluded_paths=unavailable)
 
 
 def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logger) -> tuple[bool, str, bool]:
@@ -562,7 +564,9 @@ def execute_storage_operations() -> dict:
         success, message = run_sync(source, destination, logger, config=config, integrity=integrity,
                                     precautions=precautions)
         warning = "; ".join(filter(None, (integrity.warning, precautions.warning)))
-        completed = success and not precautions.retry_required
+        # A restored mount remains excluded if preflight already protected it.
+        # Keep that provenance separate from ordinary integrity findings.
+        completed = success and not (precautions.retry_required or integrity.mount_excluded_paths)
         results["syncs"].append({
             "source": source,
             "destination": destination,

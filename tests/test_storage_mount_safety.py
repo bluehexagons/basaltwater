@@ -70,7 +70,7 @@ class StorageMountSafetyTests(unittest.TestCase):
                 with patch('lib.task_utils.os.path.ismount', return_value=True):
                     self.assertEqual(unavailable_sync_subtrees(str(alias), str(self.destination), config), ())
 
-    def test_scheduled_backup_passes_nested_mount_protection_and_records_completion(self):
+    def test_scheduled_backup_retains_retry_for_preflight_mount_exclusions(self):
         mount = self.source / 'disk'
         mount.mkdir()
         config = {'backup_specs': [[str(self.source), str(self.destination), 'daily']],
@@ -84,7 +84,42 @@ class StorageMountSafetyTests(unittest.TestCase):
                                     excluded_paths=('disk',), copy_new_only=False,
                                     config=RuntimeConfig.from_dict(config),
                                     precautions=sync_rsync.SyncPrecautions())
-        self.assertIn(storage_ops.get_sync_op_id(str(self.source), str(self.destination)), state)
+        op_id = storage_ops.get_sync_op_id(str(self.source), str(self.destination))
+        self.assertFalse(result['syncs'][0]['completed'])
+        self.assertNotIn(op_id, state)
+        self.assertIn(op_id, state['_attempts'])
+
+    def test_mount_restored_before_worker_does_not_complete_an_excluded_subtree(self):
+        for endpoint in (self.source, self.destination):
+            mount = endpoint / 'restored'
+            mount.mkdir()
+            config = {'sync_specs': [[str(self.source), str(self.destination), 'weekly']],
+                      'storage_mounts': [['data', str(mount)]]}
+
+            def restored_worker(*args, **kwargs):
+                self.assertEqual(kwargs['excluded_paths'], ('restored',))
+                # The mount is present again: the worker reports no new loss,
+                # but still uses the exclusion supplied by preflight.
+                kwargs['precautions'].warning = ''
+                kwargs['precautions'].retry_required = False
+                return 0
+
+            with self.subTest(endpoint=endpoint), \
+                 patch.object(storage_ops, 'load_setup_config', return_value=config), \
+                 patch.object(storage_ops, 'STATE_FILE', str(self.root / endpoint.name / 'state.json')), \
+                 patch.object(storage_ops, 'get_service_logger'), \
+                 patch.object(storage_ops, 'parse_notification_args', return_value=[]), \
+                 patch('lib.task_utils.os.path.ismount', return_value=False), \
+                 patch.object(sync_rsync, 'run_rsync_with_notifications', side_effect=restored_worker):
+                result = storage_ops.execute_storage_operations()
+                state = storage_ops.load_last_run()
+            operation = result['syncs'][0]
+            self.assertTrue(operation['success'])
+            self.assertFalse(operation['completed'])
+            self.assertIn('unavailable configured mounts', operation['warning'])
+            op_id = storage_ops.get_sync_op_id(str(self.source), str(self.destination))
+            self.assertNotIn(op_id, state)
+            self.assertIn(op_id, state['_attempts'])
 
     def test_inline_sync_preserves_offline_nested_mounts(self):
         config = self.config(self.source / 'disk')
