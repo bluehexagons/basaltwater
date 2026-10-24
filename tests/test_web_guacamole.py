@@ -388,24 +388,33 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_remote_handoff_is_generation_and_geometry_scoped(self):
         with patch.object(desktop, "request", return_value={}) as request:
-            await service.desktop_call("pause", generation="desktop-1", geometry=[1600, 900])
-        request.assert_called_once_with({"action": "pause", "generation": "desktop-1", "geometry": [1600, 900]})
+            await service.desktop_call("control", generation="desktop-1", geometry=[1600, 900],
+                                       mode="human-override", seconds=None, human_approved=True)
+        request.assert_called_once_with({"action": "control", "generation": "desktop-1", "geometry": [1600, 900],
+                                         "mode": "human-override", "seconds": None, "human_approved": True})
+        with patch.object(desktop, "request", return_value={}) as request:
+            await service.desktop_call("browser-take", generation="desktop-1", geometry=[1600, 900],
+                                       human_approved=True, override_seconds=None)
+        request.assert_called_once_with({"action": "browser-take", "generation": "desktop-1", "geometry": [1600, 900],
+                                         "pause_token": None, "human_approved": True, "override_seconds": None})
 
-    def test_supervisor_rejects_stale_handoffs_before_mutating_pause(self):
-        session = desktop.DesktopSession(dict(desktop="i3"), MagicMock())
-        session.snapshot_status = MagicMock(return_value=dict(state="running", geometry=[1600, 900]))
-        for action in ("pause", "resume"):
+    def test_supervisor_rejects_stale_handoffs_before_mutating_permission(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(Path, "home", return_value=Path(temporary)):
+            from desktop import control_state
+
+            session = desktop.DesktopSession(dict(desktop="i3", username="agent"), MagicMock())
+            session.snapshot_status = MagicMock(return_value=dict(state="running", geometry=[1600, 900]))
+            before = control_state.status()
             for generation, geometry in (("stale", [1600, 900]), (session.generation, [1280, 720])):
-                session.paused = action == "resume"
                 with self.assertRaises(ValueError):
-                    session.handle({"action": action, "generation": generation, "geometry": geometry})
-                self.assertEqual(session.paused, action == "resume")
-        session.handle({"action": "pause", "generation": session.generation, "geometry": [1600, 900]})
-        self.assertTrue(session.paused)
-        session.snapshot_status.return_value["state"] = "stopping"
-        with self.assertRaises(RuntimeError):
-            session.handle({"action": "resume", "generation": session.generation, "geometry": [1600, 900]})
-        self.assertTrue(session.paused)
+                    session.handle(dict(action="control", mode="disabled", human_approved=True,
+                                        generation=generation, geometry=geometry))
+                self.assertEqual(control_state.status(), before)
+            session.snapshot_status.return_value["state"] = "stopping"
+            with self.assertRaises(RuntimeError):
+                session.handle(dict(action="control", mode="disabled", human_approved=True,
+                                    generation=session.generation, geometry=[1600, 900]))
+            self.assertEqual(control_state.status(), before)
 
     def test_modified_client_cannot_input_or_enable_transfers(self):
         self.assertIsNone(filter_instruction(["key", "65", "1"], False))
@@ -455,6 +464,8 @@ class BrowserOwnershipTests(unittest.TestCase):
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
+        temporary = stack.enter_context(tempfile.TemporaryDirectory())
+        stack.enter_context(patch.object(Path, "home", return_value=Path(temporary)))
         stack.enter_context(patch.object(desktop, "geometry", return_value=[1600, 900]))
         stack.enter_context(patch.object(desktop, "window_manager_ready", return_value=True))
         stack.enter_context(patch.dict(os.environ, DISPLAY=":10"))
@@ -463,29 +474,34 @@ class BrowserOwnershipTests(unittest.TestCase):
         self.session = desktop.DesktopSession(dict(username="agent", desktop="xfce"), self.process)
         self.scope = dict(generation=self.session.generation, geometry=[1600, 900])
 
-    def take(self, token=None):
-        return self.session.handle(dict(action="browser-take", pause_token=token, **self.scope))["browser_pause"]
+    def take(self, *, seconds=900):
+        return self.session.handle(dict(action="browser-take", pause_token=None, human_approved=True,
+                                        override_seconds=seconds, **self.scope))["browser_pause"]
 
-    def test_release_restores_prior_pause_and_revokes_agent_lease(self):
-        for paused in (False, True):
-            self.session.paused = paused
-            self.session.lease = "old-agent-lease"
-            token = self.take()
-            self.assertTrue(self.session.paused)
-            self.assertIsNone(self.session.lease)
-            # Repeated take retains the original pre-browser pause state.
-            self.assertEqual(self.take(token), token)
-            self.session.handle(dict(action="browser-release", pause_token=token, **self.scope))
-            self.assertEqual(self.session.paused, paused)
-            self.assertIsNone(self.session.browser_pause)
+    def control(self, mode, *, seconds=900):
+        return self.session.handle(dict(action="control", mode=mode, seconds=seconds,
+                                        human_approved=True, **self.scope))
 
-    def test_local_pause_or_resume_replaces_browser_ownership(self):
-        for action in ("pause", "resume"):
+    def test_release_preserves_durable_override_across_backend_restart(self):
+        token = self.take(seconds=None)
+        before = self.session.snapshot_status()
+        state = self.session.handle(dict(action="browser-release", pause_token=token, **self.scope))
+        self.assertTrue(state["paused"])
+        self.assertEqual(state["agent_control"], "human-override")
+        self.assertEqual(state["control_revision"], before["control_revision"])
+        self.assertIsNone(state["browser_pause"])
+        replacement = desktop.DesktopSession(dict(username="agent", desktop="xfce"), self.process)
+        self.assertEqual(replacement.snapshot_status()["agent_control"], "human-override")
+        self.assertIsNone(replacement.snapshot_status()["override_remaining"])
+
+    def test_explicit_enable_or_disable_replaces_browser_ownership(self):
+        for mode in ("enabled", "disabled"):
             token = self.take()
-            self.session.handle(dict(action=action))
-            self.session.handle(dict(action="browser-release", pause_token=token, **self.scope))
-            self.assertEqual(self.session.paused, action == "pause")
-            self.assertIsNone(self.session.browser_pause)
+            self.control(mode)
+            state = self.session.handle(dict(action="browser-release", pause_token=token, **self.scope))
+            self.assertEqual(state["agent_control"], mode)
+            self.assertEqual(state["paused"], mode == "disabled")
+            self.assertIsNone(state["browser_pause"])
 
     def test_stale_cleanup_cannot_resume_later_browser_owner(self):
         stale = self.take()
@@ -493,29 +509,57 @@ class BrowserOwnershipTests(unittest.TestCase):
         current = self.take()
         self.assertNotEqual(stale, current)
         self.session.handle(dict(action="browser-release", pause_token=stale, **self.scope))
-        self.assertTrue(self.session.paused)
+        self.assertTrue(self.session.snapshot_status()["paused"])
         self.assertEqual(self.session.browser_pause, current)
 
-    def test_timeout_recovers_from_crash_but_preserves_separate_pause(self):
-        for paused in (False, True):
-            self.session.paused = paused
-            self.take()
-            self.session.browser_pause_until = 0
-            state = self.session.handle(dict(action="status"))
-            self.assertEqual(state["paused"], paused)
-            self.assertIsNone(state["browser_pause"])
-            if not paused:
-                self.assertIn("lease", self.session.handle(dict(action="acquire", generation=self.session.generation)))
+    def test_heartbeat_expiry_keeps_saved_override(self):
+        self.take()
+        self.session.browser_pause_until = 0
+        state = self.session.handle(dict(action="status"))
+        self.assertTrue(state["paused"])
+        self.assertEqual(state["agent_control"], "human-override")
+        self.assertIsNone(state["browser_pause"])
 
     def test_refresh_renews_only_the_current_unexpired_owner(self):
         token = self.take()
+        before = self.session.snapshot_status()
         self.session.browser_pause_until = time.monotonic() + 5
         self.session.handle(dict(action="browser-refresh", pause_token=token, **self.scope))
         self.assertGreater(self.session.browser_pause_until, time.monotonic() + 40)
+        after = self.session.snapshot_status()
+        self.assertEqual(after["override_until"], before["override_until"])
+        self.assertEqual(after["control_revision"], before["control_revision"])
         self.session.browser_pause_until = 0
         with self.assertRaisesRegex(ValueError, "expired"):
             self.session.handle(dict(action="browser-refresh", pause_token=token, **self.scope))
-        self.assertFalse(self.session.paused)
+        self.assertTrue(self.session.snapshot_status()["paused"])
+
+    def test_take_requires_explicit_human_approval(self):
+        for approved in (False, None, 1, "true"):
+            with self.subTest(approved=approved), self.assertRaises(PermissionError):
+                self.session.handle(dict(action="browser-take", pause_token=None,
+                                          human_approved=approved, **self.scope))
+
+    def test_timed_override_expiry_revokes_browser_input(self):
+        self.take(seconds=60)
+        future = time.time() + 61
+        with patch("desktop.control_state.time.time", return_value=future):
+            state = self.session.snapshot_status()
+        self.assertEqual(state["agent_control"], "enabled")
+        self.assertFalse(state["paused"])
+        self.assertIsNone(state["browser_pause"])
+
+    def test_external_durable_change_invalidates_refresh_even_when_mode_is_unchanged(self):
+        from desktop import control_state
+
+        token = self.take()
+        control_state.change("human-override", seconds=None, human_approved=True)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.session.handle(dict(action="browser-refresh", pause_token=token, **self.scope))
+        state = self.session.snapshot_status()
+        self.assertEqual(state["agent_control"], "human-override")
+        self.assertIsNone(state["override_until"])
+        self.assertIsNone(state["browser_pause"])
 
     def test_scope_and_owner_are_required_before_mutating_or_logging_out(self):
         token = self.take()
@@ -533,14 +577,14 @@ class BrowserOwnershipTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "geometry"):
                     self.session.handle(dict(action=action, pause_token=token, generation=self.session.generation))
             popen.assert_not_called()
-        self.assertTrue(self.session.paused)
+        self.assertTrue(self.session.snapshot_status()["paused"])
         self.assertEqual(self.session.browser_pause, token)
 
-    def test_cleanup_after_resize_or_during_logout_still_releases_own_pause(self):
+    def test_cleanup_during_logout_preserves_permission(self):
         token = self.take()
         self.process.poll.return_value = 0
         self.session.handle(dict(action="browser-release", generation=self.session.generation, pause_token=token))
-        self.assertFalse(self.session.paused)
+        self.assertTrue(self.session.snapshot_status()["paused"])
 
     def test_browser_logout_preserves_pause_and_allows_normal_application_dialogs(self):
         token = self.take()
@@ -548,7 +592,7 @@ class BrowserOwnershipTests(unittest.TestCase):
             result = self.session.handle(dict(action="browser-logout", pause_token=token, **self.scope))
             self.assertTrue(result["logout_requested"])
             popen.assert_called_once_with(["xfce4-session-logout", "--logout"], process_group=self.process.pid)
-        self.assertTrue(self.session.paused)
+        self.assertTrue(self.session.snapshot_status()["paused"])
         self.assertEqual(self.session.browser_pause, token)
         self.process.terminate.assert_not_called()
 
@@ -558,29 +602,32 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.stack = ExitStack()
         self.account = self.stack.enter_context(patch.object(service.pwd, "getpwnam", return_value=MagicMock(pw_dir="/home/agent")))
         self.features = self.stack.enter_context(patch.object(service, "discover_features", return_value=PanelFeatures()))
-        self.snapshot = dict(state="running", generation="generation-1", geometry=[1600, 900], paused=False)
+        self.snapshot = dict(state="running", generation="generation-1", geometry=[1600, 900], paused=False,
+                             agent_control="enabled", override_until=None, override_remaining=None, control_revision="initial")
         self.pause_serial = 0
-        self.prior_pause = False
         async def desktop_call(action, **scope):
             if scope and (scope["generation"] != self.snapshot["generation"]
                           or (scope.get("geometry") is not None and scope["geometry"] != self.snapshot["geometry"])):
                 raise RuntimeError("Desktop session changed")
             if action == "browser-take":
+                self.assertIs(scope["human_approved"], True)
                 if self.snapshot.get("browser_pause") is None:
-                    self.prior_pause = self.snapshot["paused"]
                     self.pause_serial += 1
                     self.snapshot["browser_pause"] = f"{self.pause_serial:032x}"
-                self.snapshot["paused"] = True
+                seconds = scope["override_seconds"]
+                self.snapshot.update(paused=True, agent_control="human-override", control_revision=str(self.pause_serial),
+                                     override_remaining=seconds, override_until=None if seconds is None else time.time() + seconds)
             elif action == "browser-release" and scope["pause_token"] == self.snapshot.get("browser_pause"):
-                self.snapshot["paused"] = self.prior_pause
                 self.snapshot["browser_pause"] = None
             elif action == "browser-refresh" and scope["pause_token"] != self.snapshot.get("browser_pause"):
                 raise RuntimeError("Browser control expired")
             elif action == "browser-logout":
                 return dict(logout_requested=True)
-            elif action == "resume":
-                self.snapshot["paused"] = False
-                self.snapshot["browser_pause"] = None
+            elif action == "control":
+                self.assertIs(scope["human_approved"], True)
+                self.snapshot.update(paused=scope["mode"] != "enabled", agent_control=scope["mode"],
+                                     browser_pause=None, override_until=None, override_remaining=None,
+                                     control_revision=self.snapshot["control_revision"] + "-changed")
             return dict(self.snapshot)
         self.desktop_call = self.stack.enter_context(patch.object(service, "desktop_call", side_effect=desktop_call))
         self.app = service.create_app(dict(username="agent", origins=["https://desktop-vm:9443"], certificate="a" * 64))
@@ -614,6 +661,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('value="pan"', text)
         self.assertIn('value="ssh -- agent@desktop-vm"', text)
         self.assertIn("Check desktop status", text)
+        self.assertNotIn('id="agent-control-status"', text)
+        self.assertNotIn('id="override-duration"', text)
+        self.assertNotIn('id="disable"', text)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
         self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
@@ -625,7 +675,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.snapshot["browser_pause"] = "private-token"
         result = await self.post("inspect")
         self.assertEqual(result.status, 200)
-        self.assertEqual(await result.json(), dict(state="running", geometry=[1600, 900], paused=False))
+        self.assertEqual(await result.json(), dict(state="running", geometry=[1600, 900], paused=False,
+                                                   agent_control="enabled", override_until=None, override_remaining=None,
+                                                   control_revision="initial"))
         self.assertIsNone(self.gateway.session)
         self.desktop_call.assert_awaited_once_with("status")
         self.snapshot.update(state="stopped", geometry=None)
@@ -673,25 +725,94 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 409)
         self.assertFalse(self.gateway.session.controlled)
 
-    async def test_take_observe_resume_and_disconnect_release_browser_pause(self):
+    async def test_take_observe_enable_and_disconnect_preserve_saved_permission(self):
         attachment = await self.session()
         self.gateway.session.attached = True
         self.gateway.session.ready = True
         result = await self.post("control", session=attachment, action="take")
         self.assertTrue((await result.json())["controlled"])
-        self.desktop_call.assert_awaited_with("browser-take", generation="generation-1", geometry=[1600, 900], pause_token=None)
+        self.desktop_call.assert_awaited_with("browser-take", generation="generation-1", geometry=[1600, 900], pause_token=None,
+                                              human_approved=True, override_seconds=900)
         self.assertTrue(self.snapshot["paused"])
         result = await self.post("control", session=attachment, action="observe")
         self.assertFalse((await result.json())["controlled"])
         self.assertTrue(self.snapshot["paused"])
+        self.assertIsNone(self.snapshot["browser_pause"])
         await self.post("control", session=attachment, action="resume")
         self.assertFalse(self.snapshot["paused"])
+        self.assertEqual(self.snapshot["agent_control"], "enabled")
         await self.post("control", session=attachment, action="take")
         old = self.gateway.session
         await self.post("disconnect")
         self.assertIsNone(self.gateway.session)
         self.assertEqual(old.password, "")
-        self.assertFalse(self.snapshot["paused"])
+        self.assertTrue(self.snapshot["paused"])
+        self.assertEqual(self.snapshot["agent_control"], "human-override")
+
+    async def test_take_duration_defaults_and_indefinite_are_explicit_human_choices(self):
+        attachment = await self.session()
+        self.gateway.session.ready = True
+        for seconds in (900, 300, None):
+            with self.subTest(seconds=seconds):
+                result = await self.post("control", session=attachment, action="take", override_seconds=seconds)
+                self.assertEqual(result.status, 200, await result.text())
+                state = await result.json()
+                self.assertTrue(state["controlled"])
+                self.assertEqual(state["override_remaining"], seconds)
+                self.assertEqual(state["agent_control"], "human-override")
+                self.assertNotIn("browser_pause", state)
+                self.desktop_call.assert_any_await("browser-take", generation="generation-1", geometry=[1600, 900],
+                                                   pause_token=None, human_approved=True, override_seconds=seconds)
+
+    async def test_invalid_duration_is_rejected_before_desktop_calls(self):
+        attachment = await self.session()
+        self.gateway.session.ready = True
+        self.desktop_call.reset_mock()
+        for seconds in (True, False, 0, 59, 86401, 900.0, "900", "indefinite", [], {}):
+            result = await self.post("control", session=attachment, action="take", override_seconds=seconds)
+            self.assertEqual(result.status, 400)
+        result = await self.post("control", session=attachment, action="disable", override_seconds=900)
+        self.assertEqual(result.status, 400)
+        self.desktop_call.assert_not_called()
+
+    async def test_disable_releases_browser_input_and_survives_disconnect(self):
+        attachment = await self.session()
+        self.gateway.session.ready = True
+        await self.post("control", session=attachment, action="take")
+        result = await self.post("control", session=attachment, action="disable")
+        self.assertEqual(result.status, 200)
+        state = await result.json()
+        self.assertEqual(state["agent_control"], "disabled")
+        self.assertTrue(state["paused"])
+        self.assertFalse(state["controlled"])
+        self.desktop_call.assert_any_await("control", mode="disabled", seconds=900, human_approved=True,
+                                          generation="generation-1", geometry=[1600, 900])
+        await self.post("disconnect", session=attachment)
+        self.assertEqual(self.snapshot["agent_control"], "disabled")
+
+    async def test_revision_change_or_override_expiration_ends_browser_input(self):
+        attachment = await self.session()
+        current = self.gateway.session
+        current.ready = True
+        for change in (dict(control_revision="changed-elsewhere"),
+                       dict(agent_control="enabled", paused=False, override_until=None, override_remaining=None)):
+            await self.post("control", session=attachment, action="take")
+            self.snapshot.update(change)
+            state = await (await self.post("status", session=attachment)).json()
+            self.assertFalse(state["controlled"])
+            self.assertIsNone(current.pause_token)
+
+    async def test_agent_page_exposes_permission_separately_from_connection(self):
+        self.features.return_value = PanelFeatures(tools=frozenset({"codex"}))
+        response = await self.client.get("/desktop/", headers=self.headers)
+        text = await response.text()
+        self.assertIn('id="agent-control-status"', text)
+        self.assertIn('id="override-duration"', text)
+        self.assertIn('<option value="900">15 minutes</option>', text)
+        self.assertIn('value="indefinite"', text)
+        self.assertIn('id="disable" disabled>Disable agents', text)
+        self.assertIn('id="resume" disabled>Enable agents', text)
+        self.assertIn('aria-label="Browser connection controls"', text)
 
     async def test_disconnect_preserves_preexisting_and_replacement_manual_pauses(self):
         for mode in ("preexisting", "replacement"):
@@ -756,6 +877,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         result = await self.post("logout", session=attachment)
         self.assertEqual(result.status, 409)
         current.ready = True
+        result = await self.post("logout", session=attachment)
+        self.assertEqual(result.status, 409)
+        await self.post("control", session=attachment, action="take")
         result = await self.post("logout", session=attachment)
         self.assertEqual(result.status, 200, await result.text())
         self.assertTrue((await result.json())["logout_requested"])
@@ -936,7 +1060,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(current.keys)
         self.assertIsNone(current.pointer)
 
-    async def test_socket_close_native_eof_and_idle_expiry_return_control_to_agents(self):
+    async def test_socket_close_native_eof_and_idle_expiry_preserve_human_override(self):
         for ending in ("browser", "native", "idle"):
             with self.subTest(ending=ending):
                 attachment = await self.session()
@@ -968,23 +1092,26 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                         break
                     await asyncio.sleep(.01)
                 self.assertIsNone(self.gateway.session)
-                self.assertFalse(self.snapshot["paused"])
+                self.assertTrue(self.snapshot["paused"])
+                self.assertEqual(self.snapshot["agent_control"], "human-override")
                 writes = [call.args[0] for call in writer.write.call_args_list]
                 self.assertIn(instruction("key", "65", "0").encode(), writes)
                 self.assertIn(instruction("mouse", "10", "20", "0").encode(), writes)
 
-    async def test_watch_refreshes_browser_lease_without_extending_user_inactivity(self):
+    async def test_watch_refreshes_browser_owner_without_extending_override_or_inactivity(self):
         attachment = await self.session()
         current = self.gateway.session
         current.ready = True
         await self.post("control", session=attachment, action="take")
         activity = current.activity
+        deadline = self.snapshot["override_until"]
         with patch.object(service.asyncio, "sleep", new=AsyncMock(side_effect=[None, asyncio.CancelledError])):
             with self.assertRaises(asyncio.CancelledError):
                 await self.gateway.watch(current)
         self.desktop_call.assert_any_await("browser-refresh", generation=current.generation,
                                            geometry=current.geometry, pause_token=current.pause_token)
         self.assertEqual(current.activity, activity)
+        self.assertEqual(self.snapshot["override_until"], deadline)
 
     async def test_application_shutdown_releases_input_and_revokes_session(self):
         attachment = await self.session()
@@ -999,7 +1126,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(current.controlled)
         current.upstream.write.assert_called_once_with(instruction("key", "65", "0").encode())
         current.upstream.close.assert_called()
-        self.assertFalse(self.snapshot["paused"])
+        self.assertTrue(self.snapshot["paused"])
 
     async def test_upstream_login_failure_discards_password_and_frees_slot(self):
         attachment = await self.session()
