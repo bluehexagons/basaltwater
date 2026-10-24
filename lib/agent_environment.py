@@ -317,7 +317,8 @@ def _native_development(repository: str) -> dict[str, object]:
         + "Use node for a declared package script with the project's selected installed Node runtime, "
         "and check for a declared project recipe with private revision/settings evidence. "
         "Tasks retain bounded logs and status after client disconnect. Capture/input still require "
-        "separate approved portal control. Honor human pause; record actual playtest outcomes "
+        "separate approved portal control. Follow persistent desktop control states; do not "
+        "change state from a task request alone. Record actual playtest outcomes "
         "separately from prerequisites and process exit status.",
     }
 

@@ -224,10 +224,14 @@ Without TLS, Basic Auth crosses the network as plaintext.
 Add `--guacamole` to an HTTPS panel setup to install an embedded browser desktop.
 It enables the shared desktop without opening RDP ingress. Open **Desktop
 (Guacamole)** under **Services**, enter the setup account's Unix password, and
-connect to observe. On agent systems, **Take control** pauses agent desktop
-actions and **Resume agent** explicitly resumes them. Other systems show
-ordinary desktop controls, including **Release control**. The panel password
-and Unix password remain separate.
+connect to observe. On agent systems, the desktop UI offers **Enable agents**,
+**Disable agents**, and **Take control** with a 15-minute default, duration
+choice, or indefinite override. Timed expiry returns to enabled because the
+human chose that duration. Closing the browser, disconnecting, or restarting
+the backend does not change remembered state. Other systems show ordinary
+desktop controls. The panel password and Unix password remain separate. See
+[persistent desktop control](../workstations/desktop-control.md) for state
+transitions and approval rules.
 Use `--no-guacamole` to remove browser access while retaining the desktop.
 The same installation provides **Console**, a separate Unix shell with phone
 keyboard controls, text sizes and terminal resizing. It uses the Unix password
