@@ -20,11 +20,24 @@ def observation(*windows, truncated=False):
     return {"generation": "g", "windows": list(windows), "truncated": truncated}
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 0
+        self.sleeps = []
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
 class WindowReadinessTests(unittest.TestCase):
-    def run_wait(self, observations, times, **options):
+    def run_wait(self, observations, **options):
         backend = Mock()
         backend.request.side_effect = observations
-        with patch.object(client.time, "monotonic", side_effect=times), patch.object(client.time, "sleep"):
+        clock = FakeClock()
+        with patch.object(client.time, "monotonic", side_effect=lambda: clock.now), patch.object(
+            client.time, "sleep", side_effect=clock.sleep,
+        ):
             result = client.wait_for_window("g", title="MuseScore", backend=backend, **options)
         self.assertTrue(all(call.args[0]["action"] == "windows" for call in backend.request.call_args_list))
         return result
@@ -32,7 +45,7 @@ class WindowReadinessTests(unittest.TestCase):
     def test_splash_is_skipped_and_only_the_document_is_returned(self):
         splash = window("MuseScore Startup", "splash")
         document = window()
-        result = self.run_wait([observation(splash), observation(splash, document)], [0, 0, 0.25],
+        result = self.run_wait([observation(splash), observation(splash, document)],
                                exclude_titles=["Startup"])
         self.assertEqual(result["windows"], [document])
 
@@ -40,19 +53,18 @@ class WindowReadinessTests(unittest.TestCase):
         result = self.run_wait([observation(window(identity="splash")), observation(),
                                observation(window()), observation(window(identity="loading")),
                                observation(window()), observation(window()), observation(window())],
-                              [0, 0, 0.25, 0.5, 0.75, 1, 1.25, 1.5], stable_seconds=0.5)
+                              stable_seconds=0.5)
         self.assertEqual(result["windows"], [window()])
 
     def test_incomplete_inventory_restarts_stability(self):
         result = self.run_wait([observation(window()), observation(window(), truncated=True),
                                observation(window()), observation(window()), observation(window())],
-                              [0, 0, 0.25, 0.5, 0.75, 1], stable_seconds=0.5)
+                              stable_seconds=0.5)
         self.assertEqual(result["windows"], [window()])
 
     def test_absence_must_stay_absent_and_complete_for_the_interval(self):
         result = self.run_wait([observation(), observation(window()), observation(truncated=True),
                                observation(), observation(), observation()],
-                              [0, 0, 0.25, 0.5, 0.75, 1, 1.25],
                               condition="absent", stable_seconds=0.5)
         self.assertEqual(result["windows"], [])
 
@@ -60,17 +72,18 @@ class WindowReadinessTests(unittest.TestCase):
         wrong_pid = {**window(), "pid": 99}
         hidden = window(visible=False)
         result = self.run_wait([observation(wrong_pid, hidden), observation(window())],
-                              [0, 0, 0.25], pid=42, exclude_titles=["Startup"])
+                              pid=42, exclude_titles=["Startup"])
         self.assertEqual(result["windows"], [window()])
 
     def test_continuously_changing_window_times_out(self):
         backend = Mock()
         backend.request.side_effect = [observation(window(identity=str(i))) for i in range(5)]
-        with patch.object(client.time, "monotonic", side_effect=[0, 0, 0.25, 0.5, 0.75, 1]), patch.object(
-            client.time, "sleep",
+        clock = FakeClock()
+        with patch.object(client.time, "monotonic", side_effect=lambda: clock.now), patch.object(
+            client.time, "sleep", side_effect=clock.sleep,
         ), self.assertRaisesRegex(RuntimeError, "Timed out"):
             client.wait_for_window("g", title="MuseScore", backend=backend, stable_seconds=0.5, timeout=1)
-        self.assertEqual(backend.request.call_count, 5)
+        self.assertEqual(backend.request.call_count, 4)
 
     def test_invalid_options_fail_before_any_backend_request(self):
         cases = [{"exclude_titles": "Startup"}, {"exclude_titles": [""]},
@@ -89,6 +102,88 @@ class WindowReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SIGSEGV.*11"):
             client.wait_for_window("g", title="MuseScore", backend=backend, launch="token")
         backend.request.assert_called_once_with({"action": "launch-status", "generation": "g", "launch": "token"})
+
+
+class WaitPollingTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = FakeClock()
+        for name, effect in (("monotonic", lambda: self.clock.now), ("sleep", self.clock.sleep)):
+            patcher = patch.object(client.time, name, side_effect=effect)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.backend = Mock()
+
+    def test_idle_window_wait_uses_fewer_scans_and_stops_at_deadline(self):
+        self.backend.request.return_value = observation()
+        with self.assertRaisesRegex(RuntimeError, "Timed out"):
+            client.wait_for_window("g", title="MuseScore", backend=self.backend)
+        self.assertLessEqual(self.backend.request.call_count, 20)
+        self.assertLessEqual(max(self.clock.sleeps), 1)
+        self.assertEqual(self.clock.now, 15)
+
+    def test_incomplete_element_wait_backs_off_without_claiming_absence(self):
+        root = "0:" + "a" * 32
+        self.backend.request.return_value = {"generation": "g", "elements": [], "truncated": True, "root": root}
+        result = client.wait_for_element("g", pid=42, name="Save", root=root,
+                                         state="absent", backend=self.backend)
+        self.assertIn("Timed out", result["error"])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["root"], root)
+        self.assertLessEqual(self.backend.request.call_count, 20)
+        self.assertLessEqual(max(self.clock.sleeps), 1)
+        self.assertEqual(self.clock.now, 15)
+        self.assertTrue(all(call.args[0]["root"] == root for call in self.backend.request.call_args_list))
+
+    def test_immediately_ready_waits_do_not_sleep(self):
+        self.backend.request.return_value = observation(window())
+        client.wait_for_window("g", title="MuseScore", backend=self.backend)
+        self.backend.request.assert_called_once()
+        self.backend.request.reset_mock()
+        self.backend.request.return_value = {"generation": "g", "elements": [{"ref": "save"}], "truncated": False}
+        client.wait_for_element("g", pid=42, name="Save", backend=self.backend)
+        self.backend.request.assert_called_once()
+        self.assertEqual(self.clock.sleeps, [])
+
+    def test_short_waits_never_start_a_second_scan_at_the_deadline(self):
+        self.backend.request.return_value = observation()
+        with self.assertRaisesRegex(RuntimeError, "Timed out"):
+            client.wait_for_window("g", title="MuseScore", timeout=0.1, backend=self.backend)
+        self.backend.request.assert_called_once()
+        self.backend.request.reset_mock()
+        self.backend.request.return_value = {"generation": "g", "elements": [], "truncated": False}
+        result = client.wait_for_element("g", pid=42, name="Save", timeout=0.1, backend=self.backend)
+        self.assertIn("Timed out", result["error"])
+        self.backend.request.assert_called_once()
+
+    def test_window_observation_after_deadline_is_not_success(self):
+        def request(payload):
+            self.clock.now += 2
+            return observation(window())
+        self.backend.request.side_effect = request
+        with self.assertRaisesRegex(RuntimeError, "Timed out"):
+            client.wait_for_window("g", title="MuseScore", timeout=1, backend=self.backend)
+        self.backend.request.assert_called_once()
+
+    def test_element_observation_after_deadline_is_retained_without_success(self):
+        observed = {"generation": "g", "elements": [{"ref": "save"}], "truncated": False}
+        def request(payload):
+            self.clock.now += 2
+            return observed
+        self.backend.request.side_effect = request
+        result = client.wait_for_element("g", pid=42, name="Save", timeout=1, backend=self.backend)
+        self.assertIn("Timed out", result["error"])
+        self.assertEqual(result["elements"], observed["elements"])
+        self.assertEqual(result["generation"], "g")
+        self.backend.request.assert_called_once()
+
+    def test_slow_launch_status_does_not_start_a_window_scan_after_deadline(self):
+        def request(payload):
+            self.clock.now += 2
+            return {"returncode": None}
+        self.backend.request.side_effect = request
+        with self.assertRaisesRegex(RuntimeError, "Timed out"):
+            client.wait_for_window("g", title="MuseScore", timeout=1, launch="token", backend=self.backend)
+        self.backend.request.assert_called_once_with({"action": "launch-status", "generation": "g", "launch": "token"})
 
 
 class WindowWaitCliTests(unittest.TestCase):

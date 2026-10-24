@@ -65,6 +65,7 @@ def wait_for_window(generation: str, *, window: str | None = None,
     if window is None and title is None and pid is None:
         raise ValueError("Select a window ID, title substring, or PID to wait for")
     deadline = time.monotonic() + timeout
+    poll_interval = 0.25
     stable_since = None
     stable_identity = None
     while True:
@@ -81,6 +82,8 @@ def wait_for_window(generation: str, *, window: str | None = None,
                 else:
                     reason = f"code {code}"
                 raise RuntimeError(f"Application exited with {reason} before the requested window condition")
+            if time.monotonic() >= deadline:
+                break
         result = backend.request({"action": "windows", "generation": generation})
         if result["generation"] != generation:
             raise RuntimeError("Desktop session changed while waiting")
@@ -115,12 +118,19 @@ def wait_for_window(generation: str, *, window: str | None = None,
                 stable_identity = identity
             if stable_since is not None:
                 ready = now - stable_since >= stable_seconds
-        if ready and (not stable_seconds or now <= deadline):
+        if ready and now <= deadline:
             return {"generation": generation, "condition": condition, "windows": matches,
                     "launch_status": launch_status}
         if now >= deadline:
-            raise RuntimeError(f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows")
-        time.sleep(min(0.25, max(0, deadline - now)))
+            break
+        # Back off expensive inventories, but keep checking an observed window
+        # frequently while establishing its requested stability interval.
+        interval = 0.25 if stable_since is not None else poll_interval
+        time.sleep(min(interval, deadline - now))
+        poll_interval = 0.25 if stable_since is not None else min(1, poll_interval * 2)
+        if time.monotonic() >= deadline:
+            break
+    raise RuntimeError(f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows")
 
 
 def wait_for_element(generation: str, *, pid: int, name: str | None = None,
@@ -140,6 +150,7 @@ def wait_for_element(generation: str, *, pid: int, name: str | None = None,
     if text is not None and (not isinstance(text, str) or len(text) > 256 or state == "absent"):
         raise ValueError("Text wait requires at most 256 characters and a non-absent state")
     deadline = time.monotonic() + timeout
+    poll_interval = 0.25
     while True:
         result = backend.request(query)
         if result["generation"] != generation:
@@ -151,11 +162,16 @@ def wait_for_element(generation: str, *, pid: int, name: str | None = None,
         if text is not None:
             matches = [row for row in matches if not row.get("text_truncated", False) and row.get("text") == text]
         ready = complete and not matches if state == "absent" else complete and len(matches) == 1
-        if ready:
+        now = time.monotonic()
+        if ready and now <= deadline:
             return {**result, "elements": matches, "condition": state}
+        if now >= deadline:
+            break
+        time.sleep(min(poll_interval, deadline - now))
+        poll_interval = min(1, poll_interval * 2)
         if time.monotonic() >= deadline:
-            return {**result, "error": f"Timed out waiting for element state '{state}'; inspect matches and truncation"}
-        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+            break
+    return {**result, "error": f"Timed out waiting for element state '{state}'; inspect matches and truncation"}
 
 
 def doctor() -> dict[str, Any]:

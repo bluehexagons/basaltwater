@@ -55,6 +55,11 @@ Actions use the same generation and control lease as pointer input.
 `--text` equality. Success requires a complete scan and one matching control;
 `--state absent` means no matching showing control, not document completion.
 Waits do not hold control, and timeout responses include the last observation.
+Window and element waits observe immediately, then back off from 250 ms to at
+most one second between scans. Window stability checks retain 250 ms polling.
+No new scan starts once the wait deadline expires, and a late observation cannot
+report success. An in-flight backend request can still delay the timeout response
+until its own bounded timeout; do not stack new waits while it is running.
 Accessibility support varies by application; use screenshots and existing input
 when controls are unavailable. No application-specific adapter is required.
 Run `basaltw desktop smoke` for a live Geany edit/save/scoped-dialog check
