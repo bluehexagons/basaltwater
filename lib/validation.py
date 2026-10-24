@@ -186,7 +186,9 @@ _CHANNEL_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9._/-]*[A-Za-z0-
 _CHANNEL_COMMIT_PATTERN = re.compile(r"^[0-9A-Fa-f]{4,64}$")
 
 
-def _validate_syncthing_root(storage_root: object) -> None:
+def _validate_syncthing_root(
+    storage_root: object, *, allow_reserved: bool = False,
+) -> None:
     if storage_root is None:
         return
     if not isinstance(storage_root, str):
@@ -215,7 +217,7 @@ def _validate_syncthing_root(storage_root: object) -> None:
         "/var/lib/private", "/var/lib/sudo", "/var/lib/AccountsService",
         "/var/lib/NetworkManager", "/var/lib/initramfs-tools",
     )
-    if any(
+    if not allow_reserved and any(
         storage_root == root or storage_root.startswith(root + os.sep)
         for root in reserved_trees
     ):
@@ -234,14 +236,21 @@ def _validate_syncthing_root(storage_root: object) -> None:
         )
 
 
-def validate_syncthing_settings(config: Any) -> None:
+def validate_syncthing_settings(
+    config: Any, *, loading_saved_config: bool = False,
+) -> None:
     """Validate managed Syncthing service and administrator boundaries."""
 
     enabled = bool(getattr(config, "enable_syncthing", False))
     disabled = bool(getattr(config, "disable_syncthing", False))
     admin = getattr(config, "syncthing_admin", None)
     storage_root = getattr(config, "syncthing_root", None)
-    _validate_syncthing_root(storage_root)
+    # Old versions accepted reserved trees. Keep those settings readable for
+    # correction/removal, but enforce the policy on every activation. All other
+    # path checks still apply, even to saved or disabled settings.
+    _validate_syncthing_root(
+        storage_root, allow_reserved=loading_saved_config or not enabled,
+    )
 
     if disabled:
         if enabled or admin:

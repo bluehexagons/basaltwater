@@ -210,6 +210,13 @@ To remove the service and HTTPS route while preserving state and files:
 basaltw patch fileserver --no-syncthing
 ```
 
+Saved settings from older versions may name a reserved system tree such as
+`/var/lib/dpkg`. They remain readable so this removal command can run, or so
+`basaltw patch fileserver --syncthing-root /srv/syncthing` can select a safe
+replacement. An unchanged reserved root cannot be activated or re-enabled;
+removal preserves it only as saved metadata and does not prepare or modify it.
+Malformed paths and other invalid saved settings still require correction.
+
 Removal requires a successful disable operation and confirmed terminal stopped
 and disabled states. Bus errors, transitional states and uncertain enablement
 preserve the unit for diagnosis; check `systemctl status` and `systemctl

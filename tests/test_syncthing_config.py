@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import basaltwater
 from lib.arg_parser import create_setup_argument_parser
-from lib.cache import merge_setup_configs
+from lib.atomic_io import write_json_atomic
+from lib.cache import (
+    get_cache_path_for_host,
+    load_setup_command,
+    merge_setup_configs,
+    save_setup_command,
+)
 from lib.config import SetupConfig
+from lib.state_read import StateReadError
 
 
 class SyncthingConfigTest(unittest.TestCase):
@@ -238,6 +246,94 @@ class SyncthingConfigTest(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertIn("Features: Syncthing", output.getvalue())
+
+
+class SyncthingSavedConfigTest(unittest.TestCase):
+    def setUp(self) -> None:
+        cache_dir = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch("lib.cache.get_setup_cache_dir", return_value=cache_dir))
+        self.enterContext(patch("lib.system_utils.get_local_timezone", return_value="UTC"))
+        self.parser = basaltwater.create_basaltwater_parser()[0]
+        self.cache_path = get_cache_path_for_host("fileserver")
+
+    def _write_saved_config(self, **overrides: object) -> None:
+        args = {
+            "username": "agent",
+            "enable_syncthing": True,
+            "syncthing_root": "/var/lib/dpkg",
+        }
+        args.update(overrides)
+        write_json_atomic(self.cache_path, {
+            "host": "fileserver", "system_type": "server_lite", "args": args,
+        })
+
+    def test_patch_can_disable_or_replace_cached_reserved_root_and_save(self) -> None:
+        for options, enabled, root in (
+            (["--no-syncthing"], False, "/var/lib/dpkg"),
+            (["--syncthing-root", "/srv/team-files"], True, "/srv/team-files"),
+        ):
+            with self.subTest(options=options):
+                self._write_saved_config()
+                args = self.parser.parse_args(["patch", "fileserver", "agent", *options])
+                with patch("basaltwater._execute_patch_config", return_value=0) as execute:
+                    self.assertEqual(basaltwater.run_patch_command(args), 0)
+                corrected = execute.call_args.args[0]
+                self.assertEqual(corrected.enable_syncthing, enabled)
+                self.assertEqual(corrected.syncthing_root, root)
+                self.assertEqual(corrected.disable_syncthing, not enabled)
+                remote_args = corrected.to_remote_args()
+                self.assertIn("--syncthing" if enabled else "--no-syncthing", remote_args)
+                if not enabled:
+                    self.assertIsNone(corrected.syncthing_admin)
+                save_setup_command(corrected, operation="patch")
+                restored = load_setup_command("fileserver")
+                self.assertIsNotNone(restored)
+                self.assertEqual(restored.enable_syncthing, enabled)
+                self.assertEqual(restored.syncthing_root, root)
+
+    def test_cached_reserved_root_cannot_be_replayed_or_activated(self) -> None:
+        for enabled, options in ((True, []), (True, ["--syncthing"]), (False, ["--syncthing"])):
+            with self.subTest(enabled=enabled, options=options):
+                self._write_saved_config(enable_syncthing=enabled)
+                cached = load_setup_command("fileserver")
+                self.assertIsNotNone(cached)
+                self.assertEqual(cached.syncthing_root, "/var/lib/dpkg")
+                if enabled:
+                    with self.assertRaisesRegex(ValueError, "reserved system trees"):
+                        cached.to_remote_args()
+                args = self.parser.parse_args(["patch", "fileserver", "agent", *options])
+                with (
+                    patch("basaltwater._execute_patch_config") as execute,
+                    redirect_stdout(io.StringIO()) as output,
+                ):
+                    self.assertEqual(basaltwater.run_patch_command(args), 1)
+                execute.assert_not_called()
+                self.assertIn("reserved system trees", output.getvalue())
+
+    def test_correction_does_not_hide_malformed_saved_settings(self) -> None:
+        for overrides in (
+            {"syncthing_root": 42},
+            {"syncthing_root": "/var/lib/dpkg\n"},
+            {"syncthing_root": "/var/lib/dpkg/../dpkg"},
+            {"syncthing_root": "var/lib/dpkg"},
+            {"syncthing_root": "/var/lib/dpkg/team files"},
+            {"syncthing_root": "/home/agent/files"},
+            {"syncthing_root": "/var/lib/basaltwater"},
+            {"syncthing_admin": "Not Valid"},
+            {"web_panel_port": -1},
+        ):
+            with self.subTest(overrides=overrides):
+                self._write_saved_config(**overrides)
+                with open(self.cache_path, "rb") as stream:
+                    original = stream.read()
+                for options in (["--no-syncthing"], ["--syncthing-root", "/srv/team-files"]):
+                    args = self.parser.parse_args(["patch", "fileserver", "agent", *options])
+                    with patch("basaltwater._execute_patch_config") as execute:
+                        with self.assertRaises(StateReadError):
+                            basaltwater.run_patch_command(args)
+                    execute.assert_not_called()
+                with open(self.cache_path, "rb") as stream:
+                    self.assertEqual(stream.read(), original)
 
 
 if __name__ == "__main__":
