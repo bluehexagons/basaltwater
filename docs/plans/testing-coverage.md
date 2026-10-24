@@ -74,13 +74,13 @@ in the evidence index below; raw logs and host inventories stay outside Git.
 | PVE-DISK | Disk and resource flags | Live slice: root/data growth, ext4/XFS, SSD/discard/backup flags, CPU, balloon minimum/shares, additive disk and swap reruns; block and directory-backed import | E1, E4, E8 |
 | PVE-COLD | [HDD parking](../operations/proxmox-hdd-parking.md) | Partial: verified stopped-guest backup, full-clone root/cloud-init move from thin SSD to directory-backed HDD, native task outcomes, boot/identity/file checks, saved storage adoption and unchanged-setup wake from stopped; stale SSD declarations rejected. Reverse moves, linked clones, snapshot history and EFI/TPM layouts remain open | E15 |
 | PVE-SNAP | Snapshots | Live slice: QEMU/LXC and native thin linked-clone rollback, content and identity checks; snapshot removal | E1, E2, E7 |
-| PVE-BACKUP | VM archives and restore | Partial: QEMU/LXC snapshot/zstd backup and selected same-host native restores checked; no Basaltwater restore CLI, off-host copy or retention qualification | E1, E2, E8 |
+| PVE-BACKUP | VM archives and restore | Partial: QEMU/LXC snapshot/zstd backup and selected same-host native restores checked; gracefully stopped Git-service archive restored to an unused VMID on HDD with NIC disconnected before first boot, followed by application and reboot checks. No Basaltwater restore CLI, off-host copy or retention qualification | E1, E2, E8, E16 |
 | PVE-ORPHAN | Orphan deletion safety | Partial: actual referenced local files/LVs/storage aliases refused; selected disposable orphan removed; remote-node/RBD/VirtioFS cases have mocked safeguards | E3 |
 | PVE-TEMPLATE | Vendor templates and clones | Partial: immutable never-booted Debian template, full and linked native thin clones, unique identities and stable reboot; no production template/clone CLI or retirement test | E4, E7 |
 | PVE-HOST | Host storage and maintenance | Partial: storage reboot persistence, passive thin-capacity audit, services and maintenance guards; no interrupted host upgrade or reboot with running guests | E1, E3, E8 |
 | NET-ACL | Guest firewall and trust | Partial: source allowlists, node excluded/controller allowed, custom web port, strict SSH and private CA; selected rejection paths checked | E5, E6 |
 | NET-ISOLATION | Lab management isolation | Not run as an isolated-network qualification; the physical bridge/subnet permits guest access to management ports | E1, E2 |
-| APP-GOGS | Git hosting | Live slice: HTTPS/SSH clone/push, LFS digest, server ACL rejection, forced-command restrictions, populated rerun and reboot; retained private repository/API and managed client fetch/LFS digest rechecked in E15; no Gogs application restore | E6, E15 |
+| APP-GOGS | Git hosting | Live slice: HTTPS/SSH clone/push, LFS digest, server ACL rejection, forced-command restrictions, populated rerun and reboot; same-host HDD recovery of SQLite, private repository and LFS, authenticated HTTPS/fresh clone/download/hash before and after reboot. Native probes reject missing/empty databases, an unbound direct HTTP port and HTTP-unready binary recovery. Off-host recovery, migration rollback, restored SSH transfers and attachments remain open | E6, E15, E16 |
 | APP-HOMEBOX | Asset management | Partial: login/API, entity/attachment digest, native backup/restore, traversal rejection, disable/re-enable, mounted data and reboot; browser/WebSocket and upgrade rollback remain open | E5 |
 | DEV-GIT | Managed Git client | Live slice: workspace with spaces, scoped CA/credentials, read/write server ACL, password rotation, removal/re-enable and reboot | E6 |
 | DEV-TOOLS | Optional CLI tools | Partial: `--debug-tools`, `--container-tools`, Git LFS, busybox-static and selected extra packages; GDB/strace/Valgrind/Ninja runtime checks, ccache statistics only | E5, E6, E7 |
@@ -132,6 +132,7 @@ basaltw agent memory get lab-testing-coverage --project . --json
 | E13 | 2026-10-24 | Samba, Syncthing and native rsync mount lifetime; final populated reruns at `b01be24a` and mount-retry checks through `e24658a4`; reboot checks at `d1b15ff7` plus `bbdbf163` rsync |
 | E14 | 2026-10-24 | CIFS service-outage deadline/reconnect, Syncthing concurrent edits and archived-version restoration at `945b4012`; recovery/sandbox fixes, credential rotation, populated reruns and separate endpoint reboots at `00127f88`; incoming Proxmox panel inventory native collection/export/render and IPC-group regression |
 | E15 | 2026-10-24 | Native HDD parking, storage-declaration verification/adoption, stopped-guest setup wake and retained Git/LFS regression checks; controller source `78789105`; cold Podman maintenance diagnostics through `e1340e95` |
+| E16 | 2026-10-24 | Consistent stopped-guest Gogs backup from controller `477e4619`, isolated same-host HDD restore preserving the E6 runtime, fresh HTTPS Git/LFS recovery and reboot; exact health/recovery functions from `9a8ca7f7` exercised in memory against native services, SQLite and controlled port fixtures |
 
 For each new batch, update affected rows and the private evidence mapping.
 Record preconditions, exact source/runtime revisions, expected/observed behavior,
@@ -149,7 +150,8 @@ branch coverage is not a live-feature coverage percentage.
 ## Next useful batches
 
 Next valuable cases are managed-user rename, a local signed deployment/rollback,
-and fresh agent-profile setup without account-bound credentials. Extend
+fresh agent-profile setup without account-bound credentials, and GitHub/Gogs
+mirror configuration with fresh-client LFS routing. Extend
 file-service testing to interrupted writes and silent network blackholes.
 Off-host restore, external notification
 delivery and native desktop qualification need their own explicit test boundary.

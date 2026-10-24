@@ -253,6 +253,41 @@ URL. Gogs does not provide Git LFS file locking. Treat repositories, SQLite,
 configuration, and completed LFS objects as one recovery set; do not copy
 those live paths independently and call the result a consistent backup.
 
+### Rehearse recovery
+
+For a Proxmox VM, a simple consistent recovery point is a gracefully shut down
+guest whose archive includes the root disk and every Gogs data disk. Check the
+disk backup flags before creating the archive. The
+[Proxmox backup command](../operations/proxmox.md#placement-backups-and-migration)
+verifies that a new archive exists; application recovery still needs a drill:
+
+1. Restore to an unused VMID with automatic startup disabled. Keep it stopped
+   while disconnecting **every virtual NIC**, and inspect any physical-device
+   passthrough before booting. A whole-VM restore retains addresses, MACs,
+   credentials and machine identity. A separate VMID alone does not isolate it
+   from the original server. Changing only the MAC can also break a guest's
+   existing network configuration.
+2. Boot the disconnected copy and use the guest agent or console to inspect
+   mounts, disk UUIDs, services and read-only SQLite health. For local HTTPS
+   checks, preserve certificate verification and map the advertised address
+   inside the disconnected guest only. Verify authenticated repository access;
+   a login page or HTTP 200 alone does not establish data recovery.
+3. Make a fresh clone with an empty LFS cache. Initialize Git LFS for that
+   checkout (`git lfs install --local`), fetch the objects and compare expected
+   commits, payload sizes and hashes. If cloning with `GIT_LFS_SKIP_SMUDGE=1`,
+   unset it before the explicit pull. Check the working-tree payload, since
+   `git lfs pull` can exit successfully while leaving a pointer when LFS has
+   not been initialized for the repository.
+4. Reboot and repeat the mount, identity and fresh-download checks. Keep a
+   retained test copy stopped, with automatic startup disabled and its NICs
+   disconnected. Reconnecting it requires an explicit cutover or preparation
+   of a new network and machine identity.
+
+The lab has exercised this boundary for one small private repository and LFS
+object on a same-host HDD restore. It does not qualify off-host recovery,
+database migration rollback, attachments or every repository permission mode.
+Keep an independent backup outside the host's failure domain.
+
 Agent VMs that need LFS can install and initialize the client once before all
 normal repository clones:
 
