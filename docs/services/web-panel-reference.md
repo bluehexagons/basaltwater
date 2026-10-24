@@ -59,14 +59,39 @@ Run links use `GET /agents?run=RUN_ID` and an in-page anchor to open the selecte
 report; an evicted record produces a notice. IDs use the same strict
 32-character format as other task views. Opening a report changes no state.
 
-On a `server_proxmox` host, the panel is an optional host-monitoring dashboard.
-It includes the existing host metrics, services, mounted storage, scheduled
-jobs, and service diagnostics, including status and logs for installed Proxmox
-services. The diagnostic allowlist includes `pveproxy`, `pvedaemon`, `pvestatd`,
-`pve-cluster`, `corosync`, `pve-firewall`, and `proxmox-firewall`. These
-views are for the host only: the panel does not manage VMs, containers, cluster
-membership, or Proxmox configuration, and it does not use a privileged Proxmox
-API or a guest-operation broker.
+On a `server_proxmox` host, the dashboard adds a **Proxmox overview** with local
+VMs, LXC containers and templates, guest state, CPU use and vCPU allocation,
+memory use/allocation, disk capacity and uptime. Guest names link directly to
+their native Proxmox summary. Storage pools show their reported state, type,
+shared flag and capacity, with warnings at 80% and 95% use. Pool totals can
+overlap; do not add them together. Guest disk capacity is allocated space,
+not a guest filesystem free-space measurement. The overview also reports the
+installed Proxmox version, standalone/cluster state, quorum and online-node
+counts. **Open Proxmox VE** uses the configured native address on HTTPS port
+8006, including IPv6, and Proxmox's own login and certificate.
+
+A separate root oneshot, `basaltwater-web-panel-proxmox.service`, runs only
+`pvesh get /cluster/status`, `/cluster/resources` and `/version` with JSON output.
+These read cached cluster statistics; there are no per-guest, remote-node or
+storage scans. Each query has an eight-second deadline and 2 MiB output limit;
+the service has a 30-second total start limit. Its timer runs about every minute,
+and setup starts an initial collection. The root-owned snapshot at
+`/var/lib/basaltwater/web-panel/proxmox/inventory.json` is mode 0640, readable
+by the panel group. Only selected inventory fields are copied; configuration,
+credentials, raw output and command errors are excluded. The panel revalidates
+bounded JSON on read, limits each table to 512 rows, warns after three minutes,
+and distinguishes failed collection from a successfully empty inventory.
+Unknown metrics remain unavailable. Refreshing the dashboard reads this file
+without launching Proxmox commands. Rerun panel setup to install the collector
+on an existing host. To investigate missing or stale data, inspect
+`systemctl status basaltwater-web-panel-proxmox.timer` and
+`journalctl -u basaltwater-web-panel-proxmox.service` on the host.
+
+Existing host metrics, services, mounted storage, scheduled jobs and service
+diagnostics remain available. The diagnostic allowlist includes `pveproxy`,
+`pvedaemon`, `pvestatd`, `pve-cluster`, `corosync`, `pve-firewall` and
+`proxmox-firewall`. The panel has no guest-operation broker; management actions
+remain in the native Proxmox UI and CLI.
 
 ## Notification ingest
 
@@ -490,13 +515,14 @@ The panel uses Basic Auth, request throttling, an
 CSRF tokens for state-changing forms, no-store responses, and separate service
 group access for the socket, bearer token, audit snapshot, and notification
 history. It supports server and workstation profiles, including optional
-host-only monitoring on `server_proxmox`. On a root-managed setup, it runs as
+host and guest monitoring on `server_proxmox`. On a root-managed setup, it runs as
 the locked `basaltwater-web-panel` service account. Proxmox's `/etc/pve` and
 `/var/lib/pve-cluster` paths are hidden from the panel and its Nginx service.
 Proxmox panel setup restarts Nginx to apply these restrictions, including on
 retries after an interrupted setup.
-The optional Proxmox panel is host monitoring only and links to the native
-Proxmox UI on port 8006; it does not provide VM or container control. With
+The Proxmox collector publishes sanitized read-only inventory without granting
+the web worker Proxmox API access. Links open the native Proxmox UI on port
+8006 for VM, container and storage management. With
 panel TLS enabled, it listens on the selected HTTPS port and exposes the
 certificate-only CA enrollment and download listener on port 8442. Port 8442
 serves the public CA certificate; it is not an ACME issuance listener on port
@@ -514,8 +540,9 @@ exact ownership comment `Managed by basaltwater web panel`. They do not switch
 the firewall engine, enable or disable the global firewall, or change the
 cluster-wide `management` IP set. Removing the panel deletes only these owned
 rules, its Nginx site and systemd isolation drop-in, backend/configuration,
-and Fail2ban configuration; the shared CA, Nginx/OpenSSL packages, native
-Proxmox UI/configuration, and unowned firewall rules remain.
+inventory collector/timer/snapshot and Fail2ban configuration; the shared CA,
+Nginx/OpenSSL packages, native Proxmox UI/configuration, and unowned firewall
+rules remain.
 
 The panel renders saved configured access and discovers live `basaltwater-web`
 forwards and static sites. HomeBox status is a loopback readiness probe only;

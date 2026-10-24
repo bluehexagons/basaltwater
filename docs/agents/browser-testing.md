@@ -42,6 +42,8 @@ page:
 - `minimal`: core inspection pages with optional tools absent.
 - `empty`: optional pages and forms with no saved tasks, messages or job records.
 - `degraded`: high resource use, collector notices and simulated operation failures.
+- `proxmox`: a monitoring-only Proxmox node with running/stopped VMs, an LXC,
+  a template and a storage pool at 85% use; no Proxmox commands run.
 
 To test runner registration, use `--scenario empty --https` and open **GitHub
 runner → Load runner status**. Enter `reject-sample-runner-token` to test rejection,
@@ -191,7 +193,7 @@ run reports `scope: focused`, its selection, and `selected_checks_passed` for
 each engine. It never sets `application_tested` or claims full qualification.
 No matching tests, failed selected checks and skipped first-party checks fail
 the command. Run without `--grep` for the full suite. The development-server
-case exercises real forms, all four scenarios, source reload, preservation of
+case exercises real forms, the core scenarios, source reload, preservation of
 saved and unsaved edits, reset, and cleanup on shutdown.
 
 The standalone runtime must include `playwright` or `@playwright/test` at the

@@ -1,0 +1,204 @@
+"""Bounded Proxmox inventory snapshots shared with the unprivileged panel."""
+
+from __future__ import annotations
+
+import math
+import os
+import resource
+import socket
+import subprocess
+import tempfile
+import time
+
+from common.web_panel_events import WEB_PANEL_DATA_DIR
+from lib.atomic_io import parse_json, read_json_file, write_json_atomic
+from lib.validation import validate_proxmox_storage_name
+from lib.validators import validate_host
+
+
+SNAPSHOT_DIR = f"{WEB_PANEL_DATA_DIR}/proxmox"
+SNAPSHOT = f"{SNAPSHOT_DIR}/inventory.json"
+MAX_BYTES = 2 * 1024 * 1024
+MAX_ROWS = 512
+STALE_SECONDS = 180
+
+
+def _text(value: object, maximum: int = 255) -> str | None:
+    return value if isinstance(value, str) and 0 < len(value) <= maximum and value.isprintable() else None
+
+
+def _number(value: object, maximum: int = 2**64 - 1) -> int | float | None:
+    if type(value) not in {int, float} or not 0 <= value <= maximum or not math.isfinite(value):
+        return None
+    return value
+
+
+def _flag(value: object) -> bool | None:
+    return bool(value) if type(value) in {int, bool} and value in (0, 1) else None
+
+
+def _counter(value: object) -> int | None:
+    number = _number(value)
+    return int(number) if number is not None and int(number) == number else None
+
+
+def _rows(value: object) -> list[dict]:
+    if not isinstance(value, list) or len(value) > 10000 or any(not isinstance(row, dict) for row in value):
+        raise ValueError("Invalid Proxmox inventory")
+    return value
+
+
+def sanitize_resources(value: object, node: str) -> tuple[list[dict], list[dict], list[str]]:
+    """Copy only public inventory fields; never publish config or raw output."""
+    guests, storage, issues = [], [], []
+    seen = set()
+    for row in _rows(value):
+        kind = row.get("type")
+        if row.get("node") != node or not isinstance(kind, str) or kind not in {"qemu", "lxc", "storage"}:
+            continue
+        if kind == "storage":
+            identity = _text(row.get("storage"))
+            try:
+                validate_proxmox_storage_name(identity)
+            except ValueError:
+                issues.append("Omitted an invalid storage record.")
+                continue
+        else:
+            identity = _number(row.get("vmid"), 999999999)
+            if type(identity) is not int or identity < 100:
+                issues.append("Omitted an invalid guest record.")
+                continue
+        key = ("storage" if kind == "storage" else "guest", identity)
+        if key in seen:
+            issues.append("Omitted a duplicate inventory record.")
+            continue
+        seen.add(key)
+        record = {"type": kind, "node": node}
+        if kind == "storage":
+            record.update(storage=identity, plugintype=_text(row.get("plugintype"), 64), shared=_flag(row.get("shared")))
+            statuses = {"available", "unavailable", "unknown"}
+        else:
+            record.update(vmid=identity, name=_text(row.get("name")), template=_flag(row.get("template")))
+            statuses = {"running", "stopped", "paused", "unknown"}
+            record["cpu"] = _number(row.get("cpu"), 1)
+            record.update({key: _counter(row.get(key)) for key in ("maxcpu", "mem", "maxmem", "uptime")})
+        status = row.get("status")
+        record["status"] = status if isinstance(status, str) and status in statuses else "unknown"
+        record.update({key: _counter(row.get(key)) for key in ("disk", "maxdisk")})
+        (storage if kind == "storage" else guests).append(record)
+    guests.sort(key=lambda row: row["vmid"])
+    storage.sort(key=lambda row: row["storage"])
+    if len(guests) > MAX_ROWS or len(storage) > MAX_ROWS:
+        issues.append(f"Inventory limited to {MAX_ROWS} guests and {MAX_ROWS} storage pools; open Proxmox for the full list.")
+    return guests[:MAX_ROWS], storage[:MAX_ROWS], list(dict.fromkeys(issues))
+
+
+def sanitize_cluster(value: object) -> dict:
+    rows = _rows(value)
+    nodes = [row for row in rows if row.get("type") == "node"]
+    local = [row.get("name") for row in nodes if _flag(row.get("local")) is True]
+    if len(local) != 1 or not validate_host(local[0]):
+        raise ValueError("Proxmox did not identify the local node")
+    clusters = [row for row in rows if row.get("type") == "cluster"]
+    if len(clusters) > 1 or not nodes:
+        raise ValueError("Invalid Proxmox cluster status")
+    cluster = clusters[0] if clusters else {}
+    return {
+        "node": local[0], "name": _text(cluster.get("name")), "clustered": bool(clusters),
+        "quorate": _flag(cluster.get("quorate")), "nodes": len(nodes),
+        "online": sum(_flag(row.get("online")) is True for row in nodes),
+        "unknown": sum(_flag(row.get("online")) is None for row in nodes),
+    }
+
+
+def _limit_output() -> None:
+    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_BYTES + 1, MAX_BYTES + 1))
+
+
+def _query(path: str) -> object:
+    """Read fixed cached API endpoints locally, with no SSH or API credentials."""
+    with tempfile.TemporaryFile() as output:
+        result = subprocess.run(
+            ["/usr/bin/pvesh", "get", path, "--output-format", "json"],
+            stdout=output, stderr=subprocess.DEVNULL, timeout=8, check=False,
+            preexec_fn=_limit_output,
+        )
+        output.seek(0)
+        raw = output.read(MAX_BYTES + 1)
+    if result.returncode != 0 or len(raw) > MAX_BYTES:
+        raise ValueError("Proxmox query failed or exceeded its output limit")
+    return parse_json(raw)
+
+
+def collect_snapshot() -> dict:
+    issues = []
+    cluster = None
+    node = socket.gethostname().split(".", 1)[0]
+    try:
+        cluster = sanitize_cluster(_query("/cluster/status"))
+        node = cluster["node"]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        issues.append("Cluster status could not be collected.")
+    guests, storage = [], []
+    inventory = False
+    try:
+        if not validate_host(node):
+            raise ValueError("Invalid local node name")
+        guests, storage, notices = sanitize_resources(_query("/cluster/resources"), node)
+        issues.extend(notices)
+        inventory = True
+    except (OSError, ValueError, subprocess.SubprocessError):
+        issues.append("Guest and storage inventory could not be collected.")
+    version = None
+    try:
+        payload = _query("/version")
+        version = _text(payload.get("version"), 64) if isinstance(payload, dict) else None
+        if version is None:
+            raise ValueError("Missing Proxmox version")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        issues.append("Proxmox version could not be collected.")
+    return {
+        "schema": 1, "generated_at": time.time(), "node": node, "version": version,
+        "inventory": inventory, "guests": guests, "storage": storage, "cluster": cluster,
+        "issues": issues,
+    }
+
+
+def export_snapshot() -> None:
+    """Publish only to the fixed root-owned, panel-readable snapshot directory."""
+    write_json_atomic(SNAPSHOT, collect_snapshot(), mode=0o640, gid=os.getegid())
+
+
+def load_snapshot(path: str = SNAPSHOT) -> dict:
+    """Validate saved data again; stale readings retain a visible warning."""
+    try:
+        value = read_json_file(path, max_bytes=MAX_BYTES)
+        if (not isinstance(value, dict) or type(value.get("schema")) is not int
+                or value["schema"] != 1 or type(value.get("inventory")) is not bool):
+            raise ValueError("Invalid snapshot schema")
+        stamp = _number(value.get("generated_at"))
+        if stamp is None or stamp > time.time() + 60 or stamp > 253402300799 or not validate_host(value.get("node")):
+            raise ValueError("Invalid snapshot identity or time")
+        guests, storage, issues = sanitize_resources([*_rows(value.get("guests")), *_rows(value.get("storage"))], value["node"])
+        saved_issues = value.get("issues")
+        if not isinstance(saved_issues, list) or len(saved_issues) > 20 or any(_text(item, 512) is None for item in saved_issues):
+            raise ValueError("Invalid snapshot notices")
+        issues.extend(saved_issues)
+        cluster = value.get("cluster")
+        if cluster is not None:
+            if (not isinstance(cluster, dict) or cluster.get("node") != value["node"]
+                    or type(cluster.get("clustered")) is not bool
+                    or type(cluster.get("nodes")) is not int or not 1 <= cluster["nodes"] <= 10000
+                    or any(type(cluster.get(key)) is not int or not 0 <= cluster[key] <= cluster["nodes"] for key in ("online", "unknown"))
+                    or cluster["online"] + cluster["unknown"] > cluster["nodes"]
+                    or cluster.get("quorate") is not None and type(cluster["quorate"]) is not bool):
+                raise ValueError("Invalid cluster snapshot")
+            cluster = {**{key: cluster.get(key) for key in ("node", "clustered", "nodes", "online", "unknown", "quorate")},
+                       "name": _text(cluster.get("name"))}
+        if time.time() - stamp > STALE_SECONDS:
+            issues.append("Snapshot is more than three minutes old. Check the Proxmox snapshot timer.")
+        return {"available": True, "generated_at": stamp, "node": value["node"], "version": _text(value.get("version"), 64),
+                "inventory": value["inventory"], "guests": guests, "storage": storage, "cluster": cluster,
+                "issues": list(dict.fromkeys(issues))}
+    except (OSError, ValueError, TypeError):
+        return {"available": False, "issues": ["Proxmox snapshot is unavailable. Rerun panel setup or inspect the Proxmox snapshot service."]}

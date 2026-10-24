@@ -982,6 +982,10 @@ WantedBy=timers.target
 
 
 def _preflight_web_panel_removal() -> tuple[str | None, bool]:
+    from common.proxmox_web_panel_steps import preflight_proxmox_snapshot, proxmox_snapshot_present
+
+    if proxmox_snapshot_present():
+        preflight_proxmox_snapshot()
     if os.path.lexists(WEB_PANEL_SERVICE_FILE):
         if os.path.islink(WEB_PANEL_SERVICE_FILE) or not os.path.isfile(
             WEB_PANEL_SERVICE_FILE
@@ -1104,6 +1108,9 @@ def remove_web_panel() -> None:
 
     preflight_registration_units()
     _remove_nginx_site(nginx_content, link_exists)
+    from common.proxmox_web_panel_steps import remove_proxmox_snapshot
+
+    remove_proxmox_snapshot()
     remove_guacamole()
     remove_registration_service()
     units_changed = False
@@ -1203,9 +1210,10 @@ def configure_web_panel(config: SetupConfig) -> None:
     )
 
     if config.system_type == "server_proxmox":
-        from common.proxmox_web_panel_steps import preflight_proxmox_panel_nginx
+        from common.proxmox_web_panel_steps import preflight_proxmox_panel_nginx, preflight_proxmox_snapshot
 
         preflight_proxmox_panel_nginx()
+        preflight_proxmox_snapshot()
     _ensure_nginx()
     if config.system_type == "server_proxmox":
         from common.proxmox_web_panel_steps import configure_proxmox_panel_nginx
@@ -1244,6 +1252,10 @@ def configure_web_panel(config: SetupConfig) -> None:
         os.makedirs(WEB_PANEL_CONFIG_DIR, mode=0o750, exist_ok=True)
         write_json_atomic(WEB_PANEL_MANIFEST, manifest, mode=0o644, sort_keys=True)
         _configure_audit_exporter(account.pw_gid)
+        if config.system_type == "server_proxmox":
+            from common.proxmox_web_panel_steps import configure_proxmox_snapshot
+
+            configure_proxmox_snapshot(account.pw_gid)
         if config.system_type == GITHUB_RUNNER_PROFILE and config.enable_ssl:
             from web.github_runner_registration_steps import configure_registration_service
 

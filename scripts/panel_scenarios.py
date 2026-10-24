@@ -25,11 +25,12 @@ from lib.agent_inbox import AgentInbox
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.github_runner_config import VERSION as RUNNER_VERSION, validate_policy as validate_runner_policy
 from lib.maintenance_agent_config import DEFAULTS, validate_policy
+from lib.proxmox_panel import sanitize_cluster, sanitize_resources
 from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token, validate_runner_registration_token
 from scripts.panel_samples import job_rows
 from scripts.panel_storage_samples import storage_snapshot
 
-SCENARIOS = ("minimal", "full", "empty", "degraded")
+SCENARIOS = ("minimal", "full", "empty", "degraded", "proxmox")
 
 
 class Scenario:
@@ -46,7 +47,7 @@ class Scenario:
             "name": "Development Operator", "email": "operator@example.test", "github_present": False,
             "requests": [], "policy": {**DEFAULTS, "enabled": True}, "hold": False, "checked": False,
         }
-        self.features = PanelFeatures() if name == "minimal" else PanelFeatures(
+        self.features = PanelFeatures(admin_page=name != "proxmox") if name in {"minimal", "proxmox"} else PanelFeatures(
             tools=frozenset({"codex", "git", "gh", "butler", "steamcmd"}), t3=True, maintenance=True, admin=True,
             github_runner=True,
         )
@@ -79,6 +80,22 @@ class Scenario:
         self.replace(state, "diagnostic_sources", return_value={"nginx.service": "Synthetic web service"})
         self.replace(panel, "discover_basaltwater_web_services", return_value=[])
         self.replace(panel, "discover_certificate_trust", return_value=None)
+        if self.name == "proxmox":
+            state.manifest.update(system_type="server_proxmox", title="Proxmox development node")
+            guests, pools, _issues = sanitize_resources([
+                {"node": "pve1", "type": kind, "vmid": vmid, "name": name, "status": status, "template": template,
+                 "cpu": .14, "maxcpu": 4, "mem": 3 * 1024**3, "maxmem": 8 * 1024**3,
+                 "maxdisk": 64 * 1024**3, "uptime": 86400}
+                for kind, vmid, name, status, template in (
+                    ("qemu", 100, "build-agent", "running", 0), ("lxc", 101, "web-services", "running", 0),
+                    ("qemu", 102, "test-workstation", "stopped", 0), ("qemu", 9000, "debian-template", "stopped", 1))
+            ] + [{"node": "pve1", "type": "storage", "storage": "local-lvm", "status": "available",
+                  "plugintype": "lvmthin", "shared": 0, "disk": 85 * 1024**3, "maxdisk": 100 * 1024**3}], "pve1")
+            self.replace(panel, "load_proxmox_snapshot", return_value={
+                "available": True, "inventory": True, "generated_at": time.time(), "node": "pve1", "version": "9.1.0",
+                "guests": guests, "storage": pools, "issues": [],
+                "cluster": sanitize_cluster([{"type": "node", "name": "pve1", "local": 1, "online": 1}]),
+            })
         self.replace(state, "t3_update_available", return_value=self.features.t3)
         self.replace(state, "trigger_t3_update", side_effect=self.update)
         self.replace(jobs, "collect_jobs", return_value=jobs.JobSnapshot(
