@@ -13,6 +13,7 @@ import stat
 import subprocess
 import time
 
+from lib.agent_storage_inventory import _local, _mounts
 from lib.maintenance_defaults import (
     PODMAN_IMAGE_PRESSURE_RETENTION_DAYS,
     PODMAN_IMAGE_RETENTION_DAYS,
@@ -141,16 +142,17 @@ def _graph_root(value: object, home: str, uid: int) -> str:
             or os.path.realpath(value) != value):
         raise _Unknown("unsafe_graph_root")
     info = os.stat(value, follow_symlinks=False)
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o022
+            or not _local(value, _mounts())):
         raise _Unknown("unsafe_graph_root")
     return value
 
 
 def _command(executable: str, home: str, args: list[str], *,
              timeout: int = _COMMAND_TIMEOUT) -> subprocess.CompletedProcess[str]:
-    # Do not inherit Podman-specific environment overrides. Remote selections
-    # are detected before reaching this helper and cause a safe refusal.
-    environment = {"HOME": home, "PATH": "/usr/local/bin:/usr/bin:/bin", "LC_ALL": "C"}
+    # Preserve native XDG/storage configuration so every probe and prune uses
+    # the account's selected store. Force local mode and validate its graph root.
+    environment = dict(os.environ, HOME=home, PATH="/usr/local/bin:/usr/bin:/bin", LC_ALL="C")
     return run_captured([executable, "--remote=false", *args], cwd=home, env=environment,
                         timeout=timeout, max_bytes=_OUTPUT_LIMIT)
 
@@ -172,11 +174,12 @@ def _process_activity(uid: int) -> tuple[str, str | None]:
                         raw = source.read(65)
                     if len(raw) > 64 or not raw.endswith(b"\n"):
                         raise _Unknown("process_metadata_limit")
-                    name = raw[:-1].decode("ascii", errors="strict")
+                    name = raw[:-1].decode("utf-8", errors="replace")
                     if name in _PROCESS_NAMES:
                         return "deferred_active", "active_container_workload"
-                except FileNotFoundError as exc:
-                    raise _Unknown("process_inventory_changed") from exc
+                except FileNotFoundError:
+                    # An exited process cannot still be using the store.
+                    continue
         if time.monotonic() >= deadline:
             raise _Unknown("process_inventory_limit")
     except _Unknown:
@@ -235,12 +238,13 @@ def clean_podman_images(*, apply: bool = False) -> dict:
         if executable is None:
             result["status"] = "absent"
             return result
-        lock_descriptor = _lock_file(home, uid)
-        try:
-            fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            locked = True
-        except BlockingIOError:
-            return _issue(result, "deferred_active", "cleanup_already_running")
+        if apply:
+            lock_descriptor = _lock_file(home, uid)
+            try:
+                fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+            except BlockingIOError:
+                return _issue(result, "deferred_active", "cleanup_already_running")
 
         info_result = _command(executable, home, ["info", "--format", "json"])
         if info_result.returncode != 0:
@@ -256,7 +260,10 @@ def clean_podman_images(*, apply: bool = False) -> dict:
             raise _Unknown("invalid_podman_info")
         if host.get("serviceIsRemote") is True:
             return _issue(result, "deferred_unknown", "remote_selection_unsupported")
-        if host.get("security", {}).get("rootless") is not True:
+        security = host.get("security")
+        if not isinstance(security, dict):
+            raise _Unknown("invalid_podman_info")
+        if security.get("rootless") is not True:
             return _issue(result, "deferred_unknown", "rootful_engine_unsupported")
         root = _graph_root(store.get("graphRoot"), home, uid)
         container_store = store.get("containerStore")

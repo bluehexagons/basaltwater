@@ -1,4 +1,4 @@
-"""Bounded read-only storage evidence for cleanup planning, never deletion."""
+"""Bounded storage inventories and explicit guarded cleanup commands."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ _ROOTS = (
     (".nvm/versions/node", "node-runtimes", "Check active processes, nvm aliases, project .nvmrc/.node-version/package engines and per-version global packages before approved nvm uninstall of an exact unused version."),
     (".nvm/.cache", "node-downloads", "Downloaded Node archives, separate from installed versions; native nvm cache clear costs future downloads and must not race an installation."),
     ("go/pkg/mod", "go-modules", "Module downloads can include active Go toolchains. Check go env GOMODCACHE/GOTOOLCHAIN and project/offline dependencies; build-cache cleanup does not authorize go clean -modcache."),
-    (".local/share/containers/storage", "container-storage", "Use the container engine's image/container/volume inventory and explicit native cleanup. Preserve running/stopped project containers and volumes; never remove overlay storage directly."),
+    (".local/share/containers/storage", "container-storage", "Preview agent storage clean-podman for retained dangling images. Preserve tagged images, container references and volumes; never remove overlay storage directly."),
     (".local/share/godot/export_templates", "godot-templates", "Preserve versions required by project toolchain locks and exports; these are installed templates, not redundant download archives."),
     (".local/share/basaltwater/t3code", "t3-launcher", "Managed T3 launcher dependencies; preserve active process/service references and use managed updates rather than deleting node_modules."),
     (".local/share/basaltwater/evidence", "development-evidence", "Review and curate project evidence with provenance before selecting removals; preserve milestone captures and verification records."),
@@ -364,10 +364,21 @@ def add_storage_parser(commands: argparse._SubParsersAction) -> None:
     go = actions.add_parser("clean-go-build", help="Preview native Go build-cache cleanup with active-build checks")
     go.add_argument("--apply", action="store_true", help="Execute go clean -cache within authorized cleanup scope")
     go.add_argument("--json", action="store_true")
+    podman = actions.add_parser("clean-podman", help="Preview age-limited dangling Podman image cleanup with active-build checks")
+    mode = podman.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Preview without deleting (default)")
+    mode.add_argument("--apply", action="store_true", help="Prune eligible dangling images through local rootless Podman")
+    podman.add_argument("--json", action="store_true")
 
 
 def run_storage_command(args: argparse.Namespace) -> int:
     try:
+        if args.agent_storage_command == "clean-podman":
+            from lib.podman_cleanup import clean_podman_images
+
+            result = clean_podman_images(apply=args.apply)
+            print(json.dumps(result, indent=2))
+            return 0 if result["status"] in ("preview", "cleaned", "absent") else 1
         if args.agent_storage_command == "clean-go-build":
             from lib.go_cache_cleanup import clean_go_build_cache
 
@@ -395,5 +406,5 @@ def run_storage_command(args: argparse.Namespace) -> int:
         print(json.dumps(result, separators=(",", ":")) if getattr(args, "summary", False) else json.dumps(result, indent=2))
         return 1 if result["issues"] or unavailable_selection else 0
     except (OSError, ValueError) as exc:
-        print(json.dumps({"read_only": True, "error": str(exc)}))
+        print(json.dumps({"read_only": not bool(getattr(args, "apply", False)), "error": str(exc)}))
         return 1

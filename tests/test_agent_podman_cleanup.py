@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, mock_open, patch
 
 from lib import maintenance_defaults
 from lib import podman_cleanup as cleanup
@@ -26,7 +26,7 @@ class PodmanCleanupTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.home = Path(self.temporary.name)
         self.graph = self.home / "podman-store"
-        self.graph.mkdir()
+        self.graph.mkdir(mode=0o700)
         self.now = 2_000_000_000
         self.cutoff_age = 10 * 86400
         self.images = [
@@ -56,7 +56,9 @@ class PodmanCleanupTests(unittest.TestCase):
 
         self.run = run
         patches = [
+            patch.object(cleanup, "_home_and_identity", return_value=(str(self.home), os.getuid())),
             patch.object(cleanup.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=str(self.home))),
+            patch.object(cleanup, "_mounts", return_value={str(self.home): "ext4"}),
             patch.object(cleanup.shutil, "which", return_value="/usr/bin/podman"),
             patch.object(cleanup, "_process_activity", return_value=("eligible", None)),
             patch.object(cleanup, "run_captured", side_effect=run),
@@ -80,6 +82,7 @@ class PodmanCleanupTests(unittest.TestCase):
         self.assertEqual(result["candidate_ids"], ["a" * 64])
         self.assertEqual(result["image_estimate_bytes"], 4096)
         self.assertEqual(len(self.commands), 2)
+        self.assertFalse((self.home / ".local").exists())
         self.assertTrue(all(call[0][:2] == ["/usr/bin/podman", "--remote=false"]
                             for call in self.commands))
 
@@ -111,6 +114,45 @@ class PodmanCleanupTests(unittest.TestCase):
             maintenance_defaults.USER_CACHE_FREE_MAX_BYTES,
             max(maintenance_defaults.USER_CACHE_FREE_MIN_BYTES, (40 * 1024**3) // 5),
         ))
+
+    def test_apply_under_pressure_uses_one_day_cutoff(self):
+        self.free[0] = 1024**3
+        result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "cleaned")
+        self.assertIn(f"until={self.now - 86400}", self.commands[-1][0])
+
+    def test_native_store_configuration_is_preserved_for_probes_and_prune(self):
+        configuration = {"XDG_RUNTIME_DIR": str(self.home / "runtime"),
+                         "XDG_CONFIG_HOME": str(self.home / "config"),
+                         "CONTAINERS_STORAGE_CONF": str(self.home / "storage.conf")}
+        with patch.dict(os.environ, configuration):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "cleaned")
+        for _argv, options in self.commands:
+            self.assertEqual({key: options["env"][key] for key in configuration}, configuration)
+
+    def test_nonlocal_or_shared_writable_graph_root_is_refused(self):
+        with patch.object(cleanup, "_mounts", return_value={str(self.home): "nfs4"}):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["issue"], "unsafe_graph_root")
+        self.assertFalse(result["cleanup_attempted"])
+        self.graph.chmod(0o777)
+        result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["issue"], "unsafe_graph_root")
+
+    def test_malformed_security_metadata_defers_without_prune(self):
+        def malformed(command, **kwargs):
+            result = self.run(command, **kwargs)
+            if "info" in command:
+                payload = json.loads(result.stdout)
+                payload["host"]["security"] = []
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+            return result
+        with patch.object(cleanup, "run_captured", side_effect=malformed):
+            result = cleanup.clean_podman_images(apply=True)
+        self.assertEqual(result["status"], "deferred_unknown")
+        self.assertEqual(result["issue"], "invalid_podman_info")
+        self.assertFalse(result["cleanup_attempted"])
 
     def test_candidate_preview_is_bounded_while_count_remains_complete(self):
         self.images = [
@@ -224,6 +266,39 @@ class PodmanCleanupTests(unittest.TestCase):
         self.assertEqual(result["status"], "absent")
         with self.assertRaises(TypeError):
             cleanup.clean_podman_images(apply=1)
+
+
+class PodmanProcessGuardTests(unittest.TestCase):
+    def test_build_tool_defers_but_unrelated_unicode_name_does_not(self):
+        entry = SimpleNamespace(name="123", path="/proc/123",
+                                stat=Mock(return_value=SimpleNamespace(st_uid=42)))
+        for name, expected in ((b"buildah\n", "deferred_active"), ("模型工具\n".encode(), "eligible")):
+            with self.subTest(name=name), patch.object(cleanup.os, "scandir") as scan, \
+                    patch.object(cleanup.time, "monotonic", return_value=1), \
+                    patch("builtins.open", mock_open(read_data=name)):
+                scan.return_value.__enter__.return_value = [entry]
+                self.assertEqual(cleanup._process_activity(42)[0], expected)
+
+    def test_exited_process_is_ignored_and_unreadable_process_defers(self):
+        entry = SimpleNamespace(name="123", path="/proc/123", stat=Mock())
+        with patch.object(cleanup.os, "scandir") as scan, \
+                patch.object(cleanup.time, "monotonic", return_value=1):
+            scan.return_value.__enter__.return_value = [entry]
+            entry.stat.side_effect = FileNotFoundError()
+            self.assertEqual(cleanup._process_activity(42), ("eligible", None))
+            entry.stat.side_effect = PermissionError()
+            with self.assertRaisesRegex(cleanup._Unknown, "process_inventory_incomplete"):
+                cleanup._process_activity(42)
+
+    def test_root_or_mismatched_privileges_are_refused_before_probing(self):
+        for real, effective in ((0, 0), (42, 43)):
+            with self.subTest(real=real, effective=effective), \
+                    patch.object(cleanup.os, "getuid", return_value=real), \
+                    patch.object(cleanup.os, "geteuid", return_value=effective), \
+                    patch.object(cleanup, "run_captured") as run:
+                result = cleanup.clean_podman_images(apply=True)
+                self.assertEqual(result["issue"], "unsafe_account")
+                run.assert_not_called()
 
 
 if __name__ == "__main__":
