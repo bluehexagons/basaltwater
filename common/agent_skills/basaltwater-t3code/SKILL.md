@@ -19,9 +19,12 @@ relevant result fields and failing checks before collecting logs. The server
 is the upstream per-user `t3code.service`; inspect it without sudo.
 
 Restarting it interrupts active T3 sessions: arrange the interruption with the
-owner first. After setup refreshes skills, plugins, or MCP configuration, use
-**Restart agent session** in T3's command palette after the current turn.
-This per-thread action reloads provider configuration without a server restart.
+owner first. Managed setup refresh reloads provider configuration and skills:
+Debian restarts the service unless the updater already started it fresh;
+CachyOS desktop queues a graceful relaunch of a running app and leaves stopped
+apps stopped. Interrupted-turn continuation follows T3's existing setting.
+For changes outside setup, use **Restart agent session** in T3's command palette
+after the current turn to reload one thread without a server restart.
 
 Read only the route needed:
 

@@ -167,12 +167,13 @@ Removal requires explicit `--apply` and separately authorized cleanup scope;
 inspection never invokes it. Include writes to each target's parent when
 preparing a follow-up, because disposal first isolates directories there.
 
-Use cheap Luna workers at high reasoning and standard service for bounded
+Use Luna workers at medium reasoning and standard service for bounded
 classification of selected file lists or redacted log excerpts when delegation
-is available. Set file/byte limits and request compact findings with paths or
-offsets. Do not copy bulk logs or private transcripts into worker or parent
-context. If no worker interface is exposed, use bounded local summaries and
-report uncertainty. The installed VM-triage skill has the same workflow.
+is available. Use low only for trivial deterministic work, and high/xhigh when
+concrete complexity warrants it. Set file/byte limits and request compact findings
+with paths or offsets. Do not copy bulk logs or private transcripts into worker
+or parent context. If no worker interface is exposed, use bounded local summaries
+and report uncertainty. The installed VM-triage skill has the same workflow.
 
 ## Choose a follow-up
 

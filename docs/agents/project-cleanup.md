@@ -138,12 +138,13 @@ normal development. A policy remains useful documentation without the CLI.
 
 ## Agent curation and timeline evidence
 
-Use cheap Luna workers at high reasoning and standard service for bounded
+Use Luna workers at medium reasoning and standard service for bounded
 classification of selected file lists or redacted log excerpts when delegation
-is available. Prefer metadata, hashes, small contact sheets and representative
-samples; return a short list with exact paths and evidence offsets. Do not send
-bulk logs, private transcripts or databases to the parent or a worker. Without
-delegation, use deterministic summaries and document uncertainty.
+is available. Use low only for trivial deterministic work, and high/xhigh when
+concrete complexity warrants it. Prefer metadata, hashes, small contact sheets
+and representative samples; return a short list with exact paths and evidence
+offsets. Do not send bulk logs, private transcripts or databases to the parent
+or a worker. Without delegation, use deterministic summaries and document uncertainty.
 
 Preserve captures that explain milestones, UI changes, regressions, comparisons
 or released behavior. Propose a dated archive folder with original media and a

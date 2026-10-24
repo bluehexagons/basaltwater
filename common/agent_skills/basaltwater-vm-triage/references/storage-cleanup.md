@@ -24,9 +24,9 @@ cleanup remains separate.
 
 Classify only a selected, bounded file list or a few relevant log excerpts.
 Prefer metadata, counters, and app-owned inventories before content. Where
-delegation is supported, use a low-cost Luna model at high reasoning and
-standard service for bounded classification; use xhigh for an ambiguity that justifies
-it. Medium is the normal reasoning floor. Return a tiny ranked finding list
+delegation is supported, use Luna at medium reasoning and standard service for
+bounded classification. Use low only for trivial deterministic work, and
+high/xhigh when concrete complexity warrants it. Return a tiny ranked finding list
 with evidence offsets or paths, confidence, and the next owner-app check.
 
 Do not send bulk logs, transcripts, base64, private database contents, or
