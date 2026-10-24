@@ -642,10 +642,15 @@ def _ensure_swap_device(
         active_name is not None and inventory.get(active_name) != area.priority
     )
     was_active = active_name is not None
+    # The live inventory cannot verify discard. Apply it once before adopting
+    # active swap so the recorded policy reflects a successful activation.
+    reactivate = was_active and (
+        prior is None or prior_policy_changed or priority_drifted
+    )
     previous_priority = inventory.get(active_name or "")
     if previous_priority is None:
         previous_priority = int(prior.get("priority", 100)) if prior else 100
-    if (prior_policy_changed or priority_drifted) and was_active:
+    if reactivate:
         run(f"swapoff {shlex.quote(path)}")
         active.discard(path)
         active.discard(f"/dev/disk/by-uuid/{uuid}")
@@ -653,7 +658,7 @@ def _ensure_swap_device(
         try:
             _swapon(path, area.priority, area.discard)
         except Exception:
-            if (prior_policy_changed or priority_drifted) and was_active:
+            if reactivate:
                 try:
                     _swapon(
                         path,
