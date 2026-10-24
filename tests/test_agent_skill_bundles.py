@@ -43,6 +43,19 @@ class AgentSkillBundleTests(unittest.TestCase):
     def install(self) -> bool:
         return install_skill_bundle(self.source, self.destination, self.uid, self.gid)
 
+    def interrupt_completion(self) -> None:
+        write_inventory = bundles.write_json_atomic
+
+        def interrupt(path, value, **kwargs):
+            if value.get("complete"):
+                raise OSError("Interrupted completion record")
+            return write_inventory(path, value, **kwargs)
+
+        with patch.object(bundles, "write_json_atomic", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "Interrupted completion record"):
+                self.install()
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+
     def test_binary_nested_resources_executable_scripts_and_idempotence(self) -> None:
         self.resource("references/nested/update.md", b"Migration details\n")
         self.resource("scripts/check.sh", b"#!/bin/sh\nexit 0\n", 0o755)
@@ -154,16 +167,7 @@ class AgentSkillBundleTests(unittest.TestCase):
     def test_interruption_before_completion_record_is_retryable_without_resource_changes(self) -> None:
         self.install()
         (self.source / "SKILL.md").write_bytes(self.entrypoint + b"Updated guidance\n")
-        write_inventory = bundles.write_json_atomic
-
-        def interrupt(path, value, **kwargs):
-            if value.get("complete"):
-                raise OSError("Interrupted completion record")
-            return write_inventory(path, value, **kwargs)
-
-        with patch.object(bundles, "write_json_atomic", side_effect=interrupt):
-            with self.assertRaisesRegex(OSError, "Interrupted"):
-                self.install()
+        self.interrupt_completion()
         self.assertEqual((self.destination / "SKILL.md").read_bytes(), (self.source / "SKILL.md").read_bytes())
         self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
         self.assertTrue(self.install())
@@ -183,6 +187,140 @@ class AgentSkillBundleTests(unittest.TestCase):
         self.assertTrue(self.install())
         self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
         self.assertFalse(self.install())
+
+    def test_interrupted_upgrade_can_retry_a_newer_source_or_roll_back(self) -> None:
+        reference = self.resource("references/update.md", b"A")
+        for retry in (b"C", b"A"):
+            with self.subTest(retry=retry):
+                reference.write_bytes(b"A")
+                self.install()
+                reference.write_bytes(b"B")
+                self.interrupt_completion()
+                self.assertEqual((self.destination / "references/update.md").read_bytes(), b"B")
+                reference.write_bytes(retry)
+                self.assertTrue(self.install())
+                self.assertEqual((self.destination / "references/update.md").read_bytes(), retry)
+                self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
+                self.assertFalse(self.install())
+
+    def test_repeated_interruption_retains_actual_and_next_resource_digests(self) -> None:
+        reference = self.resource("references/update.md", b"A")
+        second = self.resource("references/z-last.md", b"A")
+        self.install()
+        reference.write_bytes(b"B")
+        second.write_bytes(b"B")
+        self.interrupt_completion()
+        reference.write_bytes(b"C")
+        second.write_bytes(b"C")
+        with patch.object(bundles, "_write", side_effect=OSError("Interrupted before C")):
+            with self.assertRaisesRegex(OSError, "Interrupted before C"):
+                self.install()
+        reference.write_bytes(b"D")
+        second.write_bytes(b"D")
+        write = bundles._write
+
+        def interrupt(path, *args):
+            if path.name == "z-last.md":
+                raise OSError("Interrupted during D")
+            return write(path, *args)
+
+        with patch.object(bundles, "_write", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "Interrupted during D"):
+                self.install()
+        self.assertEqual((self.destination / "references/update.md").read_bytes(), b"D")
+        self.assertEqual((self.destination / "references/z-last.md").read_bytes(), b"B")
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+        reference.write_bytes(b"E")
+        second.write_bytes(b"E")
+        self.assertTrue(self.install())
+        self.assertEqual((self.destination / "references/update.md").read_bytes(), b"E")
+        self.assertEqual((self.destination / "references/z-last.md").read_bytes(), b"E")
+        self.assertFalse(self.install())
+
+    def test_failed_pending_checkpoint_does_not_publish_resource_changes(self) -> None:
+        reference = self.resource("references/update.md", b"A")
+        self.install()
+        inventory = self.destination / ".basaltwater-files.json"
+        previous_inventory = inventory.read_bytes()
+        reference.write_bytes(b"B")
+        (self.source / "SKILL.md").write_bytes(self.entrypoint + b"B guidance\n")
+        with patch.object(bundles, "write_json_atomic", side_effect=OSError("Checkpoint failed")):
+            with self.assertRaisesRegex(OSError, "Checkpoint failed"):
+                self.install()
+        self.assertEqual((self.destination / "references/update.md").read_bytes(), b"A")
+        self.assertEqual((self.destination / "SKILL.md").read_bytes(), self.entrypoint)
+        self.assertEqual(inventory.read_bytes(), previous_inventory)
+
+    def test_pending_resources_are_removed_when_deleted_or_bundle_retired(self) -> None:
+        reference = self.resource("references/update.md", b"A")
+        for retire in (False, True):
+            with self.subTest(retire=retire):
+                reference.write_bytes(b"A")
+                self.install()
+                reference.write_bytes(b"B")
+                added = self.resource("references/added.md", b"new in B")
+                edited = self.resource("references/edited.md", b"managed in B")
+                self.interrupt_completion()
+                (self.destination / "references/edited.md").write_bytes(b"personal edits")
+                reference.unlink()
+                added.unlink()
+                edited.unlink()
+                if retire:
+                    self.assertTrue(remove_skill_bundle(self.destination, self.uid))
+                    self.assertFalse((self.destination / "SKILL.md").exists())
+                else:
+                    self.assertTrue(self.install())
+                    self.assertFalse(self.install())
+                self.assertFalse((self.destination / "references/update.md").exists())
+                self.assertFalse((self.destination / "references/added.md").exists())
+                self.assertEqual((self.destination / "references/edited.md").read_bytes(), b"personal edits")
+                (self.destination / "references/edited.md").unlink()
+
+    def test_personal_edit_after_interruption_blocks_cross_version_retry(self) -> None:
+        reference = self.resource("references/update.md", b"A")
+        self.install()
+        reference.write_bytes(b"B")
+        self.interrupt_completion()
+        installed = self.destination / "references/update.md"
+        installed.write_bytes(b"personal edits")
+        inventory = self.destination / ".basaltwater-files.json"
+        previous_inventory = inventory.read_bytes()
+        reference.write_bytes(b"C")
+        (self.source / "SKILL.md").write_bytes(self.entrypoint + b"C guidance\n")
+        with self.assertRaisesRegex(RuntimeError, "personal or modified"):
+            self.install()
+        self.assertEqual(installed.read_bytes(), b"personal edits")
+        self.assertEqual((self.destination / "SKILL.md").read_bytes(), self.entrypoint)
+        self.assertEqual(inventory.read_bytes(), previous_inventory)
+
+    def test_invalid_pending_inventory_fails_closed(self) -> None:
+        self.resource("references/update.md", b"managed")
+        self.install()
+        inventory = self.destination / ".basaltwater-files.json"
+        original = json.loads(inventory.read_text())
+        invalid = (None, [], {"../outside.md": "0" * 64},
+                   {"references/update.md": "invalid"}, {"references/update.md": ["0" * 64]})
+        for pending in invalid:
+            with self.subTest(pending=pending):
+                value = {**original, "complete": False, "pending": pending}
+                inventory.write_text(json.dumps(value))
+                before = inventory.read_bytes()
+                with self.assertRaisesRegex(RuntimeError, "Invalid.*inventory"):
+                    self.install()
+                with self.assertRaisesRegex(RuntimeError, "Invalid.*inventory"):
+                    remove_skill_bundle(self.destination, self.uid)
+                self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+                self.assertEqual(inventory.read_bytes(), before)
+                self.assertEqual((self.destination / "references/update.md").read_bytes(), b"managed")
+        for complete in (True, None):
+            with self.subTest(complete=complete):
+                value = {**original, "pending": original["files"]}
+                if complete is None:
+                    value.pop("complete")
+                inventory.write_text(json.dumps(value))
+                with self.assertRaisesRegex(RuntimeError, "Invalid.*inventory"):
+                    self.install()
+                self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
 
     def test_modified_tracked_resource_is_not_overwritten(self) -> None:
         self.resource("references/update.md", b"managed")
