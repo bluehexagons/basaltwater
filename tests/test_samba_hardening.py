@@ -50,6 +50,7 @@ class TestSambaGlobalHardenedSettings(unittest.TestCase):
     def test_disables_netbios_and_anonymous(self) -> None:
         s = samba_steps.SAMBA_GLOBAL_HARDENED_SETTINGS
         self.assertEqual(s["disable netbios"], "yes")
+        self.assertEqual(s["smb ports"], "445")
         self.assertEqual(s["map to guest"], "Never")
         self.assertEqual(s["restrict anonymous"], "2")
 
@@ -63,7 +64,7 @@ class TestSambaGlobalHardenedSettings(unittest.TestCase):
 
 
 class TestConfigureSambaGlobalSettings(unittest.TestCase):
-    def test_only_rewrites_global_settings_and_reloads_smbd(self) -> None:
+    def test_rewrites_global_settings_and_restarts_smbd_after_disabling_nmbd(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             smb_conf = os.path.join(tmpdir, "smb.conf")
             original = """[GLOBAL]
@@ -97,7 +98,28 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
         self.assertNotIn("null passwords", global_section)
         self.assertIn("server min protocol = NT1", archive_section)
         self.assertTrue(any(command.startswith("testparm -s ") for command in commands))
-        self.assertIn("systemctl reload smbd", commands)
+        self.assertIn("systemctl disable --now nmbd", commands)
+        self.assertIn("systemctl restart smbd", commands)
+        self.assertLess(
+            commands.index("systemctl disable --now nmbd"),
+            commands.index("systemctl restart smbd"),
+        )
+
+    def test_unchanged_global_config_stops_and_disables_nmbd_without_restarting_smbd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            smb_conf = os.path.join(tmpdir, "smb.conf")
+            already_configured = samba_steps._render_hardened_global_settings("[global]\n")
+            with open(smb_conf, "w", encoding="utf-8") as file_obj:
+                file_obj.write(already_configured)
+            with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
+                 patch.object(samba_steps.os, "fchown"), \
+                 patch.object(samba_steps, "run", return_value=MagicMock(returncode=0)) as run:
+                samba_steps.configure_samba_global_settings(_make_config())
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn("systemctl disable --now nmbd", commands)
+        self.assertNotIn("systemctl restart smbd", commands)
+        self.assertNotIn("systemctl reload smbd", commands)
 
     def test_restores_previous_config_when_testparm_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -788,9 +810,9 @@ class TestSambaConfigActivation(unittest.TestCase):
                     self.assertFalse(any(command.startswith(("systemctl", "groupdel", "printf"))
                                          for command in self.commands))
 
-    def test_activation_failure_restores_config_and_retry_reloads(self) -> None:
+    def test_activation_failure_restores_config_and_retry_activates(self) -> None:
         for operation, failure in (
-            ("global", "systemctl reload smbd"),
+            ("global", "systemctl restart smbd"),
             ("shares", "install -d -m 0755"),
             ("shares", "printf %s"),
             ("shares", "systemctl daemon-reload"),
@@ -810,14 +832,16 @@ class TestSambaConfigActivation(unittest.TestCase):
                 self.configure(operation)
                 self.assertNotEqual(self.conf.read_text(), self.original)
                 self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
-                self.assertEqual(self.commands.count("systemctl reload smbd"), 1)
+                activation = "systemctl restart smbd" if operation == "global" else "systemctl reload smbd"
+                self.assertEqual(self.commands.count(activation), 1)
                 self.commands.clear()
                 self.configure(operation)
+                self.assertNotIn("systemctl restart smbd", self.commands)
                 self.assertNotIn("systemctl reload smbd", self.commands)
                 self.assertFalse(any(command.startswith("testparm") for command in self.commands))
 
     def test_activation_interrupt_restores_previous_file(self) -> None:
-        self.failure, self.error = "systemctl reload smbd", KeyboardInterrupt()
+        self.failure, self.error = "systemctl restart smbd", KeyboardInterrupt()
         with self.assertRaises(KeyboardInterrupt):
             self.configure("global")
         self.assert_restored()
@@ -837,7 +861,7 @@ class TestSambaConfigActivation(unittest.TestCase):
              self.assertRaisesRegex(OSError, "directory sync failed"):
             self.configure("global")
         self.assert_restored()
-        self.assertNotIn("systemctl reload smbd", self.commands)
+        self.assertNotIn("systemctl restart smbd", self.commands)
 
 
 if __name__ == '__main__':
