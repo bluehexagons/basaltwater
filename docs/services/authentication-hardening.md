@@ -23,6 +23,11 @@ profile and checks that the generated common auth and account stacks use it.
 Setup fails if the lockout profile cannot be activated, so a matching settings
 file alone is not reported as active protection.
 
+Security setup package installs (UFW, Fail2ban, AppArmor, and auditd) use the
+shared 300-second APT/dpkg lock wait, allowing normal overlap with distro APT
+jobs. Lock-wait exhaustion or another install failure still stops that setup
+step before configuration continues; setup does not replay the failed install.
+
 The security monitor reads `ausearch` and SSH journal results as a stream, with
 bounded audit and SSH record and summary sizes. It counts all fail2ban bans and
 unbans in the interval, but includes at most 50 examples of each in a

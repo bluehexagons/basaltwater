@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.config import SetupConfig
 from lib.maintenance_defaults import JOURNAL_MAX_USE
+from lib.remote_utils import CommandExecutionError
 from lib.system_types import get_steps_for_system_type
 from security.security_steps import (
     _ensure_browser_automation_userns_profile,
@@ -80,6 +81,9 @@ class TestAppArmorProfiles(unittest.TestCase):
         )
 
         commands = [call.args[0] for call in mock_run.call_args_list]
+        mock_run.assert_any_call(
+            "apt-get -o DPkg::Lock::Timeout=300 install -y -qq apparmor apparmor-utils"
+        )
         self.assertIn("systemctl reload apparmor", commands)
         self.assertNotIn("systemctl restart apparmor", commands)
         self.assertFalse(any(command.startswith("aa-enforce ") for command in commands))
@@ -422,6 +426,9 @@ class TestConfigureFail2Ban(unittest.TestCase):
     def test_writes_sshd_jail_when_rdp_disabled(self, mock_file, _md, mock_run, _ic):
         mock_run.return_value = SimpleNamespace(returncode=0)
         configure_fail2ban(SetupConfig(username="u", host="h", system_type="server_lite"))
+        mock_run.assert_any_call(
+            "apt-get -o DPkg::Lock::Timeout=300 install -y -qq fail2ban"
+        )
         opened_paths = [args[0] for args, _ in mock_file.call_args_list]
         self.assertIn("/etc/fail2ban/jail.d/sshd.local", opened_paths)
         self.assertNotIn("/etc/fail2ban/jail.d/xrdp.local", opened_paths)
@@ -491,6 +498,9 @@ class TestConfigureAuditd(unittest.TestCase):
                 "security.security_steps._AUDIT_RULES_FILE", rules_file
             ):
                 configure_auditd(config)
+                mock_run.assert_any_call(
+                    "apt-get -o DPkg::Lock::Timeout=300 install -y -qq auditd audispd-plugins"
+                )
                 with open(rules_file, encoding="utf-8") as rules:
                     contents = rules.read()
                 self.assertNotIn("-w ", contents)
@@ -517,6 +527,40 @@ class TestConfigureAuditd(unittest.TestCase):
             self.assertIn("systemctl start auditd", commands)
             self.assertIn("augenrules --load", commands)
             self.assertNotIn("systemctl restart auditd", commands)
+
+
+class TestSecurityPackageInstallFailures(unittest.TestCase):
+    def test_install_failure_stops_configuration_without_replay(self):
+        config = SetupConfig(username="u", host="h", system_type="server_lite")
+        for configure, packages in (
+            (configure_fail2ban, "fail2ban"),
+            (configure_apparmor, "apparmor apparmor-utils"),
+            (configure_auditd, "auditd audispd-plugins"),
+        ):
+            command = f"apt-get -o DPkg::Lock::Timeout=300 install -y -qq {packages}"
+            for detail in ("Could not acquire dpkg frontend lock", "Package installation failed"):
+                with self.subTest(configure=configure.__name__, detail=detail):
+                    failure = CommandExecutionError(command, 100, detail)
+                    with (
+                        patch.dict(os.environ),
+                        patch("security.security_steps.is_dry_run", return_value=False),
+                        patch("security.security_steps.is_container", return_value=False),
+                        patch("security.security_steps.is_vm", return_value=True),
+                        patch("security.security_steps.is_hardware", return_value=False),
+                        patch("security.security_steps.run", side_effect=failure) as run,
+                        patch("security.security_steps.os.makedirs") as makedirs,
+                        patch("security.security_steps.open") as file_open,
+                        patch("security.security_steps.write_text_atomic") as write,
+                        patch("builtins.print") as output,
+                    ):
+                        with self.assertRaises(CommandExecutionError) as raised:
+                            configure(config)
+                        self.assertIs(raised.exception, failure)
+                        run.assert_called_once_with(command)
+                        makedirs.assert_not_called()
+                        file_open.assert_not_called()
+                        write.assert_not_called()
+                        output.assert_not_called()
 
 
 class TestConfigurePamLockout(unittest.TestCase):
@@ -688,6 +732,51 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
 class TestConfigureFirewall(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
+
+    def test_all_entrypoints_install_ufw_with_bounded_lock_wait_before_rules(self):
+        config = SetupConfig(username="u", host="h", system_type="server_lite")
+        for configure in (configure_firewall, configure_firewall_web, configure_firewall_ssh_only):
+            with self.subTest(configure=configure.__name__):
+                def run_command(command, **_kwargs):
+                    return SimpleNamespace(
+                        returncode=1 if command.startswith("ufw status 2>") else 0,
+                        stdout="", stderr="",
+                    )
+
+                with patch("security.security_steps.run", side_effect=run_command) as run:
+                    configure(config)
+                self.assertEqual(
+                    [call.args[0] for call in run.call_args_list[:3]],
+                    [
+                        "ufw status 2>/dev/null | grep -q 'Status: active'",
+                        "apt-get -o DPkg::Lock::Timeout=300 install -y -qq ufw",
+                        "ufw default deny incoming",
+                    ],
+                )
+                self.assertEqual(run.call_args_list[1].kwargs, {})
+                self.assertEqual(
+                    sum(call.args[0].startswith("apt-get ") for call in run.call_args_list), 1
+                )
+
+    def test_install_failure_stops_all_entrypoints_before_rules_without_replay(self):
+        config = SetupConfig(username="u", host="h", system_type="server_lite")
+        command = "apt-get -o DPkg::Lock::Timeout=300 install -y -qq ufw"
+        for configure in (configure_firewall, configure_firewall_web, configure_firewall_ssh_only):
+            for detail in ("Could not acquire dpkg frontend lock", "Package installation failed"):
+                with self.subTest(configure=configure.__name__, detail=detail):
+                    failure = CommandExecutionError(command, 100, detail)
+                    with (
+                        patch("security.security_steps.run", side_effect=[
+                            SimpleNamespace(returncode=1), failure,
+                        ]) as run,
+                        patch("builtins.print") as output,
+                    ):
+                        with self.assertRaises(CommandExecutionError) as raised:
+                            configure(config)
+                        self.assertIs(raised.exception, failure)
+                        self.assertEqual(run.call_count, 2)
+                        run.assert_called_with(command)
+                        output.assert_not_called()
 
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")

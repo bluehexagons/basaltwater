@@ -16,7 +16,7 @@ from lib.atomic_io import write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import install_kernel_restart_hook
 from lib.config import SetupConfig
-from lib.maintenance_defaults import JOURNAL_MAX_USE
+from lib.maintenance_defaults import APT_LOCK_OPTIONS, JOURNAL_MAX_USE
 from lib.machine_state import (
     can_manage_mdns,
     can_manage_system_services,
@@ -70,6 +70,7 @@ _APPARMOR_USERNS_PROFILE = "/etc/apparmor.d/unprivileged_userns"
 _APPARMOR_USERNS_RESTRICTION = (
     "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
 )
+_APT_GET = f"apt-get {shlex.join(APT_LOCK_OPTIONS)}"
 
 
 def _run_ufw(command: str, *, check: bool = False):
@@ -481,7 +482,7 @@ def configure_firewall(config: SetupConfig) -> None:
         _source_restricted_firewall_status(config, include_rdp=config.enable_rdp)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run("apt-get install -y -qq ufw")
+        run(f"{_APT_GET} install -y -qq ufw")
         for command in ("ufw default deny incoming", "ufw default allow outgoing"):
             policy_result = _run_ufw(command, check=True)
             if policy_result.returncode != 0:
@@ -551,7 +552,7 @@ def configure_fail2ban(config: SetupConfig) -> None:
         return
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run("apt-get install -y -qq fail2ban")
+    run(f"{_APT_GET} install -y -qq fail2ban")
 
     os.makedirs("/etc/fail2ban/filter.d", exist_ok=True)
     os.makedirs("/etc/fail2ban/jail.d", exist_ok=True)
@@ -1011,7 +1012,7 @@ def configure_apparmor(config: SetupConfig) -> None:
         return
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run("apt-get install -y -qq apparmor apparmor-utils")
+    run(f"{_APT_GET} install -y -qq apparmor apparmor-utils")
     run("systemctl enable apparmor", check=False)
 
     enabled = run("aa-enabled -q", check=False).returncode == 0
@@ -1060,7 +1061,7 @@ def configure_auditd(config: SetupConfig) -> None:
         return
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run("apt-get install -y -qq auditd audispd-plugins")
+    run(f"{_APT_GET} install -y -qq auditd audispd-plugins")
 
     audit_rules = """# Managed by basaltwater - audit rules.
 # Identity and authentication files
@@ -1303,7 +1304,7 @@ def configure_firewall_web(config: SetupConfig) -> None:
         _source_restricted_firewall_status(config, include_rdp=False)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run("apt-get install -y -qq ufw")
+        run(f"{_APT_GET} install -y -qq ufw")
         for command in ("ufw default deny incoming", "ufw default allow outgoing"):
             policy_result = _run_ufw(command, check=True)
             if policy_result.returncode != 0:
@@ -1351,7 +1352,7 @@ def configure_firewall_ssh_only(config: SetupConfig) -> None:
         _source_restricted_firewall_status(config, include_rdp=False)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run("apt-get install -y -qq ufw")
+        run(f"{_APT_GET} install -y -qq ufw")
         for command in ("ufw default deny incoming", "ufw default allow outgoing"):
             policy_result = _run_ufw(command, check=True)
             if policy_result.returncode != 0:
