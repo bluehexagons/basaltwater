@@ -164,6 +164,21 @@ class TestRunScrub(unittest.TestCase):
 
 
 class TestRunSync(unittest.TestCase):
+    def test_worker_precautions_are_collected_without_changing_exit_contract(self):
+        from sync.service_tools import sync_rsync
+
+        precautions = sync_rsync.SyncPrecautions()
+        def sync(*args, **kwargs):
+            kwargs['precautions'].warning = 'Preserved offline disk'
+            kwargs['precautions'].retry_required = True
+            return 0
+        with patch.object(sync_rsync, 'run_rsync_with_notifications', side_effect=sync):
+            result = run_sync('/src', '/dst', MagicMock(), config=RuntimeConfig.from_dict({}),
+                              precautions=precautions)
+        self.assertTrue(result[0])
+        self.assertEqual(precautions.warning, 'Preserved offline disk')
+        self.assertTrue(precautions.retry_required)
+
     @patch("sync.service_tools.sync_rsync.run_rsync_with_notifications", side_effect=RuntimeError("boom"))
     def test_sync_exception_logs_structured_failure(self, _mock_sync):
         logger = MagicMock()

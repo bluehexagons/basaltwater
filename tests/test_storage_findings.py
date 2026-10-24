@@ -420,7 +420,8 @@ class TestFindings(unittest.TestCase):
             result = storage_ops.execute_storage_operations()
         run.assert_called_once_with(str(self.source), destination, suppress_notifications=True,
                                     excluded_paths=("data.bin",), copy_new_only=False,
-                                    config=RuntimeConfig.from_dict(config))
+                                    config=RuntimeConfig.from_dict(config),
+                                    precautions=sync_rsync.SyncPrecautions())
         self.assertTrue(result["success"])
         self.assertTrue(result["syncs"][0]["success"])
         self.assertEqual(save.call_args.args[0][op_id], now)
@@ -466,7 +467,8 @@ class TestFindings(unittest.TestCase):
         self.assertIn("Copying new files only", result["syncs"][1]["warning"])
         run.assert_called_once_with(str(self.source), destination, suppress_notifications=True,
                                     excluded_paths=(), copy_new_only=True,
-                                    config=RuntimeConfig.from_dict(config))
+                                    config=RuntimeConfig.from_dict(config),
+                                    precautions=sync_rsync.SyncPrecautions())
         self.assertIn(storage_ops.get_sync_op_id(str(self.source), destination), state)
         self.assertNotIn(storage_ops.get_sync_op_id(str(self.source), offline), state)
         self.assertTrue(result["parity_updates"][0]["skipped"])

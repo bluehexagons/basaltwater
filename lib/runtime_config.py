@@ -51,7 +51,9 @@ class RuntimeConfig:
         Returns:
             RuntimeConfig instance
         """
-        return cls(
+        from lib.task_utils import configured_storage_mounts
+
+        config = cls(
             username=data.get("username", "root"),
             sync_specs=data.get("sync_specs") or [],
             backup_specs=data.get("backup_specs") or [],
@@ -59,10 +61,16 @@ class RuntimeConfig:
             notify_specs=data.get("notify_specs") or [],
             friendly_name=data.get("friendly_name"),
             smb_mounts=data.get("smb_mounts"),
-            storage_mounts=data.get("storage_mounts") or [],
+            storage_mounts=data.get("storage_mounts"),
             notification_level=data.get("notification_level"),
             notification_strict_https=data.get("notification_strict_https") is True,
         )
+        # Validate raw saved declarations before normalizing optional fields.
+        # False/0/""/{} must never erase the mount guards for a standalone sync.
+        configured_storage_mounts(config)
+        if config.storage_mounts is None:
+            config.storage_mounts = []
+        return config
 
     @classmethod
     def from_setup_config(cls, config: Any) -> "RuntimeConfig":

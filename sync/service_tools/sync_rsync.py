@@ -17,6 +17,7 @@ import json
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from logging import ERROR, WARNING
 from datetime import datetime
 from typing import BinaryIO, TYPE_CHECKING
@@ -45,6 +46,37 @@ BYTES_TO_MB = 1024 * 1024
 # Progress logging interval (seconds)
 PROGRESS_LOG_INTERVAL = 30
 RSYNC_TIMEOUT_SECONDS = 14400
+WORKER_REPORT_LIMIT = 8192
+WORKER_SAMPLE_PATH_LIMIT = 128
+
+
+@dataclass
+class SyncPrecautions:
+    """Optional output collector; guarded partial syncs need a later retry."""
+
+    warning: str = ""
+    retry_required: bool = False
+
+
+def _read_worker_report(stream: BinaryIO) -> SyncPrecautions:
+    """Read a bounded, dedicated report, never rsync's ordinary output."""
+    stream.seek(0)
+    payload = stream.read(WORKER_REPORT_LIMIT + 1)
+    if len(payload) > WORKER_REPORT_LIMIT:
+        raise ValueError('Sync worker report exceeds size limit')
+    report = json.loads(payload)
+    if (not isinstance(report, dict) or set(report) != {'version', 'unavailable_count', 'sample'}
+            or type(report['version']) is not int or report['version'] != 1
+            or type(report['unavailable_count']) is not int or report['unavailable_count'] < 0
+            or not isinstance(report['sample'], list)
+            or len(report['sample']) != min(report['unavailable_count'], 5)
+            or any(not isinstance(path, str) or not path or len(path) > WORKER_SAMPLE_PATH_LIMIT
+                   for path in report['sample'])):
+        raise ValueError('Invalid sync worker report')
+    count = report['unavailable_count']
+    warning = (f"Preserved {count} subtree(s) on unavailable configured mounts: "
+               f"{', '.join(report['sample'])}; sync incomplete, retry needed") if count else ""
+    return SyncPrecautions(warning, bool(count))
 
 
 def _output_lines(process):
@@ -181,7 +213,7 @@ def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...
         ], filters if protected_paths else None
 
 
-def _mount_worker() -> int:
+def _mount_worker(report_fd: int) -> int:
     """Validate and exec only after unshare has detached mount propagation."""
     try:
         request = json.load(sys.stdin)
@@ -234,6 +266,14 @@ def _mount_worker() -> int:
             print(f'Preserving unavailable mount subtrees: {", ".join(unavailable[:5])}', file=sys.stderr)
         excluded = tuple(dict.fromkeys([*request['excluded_paths'], *unavailable]))
         with _rsync_command(source, destination, excluded, request['copy_new_only']) as (command, filters):
+            # The anonymous report is separate from rsync output and closed
+            # before exec. Bound the sample even for very long declarations.
+            report = json.dumps({'version': 1, 'unavailable_count': len(unavailable),
+                                 'sample': [path[:WORKER_SAMPLE_PATH_LIMIT] for path in unavailable[:5]]}).encode('utf-8')
+            if len(report) > WORKER_REPORT_LIMIT:
+                raise ValueError('Sync worker report exceeds size limit')
+            with os.fdopen(report_fd, 'wb') as stream:
+                stream.write(report)
             # No extra supervisor: rsync retains the parent's private session,
             # pipes and deadline, and this namespace for its entire traversal.
             if filters is not None:
@@ -249,7 +289,7 @@ def _mount_worker() -> int:
 
 def _start_rsync(source: str, destination: str, config: SetupConfig | RuntimeConfig,
                  excluded_paths: tuple[str, ...], copy_new_only: bool,
-                 initial_setup: bool) -> subprocess.Popen[str]:
+                 initial_setup: bool, report: BinaryIO) -> subprocess.Popen[str]:
     """Transfer declarations, never credentials, to a namespace-isolated worker."""
     request = {
         'source': source, 'destination': destination,
@@ -266,9 +306,10 @@ def _start_rsync(source: str, destination: str, config: SetupConfig | RuntimeCon
         try:
             return subprocess.Popen(
                 ['/usr/bin/unshare', '--mount', '--propagation', 'private', '--',
-                 sys.executable, '-u', os.path.abspath(__file__), '--mount-worker'],
+                 sys.executable, '-u', os.path.abspath(__file__), '--mount-worker', str(report.fileno())],
                 stdin=stream, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=True, bufsize=1,
+                pass_fds=(report.fileno(),),
             )
         except OSError as exc:
             raise RuntimeError('Cannot start private mount namespace; sync requires '
@@ -280,6 +321,7 @@ def run_rsync_with_notifications(
     excluded_paths: tuple[str, ...] = (), copy_new_only: bool = False,
     config: SetupConfig | RuntimeConfig | None = None,
     initial_setup: bool = False,
+    precautions: SyncPrecautions | None = None,
 ) -> int:
     """Run rsync and send notifications on completion or failure.
     
@@ -291,6 +333,7 @@ def run_rsync_with_notifications(
         copy_new_only: Add new files without replacing or deleting existing destination data
         config: Current declarations for setup/runtime; None strictly loads saved state
         initial_setup: Prepare directories and probe SMB within the private namespace
+        precautions: Optional collector for worker warnings and incomplete mount coverage
         
     Returns:
         Exit code (0 for success, non-zero for failure)
@@ -337,6 +380,10 @@ def run_rsync_with_notifications(
     total_bytes = 0
     percent_done = 0
     
+    report = None
+    if precautions is None:
+        precautions = SyncPrecautions()
+    precautions.warning, precautions.retry_required = "", False
     try:
         if config is None:
             from lib.machine_state import load_setup_config
@@ -347,7 +394,8 @@ def run_rsync_with_notifications(
         validate_sync_paths(source, destination)
         if not os.path.isdir(source):
             raise ValueError(f"Sync source is not an existing directory: {source}")
-        process = _start_rsync(source, destination, config, excluded_paths, copy_new_only, initial_setup)
+        report = tempfile.TemporaryFile()
+        process = _start_rsync(source, destination, config, excluded_paths, copy_new_only, initial_setup, report)
         
         # Collect output for stats parsing
         stdout_lines = deque(maxlen=4096)
@@ -423,6 +471,11 @@ def run_rsync_with_notifications(
                 output=stdout_output, 
                 stderr=stderr_output
             )
+        worker_precautions = _read_worker_report(report)
+        precautions.warning = worker_precautions.warning
+        precautions.retry_required = worker_precautions.retry_required
+        if precautions.warning:
+            log_event(logger, 'Sync completed with precautions', level=WARNING, warning=precautions.warning)
         if stderr_lines:
             log_event(logger, 'Sync worker warnings', level=WARNING, stderr='\n'.join(stderr_lines))
         
@@ -474,17 +527,19 @@ Files transferred: {files_transferred}
 Total size: {total_size // BYTES_TO_MB} MB
 Duration: {duration:.1f}s
 """
+                if precautions.warning:
+                    details += f"\nWarning: {precautions.warning}\n"
                 
                 send_notification_safe(
                     notification_configs,
-                    subject=f"{name_prefix}Success: Sync completed",
+                    subject=f"{name_prefix}Sync completed with warnings" if precautions.warning else f"{name_prefix}Success: Sync completed",
                     job="sync",
-                    status="good",
+                    status="warning" if precautions.warning else "good",
                     message=message,
                     details=details,
                     logger=logger,
                     event_type="sync.completed",
-                    state="success",
+                    state="firing" if precautions.warning else "success",
                     dedup_key=f"sync:{source}:{destination}",
                     delivery_policy="signal",
                 )
@@ -564,12 +619,15 @@ Duration: {duration:.1f}s
                 log_event(logger, "Failed to send failure notification", level=ERROR, error=str(notify_error))
         
         return 1
+    finally:
+        if report is not None:
+            report.close()
 
 
 def main():
     """Main entry point."""
-    if sys.argv[1:] == ['--mount-worker']:
-        return _mount_worker()
+    if len(sys.argv) == 3 and sys.argv[1] == '--mount-worker':
+        return _mount_worker(int(sys.argv[2]))
     if len(sys.argv) != 3:
         print("Usage: sync_rsync.py <source> <destination>")
         return 1

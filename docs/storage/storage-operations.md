@@ -96,6 +96,9 @@ The standalone `sync_rsync.py SOURCE DESTINATION` entry point applies the same
 endpoint and nested mount guards using the saved setup configuration. Missing,
 unreadable, or invalid configuration stops standalone sync; inline setup uses
 its current declarations before they have been saved.
+Saved mount fields accept absence, `null`, or an empty list as no declarations;
+malformed values such as `false`, `0`, an empty string, or an object are rejected
+before normalization, so they cannot silently disable mount guards.
 
 Every rsync runs in a new Linux mount namespace created by util-linux
 `unshare --mount --propagation private`. The worker validates required mounts
@@ -104,6 +107,17 @@ rsync in that same namespace. Host unmounts after validation cannot expose an
 underlying directory to that traversal. A mount removed before namespace
 creation is rejected or excluded by the worker. Inline setup's directory
 creation and SMB probes also run inside this boundary.
+The worker sends a bounded precaution report through a separate anonymous file
+descriptor before executing rsync; ordinary rsync output is never interpreted
+as that report. Missing or malformed reports fail the operation. Worker-discovered
+unavailable subtrees appear in scheduled results and warning notifications, as
+well as standalone notifications. When the worker preserves unavailable mount
+subtrees, the sync does not advance its completion timestamp: it retries using the same
+one-hour-to-twenty-four-hour backoff as incomplete operations. Every retry uses
+the private namespace and rechecks mounts; no unprotected retry is attempted.
+Once mount coverage is restored, completion clears the retry history and the
+configured interval resumes. Recorded integrity findings alone retain their
+normal completion cadence.
 Generated exclusions preserve literal spaces and glob characters. The worker
 passes their NUL-delimited filters through rsync's standard input using an
 anonymous file, so no filter pathname needs cleanup after execution.

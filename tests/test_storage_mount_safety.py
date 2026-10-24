@@ -82,7 +82,8 @@ class StorageMountSafetyTests(unittest.TestCase):
         self.assertIn('unavailable configured mounts', result['syncs'][0]['warning'])
         run.assert_called_once_with(str(self.source), str(self.destination), suppress_notifications=True,
                                     excluded_paths=('disk',), copy_new_only=False,
-                                    config=RuntimeConfig.from_dict(config))
+                                    config=RuntimeConfig.from_dict(config),
+                                    precautions=sync_rsync.SyncPrecautions())
         self.assertIn(storage_ops.get_sync_op_id(str(self.source), str(self.destination)), state)
 
     def test_inline_sync_preserves_offline_nested_mounts(self):

@@ -43,6 +43,7 @@ from lib.task_utils import (
 from lib.runtime_config import RuntimeConfig
 from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
+from sync.service_tools.sync_rsync import SyncPrecautions
 
 # Constants
 LOCK_FILE = "/run/lock/storage-ops.lock"
@@ -316,7 +317,8 @@ class SyncIntegrity:
 
 
 def run_sync(source: str, destination: str, logger, *, config: RuntimeConfig,
-             integrity: SyncIntegrity = SyncIntegrity()) -> tuple[bool, str]:
+             integrity: SyncIntegrity = SyncIntegrity(),
+             precautions: SyncPrecautions | None = None) -> tuple[bool, str]:
     """Execute rsync sync operation."""
     from sync.service_tools.sync_rsync import run_rsync_with_notifications
     
@@ -327,6 +329,7 @@ def run_sync(source: str, destination: str, logger, *, config: RuntimeConfig,
             source, destination, suppress_notifications=True,
             excluded_paths=integrity.excluded_paths, copy_new_only=integrity.copy_new_only,
             config=config,
+            precautions=precautions,
         )
         return result == 0, f"Sync {'completed' if result == 0 else 'failed'} with exit code {result}"
     except Exception as e:
@@ -555,20 +558,25 @@ def execute_storage_operations() -> dict:
         if integrity.warning:
             log_event(logger, "Sync continuing with integrity precautions", level=WARNING,
                       source=source, destination=destination, warning=integrity.warning)
-        success, message = run_sync(source, destination, logger, config=config, integrity=integrity)
+        precautions = SyncPrecautions()
+        success, message = run_sync(source, destination, logger, config=config, integrity=integrity,
+                                    precautions=precautions)
+        warning = "; ".join(filter(None, (integrity.warning, precautions.warning)))
+        completed = success and not precautions.retry_required
         results["syncs"].append({
             "source": source,
             "destination": destination,
             "success": success,
             "message": message,
-            "warning": integrity.warning,
+            "warning": warning,
+            "completed": completed,
         })
         
-        if success:
+        if completed:
             new_state[op_id] = time.time()
-        else:
+        if not success:
             results["success"] = False
-        record_attempt(new_state, op_id, success)
+        record_attempt(new_state, op_id, completed)
         save_last_run(new_state)
     
     # Execute full scrubs if due.  Long-running progress remains in the local

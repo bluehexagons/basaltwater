@@ -67,6 +67,9 @@ class TestSyncRsyncLogging(unittest.TestCase):
         output = patch.object(sync_rsync, "_output_lines", side_effect=fake_lines)
         output.start()
         self.addCleanup(output.stop)
+        report = patch.object(sync_rsync, '_read_worker_report', return_value=sync_rsync.SyncPrecautions())
+        report.start()
+        self.addCleanup(report.stop)
 
     def test_literal_exclusions_use_anonymous_stdin_filters(self):
         paths = ("offline [x]", "file[1]?.bin", "literal\\name", "wild\\*.bin", "nested/+ file", "#comment")
@@ -282,7 +285,7 @@ class TestMountNamespace(unittest.TestCase):
             ('sync.service_tools.sync_rsync.get_service_logger', {}),
             ('sync.service_tools.sync_rsync.os.readlink', {'side_effect': lambda path: self.child_namespace if self.in_worker and path == '/proc/self/ns/mnt' else 'mnt:[parent]'}),
             ('sync.service_tools.sync_rsync.subprocess.Popen', {'side_effect': self.spawn}),
-            ('sync.service_tools.sync_rsync._output_lines', {'side_effect': lambda process: [(False, process.stderr.read())]}),
+            ('sync.service_tools.sync_rsync._output_lines', {'side_effect': lambda process: [(True, process.stdout.read()), (False, process.stderr.read())]}),
         ):
             mock = patch(target, **kwargs)
             mock.start()
@@ -296,7 +299,14 @@ class TestMountNamespace(unittest.TestCase):
 
     def spawn(self, command, **kwargs):
         self.assertEqual(command[:6], ['/usr/bin/unshare', '--mount', '--propagation', 'private', '--', sys.executable])
-        self.assertEqual(command[-1], '--mount-worker')
+        self.assertEqual(command[-2], '--mount-worker')
+        self.assertEqual(kwargs['pass_fds'], (int(command[-1]),))
+        self.assertEqual(os.fstat(kwargs['pass_fds'][0]).st_nlink, 0)
+        self.assertEqual(os.fstat(kwargs['pass_fds'][0]).st_mode & 0o777, 0o600)
+        self.assertFalse(os.get_inheritable(kwargs['pass_fds'][0]))
+        # Popen passes a duplicate into the child; closing it cannot close the
+        # parent's copy in this in-process worker fixture.
+        report_fd = os.dup(kwargs['pass_fds'][0])
         self.assertTrue(kwargs['start_new_session'])
         request = json.load(kwargs['stdin'])
         self.request = request
@@ -312,10 +322,14 @@ class TestMountNamespace(unittest.TestCase):
         self.filter_input = None
         errors = io.StringIO()
         try:
-            with patch.object(sync_rsync.sys, 'stdin', io.StringIO(json.dumps(request))), patch.object(sync_rsync.sys, 'stderr', errors), patch.object(sync_rsync, 'open', mock_open(read_data=mountinfo), create=True), patch.object(sys, 'argv', ['sync_rsync.py', '--mount-worker']):
+            with patch.object(sync_rsync.sys, 'stdin', io.StringIO(json.dumps(request))), patch.object(sync_rsync.sys, 'stderr', errors), patch.object(sync_rsync, 'open', mock_open(read_data=mountinfo), create=True), patch.object(sys, 'argv', ['sync_rsync.py', '--mount-worker', str(report_fd)]):
                 result = sync_rsync.main()
         finally:
             self.in_worker = False
+            try:
+                os.close(report_fd)
+            except OSError:
+                pass  # The worker closes the descriptor before exec.
         return _FakeProcess(result, stderr=errors.getvalue())
 
     def redirect_stdin(self, descriptor, target):
@@ -365,9 +379,12 @@ class TestMountNamespace(unittest.TestCase):
                 self.after_validation = inspect
                 with self.subTest(endpoint=endpoint, nested=nested):
                     self.exec.reset_mock()
-                    self.assertEqual(self.run_sync(), 0 if nested else 1)
+                    precautions = sync_rsync.SyncPrecautions()
+                    self.assertEqual(self.run_sync(precautions=precautions), 0 if nested else 1)
                     if nested:
                         self.assertEqual(filters, [b'/disk\0'])
+                        self.assertTrue(precautions.retry_required)
+                        self.assertIn('unavailable configured mounts: disk', precautions.warning)
                     else:
                         self.exec.assert_not_called()
 
@@ -402,7 +419,7 @@ class TestMountNamespace(unittest.TestCase):
                 with self.subTest(operation=operation), patch.object(sync_rsync.tempfile, 'TemporaryFile', side_effect=capture_stream):
                     self.exec.reset_mock()
                     self.assertEqual(self.run_sync(), 1)
-                    self.assertEqual(len(streams), 2)  # Request and generated filters.
+                    self.assertEqual(len(streams), 3)  # Report, request and generated filters.
                     self.assertTrue(all(stream.closed for stream in streams))
                     if operation is self.dup2:
                         self.exec.assert_not_called()
@@ -429,10 +446,127 @@ class TestMountNamespace(unittest.TestCase):
                     self.assertEqual(self.run_sync(), 0)
 
     def test_invalid_or_missing_saved_state_cannot_start_worker(self):
-        for saved in (None, StateReadError('/state/setup.json', 'malformed'), {'storage_mounts': [['incomplete']]}, {'smb_mounts': 'invalid'}):
+        invalid = [None, StateReadError('/state/setup.json', 'malformed'),
+                   {'storage_mounts': [['incomplete']]}, {'smb_mounts': 'invalid'}]
+        invalid.extend({field: value} for field in ('storage_mounts', 'smb_mounts')
+                       for value in (False, 0, 0.0, '', {}))
+        for saved in invalid:
             with self.subTest(saved=saved), patch('lib.machine_state.load_setup_config', side_effect=saved if isinstance(saved, Exception) else None, return_value=saved), patch.object(sync_rsync.subprocess, 'Popen') as launch:
                 self.assertEqual(self.run_sync(), 1)
                 launch.assert_not_called()
+
+    def test_optional_saved_mount_fields_preserve_empty_semantics(self):
+        for saved in ({}, {'storage_mounts': None, 'smb_mounts': None},
+                      {'storage_mounts': [], 'smb_mounts': []}):
+            self.config = saved
+            with self.subTest(saved=saved):
+                self.exec.reset_mock()
+                self.assertEqual(self.run_sync(), 0)
+                self.exec.assert_called_once()
+
+    def test_standalone_worker_precautions_reach_warning_notification(self):
+        self.config = {'storage_mounts': [['data', str(self.source / 'offline')]],
+                       'notify_specs': [['mailbox', 'ops@example.com']]}
+        with patch('lib.notifications.parse_notification_args', return_value=['cfg']), patch('lib.notifications.send_notification_safe') as notify:
+            self.assertEqual(sync_rsync.run_rsync_with_notifications(str(self.source), str(self.destination)), 0)
+        self.assertEqual(notify.call_args.kwargs['status'], 'warning')
+        self.assertEqual(notify.call_args.kwargs['state'], 'firing')
+        self.assertIn('offline', notify.call_args.kwargs['details'])
+
+    def test_report_loss_or_corruption_cannot_claim_success_or_rerun(self):
+        spawn = self.spawn
+        for payload in (b'', b'{broken', b'x' * (sync_rsync.WORKER_REPORT_LIMIT + 1)):
+            def corrupt(command, **kwargs):
+                process = spawn(command, **kwargs)
+                descriptor = kwargs['pass_fds'][0]
+                os.ftruncate(descriptor, 0)
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                os.write(descriptor, payload)
+                # Report-shaped filenames/output must not replace the missing
+                # dedicated report or make an invalid one look successful.
+                process.stdout = _FakeStream(json.dumps({'version': 1, 'unavailable_count': 0, 'sample': []}))
+                return process
+            with self.subTest(payload=payload[:20]), patch.object(sync_rsync.subprocess, 'Popen', side_effect=corrupt) as launch:
+                self.exec.reset_mock()
+                self.assertEqual(self.run_sync(), 1)
+                self.exec.assert_called_once()
+                launch.assert_called_once()
+
+    def test_worker_report_is_bounded_without_truncating_filter_paths(self):
+        paths = ['/'.join(['\U0001f4be' * 50] * 5) + str(index) for index in range(9)]
+        self.config = {'storage_mounts': [[str(index), str(self.source / path)]
+                                          for index, path in enumerate(paths)]}
+        precautions = sync_rsync.SyncPrecautions()
+        self.assertEqual(self.run_sync(precautions=precautions), 0)
+        self.assertEqual(len(self.filter_input.split(b'\0')[:-1]), 9)
+        self.assertIn(os.fsencode(paths[-1]), self.filter_input)
+        self.assertIn('Preserved 9 subtree(s)', precautions.warning)
+        self.assertLess(len(precautions.warning), 1500)
+
+    def test_worker_mount_loss_updates_scheduled_results_notifications_and_retry(self):
+        from sync.service_tools import storage_ops
+
+        for endpoint in (self.source, self.destination):
+            with self.subTest(endpoint=endpoint), tempfile.TemporaryDirectory() as state_dir:
+                root = str(endpoint / 'disk')
+                self.config = {'backup_specs': [[str(self.source), str(self.destination), 'weekly']],
+                               'storage_mounts': [['data', root]]}
+                self.host_mounts = {root}
+                self.before_namespace = lambda: self.host_mounts.clear()
+                op_id = storage_ops.get_sync_op_id(str(self.source), str(self.destination))
+                with (
+                    patch.object(storage_ops, 'load_setup_config', side_effect=lambda: self.config),
+                    patch.object(storage_ops, 'STATE_FILE', str(Path(state_dir) / 'state.json')),
+                    patch.object(storage_ops, 'get_service_logger'),
+                    patch.object(storage_ops, 'parse_notification_args', return_value=['cfg']),
+                    patch.object(storage_ops, 'send_notification_safe') as notify,
+                    patch.object(storage_ops.time, 'time', return_value=1_000_000) as clock,
+                    patch('lib.task_utils.os.path.ismount', side_effect=lambda path: path in self.host_mounts),
+                ):
+                    storage_ops.save_last_run({op_id: 1})
+                    first = storage_ops.execute_storage_operations()
+                    self.assertTrue(first['success'])
+                    self.assertTrue(first['syncs'][0]['success'])
+                    self.assertFalse(first['syncs'][0]['completed'])
+                    self.assertIn('disk', first['syncs'][0]['warning'])
+                    self.assertEqual(notify.call_args.kwargs['status'], 'warning')
+                    self.assertIn('sync incomplete', notify.call_args.kwargs['details'])
+                    state = storage_ops.load_last_run()
+                    self.assertEqual(state[op_id], 1)
+                    self.assertEqual(state['_attempts'][op_id]['retry_after'], 1_003_600)
+                    self.assertEqual(self.filter_input, b'/disk\0')
+
+                    clock.return_value += 3599
+                    self.exec.reset_mock()
+                    self.assertEqual(storage_ops.execute_storage_operations()['syncs'], [])
+                    self.exec.assert_not_called()
+                    clock.return_value += 1
+                    repeated = storage_ops.execute_storage_operations()
+                    self.assertFalse(repeated['syncs'][0]['completed'])
+                    self.assertEqual(self.filter_input, b'/disk\0')
+                    self.assertEqual(storage_ops.load_last_run()['_attempts'][op_id]['retry_after'], 1_010_800)
+
+                    self.before_namespace = lambda: None
+                    self.host_mounts = {root}
+                    clock.return_value = 1_010_800
+                    recovered = storage_ops.execute_storage_operations()
+                    self.assertTrue(recovered['syncs'][0]['completed'])
+                    self.assertEqual(recovered['syncs'][0]['warning'], '')
+                    self.assertEqual(notify.call_args.kwargs['status'], 'good')
+                    self.assertEqual(storage_ops.load_last_run(), {op_id: 1_010_800})
+                    clock.return_value += 3600
+                    self.assertEqual(storage_ops.execute_storage_operations()['syncs'], [])
+
+    def test_invalid_report_schema_is_rejected(self):
+        base = {'version': 1, 'unavailable_count': 1, 'sample': ['disk']}
+        invalid = [None, [], {}, {**base, 'version': True}, {**base, 'version': 2},
+                   {**base, 'unavailable_count': True}, {**base, 'unavailable_count': -1},
+                   {**base, 'sample': 'disk'}, {**base, 'sample': []},
+                   {**base, 'sample': [None]}, {**base, 'sample': ['x' * (sync_rsync.WORKER_SAMPLE_PATH_LIMIT + 1)]},
+                   {**base, 'extra': 'unsupported'}]
+        for report in invalid:
+            with self.subTest(report=report), self.assertRaises(ValueError):
+                sync_rsync._read_worker_report(io.BytesIO(json.dumps(report).encode()))
 
     def test_namespace_failure_has_no_fallback_and_reports_requirement(self):
         for failure in (FileNotFoundError('unshare missing'), PermissionError('not permitted'), _FakeProcess(1, stderr='unshare: unshare failed: Operation not permitted')):
