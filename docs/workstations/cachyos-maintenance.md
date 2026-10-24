@@ -229,7 +229,11 @@ The entry is `~/.config/autostart/basaltwater-cachyos-t3.desktop`, or
 `$XDG_CONFIG_HOME/autostart/basaltwater-cachyos-t3.desktop` for an absolute XDG
 override. It uses the package-owned `/usr/bin/t3code` and KDE's normal login
 environment. No user service or restart loop is added for the desktop app;
-quitting it leaves it stopped for that session. Setup retains a running app.
+quitting it leaves it stopped for that session. Setup/refresh queues a detached
+worker to gracefully close and relaunch a running app after selected skills and
+the setup result are saved. A stopped app stays stopped. Inspect the printed
+worker unit with `journalctl --user -u UNIT` on failure, then verify a provider
+turn and terminal; queue acceptance alone does not establish readiness.
 The entry's `TryExec` prevents login launch attempts after package removal.
 
 Use **System Settings → Autostart** to disable T3 startup. The doctor reports a
@@ -401,8 +405,10 @@ Desktop mode disables only the Basaltwater-owned user service and retains its
 unit, runtime, and data. Web mode stages and starts the managed service again;
 after successful activation it removes the managed desktop autostart entry.
 A failed web activation keeps desktop login startup. The desktop package stays
-installed. Omitting both flags leaves the current mode alone. Setup never kills
-the desktop app or takes over an upstream service.
+installed. Omitting both flags leaves the current mode alone. Switching to web
+mode requires you to quit the desktop first; desktop setup queues its graceful
+reload when already running. Setup never force-kills the app or takes over an
+upstream service.
 
 The web service uses `~/.local/share/basaltwater/cachyos-t3/data` explicitly,
 separate from the desktop's default `~/.t3`. Switching modes does not copy,

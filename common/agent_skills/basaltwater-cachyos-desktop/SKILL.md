@@ -65,7 +65,8 @@ after monitor/scaling/resolution changes. Review captures before sharing unrelat
 content. Stop native control when finished, preserving KDE and applications.
 For missing/stuck physical keys, stop control and read the native recovery steps.
 
-For web consumers, follow session browser policy and `basaltwater-browser-testing`.
+For web consumers, follow session browser policy and the installed browser skill
+when available (`basaltwater-t3-preview-testing` for T3 on CachyOS).
 Use the permitted available browser after confirmed T3 unavailability; preserve
 profiles and existing sessions. Report browser, origin and observed checks;
 editor previews and desktop pixels do not establish DOM/network or game fidelity.

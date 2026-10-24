@@ -393,7 +393,8 @@ A failed query, failed installation, or update that leaves the package version
 unchanged stops setup before disabling the working web service; setup does not
 retry through another helper. Setup checks package metadata and executable
 ownership without launching Electron. Quit/reopen an already-running T3 when
-convenient to load the updated embedded server. `cachy-update` may skip AUR
+updating its package directly. Setup/refresh instead queues a graceful reload
+after installing selected skills and saving its result. `cachy-update` may skip AUR
 checks when only Shelly is installed; use `shelly list-updates aur` for routine
 checks. See [desktop updates](cachyos-maintenance.md#t3-desktop-updates) and
 [Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/).
@@ -419,8 +420,9 @@ Desktop setup enables T3 Code at KDE login using a managed
 [freedesktop autostart entry](https://specifications.freedesktop.org/autostart/latest/)
 at `~/.config/autostart/basaltwater-cachyos-t3.desktop` (or under an absolute
 `$XDG_CONFIG_HOME`). It launches the native `/usr/bin/t3code` only after login
-and skips startup if that executable has been uninstalled. Setup itself does
-not launch another app. A normal quit leaves T3 stopped until the next login.
+and skips startup if that executable has been uninstalled. Setup leaves a stopped
+app stopped and queues a graceful reload for a running app. A normal quit leaves
+T3 stopped until the next login.
 Manage startup in KDE's **System Settings → Autostart**; a desktop setup or
 refresh re-enables the managed entry. Custom files or symlinks at its destination
 are preserved and reported before package changes. Switching successfully to
@@ -672,9 +674,12 @@ place. Deferred cleanup can run on a later setup invocation.
 ## Skills, diagnostics, and boundaries
 
 Codex and OpenCode receive the CachyOS workstation, workspace, desktop, shared
-subagent, and (when T3 is selected) T3 skills under `~/.agents/skills`. Claude
+subagent, and (when T3 is selected or retained) T3 and T3-preview browser skills
+under `~/.agents/skills`. Claude
 receives the selected catalog under `~/.claude/skills`. Standard VM, XRDP, gateway,
-browser-automation, and Godot-web skills are not installed. Personal skills are
+managed-Playwright, and Godot-web skills are not installed. The preview skill uses
+only tools exposed to the session and existing project/browser alternatives.
+Personal skills are
 preserved. The desktop skill covers autonomous Blender/Inkscape and other
 application edits, scripting, editable sources and verified exports. The manifest
 uses direct native launch commands instead of Debian XRDP commands.
@@ -706,7 +711,12 @@ An inactive managed T3 service is expected in desktop mode:
 ```fish
 basaltw local cachyos-doctor
 basaltw local cachyos-doctor --json
+basaltw local cachyos-doctor --attention --json
 ```
+
+`--attention` keeps every deferred/failed observation and counts omitted
+successes; omit it when successful checks or versions matter. See
+[read-only diagnostics](cachyos-maintenance.md#read-only-diagnostics).
 
 It does not install, launch, capture, open listeners, or write a report. A
 successful report proves only the observations it lists; it does not prove GPU

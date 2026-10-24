@@ -7,155 +7,41 @@ metadata:
 
 # Local T3 Code and T3 Connect
 
-## Agent workflows
+Use the existing desktop account and selected T3 mode. Inspect the selected
+provider's readiness; missing optional providers do not justify installing them.
+Verify an authenticated provider turn and terminal in T3; HTTP reachability,
+package presence, or an accepted refresh job does not establish readiness.
 
-Stable T3 0.1.0 supports native delegation, persistent queues, forks, and
-scheduling. Use the installed `basaltwater-subagents` skill's T3 orchestration
-reference for live provider/model discovery, child-task lifecycle, worktree
-binding, PR watches, and review guides. Its T3 scheduling reference covers native
-automations; this workstation profile does not provision the independent
-Basaltwater task worker. Select one owner for each schedule and worktree; a shell
-directory change does not rebind T3.
-These shared workflows also apply to desktop mode; the VM service commands do
-not. Inspect the selected provider's readiness instead of installing unselected
-providers to silence optional checks.
+## Choose the mode
 
-## Desktop mode
+Read only the relevant reference before installation, updates, or repair:
 
-`basaltw setup agent_cachyos localhost --t3code-desktop` installs missing
-`t3code-bin` through current CachyOS's default Shelly CLI
-(`shelly install aur t3code-bin`). For installed packages, setup/refresh checks
-`shelly list-updates aur --json` and runs `shelly update aur t3code-bin` only
-when an update is available; it does not rebuild current packages. Only when
-Shelly is absent does setup try paru, then yay. Preserve package-review prompts
-and Shelly's configured AUR policy; do not switch helpers to bypass a failure.
-Every desktop setup requires a helper. Failed queries, failed updates, and
-updates leaving the installed version unchanged stop setup before startup
-changes. `cachy-update` may skip AUR checks with only Shelly installed; use
-`shelly list-updates aur` for routine checks. Install selected skills before
-refreshing T3. Desktop setup/refresh queues a detached user worker: after a
-short delay it gracefully sends SIGTERM to a running same-user `t3code-bin`,
-waits for exit, and relaunches the packaged app with its original environment
-and arguments. It never force-kills. If the app was stopped, it stays stopped;
-KDE login autostart remains enabled. The worker reloads provider configuration
-and skills while preserving `~/.t3` data and credentials. Queue acceptance does
-not prove readiness; on failure inspect the printed unit with
-`journalctl --user -u UNIT`, then verify an authenticated provider turn and
-terminal. Saved threads continue on the next message; automatic continuation
-of interrupted turns follows T3's existing **Continue threads after server
-update** setting, and queued turns still need user Resume.
-Setup disables the Basaltwater web service;
-an inactive service is expected in this mode. Setup retains all application data.
-The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
-the selection. Do not launch another backend to repair a working desktop.
+| Selected environment | Workflow |
+| --- | --- |
+| Packaged `t3code-bin`, default data at `~/.t3` | [Desktop setup, AUR updates, login startup and graceful reload](references/desktop.md) |
+| `basaltwater-cachyos-t3.service`, data at `~/.local/share/basaltwater/cachyos-t3/data` | [Web service, pairing, Connect and activation recovery](references/web-service.md) |
 
-Desktop setup enables KDE login startup through the managed
-`~/.config/autostart/basaltwater-cachyos-t3.desktop` entry (or absolute
-`$XDG_CONFIG_HOME`). It uses `/usr/bin/t3code` and skips an absent executable.
-Normal quit leaves it stopped for this session. KDE's Autostart settings can
-disable it; desktop setup/refresh re-enables it. Custom entries and symlinks at
-the managed destination are refused before changes. Doctor checks startup
-configuration and executable presence without launching Electron; verify a
-provider thread and terminal after setup's worker runs or at a later login.
+Desktop mode disables the managed web service; an inactive service is expected.
+Use desktop Settings → Connections for desktop pairing/Connect. The web CLI
+operates on separate data. Keep history, credentials and package ownership intact;
+do not start another backend to repair a working desktop.
 
-Use the app's provider settings, local provider login, and absolute provider
-binary paths if KDE's PATH differs from the shell. Verify a thread and terminal
-in the app. Use desktop Settings → Connections for pairing or T3 Connect when
-supported by that version. The web CLI commands below configure a separate
-environment, not the desktop's default `~/.t3` data.
+Finish active work before setup/refresh: desktop setup queues a graceful app
+reload; web setup restarts its service. To switch desktop → web, quit the desktop
+to free its port, then use `--web-interface t3code`. To switch back, select
+`--t3code-desktop`. These flags are mutually exclusive. Omitting them leaves the
+mode alone; switching does not migrate data. Successful web activation removes
+managed desktop autostart; failed activation preserves it.
 
-The desktop flag and `--web-interface t3code` are mutually exclusive. To switch
-to web mode, finish active work, quit the desktop to free its port, and rerun
-setup with the web flag. Successful web activation removes the managed desktop
-autostart entry; failed activation preserves it. To switch back, rerun with the
-desktop flag. Omission does not change the selected mode. Never uninstall the desktop package, kill
-its processes, or delete history as part of switching.
+## Agent and browser workflows
 
-## Managed web service
+Follow live session orchestration instructions. Use `basaltwater-subagents` for
+provider/model selection, child tasks, worktree binding and native schedules.
+A shell directory change does not rebind T3. This profile does not provision
+the independent Basaltwater task worker; keep one owner per schedule/worktree.
 
-The `agent_cachyos --web-interface t3code` setup uses the current desktop account
-and a dedicated user unit, `basaltwater-cachyos-t3.service`. It binds to
-`127.0.0.1:3773` by default, or to the explicitly selected private IPv4 address
-and port. It runs with the user session; setup does not enable lingering.
-Firewall management requires an explicit access flag; see the workstation skill.
-
-Inspect service state and recent logs as the user:
-
-```fish
-systemctl --user status basaltwater-cachyos-t3.service --no-pager
-journalctl --user -u basaltwater-cachyos-t3.service -n 100 --no-pager
-```
-
-Managed web-service output is filtered before systemd records it, including
-headless startup tokens, pairing URLs, and QR rows. The explicit `t3 pair`
-command still returns a one-time credential to the local caller; do not save
-its output in shared logs or support reports. The filter does not sanitize every
-application or provider message; review and redact log excerpts before sharing.
-
-The runtime is installed under `~/.local/share/basaltwater/cachyos-t3`, separate
-from an existing T3 desktop installation. Its data is explicitly under that
-runtime root's `data` directory. Older units used `~/.t3`; rerunning web setup
-starts a separate environment and leaves the old data untouched. There is no
-automatic history or credential migration. Provider CLIs must work in this account
-and be authenticated through their normal local login. If provider discovery
-fails, inspect the unit's PATH and the provider binary path in T3 settings.
-
-To connect a browser or desktop client, run:
-
-```fish
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
-```
-
-Open the printed `Pairing URL` in the browser, or paste it into the desktop
-client. Opening the bare localhost address redirects to T3's pairing page. This
-profile binds to loopback by default. Pass `--web-interface-host` a private
-IPv4 address during setup to allow clients on the trusted LAN. Add `--lan-access`
-or `--access-source` to restrict UFW access, and arrange address stability.
-
-For cloud access through T3 Connect, keep the default loopback bind and run the
-following as the desktop user. Complete the browser sign-in, restart the
-managed service, and check the saved link:
-
-```fish
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
-systemctl --user restart basaltwater-cachyos-t3.service
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
-```
-
-T3 Connect is separate from direct LAN pairing and does not require port
-forwarding. Use `connect link` here instead of `connect`: the latter may offer
-to install a second upstream `t3code.service`. Use `connect unlink` or
-`connect logout` to disable it. The service follows the user session unless the
-user deliberately enables systemd lingering.
-
-Rerunning setup with T3 selected stages the latest runtime, validates its CLI,
-native PTY shell, and unit, then stops and starts the service after selected
-skills install. Saved threads can continue on a new message. Automatic
-continuation of interrupted active turns depends on T3's existing **Continue
-threads after server update** setting; queued turns still need user Resume, and
-approvals may not survive. Finish active work first and retain the chosen host,
-port, and workspace options on the command. Use
-setup for updates; direct npm installs into the managed root bypass staging.
-The stable `bin/t3` link remains the entry point for pairing and Connect.
-
-Failed activation restores the previous runtime and unit, but does not reverse
-application database migrations. Incomplete recovery retains private snapshots
-in the runtime root's `.activation` directory; resolve the service error and
-rerun setup to retry recovery. Preserve that directory until recovery completes.
-If the unit or CLI link was changed or removed outside setup, recovery stops and
-leaves the snapshots for manual inspection.
-The current and previous managed releases are retained after successful updates.
-HTTP UI reachability is not proof of a working provider thread; unknown HTTP
-routes can return the frontend HTML. Test a thread and terminal in the client.
-
-To stop the service persistently, use
-`systemctl --user disable --now basaltwater-cachyos-t3.service`.
-Omitting the web-interface flag on a later setup does not uninstall the service.
-
-This profile does not install the VM gateway, VM device-pairing helpers, or
-managed Playwright. Selected native applications install KDE automation
-prerequisites; use `basaltwater-cachyos-desktop` for task-scoped portal consent
-and control. T3 setup does not start desktop control. Do not use VM-specific T3
-repair/update commands for this service. Read the [CachyOS maintenance reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md)
-for deliberate runtime updates (also in the installed checkout at
-`~/.local/share/basaltwater/docs/workstations/cachyos-maintenance.md`).
+Use `basaltwater-t3-preview-testing` for browser checks and the active session's
+preview policy. This profile installs neither managed Playwright nor the VM
+gateway/device-pairing helpers. Use `basaltwater-cachyos-desktop` for task-scoped
+portal consent and native control; T3 setup does not start desktop control.
+Use the CachyOS references above for service management.

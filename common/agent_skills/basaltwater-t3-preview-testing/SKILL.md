@@ -7,7 +7,7 @@ metadata:
 
 # T3 browser testing
 
-This VM has T3 guidance, without managed Playwright. Use only browser tools and
+This setup supplies T3 guidance, without managed Playwright. Use only browser tools and
 desktop/project alternatives actually available under the active session policy.
 
 When T3-first policy applies, call `preview_status`, then `preview_open` once

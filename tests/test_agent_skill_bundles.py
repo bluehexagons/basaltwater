@@ -127,6 +127,63 @@ class AgentSkillBundleTests(unittest.TestCase):
         self.assertEqual((self.destination / "SKILL.md").read_bytes(), self.entrypoint)
         self.assertEqual(personal.read_bytes(), b"personal")
 
+    def test_interrupted_existing_reference_upgrade_is_not_ready_until_retry(self) -> None:
+        reference = self.resource("references/update.md", b"old reference")
+        self.install()
+        updated_entrypoint = self.entrypoint + b"New guidance\n"
+        (self.source / "SKILL.md").write_bytes(updated_entrypoint)
+        reference.write_bytes(b"new reference")
+        write = bundles._write
+
+        def interrupt(path, *args):
+            if path.name == "update.md":
+                raise OSError("Interrupted reference update")
+            return write(path, *args)
+
+        with patch.object(bundles, "_write", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "Interrupted"):
+                self.install()
+        self.assertEqual((self.destination / "SKILL.md").read_bytes(), updated_entrypoint)
+        self.assertEqual((self.destination / "references/update.md").read_bytes(), b"old reference")
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertTrue(self.install())
+        self.assertEqual((self.destination / "references/update.md").read_bytes(), b"new reference")
+        self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertFalse(self.install())
+
+    def test_interruption_before_completion_record_is_retryable_without_resource_changes(self) -> None:
+        self.install()
+        (self.source / "SKILL.md").write_bytes(self.entrypoint + b"Updated guidance\n")
+        write_inventory = bundles.write_json_atomic
+
+        def interrupt(path, value, **kwargs):
+            if value.get("complete"):
+                raise OSError("Interrupted completion record")
+            return write_inventory(path, value, **kwargs)
+
+        with patch.object(bundles, "write_json_atomic", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "Interrupted"):
+                self.install()
+        self.assertEqual((self.destination / "SKILL.md").read_bytes(), (self.source / "SKILL.md").read_bytes())
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertTrue(self.install())
+        self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertFalse(self.install())
+
+    def test_legacy_interruption_after_file_updates_repairs_stale_inventory(self) -> None:
+        reference = self.resource("references/update.md", b"old reference")
+        self.install()
+        inventory = self.destination / ".basaltwater-files.json"
+        value = json.loads(inventory.read_text())
+        value.pop("complete")
+        inventory.write_text(json.dumps(value))
+        reference.write_bytes(b"new reference")
+        (self.destination / "references/update.md").write_bytes(b"new reference")
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertTrue(self.install())
+        self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertFalse(self.install())
+
     def test_modified_tracked_resource_is_not_overwritten(self) -> None:
         self.resource("references/update.md", b"managed")
         self.install()

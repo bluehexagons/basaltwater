@@ -123,6 +123,21 @@ class SkillCatalogTests(unittest.TestCase):
             install_skill_bundle(self.source, destination, os.getuid(), os.getgid())
         self.assertEqual(self.status(), "current")
 
+    def test_unfinished_refresh_is_incomplete_even_when_all_files_match(self) -> None:
+        destination = self.install()
+        inventory = destination / ".basaltwater-files.json"
+        value = json.loads(inventory.read_text())
+        value["complete"] = False
+        inventory.write_text(json.dumps(value))
+        self.assertEqual(self.status(), "incomplete")
+        self.assertEqual(self.footprint()["status"], "complete")
+        value["complete"] = "false"
+        inventory.write_text(json.dumps(value))
+        self.assertEqual(self.status(), "unsafe")
+        value.pop("complete")
+        inventory.write_text(json.dumps(value))
+        self.assertEqual(self.status(), "current")  # Older inventories lack this field.
+
     def test_same_name_personal_override_is_preserved_and_reported(self) -> None:
         destination = self.install()
         (destination / "SKILL.md").write_text("Personal override\n")

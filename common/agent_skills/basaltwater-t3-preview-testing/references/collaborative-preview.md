@@ -1,6 +1,6 @@
 # T3 collaborative preview testing
 
-This VM has T3 Code preview guidance but no managed Playwright fallback. T3
+This setup supplies T3 Code preview guidance but no managed Playwright fallback. T3
 v0.1.2 prefers its server browser, which uses the server's routes and certificate
 trust and can automate without a viewing client. A desktop-hosted preview uses
 the desktop client's routes and trust instead. Identify the selected runtime
@@ -36,9 +36,11 @@ do not classify that status as preview unavailability.
 
 When fallback is permitted, continue automatically with a ready configured
 alternative; do not wait for the user to reopen T3 or restart its service.
-Discover applications with `basaltw agent manifest REPOSITORY --json`. If a
-desktop skill is installed, read it and check desktop status/doctor before using
-its managed launch, scoped inspection, and input commands. Honor human pause and
+Discover browser capabilities with `basaltw agent manifest REPOSITORY
+--capability browser --json`. If a desktop skill is installed, read it before
+launch, capture, or input. CachyOS uses `basaltwater-cachyos-desktop` and
+`basaltw desktop --native`; Debian uses `basaltwater-desktop` and the XRDP
+commands. Check the matching status/doctor. Honor human pause and
 existing browser profiles. Alternatively use a project's existing Playwright
 dependencies and documented test command. Do not install Playwright ad hoc,
 bind a service to `0.0.0.0`, or widen firewall policy.
@@ -122,15 +124,12 @@ renderer works even though T3 did not mount its UI. Treat that combination as
 stale preview-presentation state rather than an application, route, or TLS
 failure, and do not create replacement tabs.
 
-Restarting only the desktop client may preserve VM-side preview state. When
-collaborative coverage is required and the user explicitly accepts interruption
-of every active T3 session, restart the managed server as the target user:
-
-```bash
-systemctl --user restart t3code.service
-```
-
-Reconnect the client and try status/open once. Never restart the service
+Restarting only a desktop client may preserve remote server preview state.
+When collaborative coverage requires a restart and the user explicitly accepts
+the interruption, follow the installed platform T3 skill. Debian's managed unit
+is `t3code.service`; CachyOS web mode uses `basaltwater-cachyos-t3.service`, and
+CachyOS desktop mode requires reopening the packaged app. Keep those environments
+distinct. Reconnect the client and try status/open once. Never restart T3
 silently or for ordinary preview absence. Without approval, leave the affected
 collaborative operation skipped and continue in a configured alternative when
 policy permits; a full VM reboot is not the first recovery step.

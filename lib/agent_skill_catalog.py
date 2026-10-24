@@ -97,7 +97,9 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                 else:
                     entrypoint_size = _measure(entrypoint)
                     files = _source_bundle(source)
-                    recorded = _inventory(destination, uid)
+                    recorded, complete = _inventory(destination, uid)
+                    if not complete:
+                        status = "incomplete"
                     inventory = destination / _INVENTORY
                     if inventory.exists() and inventory.stat().st_mode & 0o022:
                         raise RuntimeError(f"Unsafe managed agent skill inventory: {inventory}")

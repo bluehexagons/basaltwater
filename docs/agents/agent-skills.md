@@ -119,8 +119,10 @@ The limited [`agent_cachyos` profile](../workstations/cachyos.md) has a separate
 `basaltwater-cachyos-desktop`, the shared `basaltwater-project-development`,
 `basaltwater-project-adoption`, `basaltwater-frontend-design`, and
 `basaltwater-subagents`, plus optional
-`basaltwater-cachyos-t3code`.
-It does not receive the VM or browser skills below.
+`basaltwater-cachyos-t3code` and `basaltwater-t3-preview-testing` for selected
+or existing managed T3 environments. The browser skill describes session preview
+tools and existing alternatives, without claiming managed Playwright is installed.
+The remaining VM/browser skills below are excluded.
 Its installer reconciles known managed VM skills while preserving personal
 skills. See the [CachyOS guide](../workstations/cachyos.md#skills-diagnostics-and-boundaries) for
 scope and reruns.
@@ -135,11 +137,14 @@ scope and reruns.
 | `basaltwater-subagents` | Bounded delegation, complete local worktree lifecycle, and cost-aware project model learning on either platform |
 | `basaltwater-cachyos-desktop` | Task-scoped KDE portal/AT-SPI control, native Blender and media workflows, reusable grants, and physical-key recovery |
 | `basaltwater-cachyos-t3code` | T3 desktop or managed web mode, switching, pairing, and T3 Connect |
+| `basaltwater-t3-preview-testing` | T3 preview checks and available browser alternatives when a T3 environment is selected or retained |
 
 The desktop skill is always included in this catalog; installing its guidance
 does not start control or establish application readiness. Its shipped Blender,
 media, and native-control references explain prerequisite selection, owner
 consent, saved-grant restoration, pause/revocation, and workflow verification.
+The CachyOS T3 entrypoint routes desktop and web-service procedures to separate
+references, so routine desktop work need not load web activation and pairing steps.
 
 A Debian agent-enabled setup that selects Codex, OpenCode, or Claude Code
 receives these base skills:
@@ -265,7 +270,11 @@ Each file replacement is atomic; the entire catalog is not a single transaction,
 so rerun setup after correcting a reported collision. New resource ownership is
 recorded before writing files, and previous digests remain until refresh finishes.
 An interrupted installation can therefore be retried without treating its new
-resources as personal files; missing recorded resources fail readiness checks.
+resources as personal files. An explicit completion flag is cleared before any
+bundle files change and set only after the refresh finishes. Interrupted bundles
+fail readiness and report `incomplete` in the catalog even when their files
+still match the old digests or already match the new source. Older inventories
+without this flag remain readable; missing recorded resources fail readiness.
 Readiness verifies recorded resources are present, unchanged, user-owned, and
 not writable by other users; older entrypoint-only installations remain readable.
 

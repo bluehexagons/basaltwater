@@ -92,7 +92,10 @@ def _digest(content: bytes) -> str:
 def skill_resources_ready(directory: Path, uid: int) -> bool:
     """Check recorded bundle resources while accepting older entrypoint-only skills."""
     try:
-        for name, digest in _inventory(directory, uid).items():
+        recorded, complete = _inventory(directory, uid)
+        if not complete:
+            return False
+        for name, digest in recorded.items():
             path = directory / name
             content = _read(path, uid)
             if content is None or _digest(content) != digest or path.stat().st_mode & 0o022:
@@ -102,16 +105,17 @@ def skill_resources_ready(directory: Path, uid: int) -> bool:
         return False
 
 
-def _inventory(directory: Path, uid: int) -> dict[str, str]:
+def _inventory(directory: Path, uid: int) -> tuple[dict[str, str], bool]:
     path = directory / _INVENTORY
     check_skill_path(path, uid)
     if not os.path.lexists(path):
-        return {}
+        return {}, True
     try:
         value = read_json_file(str(path))
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Invalid managed agent skill inventory: {path}") from exc
-    if not isinstance(value, dict) or value.get("version") != 1:
+    if (not isinstance(value, dict) or value.get("version") != 1
+            or type(value.get("complete", True)) is not bool):
         raise RuntimeError(f"Invalid managed agent skill inventory: {path}")
     files = value.get("files")
     if not isinstance(files, dict) or any(
@@ -120,7 +124,7 @@ def _inventory(directory: Path, uid: int) -> dict[str, str]:
         for name, digest in files.items()
     ):
         raise RuntimeError(f"Invalid managed agent skill inventory: {path}")
-    return files
+    return files, value.get("complete", True)
 
 
 def _source_bundle(source: Path) -> dict[str, tuple[bytes, int]]:
@@ -194,7 +198,7 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
     check_skill_path(directory, uid)
     if directory.exists() and not directory.is_dir():
         raise RuntimeError(f"Refusing unsafe agent skill directory: {directory}")
-    recorded = _inventory(directory, uid)
+    recorded, complete = _inventory(directory, uid)
     previous: dict[str, bytes | None] = {}
     for name, (content, _mode) in files.items():
         path = directory / name
@@ -218,17 +222,22 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
     for name in stale:
         _read(directory / name, uid)
     changed = ensure_skill_directory(directory, uid, gid)
-    # Claim only preflighted new resources before writing them. Keep existing
-    # digests until the refresh completes so an interrupted run can recognize
-    # both old contents and files already updated to the current source.
+    # Mark the bundle incomplete before publishing any files. Keep existing
+    # digests and claim preflighted new resources so retries recognize both old
+    # contents and files already updated to the current source.
+    inventory = {name: _digest(content) for name, (content, _mode) in files.items() if name != "SKILL.md"}
     claimed = {
         **recorded,
         **{name: _digest(content) for name, (content, _mode) in files.items()
            if name != "SKILL.md" and name not in recorded},
     }
-    if claimed != recorded:
-        write_json_atomic(str(directory / _INVENTORY), {"version": 1, "files": claimed}, uid=uid, gid=gid)
-        recorded = claimed
+    updating = not complete or changed or inventory != recorded or any(
+        previous[name] != content or stat.S_IMODE((directory / name).stat().st_mode) != mode
+        for name, (content, mode) in files.items()
+    )
+    if updating:
+        write_json_atomic(str(directory / _INVENTORY),
+                          {"version": 1, "complete": False, "files": claimed}, uid=uid, gid=gid)
         changed = True
     for name, (content, mode) in files.items():
         path = directory / name
@@ -244,9 +253,9 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
                 changed = True
             os.chown(path, uid, gid)
     changed = _remove_resources(directory, stale, uid) or changed
-    inventory = {name: _digest(content) for name, (content, _mode) in files.items() if name != "SKILL.md"}
-    if inventory != recorded or (inventory and not (directory / _INVENTORY).exists()):
-        write_json_atomic(str(directory / _INVENTORY), {"version": 1, "files": inventory}, uid=uid, gid=gid)
+    if updating:
+        write_json_atomic(str(directory / _INVENTORY),
+                          {"version": 1, "complete": True, "files": inventory}, uid=uid, gid=gid)
         changed = True
     inventory_path = directory / _INVENTORY
     if inventory_path.exists() and stat.S_IMODE(inventory_path.stat().st_mode) != 0o600:
@@ -262,7 +271,7 @@ def remove_skill_bundle(directory: Path, uid: int) -> bool:
     content = _read(entrypoint, uid)
     if content is None or _MARKER not in content:
         return False
-    recorded = _inventory(directory, uid)
+    recorded, _complete = _inventory(directory, uid)
     for name in recorded:
         _read(directory / name, uid)
     _remove_resources(directory, recorded, uid)

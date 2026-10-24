@@ -141,6 +141,43 @@ class ManagedAgentSkillTests(unittest.TestCase):
 
         self.assertEqual(source_names, installed_names)
 
+    def test_cachyos_reconciles_browser_guidance_for_selected_and_existing_t3(self) -> None:
+        preview = "basaltwater-t3-preview-testing"
+        cases = (
+            (["codex"], {"t3code_desktop": True}, False),
+            (["opencode"], {"web_interfaces": ["t3code"]}, False),
+            (["claude"], {}, True),
+            (["codex", "claude"], {"t3code_desktop": True}, False),
+            (["codex"], {}, False),
+        )
+        for tools, selection, existing_desktop in cases:
+            with self.subTest(tools=tools, selection=selection), tempfile.TemporaryDirectory() as home:
+                config = SetupConfig(host="localhost", username="agent", system_type="agent_cachyos",
+                                     agent_tools=tools, **selection)
+                if existing_desktop:
+                    marker = Path(home) / ".local/share/basaltwater/cachyos-t3/desktop-mode"
+                    marker.parent.mkdir(parents=True)
+                    marker.write_text("# Managed by basaltwater CachyOS setup\n")
+                with patch("common.agent_steps.pwd.getpwnam", return_value=self._account(home)), \
+                        patch("common.agent_steps.os.chown"), \
+                        patch.dict(os.environ, {"XDG_CONFIG_HOME": ""}), \
+                        patch("subprocess.run", side_effect=AssertionError("Skill delivery must be local")):
+                    install_managed_agent_skills("agent", tools, BROWSER_AGENT_SKILL_NAMES)
+                    install_cachyos_skills(config)
+                    install_cachyos_skills(config)
+                catalogs = (".agents", ".claude") if len(tools) == 2 else (
+                    ".claude" if tools == ["claude"] else ".agents",
+                )
+                expected = {preview} if selection or existing_desktop else set()
+                for catalog in catalogs:
+                    root = Path(home) / catalog / "skills"
+                    present = {name for name in BROWSER_AGENT_SKILL_NAMES if (root / name / "SKILL.md").exists()}
+                    self.assertEqual(present, expected)
+                    if expected:
+                        source = Path(AGENT_SKILLS_ROOT) / preview / "references/collaborative-preview.md"
+                        self.assertEqual((root / preview / "references/collaborative-preview.md").read_bytes(),
+                                         source.read_bytes())
+
     def test_wsl_delivers_complete_bundles_to_each_selected_linux_user_catalog(self) -> None:
         for tools, catalogs in ((["codex"], (".agents",)), (["opencode"], (".agents",)),
                                 (["claude"], (".claude",)), (["codex", "claude"], (".agents", ".claude"))):
