@@ -34,6 +34,14 @@ from lib.validators import validate_username
 
 RENAME_ROOT = "/var/lib/basaltwater/user-renames"
 SYSTEMD_DIR = "/etc/systemd/system"
+SYSTEMD_EXTRA_DIRS = (
+    "/etc/systemd/system.control", "/run/systemd/system.control",
+    "/run/systemd/transient", "/run/systemd/generator.early",
+    "/run/systemd/system", "/usr/local/lib/systemd/system",
+    "/usr/lib/systemd/system", "/lib/systemd/system",
+    "/etc/systemd/system.attached", "/run/systemd/system.attached",
+    "/run/systemd/generator", "/run/systemd/generator.late",
+)
 LINGER_DIR = "/var/lib/systemd/linger"
 CRON_DIR = "/var/spool/cron/crontabs"
 MAIL_DIRS = ("/var/mail", "/var/spool/mail")
@@ -152,6 +160,10 @@ def _marker_path(operation_id: str) -> str:
     return os.path.join(_operation_dir(operation_id), "operation.json")
 
 
+def _attempt_path(operation_id: str) -> str:
+    return os.path.join(_operation_dir(operation_id), "attempt.json")
+
+
 def _unit_name(operation_id: str) -> str:
     return f"basaltwater-user-rename-{operation_id}"
 
@@ -182,6 +194,9 @@ def _write_status(
         "status": status,
         "updated_at": time.time(),
     }
+    attempt = _read_json(_attempt_path(operation_id))
+    if attempt:
+        payload["attempt_id"] = attempt["attempt_id"]
     if error:
         payload["error"] = error[:1000]
     if details:
@@ -295,7 +310,7 @@ def _is_managed_unit(path: str, content: str, old_username: str, old_home: str) 
     if base in MANAGED_UNIT_NAMES or base.startswith(MANAGED_UNIT_PREFIXES):
         return True
     if _unit_kind(path) == "mount" and (
-        f"uid={old_username}" in content or f"gid={old_username}" in content
+        re.search(rf"\b[ug]id={re.escape(old_username)}(?=,|\s|$)", content)
     ) and "credentials=/root/.smb/credentials-" in content:
         return True
     return False
@@ -309,8 +324,9 @@ def _managed_unit_files(old_username: str, old_home: str) -> tuple[list[str], li
     except OSError:
         return managed, unmanaged
     managed_bases: set[str] = set()
+    managed_mount_bases: set[str] = set()
     for name in names:
-        if not name.endswith((".service", ".timer", ".path", ".mount")):
+        if not name.endswith((".service", ".timer", ".path", ".mount", ".automount", ".socket")):
             continue
         path = os.path.join(SYSTEMD_DIR, name)
         try:
@@ -320,15 +336,17 @@ def _managed_unit_files(old_username: str, old_home: str) -> tuple[list[str], li
                 content = file_obj.read()
         except (OSError, UnicodeDecodeError):
             continue
-        if old_username not in content and old_home not in content:
+        if not _identity_reference(content, old_username, old_home):
             continue
         if _is_managed_unit(path, content, old_username, old_home):
             managed.append(path)
             managed_bases.add(_unit_base(path))
+            if _unit_kind(path) == "mount":
+                managed_mount_bases.add(_unit_base(path))
         else:
             unmanaged.append(path)
 
-    # Timer and path companions normally contain no username themselves, but
+    # Timer, path and automount companions may contain no username themselves, but
     # they must be stopped with a user-scoped service during the identity
     # cutover. Include only companions of a positively identified managed
     # unit, preserving the allowlist boundary above.
@@ -337,7 +355,10 @@ def _managed_unit_files(old_username: str, old_home: str) -> tuple[list[str], li
         path = os.path.join(SYSTEMD_DIR, name)
         if (
             _unit_base(path) not in managed_bases
-            or _unit_kind(path) not in {"timer", "path"}
+            or not (
+                _unit_kind(path) in {"timer", "path"}
+                or (_unit_kind(path) == "automount" and _unit_base(path) in managed_mount_bases)
+            )
             or path in managed_paths
             or os.path.islink(path)
             or not os.path.isfile(path)
@@ -345,7 +366,66 @@ def _managed_unit_files(old_username: str, old_home: str) -> tuple[list[str], li
             continue
         managed.append(path)
         managed_paths.add(path)
+    unmanaged = [path for path in unmanaged if path not in managed_paths]
     return sorted(managed), sorted(unmanaged)
+
+
+def _unsupported_systemd_references(old_username: str, old_home: str) -> list[str]:
+    """Reject identity references outside the local managed fragment allowlist.
+
+    Drop-ins (including type-wide ones) can override an otherwise safe fragment.
+    Conservatively inspect all supported system unit load roots rather than
+    guessing how to migrate arbitrary effective systemd configuration.
+    """
+
+    references: set[str] = set()
+    for root in dict.fromkeys((SYSTEMD_DIR, *SYSTEMD_EXTRA_DIRS)):
+        if not os.path.isdir(root):
+            continue
+        try:
+            names = os.listdir(root)
+            paths = []
+            for name in names:
+                path = os.path.join(root, name)
+                if name.endswith(".d") and os.path.isdir(path):
+                    paths.extend(
+                        os.path.join(path, child) for child in os.listdir(path)
+                        if child.endswith(".conf")
+                    )
+                elif (root != SYSTEMD_DIR or os.path.islink(path)) and name.endswith(
+                    (".service", ".timer", ".path", ".mount", ".automount", ".socket")
+                ):
+                    paths.append(path)
+            for path in paths:
+                if not os.path.isfile(path):
+                    continue
+                with open(path, encoding="utf-8") as file_obj:
+                    if _identity_reference(file_obj.read(), old_username, old_home):
+                        references.add(path)
+        except (OSError, UnicodeDecodeError) as exc:
+            raise RenameError(f"Could not inspect systemd configuration in {root}: {exc}") from exc
+    return sorted(references)
+
+
+def _reject_mount_moves(
+    paths: Iterable[str], old_username: str, new_username: str, old_home: str, new_home: str,
+) -> None:
+    for path in paths:
+        if _unit_kind(path) != "mount":
+            continue
+        with open(path, encoding="utf-8") as file_obj:
+            content = file_obj.read()
+        for match in re.finditer(r"^\s*Where\s*=\s*(.*?)\s*$", content, re.MULTILINE):
+            # Generated mount values double backslashes and percent signs.
+            where = match.group(1).replace("\\\\", "\\").replace("%%", "%")
+            if _rewrite_text(where, [
+                (old_home, new_home), (new_home, new_home), (old_username, new_username),
+            ]) != where:
+                raise RenameError(
+                    f"Managed SMB mountpoint would change during rename: {path}. "
+                    "Use --keep-home for a home-local mount, or remove and recreate the mount/automount pair "
+                    "outside the home before renaming."
+                )
 
 
 def _unmanaged_sudoers_references(old_username: str) -> list[str]:
@@ -476,6 +556,8 @@ def _preflight(manifest: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         primary_group = ""
     managed_units, unmanaged_units = _managed_unit_files(old_username, old_home)
+    unmanaged_units.extend(_unsupported_systemd_references(old_username, old_home))
+    _reject_mount_moves(managed_units, old_username, new_username, old_home, new_home)
     if unmanaged_units:
         raise RenameError(
             "Unmanaged systemd references to the old account: "
@@ -570,6 +652,28 @@ def _preflight(manifest: dict[str, Any]) -> dict[str, Any]:
         "setup_config_present": setup is not None,
         "linger_enabled": os.path.isfile(linger_path),
     }
+
+
+def _revalidate_pre_cutover(manifest: dict[str, Any]) -> None:
+    """Check current safety without replacing durable pre-quiesce facts."""
+
+    current = _preflight(manifest)
+    for key, value in current.items():
+        if key in {"old_shell", "managed_units"}:
+            continue
+        if key not in manifest or manifest[key] != value:
+            raise RenameError(f"Recorded rename preflight no longer matches: {key}")
+    if not isinstance(manifest.get("old_shell"), str):
+        raise RenameError("Recorded original login shell is missing")
+    if current["old_shell"] not in {manifest["old_shell"], "/usr/sbin/nologin"}:
+        raise RenameError("Account shell changed outside the rename operation")
+    recorded_units = [
+        (item["path"], item["unit"], item["kind"])
+        for item in manifest.get("managed_units", [])
+    ]
+    current_units = [(item["path"], item["unit"], item["kind"]) for item in current["managed_units"]]
+    if recorded_units != current_units:
+        raise RenameError("Managed unit inventory changed since the original preflight")
 
 
 def _processes_for_uid(uid: int) -> list[int]:
@@ -807,6 +911,8 @@ def _rewrite_subordinate_id_files(old_username: str, new_username: str) -> None:
     """Move rootless-container subordinate ID ownership to the new name."""
 
     for path in ("/etc/subuid", "/etc/subgid"):
+        if os.path.islink(path):
+            raise RenameError(f"Unsafe subordinate ID file: {path}")
         try:
             with open(path, encoding="utf-8") as file_obj:
                 lines = file_obj.readlines()
@@ -821,8 +927,11 @@ def _rewrite_subordinate_id_files(old_username: str, new_username: str) -> None:
             for line in lines
         ]
         if updated != lines:
-            if not _replace_in_file(path, [(old_username + ":", new_username + ":")]):
-                raise RenameError(f"Could not rewrite subordinate ID file: {path}")
+            metadata = os.stat(path, follow_symlinks=False)
+            write_text_atomic(
+                path, "".join(updated), mode=stat.S_IMODE(metadata.st_mode),
+                uid=metadata.st_uid, gid=metadata.st_gid,
+            )
 
 
 def _verify_subordinate_id_files(old_username: str) -> None:
@@ -833,6 +942,29 @@ def _verify_subordinate_id_files(old_username: str) -> None:
                     raise RenameError(f"{path} still references the old account")
         except FileNotFoundError:
             continue
+
+
+def _rewrite_text(text: str, replacements: list[tuple[str, str]]) -> str:
+    """Replace complete login tokens or home path prefixes in one pass.
+
+    Destination paths are explicit protected alternatives, so recovery can
+    safely revisit a file whose destination contains the original login.
+    """
+
+    replacements_by_old = {old: new for old, new in replacements if old}
+    if not replacements_by_old:
+        return text
+    alternatives = []
+    for old in sorted(replacements_by_old, key=len, reverse=True):
+        if old.startswith("/"):
+            alternatives.append(r"(?<![A-Za-z0-9_./-])" + re.escape(old) + r"(?![A-Za-z0-9_.-])")
+        else:
+            alternatives.append(r"(?<![A-Za-z0-9_.-])" + re.escape(old) + r"(?![A-Za-z0-9_.-])")
+    return re.sub("|".join(alternatives), lambda match: replacements_by_old[match.group(0)], text)
+
+
+def _identity_reference(content: str, username: str, home: str) -> bool:
+    return _rewrite_text(content, [(username, ""), (home, "")]) != content
 
 
 def _replace_in_file(path: str, replacements: list[tuple[str, str]]) -> bool:
@@ -846,13 +978,7 @@ def _replace_in_file(path: str, replacements: list[tuple[str, str]]) -> bool:
         text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return False
-    replacements_by_old = {old: new for old, new in replacements if old}
-    if not replacements_by_old:
-        return False
-    pattern = re.compile(
-        "|".join(re.escape(old) for old in sorted(replacements_by_old, key=len, reverse=True))
-    )
-    updated = pattern.sub(lambda match: replacements_by_old[match.group(0)], text)
+    updated = _rewrite_text(text, replacements)
     if updated == text:
         return False
     metadata = os.stat(path, follow_symlinks=False)
@@ -865,14 +991,18 @@ def _replace_in_file(path: str, replacements: list[tuple[str, str]]) -> bool:
     return True
 
 
+def _unit_replacements(manifest: dict[str, Any], old_home: str, new_home: str) -> list[tuple[str, str]]:
+    return [
+        (old_home, new_home), (new_home, new_home),
+        (manifest["old_username"], manifest["new_username"]),
+        *_managed_credential_paths(manifest),
+    ]
+
+
 def _rewrite_managed_units(manifest: dict[str, Any], old_home: str, new_home: str) -> list[str]:
     # Match the destination home as a whole before the username replacement so
     # a resumed migration does not rewrite ``olduser`` inside ``/srv/olduser-data``.
-    replacements = [
-        (old_home, new_home),
-        (new_home, new_home),
-        (manifest["old_username"], manifest["new_username"]),
-    ]
+    replacements = _unit_replacements(manifest, old_home, new_home)
     changed: list[str] = []
     for item in manifest.get("managed_units", []):
         path = item.get("path")
@@ -902,15 +1032,24 @@ def _managed_credential_paths(manifest: dict[str, Any]) -> list[tuple[str, str]]
         credential_pattern = rf"credentials={re.escape(SMB_CREDENTIAL_DIR)}/([^\s,]+)"
         for match in re.finditer(credential_pattern, content):
             name = match.group(1)
-            if old_username not in name:
-                continue
             if "/" in name or name in {".", ".."}:
                 raise RenameError("Unsafe SMB credential path in managed mount unit")
-            old_path = os.path.join(SMB_CREDENTIAL_DIR, name)
-            new_path = os.path.join(
-                SMB_CREDENTIAL_DIR,
-                name.replace(old_username, new_username),
+            # systemd-escaped path components are separated by hyphens. Match
+            # complete components, protecting the destination on a retry.
+            pattern = re.compile(
+                r"(?<![A-Za-z0-9_.])(?:"
+                + "|".join(re.escape(value) for value in sorted(
+                    {old_username, new_username}, key=len, reverse=True
+                )) + r")(?![A-Za-z0-9_.])"
             )
+            updated_name = pattern.sub(
+                lambda match: new_username if match.group(0) == old_username else match.group(0),
+                name,
+            )
+            if name == updated_name:
+                continue
+            old_path = os.path.join(SMB_CREDENTIAL_DIR, name)
+            new_path = os.path.join(SMB_CREDENTIAL_DIR, updated_name)
             rename = (old_path, new_path)
             if rename not in seen:
                 seen.add(rename)
@@ -989,7 +1128,7 @@ def _rewrite_managed_home_files(old_home: str, new_home: str) -> list[str]:
 def _verify_managed_rewrites(manifest: dict[str, Any], old_home: str) -> None:
     """Ensure managed unit files no longer contain stale identity references."""
 
-    old_username = manifest["old_username"]
+    replacements = _unit_replacements(manifest, old_home, manifest["new_home"])
     for item in manifest.get("managed_units", []):
         path = item.get("path")
         if not isinstance(path, str):
@@ -999,8 +1138,7 @@ def _verify_managed_rewrites(manifest: dict[str, Any], old_home: str) -> None:
                 content = file_obj.read()
         except (OSError, UnicodeDecodeError) as exc:
             raise RenameError(f"Could not verify managed unit {path}: {exc}") from exc
-        remaining = content.replace(manifest["new_home"], "")
-        if old_home in remaining or old_username in remaining:
+        if _rewrite_text(content, replacements) != content:
             raise RenameError(f"Managed unit still references the old account: {path}")
     new_home = manifest["new_home"]
     for path in (
@@ -1018,7 +1156,7 @@ def _verify_managed_rewrites(manifest: dict[str, Any], old_home: str) -> None:
             continue
         with open(path, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        if old_home != new_home and old_home in content:
+        if _rewrite_text(content, [(old_home, new_home), (new_home, new_home)]) != content:
             raise RenameError(f"T3 Code user service still references {old_home}: {path}")
 
 
@@ -1165,10 +1303,8 @@ def _run_migration(manifest: dict[str, Any]) -> int:
     try:
         lock_file = _acquire_target_lock()
     except RenameError as exc:
-        try:
-            _write_status(manifest["operation_id"], "starting", "failed", error=str(exc))
-        except OSError:
-            pass
+        # A second worker must not replace the running owner's result.
+        print(str(exc), file=sys.stderr)
         return 1
     try:
         return _run_migration_locked(manifest)
@@ -1220,6 +1356,9 @@ def _run_migration_locked(manifest: dict[str, Any]) -> int:
                 manifest["phase"] = phase
                 _write_marker(manifest, phase)
         if phase in {"identity-renamed", "configuration-updated", "services-reconciled", "verified"}:
+            details = manifest
+        elif saved_manifest:
+            _revalidate_pre_cutover(manifest)
             details = manifest
         else:
             details = _preflight(manifest)
@@ -1373,11 +1512,30 @@ def _json_preflight(manifest: dict[str, Any]) -> int:
     return 0
 
 
+def _prepare_resume(manifest: dict[str, Any], attempt_id: str) -> int:
+    """Durably identify the next worker before its asynchronous start request."""
+
+    _require_root()
+    _validate_operation_id(attempt_id)
+    lock_file = _acquire_target_lock()
+    try:
+        operation_id = manifest["operation_id"]
+        if _run(["systemctl", "is-active", "--quiet", _unit_name(operation_id)], check=False).returncode == 0:
+            raise RenameError("Rename job is already active; wait for it before resuming")
+        write_json_atomic(_attempt_path(operation_id), {"attempt_id": attempt_id}, mode=0o600)
+        _write_status(operation_id, "queued", "in_progress")
+    finally:
+        _release_target_lock(lock_file)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Internal target user migration helper")
     parser.add_argument("--manifest", required=True, help="Root-owned migration manifest")
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--run", action="store_true")
+    parser.add_argument("--prepare-resume", action="store_true")
+    parser.add_argument("--attempt-id")
     parser.add_argument("--json", action="store_true", help="Emit preflight JSON")
     return parser
 
@@ -1386,6 +1544,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         manifest = _load_manifest(args.manifest)
+        if args.prepare_resume:
+            if not args.attempt_id:
+                raise RenameError("Resume preparation requires --attempt-id")
+            return _prepare_resume(manifest, args.attempt_id)
         if args.preflight:
             return _json_preflight(manifest)
         if args.run:

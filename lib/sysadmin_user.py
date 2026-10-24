@@ -371,8 +371,9 @@ def _start_resume_unit(
     username: str,
     ssh_key: Optional[str],
     operation_id: str,
-) -> None:
+) -> str:
     unit_name = f"basaltwater-user-rename-{operation_id}.service"
+    attempt_id = _operation_id()
     result = _run_ssh(
         host,
         username,
@@ -380,6 +381,11 @@ def _start_resume_unit(
         chain_remote_commands(
             [
                 ["sudo", "-n", "test", "-f", _remote_unit_path(operation_id)],
+                [
+                    "sudo", "-n", "/usr/bin/python3", TARGET_HELPER,
+                    "--manifest", _remote_manifest_path(operation_id),
+                    "--prepare-resume", "--attempt-id", attempt_id,
+                ],
                 [
                     "sudo",
                     "-n",
@@ -395,6 +401,7 @@ def _start_resume_unit(
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"Could not resume rename job: {detail[:400]}")
+    return attempt_id
 
 
 def _wait_for_completion(
@@ -403,6 +410,8 @@ def _wait_for_completion(
     new_username: str,
     ssh_key: Optional[str],
     operation_id: str,
+    *,
+    attempt_id: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     users = [admin_user]
     if new_username not in users:
@@ -413,6 +422,8 @@ def _wait_for_completion(
         for username in users:
             status = _read_status(host, username, ssh_key, operation_id)
             if status is None:
+                continue
+            if attempt_id is not None and status.get("attempt_id") != attempt_id:
                 continue
             phase = status.get("phase")
             if isinstance(phase, str) and phase != last_phase:
@@ -519,6 +530,7 @@ def run_user_rename(
             return 1
         operation_id = resume or _operation_id()
         operation_admin = resolved_admin
+        attempt_id = None
         if resume:
             print(f"Resuming target user rename operation {operation_id}…")
             operation_admin, existing_status, existing_manifest = _read_resume_operation(
@@ -535,7 +547,7 @@ def run_user_rename(
                     raise RuntimeError("Rename operation belongs to a different source account")
                 if existing_manifest.get("new_username") != new_username:
                     raise RuntimeError("Rename operation destination does not match the command")
-                _start_resume_unit(
+                attempt_id = _start_resume_unit(
                     host,
                     operation_admin,
                     resolved_key,
@@ -591,6 +603,7 @@ def run_user_rename(
             new_username,
             resolved_key,
             operation_id,
+            attempt_id=attempt_id,
         )
         if status is None:
             print(

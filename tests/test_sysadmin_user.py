@@ -35,8 +35,8 @@ class TestSysadminUser(unittest.TestCase):
             sysadmin_user,
             "_run_ssh",
             return_value=completed,
-        ) as run_ssh:
-            sysadmin_user._start_resume_unit(
+        ) as run_ssh, patch.object(sysadmin_user, "_operation_id", return_value="fedcba9876543210"):
+            attempt_id = sysadmin_user._start_resume_unit(
                 "host.example",
                 "newuser",
                 None,
@@ -45,6 +45,66 @@ class TestSysadminUser(unittest.TestCase):
 
         remote_command = run_ssh.call_args.args[3]
         self.assertIn("systemctl enable --now --no-block", remote_command)
+        self.assertEqual(attempt_id, "fedcba9876543210")
+        self.assertIn("--prepare-resume --attempt-id fedcba9876543210", remote_command)
+        self.assertLess(remote_command.index("--prepare-resume"), remote_command.index("systemctl enable"))
+
+    def test_resume_poll_waits_for_matching_attempt_even_if_new_worker_finishes_immediately(self):
+        for outcome in ("success", "failed"):
+            with self.subTest(outcome=outcome):
+                stale = {"status": "failed", "phase": "identity-renamed", "attempt_id": "old-attempt"}
+                terminal = {"status": outcome, "phase": "complete", "attempt_id": "new-attempt"}
+                with (
+                    patch.object(sysadmin_user, "_read_status", side_effect=[stale, terminal]) as read,
+                    patch.object(sysadmin_user.time, "sleep") as sleep,
+                ):
+                    self.assertEqual(sysadmin_user._wait_for_completion(
+                        "host.example", "newuser", "newuser", None, "0123456789abcdef",
+                        attempt_id="new-attempt",
+                    ), terminal)
+                self.assertEqual(read.call_count, 2)
+                sleep.assert_called_once()
+
+    def test_resume_poll_does_not_treat_unacknowledged_attempt_as_completed(self):
+        with (
+            patch.object(sysadmin_user, "_read_status", return_value={"status": "failed"}),
+            patch.object(sysadmin_user.time, "monotonic", side_effect=[0, 0, 301]),
+            patch.object(sysadmin_user.time, "sleep"),
+        ):
+            self.assertIsNone(sysadmin_user._wait_for_completion(
+                "host.example", "newuser", "newuser", None, "0123456789abcdef", attempt_id="new-attempt",
+            ))
+
+    def test_ssh_resume_transport_keeps_host_key_verification(self):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value=f"{tmpdir}/known_hosts"),
+            patch.object(sysadmin_user.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run,
+        ):
+            sysadmin_user._run_ssh("host.example", "newuser", None, "id -u")
+        command = run.call_args.args[0]
+        self.assertIn("StrictHostKeyChecking=yes", command)
+        self.assertIn(f"UserKnownHostsFile={tmpdir}/known_hosts", command)
+
+    def test_dry_run_never_starts_worker_or_updates_cache(self):
+        config = SimpleNamespace(username="olduser", ssh_key=None)
+        with (
+            patch.object(sysadmin_user, "_resolve_credentials", return_value=("root", None, config)),
+            patch.object(sysadmin_user, "_acquire_host_lock", return_value=object()),
+            patch.object(sysadmin_user, "_release_host_lock"),
+            patch.object(sysadmin_user, "ensure_remote_sudo", return_value=True),
+            patch.object(sysadmin_user, "_stage_manifest"),
+            patch.object(sysadmin_user, "_preflight", return_value={"old_home": "/home/olduser", "new_home": "/home/newuser"}),
+            patch.object(sysadmin_user, "_discard_remote_operation") as discard,
+            patch.object(sysadmin_user, "_stage_unit") as start,
+            patch.object(sysadmin_user, "_start_resume_unit") as resume,
+            patch.object(sysadmin_user, "rename_setup_command") as cache,
+        ):
+            self.assertEqual(sysadmin_user.run_user_rename("host.example", "newuser", dry_run=True), 0)
+        discard.assert_called_once()
+        start.assert_not_called()
+        resume.assert_not_called()
+        cache.assert_not_called()
 
     def test_host_lock_serializes_operations(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -133,6 +193,7 @@ class TestSysadminUser(unittest.TestCase):
         failed_status = {"status": "failed", "phase": "identity-renamed"}
         success_status = {
             "status": "success",
+            "attempt_id": "fedcba9876543210",
             "phase": "complete",
             "details": {
                 "old_home": "/home/olduser",
@@ -146,8 +207,10 @@ class TestSysadminUser(unittest.TestCase):
             "new_username": "newuser",
         }
 
+        statuses = iter([failed_status, failed_status, success_status])
+
         def read_status(_host, username, _key, _operation_id):
-            return failed_status if username == "newuser" else None
+            return next(statuses) if username == "newuser" else None
 
         def read_manifest(_host, username, _key, _operation_id):
             return manifest if username == "newuser" else None
@@ -163,12 +226,8 @@ class TestSysadminUser(unittest.TestCase):
             patch.object(sysadmin_user, "ensure_remote_sudo") as ensure_sudo,
             patch.object(sysadmin_user, "_read_status", side_effect=read_status),
             patch.object(sysadmin_user, "_read_manifest", side_effect=read_manifest),
-            patch.object(sysadmin_user, "_start_resume_unit") as start_resume,
-            patch.object(
-                sysadmin_user,
-                "_wait_for_completion",
-                return_value=success_status,
-            ),
+            patch.object(sysadmin_user, "_start_resume_unit", return_value="fedcba9876543210") as start_resume,
+            patch.object(sysadmin_user.time, "sleep"),
             patch.object(sysadmin_user, "_verify_new_login", return_value=True),
             patch.object(sysadmin_user, "rename_setup_command") as rename_cache,
         ):

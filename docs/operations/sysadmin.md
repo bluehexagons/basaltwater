@@ -453,6 +453,26 @@ from that session. On resume, the controller tries both the configured
 administrative identity and the new username; home-selection options and
 `--dry-run` cannot be changed during a resume.
 
+Preflight also rejects unmanaged systemd fragments and drop-ins that reference
+the old login or home, including overrides of managed services. Reconcile those
+references before retrying. A managed SMB mount whose mountpoint would change
+is rejected before services stop: its systemd mount and automount filenames
+must match their `Where=` path. Use `--keep-home` for a home-local mount, or
+remove and recreate the mount/automount pair outside the home before renaming.
+The rename command does not migrate mount unit names.
+
+Interrupted operations retain their original login shell and managed service
+activation snapshots in the private target operation directory under
+`/var/lib/basaltwater/user-renames/OPERATION_ID/`. Resume rechecks safety before
+identity cutover without replacing those recovery facts with the temporary
+`nologin` shell or stopped service state. An identity or managed-unit inventory
+change blocks recovery for inspection. Each resume records a durable attempt
+ID before starting the detached job; the controller waits for that attempt's
+result, so an earlier failed status cannot terminate the new wait. If the new
+worker cannot start or acknowledge the attempt, the command reports the
+operation as in progress or unreachable and retains the same `--resume` path.
+Wait for an active job to finish before requesting another resume.
+
 The target must already have the current Basaltwater target files installed so
 the migration helper is available under `/opt/basaltwater/lib/`. Run the
 normal target upgrade first if preflight reports that the helper is missing.
