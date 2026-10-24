@@ -157,7 +157,9 @@ def install_smbclient(config: SetupConfig) -> None:
     - smbclient: Command-line SMB client
     - gvfs-backends: GNOME VFS backends for file manager integration
     """
-    packages = ["cifs-utils", "smbclient", "gvfs-backends"]
+    packages = ["cifs-utils", "smbclient"]
+    if config.include_desktop:
+        packages.append("gvfs-backends")
     
     all_installed = all(is_package_installed(pkg) for pkg in packages)
     if all_installed:
@@ -168,8 +170,9 @@ def install_smbclient(config: SetupConfig) -> None:
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(f"apt-get install -y -qq {packages_str}")
     
-    print("  ✓ SMB client packages installed (cifs-utils, smbclient, gvfs-backends)")
-    print("    File managers can now browse and mount SMB/Samba shares")
+    print(f"  ✓ SMB client packages installed ({', '.join(packages)})")
+    if config.include_desktop:
+        print("    File managers can now browse and mount SMB/Samba shares")
 
 
 def configure_dark_theme(config: SetupConfig) -> None:

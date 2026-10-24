@@ -327,6 +327,10 @@ basaltw setup workstation_desktop client admin \
   --mount-smb /mnt/projects fileserver alice projects_write /
 ```
 
+`--smbclient` and `--mount-smb` also work on headless Debian server profiles.
+Setup installs `cifs-utils` and `smbclient` before configuring mounts; desktop
+profiles additionally install `gvfs-backends` for file-manager integration.
+
 The mount `CREDENTIALS` field follows the same rule as share users: use a bare
 username backed by the workspace credential store, or an inline
 `username:password` only in controlled automation.

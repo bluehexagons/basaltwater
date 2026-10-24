@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -20,6 +21,36 @@ from lib.config import SetupConfig
 
 
 class TestPluginRegistry(unittest.TestCase):
+    def test_smb_client_packages_precede_mounts_once_on_headless_and_desktop(self):
+        from desktop.desktop_environment_steps import install_smbclient
+        from plugins.post_setup import build_post_setup_steps
+
+        for profile, desktop in (("server_lite", False), ("server_web", False), ("pc_dev", True)):
+            with self.subTest(profile=profile):
+                config = SetupConfig(
+                    host="192.0.2.10", username="user", system_type=profile,
+                    include_desktop=desktop, enable_smbclient=True,
+                    smb_mounts=[["/mnt/share", "192.0.2.11", "user:fixture", "share", "/"]],
+                )
+                steps = get_steps_for_system_type(config) + build_post_setup_steps(config, lambda *_: ("", ""))
+                functions = [function for _, function in steps]
+                self.assertEqual(functions.count(install_smbclient), 1)
+                names = [name for name, _ in steps]
+                self.assertLess(names.index("Installing SMB client packages"), names.index("Configuring SMB mounts"))
+
+    def test_smb_client_package_selection_respects_desktop(self):
+        from desktop import desktop_environment_steps as module
+
+        for desktop in (False, True):
+            with self.subTest(desktop=desktop), \
+                    patch.object(module, "is_package_installed", return_value=False), \
+                    patch.object(module, "run") as run, patch.dict(os.environ):
+                module.install_smbclient(SetupConfig(host="host", username="user", system_type="server_lite", include_desktop=desktop))
+                command = run.call_args.args[0]
+                self.assertIn("cifs-utils", command)
+                self.assertIn("smbclient", command)
+                self.assertEqual("gvfs-backends" in command, desktop)
+
     def test_web_rdp_uses_one_shared_firewall_before_desktop_setup(self):
         from security.steps import configure_firewall, configure_firewall_web
 

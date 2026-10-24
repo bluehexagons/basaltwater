@@ -153,6 +153,11 @@ def build_post_setup_steps(
 
         steps.append(("Configuring Samba and reconciling shares", configure_samba))
 
+    if config.enable_smbclient and not config.include_desktop:
+        from desktop.desktop_environment_steps import install_smbclient
+
+        steps.append(("Installing SMB client packages", install_smbclient))
+
     if config.smb_mounts:
         def configure_smb_mounts(_config: SetupConfig) -> None:
             from smb.smb_mount_steps import configure_smb_mount
