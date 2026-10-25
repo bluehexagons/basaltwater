@@ -138,7 +138,7 @@ class TestKioskDestinations(unittest.TestCase):
             [{**item(), "extra": "value"}],
             *[[item(name)] for name in (None, 1, "", " ", " Node", "Node ", "x" * 81,
                                         "Node\n", "No\tde", "No\x00de", "No\x7fde",
-                                        "No\x85de", "No\u200bde", "No\u202ede")],
+                                        "No\x85de", "No\u200bde", "No\u202ede", "No=de", "No\ud800de")],
             *[[item(url=url)] for url in (None, False, "", "file:///etc/passwd",
                                           "https://user:secret@pve.example/", "https://pve.example/a b")],
             [item("Node"), item("NODE")], [item("Straße"), item("STRASSE")],
@@ -153,7 +153,8 @@ class TestKioskDestinations(unittest.TestCase):
             {"name": "Main console", "url": "https://pve.example/?a=b=c#home"},
         )
         for value in ("No separator", "=http://localhost/", "   =http://localhost/", "Name=",
-                      "Name=file:///etc/passwd", "Name\n=http://localhost/", "\x85Name=http://localhost/"):
+                      "Name=file:///etc/passwd", "Name\n=http://localhost/", "\x85Name=http://localhost/",
+                      "Name\ud800=http://localhost/"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 parse_kiosk_destination(value)
 

@@ -70,6 +70,13 @@ class KioskRenderingTests(unittest.TestCase):
             self.assertEqual(steps.render_configuration(url, source), (files, unit))
             changed, _ = steps.render_configuration("https://pve.example/other", source)
             self.assertTrue(set(files).isdisjoint(changed))
+            destinations = [{"name": "VM", "url": "https://vm.example/"}]
+            changed, changed_unit = steps.render_configuration(url, source, destinations=destinations)
+            self.assertTrue(set(files).isdisjoint(changed))
+            self.assertNotEqual(unit, changed_unit)
+            self.assertEqual(next(json.loads(content)["destinations"] for path, content in changed.items()
+                                  if path.suffix == ".json"), destinations)
+            self.assertEqual(steps.render_configuration(url, source, destinations=[]), (files, unit))
 
     def test_plugin_opt_in_preflights_before_profile_mutations(self):
         from plugins.proxmox import build_server_proxmox_steps
@@ -153,6 +160,21 @@ class KioskLifecycleTests(unittest.TestCase):
         self.assertEqual((steps.UNIT_DIR / steps.SERVICE).read_text(), previous)
         self.assertTrue(all(path.exists() for path in old))
         self.assertEqual(len(list(steps.CONFIG_DIR.iterdir())), 4)
+
+    def test_destinations_restart_web_once_and_clear_returns_to_direct_homepage(self):
+        steps.configure_kiosk(config(kiosk_mode="web"))
+        old_unit = (steps.UNIT_DIR / steps.SERVICE).read_text()
+        settings = config(kiosk_mode="web", kiosk_destinations=[{"name": "VM", "url": "https://vm.example/"}])
+        self.replace.reset_mock()
+        steps.configure_kiosk(settings)
+        self.assertEqual(self.replace.call_count, 1)
+        self.assertNotEqual((steps.UNIT_DIR / steps.SERVICE).read_text(), old_unit)
+        self.replace.reset_mock()
+        steps.configure_kiosk(settings)
+        self.replace.assert_not_called()
+        steps.configure_kiosk(config(kiosk_mode="web", kiosk_destinations=[]))
+        self.assertEqual(self.replace.call_count, 1)
+        self.assertEqual((steps.UNIT_DIR / steps.SERVICE).read_text(), old_unit)
 
     def test_disable_removes_only_owned_configuration_and_retains_home(self):
         steps.configure_kiosk(config(kiosk_mode="cli"))

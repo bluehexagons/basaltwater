@@ -70,9 +70,11 @@ def validate_kiosk_destinations(value: list[dict[str, str]] | None) -> list[dict
         name = destination["name"]
         if not isinstance(name, str) or not name or name != name.strip() or len(name) > 80:
             raise ValueError("Kiosk destination names must be trimmed, non-empty strings of at most 80 characters")
+        if "=" in name:
+            raise ValueError("Kiosk destination names must not contain '='")
         validate_no_control_characters(name, "Kiosk destination name")
-        if any(unicodedata.category(char) in {"Cc", "Cf"} for char in name):
-            raise ValueError("Kiosk destination names must not contain control or format characters")
+        if any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in name):
+            raise ValueError("Kiosk destination names must not contain control, format or surrogate characters")
         if name.casefold() in names:
             raise ValueError("Kiosk destination names must be unique (case-insensitive)")
         names.add(name.casefold())
@@ -85,8 +87,8 @@ def parse_kiosk_destination(value: str) -> dict[str, str]:
     name, separator, url = value.partition("=")
     if not separator:
         raise ValueError("--kiosk-destination requires NAME=URL")
-    if any(unicodedata.category(char) in {"Cc", "Cf"} for char in name):
-        raise ValueError("Kiosk destination names must not contain control or format characters")
+    if any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in name):
+        raise ValueError("Kiosk destination names must not contain control, format or surrogate characters")
     destination = {"name": name.strip(), "url": url}
     validate_kiosk_destinations([destination])
     return destination

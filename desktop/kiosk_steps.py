@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from desktop.kiosk_runtime import ACCOUNT_COMMENT as COMMENT, HOME, MANAGER, USER, cleanup_sessions
 from lib.atomic_io import remove_file_durable, write_text_atomic
-from lib.kiosk_config import validate_kiosk_settings, validate_kiosk_url
+from lib.kiosk_config import validate_kiosk_destinations, validate_kiosk_settings, validate_kiosk_url
 from lib.machine_state import can_manage_system_services, resolve_machine_type
 from lib.maintenance_defaults import APT_DPKG_OPTIONS, APT_LOCK_OPTIONS
 from lib.remote_utils import is_dry_run, read_os_release, run
@@ -238,12 +238,18 @@ def _word(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
 
 
-def render_configuration(url: str, source: Path) -> tuple[dict[Path, str], str]:
+def render_configuration(
+    url: str, source: Path, *, destinations: list[dict[str, str]] | None = None,
+) -> tuple[dict[Path, str], str]:
     """Use immutable configuration generations so unit rollback uses old data."""
     validate_kiosk_url(url)
+    validate_kiosk_destinations(destinations)
     script = source / "desktop/kiosk_runtime.py"
     validate_filesystem_path(str(script), must_exist=True)
-    content = json.dumps({"manager": MANAGER, "version": 1, "url": url}, sort_keys=True) + "\n"
+    value = {"manager": MANAGER, "version": 1, "url": url}
+    if destinations:
+        value["destinations"] = destinations
+    content = json.dumps(value, sort_keys=True) + "\n"
     generation = hashlib.sha256((str(script) + "\n" + content).encode()).hexdigest()
     session = CONFIG_DIR / f"session-{generation}.json"
     greetd = session.with_suffix(".toml")
@@ -296,7 +302,8 @@ def configure_kiosk(config: SetupConfig) -> None:
         return
     _install_packages()
     _install_account()
-    files, unit = render_configuration(kiosk_url(config), Path(__file__).resolve().parents[1])
+    files, unit = render_configuration(kiosk_url(config), Path(__file__).resolve().parents[1],
+                                       destinations=config.kiosk_destinations)
     _root_directory(CONFIG_DIR)
     for path, content in files.items():
         existing = snapshot_unit_file(str(path))

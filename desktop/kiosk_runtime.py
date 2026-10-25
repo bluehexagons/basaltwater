@@ -17,8 +17,8 @@ import time
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lib.atomic_io import read_json_file
-from lib.kiosk_config import validate_kiosk_url
+from lib.atomic_io import read_json_file, write_text_atomic
+from lib.kiosk_config import validate_kiosk_destinations, validate_kiosk_url
 
 
 USER = "basaltwater-kiosk"
@@ -38,20 +38,26 @@ def configuration(path: Path) -> dict:
     if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
             or info.st_uid != 0 or info.st_mode & 0o022):
         raise RuntimeError("Unsafe kiosk session configuration")
-    value = read_json_file(str(path), max_bytes=65536)
-    if (not isinstance(value, dict) or set(value) != {"manager", "version", "url"}
+    value = read_json_file(str(path), max_bytes=512 * 1024)
+    if (not isinstance(value, dict) or set(value) not in (
+            {"manager", "version", "url"}, {"manager", "version", "url", "destinations"})
             or value["manager"] != MANAGER or type(value["version"]) is not int
             or value["version"] != 1):
         raise ValueError("Unsupported kiosk session configuration")
     validate_kiosk_url(value["url"])
+    if "destinations" in value:
+        if not isinstance(value["destinations"], list):
+            raise ValueError("Kiosk session destinations must be a list")
+        validate_kiosk_destinations(value["destinations"])
     return value
 
 
-def browser_command(url: str) -> list[str]:
+def browser_command(url: str, *, start_page: bool = False) -> list[str]:
     """Preserve browser chrome and pass the URL as one literal argument."""
     validate_kiosk_url(url)
+    destination = (HOME / "start.html").as_uri() if start_page else url
     return ["/usr/bin/cage", "-s", "-m", "last", "--", "/usr/bin/firefox-esr",
-            "--no-remote", "--profile", str(HOME / "profile"), "--new-window", url]
+            "--no-remote", "--profile", str(HOME / "profile"), "--new-window", destination]
 
 
 def session_environment() -> dict[str, str]:
@@ -83,7 +89,7 @@ def _stop_group(process: subprocess.Popen) -> None:
     process.wait(timeout=5)
 
 
-def supervise(url: str) -> int:
+def supervise(url: str, *, start_page: bool = False) -> int:
     """Retry failed sessions with a bounded budget; closing Firefox ends it."""
     stopped = threading.Event()
     previous = {}
@@ -98,7 +104,7 @@ def supervise(url: str) -> int:
         while not stopped.is_set():
             started = time.monotonic()
             attempts += 1
-            process = subprocess.Popen(browser_command(url), env=session_environment(),
+            process = subprocess.Popen(browser_command(url, start_page=start_page), env=session_environment(),
                                        cwd=HOME, start_new_session=True)
             try:
                 while process.poll() is None and not stopped.wait(0.25):
@@ -147,6 +153,11 @@ def run_session(path: Path) -> int:
                          os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if value.get("destinations"):
+            from desktop.kiosk_home import render_home
+
+            write_text_atomic(str(HOME / "start.html"), render_home(value["url"], value["destinations"]), mode=0o600)
+            return supervise(value["url"], start_page=True)
         return supervise(value["url"])
     finally:
         os.close(descriptor)

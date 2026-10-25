@@ -28,13 +28,13 @@ basaltw patch pve.example.lan root --no-kiosk
 
 `--kiosk web` installs and enables the local browser session at boot.
 `--kiosk cli` installs the kiosk runtime but boots to the normal text console;
-start it when needed with `sudo systemctl start basaltwater-kiosk.service`.
+start it when needed with `sudo basaltw kiosk start` on the Proxmox host.
 The modes are mutually exclusive with `--no-kiosk`.
 
 On a patch, omitted kiosk options inherit the saved selection. `--no-kiosk`
-clears the saved URL and removes the managed unit, configuration, and systemd
-preset. A URL-only patch uses the inherited enabled mode; an explicit URL with
-`--no-kiosk` is rejected. Disabling the kiosk preserves the dedicated account,
+clears the saved URL and destinations and removes the managed unit,
+configuration, and systemd preset. A URL-only patch uses the inherited enabled
+mode; an explicit URL with `--no-kiosk` is rejected. Disabling the kiosk preserves the dedicated account,
 Firefox profile and browser data, and installed packages.
 
 When no URL is supplied, the kiosk opens the Basaltwater web panel using its
@@ -46,6 +46,43 @@ its hostname cannot resolve locally, use an appropriate reachable address or
 hostname and ensure the kiosk account can resolve it. For an internal TLS
 service, enroll its CA using [client CA trust](../services/client-ca-trust.md)
 or the browser's certificate settings. Certificate verification remains enabled.
+
+## Save destinations
+
+Add named links for guest consoles, coding environments, or a guest's Guacamole
+panel. Supply the complete desired list; repeated flags preserve their order:
+
+```bash
+basaltw patch pve.example.lan root \
+  --kiosk-destination 'Coding VM=https://coding.example.lan/' \
+  --kiosk-destination 'Agent console=https://agent.example.lan/console'
+```
+
+An enabled kiosk with destinations opens a local start page containing the
+configured home page and these links. Links open in new tabs, so the start page
+remains available for switching. Normal browser tabs, address bar, bookmarks,
+and navigation stay available. The page loads without a network connection; each destination still
+requires its normal network and web authentication. It does not test availability
+or reload open consoles when connectivity changes.
+
+Names are trimmed when parsed and must be unique ignoring case, contain no
+control characters or `=`, and have at most 80 characters. Configure up to 16
+destinations; each URL follows the same HTTP(S) validation as `--kiosk-url`.
+Avoid URLs with tokens: destination URLs are ordinary setup configuration,
+not secret storage.
+
+Omitting destination flags on a patch inherits the saved list. Supplying one or
+more `--kiosk-destination` flags replaces it. To return to opening the configured
+host URL directly:
+
+```bash
+basaltw patch pve.example.lan root --clear-kiosk-destinations
+```
+
+Changing destinations restarts a running kiosk in web mode, just like changing
+its URL. The local page is regenerated at browser startup under the private
+kiosk home as `start.html`; it can be bookmarked in Firefox. Clearing configured
+destinations or disabling the kiosk retains browser data and that private file.
 
 ## Session and security model
 
@@ -65,9 +102,9 @@ to the kiosk; a Surface keyboard may require its Fn key for function-row
 shortcuts. The kiosk uses greetd with PAM/logind, takes the last connected
 monitor, and does not change lid or suspend policy.
 
-Guest access is not discovered automatically, and the host UI gains no new
-guest switcher. Add guest URLs as Markdown links in VM Notes for the host panel,
-or save browser bookmarks. The kiosk does not scan the network. Browser connectivity follows
+Guest access is not discovered automatically. Use saved kiosk destinations,
+Markdown links in VM Notes for the host panel, or browser bookmarks.
+The kiosk does not scan the network. Browser connectivity follows
 the normal LAN bridge and manually configured host addresses.
 
 ## Runtime and lifecycle
@@ -87,18 +124,29 @@ unowned configuration conflicts and other graphical seats. The kiosk service
 uses a runtime directory and clears greetd's initial-session marker when a
 manual service restart is requested.
 
-An unchanged rerun leaves the browser running. A changed URL or unit restarts
-the service in web mode; CLI mode stops and disables it. Use these commands to
-inspect or operate the service:
+An unchanged rerun leaves the browser running. A changed URL, destination list,
+or unit restarts the service in web mode; CLI mode stops and disables it.
+Use these commands to inspect or operate the service:
 
 ```bash
-sudo systemctl status basaltwater-kiosk.service
-sudo systemctl start basaltwater-kiosk.service
-sudo systemctl stop basaltwater-kiosk.service
-sudo systemctl restart basaltwater-kiosk.service
+basaltw kiosk status
+basaltw kiosk doctor --json
+sudo basaltw kiosk start
+sudo basaltw kiosk stop
+sudo basaltw kiosk restart
 sudo journalctl -u basaltwater-kiosk.service
 sudo journalctl -t basaltwater-kiosk
 ```
+
+These commands operate on the local host. Status and doctor are read-only;
+run doctor as root when account or private-file checks require it. Doctor
+reports missing prerequisites and recovery suggestions without installing
+packages, probing destination URLs, or changing services. Status describes
+the service and sessions; an active login manager does not prove Firefox or
+a guest console is ready. All five commands accept `--json`. Start, stop, and
+restart require root and preserve the configured boot enablement. Stop checks
+that the dedicated user's PAM sessions finish cleanup before reporting success.
+The equivalent `systemctl` commands remain available for administrator recovery.
 
 A compositor startup failure retries at most three times in quick succession.
 After repeated failure, or after Firefox closes normally, tty7 shows text
@@ -143,7 +191,11 @@ Record results for each intended hardware combination, including:
   browser navigation, and Ctrl+Alt+F1/F7 switching while the local console has
   focus (including any Surface Fn-key behavior).
 - `web` mode boot to the configured URL and `cli` mode boot to text, followed
-  by a manual `systemctl start`.
+  by `basaltw kiosk start`; verify status/doctor for a healthy seat and for
+  missing devices or unavailable inspection permissions.
+- Saved destinations displayed locally while offline, keyboard focus and link
+  opening in ordinary Firefox tabs, patch inheritance/replacement/clear, and
+  direct host URL startup after clearing the list.
 - Reboot behavior, browser close/restart behavior, and the displayed guidance
   after a compositor failure.
 - Network unplug and recovery behavior in the browser, with the host console

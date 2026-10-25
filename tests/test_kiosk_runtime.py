@@ -32,6 +32,7 @@ class KioskRuntimeTests(unittest.TestCase):
         self.assertEqual(command[:6], ["/usr/bin/cage", "-s", "-m", "last", "--", "/usr/bin/firefox-esr"])
         self.assertNotIn("--kiosk", command)
         self.assertEqual(command[command.index("--profile") + 1], str(self.home / "profile"))
+        self.assertEqual(runtime.browser_command(url, start_page=True)[-1], (self.home / "start.html").as_uri())
         with self.assertRaises(ValueError):
             runtime.browser_command("file:///etc/passwd")
 
@@ -68,6 +69,12 @@ class KioskRuntimeTests(unittest.TestCase):
         self.assertEqual(popen.call_count, 1)
         cleanup.assert_called_once()
         self.assertEqual(handlers.call_count, 6)
+
+    def test_supervisor_opens_the_generated_local_page_when_requested(self):
+        popen, cleanup, _, _ = self.supervisor([0])
+        self.assertEqual(runtime.supervise("http://localhost/", start_page=True), 0)
+        self.assertEqual(popen.call_args.args[0][-1], (self.home / "start.html").as_uri())
+        cleanup.assert_called_once()
 
     def test_crashes_exhaust_budget_and_clean_every_attempt(self):
         popen, cleanup, event, handlers = self.supervisor([1, -11, 1])
@@ -137,6 +144,16 @@ class KioskRuntimeTests(unittest.TestCase):
                  patch.object(runtime.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=os.getuid() or 12345)):
                 self.assertEqual(runtime.run_session(self.home / "config.json"), 0)
                 supervise.assert_called_once_with("http://localhost/")
+                supervise.reset_mock()
+                destination = {"name": "Coding VM", "url": "http://vm.example/"}
+                with patch.object(runtime, "configuration", return_value={"url": "http://localhost/",
+                                                                         "destinations": [destination]}):
+                    self.assertEqual(runtime.run_session(self.home / "config.json"), 0)
+                supervise.assert_called_once_with("http://localhost/", start_page=True)
+                page = self.home / "start.html"
+                self.assertEqual(page.stat().st_mode & 0o777, 0o600)
+                self.assertIn("Coding VM", page.read_text())
+                self.assertIn('href="http://vm.example/"', page.read_text())
                 (self.home / "profile").chmod(0o755)
                 with self.assertRaisesRegex(RuntimeError, "profile"):
                     runtime.run_session(self.home / "config.json")
@@ -159,7 +176,12 @@ class KioskRuntimeTests(unittest.TestCase):
 
         with patch.object(Path, "lstat", autospec=True, side_effect=root_stat):
             self.assertEqual(runtime.configuration(path), payload)
-            for change in ({"version": True}, {"version": 2}, {"manager": "other"}, {"url": "file:///etc/passwd"}):
+            with_destinations = payload | {"destinations": [{"name": "VM", "url": "https://vm.example/"}]}
+            path.write_text(json.dumps(with_destinations))
+            self.assertEqual(runtime.configuration(path), with_destinations)
+            for change in ({"version": True}, {"version": 2}, {"manager": "other"}, {"url": "file:///etc/passwd"},
+                           {"destinations": None}, {"destinations": [{"name": "Bad", "url": "file:///etc/passwd"}]},
+                           {"unexpected": []}):
                 path.write_text(json.dumps(payload | change))
                 with self.subTest(change=change), self.assertRaises(ValueError):
                     runtime.configuration(path)
@@ -170,6 +192,23 @@ class KioskRuntimeTests(unittest.TestCase):
             path.symlink_to(self.home / "other")
             with self.assertRaisesRegex(RuntimeError, "Unsafe"):
                 runtime.configuration(path)
+
+    def test_maximum_destination_urls_fit_the_bounded_session_reader(self):
+        path = self.home / "config.json"
+        url = "https://vm.example/" + "é" * 4000
+        payload = {"manager": runtime.MANAGER, "version": 1, "url": "http://localhost/",
+                   "destinations": [{"name": f"VM {number}", "url": url} for number in range(16)]}
+        path.write_text(json.dumps(payload))
+        path.chmod(0o644)
+        original = Path.lstat
+
+        def root_stat(candidate):
+            values = list(original(candidate))
+            values[4] = 0
+            return os.stat_result(values)
+
+        with patch.object(Path, "lstat", autospec=True, side_effect=root_stat):
+            self.assertEqual(runtime.configuration(path), payload)
 
     def test_stop_cleans_only_dedicated_logind_user(self):
         with patch.object(runtime.os, "getuid", return_value=0), \
