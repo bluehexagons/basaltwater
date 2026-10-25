@@ -452,6 +452,46 @@ class AdminJobTests(unittest.TestCase):
             with patch.object(admin_job, "read_installation_metadata", return_value=None):
                 self.assertIn("refresh", self.availability_checker())
 
+    def test_availability_blocks_hard_killed_setup_but_allows_recovery_required_setup(self):
+        marker = Path(self.directory.name) / "setup-operation.json"
+        source = Path(self.directory.name) / "basaltwater"
+        store = OperationStateStore(str(marker))
+        record = store.begin("target_setup", "server_lite", "applying", context={
+            "machine_type": "hardware", "system_type": "server_lite", "username": "root",
+        })
+        store.close()
+        with patch.object(admin_job, "SOURCE", str(source)), \
+                patch.object(admin_job, "can_manage_system_services", return_value=True), \
+                patch.object(admin_job, "can_restart_system", return_value=True), \
+                patch.object(admin_job, "read_os_release", return_value={"ID": "debian"}), \
+                patch.object(admin_job.os.path, "isfile", return_value=True), \
+                patch.object(admin_job, "read_json_file", return_value={"channel": "dev"}):
+            blocked = self.availability_checker()
+            self.assertIn("refresh", blocked)
+            self.assertIn("interrupted or unknown target setup", blocked["refresh"])
+            self.assertIn("refresh-preview", blocked)
+
+            recovered = store.transition(
+                record.operation_id, "recovery", status="recovery_required", expected_record=record,
+            )
+            blocked = self.availability_checker()
+            self.assertNotIn("refresh", blocked)
+            self.assertNotIn("refresh-preview", blocked)
+            self.assertEqual(OperationStateStore(str(marker)).load(), recovered)
+
+            activation_marker = Path(self.directory.name) / admin_job.SOURCE_ACTIVATION_MARKER_FILENAME
+            activation_store = OperationStateStore(str(activation_marker))
+            activation = activation_store.begin("source_refresh", str(source), "prepared", context={
+                "repository_path": str(source), "backup_path": str(source.parent / "backup"),
+                "staged_path": str(source.parent / "staged"), "runtime_data_names": [],
+            })
+            activation_store.close()
+            blocked = self.availability_checker()
+            self.assertIn("refresh", blocked)
+            self.assertIn("source activation", blocked["refresh"])
+            activation_store.complete(activation.operation_id, outcome="rolled_back")
+            self.assertNotIn("refresh", self.availability_checker())
+
     def test_refresh_source_validation_checks_git_hooks_and_rejects_symlinks(self):
         source = Path(self.directory.name) / "source"
         hooks = source / ".git/hooks"

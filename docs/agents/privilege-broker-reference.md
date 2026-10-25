@@ -238,3 +238,70 @@ The separate approval interface and existing request
 quotas remain in force. A lost dispatch response remains uncertain, and a
 broker restart never retries it. Root refresh additionally checks all installed
 code and Git metadata for root ownership, symlinks, and writable permissions.
+
+### Refresh interrupted during source activation
+
+For a controller-installed source snapshot, refresh publishes a private
+operation marker beside the installed source before its first rename:
+`<source-parent>/.basaltwater-source-refresh-operation.json` (normally
+`/opt/.basaltwater-source-refresh-operation.json`). It records the exact
+`repository_path`, `backup_path`, `staged_path`, `temporary_path`, and the
+`runtime_data_names` that are being carried across. A completed activation
+removes the marker after writing its bounded `.last.json` result. A caught
+failure that cannot restore the original source keeps the marker with
+`recovery_required`; process loss leaves it `in_progress`. The marker identifies
+planned copies but does not prove which rename completed. These renames are not
+one filesystem transaction, and this evidence does not claim atomic
+power-loss recovery.
+
+An unresolved marker blocks refresh and its dry-run check. First confirm that
+the original maintenance process has exited and keep all recorded paths in
+place. Inspect the record and each path as root:
+
+```bash
+sudo systemctl status basaltwater-admin-maintenance.service
+sudo python3 -m json.tool /opt/.basaltwater-source-refresh-operation.json
+sudo ls -lai -- /opt/basaltwater /opt/REPLACE_WITH_RECORDED_BACKUP_PATH /opt/REPLACE_WITH_RECORDED_STAGED_PATH
+```
+
+Use the exact paths from the marker if they differ from the normal `/opt`
+layout. Check which copy has the old installed source, which has the downloaded
+source, and where every name in `runtime_data_names` currently resides. Inspect
+symlinks with `sudo readlink` and compare file identity, modes and contents
+before moving anything. Preserve the marker and all copies while deciding
+whether to restore the old source or finish activation. Never rerun refresh or
+blindly replay a rename while this marker exists. If a path or runtime entry is
+missing or duplicated and its owner is unclear, keep the evidence in place and
+continue recovery from administrator SSH or the VM console.
+
+After restoring or activating a complete source tree at `/opt/basaltwater`,
+verify its code, retained runtime entries, ownership and modes. Then resolve
+only the inspected operation using that verified source:
+
+```bash
+sudo /usr/bin/python3 - <<'PY'
+import sys
+sys.path.insert(0, "/opt/basaltwater")
+from lib.operation_state import OperationStateStore
+
+marker = "/opt/.basaltwater-source-refresh-operation.json"
+expected_operation_id = "REPLACE_WITH_RECORDED_OPERATION_ID"
+store = OperationStateStore(marker)
+record = store.load()
+if (record is None or record.operation_type != "source_refresh"
+        or record.operation_id != expected_operation_id):
+    raise SystemExit("Expected source refresh recovery marker is missing or has changed")
+outcome = "rolled_back"  # Use "succeeded" only after verifying completed activation.
+store.complete(record.operation_id, outcome=outcome)
+PY
+```
+
+Keep the retained backup until a later successful refresh and setup are
+verified. A separate target setup marker at
+`/opt/basaltwater/state/setup-operation.json` also blocks refresh when it is
+still `in_progress`, preserving its original job correlation for inspection.
+Use the [transaction recovery guide](../operations/transaction-recovery.md)
+before resolving such a hard-killed setup. A matching
+`recovery_required` setup remains eligible for its idempotent setup replay;
+refresh refuses a profile, machine type or username mismatch before changing
+source.

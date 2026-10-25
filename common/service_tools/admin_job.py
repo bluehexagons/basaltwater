@@ -23,6 +23,7 @@ from lib.machine_state import STATE_DIR, SETUP_CONFIG_FILE, can_manage_system_se
 from lib.operation_state import OperationStateStore
 from lib.installation_info import INSTALLATION_METADATA_FILENAME, read_installation_metadata
 from lib.privilege_policy import protected_path
+from lib.refresh import SOURCE_ACTIVATION_MARKER_FILENAME
 from lib.remote_utils import read_os_release
 from lib.validation import validate_channel
 
@@ -53,6 +54,28 @@ def current_setup_context(job: dict) -> dict | None:
                               )}}, job["job_id"])
     except (OSError, ValueError, RuntimeError):
         return None
+
+
+def _refresh_recovery_block_reason() -> str | None:
+    """Gate new refresh dispatch on unresolved source or hard-killed setup state."""
+    try:
+        activation_marker = os.path.join(os.path.dirname(SOURCE), SOURCE_ACTIVATION_MARKER_FILENAME)
+        for marker in (activation_marker, os.path.join(os.path.realpath(STATE_DIR), "setup-operation.json")):
+            protected_path(os.path.dirname(marker), directory=True)
+            for candidate in (marker, marker + ".lock"):
+                if os.path.lexists(candidate):
+                    protected_path(candidate)
+        activation = OperationStateStore(activation_marker).load()
+        if activation is not None:
+            return "A Basaltwater source activation needs administrator recovery before refresh."
+        setup = OperationStateStore(os.path.join(os.path.realpath(STATE_DIR), "setup-operation.json")).load()
+        if setup is not None and (
+            setup.operation_type != "target_setup" or setup.status == "in_progress"
+        ):
+            return "An interrupted or unknown target setup needs administrator inspection before refresh."
+    except (OSError, ValueError, RuntimeError, TypeError):
+        return "Refresh recovery state could not be verified; administrator inspection is required."
+    return None
 
 
 def availability() -> dict[str, str]:
@@ -92,6 +115,9 @@ def availability() -> dict[str, str]:
     except (OSError, ValueError, RuntimeError, TypeError):
         reason = "The installed Basaltwater source or saved Debian setup is missing or unsafe."
         blocked.update({"refresh-preview": reason, "refresh": reason})
+    recovery_reason = _refresh_recovery_block_reason() if debian else None
+    if recovery_reason:
+        blocked.update({"refresh-preview": recovery_reason, "refresh": recovery_reason})
     if not os.path.isfile("/usr/sbin/nginx"):
         blocked.update({key: "Nginx is not installed." for key in ("check-web", "reload-web")})
     return blocked
