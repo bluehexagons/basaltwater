@@ -22,6 +22,7 @@ import stat
 import tempfile
 import hashlib
 import sqlite3
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -304,19 +305,27 @@ def _process_job(job_file: str) -> bool:
         log_event(logger, 'CI/CD configuration unavailable; retaining job', level=40, error=str(exc))
         return False
     
-    consume = True
+    # The receiver reserves this filename namespace. Identify receipt jobs
+    # before reading: unreadable JSON or a missing delivery_key must not turn
+    # a pending reservation into a disposable (or unclaimed) legacy attempt.
+    receipt_job = re.fullmatch(r'delivery-[0-9a-f]{64}\.json', os.path.basename(job_file)) is not None
+    consume = not receipt_job
     try:
         job_data = _load_job_file(job_file)
+        receipt_job = receipt_job or (isinstance(job_data, dict) and 'delivery_key' in job_data)
+        consume = not receipt_job
         repo_url, ref, branch, commit_sha, pusher = validate_job_data(job_data)
 
-        if 'delivery_key' in job_data:
+        if receipt_job:
             try:
                 with receiver_state():
                     claimed = claim(DELIVERIES_FILE, job_file, job_data)
             except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
-                consume = False
                 log_event(logger, 'Delivery receipt unavailable; retaining job', level=40, error=str(exc))
                 return False
+            # Only a completed, ledger-matched claim (including an already
+            # terminal receipt) permits consumption. Uncertain claims stay put.
+            consume = True
             if not claimed:
                 log_event(logger, 'Skipping expired or previously claimed delivery', level=30, job_file=job_file)
                 return False

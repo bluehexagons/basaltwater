@@ -227,7 +227,10 @@ a possibly completed deployment. Inspect the journal and build logs before
 deliberately submitting a new push after an interrupted or failed attempt.
 Do not delete the ledger to force retries. Missing, invalid, or unavailable
 receipts retain their queued jobs and stop the drain before later jobs for
-operator repair.
+operator repair. Receipt jobs that cannot be read or validated before claiming
+also remain queued and stop the drain. Repair the job before retrying; its
+payload must match the ledger. The receiver's `delivery-<digest>.json` filenames
+always require a matching receipt, even when the payload loses `delivery_key`.
 Upgrade receiver and executor together for this receipt protocol; old queue
 files without a receipt retain their previous one-attempt behavior.
 
@@ -316,9 +319,10 @@ the new build home, snapshots and logs.
   toolchains for that user
 - the receiver writes one bounded job file and the path unit starts the
   executor, so the receiver does not need systemd or polkit privileges
-- jobs are consumed after one attempt, including malformed or failed jobs, so
-  one bad payload cannot retrigger forever; unavailable or invalid configuration
-  retains jobs without starting an attempt
+- legacy jobs are consumed after one attempt, including malformed or failed
+  jobs. Receipt jobs are consumed only after a completed claim check;
+  unreadable or invalid jobs before claiming stop the drain for repair.
+  Unavailable or invalid configuration retains jobs without starting an attempt
 - job and privileged request readers open paths without following symlinks or
   blocking on FIFOs, then require regular files. Job reads remain bounded even
   if a file grows after its initial size check

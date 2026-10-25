@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
+import errno
 import hashlib
 import hmac
 from io import BytesIO
@@ -235,6 +236,124 @@ class TestDeliveries(unittest.TestCase):
             calls.claim.reset_mock(side_effect=True)
             self.assertEqual(executor.main(), 0)
             self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+
+    def test_executor_retains_unreadable_delivery_before_claim_and_retries_in_order(self):
+        keys = self.reserve_then_publish_later_delivery()
+        first = Path(self.jobs) / f'delivery-{keys[0]}.json'
+        load_job = executor._load_job_file
+
+        def transient_read_error(path):
+            if Path(path) == first:
+                raise OSError(errno.EIO, 'transient job read error')
+            return load_job(path)
+
+        with self.executor_drain() as calls:
+            with patch.object(executor, '_load_job_file', side_effect=transient_read_error):
+                self.assertEqual(executor.main(), 1)
+            self.assertTrue(first.exists())
+            calls.claim.assert_not_called()
+            calls.clone_or_update_repo.assert_not_called()
+            calls.run_script.assert_not_called()
+            with closing(sqlite3.connect(self.ledger)) as connection:
+                self.assertEqual(dict(connection.execute('SELECT key, state FROM receipts')),
+                                 dict.fromkeys(keys, 'pending'))
+
+            def clone_after_durable_claim(repo_url, workspace, ref, commit):
+                with closing(sqlite3.connect(self.ledger)) as connection:
+                    self.assertEqual(dict(connection.execute('SELECT key, state FROM receipts')),
+                                     {keys[0]: 'claimed', keys[1]: 'pending' if commit == 'b' * 40 else 'claimed'})
+                return True
+
+            calls.clone_or_update_repo.side_effect = clone_after_durable_claim
+            self.assertEqual(executor.main(), 0)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+            self.assertEqual([call.args[3] for call in calls.clone_or_update_repo.call_args_list], ['b' * 40, 'c' * 40])
+            self.assertEqual(len(calls.run_script.call_args_list), 2)
+            for call, commit in zip(calls.run_script.call_args_list, ('b' * 40, 'c' * 40)):
+                self.assertIn(f'Commit: {commit}', Path(call.args[2]).read_text())
+        self.assertEqual(list(Path(self.jobs).glob('*.json')), [])
+
+    def test_executor_retains_corrupt_delivery_until_repaired_before_later_claim(self):
+        invalid_jobs = {
+            'invalid JSON': '{',
+            'non-object JSON': '[]',
+            'invalid fields': json.dumps({**self.payload, 'delivery_key': 'f' * 64, 'commit_sha': 'bad'}),
+            'missing delivery key': json.dumps(self.payload),
+        }
+        for reason, content in invalid_jobs.items():
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory(dir=self.root) as directory, \
+                    patch.object(self, 'ledger', str(Path(directory) / 'ledger')), \
+                    patch.object(self, 'jobs', str(Path(directory) / 'jobs')):
+                keys = self.reserve_then_publish_later_delivery()
+                deliveries.recover_pending(self.ledger, self.jobs)
+                first = Path(self.jobs) / f'delivery-{keys[0]}.json'
+                original = first.read_text()
+                first.write_text(content)
+                with self.executor_drain() as calls:
+                    # A repeat drain must neither discard nor bypass the reservation.
+                    for _ in range(2):
+                        self.assertEqual(executor.main(), 1)
+                        self.assertTrue(first.exists())
+                        self.assertEqual(first.read_text(), content)
+                    calls.clone_or_update_repo.assert_not_called()
+                    calls.run_script.assert_not_called()
+                    self.assertTrue(all(call.args[1] == str(first) for call in calls.claim.call_args_list))
+                    with closing(sqlite3.connect(self.ledger)) as connection:
+                        self.assertEqual(dict(connection.execute('SELECT key, state FROM receipts')),
+                                         dict.fromkeys(keys, 'pending'))
+                    first.write_text(original)
+                    calls.claim.reset_mock()
+                    self.assertEqual(executor.main(), 0)
+                    self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+                    self.assertEqual([call.args[3] for call in calls.clone_or_update_repo.call_args_list], ['b' * 40, 'c' * 40])
+                    self.assertEqual(calls.run_script.call_count, 2)
+
+    def test_executor_discards_malformed_legacy_job_once_and_drains_later_delivery(self):
+        for reason, content in (('read error', '{}'), ('invalid JSON', '{'), ('invalid fields', '{}')):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory(dir=self.root) as directory, \
+                    patch.object(self, 'ledger', str(Path(directory) / 'ledger')), \
+                    patch.object(self, 'jobs', str(Path(directory) / 'jobs')):
+                self.enqueue()
+                legacy = Path(self.jobs) / 'legacy.json'
+                legacy.write_text(content)
+                os.utime(legacy, (1, 1))
+                load_job = executor._load_job_file
+
+                def read_job(path):
+                    if reason == 'read error' and Path(path) == legacy:
+                        raise OSError(errno.EIO, 'legacy job read error')
+                    return load_job(path)
+
+                with self.executor_drain() as calls, patch.object(executor, '_load_job_file', side_effect=read_job) as load:
+                    self.assertEqual(executor.main(), 1)
+                    self.assertFalse(legacy.exists())
+                    calls.claim.assert_called_once()
+                    calls.clone_or_update_repo.assert_called_once()
+                    calls.run_script.assert_called_once()
+                    self.assertEqual(executor.main(), 0)
+                    self.assertEqual([call.args[0] for call in load.call_args_list].count(str(legacy)), 1)
+                    calls.run_script.assert_called_once()
+
+    def test_executor_does_not_replay_delivery_when_claim_commit_result_is_uncertain(self):
+        keys = self.reserve_then_publish_later_delivery()
+
+        def commit_then_fail(*args):
+            deliveries.claim(*args)
+            raise sqlite3.OperationalError('claim result unavailable after commit')
+
+        with self.executor_drain() as calls:
+            calls.claim.side_effect = commit_then_fail
+            self.assertEqual(executor.main(), 1)
+            calls.clone_or_update_repo.assert_not_called()
+            calls.run_script.assert_not_called()
+            calls.claim.reset_mock(side_effect=True)
+            # The first delivery is already claimed and must never start a build.
+            self.assertEqual(executor.main(), 1)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+            calls.clone_or_update_repo.assert_called_once()
+            self.assertEqual(calls.clone_or_update_repo.call_args.args[3], 'c' * 40)
+            calls.run_script.assert_called_once()
+        self.assertEqual(list(Path(self.jobs).glob('*.json')), [])
 
     def test_executor_continues_after_an_earlier_claimed_attempt_fails(self):
         keys = self.reserve_then_publish_later_delivery()
