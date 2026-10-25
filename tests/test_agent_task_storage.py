@@ -163,6 +163,30 @@ class StorageTaskTests(unittest.TestCase):
         self.assertIn("sandbox process lists cannot establish host idleness", prompts[0])
         self.assertEqual(json.loads(Path(runtime["log_path"]).read_text())["host_storage"], evidence)
 
+    def test_cancel_after_host_review_prevents_provider_launch(self) -> None:
+        cancellation = threading.Event()
+        evidence = {"operation": "review", "result": {"inventory": {"bounded": True}}}
+
+        def finish_review(*_args: object, **_kwargs: object) -> dict:
+            cancellation.set()
+            return evidence
+
+        account_os = SimpleNamespace(**vars(os))
+        account_os.geteuid = lambda: 1000
+        with (patch.object(tasks, "os", account_os),
+              patch.object(tasks, "_tool_path", return_value="/test/codex"),
+              patch.object(tasks, "run_storage_operation", side_effect=finish_review) as host,
+              patch.object(tasks.subprocess, "Popen") as provider):
+            result = tasks.execute_prompt({**self.values, "mode": "inspect", "storage_operation": "review"},
+                                          self.home, cancellation)
+
+        host.assert_called_once()
+        provider.assert_not_called()
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["message"], "Cancelled before provider launch")
+        self.assertEqual(result["usage"], {"input_tokens": 0, "output_tokens": 0})
+        self.assertEqual(result["evidence"], [json.dumps(evidence)])
+
     def test_follow_up_is_inert_until_approved_and_runs_once_without_codex(self) -> None:
         manager = tasks.AgentTasks(self.home)
         self.addCleanup(manager.close)
@@ -327,13 +351,15 @@ class HostStorageTests(unittest.TestCase):
                       patch.object(storage, "_OUTPUT_LIMIT", 10),
                       patch.object(storage.time, "time", return_value=20)):
                     reply = storage.run_storage_operation("review", self.home, cancellation,
-                                                         timeout=100, deadline_at=10 if problem == "deadline" else 0)
+                                                         timeout=100, deadline_at=10 if problem == "deadline" else 0,
+                                                         lease_fd=73)
                 self.assertIn("error", reply)
                 kill.assert_called_once_with(4321, storage.signal.SIGKILL)
                 argv = spawn.call_args.args[0]
                 self.assertEqual(argv[1], "-I")
                 self.assertEqual(argv[-2:], ["review", self.home])
                 self.assertTrue(spawn.call_args.kwargs["start_new_session"])
+                self.assertEqual(spawn.call_args.kwargs["pass_fds"], (73,))
 
     def test_nested_native_commands_share_only_the_disposable_worker_group(self) -> None:
         process, selector = MagicMock(), MagicMock()

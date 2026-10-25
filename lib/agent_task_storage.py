@@ -146,10 +146,12 @@ def storage_operation(operation: str, home: str) -> dict:
 
 
 def run_storage_operation(operation: str, home: str, cancel: object, *, timeout: float,
-                          deadline_at: float = 0) -> dict:
+                          deadline_at: float = 0, lease_fd: int | None = None) -> dict:
     """Bound host observations/mutations, output, cancellation and descendants."""
     if operation not in STORAGE_OPERATIONS[1:]:
         raise ValueError("Unsupported storage operation")
+    if lease_fd is not None and (type(lease_fd) is not int or lease_fd < 0):
+        raise ValueError("Invalid task worker lease descriptor")
     # Isolated Python ignores caller PYTHONPATH and startup hooks. Only the
     # installed package location is added; no caller command/path is accepted.
     root = str(Path(__file__).resolve().parent.parent)
@@ -162,7 +164,8 @@ def run_storage_operation(operation: str, home: str, cancel: object, *, timeout:
     if cancel.is_set():
         return {"error": "Cancelled before host storage operation", "cancelled": True}
     with subprocess.Popen(command, cwd=home, env=environment, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True) as process:
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True,
+                          pass_fds=() if lease_fd is None else (lease_fd,)) as process:
         try:
             assert process.stdout is not None
             with selectors.DefaultSelector() as selector:
