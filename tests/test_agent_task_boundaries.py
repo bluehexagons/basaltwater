@@ -69,10 +69,67 @@ class TaskBoundaryTests(unittest.TestCase):
         state = self.manager.snapshot()
         self.assertTrue(self.manager._stop.is_set())
         self.assertEqual(state["tasks"][0]["attempts"], 1)
+        self.assertEqual(state["tasks"][0]["daily_attempts"], 1)
+        self.assertEqual(state["tasks"][0]["consecutive_failures"], 0)
         self.assertTrue(state["tasks"][0]["enabled"])
         self.assertEqual(state["runs"][0]["status"], "cancelled")
         self.assertEqual(self.manager.contexts.history(identifier)[0]["status"], "cancelled")
         self.assertIsNone(self.manager._lease)
+
+    def test_codex_child_inherits_only_the_internal_worker_lease_descriptor(self) -> None:
+        task = {**tasks.validate_task(self.values, self.home), "id": "a" * 32}
+        runtime_values = self.manager.contexts.prepare(task, "b" * 32)
+        runtime = tasks._TaskExecutionRuntime(runtime_values, lease_fd=37)
+        task["_runtime"] = runtime
+        process, selector = MagicMock(), MagicMock()
+        process.__enter__.return_value = process
+        process.pid, process.wait.return_value = 1234, 0
+        selector.__enter__.return_value = selector
+        selector.get_map.return_value = {}
+        provider_os = SimpleNamespace(**vars(os))
+
+        def pass_fds(execution_task: dict) -> tuple[int, ...]:
+            with (patch.object(tasks, "os", provider_os), patch.object(provider_os, "geteuid", return_value=1000),
+                  patch.object(tasks, "_tool_path", return_value="/test/codex"),
+                  patch.object(tasks.subprocess, "Popen", return_value=process) as spawn,
+                  patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
+                  patch.object(provider_os, "killpg")):
+                tasks.execute_prompt(execution_task, self.home, threading.Event())
+            return spawn.call_args.kwargs["pass_fds"]
+
+        self.assertEqual(pass_fds(task), (37,))
+        self.assertNotIn("lease_fd", runtime)
+        self.assertEqual(runtime.lease_fd, 37)
+        external_runtime = {**runtime_values,
+                            "log_path": str(Path(runtime_values["log_path"]).with_name("external.jsonl")),
+                            "lease_fd": 43}
+        self.assertEqual(pass_fds({**self.values, "_runtime": external_runtime}), ())
+        self.assertEqual(pass_fds(self.values), ())
+        for invalid in (-1, True, "37", 1.5):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                tasks._TaskExecutionRuntime(runtime_values, lease_fd=invalid)
+
+    def test_tick_keeps_worker_lease_out_of_task_state_and_receipts(self) -> None:
+        identifier = self.manager.create(self.values, run_now=True, now=0)
+        runtime_values = {"directory": self.home, "context_directory": str(Path(self.home) / "runtime"),
+                          "log_path": str(Path(self.home) / "runtime" / "run.jsonl")}
+
+        def execute(task: dict, _home: str, _cancel: object) -> dict:
+            runtime = task["_runtime"]
+            self.assertIsInstance(runtime, tasks._TaskExecutionRuntime)
+            self.assertEqual(runtime.lease_fd, 41)
+            self.assertNotIn("lease_fd", runtime)
+            return {"status": "completed", "output": "", "message": "Done", **report()}
+
+        with (patch.object(self.manager, "_lease", 41),
+              patch.object(self.manager.contexts, "prepare", return_value=runtime_values),
+              patch.object(tasks, "execute_prompt", side_effect=execute)):
+            self.assertTrue(self.manager.tick(now=1))
+        state = self.manager.snapshot()
+        receipt = self.manager.contexts.receipt(identifier, state["runs"][0]["id"])
+        self.assertNotIn("_runtime", state["runs"][0])
+        self.assertNotIn("lease_fd", json.dumps(state))
+        self.assertNotIn("lease_fd", json.dumps(receipt))
 
     def test_shutdown_still_cancels_after_the_per_run_cancel_flag_is_cleared(self) -> None:
         cancellation = self.manager._cancel_for_task("a" * 32)
@@ -211,6 +268,36 @@ class TaskBoundaryTests(unittest.TestCase):
         self.assertIn("deadline", result["message"])
         selector.select.assert_not_called()
         kill.assert_called_with(1234, signal.SIGKILL)
+
+    def test_recovered_final_receipt_advances_recurring_schedule(self) -> None:
+        self.manager.create(self.values, run_now=True, now=0)
+        write, count = tasks.write_text_atomic, 0
+
+        def fail_final_write(*args: object, **kwargs: object) -> None:
+            nonlocal count
+            count += 1
+            if count == 2:
+                raise OSError("Simulated final state write failure")
+            write(*args, **kwargs)
+
+        with (patch.object(tasks, "write_text_atomic", side_effect=fail_final_write),
+              patch.object(tasks.time, "time", return_value=7400),
+              patch.object(tasks, "execute_prompt", return_value={"status": "completed", "output": "",
+                      "message": "Done", **report()}), self.assertRaises(OSError)):
+            self.manager.tick(now=1)
+        self.assertEqual(self.manager.snapshot()["runs"][0]["status"], "running")
+
+        restored = tasks.AgentTasks(self.home)
+        self.addCleanup(restored.close)
+        with patch.object(tasks.time, "time", return_value=7400):
+            restored.start(once=True)
+        task = restored.snapshot()["tasks"][0]
+        self.assertEqual(task["attempts"], 1)
+        self.assertEqual(task["daily_attempts"], 1)
+        self.assertEqual(task["next_run"], 10800)
+        with patch.object(tasks, "execute_prompt") as execute:
+            self.assertFalse(restored.tick(now=7401))
+        execute.assert_not_called()
 
 
 class MaintenancePromptContextTests(unittest.TestCase):

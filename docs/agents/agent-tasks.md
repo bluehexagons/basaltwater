@@ -420,11 +420,11 @@ Existing historical records are not retroactively classified.
 | Setting | Default and meaning |
 | --- | --- |
 | `timeout_minutes` | 30; 1–10080 minutes for the provider invocation, including waits |
-| `max_runs` | 0 for ordinary tasks; 20 for CLI goals; lifetime attempt limit, including failed/interrupted work |
+| `max_runs` | 0 for ordinary tasks; 20 for CLI goals; lifetime attempt limit, including failed, interrupted, and cancelled claims |
 | `deadline_at` | 0; UTC epoch or ISO date with timezone; prevents late launches and bounds the invocation |
 | `start_at` | 0; explicit first-run instant, including a scheduled one-time invocation; must precede a nonzero deadline |
 | `token_budget` | 0; sum of reported input/output tokens across runs, checked after each run |
-| `daily_limit` | 0; maximum reserved attempts per UTC day; preserves queued work, including one-time invocations, until the next day |
+| `daily_limit` | 0; maximum reserved attempts per UTC day; a cancelled claim still consumes its reservation; queued work, including one-time invocations, waits until the next day |
 | `failure_limit` | 3; pause after 1–10 consecutive failures/blocked/interrupted runs; 0 disables pausing |
 | `backoff_minutes` | 0; minimum delay after unsuccessful work, in addition to the saved cadence |
 | `history_limit` | 100; retain 1–1000 generated receipt/log pairs per task |
@@ -552,10 +552,21 @@ explicitly authorizes that work; inherited tool access cannot bypass a limit.
 Private state uses atomic writes and a process lock for mutations; readers
 reload atomic snapshots. A separate lifetime worker lease prevents overlapping
 execution across the panel and foreground/system workers. Claims, attempt
-reservations and wake consumption are persisted before execution. A restarted
-active run becomes interrupted; inspect its edits before another invocation.
-If its final receipt was saved before an interrupted hot-state write, recovery
-reconciles that result and usage without relaunching the provider.
+reservations and wake consumption are persisted before execution. The worker
+passes its lease descriptor to the Codex process, so if the scheduler crashes
+while Codex is still alive, a new worker cannot recover or dispatch another run
+until that process exits. The descriptor is runtime-only and never enters task
+state or receipts. It serializes the direct provider process; arbitrary
+descendants may not inherit it, so the managed service's cgroup remains
+necessary to terminate them after supervisor failure.
+
+After the lease is available, a still-running claim without a final receipt is
+recorded as interrupted; inspect its edits before another invocation. If a
+final receipt was saved before an interrupted hot-state write, recovery
+reconciles its result and usage without relaunching the provider and advances a
+recurring task past intervals elapsed during that run. A claimed cancellation
+still consumes its reserved lifetime and daily attempt, while preserving the
+consecutive-failure count.
 Deadlines also stop idle event tasks and work deferred by a daily limit.
 Active invocations recheck their absolute deadline as well as their monotonic
 runtime cap; moving the wall clock forward does not leave a late invocation running.
