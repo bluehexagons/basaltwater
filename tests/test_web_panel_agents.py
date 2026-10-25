@@ -1268,6 +1268,184 @@ class AgentScreenTest(unittest.TestCase):
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"run": "a" * 32})
         self.assertIn("no longer in retained history", page)
 
+    def test_follow_up_block_redirects_to_retained_receipt_after_hot_history_eviction(self) -> None:
+        proposal = {
+            "title": "Restart the approved service",
+            "reason": "The service check needs one separately approved restart.",
+            "prompt": "Verify the service after its approved restart.",
+            "directory": str(self.project),
+            "mode": "workspace",
+            "workspace": "existing",
+            "network": False,
+            "temporary_files": False,
+            "writable_directories": [],
+            "operator_requirements": [],
+            "service_restarts": ["example.service"],
+            "storage_operation": "none",
+        }
+        source_task_id = self.state.agent_tasks.create({
+            "title": "Inspect service",
+            "prompt": "Inspect service state without changing it.",
+            "directory": self.home,
+            "mode": "inspect",
+            "interval": "once",
+            "history_limit": 1,
+        }, run_now=True)
+        with patch.object(tasks, "MAX_RUNS", 1), patch.object(tasks, "execute_prompt", return_value={
+            "status": "completed", "outcome": "blocked", "message": "Approval required", "output": "",
+            "follow_up": proposal,
+        }):
+            self.assertTrue(self.state.agent_tasks.tick())
+        source_run_id = self.state.agent_tasks.snapshot()["runs"][0]["id"]
+        request_id = "d" * 32
+        request_form = self.handler("/actions/agent-task", {
+            "csrf": self.state.csrf_token, "id": source_task_id, "run_id": source_run_id,
+            "action": "follow-up-privilege",
+        })
+        with patch("lib.agent_task_followups.load_policy", return_value={"services": {}}), patch(
+            "lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "pending"},
+        ) as broker:
+            request_form.do_POST()
+        self.assertEqual(request_form._send.call_args.args[0].value, 200, request_form._send.call_args.args[1])
+        broker.assert_called_once()
+
+        later_task_id = self.state.agent_tasks.create({
+            "title": "Later task", "prompt": "Inspect current state.", "directory": self.home,
+            "mode": "inspect", "interval": "once", "history_limit": 1,
+        }, run_now=True)
+        with patch.object(tasks, "MAX_RUNS", 1), patch.object(tasks, "execute_prompt", return_value={
+            "status": "completed", "message": "Done", "output": "",
+        }):
+            self.assertTrue(self.state.agent_tasks.tick())
+        snapshot = self.state.agent_tasks.snapshot()
+        self.assertEqual([run["task"]["id"] for run in snapshot["runs"]], [later_task_id])
+        self.assertEqual(self.state.agent_tasks.contexts.receipt(source_task_id, source_run_id)["id"], source_run_id)
+
+        block_form = self.handler("/actions/agent-task", {
+            "csrf": self.state.csrf_token, "id": source_task_id, "run_id": source_run_id,
+            "action": "follow-up-block",
+        })
+        with patch("lib.agent_task_followups.load_policy", return_value={"services": {}}), patch(
+            "lib.agent_task_followups.exchange", side_effect=[OSError("cancel unavailable"), OSError("status unavailable")],
+        ) as broker:
+            block_form.do_POST()
+        self.assertEqual(broker.call_args_list[0].args[0], {"action": "cancel", "id": request_id})
+        self.assertEqual(broker.call_args_list[1].args[0], {"action": "status", "id": request_id})
+        block_form.send_response.assert_called_once_with(303)
+        block_form.send_header.assert_any_call("Location", f"/agents?receipt={source_task_id}.{source_run_id}")
+
+        receipt_page = self.handler(f"/agents?receipt={source_task_id}.{source_run_id}", "")
+        receipt_page.do_GET()
+        self.assertEqual(receipt_page._send.call_args.args[0].value, 200)
+        page = receipt_page._send.call_args.args[1]
+        self.assertIn("Retained run receipt", page)
+        self.assertIn("Follow-up blocked by the operator", page)
+        self.assertIn("Retry service cancellation", page)
+        self.assertNotIn("This run is no longer in retained history", page)
+        self.assertEqual(self.state.agent_tasks.contexts.receipt(source_task_id, source_run_id)["follow_up"], proposal)
+        self.assertEqual(len([task for task in self.state.agent_tasks.snapshot()["tasks"]
+                              if task.get("source_run_id") == source_run_id]), 0)
+
+    def test_reviewed_follow_up_submission_redirects_to_source_receipt(self) -> None:
+        proposal = {
+            "title": "Verify the service",
+            "reason": "The restricted check needs a reviewed workspace task.",
+            "prompt": "Verify the service state and report evidence.",
+            "directory": str(self.project),
+            "mode": "workspace",
+            "workspace": "existing",
+            "network": False,
+            "temporary_files": False,
+            "writable_directories": [],
+            "operator_requirements": [],
+            "service_restarts": [],
+            "storage_operation": "none",
+        }
+        source_task_id = self.state.agent_tasks.create({
+            "title": "Inspect service", "prompt": "Inspect without changing it.",
+            "directory": self.home, "mode": "inspect", "interval": "once",
+        }, run_now=True)
+        with patch.object(tasks, "execute_prompt", return_value={
+            "status": "completed", "outcome": "blocked", "message": "Access restricted", "output": "",
+            "follow_up": proposal,
+        }):
+            self.state.agent_tasks.tick()
+        source_run_id = self.state.agent_tasks.snapshot()["runs"][0]["id"]
+        handler = self.handler("/actions/agent-task/save", {
+            "csrf": self.state.csrf_token,
+            "id": "",
+            "title": proposal["title"],
+            "prompt": "Review the retained evidence, then verify the service state and report evidence.",
+            "directory": str(self.project),
+            "mode": "workspace",
+            "interval": "once",
+            "workspace": "existing",
+            "source_task_id": source_task_id,
+            "source_run_id": source_run_id,
+            "submit": "run",
+        })
+        with patch.object(tasks, "execute_prompt") as execute:
+            handler.do_POST()
+        execute.assert_not_called()
+        handler.send_response.assert_called_once_with(303)
+        handler.send_header.assert_any_call("Location", f"/agents?receipt={source_task_id}.{source_run_id}")
+        child = self.state.agent_tasks.snapshot()["tasks"][-1]
+        self.assertEqual(child["source_task_id"], source_task_id)
+        self.assertEqual(child["source_run_id"], source_run_id)
+        self.assertTrue(child["queued"])
+
+    def test_service_approval_error_keeps_reviewed_follow_up_form(self) -> None:
+        proposal = {
+            "title": "Verify the restarted service",
+            "reason": "A separately approved restart is needed first.",
+            "prompt": "Verify the service state and report evidence.",
+            "directory": str(self.project),
+            "mode": "workspace",
+            "workspace": "existing",
+            "network": False,
+            "temporary_files": False,
+            "writable_directories": [],
+            "operator_requirements": [],
+            "service_restarts": ["example.service"],
+            "storage_operation": "none",
+        }
+        source_task_id = self.state.agent_tasks.create({
+            "title": "Inspect service", "prompt": "Inspect without changing it.",
+            "directory": self.home, "mode": "inspect", "interval": "once",
+        }, run_now=True)
+        with patch.object(tasks, "execute_prompt", return_value={
+            "status": "completed", "outcome": "blocked", "message": "Access restricted", "output": "",
+            "follow_up": proposal,
+        }):
+            self.state.agent_tasks.tick()
+        source_run_id = self.state.agent_tasks.snapshot()["runs"][0]["id"]
+        submitted_prompt = "Review the retained receipt before verifying the restarted service."
+        handler = self.handler("/actions/agent-task/save", {
+            "csrf": self.state.csrf_token,
+            "id": "",
+            "title": proposal["title"],
+            "prompt": submitted_prompt,
+            "directory": str(self.project),
+            "mode": "workspace",
+            "interval": "once",
+            "workspace": "existing",
+            "service_restarts": "example.service",
+            "source_task_id": source_task_id,
+            "source_run_id": source_run_id,
+            "submit": "run",
+        })
+        with patch("lib.agent_task_followups.load_policy", return_value={"services": {}}), patch(
+            "lib.agent_task_followups.exchange", side_effect=OSError("broker unavailable"),
+        ):
+            handler.do_POST()
+        status, page = handler._send.call_args.args[:2]
+        self.assertEqual(status.value, 503)
+        self.assertIn("The service request submission was not confirmed (broker unavailable)", page)
+        self.assertIn(submitted_prompt, page)
+        self.assertIn(f'name="source_task_id" value="{source_task_id}"', page)
+        self.assertIn(f'name="source_run_id" value="{source_run_id}"', page)
+        self.assertEqual(len(self.state.agent_tasks.snapshot()["tasks"]), 1)
+
     def test_composer_tasks_and_dashboard_are_separate(self) -> None:
         identifier = self.state.agent_tasks.create({"title": "Draft", "prompt": "Inspect", "directory": self.temporary.name,
                                                    "mode": "inspect", "interval": "once"}, run_now=False, draft=True)

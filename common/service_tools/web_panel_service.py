@@ -2686,7 +2686,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                                 "follow-up": identifier + "." + values.get("run_id", [""])[0],
                             }), "text/html")
                             return
-                        redirect = "/agents?" + urllib.parse.urlencode({"run": values.get("run_id", [""])[0]})
+                        redirect = "/agents?" + urllib.parse.urlencode({
+                            "receipt": identifier + "." + values.get("run_id", [""])[0],
+                        })
                     else:
                         manager.action(identifier, action)
                 else:
@@ -2714,7 +2716,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                         if choice == "privilege":
                             self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, {}, submitted=submitted), "text/html")
                             return
-                        redirect = "/agents?" + urllib.parse.urlencode({"run": source_run_id})
+                        redirect = "/agents?" + urllib.parse.urlencode({
+                            "receipt": source_task_id + "." + source_run_id,
+                        })
                     elif submitted.get("service_restarts"):
                         raise ValueError("Service restart prerequisites are only available for follow-up tasks")
                     elif identifier:

@@ -319,10 +319,13 @@ is saved. Repeated submission of a proposal returns the
 same child task. Blocking prevents that proposal from being launched and attempts
 to cancel saved service request IDs. If cancellation or its final state write is
 unconfirmed, the blocked proposal offers **Retry service cancellation** in run
-history. This only retries cancellation for known IDs without a recorded terminal
-or claimed state; it never approves, queues a child, or submits another service
-request. Cancelled, expired, denied, invalidated, executing, dispatched, succeeded,
-failed, and uncertain outcomes are retained and not retried. Cancellation cannot
+history. Approve, block and cancellation-retry actions return to the retained
+receipt by its task and run IDs, so unresolved evidence stays accessible after
+ordinary run history evicts it. This only retries cancellation for known IDs
+without a recorded terminal or claimed state; it never approves, queues a child,
+or submits another service request. Cancelled, expired, denied, invalidated,
+executing, dispatched, succeeded, failed, and uncertain outcomes are retained
+and not retried. Cancellation cannot
 stop or undo a request the broker has already claimed. If submission is uncertain
 and no request ID was returned, there is no local cancellation retry; check
 Privilege approvals before any request retry. The original task keeps its
