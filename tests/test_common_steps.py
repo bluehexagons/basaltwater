@@ -171,6 +171,71 @@ class TestDevelopmentToolPackages(unittest.TestCase):
             "ln -s /usr/bin/python3 /usr/local/bin/python"
         )
 
+    def test_python_alias_accepts_existing_matching_symlink_when_not_on_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executable_path = os.path.join(directory, "python3.11")
+            python3_path = os.path.join(directory, "python3")
+            alias_path = os.path.join(directory, "python")
+            with open(executable_path, "w", encoding="utf-8"):
+                pass
+            os.symlink(executable_path, python3_path)
+            os.symlink(executable_path, alias_path)
+
+            with (
+                patch("common.common_steps._PYTHON_ALIAS_PATH", alias_path),
+                patch(
+                    "common.common_steps.shutil.which",
+                    side_effect=[python3_path, None],
+                ),
+                patch("common.common_steps.run") as mock_run,
+            ):
+                result = ensure_python_alias(
+                    SetupConfig(
+                        host="testhost", username="agent", system_type="agent_vm"
+                    )
+                )
+
+            self.assertEqual(result, python3_path)
+            self.assertTrue(os.path.islink(alias_path))
+            self.assertEqual(os.readlink(alias_path), executable_path)
+            mock_run.assert_not_called()
+
+    def test_python_alias_rejects_existing_unmanaged_entries(self):
+        for entry_kind in ("conflicting_symlink", "dangling_symlink", "regular_file"):
+            with self.subTest(entry_kind=entry_kind), tempfile.TemporaryDirectory() as directory:
+                python3_path = os.path.join(directory, "python3")
+                alias_path = os.path.join(directory, "python")
+                other_path = os.path.join(directory, "other-python")
+                with open(python3_path, "w", encoding="utf-8"):
+                    pass
+                if entry_kind == "conflicting_symlink":
+                    with open(other_path, "w", encoding="utf-8"):
+                        pass
+                    os.symlink(other_path, alias_path)
+                elif entry_kind == "dangling_symlink":
+                    os.symlink(os.path.join(directory, "missing"), alias_path)
+                else:
+                    with open(alias_path, "w", encoding="utf-8") as stream:
+                        stream.write("unmanaged python command\n")
+
+                with (
+                    patch("common.common_steps._PYTHON_ALIAS_PATH", alias_path),
+                    patch(
+                        "common.common_steps.shutil.which",
+                        side_effect=[python3_path, None],
+                    ),
+                    patch("common.common_steps.run") as mock_run,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "unmanaged path"):
+                        ensure_python_alias(
+                            SetupConfig(
+                                host="testhost", username="agent", system_type="agent_vm"
+                            )
+                        )
+
+                self.assertTrue(os.path.lexists(alias_path))
+                mock_run.assert_not_called()
+
     @patch("common.common_steps.shutil.which", side_effect=["/usr/bin/python3", "/usr/bin/python"])
     @patch("common.common_steps.run")
     def test_python_alias_keeps_existing_command(self, mock_run, _which):

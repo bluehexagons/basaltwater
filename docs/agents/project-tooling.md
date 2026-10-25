@@ -349,6 +349,12 @@ describe the underlying conventions.
 
 ## Python tooling installation checks
 
+During setup reruns, an existing `/usr/local/bin/python` is accepted when it is
+a symlink resolving to the selected `python3` executable, even if the setup
+process cannot find `python` through its restricted `PATH`. That matching alias
+is left unchanged; dangling links, other symlink targets, regular files, and
+other existing entries still fail for operator repair.
+
 Managed uv installation accepts an existing `~/.local/bin/uv` only when it is
 a regular executable and `uv --version` exits successfully with recognizable
 `uv X.Y.Z` output (optionally including build metadata) in the target user's

@@ -64,6 +64,7 @@ _USER_TOOL_SHELL_ENV_RELATIVE_PATH = (
     "shell-env.sh",
 )
 _USER_TOOL_SHELL_MARKER = "# basaltwater user tool environment"
+_PYTHON_ALIAS_PATH = "/usr/local/bin/python"
 _USER_TOOL_SHELL_ENV = '''# Managed by basaltwater for interactive and agent shells.
 case ":$PATH:" in
     *":$HOME/.opencode/bin:"*) ;;
@@ -627,13 +628,21 @@ def ensure_python_alias(config: SetupConfig) -> str | None:
         print("  ✓ python command already available")
         return python3_path
 
-    alias_path = "/usr/local/bin/python"
+    alias_path = _PYTHON_ALIAS_PATH
+    if not os.path.isfile(python3_path):
+        raise RuntimeError(f"python3 path is not a regular file: {python3_path}")
     if os.path.lexists(alias_path):
+        if os.path.islink(alias_path):
+            try:
+                already_matches = os.path.samefile(alias_path, python3_path)
+            except OSError:
+                already_matches = False
+            if already_matches:
+                print("  ✓ python command already points to python3")
+                return python3_path
         raise RuntimeError(
             f"Cannot create python alias; an unmanaged path already exists: {alias_path}"
         )
-    if not os.path.isfile(python3_path):
-        raise RuntimeError(f"python3 path is not a regular file: {python3_path}")
 
     run(f"ln -s {shlex.quote(python3_path)} {shlex.quote(alias_path)}")
     if not os.path.isfile(alias_path):
