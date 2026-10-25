@@ -1103,6 +1103,19 @@ def add_setup_arguments(
         default=None,
         help="Install an embedded browser desktop in the HTTPS web panel; enables a shared desktop without opening RDP ingress. --no-guacamole removes browser access",
     )
+    kiosk_group = parser.add_mutually_exclusive_group()
+    kiosk_group.add_argument(
+        "--kiosk", dest="kiosk_mode", choices=("cli", "web"), default=None,
+        help="Install the Proxmox local browser kiosk; web starts it at boot, cli keeps boot in the console",
+    )
+    kiosk_group.add_argument(
+        "--no-kiosk", dest="kiosk_mode", action="store_const", const="off",
+        help="Remove only managed Proxmox kiosk configuration",
+    )
+    parser.add_argument(
+        "--kiosk-url", metavar="URL",
+        help="HTTP or HTTPS homepage for an enabled Proxmox kiosk (defaults are resolved on the target)",
+    )
     parser.add_argument(
         "--web-panel-payload",
         action="store_true",

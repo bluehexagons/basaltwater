@@ -575,6 +575,11 @@ def merge_setup_configs(
         merged_dict["disable_syncthing"] = True
         merged_dict["syncthing_admin"] = None
 
+    # An explicit off clears a previously saved homepage. An explicit URL with
+    # off is rejected by SetupConfig before the patch reaches this merge.
+    if new_config.kiosk_mode == "off" and "kiosk_mode" not in preserve_keys:
+        merged_dict["kiosk_url"] = None
+
     # GitHub sources are alternatives, not fields to accumulate on a patch.
     # The CLI preserves git_auth_source when it came only from a profile default.
     github_sources = (

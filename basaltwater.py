@@ -39,6 +39,7 @@ from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
+from lib.kiosk_config import validate_kiosk_settings
 from lib.cache import get_cache_path_for_host, load_all_setup_cache_records, load_setup_command, merge_setup_configs, save_setup_command
 from lib.command_display import redacted_git_url, redacted_saved_args
 from lib.channel_manager import (
@@ -938,6 +939,8 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
             features.append("HomeBox")
         if args.get("enable_syncthing"):
             features.append("Syncthing")
+        if args.get("kiosk_mode") in {"cli", "web"}:
+            features.append(f"Local kiosk ({args['kiosk_mode']})")
 
         if features:
             print(f"Features: {', '.join(features)}")
@@ -1144,6 +1147,10 @@ def _swap_preserve_keys(args: argparse.Namespace) -> set[str]:
 
 def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
     preserve_keys = _swap_preserve_keys(args)
+    if getattr(args, "kiosk_mode", None) in {"cli", "web"} and getattr(args, "desktop", None) is None:
+        # Enabling a kiosk must still see a saved shared desktop so validation
+        # rejects the conflict instead of treating omission as its removal.
+        preserve_keys.add("include_desktop")
     for field in ("is_build_server", "is_app_server"):
         if getattr(args, field, None) is None:
             preserve_keys.add(field)
@@ -1752,6 +1759,7 @@ def _refresh_existing_managed_guest_host_keys(
 
 
 def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
+    validate_kiosk_settings(config)
     if config.privilege_broker_auth and config.privilege_broker_port is None:
         raise ValueError("--privilege-broker-password requires an enabled privilege broker")
     _apply_hosted_proxmox_defaults(config, None)
@@ -1775,6 +1783,7 @@ def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
     )
     validate_gogs_settings(runtime_config)
     validate_homebox_settings(runtime_config)
+    validate_kiosk_settings(runtime_config)
     validate_antistatic_settings(runtime_config)
     validate_hosted_flags(runtime_config)
     validate_network_setup_settings(runtime_config)

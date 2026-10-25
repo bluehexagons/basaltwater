@@ -383,6 +383,14 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             print("RDP idle disconnect: disabled")
     if config.enable_smbclient:
         print("SMB Client: Yes")
+
+    if config.kiosk_mode == "off":
+        print("Local kiosk: remove managed configuration")
+    elif config.kiosk_mode is not None:
+        boot = "browser at boot" if config.kiosk_mode == "web" else "console at boot"
+        print(f"Local kiosk: {config.kiosk_mode} ({boot})")
+        if config.kiosk_url is not None:
+            print(f"Kiosk URL: {config.kiosk_url}")
     
     if config.desktop != "xfce" and (config.include_desktop or config.enable_rdp):
         print(f"Desktop: {config.desktop}")

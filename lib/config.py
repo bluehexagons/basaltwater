@@ -476,6 +476,8 @@ class SetupConfig:
     web_panel_notification_ingest: Optional[bool] = None
     disable_web_panel: bool = False
     guacamole: Optional[bool] = None
+    kiosk_mode: str | None = None
+    kiosk_url: str | None = None
     maintenance_agent: Optional[bool] = None
     maintenance_agent_host_checks: Optional[bool] = None
     maintenance_agent_interval: Optional[int] = None
@@ -631,6 +633,9 @@ class SetupConfig:
             self.guacamole = False
         if self.guacamole:
             self.include_desktop = True
+        from lib.kiosk_config import validate_kiosk_settings
+
+        validate_kiosk_settings(self, complete=False)
         from lib.guacamole_config import validate_guacamole_settings
 
         validate_guacamole_settings(self, complete=False)
@@ -1115,6 +1120,9 @@ class SetupConfig:
         # Loading legacy settings for inspection/correction must not authorize
         # sending an unchanged reserved root to the target for activation.
         validate_syncthing_settings(self)
+        from lib.kiosk_config import validate_kiosk_settings
+
+        validate_kiosk_settings(self)
         args: StrList = []
         if self.gogs:
             target_host = (
@@ -1125,6 +1133,7 @@ class SetupConfig:
             if target_host:
                 args.append(f"--target-host {shlex.quote(target_host)}")
         args.extend(self._homebox_args())
+        args.extend(self._kiosk_args())
         args.extend(self._ssh_args())
         from lib.maintenance_agent_config import setup_policy_args
 
@@ -1611,6 +1620,7 @@ class SetupConfig:
         if self.t3code_desktop:
             cmd_parts.append("--t3code-desktop")
         cmd_parts.extend(self._homebox_args())
+        cmd_parts.extend(self._kiosk_args())
         cmd_parts.extend(self._ssh_args())
         from lib.maintenance_agent_config import setup_policy_args
 
@@ -2210,6 +2220,16 @@ class SetupConfig:
             cmd_parts.append(f"--auto-restart-grace {self.auto_restart_grace}")
         
         return cmd_parts
+
+    def _kiosk_args(self) -> StrList:
+        args: StrList = []
+        if self.kiosk_mode == "off":
+            args.append("--no-kiosk")
+        elif self.kiosk_mode is not None:
+            args.append(f"--kiosk {shlex.quote(self.kiosk_mode)}")
+        if self.kiosk_url is not None:
+            args.append(f"--kiosk-url {shlex.quote(self.kiosk_url)}")
+        return args
 
     def _homebox_args(self) -> StrList:
         if self.homebox == []:
@@ -2877,6 +2897,8 @@ class SetupConfig:
             ),
             disable_web_panel=disable_web_panel,
             guacamole=_optional_bool_arg(args, 'guacamole'),
+            kiosk_mode=_optional_str_arg(args, 'kiosk_mode'),
+            kiosk_url=_optional_str_arg(args, 'kiosk_url'),
             maintenance_agent=_optional_bool_arg(args, 'maintenance_agent'),
             maintenance_agent_host_checks=_optional_bool_arg(args, 'maintenance_agent_host_checks'),
             maintenance_agent_interval=_optional_int_arg(args, 'maintenance_agent_interval'),
