@@ -214,6 +214,39 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertFalse(decision_path.exists())
         self.assertEqual(self.manager.contexts.pending_follow_ups(identifier), [])
 
+    def test_malformed_decision_status_does_not_abort_panel_or_summary(self) -> None:
+        from lib.atomic_io import write_json_atomic
+
+        self.proposal["title"] = "Valid retained proposal"
+        valid_id, valid_run = self.record_request()
+        self.proposal["title"] = "Proposal with unavailable decision"
+        identifier, run_id = self.record_request(history_limit=1)
+        path = self.manager.contexts.directory(identifier) / "runs" / (run_id + ".decision.json")
+
+        for status in ([], {}):
+            with self.subTest(status=status):
+                write_json_atomic(str(path), {"status": status, "requests": {}})
+                original = path.read_bytes()
+                with self.assertRaisesRegex(RuntimeError, "Invalid follow-up decision record"):
+                    follow_up_state(self.manager, identifier, run_id)
+                with patch("lib.agent_task_followups.exchange") as broker:
+                    summary = TaskAPI(self.manager).call("list", {"summary": True})
+                    statuses = {run["id"]: run["follow_up_status"] for run in summary["runs"]}
+                    self.assertEqual(statuses[valid_run], "pending")
+                    self.assertEqual(statuses[run_id], "unavailable")
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "tasks"})
+                    self.assertIn("Valid retained proposal", page)
+                    self.assertIn("Follow-up unavailable.", page)
+                    receipt = agents.render_agents(self.state, panel._PAGE_STYLE,
+                                                   {"receipt": identifier + "." + run_id})
+                    self.assertIn("Follow-up unavailable.", receipt)
+                    broker.assert_not_called()
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual([run["id"] for run in self.manager.contexts.pending_follow_ups(identifier)],
+                                 [run_id])
+                self.assertEqual([run["id"] for run in self.manager.contexts.pending_follow_ups(valid_id)],
+                                 [valid_run])
+
     def test_invalid_requests_and_unavailable_proposals_do_not_prepare_work(self) -> None:
         for changes in ({"mode": "unrestricted"}, {"network": "yes"}, {"directory": "relative"},
                         {"directory": "/tmp\npath"}, {"prompt": "a" * 4001}, {"title": ""},

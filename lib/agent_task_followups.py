@@ -115,7 +115,9 @@ def follow_up_state(manager: AgentTasks, identifier: str, run_id: str) -> dict[s
         value = private_json(path)
     except FileNotFoundError:
         return {"status": "pending", "requests": {}}
-    if value.get("status") not in {"pending", "approved", "blocked", "draft"} or not isinstance(value.get("requests"), dict):
+    if (not isinstance(value.get("status"), str)
+            or value["status"] not in {"pending", "approved", "blocked", "draft"}
+            or not isinstance(value.get("requests"), dict)):
         raise RuntimeError("Invalid follow-up decision record")
     _submission_intent(manager, identifier, run_id, value)
     return value
