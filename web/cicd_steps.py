@@ -48,6 +48,49 @@ def _check_service_config() -> None:
          "load_config_file('/etc/basaltwater/cicd/webhook_config.json')"])
 
 
+def reconcile_cicd_state_access() -> None:
+    """Restore execute-only CI grants after staging masks the state ACL.
+
+    Keep other ACL entries and the mask's existing read/write bits. Allowing
+    setfacl to recalculate the mask could expose latent read/write permissions
+    belonging to an unrelated account. Only traversal is restored, including
+    existing manifest-build traversal grants masked by runtime staging.
+    """
+    parent = os.path.dirname(CICD_HOME)
+    accounts = [pwd.getpwnam(user) for user in (CICD_USER, BUILD_USER)]
+    with directory_fd(parent) as descriptor:
+        # The group mode bits encode the ACL mask, or the group permissions
+        # when this directory does not yet have an extended ACL.
+        mask = ((os.fstat(descriptor).st_mode >> 3) & 0o7) | 0o1
+        permissions = ''.join(letter if mask & bit else '-'
+                              for letter, bit in (('r', 4), ('w', 2), ('x', 1)))
+        grants = ','.join(f'u:{account.pw_uid}:--x' for account in accounts)
+        # The child opens our live descriptor rather than resolving the state
+        # pathname again. run() does not inherit descriptors across exec.
+        target = f'/proc/{os.getpid()}/fd/{descriptor}'
+        run(['setfacl', '--no-mask', '-m', f'{grants},m::{permissions}', '--', target],
+            timeout=30)
+    _check_cicd_state_access()
+
+
+def _check_cicd_state_access() -> None:
+    """Verify state access with the runtime UIDs and no supplementary grants."""
+    for user, directories in (
+        (CICD_USER, (CICD_HOME, f'{CICD_HOME}/jobs', f'{CICD_HOME}/logs')),
+        (BUILD_USER, (BUILD_HOME, f'{BUILD_HOME}/workspaces')),
+    ):
+        account = pwd.getpwnam(user)
+        for directory in directories:
+            check_directory_path(directory)
+            for permission in ('-x', '-w', '-r'):
+                run([
+                    '/usr/bin/setpriv', f'--reuid={account.pw_uid}',
+                    f'--regid={account.pw_gid}', '--clear-groups',
+                    '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
+                    '--no-new-privs', '--', '/usr/bin/test', permission, directory,
+                ], timeout=30)
+
+
 def secure_cicd_directories(directories: list[str]) -> None:
     """Reconcile CI/CD directory ownership without changing file modes.
 
@@ -88,7 +131,7 @@ def create_isolated_build_directories() -> None:
 
 def install_cicd_dependencies(config: SetupConfig) -> None:
     """Install dependencies required for CI/CD system."""
-    packages = ['git']
+    packages = ['git', 'acl']
     
     def all_installed() -> bool:
         return all(is_package_installed(pkg) for pkg in packages)
@@ -151,6 +194,7 @@ def create_cicd_directories(config: SetupConfig) -> None:
 
     secure_cicd_directories(state_directories)
     create_isolated_build_directories()
+    reconcile_cicd_state_access()
     
     print("  ✓ Created CI/CD directories")
 
@@ -225,6 +269,7 @@ def create_webhook_receiver_service(config: SetupConfig) -> None:
     """Create systemd service for webhook receiver."""
     service_name = "webhook-receiver"
     generate_webhook_secret(config)
+    _check_cicd_state_access()
     _check_service_config()
     
     
@@ -297,6 +342,7 @@ def create_cicd_executor_service(config: SetupConfig) -> None:
     to run when the webhook user could not invoke ``systemctl start``).
     """
     service_name = "cicd-executor"
+    _check_cicd_state_access()
     _check_service_config()
     
     
