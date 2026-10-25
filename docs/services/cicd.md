@@ -242,6 +242,9 @@ job before retrying; its payload must match the ledger. The receiver's
 always require a matching receipt, even when the payload loses `delivery_key`.
 Upgrade receiver and executor together for this receipt protocol; old queue
 files without a receipt retain their previous one-attempt behavior.
+Ledger and publication path checks treat only confirmed absence as missing.
+Filesystem lookup errors stop selection or recovery so pending reservations
+cannot be bypassed during a transient storage error.
 
 Admission stops with HTTP 503 at 100 pending jobs, 10,000 retained receipts, or
 less than 128 MiB free on the queue filesystem. The SQLite ledger is limited to
