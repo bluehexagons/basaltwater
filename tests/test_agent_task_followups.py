@@ -18,7 +18,10 @@ from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
 from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, REPORT_SCHEMA, validate_follow_up, validate_report
-from lib.agent_task_followups import follow_up_state
+from lib.agent_task_followups import (
+    ServiceApprovalPending, ServiceApprovalUnavailable, decide_follow_up, follow_up_state,
+)
+from lib.privilege_client import PrivilegeRequestUnconfirmed
 from tests.test_agent_panel_tools import TaskForm
 from tests.test_agent_task_persistence import report
 
@@ -254,6 +257,36 @@ class TaskFollowUpTests(unittest.TestCase):
                 if reviewed:
                     self.assertEqual(children[0]["prompt"], form["prompt"])
                 self.manager.action(children[0]["id"], "cancel")
+
+    def test_unknown_service_submission_is_not_retried_or_reported_cancelled(self) -> None:
+        unit = "auto-update-node.service"
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        identifier, run_id = self.record_request()
+        failure = PrivilegeRequestUnconfirmed("Broker did not confirm request acceptance: persistence may be uncertain")
+        with patch("lib.agent_task_followups.exchange", side_effect=failure) as broker:
+            with self.assertRaises(ServiceApprovalUnavailable):
+                decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+
+            with self.assertRaisesRegex(ServiceApprovalPending, "outcome is unknown"):
+                decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+            with self.assertRaisesRegex(ServiceApprovalPending, "Waiting for service approval"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+
+            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+            broker.assert_called_once()
+            self.assertEqual(broker.call_args.args[0]["action"], "request")
+            state = follow_up_state(self.manager, identifier, run_id)
+            self.assertEqual(state["status"], "blocked")
+            self.assertEqual(state["requests"][unit]["state"], "submission-uncertain")
+            self.assertNotIn("id", state["requests"][unit])
+
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+            broker.assert_called_once()
+        self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
 
     def test_invalid_follow_up_does_not_discard_diagnostic_report(self) -> None:
         diagnostic = {**report("blocked"), "summary": "Service check completed", "evidence": ["unit was inactive"],
