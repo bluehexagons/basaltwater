@@ -24,6 +24,71 @@ class ServiceApprovalUnavailable(RuntimeError):
     """A broker operation failed while the task review must remain available."""
 
 
+def _request_key(identifier: str, run_id: str) -> str:
+    return "follow-up-" + identifier + "-" + run_id
+
+
+def _submission_intent(manager: AgentTasks, identifier: str, run_id: str,
+                       state: dict[str, Any]) -> dict[str, Any] | None:
+    submission = state.get("submission")
+    if submission is None:
+        return None
+    if (state["status"] != "pending" or not isinstance(submission, dict)
+            or set(submission) != {"task", "run_now", "draft", "request_key", "acknowledged_requirements"}
+            or type(submission["run_now"]) is not bool or type(submission["draft"]) is not bool
+            or submission["run_now"] == submission["draft"]
+            or submission["request_key"] != _request_key(identifier, run_id)
+            or not isinstance(submission["task"], dict)):
+        raise RuntimeError("Invalid follow-up submission intent")
+    try:
+        task = validate_task(submission["task"], manager.home, check_directory=False,
+                             check_existing_workspace=False)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise RuntimeError("Invalid follow-up submission task") from exc
+    if (task != submission["task"] or task["source_task_id"] != identifier
+            or task["source_run_id"] != run_id or task["interval"] != "once"
+            or task["max_runs"] != 1 or task["continue_until_done"] or task["start_at"] != 0
+            or not submission["draft"] and task["operator_requirements"]):
+        raise RuntimeError("Follow-up submission intent does not match its source")
+    acknowledged = submission["acknowledged_requirements"]
+    if (not isinstance(acknowledged, list) or len(acknowledged) > 20
+            or any(not isinstance(item, str) or not item.strip() or len(item) > 500 for item in acknowledged)):
+        raise RuntimeError("Invalid follow-up submission checklist")
+    if submission["draft"] and acknowledged:
+        raise RuntimeError("A follow-up draft cannot confirm prerequisites")
+    return {**submission, "task": task}
+
+
+def _matching_child(manager: AgentTasks, identifier: str, run_id: str, request_key: str,
+                    expected_task: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    matches = [task for task in manager.snapshot()["tasks"] if task.get("request_key") == request_key]
+    if len(matches) > 1:
+        raise RuntimeError("Multiple tasks match this follow-up submission")
+    if not matches:
+        return None
+    child = matches[0]
+    try:
+        settings = validate_task(child, manager.home, check_directory=False, check_existing_workspace=False)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise RuntimeError("The saved follow-up task is invalid") from exc
+    if (settings["source_task_id"] != identifier or settings["source_run_id"] != run_id
+            or settings["interval"] != "once" or settings["max_runs"] != 1
+            or settings["continue_until_done"]):
+        raise RuntimeError("The matching saved task does not match this follow-up")
+    if expected_task is not None and settings != expected_task:
+        raise RuntimeError("The saved follow-up task does not match its submission intent")
+    return child
+
+
+def _publish_decision(path: str, state: dict[str, Any], child_id: str,
+                      *, draft: bool, acknowledged: list[str]) -> str:
+    state.update(status="draft" if draft else "approved", task_id=child_id,
+                 acknowledged_requirements=acknowledged)
+    state.pop("submission", None)
+    write_json_atomic(path, state)
+    return child_id
+
+
 def _service_status(identifier: str) -> dict[str, Any]:
     try:
         return exchange({"action": "status", "id": identifier})
@@ -46,6 +111,7 @@ def follow_up_state(manager: AgentTasks, identifier: str, run_id: str) -> dict[s
         return {"status": "pending", "requests": {}}
     if value.get("status") not in {"pending", "approved", "blocked", "draft"} or not isinstance(value.get("requests"), dict):
         raise RuntimeError("Invalid follow-up decision record")
+    _submission_intent(manager, identifier, run_id, value)
     return value
 
 
@@ -140,16 +206,15 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
 
     Service prerequisites execute via the separately authenticated broker before
     provider launch; policy and write grants are still validated. Drafts retain
-    unresolved requirements. Interrupted submission is never blindly retried.
+    unresolved requirements. An interrupted task submission resumes its saved
+    intent or reconciles the exact idempotent child without replaying broker actions.
     """
     if decision not in {"approve", "block", "request-privilege"}:
         raise ValueError("Invalid follow-up decision")
     if decision == "block":
-        if not isinstance(manager.contexts.receipt(identifier, run_id).get("follow_up"), dict):
+        receipt = manager.contexts.receipt(identifier, run_id)
+        if not isinstance(receipt.get("follow_up"), dict):
             raise ValueError("This run did not request a follow-up")
-        prepared = {}
-    else:
-        prepared = prepare_follow_up(manager, identifier, run_id, review=settings is not None)
     with _decision_lock(manager, identifier):
         state = follow_up_state(manager, identifier, run_id)
         if state["status"] in {"approved", "draft"}:
@@ -159,6 +224,48 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
         if state["status"] == "blocked":
             raise ValueError("This follow-up was blocked by the operator")
         path = manager.contexts.directory(identifier) / "runs" / (run_id + ".decision.json")
+        request_key = _request_key(identifier, run_id)
+        submission = _submission_intent(manager, identifier, run_id, state)
+        child = _matching_child(manager, identifier, run_id, request_key,
+                                submission["task"] if submission is not None else None)
+        if submission is not None:
+            if decision == "approve":
+                if settings is not None:
+                    raise ValueError(
+                        "A follow-up submission is already saved. Use Approve once in its run history "
+                        "to finish it; its saved settings will be kept."
+                    )
+                if child is None:
+                    child_id = manager.create(submission["task"], run_now=submission["run_now"],
+                                              draft=submission["draft"], request_key=request_key)
+                else:
+                    child_id = child["id"]
+                return _publish_decision(str(path), state, child_id, draft=submission["draft"],
+                                         acknowledged=submission["acknowledged_requirements"])
+            if decision == "block":
+                if child is not None:
+                    raise ValueError(
+                        "A matching follow-up task has already been saved. Approve once to record it, "
+                        "then manage the saved task."
+                    )
+                # The intent is durable, but no child reached task storage, so
+                # an operator may still abandon it by blocking this proposal.
+                state.pop("submission", None)
+            else:
+                raise ValueError(
+                    "A follow-up submission is already saved. Approve once to finish it before "
+                    "requesting another service action."
+                )
+        elif child is not None:
+            if decision == "approve":
+                original = validate_follow_up(manager.contexts.receipt(identifier, run_id).get("follow_up"))
+                acknowledged = [] if child["draft"] else original.get("operator_requirements", [])
+                return _publish_decision(str(path), state, child["id"], draft=child["draft"],
+                                         acknowledged=acknowledged)
+            raise ValueError(
+                "A matching follow-up task has already been saved. Approve once to record it, "
+                "then manage the saved task."
+            )
         if decision == "block":
             state["status"] = "blocked"
             write_json_atomic(str(path), state)
@@ -171,6 +278,12 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
                         request["state"] = "cancellation-unconfirmed"
             write_json_atomic(str(path), state)
             return None
+        if decision == "approve":
+            if type(run_now) is not bool or type(draft) is not bool or draft and run_now:
+                raise ValueError("A draft cannot run immediately")
+            if not run_now and not draft:
+                raise ValueError("A one-time prompt needs Run now or an explicit first-run time")
+        prepared = prepare_follow_up(manager, identifier, run_id, review=settings is not None)
         candidate = dict(prepared if settings is None else settings)
         restarts = candidate.pop("service_restarts", [])
         if candidate.get("storage_operation", "none") not in {"none", "review"} and restarts:
@@ -229,9 +342,12 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
             raise ServiceApprovalPending("Waiting for service approval or successful execution: " + "; ".join(waiting)
                 + ". Review the status below. Failed or expired actions need an explicit new request; "
                   "uncertain actions need inspection in the privilege portal. No task has been queued.")
-        child = manager.create(task, run_now=run_now, draft=draft,
-                               request_key="follow-up-" + identifier + "-" + run_id)
-        state.update(status="draft" if draft else "approved", task_id=child,
-                     acknowledged_requirements=acknowledged)
+        state["submission"] = {"task": task, "run_now": run_now, "draft": draft,
+                               "request_key": request_key,
+                               "acknowledged_requirements": acknowledged}
+        # Commit the exact validated task before creation. If publication of
+        # the decision later fails, Approve once can safely finish this intent.
         write_json_atomic(str(path), state)
-        return child
+        child_id = manager.create(task, run_now=run_now, draft=draft, request_key=request_key)
+        return _publish_decision(str(path), state, child_id, draft=draft,
+                                 acknowledged=acknowledged)
