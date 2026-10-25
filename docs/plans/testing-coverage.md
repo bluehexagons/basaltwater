@@ -32,7 +32,7 @@ installations; optional combinations need their own checks.
 | --- | --- | --- |
 | Agent setup and tools | Fresh setup, populated reruns, reboot, separate Codex enrollment, managed skills and selected developer/container tools | Other agent profiles/providers, browser/pairing enrollment and optional combinations |
 | Agent tasks and goals | Live Luna inspection, workspace edits and conversation/checkpoint continuation; permissions, cancellation, usage and attempt/deadline limits. Controlled probes cover receipt recovery, unknown usage, surviving-child exclusion and failure isolation | Longer goals, additional crash/claim/publication boundaries and physical write failures |
-| Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry and broker restart, selected competing decisions, cancellation and credential lifecycle. Synthetic proposals and injected write/transport failures cover child recovery and cancellation-only retries against the installed broker | Further task-creation/crash races, browser recovery controls and manual recovery from retained guards |
+| Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries and manual reconciliation of uncertain remote outcomes; target-browser CA trust |
 | Admin jobs | Approved web validation and setup dry run; failed validation preserves the running gateway. HTTP CSRF/replay checks and controlled status-publication races | Applying refresh, package upgrades, power actions, long-job interruption and browser interaction |
 | Proxmox guests | Provisioning, identity/reboot, lifecycle controls, disk/resource flags, snapshots, full/linked clones, selected storage moves, backups and same-host restores | Off-host restore/retention, reverse storage moves, EFI/TPM layouts and template retirement. LXC CRIU suspend failed |
 | Host storage and networking | Passive capacity audit, storage persistence, selected maintenance guards, local orphan protection, firewall allowlists and strict SSH/TLS | Management-network isolation, multi-node/HA/Ceph, interrupted host upgrades and live remote-node/RBD/VirtioFS deletion guards |
@@ -47,16 +47,13 @@ installations; optional combinations need their own checks.
 
 ## Next useful checks
 
-1. **Agent follow-up recovery:** test process crashes around child publication
-   and additional competing decisions; require no duplicate privileged action or
-   child task, and qualify the browser recovery controls.
-2. **Longer agent runs:** exercise recurrence, checkpoint/history retention and
+1. **Longer agent runs:** exercise recurrence, checkpoint/history retention and
    remaining worker-restart boundaries while preserving usage limits and recovery.
-3. **Agent administration:** qualify browser review/status, then bounded applying
+2. **Agent administration:** qualify browser review/status, then bounded applying
    refresh and interrupted jobs on a disposable target.
-4. **Storage failure handling:** check hard-mounted network storage and stalled
+3. **Storage failure handling:** check hard-mounted network storage and stalled
    scrub preflight, then Btrfs diagnostic integration and native scrub scheduling.
-5. **Recovery and developer workflows:** restore off-host backups and verify
+4. **Recovery and developer workflows:** restore off-host backups and verify
    application data; test real GitHub mirror permissions and additional deployment
    manifests. Account-bound tests need their own explicit scope.
 
