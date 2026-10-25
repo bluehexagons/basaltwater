@@ -18,6 +18,7 @@ from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import validate_report
 from lib.agent_tasks_cli import add_tasks_parser, run_tasks_command
 from lib.agent_tasks_mcp import TaskMCP
+from lib.privilege_client import PrivilegeBrokerUnavailable
 
 
 class TaskAccessFlowTests(unittest.TestCase):
@@ -380,7 +381,7 @@ class TaskAccessFlowTests(unittest.TestCase):
 
     def test_definitive_submission_failures_can_retry_and_block_cancels_owned_request(self) -> None:
         identifier, run_id = self.record_proposal(service_restarts=["example.service"])
-        with patch.object(followups, "exchange", side_effect=FileNotFoundError):
+        with patch.object(followups, "exchange", side_effect=PrivilegeBrokerUnavailable("missing broker socket")):
             with self.assertRaises(followups.ServiceApprovalUnavailable):
                 followups.decide_follow_up(self.manager, identifier, run_id, "request-privilege")
         self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["requests"], {})

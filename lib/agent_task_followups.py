@@ -12,7 +12,7 @@ from lib.agent_task_context import private_json, validate_follow_up
 from lib.agent_task_policy import task_policy_issues
 from lib.agent_tasks import AgentTasks, validate_task
 from lib.atomic_io import write_json_atomic
-from lib.privilege_client import PrivilegeRequestRejected, exchange
+from lib.privilege_client import PrivilegeBrokerUnavailable, PrivilegeRequestRejected, exchange
 from lib.privilege_policy import load_policy
 
 
@@ -108,13 +108,19 @@ def _request_services(state: dict[str, Any], path: str, units: list[str], title:
         try:
             reply = exchange({"action": "request", "operation": operation, "parameters": parameters,
                               "reason": "Task follow-up: " + title})
-        except (FileNotFoundError, ConnectionRefusedError, PrivilegeRequestRejected) as exc:
+        except PrivilegeRequestRejected as exc:
             del state["requests"][unit]
             write_json_atomic(path, state)
-            raise ServiceApprovalUnavailable("The privilege broker could not accept the restart request for " + unit
-                + ". Check broker readiness and policy in Admin controls. Your task has not been queued.") from exc
+            raise ServiceApprovalUnavailable("The privilege broker rejected the restart request for " + unit
+                + ": " + str(exc) + ". Your task has not been queued.") from exc
+        except PrivilegeBrokerUnavailable as exc:
+            del state["requests"][unit]
+            write_json_atomic(path, state)
+            raise ServiceApprovalUnavailable("The privilege broker could not be reached before submission for " + unit
+                + ": " + str(exc) + ". Your task has not been queued.") from exc
         except (OSError, ValueError, RuntimeError) as exc:
-            raise ServiceApprovalUnavailable("The service request submission was not confirmed. Check the privilege portal before requesting again; no task has been queued.") from exc
+            raise ServiceApprovalUnavailable("The service request submission was not confirmed (" + str(exc)
+                + "). Check the privilege portal before requesting again; no task has been queued.") from exc
         state["requests"][unit] = {key: reply[key] for key in ("id", "state", "review_url") if key in reply}
         state["requests"][unit]["operation"] = operation
         write_json_atomic(path, state)

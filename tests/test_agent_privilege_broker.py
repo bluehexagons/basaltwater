@@ -8,15 +8,21 @@ from contextlib import closing, redirect_stdout
 import io
 import json
 import os
+import socketserver
 import sqlite3
 import struct
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from common.service_tools.privilege_broker import Broker, Handler, execute
-from lib.privilege_client import add_privilege_parser, run_privilege_command
+from lib import privilege_client
+from lib.privilege_client import (
+    PrivilegeBrokerUnavailable, PrivilegeRequestRejected, PrivilegeRequestUnconfirmed,
+    add_privilege_parser, run_privilege_command,
+)
 from lib.privilege_execution import ExecutionResult
 from lib.privilege_policy import (
     DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS,
@@ -366,6 +372,54 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(run_privilege_command(args), 0)
 
 
+class SocketClientTests(unittest.TestCase):
+    def exchange_response(self, response, message):
+        class ResponseHandler(socketserver.StreamRequestHandler):
+            def handle(self):
+                self.rfile.readline(MAX_MESSAGE + 1)
+                self.wfile.write(response)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "broker.sock")
+            server = socketserver.UnixStreamServer(path, ResponseHandler)
+            server.timeout = 3
+            worker = threading.Thread(target=server.handle_request)
+            worker.start()
+            try:
+                return privilege_client.exchange(message, path)
+            finally:
+                worker.join(4)
+                server.server_close()
+
+    def test_actual_socket_response_distinguishes_rejection_from_unknown(self):
+        message = {"action": "request", "operation": "service.restart",
+                   "parameters": {"unit": "demo.service"}, "reason": "test"}
+        rejected = {"ok": False, "code": "request_rejected", "error": "Operation is not registered in administrator policy"}
+        with self.assertRaises(PrivilegeRequestRejected) as result:
+            self.exchange_response((canonical(rejected) + "\n").encode(), message)
+        self.assertEqual(str(result.exception), rejected["error"])
+
+        legacy = {"ok": False, "error": "Broker rejected the request or could not persist it; inspect request status before retrying"}
+        with self.assertRaises(PrivilegeRequestUnconfirmed) as result:
+            self.exchange_response((canonical(legacy) + "\n").encode(), message)
+        self.assertIn(legacy["error"], str(result.exception))
+
+        for malformed in (b"not-json\n", b"[]\n", b'{"ok":true}\n',
+                          b'{"ok":false,"code":"request_rejected"}\n'):
+            with self.subTest(response=malformed), self.assertRaises(PrivilegeRequestUnconfirmed):
+                self.exchange_response(malformed, message)
+
+    def test_rejection_marker_for_another_action_is_not_definitive(self):
+        response = {"ok": False, "code": "request_rejected", "error": "Request unavailable"}
+        with self.assertRaises(PrivilegeRequestUnconfirmed):
+            self.exchange_response((canonical(response) + "\n").encode(), {"action": "status", "id": "a" * 32})
+
+    def test_socket_connect_failure_is_distinguished_before_send(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(PrivilegeBrokerUnavailable):
+                privilege_client.exchange({"action": "request"}, os.path.join(directory, "missing.sock"))
+
+
 class TransportTests(unittest.TestCase):
     def invoke(self, uid, payload, *, approval=False):
         handler = object.__new__(Handler)
@@ -377,6 +431,51 @@ class TransportTests(unittest.TestCase):
         handler.wfile = io.BytesIO()
         handler.handle()
         return json.loads(handler.wfile.getvalue()), handler.server.broker.dispatch
+
+    def invoke_broker(self, broker, payload):
+        handler = object.__new__(Handler)
+        handler.request = Mock()
+        handler.request.getsockopt.return_value = struct.pack("3i", 123, 1000, 1000)
+        handler.server = SimpleNamespace(allowed_uid=1000, approval=False, broker=broker)
+        handler.rfile = io.BytesIO(payload)
+        handler.wfile = io.BytesIO()
+        handler.handle()
+        return json.loads(handler.wfile.getvalue())
+
+    def test_handler_marks_only_preinsert_rejection_as_definitive(self):
+        request = {"action": "request", "operation": "service.restart",
+                   "parameters": {"unit": "demo.service"}, "reason": "test"}
+        with tempfile.TemporaryDirectory() as directory:
+            denied_policy = policy()
+            denied_policy["services"] = {"other.service": "approve"}
+            broker = Broker(os.path.join(directory, "denied.db"), lambda: denied_policy, Mock())
+            try:
+                response = self.invoke_broker(broker, (canonical(request) + "\n").encode())
+                self.assertEqual(response["ok"], False)
+                self.assertEqual(response["code"], "request_rejected")
+                self.assertIn("Operation is not registered", response["error"])
+                self.assertEqual(broker.db.execute("SELECT count(*) FROM requests").fetchone()[0], 0)
+            finally:
+                broker.db.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            allowed_policy = policy()
+            allowed_policy["services"]["demo.service"] = "allow"
+            broker = Broker(os.path.join(directory, "accepted.db"), lambda: allowed_policy, Mock())
+
+            def persist_then_fail(message, uid, *, approval=False):
+                broker.dispatch(message, uid, approval=approval)
+                raise sqlite3.OperationalError("response interrupted after persistence")
+
+            try:
+                response = self.invoke_broker(SimpleNamespace(dispatch=persist_then_fail),
+                                              (canonical(request) + "\n").encode())
+                self.assertEqual(response["ok"], False)
+                self.assertNotIn("code", response)
+                self.assertIn("inspect request status before retrying", response["error"])
+                self.assertEqual(broker.db.execute("SELECT count(*) FROM requests").fetchone()[0], 1)
+            finally:
+                broker.db.close()
 
     def test_kernel_uid_controls_access_before_dispatch(self):
         response, dispatch = self.invoke(1001, b'{"action":"status"}\n')
