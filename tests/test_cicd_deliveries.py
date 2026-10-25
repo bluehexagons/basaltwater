@@ -187,6 +187,42 @@ class TestDeliveries(unittest.TestCase):
         self.assertEqual(deliveries.pending_job_files(self.ledger, self.jobs), [older, newer])
         self.assertFalse(Path(self.ledger).exists())
 
+    def test_ledger_lookup_eio_aborts_queue_selection_and_recovery(self):
+        keys = self.reserve_then_publish_later_delivery()
+        real_lstat = os.lstat
+
+        def ledger_lookup_eio(path, *args, **kwargs):
+            if os.fspath(path) == self.ledger:
+                raise OSError(errno.EIO, 'transient ledger lookup error')
+            return real_lstat(path, *args, **kwargs)
+
+        with patch.object(deliveries.os, 'lstat', side_effect=ledger_lookup_eio):
+            with self.assertRaises(OSError) as error:
+                deliveries.pending_job_files(self.ledger, self.jobs)
+            self.assertEqual(error.exception.errno, errno.EIO)
+            with self.assertRaises(OSError) as error:
+                deliveries.recover_pending(self.ledger, self.jobs)
+            self.assertEqual(error.exception.errno, errno.EIO)
+
+        self.assertEqual(deliveries.pending_job_files(self.ledger, self.jobs),
+                         [Path(self.jobs) / f'delivery-{key}.json' for key in keys])
+        with closing(sqlite3.connect(self.ledger)) as connection:
+            self.assertEqual(dict(connection.execute('SELECT key, state FROM receipts')),
+                             dict.fromkeys(keys, 'pending'))
+
+    def test_publication_treats_symlink_as_existing_path(self):
+        self.enqueue()
+        job = self.job()
+        target = self.root / 'target.json'
+        target.write_text('{}')
+        job.unlink()
+        job.symlink_to(target)
+
+        deliveries.recover_pending(self.ledger, self.jobs)
+
+        self.assertTrue(job.is_symlink())
+        self.assertEqual(target.read_text(), '{}')
+
     def test_executor_recovers_before_claiming_or_deploying_later_delivery(self):
         keys = self.reserve_then_publish_later_delivery()
         with self.executor_drain() as calls:

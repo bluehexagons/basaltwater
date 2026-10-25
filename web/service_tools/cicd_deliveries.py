@@ -68,12 +68,21 @@ def _job_path(jobs_dir: str, key: str) -> str:
     return os.path.join(jobs_dir, f'delivery-{_key(key)}.json')
 
 
+def _path_exists(path: str) -> bool:
+    """Return false only when lstat confirms the path is absent."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _publish(connection, jobs_dir: str, key: str) -> None:
     row = connection.execute('SELECT payload, state FROM receipts WHERE key=?', (key,)).fetchone()
     if row is None or row[1] != 'pending':
         return
     path = _job_path(jobs_dir, key)
-    if not os.path.lexists(path):
+    if not _path_exists(path):
         write_json_atomic(path, json.loads(row[0]))
 
 
@@ -114,7 +123,7 @@ def enqueue(ledger: str, jobs_dir: str, key: str, payload: dict) -> None:
 
 def recover_pending(ledger: str, jobs_dir: str) -> None:
     """Re-publish reserved jobs after a receiver restart without replaying claims."""
-    if not os.path.lexists(ledger):
+    if not _path_exists(ledger):
         return
     with _database(ledger) as connection:
         _recover_pending(connection, jobs_dir)
@@ -138,10 +147,10 @@ def _recover_pending(connection, jobs_dir: str) -> None:
 
 def pending_job_files(ledger: str, jobs_dir: str) -> list[Path]:
     """Recover and select jobs under one lock, preserving receipt acceptance order."""
-    if not os.path.lexists(ledger):
+    if not _path_exists(ledger):
         jobs = _ordered_job_files(jobs_dir, {})
         # The first receiver can create the ledger while we scan legacy jobs.
-        if not os.path.lexists(ledger):
+        if not _path_exists(ledger):
             return jobs
     with _database(ledger) as connection:
         # Keep recovery and enumeration in one transaction: a receiver must
