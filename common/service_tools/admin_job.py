@@ -159,24 +159,32 @@ def _same_job(first: dict, second: dict) -> bool:
 
 def job_status() -> dict:
     """Expose fixed result metadata, never privileged output or saved setup."""
+    initial_read_succeeded = True
     try:
         result = _read_job_record()
     except (OSError, ValueError, RuntimeError, TypeError, OverflowError):
         result = {"status": "unavailable"}
+        initial_read_succeeded = False
 
-    # Observe the unit after the first record read. If it looks inactive while
-    # that record is running, reconcile with a fresh protected record because
-    # the job may have finished while systemd was queried.
+    # Observe the unit after the first record read. An inactive or failed
+    # observation must be reconciled against a second protected snapshot even
+    # when the first snapshot was empty or terminal: another job may have been
+    # published while systemd was queried.
     active = unit_state()
-    if result.get("status") == "running" and active in {"inactive", "failed"}:
-        previous = result
+    if active in {"inactive", "failed"}:
         try:
             latest = _read_job_record()
         except (OSError, ValueError, RuntimeError, TypeError, OverflowError):
             result = {"status": "unavailable"}
             active = "unavailable"
         else:
-            if not _same_job(previous, latest):
+            if not initial_read_succeeded:
+                result = {"status": "unavailable"}
+                active = "unavailable"
+            elif not result and not latest:
+                # Two confirmed missing snapshots are stable absence.
+                result = {}
+            elif not _same_job(result, latest):
                 # The old unit observation cannot classify a replacement job.
                 result = {"status": "unavailable"}
                 active = "unavailable"

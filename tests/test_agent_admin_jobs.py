@@ -321,7 +321,11 @@ class AdminJobTests(unittest.TestCase):
             result = admin_job.job_status()
         self.assertEqual(result["latest"], {})
         self.assertEqual(result["unit_state"], "inactive")
-        protect.assert_called_once_with(parent, directory=True)
+        self.assertEqual(protect.call_count, 2)
+        self.assertEqual(protect.call_args_list[0].args, (parent,))
+        self.assertEqual(protect.call_args_list[0].kwargs, {"directory": True})
+        self.assertEqual(protect.call_args_list[1].args, (parent,))
+        self.assertEqual(protect.call_args_list[1].kwargs, {"directory": True})
         unit_state.assert_called_once()
 
     def test_unsafe_job_history_parent_is_unavailable(self):
@@ -329,7 +333,9 @@ class AdminJobTests(unittest.TestCase):
                 patch.object(admin_job, "unit_state", return_value="inactive"):
             result = admin_job.job_status()
         self.assertEqual(result["latest"], {"status": "unavailable"})
-        protect.assert_called_once_with(os.path.dirname(self.path), directory=True)
+        self.assertEqual(protect.call_count, 2)
+        self.assertTrue(all(call.args == (os.path.dirname(self.path),)
+                            and call.kwargs == {"directory": True} for call in protect.call_args_list))
 
     def test_job_history_lookup_errors_and_dangling_symlink_are_unavailable(self):
         real_lstat = os.lstat
@@ -341,13 +347,17 @@ class AdminJobTests(unittest.TestCase):
 
         with patch.object(admin_job.os, "lstat", side_effect=fail_state_lstat), \
                 patch.object(admin_job, "unit_state", return_value="inactive"):
-            self.assertEqual(admin_job.job_status()["latest"], {"status": "unavailable"})
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"], {"status": "unavailable"})
+        self.assertEqual(result["unit_state"], "unavailable")
 
         Path(self.path).symlink_to(self.directory.name + "/missing-target")
         with patch.object(admin_job, "unit_state", return_value="inactive"):
-            self.assertEqual(admin_job.job_status()["latest"], {"status": "unavailable"})
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"], {"status": "unavailable"})
+        self.assertEqual(result["unit_state"], "unavailable")
 
-    def test_new_record_published_after_inactive_observation_is_not_interrupted(self):
+    def test_new_record_published_after_inactive_observation_invalidates_status(self):
         previous = {"action": "refresh", "status": "succeeded", "started": 123,
                     "finished": 124, "exit_code": 0}
         running = {"action": "refresh", "status": "running", "started": 125,
@@ -362,8 +372,31 @@ class AdminJobTests(unittest.TestCase):
 
         with patch.object(admin_job, "unit_state", side_effect=observe_inactive_then_publish):
             result = admin_job.job_status()
-        self.assertEqual(result["unit_state"], "inactive")
-        self.assertEqual(result["latest"]["status"], "succeeded")
+        self.assertEqual(result["unit_state"], "unavailable")
+        self.assertEqual(result["latest"], {"status": "unavailable"})
+
+    def test_new_job_published_after_empty_snapshot_invalidates_status(self):
+        running = {"action": "refresh", "status": "running", "started": 125,
+                   "finished": None, "exit_code": None, "job_id": "b" * 32}
+
+        def publish_running_then_report_inactive():
+            Path(self.path).write_text(json.dumps(running))
+            return "inactive"
+
+        with patch.object(admin_job, "unit_state", side_effect=publish_running_then_report_inactive):
+            result = admin_job.job_status()
+        self.assertEqual(result["unit_state"], "unavailable")
+        self.assertEqual(result["latest"], {"status": "unavailable"})
+
+    def test_busy_unit_state_does_not_trigger_a_second_history_read(self):
+        running = {"action": "refresh", "status": "running", "started": 123,
+                   "finished": None, "exit_code": None, "job_id": "a" * 32}
+        Path(self.path).write_text(json.dumps(running))
+        with patch.object(admin_job, "_read_job_record", wraps=admin_job._read_job_record) as read_record, \
+                patch.object(admin_job, "unit_state", return_value="active"):
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"]["status"], "running")
+        read_record.assert_called_once_with()
 
     def test_corrupt_job_status_remains_unavailable(self):
         for values in ({"action": []}, {"action": "refresh", "status": "running", "started": float("nan")},
