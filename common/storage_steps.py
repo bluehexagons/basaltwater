@@ -12,7 +12,7 @@ from typing import Any
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import is_dry_run, run
-from lib.validation import validate_vm_storage_name
+from lib.validation import validate_filesystem_path, validate_vm_storage_name
 from lib.vm_storage import (
     VMStorageCache,
     VMStorageMount,
@@ -27,6 +27,8 @@ from lib.vm_storage import (
 STORAGE_STATE_FILE = "/var/lib/basaltwater/vm-storage.json"
 STORAGE_MARKER = ".basaltwater-storage.json"
 STORAGE_SCHEMA_VERSION = 2
+# Covers the 1 MiB partition start plus GPT and alignment rounding.
+PARTITION_SIZE_TOLERANCE_BYTES = 2 * 1024 * 1024
 
 
 class _MissingDeclaredDisk(RuntimeError):
@@ -234,6 +236,34 @@ def _partition_for_mount(
     partition = children[0]
     if not isinstance(partition, dict) or partition.get("type") != "part":
         raise RuntimeError(f"VM data disk {serial!r} has an unexpected child device")
+    reported_size = partition.get("size")
+    if (
+        isinstance(reported_size, bool)
+        or not isinstance(reported_size, (int, str))
+        or (
+            isinstance(reported_size, str)
+            and not re.fullmatch(r"[0-9]+", reported_size)
+        )
+    ):
+        raise RuntimeError(
+            f"VM data partition for {serial!r} did not report a valid size"
+        )
+    partition_bytes = int(reported_size)
+    if partition_bytes <= 0:
+        raise RuntimeError(
+            f"VM data partition for {serial!r} did not report a valid size"
+        )
+    expected_bytes = storage_size_kib(expected_size) * 1024
+    minimum_partition_bytes = max(
+        1, expected_bytes - PARTITION_SIZE_TOLERANCE_BYTES
+    )
+    if partition_bytes < minimum_partition_bytes:
+        raise RuntimeError(
+            f"VM data partition for {serial!r} is smaller than declared: "
+            f"{partition_bytes} bytes < {expected_bytes} bytes "
+            f"(allowing {PARTITION_SIZE_TOLERANCE_BYTES} bytes for GPT and "
+            "alignment overhead)"
+        )
     return _device_path(partition)
 
 
@@ -579,11 +609,14 @@ def _prepare_mount(
         f"Type={mount.filesystem}\n"
         f"Options={mount_options}\n\n"
         "[Install]\n"
-        "WantedBy=local-fs.target\n"
+        "RequiredBy=local-fs.target\n"
     )
     write_text_atomic(unit_path, unit_text, mode=0o644)
     _run_capture("systemctl daemon-reload")
-    _run_capture(f"systemctl enable --now {shlex.quote(unit)}")
+    # Reenable removes stale Wants links from older versions and installs the
+    # current RequiredBy link before the mount is started.
+    _run_capture(f"systemctl reenable {shlex.quote(unit)}")
+    _run_capture(f"systemctl start {shlex.quote(unit)}")
     source, _filesystem = _verify_active_mount(mount, filesystem_uuid)
 
     marker = {
@@ -734,9 +767,28 @@ def setup_vm_storage(config: SetupConfig) -> None:
 def assert_declared_storage_mount(config: SetupConfig, path: str) -> None:
     """Verify the declared mount containing ``path`` before an application write."""
 
+    mounts = storage_mounts(config)
+    if not mounts:
+        return
+
+    def require_normalized_absolute_path(value: str, label: str) -> None:
+        if not isinstance(value, str):
+            raise ValueError(f"{label} must be a normalized absolute path: {value}")
+        validate_filesystem_path(value)
+        if (
+            not os.path.isabs(value)
+            or value.startswith("//")
+            or os.path.normpath(value) != value
+        ):
+            raise ValueError(f"{label} must be a normalized absolute path: {value}")
+
+    require_normalized_absolute_path(path, "Storage write path")
+    for mount in mounts:
+        require_normalized_absolute_path(mount.path, "Declared VM storage mount path")
+
     matching = [
         mount
-        for mount in storage_mounts(config)
+        for mount in mounts
         if path == mount.path or path.startswith(mount.path + os.sep)
     ]
     if not matching:

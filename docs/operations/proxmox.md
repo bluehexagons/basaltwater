@@ -604,12 +604,17 @@ For a separate home filesystem on a newly provisioned VM:
 ```
 
 After SSH becomes ready, target setup identifies each disk by serial and
-declared capacity, partitions and formats it only when it is confirmed blank,
-and creates a required UUID-based systemd mount. Existing signatures, an
-ambiguous device, a nonempty mount path, a wrong filesystem, or a failed mount
-stops setup. The mount does not use `nofail`, and a marker on the mounted
-filesystem prevents an empty root-disk directory from passing application
-checks. Gogs and agent repository setup verify the mount before writing.
+declared capacity, partitions a confirmed blank disk, and checks that its sole
+GPT partition reports the declared capacity (allowing up to 2 MiB for GPT and
+alignment overhead) before formatting. It creates a required UUID-based
+systemd mount with a `local-fs.target` requirement. Reruns reconcile older weak
+`Wants` links before starting the mount. Existing signatures, an ambiguous
+device, an undersized or unreported partition, a nonempty mount path, a wrong
+filesystem, or a failed mount stops setup. The mount does not use `nofail`, and
+a marker on the mounted filesystem prevents an empty root-disk directory from
+passing application checks. Gogs and agent repository setup verify the mount
+before writing and reject non-normalized paths rather than letting path
+traversal bypass the managed mount boundary.
 Observed mount and cache state is stored root-only in
 `/var/lib/basaltwater/vm-storage.json`; each mounted filesystem also carries
 `.basaltwater-storage.json` for fail-closed verification. Gogs, Samba shares,

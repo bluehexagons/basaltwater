@@ -199,6 +199,65 @@ class TestDiskPreparationSafety(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "signatures found: ext4"):
             storage_steps._partition_for_mount(disk, "it-data", "2G")
 
+    def test_partition_for_mount_rejects_partition_below_declared_capacity(self):
+        declared_bytes = 128 * 1024**3
+        for partition_size in (
+            8 * 1024**3,
+            declared_bytes - 2 * 1024**2 - 1,
+        ):
+            with self.subTest(partition_size=partition_size):
+                disk = {
+                    "path": "/dev/sdb",
+                    "type": "disk",
+                    "pttype": "gpt",
+                    "children": [
+                        {
+                            "type": "part",
+                            "path": "/dev/sdb1",
+                            "size": partition_size,
+                        }
+                    ],
+                }
+
+                with patch.object(storage_steps, "_run_capture") as run:
+                    with self.assertRaisesRegex(
+                        RuntimeError, "partition.*smaller than declared"
+                    ):
+                        storage_steps._partition_for_mount(disk, "bw-data", "128G")
+
+                run.assert_not_called()
+
+    def test_partition_for_mount_allows_normal_gpt_alignment_overhead(self):
+        declared_bytes = 128 * 1024**3
+        disk = {
+            "path": "/dev/sdb",
+            "type": "disk",
+            "pttype": "gpt",
+            "children": [
+                {
+                    "type": "part",
+                    "path": "/dev/sdb1",
+                    "size": declared_bytes - 2 * 1024**2,
+                }
+            ],
+        }
+
+        self.assertEqual(
+            storage_steps._partition_for_mount(disk, "bw-data", "128G"),
+            "/dev/sdb1",
+        )
+
+    def test_partition_for_mount_rejects_missing_or_invalid_partition_size(self):
+        invalid_sizes = (None, "unknown", 0, -1, 1.5, True)
+        for size in invalid_sizes:
+            with self.subTest(size=size):
+                partition = {"type": "part", "path": "/dev/sdb1"}
+                if size is not None:
+                    partition["size"] = size
+                disk = {"path": "/dev/sdb", "pttype": "gpt", "children": [partition]}
+                with self.assertRaisesRegex(RuntimeError, "did not report a valid size"):
+                    storage_steps._partition_for_mount(disk, "bw-data", "2G")
+
     @patch("common.storage_steps._lsblk")
     def test_refuses_existing_wrong_filesystem(self, mock_lsblk):
         mock_lsblk.return_value = [
@@ -495,7 +554,18 @@ class TestLVMCachePreparation(unittest.TestCase):
 class TestPrepareMount(unittest.TestCase):
     def test_recorded_identity_or_uuid_drift_never_formats(self):
         with tempfile.TemporaryDirectory() as directory:
-            disk = {"path": "/dev/sdc", "serial": "it-data", "pttype": "gpt", "children": [{"type": "part", "path": "/dev/sdc1"}]}
+            disk = {
+                "path": "/dev/sdc",
+                "serial": "it-data",
+                "pttype": "gpt",
+                "children": [
+                    {
+                        "type": "part",
+                        "path": "/dev/sdc1",
+                        "size": 2 * 1024**3,
+                    }
+                ],
+            }
             prior = {"serial": "it-data", "uuid": "12345678-abcd"}
             with (patch.object(storage_steps, "_wait_for_declared_disk", return_value=disk),
                   patch.object(storage_steps, "_mounted_info", return_value=None),
@@ -585,11 +655,14 @@ class TestPrepareMount(unittest.TestCase):
         self.assertIn("What=/dev/disk/by-uuid/filesystem-uuid", unit_text)
         self.assertIn(f"Where={directory}", unit_text)
         self.assertIn("Options=defaults\n", unit_text)
+        self.assertIn("RequiredBy=local-fs.target\n", unit_text)
+        self.assertNotIn("WantedBy=local-fs.target", unit_text)
         self.assertNotIn("nofail", unit_text)
         mock_run.assert_has_calls(
             [
                 call("systemctl daemon-reload"),
-                call("systemctl enable --now srv-agent.mount"),
+                call("systemctl reenable srv-agent.mount"),
+                call("systemctl start srv-agent.mount"),
             ]
         )
         self.assertEqual(
@@ -664,7 +737,7 @@ class TestPrepareMount(unittest.TestCase):
                     "common.storage_steps._systemd_mount_unit",
                     return_value="srv-git.mount",
                 ),
-                patch("common.storage_steps._run_capture"),
+                patch("common.storage_steps._run_capture") as run,
                 patch("common.storage_steps.write_text_atomic"),
                 patch("common.storage_steps.write_json_atomic"),
             ):
@@ -674,6 +747,14 @@ class TestPrepareMount(unittest.TestCase):
                     "it-git-data",
                     "scsi2",
                 )
+
+        run.assert_has_calls(
+            [
+                call("systemctl daemon-reload"),
+                call("systemctl reenable srv-git.mount"),
+                call("systemctl start srv-git.mount"),
+            ]
+        )
 
 
 class TestSetupVMStorage(unittest.TestCase):
@@ -813,6 +894,33 @@ class TestSetupVMStorage(unittest.TestCase):
 
 
 class TestDeclaredMountAssertion(unittest.TestCase):
+    def test_non_normalized_paths_are_rejected_before_mount_matching(self):
+        config = SetupConfig(
+            host="host",
+            username="git",
+            system_type="server_web",
+            storage_mounts=[["git-data", "/srv/data"]],
+        )
+        paths = (
+            "/srv/data/../outside-gogs",
+            "/srv/data/./gogs",
+            "/srv/data//gogs",
+            "//srv/data/gogs",
+            "/srv/data/gogs/",
+        )
+
+        with (
+            patch.object(storage_steps, "_verify_active_mount") as verify,
+            patch.object(storage_steps, "read_json_file") as read_marker,
+        ):
+            for path in paths:
+                with self.subTest(path=path):
+                    with self.assertRaisesRegex(ValueError, "normalized absolute path"):
+                        storage_steps.assert_declared_storage_mount(config, path)
+
+        verify.assert_not_called()
+        read_marker.assert_not_called()
+
     def test_marker_symlinks_and_special_files_block_application_writes(self):
         with tempfile.TemporaryDirectory() as root:
             marker = os.path.join(root, storage_steps.STORAGE_MARKER)

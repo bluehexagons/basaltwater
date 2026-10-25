@@ -118,6 +118,12 @@ rejected because rsync could delete recovery evidence. Place the database outsid
 the mirror destination. These checks apply to the scheduled orchestrator;
 standalone rsync and custom inline setup steps do not consult findings.
 
+At application setup boundaries guarded by declared VM mounts, both write
+paths and mount declarations must be canonical absolute paths. The guard
+rejects dot or dot-dot components, repeated separators, a double-leading
+slash, and a trailing slash before deciding whether a path is managed, so an
+escaped path fails instead of being treated as unmanaged.
+
 Operations require the exact configured SMB or VM mount before running;
 a mounted parent does not satisfy a missing child mount. If an expected SMB,
 VM, or other mounted filesystem is unavailable, only operations requiring it
