@@ -23,6 +23,8 @@ def validate_kiosk_url(value: str) -> str:
     """Return an unchanged HTTP(S) URL with an unambiguous, credential-free authority."""
     if not isinstance(value, str) or not value:
         raise ValueError("--kiosk-url requires a non-empty HTTP or HTTPS URL")
+    if len(value.encode("utf-8")) > 8192:
+        raise ValueError("--kiosk-url must be at most 8192 UTF-8 bytes")
     validate_no_control_characters(value, "--kiosk-url")
     if any(char.isspace() or unicodedata.category(char) in {"Cc", "Cf"} for char in value) or "\\" in value:
         raise ValueError("--kiosk-url must not contain whitespace, controls, or backslashes")
@@ -73,3 +75,5 @@ def validate_kiosk_settings(config: SetupConfig, complete: bool = True) -> None:
             raise ValueError("--kiosk cannot be combined with a shared desktop, --desktop, --rdp, or --guacamole")
         if complete and config.machine_type != "auto" and not can_manage_system_services(config.machine_type):
             raise ValueError("--kiosk requires a machine that can manage persistent system services")
+        if complete and config.machine_type not in {"auto", "hardware", "vm"}:
+            raise ValueError("--kiosk requires a hardware or VM console, not a container or WSL")

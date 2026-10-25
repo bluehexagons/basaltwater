@@ -15,7 +15,7 @@ PLUGIN = PluginDefinition(
     name="proxmox",
     module=__name__,
     plugin_kind="composition",
-    dependencies=("common", "core", "security"),
+    dependencies=("common", "core", "security", "kiosk"),
     system_types=(
         SystemTypeDefinition(
             name="server_proxmox",
@@ -44,6 +44,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
     from common.steps import check_restart_required, configure_swap
     from common.setup_maintenance import run_setup_maintenance
     from plugins.common import extend_web_panel_steps
+    from plugins.kiosk import extend_kiosk_steps
     from security.steps import (
         configure_auto_restart,
         configure_auto_updates,
@@ -93,4 +94,5 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
             ),
         )
     extend_web_panel_steps(config, steps)
+    extend_kiosk_steps(config, steps)
     return steps

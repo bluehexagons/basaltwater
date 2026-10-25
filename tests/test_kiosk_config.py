@@ -53,6 +53,7 @@ class TestKioskURL(unittest.TestCase):
             "http://[127.0.0.1]/", "http://[fe80::1%25eth0]/", "http://[v1.example]/",
             "http://999.0.0.1/", "http://127.1/", "http://2130706433/", "http://0177.0.0.1/",
             "http://%65xample.com/", "http://pve.example/%", "http://pve.example/%xx",
+            "http://pve.example/" + "a" * 8192,
         ):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validate_kiosk_url(value)

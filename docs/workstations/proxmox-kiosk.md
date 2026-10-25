@@ -19,11 +19,11 @@ Use the normal setup command with `server_proxmox`, or patch a saved Proxmox
 host. For example:
 
 ```bash
-sudo basaltw setup server_proxmox pve.example.lan root --kiosk web
-sudo basaltw patch pve.example.lan root --kiosk cli
-sudo basaltw patch pve.example.lan root --kiosk web \
+basaltw setup server_proxmox pve.example.lan root --kiosk web
+basaltw patch pve.example.lan root --kiosk cli
+basaltw patch pve.example.lan root --kiosk web \
   --kiosk-url https://pve.example.lan:8006/
-sudo basaltw patch pve.example.lan root --no-kiosk
+basaltw patch pve.example.lan root --no-kiosk
 ```
 
 `--kiosk web` installs and enables the local browser session at boot.
@@ -37,15 +37,15 @@ preset. A URL-only patch uses the inherited enabled mode; an explicit URL with
 `--no-kiosk` is rejected. Disabling the kiosk preserves the dedicated account,
 Firefox profile and browser data, and installed packages.
 
-When no URL is supplied, the kiosk opens the Basaltwater HTTPS web panel when
-that panel is enabled. Otherwise it opens the native Proxmox interface at
+When no URL is supplied, the kiosk opens the Basaltwater web panel using its
+configured scheme and port when enabled. Otherwise it opens the native Proxmox interface at
 `https://HOST:8006/`. `--kiosk-url` overrides this destination. The URL must
 use HTTP or HTTPS and have a valid authority; it cannot contain user
 credentials, whitespace, or control characters. When the node is offline or
 its hostname cannot resolve locally, use an appropriate reachable address or
 hostname and ensure the kiosk account can resolve it. For an internal TLS
-service, trust your own CA through the normal system/browser trust guidance;
-there is no hidden TLS verification bypass.
+service, enroll its CA using [client CA trust](../services/client-ca-trust.md)
+or the browser's certificate settings. Certificate verification remains enabled.
 
 ## Session and security model
 
@@ -66,8 +66,8 @@ shortcuts. The kiosk uses greetd with PAM/logind, takes the last connected
 monitor, and does not change lid or suspend policy.
 
 Guest access is not discovered automatically, and the host UI gains no new
-guest switcher. Add guest URLs as Markdown links or bookmarks in your VM Notes
-when useful. The kiosk does not scan the network. Browser connectivity follows
+guest switcher. Add guest URLs as Markdown links in VM Notes for the host panel,
+or save browser bookmarks. The kiosk does not scan the network. Browser connectivity follows
 the normal LAN bridge and manually configured host addresses.
 
 ## Runtime and lifecycle
@@ -97,20 +97,33 @@ sudo systemctl start basaltwater-kiosk.service
 sudo systemctl stop basaltwater-kiosk.service
 sudo systemctl restart basaltwater-kiosk.service
 sudo journalctl -u basaltwater-kiosk.service
-sudo journalctl -u greetd
+sudo journalctl -t basaltwater-kiosk
 ```
 
 A compositor startup failure retries at most three times in quick succession.
 After repeated failure, or after Firefox closes normally, tty7 shows text
 instructing the operator to use Ctrl+Alt+F1 and restart the service. The
-journal is useful for service and greetd startup diagnostics; runtime messages
-from greetd's child may instead appear on tty7. A network failure leaves the
+journal's service filter shows greetd startup diagnostics; the
+`basaltwater-kiosk` identifier shows browser and compositor output. The stop
+hook terminates this dedicated account's logind sessions too, including browser
+processes outside greetd's service cgroup, and waits up to 45 seconds for user
+and runtime teardown. A matching pre-start check also blocks a new browser
+while old sessions remain. Repeated greetd failures, including unexpected
+zero-status exits, restart with a three-start limit in ten minutes. After
+correcting a startup failure, use `systemctl reset-failed basaltwater-kiosk.service`
+before starting again if that limit was reached. A network failure leaves the
 browser on its error page and does not trigger kiosk restarts.
 
 To remove the managed kiosk, patch with `--no-kiosk`. This removes only the
 managed service/configuration/preset and retains the account, browser data,
 and packages. Do not manually delete immutable generations while the feature
 is enabled.
+
+If the service's unit file was manually removed while systemd still has it
+loaded, setup refuses to continue. Restore the managed file, or stop
+`basaltwater-kiosk.service` and run `systemctl daemon-reload` before retrying.
+This prevents a still-running login manager from recreating sessions during
+cleanup.
 
 ## Proxmox and hardware qualification
 
@@ -132,8 +145,8 @@ Record results for each intended hardware combination, including:
   by a manual `systemctl start`.
 - Reboot behavior, browser close/restart behavior, and the displayed guidance
   after a compositor failure.
-- Network unplug and recovery behavior in the browser, while confirming a
-  separate SSH session to the Proxmox host remains available.
+- Network unplug and recovery behavior in the browser, with the host console
+  available throughout; verify SSH access before and after reconnecting.
 - Service status and journals during startup, plus complete removal with
   `--no-kiosk` and preservation of the documented account/browser data.
 
