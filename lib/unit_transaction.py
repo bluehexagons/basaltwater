@@ -133,12 +133,18 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             # Stop activators before their service, but retain every file until
             # the entire group is quiescent. A timed-out stop may have acted.
             for name in (*deactivate, *managed_removals):
-                if states[name]["LoadState"] == "not-found":
+                previous = states[name]
+                # Reloading an unlinked unit can report not-found while its
+                # processes remain active. Enablement is independent too.
+                stop_required = previous["LoadState"] != "not-found" or previous["ActiveState"] != "inactive"
+                disable_required = previous["UnitFileState"] in {"enabled", "enabled-runtime"}
+                if not stop_required and not disable_required:
                     continue
                 touched.append(name)
-                _command("systemctl", "stop", name)
-                if states[name]["UnitFileState"] in {"enabled", "enabled-runtime"}:
-                    flags = ["--runtime"] if states[name]["UnitFileState"] == "enabled-runtime" else []
+                if stop_required:
+                    _command("systemctl", "stop", name)
+                if disable_required:
+                    flags = ["--runtime"] if previous["UnitFileState"] == "enabled-runtime" else []
                     _command("systemctl", "disable", *flags, name)
                 state = inspect_unit_state(name)
                 if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
@@ -269,10 +275,16 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                      deactivate=deactivate, prepare=prepare)
 
 
-def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system") -> None:
+def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system",
+                 prepare: Callable[[], None] | None = None) -> None:
     """Remove managed units together, restoring files and states on failure.
 
     Pass activators before their service. Missing managed files are skipped;
     vendor units are not stopped. Removal shares replacement's recovery lock.
+
+    ``prepare`` runs once after grouped deactivation, before unlinking files,
+    under the same lock and rollback boundary. Dry runs and removals with no
+    managed files skip it. Its failures restore unit files and activation
+    state, but its own side effects are not rolled back.
     """
-    _reconcile_units({}, activate=(), remove=names, unit_dir=unit_dir)
+    _reconcile_units({}, activate=(), remove=names, unit_dir=unit_dir, prepare=prepare)

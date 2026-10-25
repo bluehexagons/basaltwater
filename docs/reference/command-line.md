@@ -29,6 +29,7 @@ Related pages:
 - [`device-pairing.md`](../services/device-pairing.md) for protected browser and app enrollment options
 - [`maintenance-agents.md`](../operations/maintenance-agents.md) for maintenance-agent policy options
 - [`guacamole.md`](../workstations/guacamole.md) for browser-based desktop and console options
+- [`proxmox-kiosk.md`](../workstations/proxmox-kiosk.md) for the optional local Proxmox browser kiosk
 - [`agent-memory.md`](../agents/agent-memory.md) for private project notes, todo claims and secret-file references
 - [`agent-security.md`](../agents/agent-security.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
@@ -76,6 +77,7 @@ basaltw node resolve [--project PATH] [--version VERSION]
 basaltw node install [--project PATH] [--version VERSION] [--package-manager NAME@VERSION]...
 basaltw publish <command> ... [--json]
 basaltw desktop <command> ...
+basaltw kiosk <status|doctor|start|stop|restart> [--json]
 basaltw firmware <audit|update> [options]
 basaltw channel [CHANNEL]
 basaltw upgrade
@@ -510,6 +512,10 @@ The target-address inference and server-service scope below apply to Debian.
 | `--rdp-audio` / `--no-rdp-audio` | Control audio redirection; disabled by default |
 | `--rdp-idle-timeout SECONDS` | Disconnect an idle session after this interval; 0 disables |
 | `--desktop [xfce\|i3\|cinnamon\|lxqt]` | Configure one shared XRDP desktop; explicitly enables desktop capability on headless profiles |
+| `--kiosk {web,cli}` / `--no-kiosk` | On `server_proxmox` only, enable the local browser kiosk in web or CLI startup mode, or disable its managed session; mutually exclusive |
+| `--kiosk-url URL` | On `server_proxmox` only, set the kiosk's direct HTTP(S) homepage; must not contain credentials, whitespace, or control characters |
+| `--kiosk-destination 'NAME=URL'` | On `server_proxmox` only, add a named HTTP(S) link to the offline kiosk homepage; repeat up to 16 times to replace the entire saved list |
+| `--clear-kiosk-destinations` | Clear saved kiosk links and return to the direct homepage; mutually exclusive with `--kiosk-destination` |
 | `--browser NAME` | Browser to install |
 | `--editor [geany\|vscode]` | Install an explicit graphical editor; requires a desktop-capable setup or `--rdp` |
 | `--flatpak` | Install desktop apps via Flatpak |
@@ -517,6 +523,26 @@ The target-address inference and server-service scope below apply to Debian.
 | `--apt-install PACKAGE` | Install a package via apt |
 | `--flatpak-install PACKAGE` | Install a package via Flatpak |
 | `--dark` | Configure dark theme |
+
+Kiosk destination names are trimmed, nonempty, at most 80 characters, and unique
+without regard to case. Control and format characters are rejected. URLs use
+the same validation as `--kiosk-url`; equals signs within URLs are preserved.
+Nonempty destinations require an enabled kiosk. On a patch, omitted destination
+flags inherit the saved list; repeats replace it, and
+`--clear-kiosk-destinations` explicitly saves an empty list even when the kiosk
+is absent or off. `--no-kiosk` clears both the saved homepage URL and destination
+list, and cannot be combined with a nonempty destination list.
+
+With destinations, the browser opens a static local link page that works
+offline; opening a link still requires its destination to be reachable. With no
+destinations, the browser opens the original direct homepage instead. For example:
+
+```bash
+basaltw setup server_proxmox pve.example root --kiosk web \
+  --kiosk-destination 'Proxmox=https://pve.example:8006/' \
+  --kiosk-destination 'Dashboard=https://dashboard.example/'
+basaltw patch pve.example root --clear-kiosk-destinations
+```
 
 Static address configuration is validated before any remote work begins and
 supports NetworkManager, systemd-networkd, and ifupdown on Debian. Without
@@ -1991,6 +2017,22 @@ mount checks, and logs, and [Notifications](../services/notifications.md) for de
 targets and failure behavior.
 
 ## Maintenance and Utilities
+
+### Local Proxmox kiosk
+
+```text
+basaltw kiosk status [--json]
+basaltw kiosk doctor [--json]
+sudo basaltw kiosk start [--json]
+sudo basaltw kiosk stop [--json]
+sudo basaltw kiosk restart [--json]
+```
+
+These commands target the local host and accept no remote host argument.
+`status` and `doctor` are read-only and support ordinary accounts where local
+permissions allow inspection. `start`, `stop`, and `restart` require root and
+control the managed kiosk session. All five commands support `--json`.
+See [Proxmox kiosk](../workstations/proxmox-kiosk.md) for setup and operation.
 
 ### Firmware audit and updates
 

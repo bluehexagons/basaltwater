@@ -15,6 +15,7 @@ and backup workflows, see [Storage](../storage/README.md).
 | [Firmware](firmware.md) | Inventory and guarded fwupd updates |
 | [Networking](networking.md) | Network profiles and Proxmox firewall planning |
 | [Proxmox](proxmox.md) | Host registration, VM/LXC lifecycle, and live-host operations |
+| [Proxmox local browser kiosk](../workstations/proxmox-kiosk.md) | Local browser and host console access on a Proxmox laptop or workstation |
 | [Proxmox VM templates](proxmox-templates.md) | Immutable vendor-image templates, clone identity, and qualification |
 | [Park idle Proxmox VMs on HDD](proxmox-hdd-parking.md) | Move cold guest disks, verify saved storage and preserve wake-up identity |
 | [Interrupted operation recovery](transaction-recovery.md) | Recover setup and deployment operations safely |

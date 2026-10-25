@@ -17,6 +17,7 @@ from lib.config import (
     WEB_INTERFACES,
 )
 from lib.homebox_config import DEFAULT_VERSION as HOMEBOX_DEFAULT_VERSION
+from lib.kiosk_config import parse_kiosk_destination
 from lib.notifications import NOTIFICATION_LEVELS
 from lib.publishing_config import PUBLISHING_TOOLS
 
@@ -1102,6 +1103,30 @@ def add_setup_arguments(
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Install an embedded browser desktop in the HTTPS web panel; enables a shared desktop without opening RDP ingress. --no-guacamole removes browser access",
+    )
+    kiosk_group = parser.add_mutually_exclusive_group()
+    kiosk_group.add_argument(
+        "--kiosk", dest="kiosk_mode", choices=("cli", "web"), default=None,
+        help="Install the Proxmox local browser kiosk; web starts it at boot, cli keeps boot in the console",
+    )
+    kiosk_group.add_argument(
+        "--no-kiosk", dest="kiosk_mode", action="store_const", const="off",
+        help="Remove only managed Proxmox kiosk configuration",
+    )
+    parser.add_argument(
+        "--kiosk-url", metavar="URL",
+        help="HTTP or HTTPS homepage for an enabled Proxmox kiosk (defaults are resolved on the target)",
+    )
+    kiosk_destinations_group = parser.add_mutually_exclusive_group()
+    kiosk_destinations_group.add_argument(
+        "--kiosk-destination", dest="kiosk_destinations", action="append",
+        type=parse_kiosk_destination, metavar="NAME=URL", default=None,
+        help="Named HTTP(S) link on the Proxmox kiosk homepage; repeat up to 16 times to replace the saved list",
+    )
+    kiosk_destinations_group.add_argument(
+        "--clear-kiosk-destinations", dest="kiosk_destinations",
+        action="store_const", const=[],
+        help="Clear saved Proxmox kiosk links and return to the direct homepage",
     )
     parser.add_argument(
         "--web-panel-payload",

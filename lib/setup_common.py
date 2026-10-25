@@ -34,6 +34,7 @@ from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_specs
 from lib.credentials import prepare_runtime_config, store_cli_credentials
 from lib.homebox_config import validate_homebox_settings
+from lib.kiosk_config import validate_kiosk_settings
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.github_runner_credentials import prepare_registration_payload
 from lib.network_transition import finish_network_transition
@@ -1278,6 +1279,7 @@ def prepare_validated_runtime_config(
     workspace: Optional[str],
 ) -> SetupConfig:
     """Apply saved-host defaults, resolve credentials, and validate a setup."""
+    validate_kiosk_settings(config)
     _apply_hosted_proxmox_defaults(config, workspace)
     runtime_config = prepare_runtime_config(config, workspace)
     validate_timezone_name(runtime_config.timezone)
@@ -1303,6 +1305,7 @@ def prepare_validated_runtime_config(
     validate_gogs_settings(runtime_config)
     validate_antistatic_settings(runtime_config)
     validate_homebox_settings(runtime_config)
+    validate_kiosk_settings(runtime_config)
     validate_hosted_flags(runtime_config)
     validate_network_setup_settings(runtime_config)
     validate_rdp_settings(runtime_config)
@@ -1365,6 +1368,7 @@ def remove_replaced_setup_cache(previous_host: Optional[str], current_host: str)
 
 def run_remote_setup(config: SetupConfig) -> int:
     """Run one setup while preventing overlapping mutation of the same target."""
+    validate_kiosk_settings(config)
     if config.dry_run:
         return _run_remote_setup_locked(config)
     lock_target = (

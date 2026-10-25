@@ -18,6 +18,7 @@ from lib.arg_parser import create_setup_argument_parser
 from lib.admin_status import JOB_ID_ENV, valid_job_id
 from lib.config import SetupConfig
 from lib.homebox_config import validate_homebox_settings
+from lib.kiosk_config import validate_kiosk_settings
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.display import print_setup_summary
 from lib.machine_state import (
@@ -423,6 +424,7 @@ def config_from_remote_args(args: argparse.Namespace) -> SetupConfig:
     
     config = SetupConfig.from_args(args, system_type)
     config.machine_type = resolve_machine_type(config.machine_type)
+    validate_kiosk_settings(config)
     validate_agent_repositories(config.agent_repos)
     validate_agent_git_settings(config)
     validate_browser_automation_settings(config)

@@ -247,11 +247,13 @@ class LifecycleTests(unittest.TestCase):
         self.directory = self.root / "config"
         self.directory.mkdir(mode=0o755)
         self.units = self.root / "units"
-        self.units.mkdir()
+        self.units.mkdir(mode=0o755)
         self.policy_path = self.directory / "policy.json"
         self.auth_path = self.directory / "auth.json"
         self.polkit_path = self.root / "polkit" / "rules.d" / "broker.rules"
         self.polkit_path.parent.mkdir(parents=True, mode=0o755)
+        for directory in (self.polkit_path.parent.parent, self.polkit_path.parent):
+            directory.chmod(0o755)
         self.record = password_record("agent", "test-only approval password")
         self.config = SetupConfig(host="vm.example", username="agent", system_type="agent_vm",
                                   privilege_broker_port=9444,
