@@ -8,6 +8,8 @@ import uuid
 import fcntl
 import stat
 import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -150,6 +152,15 @@ class OperationStateStore:
         if self._lock_finalizer is not None:
             self._lock_finalizer()
             self._lock_finalizer = None
+
+    @contextmanager
+    def ownership(self) -> Iterator[OperationStateStore]:
+        """Exclude competing mutations before publishing an operation marker."""
+        self._acquire()
+        try:
+            yield self
+        finally:
+            self.close()
 
     def load(self) -> Optional[OperationRecord]:
         try:

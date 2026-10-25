@@ -156,6 +156,32 @@ class DebianRefreshTests(unittest.TestCase):
         self.upgrade.assert_not_called()
         self.run.assert_not_called()
 
+    def test_source_upgrade_excludes_target_setup_until_fresh_runner_claim(self):
+        def upgrade(repository):
+            competitor = OperationStateStore(str(self.setup_marker))
+            self.addCleanup(competitor.close)
+            with self.assertRaisesRegex(ValueError, "another process"):
+                competitor.begin("target_setup", "server_lite", "applying")
+            return {"commit": "new", "channel": "dev"}
+
+        def execute(command, **kwargs):
+            runner = OperationStateStore(str(self.setup_marker))
+            record = runner.begin("target_setup", "server_lite", "applying")
+            runner.complete(record.operation_id)
+            return subprocess.CompletedProcess(command, 0)
+
+        self.upgrade.side_effect = upgrade
+        self.run.side_effect = execute
+        self.assertEqual(self.invoke(), 0)
+        self.receipt.assert_called_once()
+
+    def test_live_setup_owner_without_published_marker_blocks_refresh(self):
+        with OperationStateStore(str(self.setup_marker)).ownership():
+            self.assertEqual(self.invoke(), 1)
+        self.upgrade.assert_not_called()
+        self.receipt.assert_not_called()
+        self.run.assert_not_called()
+
     def test_in_progress_setup_marker_blocks_source_upgrade_and_preserves_job_evidence(self):
         store = OperationStateStore(str(self.setup_marker))
         record = store.begin("target_setup", "server_lite", "applying", context={

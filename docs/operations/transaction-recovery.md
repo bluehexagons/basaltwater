@@ -151,3 +151,7 @@ corrupt state have different meanings. Reader errors name the path and do not
 print its contents.
 Only a confirmed missing marker permits a new operation; permission and I/O
 errors while looking it up require inspection and never clear its guard.
+Source refresh also holds the target setup marker's kernel lock during source
+staging and activation, excluding setup mutations until the fresh runner can
+claim its own operation. A competing setup can win that later claim; refresh
+then reports the conflict rather than running two setup plans together.

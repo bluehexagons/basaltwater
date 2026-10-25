@@ -15,6 +15,27 @@ from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_ownership_without_a_marker_blocks_another_process_until_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "operation.json")
+            script = (
+                'import sys\n'
+                'from lib.operation_state import OperationStateStore, OperationStateError\n'
+                'store = OperationStateStore(sys.argv[1])\n'
+                'try:\n'
+                '    record = store.begin("setup", "host", "applying")\n'
+                'except OperationStateError:\n'
+                '    sys.exit(7)\n'
+                'store.complete(record.operation_id)\n'
+            )
+            command = [sys.executable, "-c", script, path]
+            with OperationStateStore(path).ownership() as owner:
+                self.assertIsNone(owner.load())
+                blocked = subprocess.run(command, capture_output=True, timeout=10)
+                self.assertEqual(blocked.returncode, 7, blocked.stderr)
+            completed = subprocess.run(command, capture_output=True, timeout=10)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_lookup_errors_do_not_hide_or_replace_an_existing_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "operation.json")

@@ -251,17 +251,24 @@ def _apply_refresh(
         if not acquired:
             raise RuntimeError("Setup or maintenance is already running; refresh has made no changes")
         _assert_no_source_activation(repository)
-        _assert_setup_operation_ready(config)
-        info = (
-            _upgrade_snapshot(repository, channel)
-            if info.get("installation_type") == "setup-snapshot" else upgrade_channel(repository)
-        )
-        # Git updates in an existing managed checkout inherit the same umask.
-        # Reconcile only owned runtime source, preserving retained private data.
-        _normalize_downloaded_source(repository, runtime_only=True)
-        write_refresh_source_metadata(repository)
+        setup_marker = _setup_operation_marker()
+        _protected_operation_record(setup_marker)
+        # Target setup already owns this marker's kernel lock across its
+        # mutations. Hold that same ownership while changing source, including
+        # slow staging, so setup cannot start after our marker check.
+        with OperationStateStore(setup_marker).ownership():
+            _assert_setup_operation_ready(config)
+            info = (
+                _upgrade_snapshot(repository, channel)
+                if info.get("installation_type") == "setup-snapshot" else upgrade_channel(repository)
+            )
+            # Reconcile only owned source, preserving retained private data.
+            _normalize_downloaded_source(repository, runtime_only=True)
+            write_refresh_source_metadata(repository)
         print(f"Basaltwater is at {str(info['commit'])[:12]} on {info['channel']}", flush=True)
         print(f"Repeating saved local {config.system_type} setup for {config.username}", flush=True)
+        # Release marker ownership before the fresh runner claims setup. A
+        # competing setup can win that claim; the runner then refuses overlap.
         # Keep saved options private and start the upgraded runner in a fresh process.
         with tempfile.TemporaryDirectory(prefix="basaltwater-refresh-") as temporary:
             argument_file = Path(temporary) / "setup-args.json"
