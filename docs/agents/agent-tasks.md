@@ -290,9 +290,18 @@ and the original receipt remains unchanged. Users do not need to delete an
 agent-written request for approval or resolved preparation notes to proceed.
 Review opens
 an editable form with the source receipt, **Once**, and a one-attempt limit;
-opening it does not save or queue anything. Repeated submission of a proposal
-returns the same child task. Blocking prevents that proposal from being launched
-and attempts to cancel known pending service requests. If submission is
+opening it does not save or queue anything. The panel saves a private intent
+with the exact validated child settings before creating the task. If publishing
+the final decision fails, leave the proposal pending and select **Finish saved submission**
+from its run history to finish the same submission; recovery does not repeat
+service actions. Blocking checks for the exact matching child and refuses while
+one is saved, so it cannot mark a queued follow-up blocked. If no child was
+found, approval does not create another: the child might have completed and its
+controls might have been removed. Inspect retained history before blocking the
+proposal or preparing replacement work. Blocking can still finish when no child
+is saved. Repeated submission of a proposal returns the
+same child task. Blocking prevents that proposal from being launched and attempts
+to cancel known pending service requests. If submission is
 uncertain and no request ID was returned, blocking cannot cancel that broker
 request; check Privilege approvals before any retry. Blocking cannot undo an
 already executed action. The original task keeps its permissions, schedule and

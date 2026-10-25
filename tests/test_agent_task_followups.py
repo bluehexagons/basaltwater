@@ -21,7 +21,7 @@ from lib import privilege_client
 from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, REPORT_SCHEMA, validate_follow_up, validate_report
 from lib.agent_task_followups import (
-    ServiceApprovalPending, ServiceApprovalUnavailable, decide_follow_up, follow_up_state,
+    ServiceApprovalPending, ServiceApprovalUnavailable, decide_follow_up, follow_up_state, prepare_follow_up,
 )
 from lib.privilege_client import PrivilegeRequestUnconfirmed
 from tests.test_agent_panel_tools import TaskForm
@@ -195,6 +195,283 @@ class TaskFollowUpTests(unittest.TestCase):
                     self.assertTrue(self.manager.tick())
                     self.assertFalse(self.manager.tick())
                 self.assertEqual(execute.call_args.args[0]["id"], child["id"])
+
+    def test_failed_final_decision_publication_keeps_a_recoverable_submission_intent(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        identifier, run_id = self.record_request()
+        from lib.atomic_io import write_json_atomic
+
+        def fail_approval_publication(path, value, **kwargs):
+            if value.get("status") == "approved":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_approval_publication):
+            with self.assertRaisesRegex(OSError, "final decision"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+
+        decision = follow_up_state(self.manager, identifier, run_id)
+        self.assertEqual(decision["status"], "pending")
+        self.assertEqual(decision["submission"]["request_key"], f"follow-up-{identifier}-{run_id}")
+        children = [task for task in self.manager.snapshot()["tasks"] if task["source_run_id"] == run_id]
+        self.assertEqual(len(children), 1)
+        self.assertTrue(children[0]["queued"])
+        self.assertEqual(decision["submission"]["task"]["source_run_id"], run_id)
+
+    def test_block_cannot_publish_over_a_child_after_final_decision_failure(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        identifier, run_id = self.record_request()
+        from lib.atomic_io import write_json_atomic
+
+        def fail_approval_publication(path, value, **kwargs):
+            if value.get("status") == "approved":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_approval_publication):
+            with self.assertRaises(OSError):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+
+        with self.assertRaisesRegex(ValueError, "matching follow-up task"):
+            decide_follow_up(self.manager, identifier, run_id, "block")
+        decision = follow_up_state(self.manager, identifier, run_id)
+        self.assertEqual(decision["status"], "pending")
+        self.assertTrue(self.manager.snapshot()["tasks"][-1]["queued"])
+
+    def test_panel_can_finish_reviewed_legacy_and_current_saved_submissions(self) -> None:
+        original = dict(self.proposal)
+        from lib.atomic_io import write_json_atomic
+
+        def fail_final(path, value, **kwargs):
+            if value.get("status") == "approved":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        for legacy in (True, False):
+            with self.subTest(legacy=legacy):
+                self.proposal = dict(original)
+                if not legacy:
+                    self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+                identifier, run_id = self.record_request()
+                settings = prepare_follow_up(self.manager, identifier, run_id, review=True)
+                with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_final):
+                    with self.assertRaises(OSError):
+                        decide_follow_up(self.manager, identifier, run_id, "approve", settings=settings)
+                child = self.manager.snapshot()["tasks"][-1]
+                for query in ({"view": "tasks"}, {"run": run_id}, {"receipt": identifier + "." + run_id}):
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+                    self.assertIn('value="follow-up-approve">Finish saved submission</button>', page)
+                    self.assertNotIn("This older proposal needs an access review", page)
+                body = urlencode({"csrf": self.state.csrf_token, "id": identifier,
+                                  "run_id": run_id, "action": "follow-up-approve"}).encode()
+                handler = object.__new__(panel.WebPanelHandler)
+                handler.state, handler.path = self.state, "/actions/agent-task"
+                handler.headers, handler.rfile = {"Content-Length": str(len(body))}, BytesIO(body)
+                for name in ("_send", "send_response", "send_header", "end_headers"):
+                    setattr(handler, name, Mock())
+                with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+                    handler.do_POST()
+                    create.assert_not_called()
+                handler.send_response.assert_called_once_with(303)
+                self.assertEqual(follow_up_state(self.manager, identifier, run_id)["task_id"], child["id"])
+                self.manager.action(child["id"], "cancel")
+
+    def test_approve_retry_recovers_same_child_without_replaying_service_action(self) -> None:
+        unit = "auto-update-node.service"
+        operation = "command.run"
+        parameters = {"argv": ["/usr/bin/systemctl", "--no-ask-password", "restart", "--", unit]}
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        identifier, run_id = self.record_request()
+        request_id = "c" * 32
+        request = {"id": request_id, "state": "pending",
+                   "review_url": "https://host.example:9444/requests/" + request_id}
+        succeeded = {"id": request_id, "state": "succeeded",
+                     "plan": {"operation": operation, "parameters": parameters}}
+        from lib.atomic_io import write_json_atomic
+        failed = False
+
+        def fail_final_once(path, value, **kwargs):
+            nonlocal failed
+            if value.get("status") == "approved" and not failed:
+                failed = True
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        with patch("lib.agent_task_followups.exchange", side_effect=[request, succeeded]) as broker:
+            with self.assertRaises(ServiceApprovalPending):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_final_once):
+                with self.assertRaisesRegex(OSError, "final decision"):
+                    decide_follow_up(self.manager, identifier, run_id, "approve")
+                first_child = [task for task in self.manager.snapshot()["tasks"]
+                               if task["source_run_id"] == run_id][0]
+                with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+                    recovered = decide_follow_up(self.manager, identifier, run_id, "approve")
+                create.assert_not_called()
+            self.assertEqual(recovered, first_child["id"])
+            self.assertEqual([call.args[0]["action"] for call in broker.call_args_list], ["request", "status"])
+
+        children = [task for task in self.manager.snapshot()["tasks"] if task["source_run_id"] == run_id]
+        self.assertEqual(len(children), 1)
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["task_id"], first_child["id"])
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "approved")
+
+    def test_missing_completed_child_cannot_be_recreated_by_approval_retry(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        from lib.atomic_io import write_json_atomic
+
+        def fail_final(path, value, **kwargs):
+            if value.get("status") == "approved":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        for removal in ("delete", "reclaim"):
+            with self.subTest(removal=removal):
+                identifier, run_id = self.record_request()
+                with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_final):
+                    with self.assertRaises(OSError):
+                        decide_follow_up(self.manager, identifier, run_id, "approve")
+                child = self.manager.snapshot()["tasks"][-1]
+                with patch.object(tasks, "execute_prompt", return_value={
+                    "status": "completed", "message": "Done", "output": "", **report("complete"),
+                }) as execute:
+                    self.assertTrue(self.manager.tick())
+                    if removal == "delete":
+                        self.manager.action(child["id"], "delete")
+                    else:
+                        limit = len(self.manager.snapshot()["tasks"])
+                        with patch.object(tasks, "MAX_TASKS", limit):
+                            self.manager.create({"title": "Unrelated draft", "prompt": "Inspect only",
+                                                 "directory": self.home, "mode": "inspect"},
+                                                run_now=False, draft=True)
+                    self.assertNotIn(child["id"], [item["id"] for item in self.manager.snapshot()["tasks"]])
+                    with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+                        with self.assertRaisesRegex(ValueError, "creation outcome is unconfirmed"):
+                            decide_follow_up(self.manager, identifier, run_id, "approve")
+                        create.assert_not_called()
+                    self.assertFalse(self.manager.tick())
+                    self.assertEqual(execute.call_count, 1)
+                self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "pending")
+                decide_follow_up(self.manager, identifier, run_id, "block")
+                self.manager.action(identifier, "delete")
+
+    def test_intent_without_child_requires_inspection_before_replacement(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        identifier, run_id = self.record_request()
+        with patch.object(self.manager, "create", side_effect=OSError("task store unavailable")):
+            with self.assertRaises(OSError):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+        with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+            with self.assertRaisesRegex(ValueError, "creation outcome is unconfirmed"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            create.assert_not_called()
+        self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+        self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "blocked")
+
+    def test_draft_retry_preserves_the_saved_draft_without_queuing_it(self) -> None:
+        requirement = "Check the maintenance window before any later repair."
+        self.proposal.update(writable_directories=[], operator_requirements=[requirement], service_restarts=[])
+        identifier, run_id = self.record_request()
+        settings = prepare_follow_up(self.manager, identifier, run_id, review=True)
+        from lib.atomic_io import write_json_atomic
+
+        def fail_draft_publication(path, value, **kwargs):
+            if value.get("status") == "draft":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_draft_publication):
+            with self.assertRaisesRegex(OSError, "final decision"):
+                decide_follow_up(self.manager, identifier, run_id, "approve", settings=settings,
+                                 run_now=False, draft=True)
+
+        child = [task for task in self.manager.snapshot()["tasks"] if task["source_run_id"] == run_id][0]
+        self.assertTrue(child["draft"])
+        self.assertFalse(child["queued"])
+        self.assertEqual(child["operator_requirements"], [requirement])
+        self.assertEqual(decide_follow_up(self.manager, identifier, run_id, "approve"), child["id"])
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "draft")
+        recovered = self.manager.snapshot()["tasks"][-1]
+        self.assertTrue(recovered["draft"])
+        self.assertFalse(recovered["queued"])
+        self.assertEqual(recovered["operator_requirements"], [requirement])
+
+    def test_block_reconciles_an_orphaned_child_without_a_saved_intent(self) -> None:
+        identifier, run_id = self.record_request()
+        task = prepare_follow_up(self.manager, identifier, run_id)
+        task.update(interval="once", max_runs=1, continue_until_done=False, start_at=0,
+                    source_task_id=identifier, source_run_id=run_id)
+        task = tasks.validate_task(task, self.home)
+        acknowledged = task["operator_requirements"]
+        task["operator_requirements"] = []
+        child_id = self.manager.create(task, run_now=True,
+                                       request_key=f"follow-up-{identifier}-{run_id}")
+
+        with self.assertRaisesRegex(ValueError, "matching follow-up task"):
+            decide_follow_up(self.manager, identifier, run_id, "block")
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "pending")
+        self.assertEqual(decide_follow_up(self.manager, identifier, run_id, "approve"), child_id)
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["acknowledged_requirements"], acknowledged)
+        self.assertEqual(len([task for task in self.manager.snapshot()["tasks"]
+                              if task["source_run_id"] == run_id]), 1)
+
+    def test_concurrent_approve_and_block_cannot_leave_a_queued_child_blocked(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        identifier, run_id = self.record_request()
+        entered_create, release_create, block_waiting = threading.Event(), threading.Event(), threading.Event()
+        real_create = self.manager.create
+        import fcntl
+        real_flock = fcntl.flock
+        outcomes: dict[str, object] = {}
+
+        def delayed_create(*args, **kwargs):
+            entered_create.set()
+            if not release_create.wait(5):
+                raise TimeoutError("test did not release child creation")
+            return real_create(*args, **kwargs)
+
+        def approve() -> None:
+            try:
+                outcomes["approve"] = decide_follow_up(self.manager, identifier, run_id, "approve")
+            except Exception as exc:  # Captured for assertion in the main test thread.
+                outcomes["approve_error"] = exc
+
+        def block() -> None:
+            try:
+                outcomes["block"] = decide_follow_up(self.manager, identifier, run_id, "block")
+            except Exception as exc:  # Captured for assertion in the main test thread.
+                outcomes["block_error"] = exc
+
+        def observe_block_lock(descriptor, operation):
+            if threading.current_thread().name == "follow-up-blocker" and operation == fcntl.LOCK_EX:
+                block_waiting.set()
+            return real_flock(descriptor, operation)
+
+        with (
+            patch.object(self.manager, "create", side_effect=delayed_create),
+            patch("lib.agent_task_followups.fcntl.flock", side_effect=observe_block_lock),
+        ):
+            approver = threading.Thread(target=approve)
+            approver.start()
+            self.assertTrue(entered_create.wait(3))
+            blocker = threading.Thread(target=block, name="follow-up-blocker")
+            blocker.start()
+            try:
+                self.assertTrue(block_waiting.wait(3))
+            finally:
+                release_create.set()
+                approver.join(5)
+                blocker.join(5)
+
+        self.assertFalse(approver.is_alive())
+        self.assertFalse(blocker.is_alive())
+        self.assertNotIn("approve_error", outcomes)
+        self.assertEqual(outcomes.get("approve"), follow_up_state(self.manager, identifier, run_id)["task_id"])
+        self.assertIsInstance(outcomes.get("block_error"), ValueError)
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "approved")
+        self.assertEqual(len([task for task in self.manager.snapshot()["tasks"]
+                              if task["source_run_id"] == run_id]), 1)
 
     def test_reports_without_requests_remain_readable(self) -> None:
         self.assertEqual(validate_report(report()), report())

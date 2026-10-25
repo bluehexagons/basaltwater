@@ -1080,15 +1080,21 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
     actions = ''
     if pending:
         legacy = follow_up_requires_review(proposal)
+        recovering = status.get('submission') is not None
         def button(action: str, label: str) -> str:
             return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}">{label}</button></form>'''
-        if not legacy:
+        if recovering:
+            actions = button('follow-up-approve', 'Finish saved submission')
+        elif not legacy:
             actions = button('follow-up-approve', 'Check approval and launch' if status['requests'] else 'Approve once')
-        actions += f'<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>'
+        if not recovering:
+            actions += f'<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>'
         actions += button('follow-up-block', 'Block')
-        if proposal.get('service_restarts'):
+        if proposal.get('service_restarts') and not recovering:
             actions += button('follow-up-privilege', 'Request service approval')
-        if legacy:
+        if recovering:
+            actions += '<p class="agent-help">A submission is already saved. Finish it using its saved settings. If its task is missing, inspect retained history before preparing replacement work.</p>'
+        elif legacy:
             actions += '<p class="agent-help">This older proposal needs an access review. Select Review follow-up task, check its permissions and prerequisites, then Approve once.</p>'
         elif proposal.get('operator_requirements'):
             actions += '<p class="agent-help">Approve once confirms that the prerequisites listed above are satisfied and authorizes this task. Complete any outside preparation first; service approvals remain separate.</p>'
