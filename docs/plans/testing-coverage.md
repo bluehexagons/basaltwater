@@ -35,9 +35,9 @@ installations; optional combinations need their own checks.
 | Admin jobs | Approved web validation and setup dry run; failed validation preserves the running gateway. HTTP CSRF/replay checks and controlled status-publication races | Applying refresh, package upgrades, power actions, long-job interruption and browser interaction |
 | Proxmox guests | Provisioning, identity/reboot, lifecycle controls, disk/resource flags, snapshots, full/linked clones, selected storage moves, backups and same-host restores | Off-host restore/retention, reverse storage moves, EFI/TPM layouts and template retirement. LXC CRIU suspend failed |
 | Host storage and networking | Passive capacity audit, storage persistence, selected maintenance guards, local orphan protection, firewall allowlists and strict SSH/TLS | Management-network isolation, multi-node/HA/Ceph, interrupted host upgrades and live remote-node/RBD/VirtioFS deletion guards |
-| Sync and PAR2 | Mirrors, mount-loss guards, interrupted replacement, unreadable-source preservation and logical-damage repair; enumeration I/O failures have automated regressions | Mid-transfer network-filesystem failure and power loss. A failed mirror can still apply unrelated deletions |
+| Sync and PAR2 | Mirrors, mount-loss guards, interrupted replacement, unreadable-source preservation and logical-damage repair; supervised CIFS preflight/teardown and incomplete-run health. Enumeration I/O failures have automated regressions | Power loss, stalled scrub preflight and further network-filesystem variants. A failed mirror can still apply unrelated deletions; kernel I/O can delay teardown indefinitely |
 | Btrfs | Single-device data mount setup/rerun/reboot, UUID preservation, injected checksum detection and refusal of unsafe mounts | Full setup profile, diagnostic integration and automatic native scrub; multi-device/subvolume support needs separate design. Single-copy data cannot self-repair |
-| Samba and Syncthing | SMB3 encryption/access control, automount repair/reconnect; two-peer exchange, conflicts, version restoration, credential rotation, rerun/reboot and removal/re-enable | Interrupted writes, silent network blackholes, Windows/macOS SMB clients, Syncthing browser GUI and relays/discovery |
+| Samba and Syncthing | SMB3 encryption/access control, automount repair/reconnect and selected soft-mounted Linux CIFS stopped-server/blackhole cases; two-peer exchange, conflicts, version restoration, credential rotation, rerun/reboot and removal/re-enable | Hard-mounted CIFS, other network filesystems, Windows/macOS SMB clients, Syncthing browser GUI and relays/discovery |
 | Gogs and Git mirrors | HTTPS/SSH Git, LFS hashes, access control, rerun/reboot and same-host recovery; mirror routing/configuration guards and transfers against Gogs plus a local primary | Actual GitHub transport/permissions, off-host recovery, database migration rollback, restored SSH transfers and attachments |
 | Deployment | Signed loopback webhooks, separate build/app hosts, SSH publication, service updates, rollback, private SQLite data and queue recovery | Public sender/Tunnel/ACME, Node/Godot/multiple components, database migration recovery and power loss |
 | Panels | Setup/auth/TLS, journals/timers, Chromium agent forms, synthetic Chromium/Firefox Guacamole checks and native cached Proxmox inventory export | Native PVE console, Firefox ESR, inventory timer/full HTTP lifecycle, additional application browser flows and collaborative preview CA trust |
@@ -53,8 +53,8 @@ installations; optional combinations need their own checks.
    remaining worker-restart boundaries while preserving usage limits and recovery.
 3. **Agent administration:** qualify browser review/status, then bounded applying
    refresh and interrupted jobs on a disposable target.
-4. **Storage failure handling:** interrupt CIFS writes, simulate a silent outage,
-   and run a complete Btrfs setup with explicit diagnostic checks.
+4. **Storage failure handling:** check hard-mounted network storage and stalled
+   scrub preflight, then a complete Btrfs setup with explicit diagnostic checks.
 5. **Recovery and developer workflows:** restore off-host backups and verify
    application data; test real GitHub mirror permissions and additional deployment
    manifests. Account-bound tests need their own explicit scope.
