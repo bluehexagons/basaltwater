@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socketserver
 import tempfile
 import threading
 import tomllib
@@ -16,6 +17,7 @@ from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
+from lib import privilege_client
 from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, REPORT_SCHEMA, validate_follow_up, validate_report
 from lib.agent_task_followups import (
@@ -287,6 +289,54 @@ class TaskFollowUpTests(unittest.TestCase):
                 decide_follow_up(self.manager, identifier, run_id, "request-privilege")
             broker.assert_called_once()
         self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+
+    def test_follow_up_never_queues_from_success_status_with_unbound_identity(self) -> None:
+        unit = "auto-update-node.service"
+        operation = "command.run"
+        parameters = {"argv": ["/usr/bin/systemctl", "--no-ask-password", "restart", "--", unit]}
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        for bad_identity in ("missing", "wrong", "malformed"):
+            with self.subTest(identity=bad_identity):
+                identifier, run_id = self.record_request()
+                request_id = "a" * 32
+                messages = []
+
+                class ResponseHandler(socketserver.StreamRequestHandler):
+                    def handle(self):
+                        message = json.loads(self.rfile.readline())
+                        messages.append(message)
+                        if message["action"] == "request":
+                            result = {"id": request_id, "state": "pending",
+                                      "review_url": "https://host.example:9444/requests/" + request_id}
+                        else:
+                            result = {"state": "succeeded", "plan": {
+                                "operation": operation, "parameters": parameters}}
+                            if bad_identity == "wrong":
+                                result["id"] = "b" * 32
+                            elif bad_identity == "malformed":
+                                result["id"] = "not-a-request-id"
+                        self.wfile.write((json.dumps({"ok": True, "result": result}) + "\n").encode())
+
+                with tempfile.TemporaryDirectory() as directory:
+                    path = os.path.join(directory, "broker.sock")
+                    server = socketserver.UnixStreamServer(path, ResponseHandler)
+                    worker = threading.Thread(target=server.serve_forever)
+                    worker.start()
+                    try:
+                        with patch("lib.agent_task_followups.exchange",
+                                   side_effect=lambda message: privilege_client.exchange(message, path)):
+                            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "request-privilege"))
+                            with self.assertRaises(ServiceApprovalUnavailable):
+                                decide_follow_up(self.manager, identifier, run_id, "approve")
+                    finally:
+                        server.shutdown()
+                        server.server_close()
+                        worker.join(3)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual([message["action"] for message in messages], ["request", "status"])
+                children = [task for task in self.manager.snapshot()["tasks"]
+                            if task.get("source_run_id") == run_id]
+                self.assertEqual(children, [])
 
     def test_invalid_follow_up_does_not_discard_diagnostic_report(self) -> None:
         diagnostic = {**report("blocked"), "summary": "Service check completed", "evidence": ["unit was inactive"],

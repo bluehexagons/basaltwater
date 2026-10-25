@@ -8,7 +8,10 @@ import socket
 import sys
 import time
 
-from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS, REQUEST_SOCKET, canonical
+from lib.privilege_policy import (
+    DEFAULT_REQUEST_TTL_SECONDS, ID_PATTERN, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS,
+    REQUEST_SOCKET, canonical,
+)
 from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, sanitize_admin_status
 
 
@@ -54,7 +57,22 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
         raise PrivilegeRequestUnconfirmed("Broker did not confirm request acceptance: " + detail)
     if response.get("ok") is not True or not isinstance(response.get("result"), dict):
         raise PrivilegeRequestUnconfirmed("Invalid broker result; request acceptance is unknown")
-    return response["result"]
+    result = response["result"]
+    action = message.get("action")
+    if action == "request":
+        request_id = result.get("id")
+        if not isinstance(request_id, str) or not ID_PATTERN.fullmatch(request_id):
+            raise PrivilegeRequestUnconfirmed(
+                "Broker response did not confirm a valid request ID; request acceptance is unknown"
+            )
+    elif action in {"status", "cancel", "decide"}:
+        request_id = result.get("id")
+        if (not isinstance(request_id, str) or not ID_PATTERN.fullmatch(request_id)
+                or request_id != message.get("id")):
+            raise PrivilegeRequestUnconfirmed(
+                "Broker response did not confirm the requested ID; outcome is unknown"
+            )
+    return result
 
 
 def add_privilege_parser(commands: argparse._SubParsersAction) -> None:

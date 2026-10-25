@@ -25,7 +25,7 @@ from lib.privilege_client import (
 )
 from lib.privilege_execution import ExecutionResult
 from lib.privilege_policy import (
-    DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS,
+    DEFAULT_REQUEST_TTL_SECONDS, ID_PATTERN, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS,
     canonical, operation_plan, validate_policy,
 )
 
@@ -408,6 +408,57 @@ class SocketClientTests(unittest.TestCase):
                           b'{"ok":false,"code":"request_rejected"}\n'):
             with self.subTest(response=malformed), self.assertRaises(PrivilegeRequestUnconfirmed):
                 self.exchange_response(malformed, message)
+
+    def test_successful_new_request_requires_a_valid_returned_id(self):
+        message = {"action": "request", "operation": "service.restart",
+                   "parameters": {"unit": "demo.service"}, "reason": "test"}
+        request_id = "a" * 32
+        self.assertTrue(ID_PATTERN.fullmatch(request_id))
+        result = {"id": request_id, "state": "pending"}
+        self.assertEqual(
+            self.exchange_response((canonical({"ok": True, "result": result}) + "\n").encode(), message),
+            result,
+        )
+        for invalid in ({"state": "pending"}, {"id": "g" * 32, "state": "pending"},
+                        {"id": "a" * 31, "state": "pending"}):
+            with self.subTest(result=invalid), self.assertRaises(PrivilegeRequestUnconfirmed):
+                self.exchange_response((canonical({"ok": True, "result": invalid}) + "\n").encode(), message)
+
+    def test_existing_request_success_requires_the_exact_valid_id(self):
+        request_id = "a" * 32
+        cases = {
+            "status": {"action": "status", "id": request_id},
+            "cancel": {"action": "cancel", "id": request_id},
+            "decide": {"action": "decide", "id": request_id, "digest": "b" * 64,
+                       "approve": True, "actor": "operator"},
+        }
+        for action, message in cases.items():
+            with self.subTest(action=action):
+                matching = {"id": request_id, "state": "succeeded"}
+                self.assertEqual(
+                    self.exchange_response(
+                        (canonical({"ok": True, "result": matching}) + "\n").encode(), message
+                    ),
+                    matching,
+                )
+                for invalid in (
+                    {"state": "succeeded"},
+                    {"id": "c" * 32, "state": "succeeded"},
+                    {"id": "malformed", "state": "succeeded"},
+                ):
+                    with self.subTest(result=invalid), self.assertRaises(PrivilegeRequestUnconfirmed):
+                        self.exchange_response(
+                            (canonical({"ok": True, "result": invalid}) + "\n").encode(), message
+                        )
+
+    def test_list_and_admin_status_keep_their_result_contracts(self):
+        for message, result in (({"action": "list"}, {"requests": []}),
+                                ({"action": "admin-status"}, {"unit_state": "active"})):
+            with self.subTest(action=message["action"]):
+                response = {"ok": True, "result": result}
+                self.assertEqual(
+                    self.exchange_response((canonical(response) + "\n").encode(), message), result
+                )
 
     def test_rejection_marker_for_another_action_is_not_definitive(self):
         response = {"ok": False, "code": "request_rejected", "error": "Request unavailable"}

@@ -304,8 +304,12 @@ panel reads protected broker policy and requests individual approval of the
 exact argv `/usr/bin/systemctl --no-ask-password restart -- UNIT`, through the
 broker's existing command-approval contract. It adds no reusable service rule.
 The launch check binds the succeeded receipt to the selected operation and
-exact arguments. **Approve once** creates any missing service requests and
-opens their review without queuing the task or reporting a submission error.
+exact arguments. Broker request responses must include a valid 32-character
+hexadecimal ID; status, cancellation, and approval responses must echo the
+exact requested ID. Missing, malformed, or mismatched IDs leave the result
+unconfirmed, so the follow-up is not queued. **Approve once** creates any
+missing service requests and opens their review without queuing the task or
+reporting a submission error.
 Open **Open service approval** in its separate tab, approve with the broker
 password, then return and select **Check approval and launch**. The review form
 keeps edited settings and offers **Request or refresh service approval** for
