@@ -553,12 +553,12 @@ def configure_github_gogs_repository(
     _git(root, ["lfs", "env"])
     actions: NestedStrList = [["lfs", "install", "--local"]]
     actions.append(
-        ["remote", "set-url", "origin", github]
+        ["config", "--replace-all", "remote.origin.url", github]
         if origin_defined
         else ["remote", "add", "origin", github]
     )
     actions.append(
-        ["remote", "set-url", mirror_remote, gogs]
+        ["config", "--replace-all", f"remote.{mirror_remote}.url", gogs]
         if mirror_defined
         else ["remote", "add", mirror_remote, gogs]
     )
