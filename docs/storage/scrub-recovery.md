@@ -118,6 +118,9 @@ sets remain readable without rewriting them; acceptance migrates that file to
 the generation layout. Ambiguous legacy volume-like filenames fail closed and
 require reviewing the old evidence and using a separately configured empty
 database. New generation sets support `.par2` and volume-like source filenames.
+Parity discovery requires a complete directory enumeration. An enumeration
+error leaves existing parity untouched and records an `io_error`; only a missing
+parent directory is treated as empty during an initial build.
 
 An interrupted switch leaves either the previous complete generation or the new
 complete generation active. Its recovery manifest/finding can still be pending

@@ -11,12 +11,12 @@ from __future__ import annotations
 import sys
 import os
 import re
+import errno
 import stat
 import subprocess
 import time
 import tempfile
 import shutil
-from glob import glob, escape
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Any
@@ -79,11 +79,20 @@ def _scan_tree(directory: str, excluded: tuple[str, ...] = ()) -> list[tuple[str
 
 def _parity_files(par2_base: str) -> list[str]:
     """Return only the exact base and recognized PAR2 volume names."""
-    candidates = glob(f"{escape(par2_base)}*")
-    if par2_base.endswith(PAR2_EXTENSION):
-        candidates += glob(f"{escape(par2_base[:-5])}.vol*.par2")
-    return sorted({path for path in candidates
-                   if _par2_base_from_parity_file(path) == par2_base})
+    parent = os.path.dirname(par2_base) or os.curdir
+    try:
+        entries = os.scandir(parent)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return []
+        raise
+
+    with entries:
+        return sorted({os.path.join(os.path.dirname(par2_base), entry.name)
+                       for entry in entries
+                       if _par2_base_from_parity_file(
+                           os.path.join(os.path.dirname(par2_base), entry.name)
+                       ) == par2_base})
 
 
 def log(message: str, log_file: str) -> None:
