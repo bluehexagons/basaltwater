@@ -45,9 +45,10 @@ class TaskFollowUpTests(unittest.TestCase):
                          "directory": self.home, "mode": "workspace", "workspace": "run-directory",
                          "network": True, "temporary_files": False}
 
-    def record_request(self) -> tuple[str, str]:
+    def record_request(self, *, history_limit: int = 100) -> tuple[str, str]:
         identifier = self.manager.create({"title": "Restricted check", "prompt": "Inspect only", "directory": self.home,
-                                          "mode": "inspect", "interval": "once"}, run_now=True)
+                                          "mode": "inspect", "interval": "once", "history_limit": history_limit},
+                                         run_now=True)
         value = validate_report({**report("blocked"), "follow_up": self.proposal})
         events = CodexEvents()
         events.feed(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(value)}}).encode() + b"\n")
@@ -116,6 +117,102 @@ class TaskFollowUpTests(unittest.TestCase):
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"receipt": reference})
         self.assertIn("Follow-up draft.", page)
         self.assertEqual(self.manager.contexts.receipt(identifier, run_id)["follow_up"], self.proposal)
+
+    def test_unresolved_decisions_keep_receipts_and_controls_past_history_limit(self) -> None:
+        from lib.atomic_io import write_json_atomic
+
+        original = dict(self.proposal)
+
+        def finish_source_again(identifier: str) -> None:
+            self.manager.action(identifier, "run")
+            with patch.object(tasks, "execute_prompt", return_value={
+                "status": "completed", "message": "Done", "output": "", **report("complete"),
+            }):
+                self.assertTrue(self.manager.tick())
+
+        for scenario in ("blocked-cancellation", "pending-request", "unknown-submission", "saved-submission"):
+            with self.subTest(scenario=scenario):
+                self.proposal = dict(original)
+                if scenario == "saved-submission":
+                    self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+                else:
+                    self.proposal.update(writable_directories=[], operator_requirements=[],
+                                         service_restarts=["auto-update-node.service"])
+                identifier, run_id = self.record_request(history_limit=1)
+                unit = "auto-update-node.service"
+
+                if scenario == "saved-submission":
+                    def fail_final_decision(path, value, **kwargs):
+                        if value.get("status") == "approved":
+                            raise OSError("simulated final decision write failure")
+                        return write_json_atomic(path, value, **kwargs)
+
+                    with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_final_decision):
+                        with self.assertRaisesRegex(OSError, "final decision"):
+                            decide_follow_up(self.manager, identifier, run_id, "approve")
+                elif scenario == "pending-request":
+                    request = {"id": "a" * 32, "state": "pending"}
+                    with patch("lib.agent_task_followups.exchange", return_value=request):
+                        self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "request-privilege"))
+                elif scenario == "blocked-cancellation":
+                    request = {"id": "b" * 32, "state": "pending"}
+                    with patch("lib.agent_task_followups.exchange", return_value=request):
+                        self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "request-privilege"))
+                    with patch("lib.agent_task_followups.exchange",
+                               side_effect=[OSError("cancel unavailable"), OSError("status unavailable")]):
+                        self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+                else:
+                    unknown = PrivilegeRequestUnconfirmed("broker acceptance may be uncertain")
+                    with patch("lib.agent_task_followups.exchange", side_effect=unknown):
+                        with self.assertRaises(ServiceApprovalUnavailable):
+                            decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+                    self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+
+                finish_source_again(identifier)
+                store = self.manager.contexts
+                receipt = store.receipt(identifier, run_id)
+                self.assertEqual(receipt["follow_up"], self.proposal)
+                self.assertEqual([item["id"] for item in store.pending_follow_ups(identifier)], [run_id])
+                self.assertTrue(store.has_pending_follow_up(identifier))
+                decision = follow_up_state(self.manager, identifier, run_id)
+                self.assertEqual(decision["status"], "pending" if scenario in {"saved-submission", "pending-request"}
+                                 else "blocked")
+
+                if scenario == "blocked-cancellation":
+                    self.assertEqual(decision["requests"][unit]["id"], "b" * 32)
+                    self.assertEqual(decision["requests"][unit]["state"], "cancellation-unconfirmed")
+                    maximum = len(self.manager.snapshot()["tasks"])
+                    with patch.object(tasks, "MAX_TASKS", maximum):
+                        with self.assertRaisesRegex(ValueError, "saved tasks are allowed"):
+                            self.manager.create({"title": "Unused draft", "prompt": "Inspect only",
+                                                 "directory": self.home, "mode": "inspect"},
+                                                run_now=False, draft=True)
+                    self.assertIn(identifier, [task["id"] for task in self.manager.snapshot()["tasks"]])
+                elif scenario == "unknown-submission":
+                    self.assertNotIn("id", decision["requests"][unit])
+                    self.assertEqual(decision["requests"][unit]["state"], "submission-uncertain")
+                elif scenario == "pending-request":
+                    self.assertEqual(decision["requests"][unit]["id"], "a" * 32)
+                else:
+                    self.assertIn("submission", decision)
+
+    def test_resolved_follow_up_receipt_and_decision_still_prune(self) -> None:
+        identifier, run_id = self.record_request(history_limit=1)
+        self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+        receipt_path = self.manager.contexts.directory(identifier) / "runs" / (run_id + ".json")
+        decision_path = receipt_path.with_name(run_id + ".decision.json")
+        self.assertTrue(receipt_path.exists())
+        self.assertTrue(decision_path.exists())
+
+        self.manager.action(identifier, "run")
+        with patch.object(tasks, "execute_prompt", return_value={
+            "status": "completed", "message": "Done", "output": "", **report("complete"),
+        }):
+            self.assertTrue(self.manager.tick())
+
+        self.assertFalse(receipt_path.exists())
+        self.assertFalse(decision_path.exists())
+        self.assertEqual(self.manager.contexts.pending_follow_ups(identifier), [])
 
     def test_invalid_requests_and_unavailable_proposals_do_not_prepare_work(self) -> None:
         for changes in ({"mode": "unrestricted"}, {"network": "yes"}, {"directory": "relative"},

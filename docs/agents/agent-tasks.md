@@ -252,6 +252,20 @@ follow-up is needed. A request is retained in the receipt and recent run
 history; it never creates a task, changes permissions, or submits a privileged
 approval. Reports from older runners without this field remain readable.
 
+`history_limit` controls ordinary recent receipt retention. Receipts and
+decision files for unresolved follow-ups stay available beyond that limit,
+including saved submissions, pending service requests and blocked requests
+whose cancellation or submission outcome is unknown. Each task can retain at
+most 32 unresolved follow-up records. Once full, the next claimed attempt fails
+before workspace preparation or provider/host-operation launch; resolve saved
+proposals and inspect uncertain submissions in the privilege portal before
+continuing. A no-ID submission with an unknown outcome cannot be reconciled
+locally, so inspect it before creating a replacement task. Approved or saved
+draft decisions, blocked proposals without uncertain service requests, and
+blocked requests with known terminal outcomes return to ordinary retention.
+Unreadable or unrecognized decision evidence is preserved fail closed and
+counts toward the same limit.
+
 For example, a restricted check can request live diagnostics:
 
 ```json

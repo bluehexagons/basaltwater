@@ -22,12 +22,16 @@ OUTCOMES = ("progress", "complete", "waiting", "blocked", "failed")
 MAX_CHECKPOINT_BYTES = 16000
 MAX_CONTEXT_BYTES = 64 * 1024
 MAX_EVENT_BYTES = 1024 * 1024
+MAX_UNRESOLVED_FOLLOW_UPS = 32
 FOLLOW_UP_WARNING = (
     "Follow-up proposal omitted because its settings were invalid. "
     "Review the retained run evidence and submit a corrected proposal with minimum permissions."
 )
 _ID = re.compile(r"[a-f0-9]{32}\Z")
 _SESSION = re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\Z")
+_RESOLVED_FOLLOW_UP_REQUEST_STATES = frozenset({
+    "cancelled", "expired", "denied", "invalidated", "failed", "succeeded",
+})
 
 FOLLOW_UP_SCHEMA = {
     "type": ["object", "null"], "additionalProperties": False,
@@ -320,6 +324,12 @@ class TaskContextStore:
             raise ValueError("Invalid task run ID")
         identifier = task["id"]
         directory = self.directory(identifier, create=True)
+        unresolved = self._unresolved_follow_up_ids(identifier)
+        if len(unresolved) >= MAX_UNRESOLVED_FOLLOW_UPS:
+            raise RuntimeError(
+                f"Task has reached the limit of {MAX_UNRESOLVED_FOLLOW_UPS} unresolved follow-up records; "
+                "resolve or inspect them before running more work"
+            )
         context = self.load(identifier)
         if context.get("persistence", task["persistence"]) != task["persistence"]:
             context.update(checkpoint="", session_id=None)
@@ -415,8 +425,12 @@ class TaskContextStore:
             context["last_run_id"] = run["id"]
             self.save(identifier, context)
         receipts = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
-                          key=lambda path: path.stat().st_mtime_ns)
-        for old in receipts[:-task["history_limit"]]:
+                          key=lambda path: path.lstat().st_mtime_ns)
+        retained = {path.stem for path in receipts[-task["history_limit"]:]}
+        retained.update(self._unresolved_follow_up_ids(identifier))
+        for old in receipts:
+            if old.stem in retained:
+                continue
             for path in (old, old.with_suffix(".jsonl"), old.with_name(old.stem + ".decision.json")):
                 try:
                     info = path.lstat()
@@ -433,30 +447,78 @@ class TaskContextStore:
         context.pop("last_run_id", None)
         self.save(identifier, context)
 
-    def pending_follow_ups(self, identifier: str) -> list[dict[str, Any]]:
-        """Find unresolved retained proposals independently of the latest run."""
+    def _decision_requires_retention(self, identifier: str, run_id: str) -> bool | None:
+        """Return whether decision evidence is unresolved; unknown state fails closed."""
+        path = self.directory(identifier) / "runs" / (run_id + ".decision.json")
+        try:
+            decision = private_json(path)
+        except FileNotFoundError:
+            return None
+        except (OSError, RuntimeError, ValueError, RecursionError):
+            return True
+        status = decision.get("status")
+        if status == "pending":
+            return True
+        if status not in {"blocked", "approved", "draft"} or decision.get("submission") is not None:
+            return True
+        requests = decision.get("requests")
+        if not isinstance(requests, dict):
+            return True
+        for request in requests.values():
+            if not isinstance(request, dict):
+                return True
+            request_id = request.get("id")
+            if not isinstance(request_id, str) or not _ID.fullmatch(request_id):
+                # A saved submission with no ID has an unknown outcome.
+                return True
+            if request.get("state") not in _RESOLVED_FOLLOW_UP_REQUEST_STATES:
+                # Pending, claimed, uncertain and unrecognized states need
+                # their request ID for inspection or cancellation recovery.
+                return True
+        return False
+
+    def _unresolved_follow_up_ids(self, identifier: str) -> list[str]:
+        """Return protected run IDs, counting unreadable evidence fail closed."""
         runs = self.directory(identifier) / "runs"
-        pending = []
-        for path in runs.glob("*.json"):
-            if not _ID.fullmatch(path.stem):
+        private_directory(self.home, runs)
+        try:
+            paths = list(runs.iterdir())
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise RuntimeError(f"Cannot inspect task evidence directory: {runs}") from exc
+        unresolved = []
+        for path in paths:
+            if path.suffix != ".json" or not _ID.fullmatch(path.stem):
                 continue
-            try:
-                decision = private_json(path.with_name(path.stem + ".decision.json"))
-                if decision.get("status") in {"approved", "blocked", "draft"}:
-                    continue
-            except FileNotFoundError:
-                pass
             try:
                 receipt = self.receipt(identifier, path.stem)
             except FileNotFoundError:
+                continue
+            except (OSError, RuntimeError, ValueError, RecursionError):
+                unresolved.append(path.stem)
+                continue
+            decision_unresolved = self._decision_requires_retention(identifier, path.stem)
+            if decision_unresolved is True or (
+                    decision_unresolved is None and receipt.get("follow_up") is not None):
+                unresolved.append(path.stem)
+        return unresolved
+
+    def pending_follow_ups(self, identifier: str) -> list[dict[str, Any]]:
+        """Find unresolved proposals and request recovery independently of the latest run."""
+        pending = []
+        for run_id in self._unresolved_follow_up_ids(identifier):
+            try:
+                receipt = self.receipt(identifier, run_id)
+            except FileNotFoundError:
                 continue  # Concurrent retention can remove an older receipt.
-            if receipt.get("follow_up"):
+            if receipt.get("follow_up") is not None:
                 pending.append(receipt)
         return sorted(pending, key=lambda run: run["started_at"], reverse=True)
 
     def has_pending_follow_up(self, identifier: str) -> bool:
         """Keep unresolved retained proposals discoverable when reclaiming controls."""
-        return bool(self.pending_follow_ups(identifier))
+        return bool(self._unresolved_follow_up_ids(identifier))
 
     def receipt(self, identifier: str, run_id: str) -> dict[str, Any]:
         """Read exact retained evidence, including for a deleted task."""

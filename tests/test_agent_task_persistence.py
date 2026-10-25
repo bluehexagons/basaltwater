@@ -24,6 +24,13 @@ def report(outcome: str = "progress") -> dict:
             "evidence": ["Focused check: one failure."], "retry_after_minutes": None}
 
 
+def follow_up(home: str) -> dict:
+    return {"title": "Recheck the service", "reason": "The restricted check could not inspect live state.",
+            "prompt": "Read service state and report the result without changing it.",
+            "directory": home, "mode": "workspace", "workspace": "run-directory",
+            "network": True, "temporary_files": False}
+
+
 class PersistentTaskTests(unittest.TestCase):
     def setUp(self) -> None:
         self.home = self.enterContext(tempfile.TemporaryDirectory())
@@ -138,6 +145,62 @@ class PersistentTaskTests(unittest.TestCase):
         self.run_task(report(), now=2)
         self.assertEqual(len(list(directory.glob("*.json"))), 1)
         self.assertEqual(retained.read_text(), "preserve")
+
+    def test_unresolved_follow_up_receipt_survives_history_retention(self) -> None:
+        identifier = self.manager.create({**self.values, "history_limit": 1}, run_now=True, now=0)
+        self.run_task({**report(), "follow_up": follow_up(self.home)})
+        store = TaskContextStore(self.home)
+        first_run = self.manager.snapshot()["runs"][-1]["id"]
+        directory = store.directory(identifier) / "runs"
+
+        self.manager.action(identifier, "run")
+        self.run_task(report(), now=2)
+
+        self.assertTrue((directory / (first_run + ".json")).exists())
+        self.assertEqual([run["id"] for run in store.pending_follow_ups(identifier)], [first_run])
+        self.assertEqual(len(list(directory.glob("*.json"))), 2)
+
+    def test_unresolved_follow_up_limit_blocks_provider_before_workspace_preparation(self) -> None:
+        identifier = self.manager.create({**self.values, "history_limit": 1, "workspace": "run-directory"},
+                                         run_now=True, now=0)
+        with patch("lib.agent_task_context.MAX_UNRESOLVED_FOLLOW_UPS", 2):
+            for completed_at in (1, 3):
+                self.run_task({**report(), "follow_up": follow_up(self.home)}, now=completed_at)
+                self.manager.action(identifier, "run")
+
+            with patch.object(tasks, "execute_prompt") as provider:
+                self.assertTrue(self.manager.tick(now=5))
+            provider.assert_not_called()
+
+        store = TaskContextStore(self.home)
+        self.assertEqual(len(store.pending_follow_ups(identifier)), 2)
+        self.assertEqual(len(list((store.directory(identifier) / "runs").glob("*.json"))), 3)
+        latest = self.manager.snapshot()["runs"][-1]
+        self.assertEqual(latest["status"], "failed")
+        self.assertIn("limit of 2 unresolved follow-up records", latest["message"])
+        unprepared_workspace = Path(self.home) / ".local/share/basaltwater/task-workspaces" / identifier / latest["id"]
+        self.assertFalse(unprepared_workspace.exists())
+
+    def test_unsafe_follow_up_decision_is_preserved_and_counts_as_unresolved(self) -> None:
+        identifier = self.manager.create({**self.values, "history_limit": 1}, run_now=True, now=0)
+        self.run_task({**report(), "follow_up": follow_up(self.home)})
+        store = TaskContextStore(self.home)
+        first_run = self.manager.snapshot()["runs"][-1]["id"]
+        runs = store.directory(identifier) / "runs"
+        receipt_path = runs / (first_run + ".json")
+        decision_path = runs / (first_run + ".decision.json")
+        outside = Path(self.home) / "outside-decision.json"
+        outside.write_text("{}")
+        decision_path.symlink_to(outside)
+
+        self.manager.action(identifier, "run")
+        self.run_task(report(), now=2)
+
+        self.assertTrue(receipt_path.exists())
+        self.assertTrue(decision_path.is_symlink())
+        self.assertEqual(outside.read_text(), "{}")
+        self.assertTrue(store.has_pending_follow_up(identifier))
+        self.assertEqual([run["id"] for run in store.pending_follow_ups(identifier)], [first_run])
 
     def test_completed_process_reporting_blocked_counts_toward_failure_pausing(self) -> None:
         self.manager.create({**self.values, "failure_limit": 1}, run_now=True, now=0)
