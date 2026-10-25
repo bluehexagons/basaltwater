@@ -29,6 +29,7 @@ Related pages:
 - [`device-pairing.md`](../services/device-pairing.md) for protected browser and app enrollment options
 - [`maintenance-agents.md`](../operations/maintenance-agents.md) for maintenance-agent policy options
 - [`guacamole.md`](../workstations/guacamole.md) for browser-based desktop and console options
+- [`proxmox-kiosk.md`](../workstations/proxmox-kiosk.md) for the optional local Proxmox browser kiosk
 - [`agent-memory.md`](../agents/agent-memory.md) for private project notes, todo claims and secret-file references
 - [`agent-security.md`](../agents/agent-security.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
@@ -510,6 +511,8 @@ The target-address inference and server-service scope below apply to Debian.
 | `--rdp-audio` / `--no-rdp-audio` | Control audio redirection; disabled by default |
 | `--rdp-idle-timeout SECONDS` | Disconnect an idle session after this interval; 0 disables |
 | `--desktop [xfce\|i3\|cinnamon\|lxqt]` | Configure one shared XRDP desktop; explicitly enables desktop capability on headless profiles |
+| `--kiosk {web,cli}` / `--no-kiosk` | On `server_proxmox` only, enable the local browser kiosk in web or CLI startup mode, or disable its managed session; mutually exclusive |
+| `--kiosk-url URL` | On `server_proxmox` only, set the kiosk's HTTP(S) destination; must not contain credentials, whitespace, or control characters |
 | `--browser NAME` | Browser to install |
 | `--editor [geany\|vscode]` | Install an explicit graphical editor; requires a desktop-capable setup or `--rdp` |
 | `--flatpak` | Install desktop apps via Flatpak |

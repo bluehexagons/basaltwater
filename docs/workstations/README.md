@@ -7,6 +7,7 @@ applications. For coding-agent security and VM profiles, start at
 
 | Guide | Use it for |
 | --- | --- |
+| [Proxmox local browser kiosk](proxmox-kiosk.md) | Optional local Firefox kiosk on a Proxmox VE 9 host with DRM graphics and local input devices |
 | [Workstations](workstations.md) | Debian desktop profiles, software choices, and application flags |
 | [CachyOS setup](cachyos.md) | Add coding tools to an existing KDE workstation |
 | [CachyOS software](cachyos-software.md) | Choose native creative and publishing applications |
