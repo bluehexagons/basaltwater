@@ -155,7 +155,11 @@ overlaps `.ssh`, `.codex`, `.agents`, `.config`, or `.local/state/basaltwater`
 are rejected, including protected descendants and their ancestors. Creation,
 updates, and prelaunch checks enforce this boundary. Older saved tasks remain in
 the inventory, but an unsafe task fails before workspace preparation or provider
-launch so it can be edited to use a safe project directory.
+launch. A draft without an established context can be edited to use a safe
+project directory through CLI or MCP. If an earlier run established its source
+binding, create a new task with the safe directory and pause or remove the old
+task. `reset-context` retains that source binding; it does not enable changing
+the old task's directory. Retained receipts remain readable after removal.
 Inspection can still use the home directory. Managed `directory` and
 `run-directory` workspaces can keep the home as their source because execution
 uses private empty task directories. Fixed native storage operations also
