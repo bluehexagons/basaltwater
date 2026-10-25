@@ -58,6 +58,24 @@ _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}\Z")
 _STATUSES = {"running", "completed", "failed", "cancelled", "interrupted"}
 
 
+class _TaskExecutionRuntime(dict[str, Any]):
+    """Per-invocation context with a non-persistent worker lease descriptor."""
+
+    __slots__ = ("_lease_fd",)
+
+    def __init__(self, values: dict[str, Any], *, lease_fd: int | None = None) -> None:
+        if not isinstance(values, dict):
+            raise ValueError("Invalid task execution runtime")
+        if lease_fd is not None and (type(lease_fd) is not int or lease_fd < 0):
+            raise ValueError("Invalid task worker lease descriptor")
+        super().__init__(values)
+        self._lease_fd = lease_fd
+
+    @property
+    def lease_fd(self) -> int | None:
+        return self._lease_fd
+
+
 def _integer(value: object, label: str, minimum: int, maximum: int) -> int:
     if isinstance(value, str) and re.fullmatch(r"[0-9]{1,15}", value):
         value = int(value)
@@ -362,6 +380,9 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     if cancel.is_set():
         return {"status": "cancelled", "output": "", "message": "Cancelled before provider launch", "exit_code": None}
     runtime = task.get("_runtime")
+    lease_fd = runtime.lease_fd if isinstance(runtime, _TaskExecutionRuntime) else None
+    if lease_fd is not None and (type(lease_fd) is not int or lease_fd < 0):
+        raise ValueError("Invalid task worker lease descriptor")
     task_id = task.get("id")
     wake_events = task.get("events", [])
     task = validate_task(task, home)
@@ -392,9 +413,11 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             with os.fdopen(descriptor, "w") as log:
                 log.write(json.dumps({"host_storage": host_evidence}) + "\n")
         if task["storage_operation"] != "review" or host_evidence.get("cancelled"):
+            cancelled = bool(host_evidence.get("cancelled"))
             native = host_evidence.get("result", {})
-            state = native.get("status", "failed")
-            complete = not host_evidence.get("error") and state in {"cleaned", "absent", "preview", "below_limits"}
+            state = "cancelled" if cancelled else native.get("status", "failed")
+            complete = (not cancelled and not host_evidence.get("error")
+                        and state in {"cleaned", "absent", "preview", "below_limits"})
             summary = (f"Host storage operation {task['storage_operation']}: {state}. "
                        f"Available bytes before={native.get('free_bytes_before')}, after={native.get('free_bytes_after')}. "
                        + host_evidence.get("error", "Review retained host evidence for targets and coverage."))
@@ -402,11 +425,18 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
                        "issues", "errors", "activity") if key in native}
             if details:
                 summary += "\n" + json.dumps(details, ensure_ascii=True)[:2000]
-            return {"status": "cancelled" if host_evidence.get("cancelled") else "completed" if complete else "failed",
-                    "outcome": "complete" if complete else "blocked" if state.startswith("deferred") else "failed",
+            if cancelled:
+                status, outcome, exit_code = "cancelled", None, None
+            elif complete:
+                status, outcome, exit_code = "completed", "complete", 0
+            elif state.startswith("deferred"):
+                status, outcome, exit_code = "failed", "blocked", 1
+            else:
+                status, outcome, exit_code = "failed", "failed", 1
+            return {"status": status, "outcome": outcome,
                     "output": summary, "summary": summary, "message": summary[:500],
                     "evidence": [json.dumps(host_evidence)], "follow_up": None, "retry_after_minutes": None,
-                    "usage": {"input_tokens": 0, "output_tokens": 0}, "exit_code": 0 if complete else 1}
+                    "usage": {"input_tokens": 0, "output_tokens": 0}, "exit_code": exit_code}
         if timeout_seconds <= 0:
             return {"status": "failed", "output": "", "message": timeout_message, "exit_code": None}
     executable = _tool_path("codex", home)
@@ -543,7 +573,7 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
         process = resources.enter_context(subprocess.Popen(
             command, cwd=runtime["directory"] if runtime else task["directory"], env=environment,
             stdin=prompt_input, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=True, pass_fds=() if lease_fd is None else (lease_fd,),
         ))
         try:
             assert process.stdout is not None
@@ -1059,7 +1089,11 @@ class AgentTasks:
         usage = run.get("usage")
         if isinstance(usage, dict):
             task["tokens_used"] += usage["input_tokens"] + usage["output_tokens"]
-        if run["status"] == "completed" and outcome not in {"blocked", "failed"}:
+        if run["status"] == "cancelled":
+            # A claimed cancellation consumes its reserved attempt, but does not
+            # add a failure or apply failure backoff, even if a worker reported one.
+            pass
+        elif run["status"] == "completed" and outcome not in {"blocked", "failed"}:
             task["consecutive_failures"], task["auto_paused"] = 0, False
         elif run["status"] in {"failed", "interrupted"} or outcome in {"blocked", "failed"}:
             task["consecutive_failures"] = min(1000000, task["consecutive_failures"] + 1)
@@ -1165,7 +1199,8 @@ class AgentTasks:
                 # Saved tasks can predate a stricter access rule. Revalidate
                 # before preparing context or launching any provider process.
                 validate_task(run["task"], self.home)
-                runtime = self.contexts.prepare(run["task"], run["id"])
+                runtime = _TaskExecutionRuntime(self.contexts.prepare(run["task"], run["id"]),
+                                                lease_fd=self._lease)
                 execution_task = {**run["task"], "_runtime": runtime}
                 result = execute_prompt(execution_task, self.home, cancellation)
                 result["execution_directory"] = runtime["directory"]
@@ -1253,6 +1288,11 @@ class AgentTasks:
                             run.update(receipt)
                             self.contexts.record(run["task"], run)
                             self._record_outcome(state, run)
+                            saved_task = next((task for task in state["tasks"]
+                                               if task["id"] == run["task"]["id"]), None)
+                            if saved_task is not None:
+                                # Match normal completion: skip intervals elapsed during the run.
+                                _advance_schedule(saved_task, run["finished_at"])
                             for name in ("checkpoint", "evidence"):
                                 run.pop(name, None)
                             continue

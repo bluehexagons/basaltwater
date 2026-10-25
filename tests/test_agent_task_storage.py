@@ -64,12 +64,65 @@ class StorageTaskTests(unittest.TestCase):
     def test_uncertain_deferred_and_cancelled_operations_do_not_claim_completion(self) -> None:
         for evidence, expected in (({"result": {"status": "uncertain", "cleanup_executed": True}}, "failed"),
                                   ({"result": {"status": "deferred_active"}}, "blocked"),
-                                  ({"error": "Interrupted", "cancelled": True}, "failed")):
+                                  ({"error": "Interrupted", "cancelled": True}, None)):
             with self.subTest(evidence=evidence):
                 result, _ = self.execute(self.values, evidence)
                 self.assertEqual(result["outcome"], expected)
                 self.assertNotEqual(result["status"], "completed")
+                if evidence.get("cancelled"):
+                    self.assertEqual(result["status"], "cancelled")
+                    self.assertIn(f"{self.values['storage_operation']}: cancelled", result["summary"])
+                    self.assertIsNone(result["exit_code"])
                 self.assertIsNone(result["follow_up"])
+
+    def test_cancelled_recurring_host_review_preserves_failure_accounting(self) -> None:
+        manager = tasks.AgentTasks(self.home)
+        self.addCleanup(manager.close)
+        self.enterContext(patch.object(tasks.AgentTasks, "available", return_value=True))
+        values = {"title": "Review host storage", "prompt": "Review host storage state",
+                  "directory": self.home, "mode": "inspect", "interval": "hourly",
+                  "storage_operation": "review", "failure_limit": 3, "backoff_minutes": 15}
+        with patch.object(tasks, "_tool_path", return_value="/test/codex") as provider:
+            identifier = manager.create(values, run_now=True, now=0)
+            with manager._transaction():
+                task = next(item for item in manager._load()["tasks"] if item["id"] == identifier)
+                task["consecutive_failures"] = 2
+                task["not_before"] = 20
+                manager._save()
+            provider.reset_mock()
+
+            account_os = SimpleNamespace(**vars(os))
+            account_os.geteuid = lambda: 1000
+            execute_prompt = tasks.execute_prompt
+
+            def execute_as_account(task: dict, home: str, cancellation: object) -> dict:
+                # Exercise execute_prompt's real storage-result branch while
+                # keeping the test process's actual state-file ownership intact.
+                with patch.object(tasks, "os", account_os):
+                    return execute_prompt(task, home, cancellation)
+
+            with (patch.object(tasks, "execute_prompt", side_effect=execute_as_account),
+                  patch.object(tasks, "run_storage_operation", return_value={
+                      "operation": "review", "error": "Cancelled by operator", "cancelled": True}) as host,
+                  patch.object(tasks.subprocess, "Popen") as provider_process):
+                self.assertTrue(manager.tick(now=100))
+
+        host.assert_called_once()
+        provider.assert_not_called()
+        provider_process.assert_not_called()
+        state = manager.snapshot()
+        task = state["tasks"][0]
+        run = state["runs"][0]
+        self.assertEqual(run["status"], "cancelled")
+        self.assertIsNone(run["outcome"])
+        self.assertIn("review: cancelled", run["summary"])
+        self.assertIsNone(run["exit_code"])
+        self.assertEqual(task["attempts"], 1)
+        self.assertEqual(task["daily_attempts"], 1)
+        self.assertEqual(task["consecutive_failures"], 2)
+        self.assertTrue(task["enabled"])
+        self.assertFalse(task["auto_paused"])
+        self.assertEqual(task["not_before"], 20)
 
     def test_policy_and_operator_prerequisites_prevent_host_execution(self) -> None:
         for changes, policy in (({"operator_requirements": ["Arrange a quiet build window"]}, []),
