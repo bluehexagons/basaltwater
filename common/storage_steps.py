@@ -275,6 +275,10 @@ def _ensure_filesystem(device_path: str, filesystem: str) -> str:
         _run_capture(f"mkfs.ext4 -F -m 0 {shlex.quote(device_path)}")
     elif filesystem == "xfs":
         _run_capture(f"mkfs.xfs -f {shlex.quote(device_path)}")
+    elif filesystem == "btrfs":
+        _run_capture(
+            f"mkfs.btrfs -d single -m dup {shlex.quote(device_path)}"
+        )
     else:
         raise RuntimeError(f"Unsupported VM data filesystem: {filesystem}")
     _run_capture("udevadm settle")
@@ -446,7 +450,8 @@ def _reject_symlinked_mount_path(path: str) -> None:
 
 def _mounted_info(path: str) -> tuple[str, str] | None:
     result = _run_capture(
-        f"findmnt --json --target {shlex.quote(path)} --output SOURCE,FSTYPE,TARGET",
+        f"findmnt --json --target {shlex.quote(path)} "
+        "--output SOURCE,FSTYPE,TARGET,FSROOT",
         check=False,
     )
     if result.returncode != 0:
@@ -465,6 +470,16 @@ def _mounted_info(path: str) -> tuple[str, str] | None:
     filesystem = record.get("fstype")
     if not isinstance(source, str) or not isinstance(filesystem, str):
         raise RuntimeError(f"findmnt returned incomplete mount data for {path}")
+    if filesystem == "btrfs":
+        if record.get("fsroot") != "/":
+            raise RuntimeError(
+                f"Refusing Btrfs subvolume mount at {path}; "
+                "only the top-level filesystem mount is supported"
+            )
+        if "[" in source or "]" in source:
+            raise RuntimeError(
+                f"Refusing Btrfs subvolume source alias at {path}"
+            )
     return source, filesystem
 
 
@@ -551,6 +566,9 @@ def _prepare_mount(
 
     unit = _systemd_mount_unit(mount.path)
     unit_path = os.path.join("/etc/systemd/system", unit)
+    mount_options = (
+        "defaults,subvolid=5" if mount.filesystem == "btrfs" else "defaults"
+    )
     unit_text = (
         "[Unit]\n"
         f"Description=basaltwater VM data mount {mount.name}\n"
@@ -559,7 +577,7 @@ def _prepare_mount(
         f"What=/dev/disk/by-uuid/{filesystem_uuid}\n"
         f"Where={mount.path}\n"
         f"Type={mount.filesystem}\n"
-        "Options=defaults\n\n"
+        f"Options={mount_options}\n\n"
         "[Install]\n"
         "WantedBy=local-fs.target\n"
     )
@@ -638,6 +656,8 @@ def setup_vm_storage(config: SetupConfig) -> None:
         for index, disk in enumerate(data_disks(config), 1)
     }
     packages = "parted e2fsprogs xfsprogs util-linux"
+    if any(mount.filesystem == "btrfs" for mount in mounts):
+        packages += " btrfs-progs"
     if caches:
         packages += " lvm2 thin-provisioning-tools"
     dependencies = _run_capture(

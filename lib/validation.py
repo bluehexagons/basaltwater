@@ -2192,7 +2192,7 @@ def validate_vm_storage_settings(
     for spec in mount_specs:
         if not 2 <= len(spec) <= 4:
             raise ValueError(
-                "--storage-mount requires NAME PATH [ext4|xfs] [empty]"
+                "--storage-mount requires NAME PATH [ext4|xfs|btrfs] [empty]"
             )
         name, path = spec[:2]
         validate_vm_storage_name(name)
@@ -2201,8 +2201,10 @@ def validate_vm_storage_settings(
         mount_names.add(name)
         filesystem = spec[2] if len(spec) >= 3 else "ext4"
         policy = spec[3] if len(spec) >= 4 else "empty"
-        if filesystem not in {"ext4", "xfs"}:
-            raise ValueError("--storage-mount filesystem must be ext4 or xfs")
+        if filesystem not in {"ext4", "xfs", "btrfs"}:
+            raise ValueError(
+                "--storage-mount filesystem must be ext4, xfs, or btrfs"
+            )
         if policy != "empty":
             raise ValueError(
                 "--storage-mount currently supports only the empty policy; "

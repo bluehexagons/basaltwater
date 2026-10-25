@@ -372,7 +372,8 @@ def add_setup_arguments(
         metavar="MOUNT",
         help=(
             "Prepare a named VM data disk at an empty path: NAME PATH "
-            "[ext4|xfs] [empty]; /home is supported for new VMs; repeat as needed"
+            "[ext4|xfs|btrfs] [empty]; /home is supported for new VMs; "
+            "repeat as needed"
             if not for_remote
             else argparse.SUPPRESS
         ),

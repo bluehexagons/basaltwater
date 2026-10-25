@@ -217,6 +217,39 @@ class TestDiskPreparationSafety(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "contains xfs, expected ext4"):
             storage_steps._ensure_filesystem("/dev/sdb1", "ext4")
 
+    def test_btrfs_declaration_never_adopts_or_reformats_an_ext4_partition(self):
+        with (
+            patch.object(
+                storage_steps,
+                "_find_device_by_path",
+                return_value={"fstype": "ext4"},
+            ),
+            patch.object(storage_steps, "_run_capture") as run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "contains ext4, expected btrfs"):
+                storage_steps._ensure_filesystem("/dev/sdb1", "btrfs")
+
+        run.assert_not_called()
+
+    def test_formats_blank_btrfs_with_single_data_and_dup_metadata(self):
+        with (
+            patch.object(storage_steps, "_find_device_by_path", return_value={}),
+            patch.object(storage_steps, "_wipefs_signatures", return_value=[]),
+            patch.object(
+                storage_steps, "_filesystem_uuid", return_value="12345678-abcd"
+            ),
+            patch.object(storage_steps, "_run_capture", return_value=_result()) as run,
+        ):
+            uuid = storage_steps._ensure_filesystem("/dev/sdb1", "btrfs")
+
+        self.assertEqual(uuid, "12345678-abcd")
+        run.assert_has_calls(
+            [
+                call("mkfs.btrfs -d single -m dup /dev/sdb1"),
+                call("udevadm settle"),
+            ]
+        )
+
     @patch("common.storage_steps._run_capture")
     def test_findmnt_parent_mount_is_not_accepted(self, mock_run):
         mock_run.return_value = _result(
@@ -230,6 +263,77 @@ class TestDiskPreparationSafety(unittest.TestCase):
         )
 
         self.assertIsNone(storage_steps._mounted_info("/srv/data"))
+
+    @patch("common.storage_steps._run_capture")
+    def test_btrfs_top_level_mount_source_is_available_for_uuid_check(self, mock_run):
+        mock_run.return_value = _result(
+            stdout=json.dumps(
+                {
+                    "filesystems": [
+                        {
+                            "source": "/dev/sdb1",
+                            "fstype": "btrfs",
+                            "target": "/srv/data",
+                            "fsroot": "/",
+                        }
+                    ]
+                }
+            )
+        )
+
+        self.assertEqual(
+            storage_steps._mounted_info("/srv/data"),
+            ("/dev/sdb1", "btrfs"),
+        )
+        self.assertIn("FSROOT", mock_run.call_args.args[0])
+
+    @patch("common.storage_steps._run_capture")
+    def test_btrfs_subvolume_mount_and_source_alias_are_rejected(self, mock_run):
+        records = (
+            {
+                "source": "/dev/sdb1[/@data]",
+                "fstype": "btrfs",
+                "target": "/srv/data",
+                "fsroot": "/@data",
+            },
+            {
+                "source": "/dev/sdb1[/]",
+                "fstype": "btrfs",
+                "target": "/srv/data",
+                "fsroot": "/",
+            },
+        )
+        for record in records:
+            with self.subTest(record=record):
+                mock_run.return_value = _result(
+                    stdout=json.dumps({"filesystems": [record]})
+                )
+                with self.assertRaisesRegex(RuntimeError, "Btrfs"):
+                    storage_steps._mounted_info("/srv/data")
+
+    def test_btrfs_active_mount_verifies_the_mounted_source_uuid(self):
+        mount = VMStorageMount("data", "/srv/data", "btrfs", "empty")
+        with (
+            patch.object(
+                storage_steps,
+                "_mounted_info",
+                return_value=("/dev/sdb1", "btrfs"),
+            ),
+            patch.object(
+                storage_steps,
+                "_filesystem_uuid",
+                side_effect=("12345678-abcd", "aaaaaaaa-bbbb"),
+            ) as filesystem_uuid,
+        ):
+            self.assertEqual(
+                storage_steps._verify_active_mount(mount, "12345678-abcd"),
+                ("/dev/sdb1", "btrfs"),
+            )
+            with self.assertRaisesRegex(RuntimeError, "expected 12345678-abcd"):
+                storage_steps._verify_active_mount(mount, "12345678-abcd")
+        filesystem_uuid.assert_has_calls(
+            [call("/dev/sdb1"), call("/dev/sdb1")]
+        )
 
     @patch("common.storage_steps._run_capture")
     def test_rejects_uuid_unsafe_for_systemd_unit(self, mock_run):
@@ -482,6 +586,7 @@ class TestPrepareMount(unittest.TestCase):
         self.assertEqual(unit_path, "/etc/systemd/system/srv-agent.mount")
         self.assertIn("What=/dev/disk/by-uuid/filesystem-uuid", unit_text)
         self.assertIn(f"Where={directory}", unit_text)
+        self.assertIn("Options=defaults\n", unit_text)
         self.assertNotIn("nofail", unit_text)
         mock_run.assert_has_calls(
             [
@@ -495,6 +600,42 @@ class TestPrepareMount(unittest.TestCase):
         )
         self.assertEqual(record["uuid"], "filesystem-uuid")
         self.assertEqual(record["bus_slot"], "scsi1")
+
+    def test_btrfs_mount_unit_selects_the_top_level_subvolume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mount = VMStorageMount("data", directory, "btrfs", "empty")
+            with (
+                patch.object(
+                    storage_steps,
+                    "_wait_for_declared_disk",
+                    return_value={"serial": "it-data"},
+                ),
+                patch.object(storage_steps, "_mounted_info", return_value=None),
+                patch.object(
+                    storage_steps, "_partition_for_mount", return_value="/dev/sdb1"
+                ),
+                patch.object(
+                    storage_steps,
+                    "_ensure_filesystem",
+                    return_value="12345678-abcd",
+                ),
+                patch.object(
+                    storage_steps,
+                    "_verify_active_mount",
+                    return_value=("/dev/sdb1", "btrfs"),
+                ),
+                patch.object(
+                    storage_steps, "_systemd_mount_unit", return_value="srv-data.mount"
+                ),
+                patch.object(storage_steps, "_run_capture"),
+                patch.object(storage_steps, "write_text_atomic") as write_text,
+                patch.object(storage_steps, "write_json_atomic"),
+            ):
+                storage_steps._prepare_mount(
+                    mount, "64G", "bw-data", "scsi1"
+                )
+
+        self.assertIn("Options=defaults,subvolid=5\n", write_text.call_args.args[1])
 
     def test_rerun_verifies_existing_mount_before_rewriting_unit(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -538,6 +679,41 @@ class TestPrepareMount(unittest.TestCase):
 
 
 class TestSetupVMStorage(unittest.TestCase):
+    def test_btrfs_progs_is_installed_only_for_btrfs_mounts(self):
+        for filesystem in ("ext4", "xfs", "btrfs"):
+            with self.subTest(filesystem=filesystem), tempfile.TemporaryDirectory() as root:
+                config = SetupConfig(
+                    host="host",
+                    username="agent",
+                    system_type="server_web",
+                    machine_type="vm",
+                    container_storage=[["data", "bulk", "2G"]],
+                    storage_mounts=[["data", "/srv/data", filesystem]],
+                )
+                with (
+                    patch.object(
+                        storage_steps,
+                        "STORAGE_STATE_FILE",
+                        os.path.join(root, "state.json"),
+                    ),
+                    patch.object(storage_steps, "is_dry_run", return_value=False),
+                    patch.object(
+                        storage_steps, "_run_capture", return_value=_result()
+                    ) as run,
+                    patch.object(storage_steps, "_prepare_mount", return_value={}),
+                ):
+                    storage_steps.setup_vm_storage(config)
+
+                install_command = next(
+                    item.args[0]
+                    for item in run.call_args_list
+                    if item.args[0].startswith("apt-get install")
+                )
+                self.assertEqual(
+                    "btrfs-progs" in install_command,
+                    filesystem == "btrfs",
+                )
+
     def test_mount_failure_retains_completed_cache_identity(self):
         config = SetupConfig(host='host', username='agent', system_type='server_web',
                              container_storage=[['data', 'bulk', '2G'], ['cache', 'fast', '1G']],

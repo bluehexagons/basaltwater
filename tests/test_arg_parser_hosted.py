@@ -71,7 +71,8 @@ class TestHostedFlagParsing(unittest.TestCase):
             "10.0.0.50",
             "--storage", "root", "local-lvm", "32G",
             "--storage", "agent-data", "fast-lvm", "128G",
-            "--storage-mount", "agent-data", "/srv/agent-workspace", "xfs",
+            "--storage-mount", "agent-data", "/srv/agent-workspace",
+            "btrfs", "empty",
             "--agent-workspace", "/srv/agent-workspace",
         ])
         self.assertEqual(
@@ -80,7 +81,7 @@ class TestHostedFlagParsing(unittest.TestCase):
         )
         self.assertEqual(
             args.storage_mounts,
-            [["agent-data", "/srv/agent-workspace", "xfs"]],
+            [["agent-data", "/srv/agent-workspace", "btrfs", "empty"]],
         )
         self.assertEqual(args.agent_workspace, "/srv/agent-workspace")
 
