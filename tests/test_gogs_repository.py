@@ -41,6 +41,10 @@ def _is_mutating(arguments: StrList) -> bool:
     )
 
 
+def _origin_records(*entries: tuple[str, str]) -> str:
+    return "".join(f"{origin}\0{value}\0" for origin, value in entries)
+
+
 class TestRepositoryUrlValidation(unittest.TestCase):
     def test_normalizes_https_repository_urls(self):
         self.assertEqual(
@@ -76,9 +80,13 @@ class TestConfigureRepository(unittest.TestCase):
         config_results: dict[
             tuple[str | None, str], tuple[int, str, str]
         ] | None = None,
+        config_origin_results: dict[str, tuple[int, str, str]] | None = None,
+        git_config_path: str | None = None,
     ):
         calls: list[StrList] = []
         configured_results = config_results or {}
+        configured_origin_results = config_origin_results or {}
+        local_config_path = git_config_path or os.path.join(root, ".git", "config")
 
         def run(command: StrList, **_kwargs: object) -> subprocess.CompletedProcess[str]:
             calls.append(command)
@@ -87,8 +95,21 @@ class TestConfigureRepository(unittest.TestCase):
             arguments = command[3:]
             if arguments == ["rev-parse", "--show-toplevel"]:
                 return _completed(command, f"{root}\n")
+            if arguments == ["rev-parse", "--git-path", "config"]:
+                return _completed(command, f"{local_config_path}\n")
             if arguments == ["remote"]:
                 return _completed(command, remotes)
+            if arguments[:1] == ["config"] and "--show-origin" in arguments:
+                returncode, stdout, stderr = configured_origin_results.get(
+                    arguments[-1],
+                    (1, "", ""),
+                )
+                return _completed(
+                    command,
+                    stdout=stdout,
+                    returncode=returncode,
+                    stderr=stderr,
+                )
             if arguments[:1] == ["config"] and (
                 "--get" in arguments or "--get-all" in arguments
             ):
@@ -266,6 +287,372 @@ class TestConfigureRepository(unittest.TestCase):
             ],
             git_arguments,
         )
+
+    def test_rejects_unexpected_inherited_push_urls_before_actions(self):
+        cases = (
+            (
+                "remote.origin.pushurl",
+                "https://user:origin-secret@stale.invalid/private.git",
+                "file:/etc/gitconfig",
+                "gogs",
+                True,
+            ),
+            (
+                "remote.gogs.pushurl",
+                "https://user:mirror-secret@stale.invalid/private.git",
+                "file:/etc/gitconfig",
+                "gogs",
+                True,
+            ),
+            (
+                "remote.backup-mirror.pushurl",
+                "https://user:custom-secret@stale.invalid/private.git",
+                "file:/tmp/config include with spaces/extra.gitconfig",
+                "backup-mirror",
+                False,
+            ),
+        )
+        for key, stale, origin, mirror_remote, combined_push in cases:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as root:
+                calls, runner = self._runner(
+                    root,
+                    config_origin_results={
+                        key: (0, _origin_records((origin, stale)), "")
+                    },
+                )
+
+                with patch(
+                    "lib.gogs_repository.subprocess.run",
+                    side_effect=runner,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "inherited destination",
+                    ) as error:
+                        configure_github_gogs_repository(
+                            root,
+                            "https://github.com/team/project.git",
+                            "https://git.example.test/team/project.git",
+                            mirror_remote=mirror_remote,
+                            combined_push=combined_push,
+                        )
+
+                self.assertNotIn("stale.invalid", str(error.exception))
+                self.assertNotIn("secret", str(error.exception))
+                git_arguments = [
+                    command[3:]
+                    for command in calls
+                    if command[:2] == ["git", "-C"]
+                ]
+                self.assertFalse(
+                    any(_is_mutating(arguments) for arguments in git_arguments)
+                )
+                self.assertNotIn(["lfs", "env"], git_arguments)
+
+    def test_repairs_stale_multivalue_push_urls_from_writable_config(self):
+        with tempfile.TemporaryDirectory() as root:
+            stale_one = "https://stale-one.invalid/private.git"
+            stale_two = "https://stale-two.invalid/private.git"
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.pushurl": (
+                        0,
+                        _origin_records(
+                            ("file:.git/config", stale_one),
+                            ("file:.git/config", stale_two),
+                        ),
+                        "",
+                    ),
+                    "remote.gogs.pushurl": (
+                        0,
+                        _origin_records(
+                            ("file:.git/config", stale_one),
+                            ("file:.git/config", stale_two),
+                        ),
+                        "",
+                    ),
+                },
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                configure_github_gogs_repository(
+                    root,
+                    "https://github.com/team/project.git",
+                    "https://git.example.test/team/project.git",
+                )
+
+        git_arguments = [
+            command[3:] for command in calls if command[:2] == ["git", "-C"]
+        ]
+        self.assertIn(
+            [
+                "config",
+                "--replace-all",
+                "remote.origin.pushurl",
+                "https://github.com/team/project.git",
+            ],
+            git_arguments,
+        )
+        self.assertIn(
+            [
+                "config",
+                "--replace-all",
+                "remote.gogs.pushurl",
+                "https://git.example.test/team/project.git",
+            ],
+            git_arguments,
+        )
+
+    def test_accepts_intended_inherited_push_urls_for_selected_destinations(self):
+        cases = (
+            (
+                "gogs",
+                True,
+                (
+                    ("file:/etc/gitconfig", "https://github.com/team/project.git"),
+                    (
+                        "file:/etc/gitconfig",
+                        "https://git.example.test/team/project.git",
+                    ),
+                ),
+            ),
+            (
+                "backup-mirror",
+                False,
+                (("command line:", "https://github.com/team/project.git"),),
+            ),
+        )
+        for mirror_remote, combined_push, origin_entries in cases:
+            with (
+                self.subTest(mirror_remote=mirror_remote),
+                tempfile.TemporaryDirectory() as root,
+            ):
+                mirror = "file:/etc/gitconfig"
+                entries = {
+                    "remote.origin.pushurl": (
+                        0,
+                        _origin_records(*origin_entries),
+                        "",
+                    ),
+                    f"remote.{mirror_remote}.pushurl": (
+                        0,
+                        _origin_records(
+                            (mirror, "https://git.example.test/team/project.git")
+                        ),
+                        "",
+                    ),
+                }
+                calls, runner = self._runner(
+                    root,
+                    remotes=f"origin\n{mirror_remote}\n",
+                    config_origin_results=entries,
+                )
+
+                with patch(
+                    "lib.gogs_repository.subprocess.run",
+                    side_effect=runner,
+                ):
+                    result = configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                        mirror_remote=mirror_remote,
+                        combined_push=combined_push,
+                    )
+
+                self.assertEqual(result["combined_push"], combined_push)
+                self.assertIn(
+                    [
+                        "git",
+                        "-C",
+                        root,
+                        "config",
+                        "--null",
+                        "--show-origin",
+                        "--get-all",
+                        "remote.origin.pushurl",
+                    ],
+                    calls,
+                )
+
+    def test_no_combined_push_rejects_inherited_gogs_origin_destination(self):
+        with tempfile.TemporaryDirectory() as root:
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.pushurl": (
+                        0,
+                        _origin_records(
+                            (
+                                "file:/etc/gitconfig",
+                                "https://git.example.test/team/project.git",
+                            )
+                        ),
+                        "",
+                    )
+                },
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                with self.assertRaisesRegex(ValueError, "inherited destination"):
+                    configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                        combined_push=False,
+                    )
+
+        self.assertFalse(
+            any(
+                _is_mutating(command[3:])
+                for command in calls
+                if command[:2] == ["git", "-C"]
+            )
+        )
+
+    def test_rejects_stale_linked_worktree_push_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.pushurl": (
+                        0,
+                        _origin_records(
+                            (
+                                f"file:{root}/.git/worktrees/feature/config.worktree",
+                                "https://stale.invalid/private.git",
+                            )
+                        ),
+                        "",
+                    )
+                },
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                with self.assertRaisesRegex(ValueError, "inherited destination"):
+                    configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                    )
+
+        self.assertFalse(
+            any(
+                _is_mutating(command[3:])
+                for command in calls
+                if command[:2] == ["git", "-C"]
+            )
+        )
+
+    def test_push_url_config_query_error_is_sanitized_and_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.pushurl": (
+                        128,
+                        "",
+                        "bad push URL "
+                        "https://user:private-token@hidden.invalid/secret.git",
+                    )
+                },
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "config query failed",
+                ) as error:
+                    configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                    )
+
+        self.assertNotIn("private-token", str(error.exception))
+        self.assertNotIn("hidden.invalid", str(error.exception))
+        self.assertFalse(
+            any(
+                _is_mutating(command[3:])
+                for command in calls
+                if command[:2] == ["git", "-C"]
+            )
+        )
+
+    def test_malformed_push_url_config_query_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.pushurl": (0, "file:/etc/gitconfig\0", "")
+                },
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                with self.assertRaisesRegex(RuntimeError, "returned invalid data"):
+                    configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                    )
+
+        self.assertFalse(
+            any(
+                _is_mutating(command[3:])
+                for command in calls
+                if command[:2] == ["git", "-C"]
+            )
+        )
+
+    def test_validates_git_config_target_before_querying_config(self):
+        with tempfile.TemporaryDirectory() as root:
+            git_directory = os.path.join(root, ".git")
+            os.mkdir(git_directory)
+            config_path = os.path.join(git_directory, "config")
+            outside = os.path.join(root, "external-config")
+            with open(outside, "w", encoding="utf-8"):
+                pass
+            os.symlink(outside, config_path)
+            calls, runner = self._runner(root, git_config_path=config_path)
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                with self.assertRaisesRegex(ValueError, "regular file"):
+                    configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                    )
+
+        git_arguments = [
+            command[3:] for command in calls if command[:2] == ["git", "-C"]
+        ]
+        self.assertFalse(
+            any(arguments[:1] == ["config"] for arguments in git_arguments)
+        )
+
+    def test_nonempty_git_config_fails_before_actions_without_changing_override(self):
+        with tempfile.TemporaryDirectory() as root:
+            alternate = os.path.join(root, "alternate config")
+            original_contents = "[user]\n\tname = preserve-me\n"
+            with open(alternate, "w", encoding="utf-8") as stream:
+                stream.write(original_contents)
+            calls, runner = self._runner(root)
+
+            with patch.dict(os.environ, {"GIT_CONFIG": alternate}):
+                with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                    with self.assertRaisesRegex(ValueError, "GIT_CONFIG") as error:
+                        configure_github_gogs_repository(
+                            root,
+                            "https://github.com/team/project.git",
+                            "https://git.example.test/team/project.git",
+                        )
+                self.assertEqual(os.environ.get("GIT_CONFIG"), alternate)
+
+            with open(alternate, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), original_contents)
+            self.assertNotIn(alternate, str(error.exception))
+            self.assertEqual(calls, [])
 
     def test_rejects_effective_lfs_url_conflict_before_actions(self):
         with tempfile.TemporaryDirectory() as root:
