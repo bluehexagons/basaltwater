@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -208,6 +208,37 @@ class TestScrubResultFailures(unittest.TestCase):
             self.assertEqual(parity.read_bytes(), b'original recovery evidence')
             run.assert_not_called()
 
+    def test_fast_scrub_fails_closed_on_directory_named_legacy_parity(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, database = Path(root) / 'source', Path(root) / 'database'
+            source.mkdir()
+            database.mkdir()
+            (source / 'data.bin').write_bytes(b'healthy source data')
+            parity_directory = database / 'data.bin.par2'
+            parity_directory.mkdir()
+
+            with (
+                patch.object(scrub_par2, 'log'),
+                patch.object(scrub_par2, 'create_operation_logger'),
+                patch.object(scrub_par2, 'create_par2') as create,
+                patch.object(scrub_par2.subprocess, 'run') as par2,
+            ):
+                result = scrub_par2.scrub_directory(
+                    str(source), str(database), 10, 'unused', verify=False,
+                    suppress_notifications=True,
+                )
+
+            self.assertFalse(result['ok'])
+            self.assertFalse(result['completed'])
+            self.assertEqual(result['files_failed'], ['data.bin'])
+            self.assertEqual(
+                scrub_par2.Findings(str(source), str(database)).data['files']['data.bin']['category'],
+                'invalid_parity',
+            )
+            create.assert_not_called()
+            par2.assert_not_called()
+            self.assertTrue(parity_directory.is_dir())
+
     def test_verification_error_does_not_starve_later_files(self):
         with tempfile.TemporaryDirectory() as root:
             source, database = Path(root) / 'source', Path(root) / 'database'
@@ -341,6 +372,46 @@ class TestScrubResultFailures(unittest.TestCase):
                     with self.assertRaises(OSError) as raised:
                         scrub_par2._parity_files(os.path.join(tmp, 'data.par2'))
                     self.assertEqual(raised.exception.errno, error.errno)
+
+    def test_parity_discovery_rejects_symlinks_and_special_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'target.par2'
+            target.write_bytes(b'parity')
+            for kind in ('symlink', 'fifo'):
+                base = Path(tmp) / f'{kind}.par2'
+                if kind == 'symlink':
+                    base.symlink_to(target)
+                else:
+                    os.mkfifo(base)
+                with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'not a regular file'):
+                    scrub_par2._parity_files(str(base))
+
+    def test_parity_discovery_propagates_entry_stat_and_iteration_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / 'data.par2'
+            base.write_bytes(b'parity')
+            for failure in ('stat', 'iteration'):
+                entry = Mock()
+                entry.name = base.name
+                if failure == 'stat':
+                    entry.stat.side_effect = OSError(errno.EIO, 'entry stat failed')
+                else:
+                    entry.stat.return_value = os.lstat(base)
+
+                def entries():
+                    yield entry
+                    if failure == 'iteration':
+                        raise OSError(errno.EIO, 'directory iteration failed')
+
+                scandir = MagicMock()
+                scandir.__enter__.return_value = scandir
+                scandir.__exit__.return_value = False
+                scandir.__iter__.return_value = entries()
+                with self.subTest(failure=failure), patch.object(scrub_par2.os, 'scandir', return_value=scandir):
+                    with self.assertRaisesRegex(OSError, 'failed'):
+                        scrub_par2._parity_files(str(base))
+                if failure == 'stat':
+                    entry.stat.assert_called_once_with(follow_symlinks=False)
 
     def test_enumeration_eio_after_preflight_preserves_legacy_parity(self):
         with tempfile.TemporaryDirectory() as tmp:

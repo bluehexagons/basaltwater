@@ -79,7 +79,8 @@ def _scan_tree(directory: str, excluded: tuple[str, ...] = ()) -> list[tuple[str
 
 def _parity_files(par2_base: str) -> list[str]:
     """Return only the exact base and recognized PAR2 volume names."""
-    parent = os.path.dirname(par2_base) or os.curdir
+    directory = os.path.dirname(par2_base)
+    parent = directory or os.curdir
     try:
         entries = os.scandir(parent)
     except OSError as exc:
@@ -88,11 +89,15 @@ def _parity_files(par2_base: str) -> list[str]:
         raise
 
     with entries:
-        return sorted({os.path.join(os.path.dirname(par2_base), entry.name)
-                       for entry in entries
-                       if _par2_base_from_parity_file(
-                           os.path.join(os.path.dirname(par2_base), entry.name)
-                       ) == par2_base})
+        candidates = []
+        for entry in entries:
+            path = os.path.join(directory, entry.name)
+            if _par2_base_from_parity_file(path) != par2_base:
+                continue
+            if not stat.S_ISREG(entry.stat(follow_symlinks=False).st_mode):
+                raise ValueError(f'Parity entry is not a regular file: {path}')
+            candidates.append(path)
+    return sorted(set(candidates))
 
 
 def log(message: str, log_file: str) -> None:
