@@ -267,6 +267,45 @@ class AdminJobTests(unittest.TestCase):
         with patch.object(admin_job, "unit_state", return_value="unavailable"):
             self.assertEqual(admin_job.job_status()["unit_state"], "unavailable")
 
+    def test_unchanged_running_job_with_inactive_unit_is_interrupted(self):
+        running = {"action": "refresh", "status": "running", "started": 123,
+                   "finished": None, "exit_code": None, "job_id": "a" * 32}
+        Path(self.path).write_text(json.dumps(running))
+        with patch.object(admin_job, "unit_state", return_value="inactive"):
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"]["status"], "interrupted")
+        self.assertEqual(result["latest"]["job_id"], running["job_id"])
+
+    def test_terminal_record_published_during_unit_query_wins(self):
+        running = {"action": "refresh", "status": "running", "started": 123,
+                   "finished": None, "exit_code": None, "job_id": "a" * 32}
+        finished = {**running, "status": "succeeded", "finished": 124, "exit_code": 0}
+        Path(self.path).write_text(json.dumps(running))
+
+        def publish_terminal_then_report_inactive():
+            Path(self.path).write_text(json.dumps(finished))
+            return "inactive"
+
+        with patch.object(admin_job, "unit_state", side_effect=publish_terminal_then_report_inactive):
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"]["status"], "succeeded")
+        self.assertEqual(result["latest"]["finished"], 124)
+        self.assertIsNone(result["latest"]["failure"])
+
+    def test_replacement_job_is_not_classified_by_previous_unit_observation(self):
+        running = {"action": "refresh", "status": "running", "started": 123,
+                   "finished": None, "exit_code": None, "job_id": "a" * 32}
+        replacement = {**running, "started": 125, "job_id": "b" * 32}
+        Path(self.path).write_text(json.dumps(running))
+
+        def publish_replacement_then_report_inactive():
+            Path(self.path).write_text(json.dumps(replacement))
+            return "inactive"
+
+        with patch.object(admin_job, "unit_state", side_effect=publish_replacement_then_report_inactive):
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"], {"status": "unavailable"})
+
     def test_absent_job_history_is_empty_after_trusted_parent_check(self):
         parent = os.path.dirname(self.path)
 
