@@ -195,9 +195,11 @@ make the result unavailable. Confirmed absence of the job-history file is shown
 as no latest result; unsafe, corrupt, or inaccessible state is unavailable. The
 helper validates the trusted state directory and checks the file without
 following its final symlink. It reads the job record before observing the unit,
-so an older inactive observation cannot mark a newly published running job as
-interrupted. An inactive unit with a running record is reported as interrupted
-and is never retried automatically.
+then re-reads protected history after an inactive or failed observation. A
+terminal record for the same job wins; an unchanged running record is reported
+as interrupted and is never retried automatically. If the record changes to a
+different job or cannot be confirmed, both the latest result and unit state are
+reported unavailable so the panel blocks new controls.
 
 The CLI's `agent privilege admin-status --json` and the panel show the fixed
 diagnostics. Each helper invocation records a random `job_id` before effects;

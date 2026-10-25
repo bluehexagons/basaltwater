@@ -124,6 +124,14 @@ class AdminScreenTests(unittest.TestCase):
                     self.manager.submit("refresh", self.manager.ticket("refresh"), "")
                 exchange.assert_called_once_with({"action": "admin-status"})
 
+    def test_unconfirmed_job_state_blocks_action_review_controls(self):
+        with patch("common.service_tools.web_panel_admin.exchange", return_value={
+                **status(), "unit_state": "unavailable", "latest": {"status": "unavailable"}}):
+            document = render_admin(self.state, _PAGE_STYLE, {"action": "refresh"})
+        self.assertIn("maintenance service state is unavailable", document)
+        self.assertNotIn("Create approval request", document)
+        self.assertNotIn('href="/admin?action=refresh"', document)
+
     def test_output_is_escaped_and_arbitrary_review_urls_are_not_links(self):
         value = {**status(), "requests": [{"id": "a" * 32, "action": "refresh", "state": "<script>", "created": 0, "review_url": "javascript:alert(1)"}]}
         with patch("common.service_tools.web_panel_admin.exchange", return_value=value):

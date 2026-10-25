@@ -174,10 +174,12 @@ def job_status() -> dict:
             latest = _read_job_record()
         except (OSError, ValueError, RuntimeError, TypeError, OverflowError):
             result = {"status": "unavailable"}
+            active = "unavailable"
         else:
             if not _same_job(previous, latest):
                 # The old unit observation cannot classify a replacement job.
                 result = {"status": "unavailable"}
+                active = "unavailable"
             elif latest.get("status") == "running":
                 latest["status"] = "interrupted"
                 latest["failure"] = "job_interrupted"

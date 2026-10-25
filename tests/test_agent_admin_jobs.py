@@ -305,6 +305,7 @@ class AdminJobTests(unittest.TestCase):
         with patch.object(admin_job, "unit_state", side_effect=publish_replacement_then_report_inactive):
             result = admin_job.job_status()
         self.assertEqual(result["latest"], {"status": "unavailable"})
+        self.assertEqual(result["unit_state"], "unavailable")
 
     def test_absent_job_history_is_empty_after_trusted_parent_check(self):
         parent = os.path.dirname(self.path)
