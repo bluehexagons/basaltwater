@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import unittest
+import errno
 import json
+from pathlib import Path
+import stat
+import struct
 import subprocess
 import tempfile
 import time
@@ -469,6 +473,170 @@ class TestAppServerSteps(unittest.TestCase):
                             else:
                                 self.assertFalse(os.path.exists(target))
                     self.assertFalse(any(name.startswith('.deploy-nginx-') for name in os.listdir(root)))
+
+
+class TestAppDirectorySafety(unittest.TestCase):
+    def setUp(self):
+        from web import app_server_steps as steps
+
+        self.steps = steps
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.www = self.root / 'www'
+        self.support = (
+            self.root / 'logs' / 'web',
+            self.root / 'nginx' / 'sites-available',
+            self.root / 'nginx' / 'sites-enabled',
+        )
+        self.enterContext(patch.object(steps, 'APP_DEPLOY_ROOT', str(self.www)))
+        self.enterContext(patch.object(steps, 'APP_SUPPORT_DIRECTORIES', tuple(map(str, self.support))))
+        self.enterContext(patch.object(steps.grp, 'getgrnam', return_value=MagicMock(gr_gid=456)))
+        self.run = self.enterContext(patch.object(steps, 'run'))
+        self.chown = self.enterContext(patch.object(steps.os, 'fchown', side_effect=self._chown_root))
+
+    def _chown_root(self, descriptor, uid, gid):
+        # Model privileged ownership changes without changing host identities.
+        self.assertEqual((uid, gid), (0, 456))
+        self.assertEqual(os.fstat(descriptor).st_ino, self.www.stat().st_ino)
+
+    @staticmethod
+    def _snapshot(paths):
+        result = {}
+        for path in paths:
+            info = path.stat()
+            result[path] = (
+                info.st_ino, info.st_uid, info.st_gid, info.st_mode,
+                info.st_mtime_ns, info.st_ctime_ns,
+                path.read_bytes() if path.is_file() else None,
+                {key: os.getxattr(path, key) for key in os.listxattr(path)},
+            )
+        return result
+
+    def test_new_directory_roots_allow_deploy_without_changing_support_owners(self):
+        self.steps.create_app_directories(MagicMock())
+
+        self.assertEqual(stat.S_IMODE(self.www.stat().st_mode), 0o775)
+        for directory in self.support:
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o755)
+            self.assertEqual(directory.stat().st_uid, os.getuid())
+        self.chown.assert_called_once()
+        self.run.assert_not_called()
+
+    def test_populated_rerun_preserves_service_data_backups_and_release_state(self):
+        shared = self.www / '.basaltwater_shared' / 'app'
+        component = shared / 'api'
+        data = component / 'data'
+        backups = component / 'backups'
+        release = self.www / 'app'
+        for directory, mode in (
+            (data, 0o750), (backups, 0o700), (release, 0o755),
+            *[(directory, 0o750) for directory in self.support],
+        ):
+            directory.mkdir(parents=True)
+            directory.chmod(mode)
+        files = {
+            data / 'database.sqlite3': (0o600, b'service database'),
+            backups / 'database.sqlite3': (0o600, b'private recovery database'),
+            shared / 'manifest-operation.json': (0o600, b'{"phase":"recovery_required"}'),
+            shared / 'manifest-operation.lock': (0o600, b'lock'),
+            shared / 'manifest-units.previous.json': (0o600, b'{"units":{}}'),
+            shared / 'manifest-operation.last-result.json': (0o600, b'{"phase":"complete"}'),
+            release / 'server': (0o755, b'executable release'),
+            release / '.deploy-version': (0o644, b'previous release'),
+            self.support[0] / 'access.log': (0o640, b'private log'),
+            self.support[1] / 'app.conf': (0o640, b'operator nginx config'),
+        }
+        for path, (mode, content) in files.items():
+            path.write_bytes(content)
+            path.chmod(mode)
+        paths = [*self.www.rglob('*'), *self.support, *self.root.joinpath('logs').rglob('*'),
+                 *self.root.joinpath('nginx').rglob('*')]
+        before = self._snapshot(paths)
+
+        for _ in range(2):
+            self.steps.create_app_directories(MagicMock())
+            self.assertEqual(self._snapshot(paths), before)
+        self.assertEqual(stat.S_IMODE(self.www.stat().st_mode), 0o775)
+        self.assertEqual(self.chown.call_count, 2)
+        self.run.assert_not_called()
+
+    def test_existing_descendant_acl_is_preserved(self):
+        data = self.www / 'app' / 'data'
+        data.mkdir(parents=True)
+        # Linux POSIX ACL: a named reader plus a private group/other policy.
+        acl = struct.pack('<I', 2) + b''.join(
+            struct.pack('<HHI', tag, permission, identity)
+            for tag, permission, identity in (
+                (1, 7, 0xffffffff), (2, 4, 12345), (4, 0, 0xffffffff),
+                (16, 5, 0xffffffff), (32, 0, 0xffffffff),
+            )
+        )
+        try:
+            os.setxattr(data, 'system.posix_acl_access', acl)
+        except OSError as exc:
+            if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP):
+                self.skipTest('temporary filesystem does not support POSIX ACLs')
+            raise
+        before = self._snapshot([data])
+
+        self.steps.create_app_directories(MagicMock())
+        self.steps.create_app_directories(MagicMock())
+
+        self.assertEqual(self._snapshot([data]), before)
+
+    def test_unsafe_directory_paths_refuse_all_mutations(self):
+        outside = self.root / 'outside'
+        outside.mkdir()
+        sentinel = outside / 'private'
+        sentinel.write_bytes(b'private')
+        sentinel.chmod(0o600)
+        before = self._snapshot([outside, sentinel])
+        unsafe = self.root / 'unsafe'
+        for index in range(4):
+            for leaf in (False, True):
+                for linked in (False, True):
+                    with self.subTest(index=index, leaf=leaf, linked=linked):
+                        if linked:
+                            unsafe.symlink_to(outside, target_is_directory=True)
+                        else:
+                            unsafe.write_bytes(b'not a directory')
+                        paths = [str(self.www), *map(str, self.support)]
+                        paths[index] = str(unsafe if leaf else unsafe / 'child')
+                        try:
+                            with patch.object(self.steps, 'APP_DEPLOY_ROOT', paths[0]), \
+                                 patch.object(self.steps, 'APP_SUPPORT_DIRECTORIES', tuple(paths[1:])), \
+                                 patch.object(self.steps.os, 'mkdir') as mkdir, \
+                                 patch.object(self.steps.os, 'fchmod') as chmod:
+                                with self.assertRaisesRegex(ValueError, 'symlink or non-directory'):
+                                    self.steps.create_app_directories(MagicMock())
+                            mkdir.assert_not_called()
+                            chmod.assert_not_called()
+                            self.chown.assert_not_called()
+                            self.run.assert_not_called()
+                            self.assertEqual(self._snapshot([outside, sentinel]), before)
+                        finally:
+                            unsafe.unlink()
+
+    def test_symlink_inserted_after_preflight_is_rejected(self):
+        outside = self.root / 'outside'
+        outside.mkdir(mode=0o700)
+        check = self.steps.check_directory_path
+
+        def replace_after_check(path):
+            check(path)
+            if path == str(self.support[-1]):
+                self.www.symlink_to(outside, target_is_directory=True)
+
+        with patch.object(self.steps, 'check_directory_path', side_effect=replace_after_check), \
+             patch.object(self.steps.os, 'mkdir') as mkdir, \
+             patch.object(self.steps.os, 'fchmod') as chmod:
+            with self.assertRaisesRegex(ValueError, 'symlink'):
+                self.steps.create_app_directories(MagicMock())
+        mkdir.assert_not_called()
+        chmod.assert_not_called()
+        self.chown.assert_not_called()
+        self.run.assert_not_called()
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o700)
+        self.assertEqual(list(outside.iterdir()), [])
 
 
 class TestBuildServerSteps(unittest.TestCase):

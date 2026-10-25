@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import os
+import grp
 import shutil
+import stat
 import tempfile
 
 from lib.config import SetupConfig
 from lib.atomic_io import write_bytes_atomic
 from lib.remote_utils import run, is_package_installed, is_service_active
+from lib.setup_directories import check_directory_path, directory_fd
 
 
 DEPLOY_ADMIN_SOURCE = "/opt/basaltwater/web/service_tools/deploy_admin.py"
 DEPLOY_ADMIN_HELPER = "/usr/local/sbin/basaltwater-deploy-admin"
 DEPLOY_SUDOERS_FILE = "/etc/sudoers.d/deploy-nginx"
+APP_DEPLOY_ROOT = "/var/www"
+APP_SUPPORT_DIRECTORIES = (
+    "/var/log/basaltwater/web",
+    "/etc/nginx/sites-available",
+    "/etc/nginx/sites-enabled",
+)
 
 
 def install_app_server_dependencies(config: SetupConfig) -> None:
@@ -111,19 +120,24 @@ deploy ALL=(root) NOPASSWD: {DEPLOY_ADMIN_HELPER} *
 
 
 def create_app_directories(config: SetupConfig) -> None:
-    """Create directories for app deployments."""
-    directories = [
-        "/var/www",
-        "/var/log/basaltwater/web",
-        "/etc/nginx/sites-available",
-        "/etc/nginx/sites-enabled",
-    ]
-    
+    """Prepare directory roots without changing existing deployment contents."""
+    directories = (APP_DEPLOY_ROOT, *APP_SUPPORT_DIRECTORIES)
     for directory in directories:
-        os.makedirs(directory, mode=0o755, exist_ok=True)
-    
-    run(["chown", "-R", "deploy:deploy", "/var/www"])
-    run(["chmod", "-R", "775", "/var/www"])
+        check_directory_path(directory)
+
+    deploy_gid = grp.getgrnam("deploy").gr_gid
+    with directory_fd(APP_DEPLOY_ROOT, create=True) as descriptor:
+        # Deploy needs to create releases, but service data, private backups and
+        # operation state below this shared root belong to their own owners.
+        info = os.fstat(descriptor)
+        if (info.st_uid, info.st_gid) != (0, deploy_gid):
+            os.fchown(descriptor, 0, deploy_gid)
+        if stat.S_IMODE(info.st_mode) != 0o775:
+            os.fchmod(descriptor, 0o775)
+
+    for directory in APP_SUPPORT_DIRECTORIES:
+        with directory_fd(directory, create=True):
+            pass
     
     print("  ✓ Created app directories")
 
