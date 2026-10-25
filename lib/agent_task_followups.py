@@ -236,10 +236,12 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
                         "to finish it; its saved settings will be kept."
                     )
                 if child is None:
-                    child_id = manager.create(submission["task"], run_now=submission["run_now"],
-                                              draft=submission["draft"], request_key=request_key)
-                else:
-                    child_id = child["id"]
+                    raise ValueError(
+                        "The saved follow-up submission has no matching task. Its creation outcome is "
+                        "unconfirmed; inspect retained run history before blocking the proposal or "
+                        "preparing replacement work. Approval will not queue it again."
+                    )
+                child_id = child["id"]
                 return _publish_decision(str(path), state, child_id, draft=submission["draft"],
                                          acknowledged=submission["acknowledged_requirements"])
             if decision == "block":

@@ -278,6 +278,59 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertEqual(follow_up_state(self.manager, identifier, run_id)["task_id"], first_child["id"])
         self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "approved")
 
+    def test_missing_completed_child_cannot_be_recreated_by_approval_retry(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        from lib.atomic_io import write_json_atomic
+
+        def fail_final(path, value, **kwargs):
+            if value.get("status") == "approved":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        for removal in ("delete", "reclaim"):
+            with self.subTest(removal=removal):
+                identifier, run_id = self.record_request()
+                with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_final):
+                    with self.assertRaises(OSError):
+                        decide_follow_up(self.manager, identifier, run_id, "approve")
+                child = self.manager.snapshot()["tasks"][-1]
+                with patch.object(tasks, "execute_prompt", return_value={
+                    "status": "completed", "message": "Done", "output": "", **report("complete"),
+                }) as execute:
+                    self.assertTrue(self.manager.tick())
+                    if removal == "delete":
+                        self.manager.action(child["id"], "delete")
+                    else:
+                        limit = len(self.manager.snapshot()["tasks"])
+                        with patch.object(tasks, "MAX_TASKS", limit):
+                            self.manager.create({"title": "Unrelated draft", "prompt": "Inspect only",
+                                                 "directory": self.home, "mode": "inspect"},
+                                                run_now=False, draft=True)
+                    self.assertNotIn(child["id"], [item["id"] for item in self.manager.snapshot()["tasks"]])
+                    with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+                        with self.assertRaisesRegex(ValueError, "creation outcome is unconfirmed"):
+                            decide_follow_up(self.manager, identifier, run_id, "approve")
+                        create.assert_not_called()
+                    self.assertFalse(self.manager.tick())
+                    self.assertEqual(execute.call_count, 1)
+                self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "pending")
+                decide_follow_up(self.manager, identifier, run_id, "block")
+                self.manager.action(identifier, "delete")
+
+    def test_intent_without_child_requires_inspection_before_replacement(self) -> None:
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+        identifier, run_id = self.record_request()
+        with patch.object(self.manager, "create", side_effect=OSError("task store unavailable")):
+            with self.assertRaises(OSError):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+        with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+            with self.assertRaisesRegex(ValueError, "creation outcome is unconfirmed"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            create.assert_not_called()
+        self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+        self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "blocked")
+
     def test_draft_retry_preserves_the_saved_draft_without_queuing_it(self) -> None:
         requirement = "Check the maintenance window before any later repair."
         self.proposal.update(writable_directories=[], operator_requirements=[requirement], service_restarts=[])

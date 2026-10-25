@@ -296,7 +296,10 @@ the final decision fails, leave the proposal pending and select **Approve once**
 from its run history to finish the same submission; recovery does not repeat
 service actions. Blocking checks for the exact matching child and refuses while
 one is saved, so it cannot mark a queued follow-up blocked. If no child was
-saved, blocking can still finish. Repeated submission of a proposal returns the
+found, approval does not create another: the child might have completed and its
+controls might have been removed. Inspect retained history before blocking the
+proposal or preparing replacement work. Blocking can still finish when no child
+is saved. Repeated submission of a proposal returns the
 same child task. Blocking prevents that proposal from being launched and attempts
 to cancel known pending service requests. If submission is
 uncertain and no request ID was returned, blocking cannot cancel that broker
