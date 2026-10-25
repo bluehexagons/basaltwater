@@ -450,7 +450,7 @@ def _reject_symlinked_mount_path(path: str) -> None:
 
 def _mounted_info(path: str) -> tuple[str, str] | None:
     result = _run_capture(
-        f"findmnt --json --target {shlex.quote(path)} "
+        f"findmnt --json --nofsroot --target {shlex.quote(path)} "
         "--output SOURCE,FSTYPE,TARGET,FSROOT",
         check=False,
     )

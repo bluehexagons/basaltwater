@@ -285,31 +285,29 @@ class TestDiskPreparationSafety(unittest.TestCase):
             storage_steps._mounted_info("/srv/data"),
             ("/dev/sdb1", "btrfs"),
         )
-        self.assertIn("FSROOT", mock_run.call_args.args[0])
+        command = mock_run.call_args.args[0]
+        self.assertIn("--nofsroot", command)
+        self.assertIn("FSROOT", command)
 
     @patch("common.storage_steps._run_capture")
-    def test_btrfs_subvolume_mount_and_source_alias_are_rejected(self, mock_run):
-        records = (
-            {
-                "source": "/dev/sdb1[/@data]",
-                "fstype": "btrfs",
-                "target": "/srv/data",
-                "fsroot": "/@data",
-            },
-            {
-                "source": "/dev/sdb1[/]",
-                "fstype": "btrfs",
-                "target": "/srv/data",
-                "fsroot": "/",
-            },
+    def test_btrfs_nonroot_subvolume_mount_is_rejected(self, mock_run):
+        mock_run.return_value = _result(
+            stdout=json.dumps(
+                {
+                    "filesystems": [
+                        {
+                            "source": "/dev/sdb1[/@data]",
+                            "fstype": "btrfs",
+                            "target": "/srv/data",
+                            "fsroot": "/@data",
+                        }
+                    ]
+                }
+            )
         )
-        for record in records:
-            with self.subTest(record=record):
-                mock_run.return_value = _result(
-                    stdout=json.dumps({"filesystems": [record]})
-                )
-                with self.assertRaisesRegex(RuntimeError, "Btrfs"):
-                    storage_steps._mounted_info("/srv/data")
+
+        with self.assertRaisesRegex(RuntimeError, "Btrfs subvolume mount"):
+            storage_steps._mounted_info("/srv/data")
 
     def test_btrfs_active_mount_verifies_the_mounted_source_uuid(self):
         mount = VMStorageMount("data", "/srv/data", "btrfs", "empty")
