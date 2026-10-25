@@ -41,6 +41,20 @@ qualification on healthy storage. A small successful read/write test does not
 clear earlier media errors or establish that other allocations are readable.
 This is a separate experiment, not a recovery step in the parking workflow.
 
+When recovering from an archive instead, restore to an unused VMID on healthy
+storage and disconnect its network before the first boot. Verify basic guest
+execution before cutover. `qmrestore --unique` changes the MAC; it does not
+reset guest identity or rewrite an existing MAC-bound network configuration.
+An identity-preserving replacement may need the original MAC. Stop and
+disconnect the original before assigning it to the replacement, then verify
+the address, SSH host key, machine ID and application state. Keep the original
+disconnected afterward. Refresh the saved storage declarations through setup
+with `--verify-provider` as described below. A backup predating enrollment or
+configuration changes will need those steps repeated; authorize a separate
+target login rather than copying another machine's rotating credentials.
+One successfully restored archive does not validate other files on its source
+drive or provide an independent backup copy.
+
 The tested lab workflow used a full-clone QEMU VM without snapshots, moved from
 LVM-thin raw storage to an ext4 directory pool. Linked clones, snapshot history,
 EFI/TPM, passthrough and LXC require their own checks. Keep reusable templates
