@@ -333,7 +333,24 @@ push URLs, and writes a `.lfsconfig` intended to be committed whose endpoint is
 the Gogs repository. One subsequent `git push origin` therefore uploads LFS
 objects to Gogs and sends Git refs and LFS pointer files to both GitHub and
 Gogs. Use `--no-combined-push` when Git refs should be pushed to the `gogs` remote
-separately. The command does not stage, commit, push, create either remote
+separately. In either mode, the selected mirror remote's explicit push URL is
+reset to its Gogs URL, including when using a custom mirror name. Combined
+pushes are not atomic: after a failure, inspect refs on both remotes before a
+deliberate retry because one may have advanced while the other did not.
+
+Before applying changes, the command checks effective `lfs.url` and
+`lfs.pushurl` settings, `.lfsconfig`'s upload URL, and endpoint settings for
+`origin` and the selected mirror. A failed or malformed config query, or an
+invalid endpoint or one that points somewhere other than the requested Gogs LFS
+endpoint, stops configuration before any repository actions. Endpoint-conflict
+diagnostics do not print configured endpoint values. Matching endpoints are
+accepted. The helper replaces `.lfsconfig`'s download URL with the intended Gogs
+URL, but does not rewrite Git's global or system configuration. Remote-specific
+endpoint mismatches are rejected conservatively to avoid relying on Git LFS
+version-specific precedence; for example,
+`remote.origin.lfsurl` may not override the generated download endpoint in the
+installed Git LFS version. Review and correct an intentional mismatch yourself
+before retrying. The command does not stage, commit, push, create either remote
 repository, or configure credentials.
 
 Run first with `--dry-run` to inspect the exact Git commands. It still checks
@@ -342,11 +359,11 @@ but skips commands that change repository configuration or tracking. It avoids
 `git lfs status`, which can initialize repository configuration even though
 the status output is not used. The utility rejects embedded credentials,
 non-HTTPS repository URLs, unsafe `.lfsconfig` or `.gitattributes` targets,
-and CIFS, SSHFS, NFS, or other known remote worktree filesystems. Review and
-commit `.lfsconfig` and `.gitattributes` before the first push. Every clone
-that needs asset contents must be able to reach and authenticate to Gogs; an
-off-network clone can use `GIT_LFS_SKIP_SMUDGE=1` until the endpoint becomes
-reachable.
+Git LFS endpoint conflicts, and CIFS, SSHFS, NFS, or other known remote worktree
+filesystems. Review and commit `.lfsconfig` and `.gitattributes` before the first
+push. Every clone that needs asset contents must be able to reach and
+authenticate to Gogs; an off-network clone can use `GIT_LFS_SKIP_SMUDGE=1` until
+the endpoint becomes reachable.
 
 ## Dedicated mixed-media VM
 

@@ -86,6 +86,126 @@ def _git(repository: str, arguments: StrList) -> subprocess.CompletedProcess[str
     return _run(["git", "-C", repository, *arguments])
 
 
+def _read_git_config_values(
+    repository: str,
+    key: str,
+    *,
+    config_file: str | None = None,
+    all_values: bool = False,
+) -> list[str]:
+    """Read config without confusing an absent key with a failed query."""
+    arguments = ["config"]
+    if config_file is not None:
+        arguments.extend(["--file", config_file])
+    arguments.extend(["--null", "--get-all" if all_values else "--get", key])
+    result = subprocess.run(
+        ["git", "-C", repository, *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode == 1:
+        return []
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Could not inspect Git LFS endpoint configuration; "
+            "the git config query failed"
+        )
+
+    values = result.stdout.split("\0") if result.stdout else []
+    if values and values[-1] == "":
+        values.pop()
+    if not values or (not all_values and len(values) != 1):
+        raise RuntimeError(
+            "Could not inspect Git LFS endpoint configuration; "
+            "the git config query returned invalid or ambiguous data"
+        )
+    return values
+
+
+def _normalize_lfs_endpoint(value: str) -> str | None:
+    """Canonicalize a credential-free HTTPS LFS endpoint for comparison."""
+    if not value or value != value.strip():
+        return None
+    try:
+        validate_no_control_characters(value, "Git LFS endpoint")
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme.lower() != "https"
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        origin = normalize_git_https_origin(f"https://{parsed.netloc}")
+    except (ValueError, UnicodeError):
+        return None
+    return f"{origin}{parsed.path.rstrip('/')}"
+
+
+def _validate_lfs_endpoint_values(
+    key: str,
+    values: list[str],
+    expected_endpoint: str,
+) -> None:
+    expected = _normalize_lfs_endpoint(expected_endpoint)
+    for value in values:
+        endpoint = _normalize_lfs_endpoint(value)
+        if endpoint is None:
+            raise ValueError(
+                f"Git LFS endpoint setting '{key}' is invalid; its value is not shown"
+            )
+        if endpoint != expected:
+            raise ValueError(
+                f"Git LFS endpoint setting '{key}' conflicts with the intended "
+                "Gogs endpoint; its value is not shown"
+            )
+
+
+def _validate_lfs_endpoint_configuration(
+    repository: str,
+    lfsconfig_path: str,
+    mirror_remote: str,
+    expected_endpoint: str,
+) -> None:
+    """Reject endpoint overrides that would route LFS away from this Gogs repo."""
+    for key in ("lfs.url", "lfs.pushurl"):
+        values = _read_git_config_values(repository, key)
+        _validate_lfs_endpoint_values(key, values, expected_endpoint)
+
+    for remote in dict.fromkeys(("origin", mirror_remote)):
+        for setting in ("lfsurl", "lfspushurl"):
+            key = f"remote.{remote}.{setting}"
+            values = _read_git_config_values(repository, key)
+            _validate_lfs_endpoint_values(key, values, expected_endpoint)
+
+    if os.path.lexists(lfsconfig_path):
+        # Query both keys before replacing lfs.url so malformed config fails
+        # before any repository action. .lfsconfig is the helper-managed file;
+        # its download URL is replaced, while an upload override is preserved
+        # only when it already names the intended endpoint.
+        _read_git_config_values(
+            repository,
+            "lfs.url",
+            config_file=lfsconfig_path,
+            all_values=True,
+        )
+        push_urls = _read_git_config_values(
+            repository,
+            "lfs.pushurl",
+            config_file=lfsconfig_path,
+            all_values=True,
+        )
+        _validate_lfs_endpoint_values(
+            ".lfsconfig lfs.pushurl",
+            push_urls,
+            expected_endpoint,
+        )
+
+
 def _validate_config_target(path: str) -> None:
     if not os.path.lexists(path):
         return
@@ -150,13 +270,20 @@ def configure_github_gogs_repository(
     if filesystem in _REMOTE_FILESYSTEMS or filesystem.startswith("nfs"):
         raise ValueError(f"Repository worktree must use local storage, not {filesystem}")
 
-    _git(root, ["lfs", "version"])
-    _git(root, ["lfs", "env"])
     for target_name in (".lfsconfig", ".gitattributes"):
         _validate_config_target(os.path.join(root, target_name))
 
     lfs_url = f"{gogs}/info/lfs"
+    lfsconfig_path = os.path.join(root, ".lfsconfig")
     remotes = set(_git(root, ["remote"]).stdout.splitlines())
+    _validate_lfs_endpoint_configuration(
+        root,
+        lfsconfig_path,
+        mirror_remote,
+        lfs_url,
+    )
+    _git(root, ["lfs", "version"])
+    _git(root, ["lfs", "env"])
     actions: NestedStrList = [["lfs", "install", "--local"]]
     actions.append(
         ["remote", "set-url", "origin", github]
@@ -172,7 +299,17 @@ def configure_github_gogs_repository(
     if combined_push:
         actions.append(["config", "--add", "remote.origin.pushurl", gogs])
     actions.append(
-        ["config", "--file", os.path.join(root, ".lfsconfig"), "lfs.url", lfs_url]
+        [
+            "config",
+            "--file",
+            lfsconfig_path,
+            "--replace-all",
+            "lfs.url",
+            lfs_url,
+        ]
+    )
+    actions.append(
+        ["config", "--replace-all", f"remote.{mirror_remote}.pushurl", gogs]
     )
     actions.extend(["lfs", "track", pattern] for pattern in patterns)
 
