@@ -1126,15 +1126,29 @@ class TestValidateVMStorageSettings(unittest.TestCase):
                 ['root', 'local-lvm', '32G'],
                 ['git-data', 'bulk-lvm', '128G'],
                 ['agent-data', 'bulk-lvm', '128G'],
+                ['archive-data', 'bulk-lvm', '128G'],
             ],
             storage_mounts=[
                 ['git-data', '/srv/gogs', 'ext4'],
                 ['agent-data', '/srv/agent-workspace', 'xfs', 'empty'],
+                ['archive-data', '/srv/archive', 'btrfs', 'empty'],
             ],
             agent_workspace='/srv/agent-workspace',
         )
 
         validate_vm_storage_settings(config, require_provisioning=False)
+
+    def test_unknown_mount_filesystem_is_rejected(self):
+        config = _MockConfig(
+            machine_type='vm',
+            container_storage=[['data', 'bulk-lvm', '32G']],
+            storage_mounts=[['data', '/srv/data', 'zfs']],
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, 'filesystem must be ext4, xfs, or btrfs'
+        ):
+            validate_vm_storage_settings(config, require_provisioning=False)
 
     def test_valid_lvm_block_cache_consumes_unmounted_cache_disk(self):
         config = _MockConfig(

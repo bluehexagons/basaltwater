@@ -519,17 +519,30 @@ basaltw setup workstation_dev 10.0.0.51 agent \
 ```
 
 Each non-root `--storage NAME [POOL] AMOUNT` requires exactly one matching
-`--storage-mount NAME PATH [ext4|xfs] [empty]`, unless that disk is consumed as
-cache media by `--storage-cache` or as swap by `--swap-device`. When `POOL` is omitted, the root-pool default
-is used. Provisioning checks that each selected pool is active, accepts VM
-images, and reports enough aggregate free capacity. It then attaches the disks
-as `scsi1`, `scsi2`, and so on with stable `bw-NAME` serials.
+`--storage-mount NAME PATH [ext4|xfs|btrfs] [empty]`, unless that disk is
+consumed as cache media by `--storage-cache` or as swap by `--swap-device`.
+When `POOL` is omitted, the root-pool default is used. Provisioning checks that
+each selected pool is active, accepts VM images, and reports enough aggregate
+free capacity. It then attaches the disks as `scsi1`, `scsi2`, and so on with
+stable `bw-NAME` serials.
 The example advertises only the SSD-backed root device as an SSD; the named
 data disk keeps the VM-wide default of SSD emulation disabled. Append a logical
 disk name to any disk flag for a device-specific override, such as
 `--disk-ssd root`, `--no-disk-discard agent-data`, or
 `--disk-discard agent-data`. An unqualified flag remains the default for all
 declared disks, and a named override wins over that default.
+
+Choose `btrfs` for a new single-device Btrfs filesystem with:
+
+```bash
+--storage-mount agent-data /srv/agent-workspace btrfs empty
+```
+
+Setup formats it with one data copy and duplicated metadata on that same device,
+retaining Btrfs's default data checksumming and copy-on-write behavior. Metadata
+duplication is not device-failure protection. The managed mount selects the
+top-level Btrfs filesystem; subvolume mounts are not supported. Setup does not
+start Btrfs scrub, balance, or repair operations.
 
 Backup inclusion is also per device. Non-swap disks default to included; use
 `--no-disk-backup` for a disposable VM and `--disk-backup work` to retain one

@@ -149,6 +149,21 @@ automount as one recoverable unit group and reports activation failures; see
 
 ## Parity and repair behavior
 
+### Btrfs filesystem scrub
+
+Btrfs has a separate native scrub that reads filesystem data and metadata and
+checks their checksums. It can repair a damaged block only when another valid
+copy exists. Basaltwater's single-device Btrfs layout stores data with one copy,
+so native scrub can detect damaged data but cannot repair it from another data
+copy. Its duplicated metadata profile may provide another metadata copy on the
+same device; that is not a backup or device-failure protection. Setup does not
+start or schedule native Btrfs scrub, balance, or repair work.
+
+Basaltwater `--scrub` uses PAR2 files to protect and verify selected directory
+contents. It is independent of Btrfs scrub and can repair file corruption while
+enough PAR2 data remains available. Configure it explicitly with `--scrub` and
+keep a separate backup for failures beyond the configured parity.
+
 `--scrub DIRECTORY DATABASE_PATH REDUNDANCY FREQUENCY` uses `par2` to create
 redundancy files, verify protected files, and repair corruption when possible.
 Missing protected files are recorded and their parity retained: absence alone
