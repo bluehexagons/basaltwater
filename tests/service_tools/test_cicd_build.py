@@ -18,6 +18,19 @@ from web.service_tools import cicd_executor as executor
 
 
 class TestBuildIdentity(unittest.TestCase):
+    def test_receipt_operations_require_a_root_broker(self):
+        with patch.object(build.os, "geteuid", return_value=1100), patch.object(
+            build.pwd, "getpwnam",
+        ) as account, patch.object(build.os, "seteuid") as change_uid, patch.object(
+            build.os, "setegid",
+        ) as change_gid:
+            with self.assertRaisesRegex(RuntimeError, "broker must run as root"):
+                with build.receiver_state():
+                    self.fail("Unprivileged broker reached receipt operations")
+        account.assert_not_called()
+        change_uid.assert_not_called()
+        change_gid.assert_not_called()
+
     def test_receipt_operations_use_receiver_identity_and_restore_after_failure(self):
         changes = []
         with patch.object(build.os, "geteuid", return_value=0), patch.object(

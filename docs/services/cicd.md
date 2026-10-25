@@ -268,6 +268,16 @@ and a clean environment. The managed home is `/var/lib/basaltwater/cicd/build`
 (0700); workspaces live in its `workspaces` subdirectory. Deployment keys remain
 private under the separate `webhook` home and are not passed to build commands.
 
+The executor deliberately leaves `User=` unset and keeps `Group=root`, using
+the [system manager's default root identity](https://www.freedesktop.org/software/systemd/man/257/systemd.exec.html#User=).
+With an explicit `User=root`, [systemd 257's seccomp setup](https://github.com/systemd/systemd/blob/v257/src/core/exec-invoke.c#L5337)
+drops `CAP_SETUID` unless it is ambient. Under `NoNewPrivileges=true`, exec cannot
+restore it, leaving the broker unable to switch to `webhook` for receipt work.
+Omitting the redundant user setting avoids that path while retaining NNP, the
+five-capability bounding set and empty ambient set. Build commands still clear
+all capabilities and supplementary groups through `setpriv`; receipt work
+still uses the receiver's UID so its SQLite journals remain private and writable.
+
 Both `--cicd` and `--build-server` install the ACL tools and reconcile named
 traversal grants for `webhook` and `cicd-build` on the private
 `/var/lib/basaltwater` ancestor on every setup or patch. It also restores

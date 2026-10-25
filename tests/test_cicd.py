@@ -201,10 +201,30 @@ class TestCICDSteps(unittest.TestCase):
         replace.assert_called_once()
         self.assertEqual(replace.call_args.kwargs['activate'], ('cicd-executor.path',))
         units = replace.call_args.args[0]
-        self.assertIn('TimeoutStartSec=infinity', units['cicd-executor.service'])
-        self.assertIn('User=root\nGroup=root', units['cicd-executor.service'])
-        self.assertIn('ExecStart=/usr/bin/python3 -I ', units['cicd-executor.service'])
-        self.assertIn('CAP_SETUID CAP_SETGID CAP_SETPCAP', units['cicd-executor.service'])
+        service_lines = units['cicd-executor.service'].splitlines()
+        # The system manager supplies UID 0 without the explicit-User seccomp
+        # setup that drops CAP_SETUID before exec under NNP in systemd 257.
+        self.assertFalse(any(line.startswith(('User=', 'DynamicUser=')) for line in service_lines))
+        for directive in (
+            'Type=oneshot', 'Group=root', 'TimeoutStartSec=infinity',
+            'ExecStart=/usr/bin/python3 -I /opt/basaltwater/web/service_tools/cicd_executor.py',
+            'NoNewPrivileges=true', 'PrivateTmp=true', 'PrivateDevices=true',
+            'ProtectSystem=strict', 'ProtectHome=true', 'ProtectKernelTunables=true',
+            'ProtectKernelModules=true', 'ProtectKernelLogs=true', 'ProtectControlGroups=true',
+            'ProtectClock=true', 'ProtectHostname=true', 'ProtectProc=invisible',
+            'RestrictNamespaces=true', 'RestrictRealtime=true', 'RestrictSUIDSGID=true',
+            'LockPersonality=true', 'UMask=0027',
+        ):
+            with self.subTest(directive=directive):
+                self.assertIn(directive, service_lines)
+        for name, value in (
+            ('CapabilityBoundingSet', 'CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_OVERRIDE CAP_KILL'),
+            ('AmbientCapabilities', ''),
+        ):
+            self.assertEqual(
+                [line for line in service_lines if line.startswith(f'{name}=')],
+                [f'{name}={value}'],
+            )
         self.assertIn('PathChanged=/var/lib/basaltwater/cicd/jobs', units['cicd-executor.path'])
         self.assertIn('Unit=cicd-executor.service', units['cicd-executor.path'])
         access.assert_called_once()

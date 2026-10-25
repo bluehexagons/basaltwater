@@ -393,7 +393,9 @@ After=network.target
 
 [Service]
 Type=oneshot
-User=root
+# System services default to root. Keep User= unset: systemd 257's explicit-user
+# seccomp setup drops non-ambient CAP_SETUID, which NNP prevents exec regaining.
+# The broker needs it for receiver-state access and the build identity boundary.
 Group=root
 WorkingDirectory=/opt/basaltwater/web/service_tools
 Environment=HOME=/var/lib/basaltwater/cicd
