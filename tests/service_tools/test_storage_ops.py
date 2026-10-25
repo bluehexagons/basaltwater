@@ -764,7 +764,7 @@ class TestOperationLogging(unittest.TestCase):
     @patch("sync.service_tools.storage_ops.parse_notification_args", return_value=[])
     @patch("sync.service_tools.storage_ops.load_setup_config")
     @patch("sync.service_tools.storage_ops.get_service_logger")
-    def test_logs_skipped_sync_with_context(
+    def test_logs_lexically_invalid_sync_with_context(
         self, mock_logger, mock_load_config, _parse_notify, _load_last, _save, _validate, mock_run_sync, _send_notif
     ):
         from sync.service_tools.storage_ops import execute_storage_operations
@@ -773,7 +773,7 @@ class TestOperationLogging(unittest.TestCase):
         mock_logger.return_value = logger_mock
         mock_load_config.return_value = {
             "username": "test",
-            "sync_specs": [["/src1", "/dst1", "daily"]],
+            "sync_specs": [["/src1", "/src1/child", "daily"]],
             "scrub_specs": [],
             "notify_specs": [],
         }
@@ -781,9 +781,10 @@ class TestOperationLogging(unittest.TestCase):
         results = execute_storage_operations()
 
         mock_run_sync.assert_not_called()
+        _validate.assert_not_called()
         log_calls = [call.args[1] for call in logger_mock.log.call_args_list]
         self.assertIn(
-            "Skipping sync | destination='/dst1' error='Mount /mnt/data not available' source='/src1'",
+            "Skipping sync | destination='/src1/child' error='Sync source and destination must not be equal or nested' source='/src1'",
             log_calls,
         )
         self.assertTrue(results["syncs"][0]["skipped"])

@@ -293,10 +293,15 @@ class TestMountNamespace(unittest.TestCase):
         self.mountinfo = '36 25 0:32 / / rw - ext4 /dev/root rw\n'
         self.child_namespace = 'mnt:[child]'
         self.config = {}
+        readlink = os.readlink
         for target, kwargs in (
             ('lib.machine_state.load_setup_config', {'side_effect': lambda: self.config}),
             ('sync.service_tools.sync_rsync.get_service_logger', {}),
-            ('sync.service_tools.sync_rsync.os.readlink', {'side_effect': lambda path: self.child_namespace if self.in_worker and path == '/proc/self/ns/mnt' else 'mnt:[parent]'}),
+            ('sync.service_tools.sync_rsync.os.readlink', {'side_effect': lambda path: (
+                self.child_namespace if self.in_worker else 'mnt:[parent]'
+            ) if path == '/proc/self/ns/mnt' else (
+                'mnt:[parent]' if path == f'/proc/{os.getppid()}/ns/mnt' else readlink(path)
+            )}),
             ('sync.service_tools.sync_rsync.subprocess.Popen', {'side_effect': self.spawn}),
             ('sync.service_tools.sync_rsync._output_lines', {'side_effect': lambda process: [(True, process.stdout.read()), (False, process.stderr.read())]}),
         ):
@@ -538,12 +543,12 @@ class TestMountNamespace(unittest.TestCase):
                 ):
                     storage_ops.save_last_run({op_id: 1})
                     first = storage_ops.execute_storage_operations()
-                    self.assertTrue(first['success'])
+                    self.assertFalse(first['success'])
                     self.assertTrue(first['syncs'][0]['success'])
                     self.assertFalse(first['syncs'][0]['completed'])
                     self.assertIn('disk', first['syncs'][0]['warning'])
-                    self.assertEqual(notify.call_args.kwargs['status'], 'warning')
-                    self.assertIn('sync incomplete', notify.call_args.kwargs['details'])
+                    self.assertEqual(notify.call_args.kwargs['status'], 'error')
+                    self.assertIn('incomplete and requires retry', notify.call_args.kwargs['details'])
                     state = storage_ops.load_last_run()
                     self.assertEqual(state[op_id], 1)
                     self.assertEqual(state['_attempts'][op_id]['retry_after'], 1_003_600)
@@ -571,11 +576,13 @@ class TestMountNamespace(unittest.TestCase):
                     self.assertEqual(storage_ops.execute_storage_operations()['syncs'], [])
 
     def test_invalid_report_schema_is_rejected(self):
-        base = {'version': 1, 'unavailable_count': 1, 'sample': ['disk']}
-        invalid = [None, [], {}, {**base, 'version': True}, {**base, 'version': 2},
+        base = {'version': 2, 'unavailable_count': 1, 'sample': ['disk'],
+                'warning': '', 'retry_required': True}
+        invalid = [None, [], {}, {**base, 'version': True}, {**base, 'version': 1},
                    {**base, 'unavailable_count': True}, {**base, 'unavailable_count': -1},
                    {**base, 'sample': 'disk'}, {**base, 'sample': []},
                    {**base, 'sample': [None]}, {**base, 'sample': ['x' * (sync_rsync.WORKER_SAMPLE_PATH_LIMIT + 1)]},
+                   {**base, 'retry_required': False}, {**base, 'warning': 'x' * (sync_rsync.WORKER_REPORT_LIMIT + 1)},
                    {**base, 'extra': 'unsupported'}]
         for report in invalid:
             with self.subTest(report=report), self.assertRaises(ValueError):
@@ -644,6 +651,146 @@ class TestMountNamespace(unittest.TestCase):
             self.assertEqual(self.run_sync(config=config, initial_setup=True), 0)
         self.assertEqual(probes.call_count, 2)
 
+    def test_scheduled_integrity_metadata_is_checked_inside_namespace_worker(self):
+        from sync.service_tools import storage_ops
+
+        config = RuntimeConfig.from_dict({'scrub_specs': [
+            [str(self.source), '.pardatabase', '10%', 'weekly'],
+        ]})
+        integrity = storage_ops.SyncIntegrity(
+            excluded_paths=('suspect.bin',), warning='Preserved finding',
+            copy_new_only=True,
+        )
+
+        def inspect(source, destination, current_config, *, mounted_roots=None):
+            self.assertTrue(self.in_worker)
+            self.assertEqual(source, str(self.source))
+            self.assertEqual(destination, str(self.destination))
+            self.assertEqual(current_config.scrub_specs[0][1], '.pardatabase')
+            self.assertIsNotNone(mounted_roots)
+            return integrity
+
+        self.after_validation = lambda command: self.assertIn('--ignore-existing', command)
+        precautions = sync_rsync.SyncPrecautions()
+        with patch.object(storage_ops, 'validate_sync_integrity', side_effect=inspect) as check:
+            self.assertEqual(self.run_sync(config=config, check_integrity=True,
+                                           precautions=precautions), 0)
+        check.assert_called_once()
+        self.assertEqual(self.filter_input, b'/suspect.bin\0')
+        self.assertEqual(precautions.warning, 'Preserved finding')
+        self.assertFalse(precautions.retry_required)
+
+    def test_findings_preserve_backup_paths_and_normal_completion_cadence(self):
+        from sync.service_tools import scrub_findings, storage_ops
+
+        database = self.source.parent / 'parity'
+        database.mkdir()
+        finding = scrub_findings.Findings(str(self.source), str(database))
+        finding.record('data.bin', {'category': 'unrepairable'})
+        self.config = {'backup_specs': [[str(self.source), str(self.destination), 'daily']],
+                       'scrub_specs': [[str(self.source), str(database), '10%', 'weekly']]}
+        op_id = storage_ops.get_sync_op_id(str(self.source), str(self.destination))
+        now = 1_000_000.0
+        state = {storage_ops.get_scrub_op_id(str(self.source), str(database)): now,
+                 storage_ops.get_parity_op_id(str(self.source), str(database)): now,
+                 '_attempts': {op_id: {'failures': 3, 'failed_at': 1, 'retry_after': 2}}}
+        with (
+            patch.object(storage_ops, 'load_setup_config', return_value=self.config),
+            patch.object(storage_ops, 'load_last_run', return_value=state),
+            patch.object(storage_ops, 'save_last_run') as save,
+            patch.object(storage_ops.time, 'time', return_value=now),
+            patch.object(storage_ops, 'parse_notification_args', return_value=['cfg']),
+            patch.object(storage_ops, 'get_service_logger'),
+            patch.object(storage_ops, 'send_notification_safe') as notify,
+        ):
+            result = storage_ops.execute_storage_operations()
+        self.exec.assert_called_once()
+        self.assertEqual(self.filter_input, b'/data.bin\0')
+        self.assertTrue(result['success'])
+        self.assertTrue(result['syncs'][0]['completed'])
+        self.assertEqual(save.call_args.args[0][op_id], now)
+        self.assertNotIn('_attempts', save.call_args.args[0])
+        self.assertEqual(notify.call_args.kwargs['status'], 'warning')
+        self.assertIn('data.bin', notify.call_args.kwargs['details'])
+        self.assertTrue(scrub_findings.Findings(str(self.source), str(database)).active('data.bin'))
+
+    def test_scheduled_parity_destination_guard_prevents_rsync_inside_worker(self):
+        from sync.service_tools import storage_ops
+
+        self.config = {'scrub_specs': [[str(self.source), str(self.destination), '10%', 'weekly']]}
+        self.assertEqual(self.run_sync(check_integrity=True), 1)
+        self.exec.assert_not_called()
+
+    def test_offline_endpoints_fail_but_independent_backup_uses_conservative_copy(self):
+        from sync.service_tools import storage_ops
+
+        offline, database = self.source.parent / 'offline', self.source.parent / 'parity'
+        self.config = {
+            'backup_specs': [[str(self.source), str(offline), 'daily'],
+                             [str(self.source), str(self.destination), 'daily']],
+            'scrub_specs': [[str(self.source), str(database), '10%', 'weekly']],
+            'storage_mounts': [['offline', str(offline)], ['available', str(self.destination)],
+                               ['parity', str(database)]],
+        }
+        self.host_mounts = {str(self.destination)}
+        self.after_validation = lambda command: self.assertIn('--ignore-existing', command)
+        with (
+            patch.object(storage_ops, 'STATE_FILE', str(self.source.parent / 'state.json')),
+            patch.object(storage_ops, 'load_setup_config', return_value=self.config),
+            patch.object(storage_ops, 'parse_notification_args', return_value=[]),
+            patch.object(storage_ops, 'get_service_logger'),
+            patch('lib.task_utils.os.path.ismount', side_effect=lambda path: path in self.host_mounts),
+            patch.object(storage_ops, 'run_scrub') as scrub,
+        ):
+            result = storage_ops.execute_storage_operations()
+            state = storage_ops.load_last_run()
+        self.assertFalse(result['success'])
+        self.assertFalse(result['syncs'][0]['success'])
+        self.assertTrue(result['syncs'][1]['completed'])
+        self.assertIn('Copying new files only', result['syncs'][1]['warning'])
+        self.exec.assert_called_once()
+        self.assertIn(storage_ops.get_sync_op_id(str(self.source), str(self.destination)), state)
+        failed_id = storage_ops.get_sync_op_id(str(self.source), str(offline))
+        self.assertNotIn(failed_id, state)
+        self.assertIn(failed_id, state['_attempts'])
+        self.assertTrue(result['parity_updates'][0]['skipped'])
+        scrub.assert_not_called()
+
+    def test_service_exit_is_nonzero_for_incomplete_mount_coverage(self):
+        from sync.service_tools import storage_ops
+
+        self.config = {'backup_specs': [[str(self.source), str(self.destination), 'daily']],
+                       'storage_mounts': [['data', str(self.source / 'offline')]]}
+        with (
+            patch.object(storage_ops, 'LOCK_FILE', str(self.source.parent / 'operations.lock')),
+            patch.object(storage_ops, 'STATE_FILE', str(self.source.parent / 'state.json')),
+            patch.object(storage_ops, 'load_setup_config', return_value=self.config),
+            patch.object(storage_ops, 'parse_notification_args', return_value=[]),
+            patch.object(storage_ops, 'get_service_logger'),
+        ):
+            self.assertEqual(storage_ops.main(), 1)
+            state = storage_ops.load_last_run()
+        self.exec.assert_called_once()
+        self.assertEqual(self.filter_input, b'/offline\0')
+        op_id = storage_ops.get_sync_op_id(str(self.source), str(self.destination))
+        self.assertNotIn(op_id, state)
+        self.assertIn(op_id, state['_attempts'])
+
+    def test_blocked_integrity_metadata_fails_inside_worker_before_rsync(self):
+        from sync.service_tools import storage_ops
+
+        config = RuntimeConfig.from_dict({'scrub_specs': [
+            [str(self.source), '.pardatabase', '10%', 'weekly'],
+        ]})
+
+        def blocked(*_args, **_kwargs):
+            self.assertTrue(self.in_worker)
+            raise TimeoutError('simulated blocked findings metadata')
+
+        with patch.object(storage_ops, 'validate_sync_integrity', side_effect=blocked):
+            self.assertEqual(self.run_sync(config=config, check_integrity=True), 1)
+        self.exec.assert_not_called()
+
     def test_setup_mount_loss_prevents_preparation_and_failed_probe_prevents_rsync(self):
         config = RuntimeConfig.from_dict({'username': 'agent', 'smb_mounts': [[str(self.destination)]]})
         with patch.object(sync_rsync, 'ensure_directory') as mkdir, patch.object(sync_rsync, 'validate_smb_connectivity', return_value=False) as probe:
@@ -654,6 +801,18 @@ class TestMountNamespace(unittest.TestCase):
             self.assertEqual(self.run_sync(config=config, initial_setup=True), 1)
             probe.assert_called_once_with(str(self.destination))
             self.exec.assert_not_called()
+
+    def test_alias_overlap_and_file_source_are_rejected_inside_worker(self):
+        alias = self.destination.parent / 'alias'
+        alias.symlink_to(self.source, target_is_directory=True)
+        self.destination = alias
+        self.assertEqual(self.run_sync(), 1)
+        self.exec.assert_not_called()
+        self.destination = alias.parent / 'backup'
+        self.source = alias.parent / 'file'
+        self.source.write_text('source is not a directory')
+        self.assertEqual(self.run_sync(), 1)
+        self.exec.assert_not_called()
 
     def test_interrupted_ordinary_sync_keeps_good_destination_and_separates_partial(self):
         destination_file = self.destination / 'important.bin'
@@ -686,7 +845,7 @@ class TestRsyncDeadline(unittest.TestCase):
                 # A dead leader must not let descendants hold the pipes forever.
                 process.poll.return_value = 0
                 readable = [process.stdout] if noisy else []
-                with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 2), patch.object(sync_rsync.time, 'monotonic', side_effect=[0, 0, 1, 2]), patch.object(sync_rsync.select, 'select', return_value=(readable, [], [])) as select, patch.object(sync_rsync.os, 'read', return_value=b'progress\n'), patch.object(sync_rsync.os, 'killpg') as killpg:
+                with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 2), patch.object(sync_rsync, 'SYNC_PREFLIGHT_TIMEOUT_SECONDS', 2), patch.object(sync_rsync, '_wait_for_process_group_exit'), patch.object(sync_rsync.time, 'monotonic', side_effect=[0, 0, 1, 2]), patch.object(sync_rsync.select, 'select', return_value=(readable, [], [])) as select, patch.object(sync_rsync.os, 'read', return_value=b'progress\n'), patch.object(sync_rsync.os, 'killpg') as killpg:
                     with self.assertRaises(subprocess.TimeoutExpired):
                         list(sync_rsync._output_lines(process))
                 self.assertEqual(select.call_count, 2)
@@ -698,16 +857,89 @@ class TestRsyncDeadline(unittest.TestCase):
         process = Mock(pid=12345)
         process.wait.side_effect = [subprocess.TimeoutExpired('rsync', 8),
                                    subprocess.TimeoutExpired('rsync', 5), 0]
-        with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 10), patch.object(sync_rsync.time, 'monotonic', side_effect=[100, 101, 102]), patch.object(sync_rsync.select, 'select', return_value=([process.stdout, process.stderr], [], [])), patch.object(sync_rsync.os, 'read', return_value=b''), patch.object(sync_rsync.os, 'killpg') as killpg:
+        with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 10), patch.object(sync_rsync, 'SYNC_PREFLIGHT_TIMEOUT_SECONDS', 10), patch.object(sync_rsync, '_wait_for_process_group_exit'), patch.object(sync_rsync.time, 'monotonic', side_effect=[100, 101, 102]), patch.object(sync_rsync.select, 'select', return_value=([process.stdout, process.stderr], [], [])), patch.object(sync_rsync.os, 'read', return_value=b''), patch.object(sync_rsync.os, 'killpg') as killpg:
             with self.assertRaises(subprocess.TimeoutExpired):
                 list(sync_rsync._output_lines(process))
-        self.assertEqual(process.wait.call_args_list, [call(timeout=8), call(timeout=5), call(timeout=5)])
+        self.assertEqual(process.wait.call_args_list, [call(timeout=8), call(timeout=5), call(timeout=None)])
         self.assertEqual(killpg.call_args_list[-1], call(12345, signal.SIGKILL))
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+
+    def test_preflight_deadline_is_separate_and_group_teardown_is_confirmed(self):
+        process = Mock(pid=12345)
+        wait_for_group = Mock()
+        with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 3), \
+             patch.object(sync_rsync, 'SYNC_PREFLIGHT_TIMEOUT_SECONDS', 120), \
+             patch.object(sync_rsync.time, 'monotonic', side_effect=[0, 0, 3]), \
+             patch.object(sync_rsync.select, 'select', return_value=([], [], [])) as select, \
+             patch.object(sync_rsync.os, 'killpg') as killpg, \
+             patch.object(sync_rsync, '_wait_for_process_group_exit', wait_for_group):
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                list(sync_rsync._output_lines(process))
+        self.assertEqual(caught.exception.cmd, 'rsync preflight')
+        self.assertLessEqual(select.call_args.args[3], 0.5)
+        self.assertEqual(killpg.call_args_list,
+                         [call(12345, signal.SIGTERM), call(12345, signal.SIGKILL)])
+        process.wait.assert_has_calls([call(timeout=5), call(timeout=None)])
+        wait_for_group.assert_called_once_with(12345)
+
+    def test_group_cleanup_keeps_supervision_through_interrupt_and_signal_errors(self):
+        process = Mock(pid=12345)
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired('rsync', 5),
+            KeyboardInterrupt(),
+            0,
+        ]
+        wait_for_group = Mock()
+        with patch.object(sync_rsync.os, 'killpg', side_effect=PermissionError('signal denied')) as killpg, \
+             patch.object(sync_rsync, '_wait_for_process_group_exit', wait_for_group):
+            sync_rsync._terminate_process_group(process)
+        self.assertEqual(killpg.call_args_list, [
+            call(12345, signal.SIGTERM), call(12345, signal.SIGKILL),
+        ])
+        process.wait.assert_has_calls([call(timeout=5), call(timeout=None), call(timeout=None)])
+        wait_for_group.assert_called_once_with(12345)
+
+    def test_process_group_wait_releases_only_after_group_disappears(self):
+        with patch.object(sync_rsync.os, 'killpg', side_effect=[None, ProcessLookupError]), \
+             patch.object(sync_rsync.time, 'sleep') as sleep:
+            sync_rsync._wait_for_process_group_exit(12345)
+        sleep.assert_called_once_with(0.1)
+
+    def test_clean_leader_exit_stops_residual_descendants_before_failure(self):
+        process = Mock(pid=12345)
+        with patch.object(sync_rsync, 'RSYNC_TIMEOUT_SECONDS', 5), \
+             patch.object(sync_rsync, 'SYNC_PREFLIGHT_TIMEOUT_SECONDS', 5), \
+             patch.object(sync_rsync.select, 'select', return_value=([process.stdout, process.stderr], [], [])), \
+             patch.object(sync_rsync.os, 'read', side_effect=[b'', b'']), \
+             patch.object(sync_rsync.os, 'killpg', side_effect=[None, None, None, ProcessLookupError]) as killpg:
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                list(sync_rsync._output_lines(process))
+        self.assertIn('worker descendants remained', caught.exception.stderr)
+        self.assertEqual(killpg.call_args_list, [
+            call(12345, 0), call(12345, signal.SIGTERM),
+            call(12345, signal.SIGKILL), call(12345, 0),
+        ])
         process.stdout.close.assert_called_once()
         process.stderr.close.assert_called_once()
 
 
 class TestSyncPathSafety(unittest.TestCase):
+    def test_controller_sync_validation_stays_lexical(self):
+        process = _FakeProcess(0)
+        with patch.object(sync_rsync.os.path, 'realpath', side_effect=AssertionError('realpath outside worker')), \
+             patch.object(sync_rsync.os.path, 'isdir', side_effect=AssertionError('isdir outside worker')), \
+             patch.object(sync_rsync.subprocess, 'Popen', return_value=process) as launch, \
+             patch.object(sync_rsync, '_output_lines', return_value=iter(())), \
+             patch.object(sync_rsync, '_read_worker_report', return_value=sync_rsync.SyncPrecautions()), \
+             patch.object(sync_rsync, 'get_service_logger'):
+            result = sync_rsync.run_rsync_with_notifications(
+                '/srv/source', '/mnt/destination', True,
+                config=RuntimeConfig.from_dict({}),
+            )
+        self.assertEqual(result, 0)
+        launch.assert_called_once()
+
     def test_output_reader_drains_stderr_while_stdout_has_no_newline(self):
         # A real local child is the pipe fixture; no rsync or host mutations.
         process = subprocess.Popen(
@@ -724,32 +956,19 @@ class TestSyncPathSafety(unittest.TestCase):
                 process.kill()
             process.wait(timeout=5)
 
-    def test_overlap_and_symlink_aliases_never_launch_rsync(self):
+    def test_lexical_overlap_never_launches_worker(self):
         from sync.sync_steps import parse_sync_spec
 
         with tempfile.TemporaryDirectory() as root:
             source = os.path.join(root, "source")
             os.mkdir(source)
-            alias = os.path.join(root, "alias")
-            os.symlink(source, alias)
-            for destination in (source, root, os.path.join(source, "mirror"), alias):
+            for destination in (source, root, os.path.join(source, "mirror")):
                 with self.subTest(destination=destination), patch.object(sync_rsync.subprocess, "Popen") as popen, patch.object(sync_rsync, "get_service_logger"):
                     self.assertEqual(sync_rsync.run_rsync_with_notifications(source, destination, True,
                                      config=RuntimeConfig.from_dict({})), 1)
                     popen.assert_not_called()
             with self.assertRaisesRegex(ValueError, "equal or nested"):
                 parse_sync_spec([source, source + "/../source/mirror", "daily"])
-
-    def test_file_source_is_rejected_before_rsync(self):
-        with tempfile.TemporaryDirectory() as root:
-            source = os.path.join(root, "file")
-            with open(source, "w") as stream:
-                stream.write("data")
-            with patch.object(sync_rsync.subprocess, "Popen") as popen, patch.object(sync_rsync, "get_service_logger"):
-                self.assertEqual(sync_rsync.run_rsync_with_notifications(source, root + "-dest", True,
-                                 config=RuntimeConfig.from_dict({})), 1)
-                popen.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()

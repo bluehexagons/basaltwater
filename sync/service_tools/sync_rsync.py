@@ -46,8 +46,10 @@ BYTES_TO_MB = 1024 * 1024
 # Progress logging interval (seconds)
 PROGRESS_LOG_INTERVAL = 30
 RSYNC_TIMEOUT_SECONDS = 14400
+SYNC_PREFLIGHT_TIMEOUT_SECONDS = 120
 WORKER_REPORT_LIMIT = 8192
 WORKER_SAMPLE_PATH_LIMIT = 128
+RSYNC_STARTED_MARKER = '__BASALTWATER_RSYNC_STARTED__'
 
 
 @dataclass
@@ -65,32 +67,118 @@ def _read_worker_report(stream: BinaryIO) -> SyncPrecautions:
     if len(payload) > WORKER_REPORT_LIMIT:
         raise ValueError('Sync worker report exceeds size limit')
     report = json.loads(payload)
-    if (not isinstance(report, dict) or set(report) != {'version', 'unavailable_count', 'sample'}
-            or type(report['version']) is not int or report['version'] != 1
+    if (not isinstance(report, dict)
+            or set(report) != {'version', 'unavailable_count', 'sample', 'warning', 'retry_required'}
+            or type(report['version']) is not int or report['version'] != 2
             or type(report['unavailable_count']) is not int or report['unavailable_count'] < 0
             or not isinstance(report['sample'], list)
             or len(report['sample']) != min(report['unavailable_count'], 5)
             or any(not isinstance(path, str) or not path or len(path) > WORKER_SAMPLE_PATH_LIMIT
-                   for path in report['sample'])):
+                   for path in report['sample'])
+            or not isinstance(report['warning'], str)
+            or len(report['warning']) > WORKER_REPORT_LIMIT
+            or type(report['retry_required']) is not bool
+            or report['retry_required'] != bool(report['unavailable_count'])):
         raise ValueError('Invalid sync worker report')
     count = report['unavailable_count']
-    warning = (f"Preserved {count} subtree(s) on unavailable configured mounts: "
-               f"{', '.join(report['sample'])}; sync incomplete, retry needed") if count else ""
-    return SyncPrecautions(warning, bool(count))
+    warning = report['warning']
+    if not warning and count:
+        warning = (f"Preserved {count} subtree(s) on unavailable configured mounts: "
+                   f"{', '.join(report['sample'])}; sync incomplete, retry needed")
+    return SyncPrecautions(warning, report['retry_required'])
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    """Return whether the process group exists, failing closed if unobservable."""
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(process_group_id: int) -> None:
+    """Keep the caller supervising until the worker process group is gone.
+
+    ``killpg(..., 0)`` also sees zombies. That is intentionally conservative:
+    an unreaped group member keeps the caller's storage-operation lease until
+    the group is fully gone rather than guessing that teardown has completed.
+    """
+    while _process_group_exists(process_group_id):
+        try:
+            time.sleep(0.1)
+        except KeyboardInterrupt:
+            # Cleanup owns the retry lease; a second interrupt cannot release
+            # it while a worker may still be touching the mirror.
+            continue
+
+
+@contextmanager
+def _defer_cleanup_signals() -> Iterator[None]:
+    """Defer interrupt and service-stop signals during mandatory teardown."""
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    try:
+        yield
+    finally:
+        # Pending signals are delivered only after process ownership is safe
+        # to release. SIGKILL remains outside the process's control.
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def _wait_for_process(process, *, timeout: float | None = None):
+    """Wait through keyboard interrupts when teardown still owns the worker."""
+    while True:
+        try:
+            return process.wait(timeout=timeout)
+        except KeyboardInterrupt:
+            continue
+
+
+def _terminate_process_group(process) -> None:
+    """Stop a timed-out worker and retain supervision until its group is gone."""
+    def signal_group(sig: int) -> None:
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            # Permission or other signal errors do not prove exit. Continue
+            # waiting below; never turn an unconfirmed stop into a retry.
+            pass
+
+    with _defer_cleanup_signals():
+        signal_group(signal.SIGTERM)
+        try:
+            _wait_for_process(process, timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        signal_group(signal.SIGKILL)
+        # SIGKILL cannot complete a task stuck in uninterruptible kernel I/O.
+        # Do not release the storage-ops lock or record a retry while any
+        # worker may still be traversing or mutating the mirror.
+        _wait_for_process(process)
+        _wait_for_process_group_exit(process.pid)
 
 
 def _output_lines(process):
-    """Drain both pipes under one deadline, including the final process wait."""
+    """Drain worker and rsync output under separate supervised deadlines."""
     streams = {process.stdout: True, process.stderr: False}
     decoders = {stream: codecs.getincrementaldecoder("utf-8")(errors="replace") for stream in streams}
     pending = {stream: "" for stream in streams}
-    deadline = time.monotonic() + RSYNC_TIMEOUT_SECONDS
+    # Keep preflight shorter than a normal transfer, while allowing tests and
+    # operators to apply one smaller end-to-end budget to both phases.
+    timeout = min(SYNC_PREFLIGHT_TIMEOUT_SECONDS, RSYNC_TIMEOUT_SECONDS)
+    deadline = time.monotonic() + timeout
+    rsync_started = False
     completed = False
     try:
         while streams:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise subprocess.TimeoutExpired('rsync', RSYNC_TIMEOUT_SECONDS)
+                command = 'rsync preflight' if not rsync_started else 'rsync'
+                raise subprocess.TimeoutExpired(command, timeout)
             readable, _, _ = select.select(list(streams), [], [], min(0.5, remaining))
             if not readable:
                 yield True, ""
@@ -101,6 +189,11 @@ def _output_lines(process):
                 lines = text.replace("\r", "\n").split("\n")
                 pending[stream] = lines.pop()
                 for line in lines:
+                    if not rsync_started and not streams[stream] and line == RSYNC_STARTED_MARKER:
+                        rsync_started = True
+                        timeout = RSYNC_TIMEOUT_SECONDS
+                        deadline = time.monotonic() + timeout
+                        continue
                     yield streams[stream], line
                 if not chunk or len(pending[stream]) >= 65536:
                     if pending[stream]:
@@ -109,25 +202,22 @@ def _output_lines(process):
                 if not chunk:
                     del streams[stream]
         process.wait(timeout=max(0, deadline - time.monotonic()))
+        if _process_group_exists(process.pid):
+            # A clean leader exit is not enough if a receiver or other worker
+            # remains after closing its pipes. Stop and reap the residual group
+            # before reporting a result that could make a retry eligible.
+            _terminate_process_group(process)
+            completed = True
+            raise subprocess.CalledProcessError(
+                1, 'rsync', stderr='Rsync leader exited while worker descendants remained',
+            )
         completed = True
     finally:
         try:
             if not completed:
-                # rsync forks a local receiver too. Stop the entire private session,
-                # even if its leader exited while a child still holds the pipes.
-                def signal_group(sig):
-                    try:
-                        os.killpg(process.pid, sig)
-                    except ProcessLookupError:
-                        pass
-                signal_group(signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-                finally:
-                    signal_group(signal.SIGKILL)
-                    process.wait(timeout=5)
+                # Rsync and its receiver share the private process group. A
+                # reaped leader alone does not prove its descendants are gone.
+                _terminate_process_group(process)
         finally:
             process.stdout.close()
             process.stderr.close()
@@ -240,6 +330,7 @@ def _mount_worker(report_fd: int) -> int:
         config = RuntimeConfig.from_dict({
             'storage_mounts': [['', root] for root in request['mounts']],
             'smb_mounts': [[root] for root in request['smb_mounts']],
+            'scrub_specs': request['scrub_specs'],
         })
         validate_sync_paths(source, destination)
         for path, label in ((source, 'source'), (destination, 'destination')):
@@ -251,6 +342,18 @@ def _mount_worker(report_fd: int) -> int:
                 raise RuntimeError(f'Required {label} mount is unavailable: {path}')
         if not os.path.isdir(source):
             raise ValueError(f'Sync source is not an existing directory: {source}')
+
+        from sync.service_tools.storage_ops import SyncIntegrity, validate_sync_integrity
+        if request['check_integrity']:
+            integrity = validate_sync_integrity(
+                source, destination, config, mounted_roots=mounted_roots,
+            )
+        else:
+            integrity = SyncIntegrity()
+        unavailable = (integrity.mount_excluded_paths if request['check_integrity'] else
+                       unavailable_sync_subtrees(source, destination, config,
+                                                 mounted_roots=mounted_roots))
+
         username = request['setup_username']
         if username is not None:
             if not validate_username(username):
@@ -263,15 +366,27 @@ def _mount_worker(report_fd: int) -> int:
                 ensure_directory(destination, username)
                 if not validate_smb_connectivity(destination):
                     raise RuntimeError(f'Destination SMB connectivity failed: {destination}')
-        unavailable = unavailable_sync_subtrees(source, destination, config, mounted_roots=mounted_roots)
         if unavailable:
             print(f'Preserving unavailable mount subtrees: {", ".join(unavailable[:5])}', file=sys.stderr)
-        excluded = tuple(dict.fromkeys([*request['excluded_paths'], *unavailable]))
-        with _rsync_command(source, destination, excluded, request['copy_new_only']) as (command, filters):
+        excluded = tuple(dict.fromkeys([*request['excluded_paths'], *integrity.excluded_paths,
+                                        *unavailable]))
+        copy_new_only = request['copy_new_only'] or integrity.copy_new_only
+        warning = integrity.warning
+        if unavailable and not warning:
+            warning = (f"Preserved {len(unavailable)} subtree(s) on unavailable configured mounts: "
+                       f"{', '.join(unavailable[:5])}; sync incomplete, retry needed")
+        with _rsync_command(source, destination, excluded, copy_new_only) as (command, filters):
             # The anonymous report is separate from rsync output and closed
             # before exec. Bound the sample even for very long declarations.
-            report = json.dumps({'version': 1, 'unavailable_count': len(unavailable),
-                                 'sample': [path[:WORKER_SAMPLE_PATH_LIMIT] for path in unavailable[:5]]}).encode('utf-8')
+            report = json.dumps({
+                'version': 2,
+                'unavailable_count': len(unavailable),
+                'sample': [path[:WORKER_SAMPLE_PATH_LIMIT] for path in unavailable[:5]],
+                # JSON escaping can expand each code point substantially.
+                # Keep human detail bounded without truncating actual filters.
+                'warning': warning[:512] + ('…' if len(warning) > 512 else ''),
+                'retry_required': bool(unavailable),
+            }, ensure_ascii=False).encode('utf-8')
             if len(report) > WORKER_REPORT_LIMIT:
                 raise ValueError('Sync worker report exceeds size limit')
             with os.fdopen(report_fd, 'wb') as stream:
@@ -282,6 +397,7 @@ def _mount_worker(report_fd: int) -> int:
                 # JSON has been fully consumed. Rsync closes nonstandard FDs
                 # during startup, so give it the anonymous NUL filters on stdin.
                 os.dup2(filters.fileno(), 0)
+            os.write(2, (RSYNC_STARTED_MARKER + '\n').encode('ascii'))
             os.execv(command[0], command)
     except Exception as exc:
         print(f'Sync mount worker refused to run: {exc}', file=sys.stderr)
@@ -291,14 +407,17 @@ def _mount_worker(report_fd: int) -> int:
 
 def _start_rsync(source: str, destination: str, config: SetupConfig | RuntimeConfig,
                  excluded_paths: tuple[str, ...], copy_new_only: bool,
-                 initial_setup: bool, report: BinaryIO) -> subprocess.Popen[str]:
+                 initial_setup: bool, check_integrity: bool,
+                 report: BinaryIO) -> subprocess.Popen[str]:
     """Transfer declarations, never credentials, to a namespace-isolated worker."""
     request = {
         'source': source, 'destination': destination,
         'mounts': configured_storage_mounts(config),
         'smb_mounts': [spec[0] for spec in getattr(config, 'smb_mounts', None) or []],
+        'scrub_specs': [list(spec) for spec in getattr(config, 'scrub_specs', None) or []],
         'setup_username': config.username if initial_setup else None,
         'excluded_paths': excluded_paths, 'copy_new_only': copy_new_only,
+        'check_integrity': check_integrity,
     }
     # A regular anonymous file avoids argv limits and pipe writes that could
     # block outside the output reader's deadline for large exclusion reports.
@@ -323,6 +442,7 @@ def run_rsync_with_notifications(
     excluded_paths: tuple[str, ...] = (), copy_new_only: bool = False,
     config: SetupConfig | RuntimeConfig | None = None,
     initial_setup: bool = False,
+    check_integrity: bool = False,
     precautions: SyncPrecautions | None = None,
 ) -> int:
     """Run rsync and send notifications on completion or failure.
@@ -335,6 +455,7 @@ def run_rsync_with_notifications(
         copy_new_only: Add new files without replacing or deleting existing destination data
         config: Current declarations for setup/runtime; None strictly loads saved state
         initial_setup: Prepare directories and probe SMB within the private namespace
+        check_integrity: Read scrub findings inside the supervised private worker
         precautions: Optional collector for worker warnings and incomplete mount coverage
         
     Returns:
@@ -393,11 +514,12 @@ def run_rsync_with_notifications(
             if saved_config is None:
                 raise RuntimeError('Saved setup configuration is required for standalone sync mount guards')
             config = RuntimeConfig.from_dict(saved_config)
-        validate_sync_paths(source, destination)
-        if not os.path.isdir(source):
-            raise ValueError(f"Sync source is not an existing directory: {source}")
+        # Controller checks remain lexical. realpath(), directory checks and
+        # all declared-mount metadata access run under the worker deadline.
+        validate_sync_paths(source, destination, resolve=False)
         report = tempfile.TemporaryFile()
-        process = _start_rsync(source, destination, config, excluded_paths, copy_new_only, initial_setup, report)
+        process = _start_rsync(source, destination, config, excluded_paths, copy_new_only,
+                               initial_setup, check_integrity, report)
         
         # Collect output for stats parsing
         stdout_lines = deque(maxlen=4096)

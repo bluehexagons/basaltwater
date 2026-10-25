@@ -34,12 +34,17 @@ initial work inline and fail setup if it fails.
 The inline custom steps fail before directory creation or sync/parity work when
 a required mount is missing. Failed SMB connectivity checks also abort their work. Mount
 status inspection is read-only; explicit SMB write probes use unique temporary
-files and remove only their own probe.
+files and remove only their own probe. CIFS file creation, readback, cleanup,
+and directory listing run in a separate supervised process with a 15-second
+probe deadline. If the kernel cannot stop a process blocked in CIFS I/O, its
+caller keeps supervising it until it exits; a timed-out write probe can leave
+its uniquely named temporary file behind.
 Sync source checks require only read access. SMB subdirectories are checked
 against their containing mount, and new sync destinations are created after
 mount validation before their write probe runs.
-`mountpoint` and `findmnt` probes are bounded to 15 seconds; a timed-out probe
-is treated as an unavailable mount so setup cannot write through a stale mount.
+`mountpoint` and `findmnt` probes have a 15-second deadline; a timed-out probe
+is treated as an unavailable mount after its process exits. Uninterruptible
+kernel I/O can delay that exit too.
 
 ## Sync behavior
 
@@ -59,12 +64,30 @@ size/timestamp comparison can also skip unchanged files without reading their
 contents; successful mirroring does not replace integrity verification.
 
 Equal or nested sync paths are rejected, including aliases through symlinks.
-The source must be an existing directory. Output from both rsync pipes is
-drained without waiting for newlines, and retained output is bounded to prevent
-large runs from exhausting memory. Each rsync operation has a four-hour deadline;
-on timeout its process group is stopped, the failure is checkpointed for retry,
-and later jobs continue. The service has no shared four-hour limit that can
-repeatedly starve later jobs. Rerun setup to refresh existing service units.
+The source must be an existing directory. The controller performs only lexical
+path validation. Symlink resolution, source-directory checks, configured mount
+checks, nested-mount inventory, and scheduled integrity-findings reads run in
+the private namespace worker before it starts rsync. This keeps cold CIFS
+metadata access under the worker's preflight deadline instead of blocking the
+orchestrator before supervision begins. Preflight is limited to 120 seconds or
+the smaller configured `RSYNC_TIMEOUT_SECONDS`; rsync then has its own
+four-hour deadline. Output from both rsync pipes is drained without waiting
+for newlines, and retained output is bounded to prevent large runs from
+exhausting memory.
+
+On timeout the caller sends TERM and then KILL to the worker process group, and
+waits for both its leader and any remaining process-group members to disappear
+before returning a failure or recording a retry. This retains the scheduled
+storage-operations lock and prevents a retry from overlapping a residual rsync
+child. A deadline bounds waiting for normal worker output, not total wall time:
+SIGKILL cannot finish a task stuck in uninterruptible kernel I/O, and even an
+unreaped zombie can keep the process group visible. In those cases the caller
+fails closed and keeps the lock while it continues supervising; total runtime
+can exceed the configured deadline indefinitely. A caller forcibly killed
+outside this cleanup cannot prove that descendants are gone, so confirm the
+service cgroup is empty before manually retrying such an interrupted operation.
+Normal mirrors are not tree-atomic. Rerun setup to refresh existing service
+units.
 
 Scheduled syncs and backups continue when either tree contains open scrub findings.
 Only affected relative paths are excluded from transfer and deletion, preserving
@@ -100,6 +123,10 @@ service units that checked every storage mount before starting the orchestrator.
 Mount checks also resolve endpoint aliases. An unavailable configured mount
 below either mirror root is excluded from both transfer and deletion, with a
 warning, so healthy subtrees continue and existing backup content is preserved.
+Such a run is incomplete: its retry history is retained, its completion
+timestamp does not advance, aggregate storage-operations health is failed, and
+the service exits nonzero. Independent healthy jobs still run. Once coverage
+returns, a later retry clears the history and advances the configured cadence.
 These nested mount protections also apply to custom inline sync setup steps.
 The standalone `sync_rsync.py SOURCE DESTINATION` entry point applies the same
 endpoint and nested mount guards using the saved setup configuration. Missing,
@@ -120,11 +147,9 @@ The worker sends a bounded precaution report through a separate anonymous file
 descriptor before executing rsync; ordinary rsync output is never interpreted
 as that report. Missing or malformed reports fail the operation. Worker-discovered
 unavailable subtrees appear in scheduled results and warning notifications, as
-well as standalone notifications. Mount exclusions retained from preflight also
-require a retry, even if that mount returns before the worker starts. When either
-stage preserves mount subtrees, the sync does not advance its completion timestamp:
-it retries with the backoff used for incomplete operations, from one hour up to
-twenty-four hours. Every retry uses
+well as standalone notifications. When the worker preserves mount subtrees, the
+sync does not advance its completion timestamp: it retries with the backoff
+used for incomplete operations, from one hour up to twenty-four hours. Every retry uses
 the private namespace and rechecks mounts; no unprotected retry is attempted.
 Once mount coverage is restored, completion clears the retry history and the
 configured interval resumes. Recorded integrity findings alone retain their
@@ -241,7 +266,8 @@ remaining parity. Executed operations that fail retry
 after one hour, then two, four, eight, sixteen, and at most twenty-four hours
 between consecutive failures. Completion clears the retry history. Full scrubs
 waiting for a retry are not replaced by an unverified fast parity pass.
-Mount and integrity preflight skips remain eligible for hourly rechecks.
+Scrub mount preflight skips remain eligible for hourly rechecks. Sync worker
+preflight failures use the operational retry backoff.
 
 Scrub rejects symlinks in source and database paths, including parent components.
 Both trees must be fully readable before parity changes begin; an incomplete

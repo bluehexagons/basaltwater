@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from lib import mount_utils
 
@@ -92,14 +92,58 @@ class TestMountValidation(unittest.TestCase):
 
 class TestSmbConnectivity(unittest.TestCase):
     def test_readonly_source_uses_containing_mount_and_never_writes(self):
-        with tempfile.TemporaryDirectory() as directory:
-            child = os.path.join(directory, 'child')
-            os.mkdir(child)
-            with patch.object(mount_utils, 'is_path_mounted', return_value=True), patch.object(mount_utils.subprocess, 'run', return_value=completed(stdout='cifs')) as run, patch.object(mount_utils, '_probe_writable_directory', side_effect=PermissionError('read only')) as probe:
-                self.assertTrue(mount_utils.validate_smb_connectivity(child, writable=False))
-                probe.assert_not_called()
-                self.assertEqual(run.call_args.args[0][-2:], ['--target', child])
-                self.assertFalse(mount_utils.validate_smb_connectivity(child))
+        child = '/srv/share/child'
+        with patch.object(mount_utils, 'is_path_mounted', return_value=True), \
+             patch.object(mount_utils.subprocess, 'run', return_value=completed(stdout='cifs')) as run, \
+             patch.object(mount_utils, '_run_smb_filesystem_probe', return_value=True) as probe:
+            self.assertTrue(mount_utils.validate_smb_connectivity(child, writable=False))
+            self.assertEqual(run.call_args.args[0][-2:], ['--target', child])
+            self.assertEqual(probe.call_args.kwargs, {'writable': False})
+            self.assertTrue(mount_utils.validate_smb_connectivity(child))
+        self.assertEqual(probe.call_args.kwargs, {'writable': True})
+
+    def test_smb_file_operations_run_in_a_separate_child(self):
+        process = Mock()
+        process.wait.return_value = 0
+        with patch.object(mount_utils.subprocess, 'Popen', return_value=process) as popen:
+            self.assertTrue(mount_utils._run_smb_filesystem_probe('/mnt/share', writable=False))
+        args, kwargs = popen.call_args
+        self.assertEqual(args[0][-3:], ['--smb-probe-worker', '/mnt/share', '0'])
+        self.assertEqual(kwargs['stdin'], subprocess.DEVNULL)
+        self.assertEqual(kwargs['stdout'], subprocess.DEVNULL)
+        self.assertEqual(kwargs['stderr'], subprocess.DEVNULL)
+        self.assertFalse(kwargs.get('start_new_session', False))
+        process.wait.assert_called_once_with(timeout=mount_utils._SMB_PROBE_IO_TIMEOUT_SECONDS)
+
+    def test_timed_out_probe_is_terminated_and_supervised_until_exit(self):
+        process = Mock()
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired('probe', 15),
+            subprocess.TimeoutExpired('probe', 1),
+            -9,
+        ]
+        stdout = io.StringIO()
+        with patch.object(mount_utils.subprocess, 'Popen', return_value=process), \
+             redirect_stdout(stdout):
+            self.assertFalse(mount_utils._run_smb_filesystem_probe('/mnt/share', writable=True))
+        process.terminate.assert_called_once_with()
+        process.kill.assert_called_once_with()
+        self.assertEqual(process.wait.call_args_list, [
+            call(timeout=15), call(timeout=1), call(),
+        ])
+        self.assertIn('temporary file may remain', stdout.getvalue())
+
+    def test_interrupted_probe_wait_still_reaps_its_child(self):
+        process = Mock()
+        process.wait.side_effect = [KeyboardInterrupt(), -15]
+        with patch.object(mount_utils.subprocess, 'Popen', return_value=process), \
+             self.assertRaises(KeyboardInterrupt):
+            mount_utils._run_smb_filesystem_probe('/mnt/share', writable=False)
+        process.terminate.assert_called_once_with()
+        process.wait.assert_has_calls([
+            call(timeout=mount_utils._SMB_PROBE_IO_TIMEOUT_SECONDS),
+            call(timeout=mount_utils._SMB_PROBE_TERMINATION_GRACE_SECONDS),
+        ])
 
     def test_probe_preserves_existing_diagnostic_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -117,7 +161,7 @@ class TestSmbConnectivity(unittest.TestCase):
     def test_validate_smb_connectivity_checks_type_and_file_operations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             stdout = io.StringIO()
-            with patch.object(mount_utils, "is_path_mounted", return_value=True), patch.object(mount_utils.subprocess, "run", return_value=completed(stdout="cifs")):
+            with patch.object(mount_utils, "is_path_mounted", return_value=True), patch.object(mount_utils.subprocess, "run", return_value=completed(stdout="cifs")), patch.object(mount_utils, '_run_smb_filesystem_probe', return_value=True):
                 with redirect_stdout(stdout):
                     result = mount_utils.validate_smb_connectivity(directory)
             self.assertFalse(os.path.exists(os.path.join(directory, ".smb_connectivity_test")))

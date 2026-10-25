@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 import os
+import signal
 import subprocess
+import sys
 import time
 import threading
 import tempfile
@@ -10,6 +12,8 @@ from typing import Optional, Any, Callable
 
 
 _MOUNT_PROBE_TIMEOUT_SECONDS = 15
+_SMB_PROBE_IO_TIMEOUT_SECONDS = 15
+_SMB_PROBE_TERMINATION_GRACE_SECONDS = 1
 
 
 def _run_mount_command(
@@ -135,20 +139,65 @@ def validate_smb_connectivity(path: str, *, writable: bool = True) -> bool:
         print(f"Could not determine filesystem type for {path}")
         return False
     
-    # Test SMB-specific operations
+    # SMB metadata calls can block in the kernel even after the mount table
+    # checks above succeeded. Isolate them in a child so a timeout can stop the
+    # probe without leaving an uncancellable thread in the caller.
     try:
-        if writable:
-            _probe_writable_directory(path)
-        
-        # Test directory listing (common SMB operation)
-        # Optionally check a small listing to assert basic directory operations work
-        with os.scandir(path) as entries:
-            next(entries, None)
+        if not _run_smb_filesystem_probe(path, writable=writable):
+            print(f"SMB connectivity test failed for {path}")
+            return False
         print(f"SMB connectivity test passed for {path}")
         return True
         
     except (OSError, IOError, ValueError) as e:
         print(f"SMB connectivity test failed for {path}: {e}")
+        return False
+
+
+def _run_smb_filesystem_probe(path: str, *, writable: bool) -> bool:
+    """Run SMB file operations in a supervised process, never an uncancellable thread."""
+    process = subprocess.Popen(
+        [sys.executable, '-I', os.path.abspath(__file__), '--smb-probe-worker',
+         path, '1' if writable else '0'],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        return process.wait(timeout=_SMB_PROBE_IO_TIMEOUT_SECONDS) == 0
+    except (subprocess.TimeoutExpired, KeyboardInterrupt) as interruption:
+        timed_out = isinstance(interruption, subprocess.TimeoutExpired)
+        previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+        try:
+            try:
+                process.terminate()
+            except OSError:
+                # A failed signal does not prove that the child exited.
+                pass
+            try:
+                process.wait(timeout=_SMB_PROBE_TERMINATION_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                # A process in uninterruptible kernel I/O may not exit
+                # promptly after SIGKILL. Keep supervising it until it does.
+                while True:
+                    try:
+                        process.wait()
+                        break
+                    except KeyboardInterrupt:
+                        continue
+        finally:
+            # Any pending stop signal is delivered after this probe is gone.
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        if not timed_out:
+            raise
+        print(
+            f"SMB connectivity test timed out after {_SMB_PROBE_IO_TIMEOUT_SECONDS}s for {path}; "
+            "probe worker exited, but a temporary file may remain if CIFS I/O prevented cleanup"
+        )
         return False
 
 
@@ -164,6 +213,22 @@ def _probe_writable_directory(path: str) -> None:
                 raise ValueError('Mount probe content mismatch')
     finally:
         os.unlink(probe)
+
+
+def _smb_probe_worker(path: str, *, writable: bool) -> int:
+    """Child entry point for bounded writable and directory-listing checks."""
+    def interrupt(_signum, _frame):
+        raise InterruptedError('SMB probe interrupted for teardown')
+
+    signal.signal(signal.SIGTERM, interrupt)
+    try:
+        if writable:
+            _probe_writable_directory(path)
+        with os.scandir(path) as entries:
+            next(entries, None)
+    except (OSError, IOError, ValueError, InterruptedError):
+        return 1
+    return 0
 
 
 def get_mount_status_details(path: str) -> dict[str, Any]:
@@ -274,3 +339,7 @@ def validate_multiple_paths(paths: list[str], path_names: Optional[list[str]] = 
     for path, name in zip(paths, path_names):
         results[path] = validate_mount_for_sync(path, name)
     return results
+
+
+if __name__ == '__main__' and len(sys.argv) == 4 and sys.argv[1] == '--smb-probe-worker':
+    sys.exit(_smb_probe_worker(sys.argv[2], writable=sys.argv[3] == '1'))

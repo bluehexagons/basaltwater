@@ -257,7 +257,10 @@ def get_parity_op_id(directory: str, database: str) -> str:
     return f"parity:{directory}:{database}"
 
 
-def validate_mounts_for_operation(paths: list[str], config: RuntimeConfig, operation_type: str) -> tuple[bool, str]:
+def validate_mounts_for_operation(
+    paths: list[str], config: RuntimeConfig, operation_type: str, *,
+    mounted_roots: frozenset[str] | None = None,
+) -> tuple[bool, str]:
     """Validate that all required mounts are available.
     
     For paths that don't exist yet (e.g., sync destinations), validates that
@@ -266,12 +269,20 @@ def validate_mounts_for_operation(paths: list[str], config: RuntimeConfig, opera
     """
     for path in paths:
         try:
-            validate_configured_storage_mounts(path, config)
+            validate_configured_storage_mounts(path, config, mounted_roots=mounted_roots)
         except (OSError, ValueError, RuntimeError) as exc:
             return False, str(exc)
         needs_check = needs_mount_check(path, config)
         path = os.path.realpath(path)
         if needs_check or needs_mount_check(path, config):
+            if mounted_roots is not None:
+                ancestors = [
+                    root for root in mounted_roots
+                    if root != '/' and os.path.commonpath([path, root]) == root
+                ]
+                if not ancestors:
+                    return False, f"No mounted filesystem found for {path} ({operation_type})"
+                continue
             # Check if path exists
             path_exists = os.path.exists(path)
             
@@ -318,27 +329,34 @@ class SyncIntegrity:
 
 
 def run_sync(source: str, destination: str, logger, *, config: RuntimeConfig,
-             integrity: SyncIntegrity = SyncIntegrity(),
              precautions: SyncPrecautions | None = None) -> tuple[bool, str]:
     """Execute rsync sync operation."""
     from sync.service_tools.sync_rsync import run_rsync_with_notifications
+
+    if precautions is None:
+        precautions = SyncPrecautions()
     
     # Logging is handled by run_rsync_with_notifications
     
     try:
         result = run_rsync_with_notifications(
             source, destination, suppress_notifications=True,
-            excluded_paths=integrity.excluded_paths, copy_new_only=integrity.copy_new_only,
             config=config,
+            check_integrity=True,
             precautions=precautions,
         )
+        if result == 0 and precautions.retry_required:
+            return True, "Sync transferred available paths; mount coverage is incomplete and requires retry"
         return result == 0, f"Sync {'completed' if result == 0 else 'failed'} with exit code {result}"
     except Exception as e:
         log_event(logger, "Sync failed", level=ERROR, source=source, destination=destination, error=str(e))
         return False, str(e)
 
 
-def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig) -> SyncIntegrity:
+def validate_sync_integrity(
+    source: str, destination: str, config: RuntimeConfig, *,
+    mounted_roots: frozenset[str] | None = None,
+) -> SyncIntegrity:
     """Reject parity destinations and collect precautions for recorded findings."""
     from sync.service_tools.scrub_findings import Findings
     from lib.validation import validate_scrub_specs
@@ -360,7 +378,9 @@ def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig
         if not any(overlaps(endpoint, root) for endpoint in (source_path, destination_path)):
             continue
         try:
-            valid, error = validate_mounts_for_operation([database], config, "sync integrity check")
+            valid, error = validate_mounts_for_operation(
+                [database], config, "sync integrity check", mounted_roots=mounted_roots,
+            )
             if not valid:
                 raise RuntimeError(error)
             report = Findings(directory, database)
@@ -381,7 +401,9 @@ def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig
     if excluded_paths:
         sample = ", ".join(sorted(excluded_paths)[:5])
         warnings.insert(0, f"Preserved {len(excluded_paths)} path(s) with unresolved integrity findings: {sample}; inspect with basaltw scrub")
-    unavailable = unavailable_sync_subtrees(source, destination, config)
+    unavailable = unavailable_sync_subtrees(
+        source, destination, config, mounted_roots=mounted_roots,
+    )
     if unavailable:
         excluded_paths.update(unavailable)
         warnings.append(f"Preserved {len(unavailable)} subtree(s) on unavailable configured mounts: {', '.join(unavailable[:5])}")
@@ -538,13 +560,14 @@ def execute_storage_operations() -> dict:
                 logger.debug(f"Skipping sync {source} -> {destination} ({interval}): never run")
             continue
         
-        # Validate mounts
-        valid, error_msg = validate_mounts_for_operation([source, destination], config, "sync")
-        if valid:
-            try:
-                integrity = validate_sync_integrity(source, destination, config)
-            except (OSError, ValueError, RuntimeError) as exc:
-                valid, error_msg = False, str(exc)
+        # Only lexical validation belongs in the controller. realpath,
+        # directory, mount and findings I/O runs in the supervised namespace
+        # worker so a silent network-filesystem outage cannot bypass its deadline.
+        valid, error_msg = True, ""
+        try:
+            validate_sync_paths(source, destination, resolve=False)
+        except (OSError, ValueError, RuntimeError) as exc:
+            valid, error_msg = False, str(exc)
         if not valid:
             log_event(logger, "Skipping sync", level=WARNING, source=source, destination=destination, error=error_msg)
             results["syncs"].append({
@@ -557,16 +580,14 @@ def execute_storage_operations() -> dict:
             results["success"] = False
             continue
         
-        if integrity.warning:
-            log_event(logger, "Sync continuing with integrity precautions", level=WARNING,
-                      source=source, destination=destination, warning=integrity.warning)
         precautions = SyncPrecautions()
-        success, message = run_sync(source, destination, logger, config=config, integrity=integrity,
+        success, message = run_sync(source, destination, logger, config=config,
                                     precautions=precautions)
-        warning = "; ".join(filter(None, (integrity.warning, precautions.warning)))
-        # A restored mount remains excluded if preflight already protected it.
-        # Keep that provenance separate from ordinary integrity findings.
-        completed = success and not (precautions.retry_required or integrity.mount_excluded_paths)
+        warning = precautions.warning
+        completed = success and not precautions.retry_required
+        if warning:
+            log_event(logger, "Sync completed with precautions", level=WARNING,
+                      source=source, destination=destination, warning=warning)
         results["syncs"].append({
             "source": source,
             "destination": destination,
@@ -578,7 +599,7 @@ def execute_storage_operations() -> dict:
         
         if completed:
             new_state[op_id] = time.time()
-        if not success:
+        if not success or not completed:
             results["success"] = False
         record_attempt(new_state, op_id, completed)
         save_last_run(new_state)
@@ -712,7 +733,8 @@ def execute_storage_operations() -> dict:
 def send_operation_notification(results: dict, notification_configs: list, logger, 
                                 friendly_name: str | None = None) -> None:
     """Send summary notification for operations."""
-    success_count = sum(1 for s in results["syncs"] if s.get("success"))
+    success_count = sum(1 for s in results["syncs"]
+                        if s.get("success") and s.get("completed", True))
     total_syncs = len(results["syncs"])
     
     scrub_success_count = sum(1 for s in results["scrubs"] if s.get("success"))
@@ -776,6 +798,8 @@ def format_operation_results(operations: list) -> str:
     lines = []
     for op in operations:
         success_mark = "✓" if op.get("success") else "✗"
+        if op.get("success") and op.get("completed") is False:
+            success_mark = "!"
         if op.get("skipped"):
             success_mark = "○"
         

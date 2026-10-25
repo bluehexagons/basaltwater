@@ -70,20 +70,31 @@ class StorageMountSafetyTests(unittest.TestCase):
                 with patch('lib.task_utils.os.path.ismount', return_value=True):
                     self.assertEqual(unavailable_sync_subtrees(str(alias), str(self.destination), config), ())
 
-    def test_scheduled_backup_retains_retry_for_preflight_mount_exclusions(self):
-        mount = self.source / 'disk'
-        mount.mkdir()
+    def test_scheduled_mount_preflight_is_deferred_to_the_supervised_worker(self):
         config = {'backup_specs': [[str(self.source), str(self.destination), 'daily']],
-                  'storage_mounts': [['data', str(mount)]]}
-        with patch.object(storage_ops, 'load_setup_config', return_value=config), patch.object(storage_ops, 'STATE_FILE', str(self.root / 'state.json')), patch.object(storage_ops, 'get_service_logger'), patch.object(storage_ops, 'parse_notification_args', return_value=[]), patch('lib.task_utils.os.path.ismount', return_value=False), patch.object(sync_rsync, 'run_rsync_with_notifications', return_value=0) as run:
+                  'storage_mounts': [['data', str(self.source / 'disk')]]}
+
+        def partial(_source, _destination, _logger, *, config, precautions):
+            precautions.warning = 'Preserved unavailable configured mounts: disk'
+            precautions.retry_required = True
+            return True, 'Sync transferred available paths; mount coverage is incomplete and requires retry'
+
+        with patch.object(storage_ops, 'load_setup_config', return_value=config), \
+             patch.object(storage_ops, 'STATE_FILE', str(self.root / 'state.json')), \
+             patch.object(storage_ops, 'get_service_logger'), \
+             patch.object(storage_ops, 'parse_notification_args', return_value=[]), \
+             patch.object(storage_ops, 'validate_mounts_for_operation', side_effect=AssertionError('mount I/O outside worker')), \
+             patch.object(storage_ops, 'validate_sync_integrity', side_effect=AssertionError('findings I/O outside worker')), \
+             patch.object(storage_ops, 'run_sync', side_effect=partial) as run:
             result = storage_ops.execute_storage_operations()
             state = storage_ops.load_last_run()
-        self.assertTrue(result['success'])
+        self.assertFalse(result['success'])
         self.assertIn('unavailable configured mounts', result['syncs'][0]['warning'])
-        run.assert_called_once_with(str(self.source), str(self.destination), suppress_notifications=True,
-                                    excluded_paths=('disk',), copy_new_only=False,
-                                    config=RuntimeConfig.from_dict(config),
-                                    precautions=sync_rsync.SyncPrecautions())
+        self.assertTrue(result['syncs'][0]['success'])
+        self.assertFalse(result['syncs'][0]['completed'])
+        self.assertEqual(run.call_args.args[:2], (str(self.source), str(self.destination)))
+        self.assertEqual(run.call_args.kwargs['config'], RuntimeConfig.from_dict(config))
+        self.assertIsInstance(run.call_args.kwargs['precautions'], sync_rsync.SyncPrecautions)
         op_id = storage_ops.get_sync_op_id(str(self.source), str(self.destination))
         self.assertFalse(result['syncs'][0]['completed'])
         self.assertNotIn(op_id, state)
@@ -97,11 +108,11 @@ class StorageMountSafetyTests(unittest.TestCase):
                       'storage_mounts': [['data', str(mount)]]}
 
             def restored_worker(*args, **kwargs):
-                self.assertEqual(kwargs['excluded_paths'], ('restored',))
-                # The mount is present again: the worker reports no new loss,
-                # but still uses the exclusion supplied by preflight.
-                kwargs['precautions'].warning = ''
-                kwargs['precautions'].retry_required = False
+                self.assertTrue(kwargs['check_integrity'])
+                # The worker retains its exclusion and reports incomplete
+                # coverage even if the mount returns before completion.
+                kwargs['precautions'].warning = 'Preserved unavailable configured mounts: restored'
+                kwargs['precautions'].retry_required = True
                 return 0
 
             with self.subTest(endpoint=endpoint), \
@@ -109,11 +120,11 @@ class StorageMountSafetyTests(unittest.TestCase):
                  patch.object(storage_ops, 'STATE_FILE', str(self.root / endpoint.name / 'state.json')), \
                  patch.object(storage_ops, 'get_service_logger'), \
                  patch.object(storage_ops, 'parse_notification_args', return_value=[]), \
-                 patch('lib.task_utils.os.path.ismount', return_value=False), \
                  patch.object(sync_rsync, 'run_rsync_with_notifications', side_effect=restored_worker):
                 result = storage_ops.execute_storage_operations()
                 state = storage_ops.load_last_run()
             operation = result['syncs'][0]
+            self.assertFalse(result['success'])
             self.assertTrue(operation['success'])
             self.assertFalse(operation['completed'])
             self.assertIn('unavailable configured mounts', operation['warning'])
