@@ -120,10 +120,11 @@ and packages. Do not manually delete immutable generations while the feature
 is enabled.
 
 If the service's unit file was manually removed while systemd still has it
-loaded, setup refuses to continue. Restore the managed file, or stop
-`basaltwater-kiosk.service` and run `systemctl daemon-reload` before retrying.
-This prevents a still-running login manager from recreating sessions during
-cleanup.
+loaded, active, or enabled, setup refuses to continue. This also applies when
+`daemon-reload` changes its load state to `not-found` while processes remain
+active. Restore the managed file, or stop and disable
+`basaltwater-kiosk.service`, then run `systemctl daemon-reload` before retrying.
+This prevents a still-running login manager from recreating sessions during cleanup.
 
 ## Proxmox and hardware qualification
 

@@ -42,6 +42,13 @@ Callback failures restore unit files and activation state through the existing
 rollback; callback side effects are not rolled back. Dry runs and removals with
 no managed files skip the callback.
 
+For existing managed definitions, `LoadState=not-found` does not establish
+that a unit is inactive: a reload after unlinking its file can leave processes
+running. Deactivation checks activity and enablement independently, stops active
+units before preparation, and disables enabled units even if they are unloaded.
+Callers remain responsible for active units whose managed files are missing,
+because grouped removal skips missing files.
+
 Recovery decisions made before acquiring operation ownership must pass the
 inspected record as `expected_record` to `OperationStateStore.transition()`.
 Matching only the operation ID can replay a stale checkpoint after another

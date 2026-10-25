@@ -133,12 +133,18 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             # Stop activators before their service, but retain every file until
             # the entire group is quiescent. A timed-out stop may have acted.
             for name in (*deactivate, *managed_removals):
-                if states[name]["LoadState"] == "not-found":
+                previous = states[name]
+                # Reloading an unlinked unit can report not-found while its
+                # processes remain active. Enablement is independent too.
+                stop_required = previous["LoadState"] != "not-found" or previous["ActiveState"] != "inactive"
+                disable_required = previous["UnitFileState"] in {"enabled", "enabled-runtime"}
+                if not stop_required and not disable_required:
                     continue
                 touched.append(name)
-                _command("systemctl", "stop", name)
-                if states[name]["UnitFileState"] in {"enabled", "enabled-runtime"}:
-                    flags = ["--runtime"] if states[name]["UnitFileState"] == "enabled-runtime" else []
+                if stop_required:
+                    _command("systemctl", "stop", name)
+                if disable_required:
+                    flags = ["--runtime"] if previous["UnitFileState"] == "enabled-runtime" else []
                     _command("systemctl", "disable", *flags, name)
                 state = inspect_unit_state(name)
                 if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:

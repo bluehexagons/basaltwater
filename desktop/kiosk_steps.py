@@ -67,9 +67,13 @@ def _owned(path: Path) -> dict | None:
 
 def _owned_service() -> dict | None:
     previous = _owned(UNIT_DIR / SERVICE)
-    if previous is None and inspect_unit_state(SERVICE)["LoadState"] != "not-found":
-        raise RuntimeError("Kiosk service is loaded without its managed file; restore the unit "
-                           "or stop it and daemon-reload before configuring kiosk")
+    if previous is None:
+        state = inspect_unit_state(SERVICE)
+        if (state["LoadState"] != "not-found" or state["ActiveState"] != "inactive"
+                or state["UnitFileState"] in {"enabled", "enabled-runtime"}):
+            raise RuntimeError("Kiosk service is loaded, active or enabled without its managed file; "
+                               "restore the unit or stop and disable it, then daemon-reload "
+                               "before configuring kiosk")
     return previous
 
 

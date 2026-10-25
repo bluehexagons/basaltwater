@@ -213,16 +213,23 @@ class KioskLifecycleTests(unittest.TestCase):
         self.remove.assert_not_called()
         self.assertTrue(all(path.exists() for path in files))
 
-    def test_loaded_service_without_managed_file_is_refused_before_cleanup_or_mutations(self):
+    def test_service_without_managed_file_must_be_unloaded_inactive_and_disabled(self):
         steps.configure_kiosk(config(kiosk_mode="web"))
         (steps.UNIT_DIR / steps.SERVICE).unlink()
         files = list(steps.CONFIG_DIR.iterdir())
         self.cleanup.reset_mock()
         self.packages.reset_mock()
-        for mode in ("web", "cli", "off"):
-            with self.subTest(mode=mode), self.assertRaisesRegex(RuntimeError, "loaded without its managed file"):
-                steps.configure_kiosk(config(kiosk_mode=mode))
-            self.assertTrue(all(path.exists() for path in files))
+        for load, active, enabled in (("loaded", "active", "enabled"),
+                                      ("not-found", "active", ""),
+                                      ("not-found", "activating", ""),
+                                      ("not-found", "inactive", "enabled"),
+                                      ("not-found", "inactive", "enabled-runtime")):
+            self.state.update(LoadState=load, ActiveState=active, UnitFileState=enabled)
+            for mode in ("web", "cli", "off"):
+                with self.subTest(state=self.state, mode=mode), self.assertRaisesRegex(
+                        RuntimeError, "without its managed file"):
+                    steps.configure_kiosk(config(kiosk_mode=mode))
+                self.assertTrue(all(path.exists() for path in files))
         self.cleanup.assert_not_called()
         self.packages.assert_not_called()
         self.remove.assert_not_called()

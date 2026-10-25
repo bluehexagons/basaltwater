@@ -184,6 +184,30 @@ class TestUnitTransaction(unittest.TestCase):
                 result = json.loads((self.root / ".basaltwater-unit-operation.json.last.json").read_text())
                 self.assertEqual(result["outcome"], "rolled_back")
 
+    def test_not_found_state_does_not_skip_active_or_enabled_deactivation(self):
+        original = self.run_command
+
+        def command(args, **kwargs):
+            result = original(args, **kwargs)
+            result.stdout = result.stdout.replace("LoadState=loaded", "LoadState=not-found")
+            return result
+
+        def prepare():
+            self.assertEqual(self.active, "inactive")
+            self.assertNotIn(self.enabled, {"enabled", "enabled-runtime"})
+            self.assertEqual(self.path.read_text(), "old unit")
+
+        for active, enabled in (("active", "enabled"), ("active", "static"),
+                                 ("inactive", "enabled-runtime"), ("inactive", "disabled")):
+            with self.subTest(active=active, enabled=enabled), patch.object(units, "run", side_effect=command):
+                self.path.write_text("old unit")
+                self.active, self.enabled = active, enabled
+                self.commands.clear()
+                units.replace_units({"demo.timer": "new unit"}, activate=(), deactivate=("demo.timer",),
+                                    prepare=prepare, unit_dir=str(self.root))
+                self.assertEqual(self.path.read_text(), "new unit")
+                self.assertEqual(["systemctl", "stop", "demo.timer"] in self.commands, active == "active")
+
     def test_prepare_is_skipped_when_validation_or_deactivation_fails(self):
         for failure in (["systemd-analyze", "verify"], ["systemctl", "stop"], ["systemctl", "disable"]):
             with self.subTest(failure=failure):
@@ -524,6 +548,24 @@ class TestUnitRemoval(unittest.TestCase):
         self.assertEqual(effect.read_text(), "teardown attempted")
         result = json.loads((self.root / ".basaltwater-unit-operation.json.last.json").read_text())
         self.assertEqual(result["outcome"], "rolled_back")
+
+    def test_not_found_active_service_stops_before_removal_preparation(self):
+        original = self.run_command
+
+        def command(args, **kwargs):
+            result = original(args, **kwargs)
+            if args[:3] == ["systemctl", "show", "demo.service"]:
+                result.stdout = result.stdout.replace("LoadState=loaded", "LoadState=not-found")
+            return result
+
+        def prepare():
+            self.assertIn(["systemctl", "stop", "demo.service"], self.commands)
+            self.assertEqual(self.states["demo.service"][0], "inactive")
+            self.assertTrue((self.root / "demo.service").exists())
+
+        with patch.object(units, "run", side_effect=command):
+            self.remove(prepare=prepare)
+        self.assertFalse((self.root / "demo.service").exists())
 
     def test_stop_disable_and_reload_failures_restore_entire_group(self):
         for failure in (
