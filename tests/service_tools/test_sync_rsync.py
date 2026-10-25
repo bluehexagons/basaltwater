@@ -100,11 +100,24 @@ class TestSyncRsyncLogging(unittest.TestCase):
             with sync_rsync._rsync_command('/src', '/dst', (), True) as (command, filters):
                 self.assertIn('--ignore-existing', command)
                 self.assertIn('--partial-dir=.rsync-partial', command)
+                self.assertIn('--exclude=.rsync-partial', command)
+                self.assertIn('--partial', command)
+                self.assertNotIn('--inplace', command)
                 self.assertNotIn('--delete', command)
                 self.assertNotIn('--delete-delay', command)
                 self.assertIsNone(filters)
                 self.assertNotIn('--from0', command)
                 self.assertNotIn('--exclude-from=-', command)
+
+    def test_ordinary_sync_uses_separate_partial_storage_and_excludes_it(self):
+        with sync_rsync._rsync_command('/src', '/dst', (), False) as (command, filters):
+            self.assertIn('--delete', command)
+            self.assertIn('--delete-delay', command)
+            self.assertIn('--partial', command)
+            self.assertIn('--partial-dir=.rsync-partial', command)
+            self.assertIn('--exclude=.rsync-partial', command)
+            self.assertNotIn('--inplace', command)
+            self.assertIsNone(filters)
 
     def test_conflicting_ancestors_are_excluded_before_rsync_runs(self):
         for kind in ('source-file', 'source-symlink', 'destination-file', 'destination-symlink'):
@@ -641,6 +654,28 @@ class TestMountNamespace(unittest.TestCase):
             self.assertEqual(self.run_sync(config=config, initial_setup=True), 1)
             probe.assert_called_once_with(str(self.destination))
             self.exec.assert_not_called()
+
+    def test_interrupted_ordinary_sync_keeps_good_destination_and_separates_partial(self):
+        destination_file = self.destination / 'important.bin'
+        destination_file.write_bytes(b'previous complete contents')
+
+        def interrupt(command):
+            self.assertIn('--partial', command)
+            self.assertIn('--partial-dir=.rsync-partial', command)
+            self.assertIn('--exclude=.rsync-partial', command)
+            self.assertNotIn('--inplace', command)
+            partial = self.destination / '.rsync-partial' / destination_file.name
+            partial.parent.mkdir()
+            partial.write_bytes(b'incomplete replacement')
+            raise OSError('simulated rsync interruption')
+
+        self.after_validation = interrupt
+        self.assertEqual(self.run_sync(), 1)
+        self.assertEqual(destination_file.read_bytes(), b'previous complete contents')
+        self.assertEqual(
+            (self.destination / '.rsync-partial' / destination_file.name).read_bytes(),
+            b'incomplete replacement',
+        )
 
 
 class TestRsyncDeadline(unittest.TestCase):

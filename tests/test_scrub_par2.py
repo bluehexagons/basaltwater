@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import errno
 import subprocess
 import sys
 import tempfile
@@ -313,6 +314,74 @@ class TestScrubResultFailures(unittest.TestCase):
             found = scrub_par2._parity_files(os.path.join(tmp, 'a.par2'))
             self.assertEqual(sorted(os.path.basename(path) for path in found), sorted(names[:2]))
             self.assertEqual(sorted(os.listdir(tmp)), sorted(names))
+
+    def test_parity_discovery_matches_literal_names_with_spaces_and_globs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, 'literal [1]? name.par2')
+            expected = {
+                base,
+                base + '.vol00+01.par2',
+                os.path.join(tmp, 'literal [1]? name.vol00+01.par2'),
+            }
+            for path in expected:
+                Path(path).write_bytes(b'parity')
+            Path(os.path.join(tmp, 'literal 1x name.par2')).write_bytes(b'unrelated')
+            Path(base + '.backup').write_bytes(b'unrelated')
+
+            self.assertEqual(set(scrub_par2._parity_files(base)), expected)
+
+    def test_parity_discovery_treats_only_missing_parent_as_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, 'absent', 'data.par2')
+            self.assertEqual(scrub_par2._parity_files(missing), [])
+
+            for error in (OSError(errno.EIO, 'enumeration failed'),
+                          NotADirectoryError(errno.ENOTDIR, 'not a directory')):
+                with self.subTest(error=error), patch.object(scrub_par2.os, 'scandir', side_effect=error):
+                    with self.assertRaises(OSError) as raised:
+                        scrub_par2._parity_files(os.path.join(tmp, 'data.par2'))
+                    self.assertEqual(raised.exception.errno, error.errno)
+
+    def test_enumeration_eio_after_preflight_preserves_legacy_parity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'source'
+            database = Path(tmp) / 'database'
+            source.mkdir()
+            database.mkdir()
+            data = source / 'data.bin'
+            parity = database / 'data.bin.par2'
+            data.write_bytes(b'damaged source contents')
+            parity.write_bytes(b'last known parity baseline')
+            real_scandir = os.scandir
+            database_enumerations = 0
+
+            def fail_second_database_enumeration(path):
+                nonlocal database_enumerations
+                if os.fspath(path) == str(database):
+                    database_enumerations += 1
+                    if database_enumerations == 2:
+                        raise OSError(errno.EIO, 'transient parity enumeration failure', str(database))
+                return real_scandir(path)
+
+            with (
+                patch.object(scrub_par2, 'log'),
+                patch.object(scrub_par2, 'create_operation_logger'),
+                patch.object(scrub_par2.os, 'scandir', side_effect=fail_second_database_enumeration),
+                patch.object(scrub_par2.subprocess, 'run') as par2,
+            ):
+                result = scrub_par2.scrub_directory(
+                    str(source), str(database), 10, 'unused', verify=False,
+                    suppress_notifications=True,
+                )
+
+            self.assertGreaterEqual(database_enumerations, 3)
+            self.assertFalse(result['ok'])
+            self.assertFalse(result['completed'])
+            self.assertEqual(result['files_failed'], ['data.bin'])
+            self.assertEqual(parity.read_bytes(), b'last known parity baseline')
+            par2.assert_not_called()
+            report = scrub_par2.Findings(str(source), str(database))
+            self.assertEqual(report.data['files']['data.bin']['category'], 'io_error')
 
     def test_cli_returns_failure_for_unsuccessful_result(self):
         with patch.object(sys, 'argv', ['scrub', '/data', '/db', '10', '/log']), patch.object(scrub_par2, 'scrub_directory', return_value={'ok': False}):

@@ -193,9 +193,11 @@ def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...
                    copy_new_only: bool) -> Iterator[tuple[list[str], BinaryIO | None]]:
     """Build filters inside the pinned mount view and retain them through exec."""
     protected_paths = _protected_paths(source, destination, excluded_paths)
-    options = [] if copy_new_only else ['--delete', '--delete-delay']
+    options = ['--partial-dir=.rsync-partial']
+    if not copy_new_only:
+        options.extend(['--delete', '--delete-delay'])
     if copy_new_only:
-        options.extend(['--ignore-existing', '--partial-dir=.rsync-partial'])
+        options.append('--ignore-existing')
         protected_paths += _copy_new_conflicts(source, destination, protected_paths)
     with tempfile.TemporaryFile() as filters:
         if protected_paths:
@@ -208,7 +210,7 @@ def _rsync_command(source: str, destination: str, excluded_paths: tuple[str, ...
             options.extend(['--from0', '--exclude-from=-'])
         yield [
             '/usr/bin/rsync', '-av', *options, '--partial', '--mkpath',
-            '--exclude=.git', '--info=progress2', '--stats', '--',
+            '--exclude=.git', '--exclude=.rsync-partial', '--info=progress2', '--stats', '--',
             f'{source}/', f'{destination}/',
         ], filters if protected_paths else None
 
