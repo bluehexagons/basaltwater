@@ -57,8 +57,43 @@ def validate_kiosk_url(value: str) -> str:
     return value
 
 
+def validate_kiosk_destinations(value: list[dict[str, str]] | None) -> list[dict[str, str]] | None:
+    """Return the unchanged destination list after validating its saved schema."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 16:
+        raise ValueError("kiosk_destinations must be a list of at most 16 destinations")
+    names: set[str] = set()
+    for destination in value:
+        if not isinstance(destination, dict) or set(destination) != {"name", "url"}:
+            raise ValueError("Each kiosk destination must contain exactly name and url")
+        name = destination["name"]
+        if not isinstance(name, str) or not name or name != name.strip() or len(name) > 80:
+            raise ValueError("Kiosk destination names must be trimmed, non-empty strings of at most 80 characters")
+        validate_no_control_characters(name, "Kiosk destination name")
+        if any(unicodedata.category(char) in {"Cc", "Cf"} for char in name):
+            raise ValueError("Kiosk destination names must not contain control or format characters")
+        if name.casefold() in names:
+            raise ValueError("Kiosk destination names must be unique (case-insensitive)")
+        names.add(name.casefold())
+        validate_kiosk_url(destination["url"])
+    return value
+
+
+def parse_kiosk_destination(value: str) -> dict[str, str]:
+    """Parse one NAME=URL argument, preserving equals signs in the URL."""
+    name, separator, url = value.partition("=")
+    if not separator:
+        raise ValueError("--kiosk-destination requires NAME=URL")
+    if any(unicodedata.category(char) in {"Cc", "Cf"} for char in name):
+        raise ValueError("Kiosk destination names must not contain control or format characters")
+    destination = {"name": name.strip(), "url": url}
+    validate_kiosk_destinations([destination])
+    return destination
+
+
 def validate_kiosk_settings(config: SetupConfig, complete: bool = True) -> None:
-    """Validate a plan, allowing URL-only partial patches before mode inheritance."""
+    """Validate a plan, allowing partial homepage patches before mode inheritance."""
     mode = config.kiosk_mode
     if mode is not None and (not isinstance(mode, str) or mode not in {"web", "cli", "off"}):
         raise ValueError("kiosk_mode must be web, cli, off, or None")
@@ -66,10 +101,13 @@ def validate_kiosk_settings(config: SetupConfig, complete: bool = True) -> None:
         validate_kiosk_url(config.kiosk_url)
         if mode == "off" or (complete and mode is None):
             raise ValueError("--kiosk-url requires an enabled kiosk (--kiosk web or cli)")
-    if mode is None and config.kiosk_url is None:
+    destinations = validate_kiosk_destinations(config.kiosk_destinations)
+    if destinations and (mode == "off" or (complete and mode is None)):
+        raise ValueError("--kiosk-destination requires an enabled kiosk (--kiosk web or cli)")
+    if mode is None and config.kiosk_url is None and destinations is None:
         return
     if config.system_type != "server_proxmox":
-        raise ValueError("--kiosk, --no-kiosk, and --kiosk-url require the server_proxmox profile")
+        raise ValueError("--kiosk, --no-kiosk, --kiosk-url, --kiosk-destination, and --clear-kiosk-destinations require the server_proxmox profile")
     if mode in {"web", "cli"}:
         if config.include_desktop or config.enable_rdp or config.guacamole:
             raise ValueError("--kiosk cannot be combined with a shared desktop, --desktop, --rdp, or --guacamole")

@@ -16,7 +16,12 @@ from lib.arg_parser import create_setup_argument_parser
 from lib.cache import load_setup_command, merge_setup_configs, save_setup_command
 from lib.config import SetupConfig
 from lib.display import print_setup_summary
-from lib.kiosk_config import validate_kiosk_settings, validate_kiosk_url
+from lib.kiosk_config import (
+    parse_kiosk_destination,
+    validate_kiosk_destinations,
+    validate_kiosk_settings,
+    validate_kiosk_url,
+)
 
 
 def kiosk_config(**overrides) -> SetupConfig:
@@ -79,7 +84,8 @@ class TestKioskSettings(unittest.TestCase):
     def test_profile_restrictions_include_opt_out_and_partial_url(self):
         for system_type in ("server_lite", "server_web", "agent_vm", "agent_cachyos", "server_wsl", "custom_steps"):
             for settings in ({"kiosk_mode": "web"}, {"kiosk_mode": "cli"}, {"kiosk_mode": "off"},
-                             {"kiosk_url": "http://localhost/"}):
+                             {"kiosk_url": "http://localhost/"}, {"kiosk_destinations": []},
+                             {"kiosk_destinations": [{"name": "Local", "url": "http://localhost/"}]}):
                 with self.subTest(system_type=system_type, settings=settings), self.assertRaisesRegex(ValueError, "server_proxmox"):
                     kiosk_config(system_type=system_type, username="operator", **settings)
 
@@ -111,6 +117,60 @@ class TestKioskSettings(unittest.TestCase):
             kiosk_config(kiosk_mode="off", kiosk_url="http://localhost/")
 
 
+class TestKioskDestinations(unittest.TestCase):
+    def test_valid_schema_and_boundaries_are_preserved(self):
+        destinations = [
+            {"name": "🖥" * 80, "url": "http://localhost/"},
+            *[{"name": f"Node {index}", "url": "https://pve.example:8006/"} for index in range(15)],
+        ]
+        self.assertIs(validate_kiosk_destinations(destinations), destinations)
+        empty = []
+        self.assertIs(validate_kiosk_destinations(empty), empty)
+        self.assertIsNone(validate_kiosk_destinations(None))
+
+    def test_invalid_schema_names_urls_and_duplicates_are_rejected(self):
+        def item(name="Node", url="https://pve.example/"):
+            return {"name": name, "url": url}
+
+        for value in (
+            False, "Node=https://pve.example/", {}, (), [None], [[]],
+            [{"name": "Node"}], [{"url": "http://localhost/"}],
+            [{**item(), "extra": "value"}],
+            *[[item(name)] for name in (None, 1, "", " ", " Node", "Node ", "x" * 81,
+                                        "Node\n", "No\tde", "No\x00de", "No\x7fde",
+                                        "No\x85de", "No\u200bde", "No\u202ede")],
+            *[[item(url=url)] for url in (None, False, "", "file:///etc/passwd",
+                                          "https://user:secret@pve.example/", "https://pve.example/a b")],
+            [item("Node"), item("NODE")], [item("Straße"), item("STRASSE")],
+            [item(f"Node {index}") for index in range(17)],
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_kiosk_destinations(value)
+
+    def test_parser_trims_name_and_splits_only_first_equals(self):
+        self.assertEqual(
+            parse_kiosk_destination("  Main console  =https://pve.example/?a=b=c#home"),
+            {"name": "Main console", "url": "https://pve.example/?a=b=c#home"},
+        )
+        for value in ("No separator", "=http://localhost/", "   =http://localhost/", "Name=",
+                      "Name=file:///etc/passwd", "Name\n=http://localhost/", "\x85Name=http://localhost/"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                parse_kiosk_destination(value)
+
+    def test_partial_nonempty_list_requires_enabled_mode_when_complete(self):
+        destinations = [{"name": "Node", "url": "http://localhost/"}]
+        partial = kiosk_config(kiosk_destinations=destinations)
+        validate_kiosk_settings(partial, complete=False)
+        for complete in (validate_kiosk_settings, SetupConfig.to_remote_args, SetupConfig.to_setup_command):
+            with self.subTest(complete=complete.__name__), self.assertRaisesRegex(ValueError, "enabled kiosk"):
+                complete(partial)
+        with self.assertRaisesRegex(ValueError, "enabled kiosk"):
+            kiosk_config(kiosk_mode="off", kiosk_destinations=destinations)
+        for mode in (None, "off", "web", "cli"):
+            with self.subTest(mode=mode):
+                validate_kiosk_settings(kiosk_config(kiosk_mode=mode, kiosk_destinations=[]))
+
+
 class TestKioskCLI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -123,9 +183,11 @@ class TestKioskCLI(unittest.TestCase):
 
     def test_setup_patch_remote_defaults_are_omitted(self):
         self.assertIsNone(self.parse_config().kiosk_mode)
+        self.assertIsNone(self.parse_config().kiosk_destinations)
         for args in (self.parser.parse_args(["patch", "pve.example"]), self.remote_parser.parse_args([])):
             self.assertIsNone(args.kiosk_mode)
             self.assertIsNone(args.kiosk_url)
+            self.assertIsNone(args.kiosk_destinations)
         self.assertFalse(any("kiosk" in part for part in self.parse_config().to_remote_args()))
 
     def test_mutually_exclusive_mode_flags(self):
@@ -201,6 +263,125 @@ class TestKioskCLI(unittest.TestCase):
         old = SetupConfig.from_dict("pve.example", "server_proxmox", {"username": "root"})
         self.assertIsNone(old.kiosk_mode)
         self.assertIsNone(old.kiosk_url)
+        self.assertIsNone(old.kiosk_destinations)
+
+    def test_destination_flags_parse_repeats_and_clear_for_setup_patch_and_remote(self):
+        for parser, prefix in (
+            (self.parser, ["setup", "server_proxmox", "pve.example", "root"]),
+            (self.parser, ["patch", "pve.example", "root"]),
+            (self.remote_parser, []),
+        ):
+            with self.subTest(prefix=prefix):
+                args = parser.parse_args([*prefix, "--kiosk-destination", " First =https://pve.example/?a=b", "--kiosk-destination", "Second=http://localhost/"])
+                self.assertEqual(args.kiosk_destinations, [
+                    {"name": "First", "url": "https://pve.example/?a=b"},
+                    {"name": "Second", "url": "http://localhost/"},
+                ])
+                self.assertEqual(parser.parse_args([*prefix, "--clear-kiosk-destinations"]).kiosk_destinations, [])
+                for flags in (
+                    ["--kiosk-destination", "missing separator"],
+                    ["--kiosk-destination", "Name=file:///etc/passwd"],
+                    ["--kiosk-destination", "Name=http://localhost/", "--clear-kiosk-destinations"],
+                    ["--clear-kiosk-destinations", "--kiosk-destination", "Name=http://localhost/"],
+                ):
+                    with self.subTest(flags=flags), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                        parser.parse_args([*prefix, *flags])
+
+    def test_destination_roundtrip_preserves_omitted_empty_and_populated(self):
+        destinations = [
+            {"name": "-Operator's $HOME; `id`", "url": "https://[::1]:8006/?a=b&c=$(id)#home"},
+            {"name": 'Other "console"', "url": "https://pve.example/a'b?v=$HOME"},
+        ]
+        for mode, value in ((None, None), (None, []), ("off", []), ("web", destinations), ("cli", destinations)):
+            config = kiosk_config(kiosk_mode=mode, kiosk_destinations=value)
+            with self.subTest(mode=mode, destinations=value):
+                remote_args = self.remote_parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+                with patch("remote_setup.resolve_machine_type", return_value="hardware"):
+                    remote = remote_setup.config_from_remote_args(remote_args)
+                setup_args = self.parser.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:])
+                reconstructed = SetupConfig.from_args(setup_args, setup_args.system_type)
+                for result in (remote, reconstructed):
+                    self.assertEqual(result.kiosk_mode, mode)
+                    self.assertEqual(result.kiosk_destinations, value)
+
+    def test_destination_cache_roundtrip_and_invalid_saved_schema(self):
+        for value in (None, [], [{"name": "Node", "url": "https://pve.example:8006/"}]):
+            config = kiosk_config(kiosk_mode="web", kiosk_destinations=value)
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as workspace, \
+                 patch("lib.cache.get_setup_cache_dir", return_value=workspace):
+                save_setup_command(config)
+                restored = load_setup_command(config.host)
+                self.assertEqual(restored.kiosk_destinations, value)
+        for invalid in ({}, [{"name": "Node", "url": "file:///etc/passwd"}], [{"name": "Node"}]):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                SetupConfig.from_dict("pve.example", "server_proxmox", {
+                    "username": "root", "kiosk_mode": "web", "kiosk_destinations": invalid,
+                })
+
+    def test_destination_patch_inheritance_replacement_clear_and_disable(self):
+        original = [{"name": "Saved", "url": "http://localhost/old"}]
+        saved = kiosk_config(kiosk_mode="web", kiosk_url="http://localhost/home", kiosk_destinations=original)
+        for flags, expected in (
+            ([], original),
+            (["--kiosk", "cli"], original),
+            (["--kiosk-destination", "New=https://pve.example/new?a=b"], [{"name": "New", "url": "https://pve.example/new?a=b"}]),
+            (["--clear-kiosk-destinations"], []),
+            (["--no-kiosk"], []),
+        ):
+            args = self.parser.parse_args(["patch", "pve.example", "root", *flags])
+            new = SetupConfig.from_args(args, "server_proxmox")
+            merged = merge_setup_configs(saved, new, preserve_keys=basaltwater._patch_preserve_keys(args))
+            with self.subTest(flags=flags):
+                validate_kiosk_settings(merged)
+                self.assertEqual(merged.kiosk_destinations, expected)
+                self.assertEqual(merged.kiosk_url, None if "--no-kiosk" in flags else saved.kiosk_url)
+        self.assertEqual(saved.kiosk_destinations, original)
+
+    def test_destinations_only_patch_requires_inherited_enabled_mode(self):
+        args = self.parser.parse_args(["patch", "pve.example", "root", "--kiosk-destination", "Node=http://localhost/"])
+        new = SetupConfig.from_args(args, "server_proxmox")
+        for mode in (None, "off"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "enabled kiosk"):
+                merged = merge_setup_configs(kiosk_config(kiosk_mode=mode), new)
+                validate_kiosk_settings(merged)
+        with self.assertRaisesRegex(ValueError, "enabled kiosk"):
+            self.parse_config("--no-kiosk", "--kiosk-destination", "Node=http://localhost/")
+
+    def test_repeated_destination_flags_validate_the_complete_list(self):
+        for specs in (
+            ["Node=http://localhost/", "NODE=https://pve.example/"],
+            [f"Node {index}=http://localhost/" for index in range(17)],
+        ):
+            flags = [part for spec in specs for part in ("--kiosk-destination", spec)]
+            with self.subTest(specs=specs), self.assertRaises(ValueError):
+                self.parse_config("--kiosk", "web", *flags)
+
+    def test_patch_summary_reports_destination_count(self):
+        config = kiosk_config(kiosk_mode="web", kiosk_destinations=[{"name": "Node", "url": "http://localhost/"}])
+        with patch("basaltwater.os.path.exists", return_value=True), \
+             patch("basaltwater._prepare_runtime_config_for_cli", side_effect=ValueError("stop before execution")), \
+             redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(basaltwater._execute_patch_config(config), 1)
+        self.assertIn("Kiosk destinations: 1", output.getvalue())
+
+    def test_invalid_destinations_rejected_before_staging_or_credentials(self):
+        config = kiosk_config(kiosk_destinations=[{"name": "Node", "url": "http://localhost/"}])
+        with patch("lib.setup_common.prepare_runtime_config") as credentials, \
+             patch("lib.setup_common.copy_project_files") as stage, \
+             patch("lib.setup_common.ensure_remote_sudo") as ssh, \
+             self.assertRaisesRegex(ValueError, "enabled kiosk"):
+            setup_common.run_remote_setup(config)
+        credentials.assert_not_called()
+        stage.assert_not_called()
+        ssh.assert_not_called()
+        config.kiosk_mode = "web"
+        config.kiosk_destinations[0]["url"] = "file:///etc/passwd"
+        for prepare in (SetupConfig.to_remote_args, SetupConfig.to_setup_command,
+                        basaltwater._prepare_runtime_config_for_cli):
+            with self.subTest(prepare=prepare.__name__), \
+                 patch("basaltwater.prepare_runtime_config") as credentials, self.assertRaises(ValueError):
+                prepare(config)
+            credentials.assert_not_called()
 
     def test_invalid_completed_config_rejected_before_staging_or_credentials(self):
         config = kiosk_config(kiosk_url="http://localhost/")

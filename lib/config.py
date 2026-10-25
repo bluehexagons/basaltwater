@@ -478,6 +478,7 @@ class SetupConfig:
     guacamole: Optional[bool] = None
     kiosk_mode: str | None = None
     kiosk_url: str | None = None
+    kiosk_destinations: list[dict[str, str]] | None = None
     maintenance_agent: Optional[bool] = None
     maintenance_agent_host_checks: Optional[bool] = None
     maintenance_agent_interval: Optional[int] = None
@@ -1594,6 +1595,9 @@ class SetupConfig:
         
         Returns a list of command parts that can be joined with spaces or newlines.
         """
+        from lib.kiosk_config import validate_kiosk_settings
+
+        validate_kiosk_settings(self)
         setup_host = self.host
         provisioned_ipv4 = False
         if self.hosted_node and self.static_ipv4:
@@ -2229,6 +2233,12 @@ class SetupConfig:
             args.append(f"--kiosk {shlex.quote(self.kiosk_mode)}")
         if self.kiosk_url is not None:
             args.append(f"--kiosk-url {shlex.quote(self.kiosk_url)}")
+        if self.kiosk_destinations == []:
+            args.append("--clear-kiosk-destinations")
+        for destination in self.kiosk_destinations or []:
+            value = f"{destination['name']}={destination['url']}"
+            separator = "=" if value.startswith("-") else " "
+            args.append(f"--kiosk-destination{separator}{shlex.quote(value)}")
         return args
 
     def _homebox_args(self) -> StrList:
@@ -2899,6 +2909,11 @@ class SetupConfig:
             guacamole=_optional_bool_arg(args, 'guacamole'),
             kiosk_mode=_optional_str_arg(args, 'kiosk_mode'),
             kiosk_url=_optional_str_arg(args, 'kiosk_url'),
+            kiosk_destinations=(
+                args.kiosk_destinations
+                if isinstance(getattr(args, 'kiosk_destinations', None), list)
+                else None
+            ),
             maintenance_agent=_optional_bool_arg(args, 'maintenance_agent'),
             maintenance_agent_host_checks=_optional_bool_arg(args, 'maintenance_agent_host_checks'),
             maintenance_agent_interval=_optional_int_arg(args, 'maintenance_agent_interval'),

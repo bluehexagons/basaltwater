@@ -40,6 +40,7 @@ from lib.homebox_cli import add_homebox_subparser, run_homebox_command
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.kiosk_config import validate_kiosk_settings
+from lib.kiosk_cli import add_kiosk_subparser, run_kiosk_command
 from lib.cache import get_cache_path_for_host, load_all_setup_cache_records, load_setup_command, merge_setup_configs, save_setup_command
 from lib.command_display import redacted_git_url, redacted_saved_args
 from lib.channel_manager import (
@@ -161,6 +162,7 @@ def _build_basaltwater_epilog() -> str:
     network [subcommand]        Manage generic network inventory profiles
     local [subcommand]          Maintain this local Debian system
     firmware audit|update       Audit or deliberately update local firmware
+    kiosk status|doctor|start|stop|restart Inspect or control the local Proxmox kiosk
     proxmox [subcommand]        Manage Proxmox hosts and containers (interactive shell with no args)
     vm [subcommand]             Manage guests through a provider-neutral command surface
     shell                       Interactive REPL for managing saved configurations
@@ -657,6 +659,7 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     add_agent_subparser(subparsers)
     add_gogs_subparser(subparsers)
     add_homebox_subparser(subparsers)
+    add_kiosk_subparser(subparsers)
     add_scrub_subparser(subparsers)
     add_cicd_subparser(subparsers)
     add_project_manifest_subparser(subparsers)
@@ -941,6 +944,7 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
             features.append("Syncthing")
         if args.get("kiosk_mode") in {"cli", "web"}:
             features.append(f"Local kiosk ({args['kiosk_mode']})")
+            features.append(f"Kiosk destinations ({len(args.get('kiosk_destinations') or [])})")
 
         if features:
             print(f"Features: {', '.join(features)}")
@@ -1060,6 +1064,8 @@ def _execute_patch_config(config: SetupConfig) -> int:
     print(f"Host: {config.host}")
     print(f"User: {config.username}")
     print(f"Timezone: {config.timezone}")
+    if config.kiosk_destinations is not None:
+        print(f"Kiosk destinations: {len(config.kiosk_destinations)}")
     print("=" * 60)
     print()
 
@@ -2018,6 +2024,8 @@ def run_setup_command(args: argparse.Namespace) -> int:
     
     description = f"{args.system_type.replace('_', ' ').title()} Setup"
     print_setup_summary(config, description)
+    if config.kiosk_destinations is not None:
+        print(f"Kiosk destinations: {len(config.kiosk_destinations)}")
 
     if config.hosted_node and reuse_cached_provisioning:
         try:
@@ -2516,6 +2524,8 @@ def main() -> int:
         return run_gogs_command(args)
     elif args.command == "homebox":
         return run_homebox_command(args)
+    elif args.command == "kiosk":
+        return run_kiosk_command(args)
     elif args.command == "scrub":
         return run_scrub_command(args)
     elif args.command == "cicd":
