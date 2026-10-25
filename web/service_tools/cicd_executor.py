@@ -765,8 +765,12 @@ def main():
             log_event(logger, "Another executor instance is running, exiting")
             return 0
         
-        with receiver_state():
-            job_files = pending_job_files(DELIVERIES_FILE, JOBS_DIR)
+        try:
+            with receiver_state():
+                job_files = pending_job_files(DELIVERIES_FILE, JOBS_DIR)
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            log_event(logger, 'Delivery queue recovery unavailable; retaining jobs', level=40, error=str(exc))
+            return 1
         config = load_config()
         
         if not job_files:
@@ -785,6 +789,9 @@ def main():
                 success_count += 1
             else:
                 failure_count += 1
+                if os.path.lexists(job_file):
+                    log_event(logger, 'Earlier job retained; stopping queue drain', level=40, job_file=str(job_file))
+                    return 1
         
         log_event(
             logger,

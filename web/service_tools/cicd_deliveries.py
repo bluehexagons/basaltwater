@@ -117,28 +117,57 @@ def recover_pending(ledger: str, jobs_dir: str) -> None:
     if not os.path.lexists(ledger):
         return
     with _database(ledger) as connection:
-        keys = connection.execute("SELECT key FROM receipts WHERE state='pending'").fetchall()
-        if len(keys) > MAX_PENDING_JOBS:
-            raise ValueError('Delivery ledger exceeds the pending job limit')
-        for (key,) in keys:
-            _publish(connection, jobs_dir, key)
+        _recover_pending(connection, jobs_dir)
+
+
+def _recover_pending(connection, jobs_dir: str) -> None:
+    keys = connection.execute("SELECT key FROM receipts WHERE state='pending' ORDER BY rowid").fetchall()
+    if len(keys) > MAX_PENDING_JOBS:
+        raise ValueError('Delivery ledger exceeds the pending job limit')
+    for (key,) in keys:
+        _publish(connection, jobs_dir, key)
+    if keys:
+        # A previous publication may have renamed its file but failed to sync
+        # the directory. Existing paths alone do not establish durable recovery.
+        descriptor = os.open(jobs_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
 
 def pending_job_files(ledger: str, jobs_dir: str) -> list[Path]:
-    """Order recovered and live jobs by acceptance, never by their digest."""
-    created = {}
-    if os.path.lexists(ledger):
-        with _database(ledger) as connection:
-            created = {f'delivery-{key}.json': timestamp for key, timestamp in
-                       connection.execute('SELECT key, created FROM receipts')}
+    """Recover and select jobs under one lock, preserving receipt acceptance order."""
+    if not os.path.lexists(ledger):
+        jobs = _ordered_job_files(jobs_dir, {})
+        # The first receiver can create the ledger while we scan legacy jobs.
+        if not os.path.lexists(ledger):
+            return jobs
+    with _database(ledger) as connection:
+        # Keep recovery and enumeration in one transaction: a receiver must
+        # not reserve an unpublished job between them and let a later job pass.
+        _recover_pending(connection, jobs_dir)
+        accepted = {}
+        latest = float('-inf')
+        for key, timestamp, sequence in connection.execute(
+            'SELECT key, created, rowid FROM receipts ORDER BY rowid'
+        ):
+            # Wall-clock ties or rollback must not reverse durable insertion
+            # order. Keep original timestamps in the ledger for expiration.
+            latest = max(latest, timestamp)
+            accepted[f'delivery-{key}.json'] = (latest, sequence)
+        return _ordered_job_files(jobs_dir, accepted)
+
+
+def _ordered_job_files(jobs_dir: str, accepted: dict) -> list[Path]:
     jobs = []
     for path in Path(jobs_dir).glob('*.json'):
         try:
-            timestamp = created[path.name] if path.name in created else path.lstat().st_mtime
+            timestamp, sequence = accepted[path.name] if path.name in accepted else (path.lstat().st_mtime, 0)
         except FileNotFoundError:
             continue
-        jobs.append((timestamp, path.name, path))
-    return [path for _, _, path in sorted(jobs)]
+        jobs.append((timestamp, sequence, path.name, path))
+    return [path for _, _, _, path in sorted(jobs)]
 
 
 def claim(ledger: str, job_file: str, payload: dict) -> bool:

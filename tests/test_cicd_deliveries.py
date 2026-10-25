@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, closing, contextmanager, nullcontext
 import hashlib
 import hmac
 from io import BytesIO
@@ -10,7 +11,9 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -38,13 +41,55 @@ class TestDeliveries(unittest.TestCase):
     def job(self):
         return next(Path(self.jobs).glob('*.json'))
 
+    def reserve_then_publish_later_delivery(self):
+        first_key, later_key = 'f' * 64, 'a' * 64
+        first = Path(self.jobs) / f'delivery-{first_key}.json'
+        replace = os.replace
+
+        def interrupt_first_publication(source, target):
+            if Path(target) == first:
+                raise OSError('interrupted before rename')
+            replace(source, target)
+
+        # Equal wall times and reverse digest order must retain acceptance order.
+        with patch.object(deliveries.time, 'time', return_value=time.time()), patch(
+            'lib.atomic_io.os.replace', side_effect=interrupt_first_publication,
+        ):
+            with self.assertRaisesRegex(OSError, 'before rename'):
+                self.enqueue(first_key)
+            deliveries.enqueue(self.ledger, self.jobs, later_key,
+                               {**self.payload, 'commit_sha': 'c' * 40})
+        self.assertFalse(first.exists())
+        return first_key, later_key
+
+    @contextmanager
+    def executor_drain(self):
+        with ExitStack() as stack:
+            for name, value in {
+                'STATE_DIR': str(self.root), 'JOBS_DIR': self.jobs,
+                'DELIVERIES_FILE': self.ledger, 'LOCK_FILE': str(self.root / 'executor.lock'),
+                'WORKSPACES_DIR': str(self.root / 'workspaces'), 'LOGS_DIR': str(self.root / 'logs'),
+            }.items():
+                stack.enter_context(patch.object(executor, name, value))
+            stack.enter_context(patch.object(executor, 'receiver_state', side_effect=nullcontext))
+            stack.enter_context(patch.object(executor, 'load_config', return_value={
+                'repositories': [{'url': self.payload['repo_url'], 'scripts': {'deploy': 'deploy.sh'}}],
+            }))
+            stack.enter_context(patch.object(executor, 'run_manifest_workflow', return_value=True))
+            stack.enter_context(patch.object(executor, 'load_notification_configs_from_state', return_value=[]))
+            mocks = SimpleNamespace()
+            for name in ('clone_or_update_repo', 'run_script', 'cleanup_old_build_logs', 'cleanup_stale_workspaces', 'log_event'):
+                setattr(mocks, name, stack.enter_context(patch.object(executor, name, return_value=True)))
+            mocks.claim = stack.enter_context(patch.object(executor, 'claim', wraps=deliveries.claim))
+            yield mocks
+
     def test_concurrent_duplicate_delivery_creates_one_job(self):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = [pool.submit(self.enqueue) for _ in range(2)]
             for result in results:
                 result.result(timeout=10)
         self.assertEqual(len(list(Path(self.jobs).glob('*.json'))), 1)
-        with sqlite3.connect(self.ledger) as connection:
+        with closing(sqlite3.connect(self.ledger)) as connection:
             self.assertEqual(connection.execute('SELECT count(*) FROM receipts').fetchone()[0], 1)
 
     def test_restart_recovers_reservation_without_replaying_claimed_job(self):
@@ -94,15 +139,135 @@ class TestDeliveries(unittest.TestCase):
         self.assertFalse(deliveries.claim(self.ledger, str(job), json.loads(job.read_text())))
 
     def test_recovered_jobs_keep_acceptance_order(self):
-        with patch.object(deliveries.time, 'time', return_value=1), patch.object(deliveries, 'write_json_atomic', side_effect=OSError('interrupted')):
-            with self.assertRaises(OSError):
-                self.enqueue('f' * 64)
-        with patch.object(deliveries.time, 'time', return_value=2):
-            self.enqueue('a' * 64)
-        deliveries.recover_pending(self.ledger, self.jobs)
-        jobs = deliveries.pending_job_files(self.ledger, self.jobs)
-        self.assertEqual([job.name for job in jobs], ['delivery-' + 'f' * 64 + '.json',
-                                                     'delivery-' + 'a' * 64 + '.json'])
+        for first_time, later_time in ((1, 2), (1, 1), (2, 1)):
+            with self.subTest(times=(first_time, later_time)), tempfile.TemporaryDirectory(dir=self.root) as directory:
+                ledger, jobs_dir = str(Path(directory) / 'ledger'), str(Path(directory) / 'jobs')
+                with patch.object(deliveries.time, 'time', return_value=first_time), patch.object(deliveries, 'write_json_atomic', side_effect=OSError('interrupted')):
+                    with self.assertRaises(OSError):
+                        deliveries.enqueue(ledger, jobs_dir, 'f' * 64, self.payload)
+                with patch.object(deliveries.time, 'time', return_value=later_time):
+                    deliveries.enqueue(ledger, jobs_dir, 'a' * 64, self.payload)
+                # Queue selection itself must recover; no caller recovery first.
+                jobs = deliveries.pending_job_files(ledger, jobs_dir)
+                self.assertEqual([job.name for job in jobs], ['delivery-' + 'f' * 64 + '.json',
+                                                             'delivery-' + 'a' * 64 + '.json'])
+
+    def test_queue_enumeration_holds_the_recovery_transaction(self):
+        self.reserve_then_publish_later_delivery()
+        ordered = deliveries._ordered_job_files
+
+        def enumerate_while_locked(*args):
+            with closing(sqlite3.connect(self.ledger, timeout=0)) as competing_receiver:
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'locked'):
+                    competing_receiver.execute('BEGIN IMMEDIATE')
+            return ordered(*args)
+
+        with patch.object(deliveries, '_ordered_job_files', side_effect=enumerate_while_locked):
+            self.assertEqual(len(deliveries.pending_job_files(self.ledger, self.jobs)), 2)
+
+    def test_queue_selection_rechecks_a_ledger_created_during_legacy_scan(self):
+        ordered = deliveries._ordered_job_files
+
+        def first_receiver_arrives(jobs_dir, accepted):
+            if not Path(self.ledger).exists():
+                self.reserve_then_publish_later_delivery()
+            return ordered(jobs_dir, accepted)
+
+        with patch.object(deliveries, '_ordered_job_files', side_effect=first_receiver_arrives):
+            jobs = deliveries.pending_job_files(self.ledger, self.jobs)
+        self.assertEqual([path.name for path in jobs], [f'delivery-{key * 64}.json' for key in ('f', 'a')])
+
+    def test_legacy_queue_without_a_ledger_keeps_mtime_order(self):
+        Path(self.jobs).mkdir()
+        older, newer = Path(self.jobs) / 'z.json', Path(self.jobs) / 'a.json'
+        for path, timestamp in ((older, 1), (newer, 2)):
+            path.write_text('{}')
+            os.utime(path, (timestamp, timestamp))
+        self.assertEqual(deliveries.pending_job_files(self.ledger, self.jobs), [older, newer])
+        self.assertFalse(Path(self.ledger).exists())
+
+    def test_executor_recovers_before_claiming_or_deploying_later_delivery(self):
+        keys = self.reserve_then_publish_later_delivery()
+        with self.executor_drain() as calls:
+            def clone_after_durable_claim(repo_url, workspace, ref, commit):
+                # Every build starts only after the corresponding claim commits.
+                with closing(sqlite3.connect(self.ledger)) as connection:
+                    states = dict(connection.execute('SELECT key, state FROM receipts'))
+                expected = {keys[0]: 'claimed', keys[1]: 'pending' if commit == 'b' * 40 else 'claimed'}
+                self.assertEqual(states, expected)
+                return True
+
+            calls.clone_or_update_repo.side_effect = clone_after_durable_claim
+            self.assertEqual(executor.main(), 0)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+            self.assertEqual([call.args[3] for call in calls.clone_or_update_repo.call_args_list], ['b' * 40, 'c' * 40])
+            deployed_commits = [Path(call.args[2]).read_text() for call in calls.run_script.call_args_list]
+            self.assertEqual(len(deployed_commits), 2)
+            for content, commit in zip(deployed_commits, ('b' * 40, 'c' * 40)):
+                self.assertIn(f'Commit: {commit}', content)
+        self.assertEqual(list(Path(self.jobs).glob('*.json')), [])
+
+    def test_executor_stops_drain_until_recovery_publication_succeeds(self):
+        keys = self.reserve_then_publish_later_delivery()
+        with self.executor_drain() as calls:
+            with patch.object(deliveries, 'write_json_atomic', side_effect=OSError('disk unavailable')):
+                self.assertEqual(executor.main(), 1)
+            calls.claim.assert_not_called()
+            calls.clone_or_update_repo.assert_not_called()
+            calls.run_script.assert_not_called()
+            calls.cleanup_old_build_logs.assert_not_called()
+            self.assertFalse(any(call.args[1] == 'CI/CD executor finished' for call in calls.log_event.call_args_list))
+            with closing(sqlite3.connect(self.ledger)) as connection:
+                self.assertEqual(connection.execute("SELECT count(*) FROM receipts WHERE state='pending'").fetchone()[0], 2)
+            # The failed drain retains both reservations for a later retry.
+            self.assertEqual(executor.main(), 0)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+
+    def test_executor_stops_before_later_claim_when_earlier_claim_is_unavailable(self):
+        keys = self.reserve_then_publish_later_delivery()
+        with self.executor_drain() as calls:
+            calls.claim.side_effect = sqlite3.OperationalError('ledger unavailable')
+            self.assertEqual(executor.main(), 1)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], [keys[0]])
+            calls.clone_or_update_repo.assert_not_called()
+            calls.run_script.assert_not_called()
+            self.assertEqual(len(list(Path(self.jobs).glob('*.json'))), 2)
+            calls.claim.reset_mock(side_effect=True)
+            self.assertEqual(executor.main(), 0)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+
+    def test_executor_continues_after_an_earlier_claimed_attempt_fails(self):
+        keys = self.reserve_then_publish_later_delivery()
+        with self.executor_drain() as calls:
+            calls.clone_or_update_repo.side_effect = [False, True]
+            self.assertEqual(executor.main(), 1)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+            calls.run_script.assert_called_once()
+            self.assertIn('Commit: ' + 'c' * 40, Path(calls.run_script.call_args.args[2]).read_text())
+        self.assertEqual(list(Path(self.jobs).glob('*.json')), [])
+
+    def test_recovery_completes_only_after_publication_directory_is_synced(self):
+        keys = self.reserve_then_publish_later_delivery()
+        fsync = os.fsync
+
+        def fail_directory_sync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError('directory sync unavailable')
+            fsync(descriptor)
+
+        with self.executor_drain() as calls:
+            with patch('lib.atomic_io.os.fsync', side_effect=fail_directory_sync):
+                self.assertEqual(executor.main(), 1)
+                # Rename succeeded, but even existing files must wait for a
+                # successful directory sync on the next recovery attempt.
+                self.assertEqual(len(list(Path(self.jobs).glob('*.json'))), 2)
+                self.assertEqual(executor.main(), 1)
+            calls.claim.assert_not_called()
+            calls.clone_or_update_repo.assert_not_called()
+            calls.run_script.assert_not_called()
+            self.assertFalse(any(call.args[1] == 'CI/CD executor finished' for call in calls.log_event.call_args_list))
+            self.assertEqual(executor.main(), 0)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
 
     def test_receipt_retention_is_bounded_and_expires_terminal_entries(self):
         self.enqueue()
@@ -140,7 +305,7 @@ class TestDeliveries(unittest.TestCase):
     def test_executor_retains_job_when_receipt_is_unavailable(self):
         self.enqueue()
         job = self.job()
-        with patch.object(executor, 'DELIVERIES_FILE', str(self.root / 'missing')), patch.object(executor, 'load_config', return_value={'repositories': []}), patch.object(executor, 'clone_or_update_repo') as clone:
+        with patch.object(executor, 'receiver_state', side_effect=nullcontext), patch.object(executor, 'DELIVERIES_FILE', str(self.root / 'missing')), patch.object(executor, 'load_config', return_value={'repositories': []}), patch.object(executor, 'clone_or_update_repo') as clone:
             self.assertFalse(executor.process_job(str(job)))
             clone.assert_not_called()
         self.assertTrue(job.exists())

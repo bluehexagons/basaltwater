@@ -216,13 +216,18 @@ replay the same signed request. Duplicate requests receive 202 without creating
 another attempt. Terminal receipts are retained for 30 days from acceptance;
 replay protection does not extend beyond that retention window.
 
-The receiver recovers unpublished pending jobs on restart. Jobs run in receipt
-acceptance order, including recovered reservations. The executor records
+The receiver recovers unpublished pending jobs on restart. Before selecting its
+queue, the executor also recovers pending reservations under the same ledger
+lock. If publication fails, the drain stops without executing later jobs; repair
+the publication failure and restart the executor to retry recovery. Jobs run in
+durable receipt acceptance order, including recovered reservations and pushes
+accepted at equal or decreasing clock times. The executor records
 its claim before build side effects, so a crash after claiming does not replay
 a possibly completed deployment. Inspect the journal and build logs before
 deliberately submitting a new push after an interrupted or failed attempt.
 Do not delete the ledger to force retries. Missing, invalid, or unavailable
-receipts retain their queued jobs and fail execution for operator repair.
+receipts retain their queued jobs and stop the drain before later jobs for
+operator repair.
 Upgrade receiver and executor together for this receipt protocol; old queue
 files without a receipt retain their previous one-attempt behavior.
 
