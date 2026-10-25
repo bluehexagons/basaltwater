@@ -269,10 +269,16 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                      deactivate=deactivate, prepare=prepare)
 
 
-def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system") -> None:
+def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system",
+                 prepare: Callable[[], None] | None = None) -> None:
     """Remove managed units together, restoring files and states on failure.
 
     Pass activators before their service. Missing managed files are skipped;
     vendor units are not stopped. Removal shares replacement's recovery lock.
+
+    ``prepare`` runs once after grouped deactivation, before unlinking files,
+    under the same lock and rollback boundary. Dry runs and removals with no
+    managed files skip it. Its failures restore unit files and activation
+    state, but its own side effects are not rolled back.
     """
-    _reconcile_units({}, activate=(), remove=names, unit_dir=unit_dir)
+    _reconcile_units({}, activate=(), remove=names, unit_dir=unit_dir, prepare=prepare)

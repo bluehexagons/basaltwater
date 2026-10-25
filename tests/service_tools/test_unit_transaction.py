@@ -452,8 +452,8 @@ class TestUnitRemoval(unittest.TestCase):
                 self.states[name][1] = "disabled"
         return subprocess.CompletedProcess(command, 0, output, "")
 
-    def remove(self):
-        units.remove_units(self.names, unit_dir=str(self.root))
+    def remove(self, *, prepare=None):
+        units.remove_units(self.names, unit_dir=str(self.root), prepare=prepare)
 
     def assert_restored(self):
         for name in self.names:
@@ -465,14 +465,26 @@ class TestUnitRemoval(unittest.TestCase):
     def test_removal_stops_group_before_deleting_and_skips_static_disable(self):
         original = units.remove_file_durable
 
+        def prepare():
+            for name in self.names:
+                self.assertIn(["systemctl", "stop", name], self.commands)
+                self.assertEqual(self.states[name][0], "inactive")
+                self.assertNotIn(self.states[name][1], {"enabled", "enabled-runtime"})
+                self.assertEqual((self.root / name).read_text(), f"old {name}")
+            self.assertIn(["systemctl", "disable", "--runtime", "demo.timer"], self.commands)
+
+        callback = Mock(side_effect=prepare)
+
         def remove(path):
             if path == str(self.root / self.names[0]):
+                callback.assert_called_once_with()
                 self.assertTrue(all(state[0] == "inactive" for state in self.states.values()))
                 self.assertTrue(all((self.root / name).exists() for name in self.names))
             original(path)
 
         with patch.object(units, "remove_file_durable", side_effect=remove):
-            self.remove()
+            self.remove(prepare=callback)
+        callback.assert_called_once_with()
         self.assertTrue(all(not (self.root / name).exists() for name in self.names))
         self.assertIn(["systemctl", "disable", "--runtime", "demo.timer"], self.commands)
         self.assertFalse(any(command[1] == "disable" and command[-1] in {"demo.service", "demo.path"} for command in self.commands))
@@ -480,6 +492,38 @@ class TestUnitRemoval(unittest.TestCase):
         self.assertEqual(result["outcome"], "succeeded")
         self.assertEqual(result["operation"]["operation_type"], "unit-removal")
         self.assertIn("removing", result["operation"]["phases"])
+
+    def test_prepare_failure_after_successful_stop_restores_group_and_propagates(self):
+        original = self.run_command
+        effect = self.root / "callback-effect"
+
+        def command(args, **kwargs):
+            result = original(args, **kwargs)
+            if args == ["systemctl", "stop", "demo.service"]:
+                # ExecStopPost can fail despite systemctl stop returning zero.
+                self.states["demo.service"][0] = "failed"
+            return result
+
+        def prepare():
+            self.assertEqual(self.states["demo.service"][0], "failed")
+            effect.write_text("teardown attempted")
+            raise RuntimeError("session teardown failed")
+
+        callback = Mock(side_effect=prepare)
+        with patch.object(units, "run", side_effect=command), patch.object(
+            units, "remove_file_durable", wraps=units.remove_file_durable,
+        ) as unlink:
+            with self.assertRaisesRegex(RuntimeError, "session teardown failed"):
+                self.remove(prepare=callback)
+        callback.assert_called_once_with()
+        self.assertFalse(any(
+            call.args[0] in {str(self.root / name) for name in self.names}
+            for call in unlink.call_args_list
+        ))
+        self.assert_restored()
+        self.assertEqual(effect.read_text(), "teardown attempted")
+        result = json.loads((self.root / ".basaltwater-unit-operation.json.last.json").read_text())
+        self.assertEqual(result["outcome"], "rolled_back")
 
     def test_stop_disable_and_reload_failures_restore_entire_group(self):
         for failure in (
@@ -640,7 +684,9 @@ class TestUnitRemoval(unittest.TestCase):
     def test_missing_managed_files_leave_vendor_units_alone(self):
         for name in self.names:
             (self.root / name).unlink()
-        self.remove()
+        callback = Mock()
+        self.remove(prepare=callback)
+        callback.assert_not_called()
         self.assertEqual(self.commands, [])
 
     def test_recovery_guard_blocks_removal_and_replacement(self):
@@ -681,8 +727,10 @@ class TestUnitRemoval(unittest.TestCase):
                 self.assertEqual(self.commands, [])
 
     def test_dry_run_creates_no_marker_and_changes_no_units(self):
+        callback = Mock()
         with patch.object(units, "is_dry_run", return_value=True):
-            self.remove()
+            self.remove(prepare=callback)
+        callback.assert_not_called()
         self.assert_restored()
         self.assertEqual(self.commands, [])
         self.assertFalse(list(self.root.glob(".basaltwater-*")))

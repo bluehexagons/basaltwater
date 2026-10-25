@@ -35,6 +35,13 @@ and other application changes are outside unit rollback. Use this boundary for
 mountpoint preparation so an active automount cannot trigger remote access or
 redirect ownership changes onto a mounted remote root.
 
+`remove_units(..., prepare=callback)` uses the same preparation boundary after
+all grouped deactivations and before any unit file is unlinked. Use it for
+checked application teardown that must succeed before removing the definitions.
+Callback failures restore unit files and activation state through the existing
+rollback; callback side effects are not rolled back. Dry runs and removals with
+no managed files skip the callback.
+
 Recovery decisions made before acquiring operation ownership must pass the
 inspected record as `expected_record` to `OperationStateStore.transition()`.
 Matching only the operation ID can replay a stale checkpoint after another
