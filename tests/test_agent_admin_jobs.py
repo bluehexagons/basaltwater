@@ -268,11 +268,28 @@ class AdminJobTests(unittest.TestCase):
             self.assertEqual(admin_job.job_status()["unit_state"], "unavailable")
 
     def test_absent_job_history_is_empty_after_trusted_parent_check(self):
-        with patch.object(admin_job, "unit_state", return_value="inactive") as unit_state:
+        parent = os.path.dirname(self.path)
+
+        def validate_path(path, *, directory=False):
+            if path == self.path:
+                raise ValueError("Missing protected file")
+            self.assertEqual(path, parent)
+            self.assertTrue(directory)
+
+        with patch.object(admin_job, "protected_path", side_effect=validate_path) as protect, \
+                patch.object(admin_job, "unit_state", return_value="inactive") as unit_state:
             result = admin_job.job_status()
         self.assertEqual(result["latest"], {})
         self.assertEqual(result["unit_state"], "inactive")
+        protect.assert_called_once_with(parent, directory=True)
         unit_state.assert_called_once()
+
+    def test_unsafe_job_history_parent_is_unavailable(self):
+        with patch.object(admin_job, "protected_path", side_effect=ValueError("Unsafe parent")) as protect, \
+                patch.object(admin_job, "unit_state", return_value="inactive"):
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"], {"status": "unavailable"})
+        protect.assert_called_once_with(os.path.dirname(self.path), directory=True)
 
     def test_job_history_lookup_errors_and_dangling_symlink_are_unavailable(self):
         real_lstat = os.lstat
