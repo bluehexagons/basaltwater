@@ -66,7 +66,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
                     self.assertEqual(render.call_args.args[2], {"follow-up": "a" * 32 + "." + "b" * 32})
                 else:
                     handler.send_response.assert_called_once_with(303)
-                    handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
+                    handler.send_header.assert_any_call("Location", "/agents?receipt=" + "a" * 32 + "." + "b" * 32)
 
     def settings(self, **changes: str) -> dict[str, str]:
         return {"title": "Follow-up", "prompt": "Inspect", "directory": str(self.directory),
@@ -92,7 +92,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         self.assertFalse(kwargs["run_now"])
         self.assertTrue(kwargs["draft"])
         handler.send_response.assert_called_once_with(303)
-        handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
+        handler.send_header.assert_any_call("Location", "/agents?receipt=" + "a" * 32 + "." + "b" * 32)
 
     def test_follow_up_run_forwards_reviewed_settings_without_direct_creation(self) -> None:
         decide = Mock()
@@ -114,7 +114,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         create.assert_not_called()
         update.assert_not_called()
         handler.send_response.assert_called_once_with(303)
-        handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
+        handler.send_header.assert_any_call("Location", "/agents?receipt=" + "a" * 32 + "." + "b" * 32)
 
     def test_partial_follow_up_provenance_rerenders_submitted_form(self) -> None:
         handler = self.handler("/actions/agent-task/save", {
