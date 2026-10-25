@@ -805,6 +805,34 @@ class AgentTasks:
         self._state = value
         return value
 
+    def _legacy_usage_is_uncertain(self, task: dict[str, Any], runs: list[dict[str, Any]]) -> bool:
+        """Use all retained evidence before trusting an older lifetime counter."""
+        task_runs = [run for run in runs if run["task"]["id"] == task["id"]]
+        pending_claims = {run["id"] for run in task_runs if run["status"] == "running"}
+        evidence = {run["id"]: run for run in task_runs}
+        try:
+            for receipt in self.contexts.history(task["id"], limit=100):
+                evidence[receipt["id"]] = receipt
+        except (OSError, RuntimeError, ValueError):
+            return True
+        known_total = 0
+        for run in evidence.values():
+            usage = run.get("usage")
+            if usage is None:
+                if run.get("status") == "running":
+                    continue
+                if run.get("status") == "cancelled" and run.get("message") == "Cancelled before workspace preparation":
+                    continue
+                return True
+            if (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
+                    or any(type(count) is not int or not 0 <= count <= 10**15 for count in usage.values())):
+                return True
+            if run["id"] not in pending_claims:
+                known_total += usage["input_tokens"] + usage["output_tokens"]
+        if task["attempts"] > len(evidence) or known_total != task["tokens_used"]:
+            return True
+        return False
+
     def _validate_state(self, value: Any) -> None:
         if (not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] not in (1, 2)
                 or not isinstance(value.get("tasks"), list) or len(value["tasks"]) > MAX_TASKS
@@ -812,6 +840,7 @@ class AgentTasks:
             raise RuntimeError("Prompt task state has an unsupported schema")
         try:
             ids: set[str] = set()
+            legacy_usage_ids: set[str] = set()
             for task in value["tasks"]:
                 if not isinstance(task, dict):
                     raise ValueError("Invalid task")
@@ -827,6 +856,8 @@ class AgentTasks:
                 if not _ID.fullmatch(task["id"]) or task["id"] in ids:
                     raise ValueError("Invalid task ID")
                 ids.add(task["id"])
+                if "usage_uncertain" not in task:
+                    legacy_usage_ids.add(task["id"])
                 if type(task["enabled"]) is not bool or type(task["queued"]) is not bool:
                     raise ValueError("Invalid task state")
                 task.setdefault("draft", False)
@@ -864,11 +895,16 @@ class AgentTasks:
                             or not math.isfinite(repair["repaired_at"]) or repair["repaired_at"] < 0):
                         raise ValueError("Invalid task usage repair record")
                 recovery = task["context_recovery"]
-                if (recovery is not None and (not isinstance(recovery, dict)
-                        or set(recovery) != {"run_id", "status"}
-                        or not isinstance(recovery["run_id"], str) or not _ID.fullmatch(recovery["run_id"])
-                        or recovery["status"] not in {"pending", "reconciled"})):
-                    raise ValueError("Invalid task context recovery state")
+                if recovery is not None:
+                    if (not isinstance(recovery, dict)
+                            or not {"run_id", "status"} <= set(recovery)
+                            or set(recovery) - {"run_id", "status", "accounting_pending"}
+                            or not isinstance(recovery["run_id"], str) or not _ID.fullmatch(recovery["run_id"])
+                            or recovery["status"] not in {"pending", "reconciled"}):
+                        raise ValueError("Invalid task context recovery state")
+                    recovery.setdefault("accounting_pending", False)
+                    if type(recovery["accounting_pending"]) is not bool:
+                        raise ValueError("Invalid task recovery accounting marker")
                 if type(task["not_before"]) not in {int, float} or not math.isfinite(task["not_before"]) or task["not_before"] < 0:
                     raise ValueError("Invalid task defer deadline")
                 if (type(task["draft"]) is not bool or type(task["auto_paused"]) is not bool
@@ -900,6 +936,8 @@ class AgentTasks:
                     raise ValueError("Invalid run metadata")
                 if "context_reconciled" in run and type(run["context_reconciled"]) is not bool:
                     raise ValueError("Invalid task context recovery marker")
+                if "storage_accounting_pending" in run and type(run["storage_accounting_pending"]) is not bool:
+                    raise ValueError("Invalid task recovery accounting marker")
                 for name in ("started_at", "finished_at"):
                     timestamp = run[name]
                     if timestamp is None and name == "finished_at":
@@ -925,10 +963,16 @@ class AgentTasks:
                 repaired_runs = {repair["run_id"] for repair in task["usage_repairs"]}
                 last_run = runs_by_id.get(task["last_run_id"])
                 if task["context_recovery"] is None and last_run is not None and last_run.get("storage_error"):
-                    task["context_recovery"] = {"run_id": last_run["id"], "status": "pending"}
+                    task["context_recovery"] = {
+                        "run_id": last_run["id"], "status": "pending", "accounting_pending": False}
+                if task["id"] in legacy_usage_ids and self._legacy_usage_is_uncertain(task, value["runs"]):
+                    task["usage_uncertain"] = True
                 if (task["last_run_id"] not in repaired_runs
                         and (task["stop_reason"] == _TOKEN_USAGE_UNAVAILABLE
-                             or last_run is not None and last_run.get("usage") is None)):
+                             or last_run is not None and last_run["status"] != "running"
+                             and not last_run.get("storage_accounting_pending") and last_run.get("usage") is None
+                             and not (last_run["status"] == "cancelled"
+                                      and last_run.get("message") == "Cancelled before workspace preparation"))):
                     task["usage_uncertain"] = True
                 if task["context_recovery"] is not None and task["context_recovery"]["status"] == "pending":
                     task["enabled"], task["queued"] = False, False
@@ -1057,7 +1101,9 @@ class AgentTasks:
             latest_run = next((run for run in state["runs"] if run["id"] == task["last_run_id"]), None)
             repaired_runs = {repair["run_id"] for repair in task["usage_repairs"]}
             if (latest_run is not None and latest_run.get("usage") is None
-                    and task["last_run_id"] not in repaired_runs):
+                    and task["last_run_id"] not in repaired_runs
+                    and not (latest_run["status"] == "cancelled"
+                             and latest_run.get("message") == "Cancelled before workspace preparation")):
                 task["usage_uncertain"] = True
             if usage_repair_tokens is not None:
                 if not task["usage_uncertain"] or task["last_run_id"] is None:
@@ -1116,7 +1162,7 @@ class AgentTasks:
                         if record["id"] == task["last_run_id"] and record["task"]["id"] == task["id"]), None)
             if run is None or not run.get("storage_error"):
                 return
-            recovery = {"run_id": run["id"], "status": "pending"}
+            recovery = {"run_id": run["id"], "status": "pending", "accounting_pending": False}
             task["context_recovery"] = recovery
         if recovery["status"] != "pending":
             return
@@ -1141,9 +1187,46 @@ class AgentTasks:
                 # the hot run was marked failed, so recovery never calls
                 # _record_outcome() or replaces that failure evidence.
                 self.contexts.record(run_task, receipt)
+        if recovery["accounting_pending"]:
+            usage = receipt.get("usage")
+            if isinstance(usage, dict):
+                recovered_tokens = usage["input_tokens"] + usage["output_tokens"]
+                if task["tokens_used"] + recovered_tokens <= 10**15:
+                    task["tokens_used"] += recovered_tokens
+                else:
+                    task["usage_uncertain"] = True
+            else:
+                task["usage_uncertain"] = True
+            recovery["accounting_pending"] = False
         recovery["status"] = "reconciled"
         if run is not None:
             run["context_reconciled"] = True
+            run["storage_accounting_pending"] = False
+            run["usage"] = receipt.get("usage")
+
+    def _quarantine_recovery_claim(self, state: dict[str, Any], run: dict[str, Any], *,
+                                   accounting_pending: bool, outcome_accounted: bool = False) -> None:
+        """Finish a stale claim as failed while retaining its reserved attempt."""
+        finished = time.time()
+        if run.get("finished_at") is None:
+            run["finished_at"] = finished
+            run["duration_seconds"] = max(0, finished - run["started_at"])
+        run.update(status="failed", message="Task recovery could not complete; inspect its receipt and repair storage",
+                   storage_error=True)
+        if accounting_pending:
+            run["storage_accounting_pending"] = True
+        else:
+            run.pop("storage_accounting_pending", None)
+        for name in ("checkpoint", "evidence"):
+            run.pop(name, None)
+        if not outcome_accounted:
+            self._record_outcome(state, run)
+        task = next((item for item in state["tasks"] if item["id"] == run["task"]["id"]), None)
+        if task is not None:
+            task["enabled"], task["queued"] = False, False
+            task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
+            task["context_recovery"] = {
+                "run_id": run["id"], "status": "pending", "accounting_pending": accounting_pending}
 
     def action(self, identifier: str, action: str, *, now: float | None = None) -> None:
         if (not isinstance(identifier, str) or not _ID.fullmatch(identifier) or not isinstance(action, str)
@@ -1275,8 +1358,11 @@ class AgentTasks:
                 task["not_before"] = run["finished_at"] + task["backoff_minutes"] * 60
                 if task["next_run"] is not None:
                     task["next_run"] = max(task["next_run"], task["not_before"])
-        if task["token_budget"] and usage is None:
+        known_zero_cancellation = (run["status"] == "cancelled"
+                                   and run.get("message") == "Cancelled before workspace preparation")
+        if usage is None and not run.get("storage_accounting_pending") and not known_zero_cancellation:
             task["usage_uncertain"] = True
+        if task["token_budget"] and task["usage_uncertain"]:
             task["enabled"], task["queued"], task["stop_reason"] = False, False, _TOKEN_USAGE_UNAVAILABLE
         elif task["continue_until_done"] and outcome == "complete" and run["status"] == "completed":
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Goal completed with recorded evidence"
@@ -1418,7 +1504,8 @@ class AgentTasks:
                 if stored_run.get("storage_error"):
                     saved_task["enabled"], saved_task["queued"] = False, False
                     saved_task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
-                    saved_task["context_recovery"] = {"run_id": stored_run["id"], "status": "pending"}
+                    saved_task["context_recovery"] = {
+                        "run_id": stored_run["id"], "status": "pending", "accounting_pending": False}
                 _advance_schedule(saved_task, finished if now is None else current + duration)
             self._save()
         return True
@@ -1450,7 +1537,10 @@ class AgentTasks:
             with self._transaction():
                 state = self._load()
                 for run in state["runs"]:
-                    if run["status"] == "running":
+                    if run["status"] != "running":
+                        continue
+                    accounting_pending, outcome_accounted = True, False
+                    try:
                         context_directory = self.contexts.directory(run["task"]["id"])
                         receipt_path = context_directory / "runs" / (run["id"] + ".json")
                         try:
@@ -1464,9 +1554,11 @@ class AgentTasks:
                             self._validate_state({"version": 2, "tasks": [], "runs": [receipt]})
                             if receipt["id"] != run["id"] or receipt["task"] != run["task"] or receipt["finished_at"] is None:
                                 raise RuntimeError("Task receipt does not match its unfinished claim")
+                            accounting_pending = False
                             run.update(receipt)
                             self.contexts.record(run["task"], run)
                             self._record_outcome(state, run)
+                            outcome_accounted = True
                             saved_task = next((task for task in state["tasks"]
                                                if task["id"] == run["task"]["id"]), None)
                             if saved_task is not None:
@@ -1483,7 +1575,16 @@ class AgentTasks:
                         if log_path.exists():
                             run.update(log_path=str(log_path), context_directory=str(context_directory))
                         self.contexts.record(run["task"], run)
+                        accounting_pending = False
                         self._record_outcome(state, run)
+                        outcome_accounted = True
+                    except (OSError, RuntimeError, ValueError, KeyError, TypeError, RecursionError):
+                        # A receipt read or context replay failure is local to
+                        # this claim. Preserve the reserved attempt and keep
+                        # the worker alive for unrelated tasks.
+                        self._quarantine_recovery_claim(
+                            state, run, accounting_pending=accounting_pending,
+                            outcome_accounted=outcome_accounted)
                 for task in state["tasks"]:
                     try:
                         self._reconcile_storage_error(state, task)

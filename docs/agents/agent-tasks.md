@@ -438,7 +438,10 @@ inspection. `run`, `resume`, scheduled work and event delivery remain blocked
 while that task still has a token budget; partial settings updates and
 `reset-context` do not clear the uncertainty. Cached input is already included
 in input usage and is not counted twice. Raising a limit preserves past
-consumption. Resume resets the failure streak, not usage counters.
+consumption. Uncertainty persists through later known-usage runs and while the
+token budget is temporarily disabled. Upgrade scans retained receipts and hot
+history; missing records that prevent a complete lifetime accounting remain
+uncertain. Resume resets the failure streak, not usage counters.
 
 After reviewing the retained receipt and independently verifying the exact
 lifetime input/output total, repair an uncertain task with an update-only
@@ -603,11 +606,14 @@ missing or invalid receipt, or a context write that still fails, keeps that
 task paused; worker startup continues for unrelated tasks. Explicit
 `run`/`resume` retries recovery and cannot launch until it succeeds. An
 explicit `reset-context` after reconciliation remains effective and does not
-cause the old checkpoint to be reapplied.
+cause the old checkpoint to be reapplied. If worker startup cannot read a
+final receipt or save its recovered context, it finalizes that hot claim as a
+storage failure and quarantines only that task. Its already reserved attempt
+is retained; usage is charged once when a valid receipt becomes readable.
 
 | Location | Contents |
 | --- | --- |
-| `~/.local/state/basaltwater/prompt-tasks/tasks.json` | Schema 2 task settings, counters, usage-repair audit, recovery identity and latest 40 runs; valid schema 1 state migrates without changing activation |
+| `~/.local/state/basaltwater/prompt-tasks/tasks.json` | Schema 2 task settings, counters, usage-repair audit, recovery/accounting identity and latest 40 runs; schema 1 usage gaps pause token-limited tasks |
 | `~/.local/state/basaltwater/task-contexts/TASK_ID/context.json` | Checkpoint, exact session binding, cumulative usage baseline and owned workspace metadata |
 | `~/.local/state/basaltwater/task-contexts/TASK_ID/runs/` | Per-run JSON receipts and bounded raw JSONL/diagnostic logs |
 | `~/.local/share/basaltwater/task-workspaces/TASK_ID/` | Persistent or per-run empty task directories |
