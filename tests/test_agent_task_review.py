@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from lib import agent_tasks as tasks
 from lib import agent_task_context as contexts
+from lib.agent_task_api import TaskAPI
 from tests.test_agent_task_persistence import SESSION, report
 
 
@@ -86,6 +87,204 @@ class TaskReviewTests(unittest.TestCase):
         with patch.object(tasks, "execute_prompt") as execute:
             self.assertFalse(self.manager.tick(now=86400))
         execute.assert_not_called()
+
+    def test_repaired_resume_reconciles_receipt_checkpoint_once_and_keeps_failure_evidence(self) -> None:
+        identifier = self.manager.create({**self.values, "failure_limit": 0, "token_budget": 100}, run_now=True, now=0)
+        real_save = self.manager.contexts.save
+
+        def fail_checkpoint(task_id: str, value: dict) -> None:
+            if "last_run_id" in value:
+                raise OSError("Simulated checkpoint write failure")
+            real_save(task_id, value)
+
+        with patch.object(self.manager.contexts, "save", side_effect=fail_checkpoint):
+            self.execute({**report("complete"), "usage": {"input_tokens": 5, "output_tokens": 3}})
+        state = self.manager.snapshot()
+        failed_run = state["runs"][0]
+        receipt = self.manager.contexts.receipt(identifier, failed_run["id"])
+        self.assertEqual(failed_run["status"], "failed")
+        self.assertTrue(failed_run["storage_error"])
+        self.assertEqual(receipt["status"], "completed")
+        self.assertEqual(self.manager.contexts.load(identifier)["checkpoint"], "")
+        self.assertEqual(state["tasks"][0]["tokens_used"], 8)
+
+        with (patch.object(self.manager.contexts, "save", side_effect=OSError("Still unavailable")),
+              patch.object(tasks, "execute_prompt") as execute):
+            with self.assertRaisesRegex(OSError, "Still unavailable"):
+                self.manager.action(identifier, "resume", now=2)
+            self.assertFalse(self.manager.tick(now=3))
+            execute.assert_not_called()
+
+        self.manager.action(identifier, "resume", now=4)
+        self.assertEqual(self.manager.contexts.load(identifier)["checkpoint"], receipt["checkpoint"])
+        self.assertEqual(self.manager.contexts.load(identifier)["last_run_id"], failed_run["id"])
+        self.assertEqual(self.manager.snapshot()["tasks"][0]["tokens_used"], 8)
+        self.assertEqual(self.manager.snapshot()["runs"][0]["status"], "failed")
+        self.assertTrue(self.manager.snapshot()["runs"][0]["storage_error"])
+
+        self.manager.action(identifier, "pause")
+        with patch.object(self.manager.contexts, "record") as record:
+            self.manager.action(identifier, "resume", now=5)
+        record.assert_not_called()
+        self.manager.action(identifier, "run")
+        checkpoints = []
+
+        def continue_from_checkpoint(task: dict, _home: str, _cancel: object) -> dict:
+            checkpoints.append(task["_runtime"]["checkpoint"])
+            return {"status": "completed", "output": "", "message": "Continued", **report(),
+                    "usage": {"input_tokens": 0, "output_tokens": 0}}
+
+        with patch.object(tasks, "execute_prompt", side_effect=continue_from_checkpoint):
+            self.assertTrue(self.manager.tick(now=6))
+        self.assertEqual(checkpoints, [receipt["checkpoint"]])
+        self.assertEqual(self.manager.snapshot()["tasks"][0]["tokens_used"], 8)
+
+    def test_storage_recovery_identity_survives_hot_run_eviction(self) -> None:
+        target = self.manager.create({**self.values, "title": "Recover checkpoint", "failure_limit": 0},
+                                     run_now=True, now=0)
+        real_save = self.manager.contexts.save
+
+        def fail_target_checkpoint(task_id: str, value: dict) -> None:
+            if task_id == target and value.get("last_run_id"):
+                raise OSError("Simulated checkpoint write failure")
+            real_save(task_id, value)
+
+        with patch.object(tasks, "MAX_RUNS", 1):
+            with patch.object(self.manager.contexts, "save", side_effect=fail_target_checkpoint):
+                self.execute(report("waiting"))
+            failed_task = next(task for task in self.manager.snapshot()["tasks"] if task["id"] == target)
+            failed_run_id = failed_task["last_run_id"]
+            self.assertEqual(failed_task["context_recovery"], {"run_id": failed_run_id, "status": "pending"})
+            self.assertTrue(self.manager.snapshot()["runs"][0]["storage_error"])
+            receipt = self.manager.contexts.receipt(target, failed_run_id)
+            unrelated = self.manager.create({**self.values, "title": "Unrelated task"}, run_now=True, now=2)
+            self.execute(report("waiting"), now=3)
+            self.assertEqual([run["task"]["id"] for run in self.manager.snapshot()["runs"]], [unrelated])
+            self.assertEqual(self.manager.contexts.receipt(target, failed_run_id)["checkpoint"], receipt["checkpoint"])
+
+            self.manager.action(target, "resume", now=4)
+            self.assertEqual(self.manager.contexts.load(target)["checkpoint"], receipt["checkpoint"])
+            recovered_task = next(task for task in self.manager.snapshot()["tasks"] if task["id"] == target)
+            self.assertEqual(recovered_task["context_recovery"], {"run_id": failed_run_id, "status": "reconciled"})
+            self.manager.action(target, "run")
+            checkpoints = []
+
+            def continue_from_checkpoint(task: dict, _home: str, _cancel: object) -> dict:
+                checkpoints.append(task["_runtime"]["checkpoint"])
+                return {"status": "completed", "output": "", "message": "Continued", **report()}
+
+            with patch.object(tasks, "execute_prompt", side_effect=continue_from_checkpoint):
+                self.assertTrue(self.manager.tick(now=5))
+            self.assertEqual(checkpoints, [receipt["checkpoint"]])
+
+    def test_missing_recovery_receipt_quarantines_one_task_without_stopping_worker(self) -> None:
+        broken = self.manager.create({**self.values, "title": "Missing receipt", "failure_limit": 0},
+                                     run_now=True, now=0)
+        with patch.object(self.manager.contexts, "record", side_effect=OSError("Receipt publication failed")):
+            self.execute(report("waiting"))
+        failed = self.manager.snapshot()["tasks"][0]
+        self.assertEqual(failed["context_recovery"]["status"], "pending")
+        self.assertTrue(self.manager.snapshot()["runs"][0]["storage_error"])
+
+        healthy = self.manager.create({**self.values, "title": "Healthy task"}, run_now=True, now=2)
+        self.manager.start(once=True)
+        self.assertEqual(self.manager.error, "")
+        self.assertIsNotNone(self.manager._lease)
+        with self.assertRaisesRegex(RuntimeError, "receipt is missing"):
+            self.manager.action(broken, "run")
+
+        invoked = []
+
+        def execute(task: dict, _home: str, _cancel: object) -> dict:
+            invoked.append(task["id"])
+            return {"status": "completed", "output": "", "message": "Done", **report()}
+
+        with patch.object(tasks, "execute_prompt", side_effect=execute):
+            self.assertTrue(self.manager.tick(now=3))
+        self.assertEqual(invoked, [healthy])
+        saved = next(task for task in self.manager.snapshot()["tasks"] if task["id"] == broken)
+        self.assertEqual(saved["context_recovery"]["status"], "pending")
+        self.assertFalse(saved["enabled"])
+        self.assertFalse(saved["queued"])
+
+    def test_unknown_usage_blocks_run_resume_and_partial_update_until_audited_repair(self) -> None:
+        values = {**self.values, "continue_until_done": True, "completion_criteria": "Review is complete",
+                  "max_runs": 0, "deadline_at": 0, "token_budget": 100}
+        identifier = self.manager.create(values, run_now=True, now=0)
+        self.execute({"usage": None})
+        saved = self.manager.snapshot()["tasks"][0]
+        self.assertTrue(saved["usage_uncertain"])
+        self.assertEqual(saved["tokens_used"], 0)
+        self.assertEqual(saved["max_runs"], 0)
+        self.assertEqual(saved["deadline_at"], 0)
+        receipt = self.manager.contexts.receipt(identifier, saved["last_run_id"])
+        self.assertIsNone(receipt["usage"])
+
+        for action in ("run", "resume"):
+            with self.subTest(action=action), self.assertRaisesRegex(ValueError, "usage unavailable"):
+                self.manager.action(identifier, action, now=2)
+        self.manager.update(identifier, {"title": "Updated goal"}, partial=True)
+        saved = self.manager.snapshot()["tasks"][0]
+        self.assertTrue(saved["usage_uncertain"])
+        self.assertFalse(saved["enabled"])
+        self.assertFalse(saved["queued"])
+        self.assertIn("usage unavailable", saved["stop_reason"])
+        with patch.object(tasks, "execute_prompt") as execute:
+            self.assertFalse(self.manager.tick(now=3))
+        execute.assert_not_called()
+
+    def test_legacy_unknown_usage_is_recovered_after_stop_reason_was_cleared(self) -> None:
+        values = {**self.values, "continue_until_done": True, "completion_criteria": "Review is complete",
+                  "max_runs": 0, "deadline_at": 0, "token_budget": 100}
+        identifier = self.manager.create(values, run_now=True, now=0)
+        self.execute({"usage": None})
+        state = json.loads(self.manager.path.read_text())
+        state["version"] = 1
+        state["tasks"][0].pop("usage_uncertain")
+        state["tasks"][0].pop("usage_repairs")
+        state["tasks"][0]["stop_reason"] = ""
+        state["tasks"][0]["enabled"] = True
+        state["tasks"][0]["queued"] = True
+        self.manager.path.write_text(json.dumps(state))
+
+        upgraded = self.manager.snapshot()["tasks"][0]
+        self.assertTrue(upgraded["usage_uncertain"])
+        self.assertFalse(upgraded["enabled"])
+        self.assertFalse(upgraded["queued"])
+        self.assertIn("usage unavailable", upgraded["stop_reason"])
+        with self.assertRaisesRegex(ValueError, "usage unavailable"):
+            self.manager.action(identifier, "run")
+
+    def test_usage_repair_is_exact_audited_and_cannot_lower_known_lifetime_usage(self) -> None:
+        values = {**self.values, "continue_until_done": True, "completion_criteria": "Review is complete",
+                  "max_runs": 0, "deadline_at": 0, "token_budget": 100}
+        identifier = self.manager.create(values, run_now=True, now=0)
+        self.execute({"usage": {"input_tokens": 10, "output_tokens": 5}})
+        self.manager.action(identifier, "run")
+        self.execute({"usage": None}, now=2)
+        api = TaskAPI(self.manager)
+        with self.assertRaisesRegex(ValueError, "below the recorded total"):
+            api.call("update", {"id": identifier, "task": {"usage_repair_tokens_used": 14}})
+        self.assertEqual(self.manager.snapshot()["tasks"][0]["tokens_used"], 15)
+        self.assertTrue(self.manager.snapshot()["tasks"][0]["usage_uncertain"])
+
+        api.call("update", {"id": identifier, "task": {"usage_repair_tokens_used": 20}})
+        repaired = self.manager.snapshot()["tasks"][0]
+        self.assertFalse(repaired["usage_uncertain"])
+        self.assertEqual(repaired["tokens_used"], 20)
+        self.assertEqual(repaired["usage_repairs"], [{
+            "run_id": repaired["last_run_id"], "previous_tokens_used": 15,
+            "tokens_used": 20, "repaired_at": unittest.mock.ANY,
+        }])
+        self.manager.action(identifier, "run")
+        self.execute({"usage": {"input_tokens": 2, "output_tokens": 1}}, now=3)
+        self.assertEqual(self.manager.snapshot()["tasks"][0]["tokens_used"], 23)
+        self.assertFalse(self.manager.snapshot()["tasks"][0]["usage_uncertain"])
+
+    def test_request_key_deduplication_still_matches_normalized_create_settings(self) -> None:
+        first = self.manager.create(self.values, run_now=False, request_key="same-settings", now=0)
+        second = self.manager.create(self.values, run_now=False, request_key="same-settings", now=0)
+        self.assertEqual(first, second)
 
     def test_replaced_source_is_not_silently_resolved_into_a_different_checkout(self) -> None:
         source, other = Path(self.home) / "source", Path(self.home) / "other"

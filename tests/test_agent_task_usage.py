@@ -103,10 +103,13 @@ class TaskUsageTests(unittest.TestCase):
         self.assertEqual(state["runs"][1]["status"], "failed")
         self.assertIsNone(state["runs"][1]["usage"])
         self.assertIsNone(self.manager.context_snapshot(self.identifier)["session_usage"])
-        self.manager.action(self.identifier, "run")
-        self.assert_blocked_without_provider(now=3)
+        with self.assertRaisesRegex(ValueError, "usage unavailable"):
+            self.manager.action(self.identifier, "run")
+        with patch.object(tasks, "execute_prompt") as execute:
+            self.assertFalse(self.manager.tick(now=3))
+        execute.assert_not_called()
 
-    def test_checkpoint_write_failure_cannot_reuse_a_stale_already_charged_baseline(self) -> None:
+    def test_checkpoint_write_failure_recovers_already_charged_baseline_once(self) -> None:
         self.execute({"input_tokens": 15, "output_tokens": 5})
         context = self.manager.contexts.load(self.identifier)
         save = self.manager.contexts.save
@@ -124,8 +127,13 @@ class TaskUsageTests(unittest.TestCase):
         self.assertFalse(self.manager.context_snapshot(self.identifier)["usage_baseline_valid"])
         self.assertTrue(state["runs"][1]["storage_error"])
         self.manager.action(self.identifier, "run")
-        self.assert_blocked_without_provider(now=3)
-        self.assertEqual(self.manager.snapshot()["tasks"][0]["tokens_used"], 26)
+        recovered = self.manager.context_snapshot(self.identifier)
+        self.assertTrue(recovered["usage_baseline_valid"])
+        self.assertEqual(recovered["session_usage"], {"input_tokens": 19, "output_tokens": 7})
+        self.execute({"input_tokens": 20, "output_tokens": 8}, now=3)
+        state = self.manager.snapshot()
+        self.assertEqual(state["tasks"][0]["tokens_used"], 28)
+        self.assertEqual(state["runs"][2]["usage"], {"input_tokens": 1, "output_tokens": 1})
 
     def test_interrupted_claim_invalidates_baseline_before_resume(self) -> None:
         self.execute({"input_tokens": 15, "output_tokens": 5})

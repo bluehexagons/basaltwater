@@ -56,6 +56,8 @@ INTERVALS = {"once": 0, "event": 0, "hourly": 3600, "daily": 86400, "weekly": 60
 _ID = re.compile(r"[a-f0-9]{32}\Z")
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}\Z")
 _STATUSES = {"running", "completed", "failed", "cancelled", "interrupted"}
+_TOKEN_USAGE_UNAVAILABLE = "Token usage unavailable; inspect the run before continuing"
+_MAX_USAGE_REPAIRS = 100
 
 
 class _TaskExecutionRuntime(dict[str, Any]):
@@ -273,7 +275,11 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
             "max_runs": max_runs, "deadline_at": deadline, "start_at": start, "token_budget": token_budget,
             "daily_limit": _integer(values.get("daily_limit", 0), "Daily run limit", 0, 1000),
             "backoff_minutes": _integer(values.get("backoff_minutes", 0), "Failure backoff", 0, MAX_REPEAT_MINUTES),
-            "history_limit": _integer(values.get("history_limit", 100), "Evidence history", 1, 1000)}
+            "history_limit": _integer(values.get("history_limit", 100), "Evidence history", 1, 1000),
+            # This update-only field is exposed through the shared task API's
+            # validated settings list. It is consumed by update(), never saved.
+            "usage_repair_tokens_used": (None if values.get("usage_repair_tokens_used") is None else
+                                          _integer(values["usage_repair_tokens_used"], "Repaired token usage", 0, 10**15))}
     task["storage_operation"] = validate_storage_operation({**task, "storage_operation": values.get("storage_operation", "none")})
     if (check_existing_workspace and mode == "workspace" and workspace == "existing"
             and task["storage_operation"] in {"none", "review"}):
@@ -811,8 +817,13 @@ class AgentTasks:
                     raise ValueError("Invalid task")
                 # Keep older saved settings readable so unsafe tasks can fail
                 # closed at prelaunch without discarding the whole inventory.
-                task.update(validate_task(task, self.home, check_directory=False,
-                                          check_existing_workspace=False))
+                task_settings = validate_task(task, self.home, check_directory=False,
+                                               check_existing_workspace=False)
+                if task_settings["usage_repair_tokens_used"] is not None:
+                    raise ValueError("Usage repair cannot be stored in task settings")
+                task_settings.pop("usage_repair_tokens_used")
+                task.update(task_settings)
+                task.pop("usage_repair_tokens_used", None)
                 if not _ID.fullmatch(task["id"]) or task["id"] in ids:
                     raise ValueError("Invalid task ID")
                 ids.add(task["id"])
@@ -823,11 +834,13 @@ class AgentTasks:
                 task.setdefault("consecutive_failures", 0)
                 for name, default in (("cancel_requested", False), ("attempts", 0), ("tokens_used", 0),
                                       ("daily_attempts", 0), ("usage_day", ""), ("stop_reason", ""),
-                                      ("events", []), ("event_keys", []), ("not_before", 0), ("last_run_id", None)):
+                                      ("events", []), ("event_keys", []), ("not_before", 0), ("last_run_id", None),
+                                      ("usage_uncertain", False), ("usage_repairs", []), ("context_recovery", None)):
                     task.setdefault(name, default)
                 if task["last_run_id"] is not None and (not isinstance(task["last_run_id"], str) or not _ID.fullmatch(task["last_run_id"])):
                     raise ValueError("Invalid task last run ID")
                 if (type(task["cancel_requested"]) is not bool
+                        or type(task["usage_uncertain"]) is not bool
                         or any(type(task[name]) is not int or not 0 <= task[name] <= 10**15
                                for name in ("attempts", "tokens_used", "daily_attempts"))
                         or not isinstance(task["usage_day"], str) or len(task["usage_day"]) > 10
@@ -837,6 +850,25 @@ class AgentTasks:
                         or not isinstance(task["event_keys"], list) or len(task["event_keys"]) > 100
                         or any(not isinstance(key, str) or len(key) > 120 for key in task["event_keys"])):
                     raise ValueError("Invalid task usage or wake state")
+                repairs = task["usage_repairs"]
+                if not isinstance(repairs, list) or len(repairs) > _MAX_USAGE_REPAIRS:
+                    raise ValueError("Invalid task usage repair history")
+                for repair in repairs:
+                    if (not isinstance(repair, dict)
+                            or set(repair) != {"run_id", "previous_tokens_used", "tokens_used", "repaired_at"}
+                            or not isinstance(repair["run_id"], str) or not _ID.fullmatch(repair["run_id"])
+                            or any(type(repair[name]) is not int or not 0 <= repair[name] <= 10**15
+                                   for name in ("previous_tokens_used", "tokens_used"))
+                            or repair["tokens_used"] < repair["previous_tokens_used"]
+                            or type(repair["repaired_at"]) not in {int, float}
+                            or not math.isfinite(repair["repaired_at"]) or repair["repaired_at"] < 0):
+                        raise ValueError("Invalid task usage repair record")
+                recovery = task["context_recovery"]
+                if (recovery is not None and (not isinstance(recovery, dict)
+                        or set(recovery) != {"run_id", "status"}
+                        or not isinstance(recovery["run_id"], str) or not _ID.fullmatch(recovery["run_id"])
+                        or recovery["status"] not in {"pending", "reconciled"})):
+                    raise ValueError("Invalid task context recovery state")
                 if type(task["not_before"]) not in {int, float} or not math.isfinite(task["not_before"]) or task["not_before"] < 0:
                     raise ValueError("Invalid task defer deadline")
                 if (type(task["draft"]) is not bool or type(task["auto_paused"]) is not bool
@@ -857,10 +889,17 @@ class AgentTasks:
                     raise ValueError("Invalid run")
                 if not isinstance(run["task"], dict):
                     raise ValueError("Invalid run task")
-                run["task"].update(validate_task(run["task"], self.home, check_directory=False,
-                                                  check_existing_workspace=False))
+                run_task_settings = validate_task(run["task"], self.home, check_directory=False,
+                                                  check_existing_workspace=False)
+                if run_task_settings["usage_repair_tokens_used"] is not None:
+                    raise ValueError("Usage repair cannot be stored in a run receipt")
+                run_task_settings.pop("usage_repair_tokens_used")
+                run["task"].update(run_task_settings)
+                run["task"].pop("usage_repair_tokens_used", None)
                 if not _ID.fullmatch(run["task"]["id"]) or not isinstance(run["message"], str) or len(run["message"]) > 500:
                     raise ValueError("Invalid run metadata")
+                if "context_reconciled" in run and type(run["context_reconciled"]) is not bool:
+                    raise ValueError("Invalid task context recovery marker")
                 for name in ("started_at", "finished_at"):
                     timestamp = run[name]
                     if timestamp is None and name == "finished_at":
@@ -881,6 +920,22 @@ class AgentTasks:
                     if usage is not None and (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
                             or any(type(count) is not int or not 0 <= count <= 10**15 for count in usage.values())):
                         raise ValueError("Invalid run usage")
+            runs_by_id = {run["id"]: run for run in value["runs"]}
+            for task in value["tasks"]:
+                repaired_runs = {repair["run_id"] for repair in task["usage_repairs"]}
+                last_run = runs_by_id.get(task["last_run_id"])
+                if task["context_recovery"] is None and last_run is not None and last_run.get("storage_error"):
+                    task["context_recovery"] = {"run_id": last_run["id"], "status": "pending"}
+                if (task["last_run_id"] not in repaired_runs
+                        and (task["stop_reason"] == _TOKEN_USAGE_UNAVAILABLE
+                             or last_run is not None and last_run.get("usage") is None)):
+                    task["usage_uncertain"] = True
+                if task["context_recovery"] is not None and task["context_recovery"]["status"] == "pending":
+                    task["enabled"], task["queued"] = False, False
+                    task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
+                if task["usage_uncertain"] and task["token_budget"]:
+                    task["enabled"], task["queued"] = False, False
+                    task["stop_reason"] = _TOKEN_USAGE_UNAVAILABLE
             value["version"] = 2
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("Prompt task state is invalid") from exc
@@ -915,6 +970,8 @@ class AgentTasks:
     def create(self, values: dict[str, Any], *, run_now: bool, now: float | None = None,
                draft: bool = False, request_key: str = "") -> str:
         task = validate_task(values, self.home)
+        if task.pop("usage_repair_tokens_used") is not None:
+            raise ValueError("Usage repair is available only when updating an existing task")
         _validate_model_effort(task, self.home)
         if type(run_now) is not bool or type(draft) is not bool or draft and run_now:
             raise ValueError("A draft cannot run immediately")
@@ -932,7 +989,9 @@ class AgentTasks:
             if request_key:
                 existing = next((saved for saved in state["tasks"] if saved.get("request_key") == request_key), None)
                 if existing is not None:
-                    if validate_task(existing, self.home) != task:
+                    existing_settings = validate_task(existing, self.home)
+                    existing_settings.pop("usage_repair_tokens_used")
+                    if existing_settings != task:
                         raise ValueError("Creation request key already belongs to different task settings")
                     return existing["id"]
             if len(state["tasks"]) >= MAX_TASKS:
@@ -956,6 +1015,7 @@ class AgentTasks:
                                    "cancel_requested": False, "attempts": 0, "tokens_used": 0,
                                    "last_run_id": None,
                                    "usage_day": "", "daily_attempts": 0, "stop_reason": "", "events": [], "event_keys": [],
+                                   "usage_uncertain": False, "usage_repairs": [], "context_recovery": None,
                                    "not_before": 0,
                                    "next_run": (task["start_at"] or (now if now is not None else time.time()) + interval)
                                    if scheduled and not draft and task["interval"] != "event" else None})
@@ -977,6 +1037,7 @@ class AgentTasks:
             merged = {**task, **values} if partial else {"initial_checkpoint": task["initial_checkpoint"],
                 "source_task_id": task["source_task_id"], "source_run_id": task["source_run_id"], **values}
             task_values = validate_task(merged, self.home)
+            usage_repair_tokens = task_values.pop("usage_repair_tokens_used")
             _validate_model_effort(task_values, self.home)
             if task["queued"] or any(run["task"]["id"] == identifier and run["status"] == "running" for run in state["runs"]):
                 raise ValueError("Wait for or cancel the active run before editing its task")
@@ -993,6 +1054,30 @@ class AgentTasks:
                     raise ValueError("Create a new task to change the workspace of an established context")
             task.update(task_values)
             task["stop_reason"] = ""
+            latest_run = next((run for run in state["runs"] if run["id"] == task["last_run_id"]), None)
+            repaired_runs = {repair["run_id"] for repair in task["usage_repairs"]}
+            if (latest_run is not None and latest_run.get("usage") is None
+                    and task["last_run_id"] not in repaired_runs):
+                task["usage_uncertain"] = True
+            if usage_repair_tokens is not None:
+                if not task["usage_uncertain"] or task["last_run_id"] is None:
+                    raise ValueError("There is no unresolved token usage to repair")
+                if usage_repair_tokens < task["tokens_used"]:
+                    raise ValueError("Repaired lifetime token usage cannot be below the recorded total")
+                if len(task["usage_repairs"]) >= _MAX_USAGE_REPAIRS:
+                    raise ValueError("Usage repair history is full; create a new task after reviewing its receipts")
+                task["usage_repairs"].append({
+                    "run_id": task["last_run_id"], "previous_tokens_used": task["tokens_used"],
+                    "tokens_used": usage_repair_tokens, "repaired_at": time.time() if now is None else now,
+                })
+                task["tokens_used"] = usage_repair_tokens
+                task["usage_uncertain"] = False
+            if task["usage_uncertain"] and task["token_budget"]:
+                task["enabled"], task["queued"] = False, False
+                task["stop_reason"] = _TOKEN_USAGE_UNAVAILABLE
+            if task["context_recovery"] is not None and task["context_recovery"]["status"] == "pending":
+                task["enabled"], task["queued"] = False, False
+                task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
             if task_values["interval"] == "event":
                 task["next_run"] = None
             elif not interval:
@@ -1007,6 +1092,58 @@ class AgentTasks:
                 task["next_run"] = task_values["start_at"] or (time.time() if now is None else now) + interval
             self._save()
         self._wake.set()
+
+    def _final_receipt_for_recovery(self, identifier: str, run_id: str,
+                                    run: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Load and validate a retained final receipt without requiring hot history."""
+        try:
+            receipt = self.contexts.receipt(identifier, run_id)
+        except FileNotFoundError as exc:
+            raise RuntimeError("Task evidence storage failed; its final receipt is missing") from exc
+        self._validate_state({"version": 2, "tasks": [], "runs": [receipt]})
+        if (receipt["id"] != run_id or receipt["task"]["id"] != identifier
+                or receipt["status"] == "running" or receipt["finished_at"] is None):
+            raise RuntimeError("Task receipt does not match its failed storage claim")
+        if run is not None and receipt["task"] != run["task"]:
+            raise RuntimeError("Task receipt does not match its failed storage claim")
+        return receipt
+
+    def _reconcile_storage_error(self, state: dict[str, Any], task: dict[str, Any]) -> None:
+        """Restore context from a retained receipt after its hot run was paused."""
+        recovery = task.get("context_recovery")
+        if recovery is None:
+            run = next((record for record in state["runs"]
+                        if record["id"] == task["last_run_id"] and record["task"]["id"] == task["id"]), None)
+            if run is None or not run.get("storage_error"):
+                return
+            recovery = {"run_id": run["id"], "status": "pending"}
+            task["context_recovery"] = recovery
+        if recovery["status"] != "pending":
+            return
+        run_id = recovery["run_id"]
+        run = next((record for record in state["runs"]
+                    if record["id"] == run_id and record["task"]["id"] == task["id"]), None)
+        if run is not None and not run.get("storage_error"):
+            raise RuntimeError("Task recovery identity does not reference a storage-failed run")
+        receipt = self._final_receipt_for_recovery(task["id"], run_id, run)
+        run_task = receipt["task"]
+        if run_task["persistence"] != "fresh":
+            context = self.contexts.load(task["id"])
+            needs_recovery = context.get("last_run_id") != run_id
+            if isinstance(receipt.get("checkpoint"), str) and context["checkpoint"] != receipt["checkpoint"]:
+                needs_recovery = True
+            if run_task["persistence"] == "conversation":
+                for name in ("session_id", "session_usage"):
+                    if name in receipt and context.get(name) != receipt[name]:
+                        needs_recovery = True
+            if needs_recovery:
+                # Re-recording is idempotent. Accounting already happened when
+                # the hot run was marked failed, so recovery never calls
+                # _record_outcome() or replaces that failure evidence.
+                self.contexts.record(run_task, receipt)
+        recovery["status"] = "reconciled"
+        if run is not None:
+            run["context_reconciled"] = True
 
     def action(self, identifier: str, action: str, *, now: float | None = None) -> None:
         if (not isinstance(identifier, str) or not _ID.fullmatch(identifier) or not isinstance(action, str)
@@ -1027,6 +1164,7 @@ class AgentTasks:
             elif action == "reset-context":
                 if running or task["queued"]:
                     raise ValueError("Pause and finish the active run before resetting context")
+                self._reconcile_storage_error(state, task)
                 self.contexts.reset(identifier)
             elif action == "delete":
                 if running:
@@ -1035,6 +1173,12 @@ class AgentTasks:
             elif action == "run":
                 if running or task["queued"]:
                     raise ValueError("This task is already running or queued")
+                self._reconcile_storage_error(state, task)
+                if task["token_budget"] and task["usage_uncertain"]:
+                    task["enabled"], task["queued"] = False, False
+                    task["stop_reason"] = _TOKEN_USAGE_UNAVAILABLE
+                    self._save()
+                    raise ValueError(_TOKEN_USAGE_UNAVAILABLE)
                 task["queued"], task["draft"] = True, False
                 task["stop_reason"] = ""
                 task["not_before"] = 0
@@ -1042,6 +1186,12 @@ class AgentTasks:
                 task["enabled"], task["queued"] = False, False
                 task["auto_paused"] = False
             else:
+                self._reconcile_storage_error(state, task)
+                if task["token_budget"] and task["usage_uncertain"]:
+                    task["enabled"], task["queued"] = False, False
+                    task["stop_reason"] = _TOKEN_USAGE_UNAVAILABLE
+                    self._save()
+                    raise ValueError(_TOKEN_USAGE_UNAVAILABLE)
                 interval = repeat_seconds(task)
                 if not interval and task["interval"] != "event":
                     current = time.time() if now is None else now
@@ -1088,7 +1238,9 @@ class AgentTasks:
                 raise ValueError("Prompt task was not found")
             if key and key in task["event_keys"]:
                 return False
-            if task["draft"] or task["auto_paused"] or task["stop_reason"] or not task["enabled"]:
+            if (task["draft"] or task["auto_paused"] or task["stop_reason"] or not task["enabled"]
+                    or task["token_budget"] and task["usage_uncertain"]
+                    or task["context_recovery"] is not None and task["context_recovery"]["status"] == "pending"):
                 raise ValueError("Resume the task before delivering wake events")
             if len(task["events"]) >= 32:
                 raise ValueError("Task event queue is full")
@@ -1123,10 +1275,11 @@ class AgentTasks:
                 task["not_before"] = run["finished_at"] + task["backoff_minutes"] * 60
                 if task["next_run"] is not None:
                     task["next_run"] = max(task["next_run"], task["not_before"])
-        if task["continue_until_done"] and outcome == "complete" and run["status"] == "completed":
+        if task["token_budget"] and usage is None:
+            task["usage_uncertain"] = True
+            task["enabled"], task["queued"], task["stop_reason"] = False, False, _TOKEN_USAGE_UNAVAILABLE
+        elif task["continue_until_done"] and outcome == "complete" and run["status"] == "completed":
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Goal completed with recorded evidence"
-        elif task["token_budget"] and usage is None:
-            task["enabled"], task["queued"], task["stop_reason"] = False, False, "Token usage unavailable; inspect the run before continuing"
         elif task["token_budget"] and task["tokens_used"] >= task["token_budget"]:
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Token budget reached"
         elif task["max_runs"] and task["attempts"] >= task["max_runs"]:
@@ -1140,6 +1293,10 @@ class AgentTasks:
             return "Task deadline reached"
         if task["max_runs"] and task["attempts"] >= task["max_runs"]:
             return "Maximum run attempts reached"
+        if task["context_recovery"] is not None and task["context_recovery"]["status"] == "pending":
+            return "Task evidence storage failed; inspect and repair it before continuing"
+        if task["token_budget"] and task["usage_uncertain"]:
+            return _TOKEN_USAGE_UNAVAILABLE
         if task["token_budget"] and task["tokens_used"] >= task["token_budget"]:
             return "Token budget reached"
         return ""
@@ -1183,6 +1340,7 @@ class AgentTasks:
                              and task["next_run"] <= current and task["not_before"] <= current), None)
             if task is None:
                 return False
+            self._reconcile_storage_error(state, task)
             day = datetime.fromtimestamp(current, timezone.utc).strftime("%Y-%m-%d")
             if task["usage_day"] != day:
                 task["usage_day"], task["daily_attempts"] = day, 0
@@ -1260,6 +1418,7 @@ class AgentTasks:
                 if stored_run.get("storage_error"):
                     saved_task["enabled"], saved_task["queued"] = False, False
                     saved_task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
+                    saved_task["context_recovery"] = {"run_id": stored_run["id"], "status": "pending"}
                 _advance_schedule(saved_task, finished if now is None else current + duration)
             self._save()
         return True
@@ -1325,6 +1484,15 @@ class AgentTasks:
                             run.update(log_path=str(log_path), context_directory=str(context_directory))
                         self.contexts.record(run["task"], run)
                         self._record_outcome(state, run)
+                for task in state["tasks"]:
+                    try:
+                        self._reconcile_storage_error(state, task)
+                    except (OSError, RuntimeError, ValueError):
+                        # A missing or unreadable receipt blocks only its owner.
+                        # Keep the durable recovery marker so explicit resume
+                        # retries safely, while unrelated tasks remain schedulable.
+                        task["enabled"], task["queued"] = False, False
+                        task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
                 self._save()
             if not once:
                 self._thread = threading.Thread(target=self._loop, daemon=True, name="agent-prompts")

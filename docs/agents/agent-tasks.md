@@ -433,9 +433,27 @@ Existing historical records are not retroactively classified.
 
 Zero disables an individual usage limit. Token budgets can be exceeded within
 an invocation; they are not dollar budgets or provider-side hard caps. Missing
-usage with a token budget pauses work for inspection. Cached input is already
-included in input usage and is not counted twice. Raising a limit preserves
-past consumption. Resume resets the failure streak, not usage counters.
+usage with a token budget sets durable usage uncertainty and pauses work for
+inspection. `run`, `resume`, scheduled work and event delivery remain blocked
+while that task still has a token budget; partial settings updates and
+`reset-context` do not clear the uncertainty. Cached input is already included
+in input usage and is not counted twice. Raising a limit preserves past
+consumption. Resume resets the failure streak, not usage counters.
+
+After reviewing the retained receipt and independently verifying the exact
+lifetime input/output total, repair an uncertain task with an update-only
+`usage_repair_tokens_used` setting. It must be at least the already recorded
+`tokens_used` total; the task records the prior and repaired values with the
+run ID, then clears uncertainty. For example, save
+`{"usage_repair_tokens_used": 59710}` in a JSON file and pass it to
+`basaltw agent tasks update TASK_ID FILE`, or send it in an MCP task update.
+This value is the exact lifetime total, not an estimate or an added delta. If
+the missing usage cannot be recovered, explicitly set `token_budget` to `0`
+to continue without a token cap; this preserves `tokens_used` and the
+uncertainty marker, and re-enabling a token budget blocks again. Creating a
+new task after reviewing the old receipts starts a separate lifetime budget
+while preserving the original task's accounting and evidence.
+
 Codex completion events contain cumulative conversation totals. Receipts keep
 those totals as `session_usage` and record only the invocation's new tokens in
 `usage`; a resumed conversation subtracts its saved private baseline. Repeated
@@ -574,11 +592,22 @@ Active invocations recheck their absolute deadline as well as their monotonic
 runtime cap; moving the wall clock forward does not leave a late invocation running.
 Receipt writing precedes checkpoint updates. An evidence/checkpoint storage
 failure pauses the task even when failure pausing is disabled; inspect its
-retained receipt and repair storage before explicitly continuing.
+retained receipt and repair storage before explicitly continuing. If a final
+receipt was saved but a checkpoint update failed, worker startup and explicit
+`run`/`resume` reconcile the exact retained receipt into context before another
+provider launch. This restores the saved checkpoint without replaying the
+provider or charging usage twice, and keeps the hot run's storage-failure
+status for inspection. A durable per-task recovery identity survives eviction
+from bounded hot history. Recovery is repeatable after another failed save. A
+missing or invalid receipt, or a context write that still fails, keeps that
+task paused; worker startup continues for unrelated tasks. Explicit
+`run`/`resume` retries recovery and cannot launch until it succeeds. An
+explicit `reset-context` after reconciliation remains effective and does not
+cause the old checkpoint to be reapplied.
 
 | Location | Contents |
 | --- | --- |
-| `~/.local/state/basaltwater/prompt-tasks/tasks.json` | Schema 2 task settings, counters and latest 40 runs; valid schema 1 state migrates without changing activation |
+| `~/.local/state/basaltwater/prompt-tasks/tasks.json` | Schema 2 task settings, counters, usage-repair audit, recovery identity and latest 40 runs; valid schema 1 state migrates without changing activation |
 | `~/.local/state/basaltwater/task-contexts/TASK_ID/context.json` | Checkpoint, exact session binding, cumulative usage baseline and owned workspace metadata |
 | `~/.local/state/basaltwater/task-contexts/TASK_ID/runs/` | Per-run JSON receipts and bounded raw JSONL/diagnostic logs |
 | `~/.local/share/basaltwater/task-workspaces/TASK_ID/` | Persistent or per-run empty task directories |
