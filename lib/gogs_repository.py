@@ -152,7 +152,6 @@ def configure_github_gogs_repository(
 
     _git(root, ["lfs", "version"])
     _git(root, ["lfs", "env"])
-    _git(root, ["lfs", "status"])
     for target_name in (".lfsconfig", ".gitattributes"):
         _validate_config_target(os.path.join(root, target_name))
 

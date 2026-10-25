@@ -109,7 +109,8 @@ class TestConfigureRepository(unittest.TestCase):
         )
         self.assertIn(["lfs", "track", "assets/**"], git_arguments)
         self.assertIn(["lfs", "env"], git_arguments)
-        self.assertIn(["lfs", "status"], git_arguments)
+        self.assertIn(["lfs", "version"], git_arguments)
+        self.assertIn(["lfs", "install", "--local"], git_arguments)
         self.assertEqual(result["filesystem"], "ext4")
 
     def test_dry_run_does_not_apply_mutating_commands(self):
@@ -127,6 +128,20 @@ class TestConfigureRepository(unittest.TestCase):
             command[3:] for command in calls if command[:2] == ["git", "-C"]
         ]
         self.assertNotIn(["lfs", "install", "--local"], git_arguments)
+        self.assertNotIn(["lfs", "status"], git_arguments)
+        self.assertFalse(
+            any(arguments[:1] == ["config"] for arguments in git_arguments)
+        )
+        self.assertFalse(
+            any(arguments[:2] == ["lfs", "track"] for arguments in git_arguments)
+        )
+        self.assertIn(
+            ["status", "--porcelain", "--untracked-files=all"],
+            git_arguments,
+        )
+        self.assertIn(["lfs", "version"], git_arguments)
+        self.assertIn(["lfs", "env"], git_arguments)
+        self.assertTrue(any(command[:2] == ["findmnt", "-n"] for command in calls))
         self.assertTrue(result["dry_run"])
         self.assertTrue(result["actions"])
 

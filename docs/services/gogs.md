@@ -336,13 +336,17 @@ Gogs. Use `--no-combined-push` when Git refs should be pushed to the `gogs` remo
 separately. The command does not stage, commit, push, create either remote
 repository, or configure credentials.
 
-Run first with `--dry-run` to inspect the exact Git commands. The utility
-rejects a dirty worktree, embedded credentials, non-HTTPS repository URLs,
-unsafe `.lfsconfig` or `.gitattributes` targets, and CIFS, SSHFS, NFS, or other
-known remote worktree filesystems. Review and commit `.lfsconfig` and
-`.gitattributes` before the first push. Every clone that needs asset contents
-must be able to reach and authenticate to Gogs; an off-network clone can use
-`GIT_LFS_SKIP_SMUDGE=1` until the endpoint becomes reachable.
+Run first with `--dry-run` to inspect the exact Git commands. It still checks
+that the worktree is clean, the filesystem is local, and Git LFS is available,
+but skips commands that change repository configuration or tracking. It avoids
+`git lfs status`, which can initialize repository configuration even though
+the status output is not used. The utility rejects embedded credentials,
+non-HTTPS repository URLs, unsafe `.lfsconfig` or `.gitattributes` targets,
+and CIFS, SSHFS, NFS, or other known remote worktree filesystems. Review and
+commit `.lfsconfig` and `.gitattributes` before the first push. Every clone
+that needs asset contents must be able to reach and authenticate to Gogs; an
+off-network clone can use `GIT_LFS_SKIP_SMUDGE=1` until the endpoint becomes
+reachable.
 
 ## Dedicated mixed-media VM
 
