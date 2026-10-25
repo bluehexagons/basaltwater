@@ -46,19 +46,27 @@ def install_app_server_dependencies(config: SetupConfig) -> None:
 def create_deploy_user(config: SetupConfig) -> None:
     """Create deploy user for receiving deployments from build server."""
     user = "deploy"
+
+    def has_managed_ssh_group() -> bool:
+        result = run(["getent", "group", "remoteusers"], check=False)
+        if result.returncode == 0:
+            return True
+        if result.returncode == 2:
+            return False
+        raise RuntimeError(
+            f"Unable to determine whether remoteusers group exists (getent exited {result.returncode})"
+        )
     
     result = run(["id", user], check=False)
     if result.returncode == 0:
-        group_result = run(["getent", "group", "remoteusers"], check=False)
-        if group_result.returncode == 0:
+        if has_managed_ssh_group():
             run(["usermod", "-aG", "remoteusers", user])
         print("  ✓ Deploy user already exists")
         return
     
     run(["useradd", "--system", "--create-home", "--shell", "/bin/bash", user])
 
-    group_result = run(["getent", "group", "remoteusers"], check=False)
-    if group_result.returncode == 0:
+    if has_managed_ssh_group():
         run(["usermod", "-aG", "remoteusers", user])
     
     ssh_dir = f"/home/{user}/.ssh"

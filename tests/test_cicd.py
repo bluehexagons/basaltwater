@@ -604,6 +604,7 @@ class TestAppServerSteps(unittest.TestCase):
                 ['usermod', '-aG', 'remoteusers', 'deploy'],
             ],
         )
+        mock_run.assert_called_with(['usermod', '-aG', 'remoteusers', 'deploy'])
     
     @patch('web.app_server_steps.run')
     def test_create_deploy_user_new(self, mock_run):
@@ -647,6 +648,28 @@ class TestAppServerSteps(unittest.TestCase):
             [entry.args[0] for entry in mock_run.call_args_list],
             [['id', 'deploy'], ['getent', 'group', 'remoteusers']],
         )
+
+    @patch('web.app_server_steps.run')
+    def test_create_deploy_user_rejects_unexpected_group_probe_status(self, mock_run):
+        """Unexpected getent failures stop both existing and fresh user paths."""
+        from web.app_server_steps import create_deploy_user
+
+        for user_exists in (True, False):
+            with self.subTest(user_exists=user_exists):
+                mock_run.reset_mock()
+                mock_run.side_effect = [
+                    MagicMock(returncode=0 if user_exists else 1),
+                    *([] if user_exists else [MagicMock(returncode=0)]),
+                    MagicMock(returncode=1),
+                ]
+
+                with self.assertRaisesRegex(RuntimeError, 'getent exited 1'):
+                    create_deploy_user(MagicMock())
+
+                commands = [entry.args[0] for entry in mock_run.call_args_list]
+                self.assertIn(['getent', 'group', 'remoteusers'], commands)
+                self.assertFalse(any(command[0] in {'mkdir', 'chmod', 'chown'} for command in commands))
+                self.assertNotIn(['usermod', '-aG', 'remoteusers', 'deploy'], commands)
 
     @patch('web.app_server_steps.run')
     def test_create_deploy_user_fails_when_group_membership_cannot_be_updated(self, mock_run):
