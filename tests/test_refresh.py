@@ -6,10 +6,12 @@ import argparse
 from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 import io
+import errno
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -191,6 +193,21 @@ class DebianRefreshTests(unittest.TestCase):
         self.assertEqual(OperationStateStore(str(self.setup_marker)).load(), recovered)
         self.assertEqual(self.setup_marker.read_bytes(), before)
 
+    def test_recovery_lookup_errors_stop_before_source_or_receipt_changes(self):
+        activation_marker = self.root.parent / refresh.SOURCE_ACTIVATION_MARKER_FILENAME
+        real_lstat = os.lstat
+        for marker in (activation_marker, self.setup_marker):
+            for target in (str(marker), str(marker) + ".lock"):
+                def lookup(path, *args, **kwargs):
+                    if path == target:
+                        raise OSError(errno.EIO, "injected lookup failure")
+                    return real_lstat(path, *args, **kwargs)
+                with self.subTest(target=target), patch.object(refresh.os, "lstat", side_effect=lookup):
+                    self.assertEqual(self.invoke(), 1)
+                self.upgrade.assert_not_called()
+                self.receipt.assert_not_called()
+                self.run.assert_not_called()
+
     def test_snapshot_branch_selection_is_validated(self):
         for branch, expected in ((None, "dev"), ("main", "dev"), ("feature/test", "branch-feature/test")):
             self.assertEqual(refresh._refresh_channel({"installation_type": "setup-snapshot", "branch": branch}), expected)
@@ -368,6 +385,41 @@ class SnapshotActivationTests(unittest.TestCase):
         self.assertEqual(record.context["repository_path"], str(self.source))
         self.assertEqual(record.context["backup_path"], str(backup))
         self.assertEqual(record.context["staged_path"], str(staged))
+
+    def test_interrupt_after_a_completed_rename_retains_marker_and_runtime_data(self):
+        real_rename = os.rename
+        for target in ("source", "deployments", "state"):
+            for interruption in (KeyboardInterrupt, SystemExit):
+                with self.subTest(target=target, interruption=interruption):
+                    def interrupt_after_move(source, destination):
+                        real_rename(source, destination)
+                        if target == "source" and source == str(self.source):
+                            raise interruption("interrupted after rename")
+                        if target != "source" and str(destination).endswith("/source/" + target):
+                            raise interruption("interrupted after rename")
+                    with patch.object(refresh.os, "rename", side_effect=interrupt_after_move):
+                        with self.assertRaises(interruption):
+                            refresh._upgrade_snapshot(str(self.source), "dev")
+                    marker = self.root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME
+                    store = OperationStateStore(str(marker))
+                    record = store.load()
+                    self.assertIsNotNone(record)
+                    backup = Path(record.context["backup_path"])
+                    staged = Path(record.context["staged_path"])
+                    self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
+                    self.assertEqual((staged / "basaltwater.py").read_text(), "new source")
+                    for name, content in (("deployments/app", "application data"),
+                                          ("state/setup.json", "saved options")):
+                        copies = [root / name for root in (backup, staged) if (root / name).exists()]
+                        self.assertEqual(len(copies), 1)
+                        self.assertEqual(copies[0].read_text(), content)
+                    # Reconcile this inspected fixture before the next subtest.
+                    for name in record.context["runtime_data_names"]:
+                        if os.path.lexists(staged / name):
+                            real_rename(staged / name, backup / name)
+                    real_rename(backup, self.source)
+                    store.complete(record.operation_id, outcome="rolled_back")
+                    shutil.rmtree(record.context["temporary_path"])
 
     def test_sigkill_after_first_rename_leaves_exact_activation_paths_for_recovery(self):
         script = """

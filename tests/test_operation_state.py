@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import os
 import tempfile
 import unittest
@@ -14,6 +15,29 @@ from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_lookup_errors_do_not_hide_or_replace_an_existing_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "operation.json")
+            store = OperationStateStore(path)
+            self.addCleanup(store.close)
+            started = store.begin("setup", "host", "applying")
+            with open(path, "rb") as stream:
+                original = stream.read()
+            real_lstat = os.lstat
+            for code in (errno.EIO, errno.EACCES, errno.ENOTDIR):
+                def lookup(target, *args, **kwargs):
+                    if target == path:
+                        raise OSError(code, "private lookup details")
+                    return real_lstat(target, *args, **kwargs)
+                with self.subTest(errno=code), patch("lib.operation_state.os.lstat", side_effect=lookup):
+                    for action in (store.load, lambda: store.begin("setup", "host", "replacement")):
+                        with self.assertRaisesRegex(OperationStateError, "marker lookup failed") as error:
+                            action()
+                        self.assertNotIn("private lookup details", str(error.exception))
+                with open(path, "rb") as stream:
+                    self.assertEqual(stream.read(), original)
+                self.assertEqual(store.load(), started)
+
     def test_recovery_transition_rejects_a_changed_record_with_the_same_id(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "operation.json")

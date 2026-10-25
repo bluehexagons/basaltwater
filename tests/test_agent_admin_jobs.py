@@ -507,3 +507,20 @@ class AdminJobTests(unittest.TestCase):
         with patch.object(admin_job, "SOURCE", str(source)), patch.object(admin_job, "protected_path", side_effect=lambda path, **kw: (_ for _ in ()).throw(ValueError("Symlink")) if os.path.islink(path) else None):
             with self.assertRaisesRegex(ValueError, "Symlink"):
                 self.source_validator()
+
+    def test_refresh_recovery_lookup_errors_make_actions_unavailable(self):
+        source = Path(self.directory.name) / "source"
+        markers = (source.parent / admin_job.SOURCE_ACTIVATION_MARKER_FILENAME,
+                   source.parent / "setup-operation.json")
+        real_lstat = os.lstat
+        for marker in markers:
+            for target in (str(marker), str(marker) + ".lock"):
+                def lookup(path, *args, **kwargs):
+                    if path == target:
+                        raise OSError(errno.EIO, "private lookup details")
+                    return real_lstat(path, *args, **kwargs)
+                with self.subTest(target=target), patch.object(admin_job, "SOURCE", str(source)), \
+                        patch.object(admin_job.os, "lstat", side_effect=lookup):
+                    reason = admin_job._refresh_recovery_block_reason()
+                self.assertIn("could not be verified", reason)
+                self.assertNotIn("private lookup details", reason)

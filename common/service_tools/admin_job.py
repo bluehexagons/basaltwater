@@ -63,8 +63,11 @@ def _refresh_recovery_block_reason() -> str | None:
         for marker in (activation_marker, os.path.join(os.path.realpath(STATE_DIR), "setup-operation.json")):
             protected_path(os.path.dirname(marker), directory=True)
             for candidate in (marker, marker + ".lock"):
-                if os.path.lexists(candidate):
-                    protected_path(candidate)
+                try:
+                    os.lstat(candidate)
+                except FileNotFoundError:
+                    continue
+                protected_path(candidate)
         activation = OperationStateStore(activation_marker).load()
         if activation is not None:
             return "A Basaltwater source activation needs administrator recovery before refresh."

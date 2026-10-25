@@ -149,3 +149,5 @@ file. Restore a verified backup or quarantine it only after reconciling actual
 state and deciding that fresh defaults are appropriate. Missing state and
 corrupt state have different meanings. Reader errors name the path and do not
 print its contents.
+Only a confirmed missing marker permits a new operation; permission and I/O
+errors while looking it up require inspection and never clear its guard.

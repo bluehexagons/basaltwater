@@ -152,9 +152,13 @@ class OperationStateStore:
             self._lock_finalizer = None
 
     def load(self) -> Optional[OperationRecord]:
-        if not os.path.lexists(self.path):
+        try:
+            info = os.lstat(self.path)
+        except FileNotFoundError:
             return None
-        if os.path.islink(self.path):
+        except OSError as exc:
+            raise _invalid_marker(self.path, "marker lookup failed") from exc
+        if stat.S_ISLNK(info.st_mode):
             raise _invalid_marker(self.path, "marker must not be a symlink")
         try:
             payload = read_json_file(self.path)

@@ -42,8 +42,11 @@ def _protected_operation_record(path: str) -> OperationRecord | None:
     parent = os.path.dirname(path)
     protected_path(parent, directory=True)
     for candidate in (path, path + ".lock"):
-        if os.path.lexists(candidate):
-            protected_path(candidate)
+        try:
+            os.lstat(candidate)
+        except FileNotFoundError:
+            continue
+        protected_path(candidate)
     return OperationStateStore(path).load()
 
 
@@ -193,7 +196,10 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
             os.chmod(staged, 0o755)
             operation_record = operation_store.transition(operation_record.operation_id, "activating_staged_source")
             os.rename(staged, repository)
-        except BaseException as error:
+        except Exception as error:
+            # Asynchronous interruption can arrive after a rename took effect
+            # but before the bookkeeping above ran. Leave its durable marker
+            # and every copy intact instead of guessing which moves completed.
             try:
                 for name in reversed(moved):
                     os.rename(os.path.join(staged, name), os.path.join(backup, name))
