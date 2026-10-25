@@ -232,7 +232,7 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
             if decision == "approve":
                 if settings is not None:
                     raise ValueError(
-                        "A follow-up submission is already saved. Use Approve once in its run history "
+                        "A follow-up submission is already saved. Use Finish saved submission in its run history "
                         "to finish it; its saved settings will be kept."
                     )
                 if child is None:
@@ -247,15 +247,15 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
             if decision == "block":
                 if child is not None:
                     raise ValueError(
-                        "A matching follow-up task has already been saved. Approve once to record it, "
+                        "A matching follow-up task has already been saved. Finish saved submission to record it, "
                         "then manage the saved task."
                     )
-                # The intent is durable, but no child reached task storage, so
-                # an operator may still abandon it by blocking this proposal.
+                # No matching child remains. Blocking abandons the intent;
+                # it cannot undo an earlier completed or removed child.
                 state.pop("submission", None)
             else:
                 raise ValueError(
-                    "A follow-up submission is already saved. Approve once to finish it before "
+                    "A follow-up submission is already saved. Finish saved submission before "
                     "requesting another service action."
                 )
         elif child is not None:

@@ -238,6 +238,44 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertEqual(decision["status"], "pending")
         self.assertTrue(self.manager.snapshot()["tasks"][-1]["queued"])
 
+    def test_panel_can_finish_reviewed_legacy_and_current_saved_submissions(self) -> None:
+        original = dict(self.proposal)
+        from lib.atomic_io import write_json_atomic
+
+        def fail_final(path, value, **kwargs):
+            if value.get("status") == "approved":
+                raise OSError("simulated final decision write failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        for legacy in (True, False):
+            with self.subTest(legacy=legacy):
+                self.proposal = dict(original)
+                if not legacy:
+                    self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[])
+                identifier, run_id = self.record_request()
+                settings = prepare_follow_up(self.manager, identifier, run_id, review=True)
+                with patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_final):
+                    with self.assertRaises(OSError):
+                        decide_follow_up(self.manager, identifier, run_id, "approve", settings=settings)
+                child = self.manager.snapshot()["tasks"][-1]
+                for query in ({"view": "tasks"}, {"run": run_id}, {"receipt": identifier + "." + run_id}):
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+                    self.assertIn('value="follow-up-approve">Finish saved submission</button>', page)
+                    self.assertNotIn("This older proposal needs an access review", page)
+                body = urlencode({"csrf": self.state.csrf_token, "id": identifier,
+                                  "run_id": run_id, "action": "follow-up-approve"}).encode()
+                handler = object.__new__(panel.WebPanelHandler)
+                handler.state, handler.path = self.state, "/actions/agent-task"
+                handler.headers, handler.rfile = {"Content-Length": str(len(body))}, BytesIO(body)
+                for name in ("_send", "send_response", "send_header", "end_headers"):
+                    setattr(handler, name, Mock())
+                with patch.object(self.manager, "create", wraps=self.manager.create) as create:
+                    handler.do_POST()
+                    create.assert_not_called()
+                handler.send_response.assert_called_once_with(303)
+                self.assertEqual(follow_up_state(self.manager, identifier, run_id)["task_id"], child["id"])
+                self.manager.action(child["id"], "cancel")
+
     def test_approve_retry_recovers_same_child_without_replaying_service_action(self) -> None:
         unit = "auto-update-node.service"
         operation = "command.run"

@@ -292,7 +292,7 @@ Review opens
 an editable form with the source receipt, **Once**, and a one-attempt limit;
 opening it does not save or queue anything. The panel saves a private intent
 with the exact validated child settings before creating the task. If publishing
-the final decision fails, leave the proposal pending and select **Approve once**
+the final decision fails, leave the proposal pending and select **Finish saved submission**
 from its run history to finish the same submission; recovery does not repeat
 service actions. Blocking checks for the exact matching child and refuses while
 one is saved, so it cannot mark a queued follow-up blocked. If no child was
