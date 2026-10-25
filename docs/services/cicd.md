@@ -268,13 +268,23 @@ and a clean environment. The managed home is `/var/lib/basaltwater/cicd/build`
 (0700); workspaces live in its `workspaces` subdirectory. Deployment keys remain
 private under the separate `webhook` home and are not passed to build commands.
 
-Both `--cicd` and `--build-server` install the ACL tools and reconcile named,
-execute-only grants for `webhook` and `cicd-build` on the private
-`/var/lib/basaltwater` ancestor on every setup or patch. Runtime staging masks
-these grants before setup; CI setup restores traversal before build-user toolchain setup
-or service activation. The parent stays private to directory listing, its
-existing ACL entries are retained, and no recursive permission changes touch
-child files or credentials. Setup checks read/write/traversal access to each
+Both `--cicd` and `--build-server` install the ACL tools and reconcile named
+traversal grants for `webhook` and `cicd-build` on the private
+`/var/lib/basaltwater` ancestor on every setup or patch. It also restores
+manifest builders identified by administrator-controlled account records:
+valid `build-*` usernames of at most 31 characters, nonzero UID/GID,
+`/usr/sbin/nologin`, and the exact home
+`/var/lib/basaltwater/build-users/<username>`. A named ACL entry alone does
+not authorize an account. Runtime staging masks these grants before setup;
+CI setup restores traversal before build-user toolchain setup or service
+activation. Before widening the access mask, it reduces existing group-class
+entries to their effective permissions, preserving unrelated users' and groups'
+effective read/write/traversal rights without activating latent permissions.
+Authorized accounts retain effective read/write rights and gain traversal.
+The parent stays private to directory listing; owner, other and default ACL
+entries are unchanged. No recursive permission changes touch child files or
+credentials. ACL reads and mutations use the opened directory descriptor rather
+than resolving its pathname again. Setup checks read/write/traversal access to each
 account's state directories under its actual UID without supplementary groups
 or capabilities, and checks again before replacing either unit. An ACL or access
 failure stops setup before service replacement. Later manifest deployments

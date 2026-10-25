@@ -15,6 +15,7 @@ from lib.cicd_build import BUILD_HOME, BUILD_USER
 from lib.remote_utils import run, is_package_installed
 from lib.unit_transaction import replace_units
 from lib.setup_directories import check_directory_path, directory_fd
+from lib.validators import validate_username
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
 from web.service_tools.cicd_config import load_config_file, save_config_file
 
@@ -48,27 +49,67 @@ def _check_service_config() -> None:
          "load_config_file('/etc/basaltwater/cicd/webhook_config.json')"])
 
 
-def reconcile_cicd_state_access() -> None:
-    """Restore execute-only CI grants after staging masks the state ACL.
+def _cicd_state_principals(parent: str) -> set[int]:
+    """Identify builders from administrator-controlled account records, not ACLs."""
+    principals = {pwd.getpwnam(user).pw_uid for user in (CICD_USER, BUILD_USER)}
+    # DeploymentOrchestrator creates build-* accounts with this exact home and
+    # shell convention. A latent named ACL alone is not evidence of authority.
+    for account in pwd.getpwall():
+        name = account.pw_name
+        if (validate_username(name) and name.startswith('build-')
+                and 6 < len(name) <= 31 and account.pw_uid > 0
+                and account.pw_gid > 0 and account.pw_shell == '/usr/sbin/nologin'
+                and account.pw_dir == os.path.join(parent, 'build-users', name)):
+            principals.add(account.pw_uid)
+    return principals
 
-    Keep other ACL entries and the mask's existing read/write bits. Allowing
-    setfacl to recalculate the mask could expose latent read/write permissions
-    belonging to an unrelated account. Only traversal is restored, including
-    existing manifest-build traversal grants masked by runtime staging.
-    """
+
+def _state_access_acl(target: str) -> dict[str, int]:
+    """Read numeric access entries on the already opened state directory."""
+    result = run(['getfacl', '--access', '--omit-header', '--numeric',
+                  '--no-effective', '--', target], capture_output=True, timeout=30)
+    entries = {}
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        match = re.fullmatch(r'(user|group|mask|other):([0-9]*):([r-][w-][x-])', line.strip())
+        if match is None:
+            raise ValueError('Invalid state directory access ACL')
+        kind, qualifier, permissions = match.groups()
+        key = f'{kind}:{qualifier}'
+        if key in entries or (qualifier and kind not in ('user', 'group')):
+            raise ValueError('Invalid state directory access ACL')
+        entries[key] = sum(bit for letter, bit in (('r', 4), ('w', 2), ('x', 1))
+                           if letter in permissions)
+    if not {'user:', 'group:', 'other:'} <= entries.keys():
+        raise ValueError('Incomplete state directory access ACL')
+    return entries
+
+
+def reconcile_cicd_state_access() -> None:
+    """Restore authorized traversal without unmasking unrelated permissions."""
     parent = os.path.dirname(CICD_HOME)
-    accounts = [pwd.getpwnam(user) for user in (CICD_USER, BUILD_USER)]
+    principals = _cicd_state_principals(parent)
     with directory_fd(parent) as descriptor:
-        # The group mode bits encode the ACL mask, or the group permissions
-        # when this directory does not yet have an extended ACL.
-        mask = ((os.fstat(descriptor).st_mode >> 3) & 0o7) | 0o1
-        permissions = ''.join(letter if mask & bit else '-'
-                              for letter, bit in (('r', 4), ('w', 2), ('x', 1)))
-        grants = ','.join(f'u:{account.pw_uid}:--x' for account in accounts)
         # The child opens our live descriptor rather than resolving the state
         # pathname again. run() does not inherit descriptors across exec.
         target = f'/proc/{os.getpid()}/fd/{descriptor}'
-        run(['setfacl', '--no-mask', '-m', f'{grants},m::{permissions}', '--', target],
+        entries = _state_access_acl(target)
+        mask = entries.get('mask:', entries['group:'])
+        # Snapshot every group-class entry's effective permissions before
+        # widening the mask. This also covers group:: and named groups.
+        grants = {key: permissions & mask for key, permissions in entries.items()
+                  if key.startswith(('user:', 'group:')) and key != 'user:'}
+        for uid in sorted(principals):
+            key = f'user:{uid}'
+            grants[key] = grants.get(key, 0) | 0o1
+        grants['mask:'] = mask | 0o1
+        changes = ','.join(
+            f'{key}:' + ''.join(letter if permissions & bit else '-'
+                               for letter, bit in (('r', 4), ('w', 2), ('x', 1)))
+            for key, permissions in grants.items()
+        )
+        run(['setfacl', '--no-mask', '-m', changes, '--', target],
             timeout=30)
     _check_cicd_state_access()
 

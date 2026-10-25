@@ -6,6 +6,7 @@ import unittest
 import errno
 import json
 from pathlib import Path
+import pwd
 import stat
 import struct
 import subprocess
@@ -263,7 +264,74 @@ class TestCicdStateAccess(unittest.TestCase):
             'cicd-build': MagicMock(pw_uid=23456, pw_gid=23457),
         }
         self.enterContext(patch.object(steps.pwd, 'getpwnam', side_effect=self.accounts.__getitem__))
-        self.run = self.enterContext(patch.object(steps, 'run'))
+        self.native_accounts = self.enterContext(patch.object(steps.pwd, 'getpwall', return_value=[]))
+        self.run = self.enterContext(patch.object(steps, 'run', side_effect=self._command))
+
+    @staticmethod
+    def _acl_entries(path):
+        try:
+            current = os.getxattr(path, 'system.posix_acl_access')
+        except OSError as exc:
+            if exc.errno != errno.ENODATA:
+                raise
+            mode = os.stat(path).st_mode
+            return {'user:': (mode >> 6) & 7, 'group:': (mode >> 3) & 7, 'other:': mode & 7}
+        entries = {}
+        for index in range(4, len(current), 8):
+            tag, permissions, identity = struct.unpack('<HHI', current[index:index + 8])
+            kind = {1: 'user', 2: 'user', 4: 'group', 8: 'group', 16: 'mask', 32: 'other'}[tag]
+            qualifier = str(identity) if tag in (2, 8) else ''
+            entries[f'{kind}:{qualifier}'] = permissions
+        return entries
+
+    def _write_acl(self, path, entries, *, default=False):
+        packed = []
+        for key, permissions in entries.items():
+            kind, qualifier = key.split(':')
+            tag = {'user': 2 if qualifier else 1, 'group': 8 if qualifier else 4,
+                   'mask': 16, 'other': 32}[kind]
+            identity = int(qualifier) if qualifier else 0xffffffff
+            packed.append((tag, permissions, identity))
+        packed.sort(key=lambda entry: (entry[0], entry[2]))
+        acl = struct.pack('<I', 2) + b''.join(struct.pack('<HHI', *entry) for entry in packed)
+        try:
+            os.setxattr(path, 'system.posix_acl_default' if default else 'system.posix_acl_access', acl)
+        except OSError as exc:
+            if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP):
+                self.skipTest('temporary filesystem does not support POSIX ACLs')
+            raise
+        return acl
+
+    def _command(self, command, **kwargs):
+        # Model ACL utilities only on fixture inodes; never execute host commands.
+        if command[0] == 'getfacl':
+            self.assertEqual(command[:-1], [
+                'getfacl', '--access', '--omit-header', '--numeric', '--no-effective', '--',
+            ])
+            entries = self._acl_entries(command[-1])
+            output = '\n'.join(
+                f'{key}:' + ''.join(letter if permissions & bit else '-'
+                                   for letter, bit in (('r', 4), ('w', 2), ('x', 1)))
+                for key, permissions in entries.items()
+            )
+            return subprocess.CompletedProcess(command, 0, output, '')
+        if command[0] == 'setfacl':
+            self.assertEqual(command[:3], ['setfacl', '--no-mask', '-m'])
+            self.assertEqual(command[4], '--')
+            entries = self._acl_entries(command[-1])
+            for change in command[3].split(','):
+                key, permissions = change.rsplit(':', 1)
+                entries[key] = sum(bit for letter, bit in (('r', 4), ('w', 2), ('x', 1))
+                                   if letter in permissions)
+            self._write_acl(command[-1], entries)
+        return subprocess.CompletedProcess(command, 0, '', '')
+
+    def _manifest_account(self, name='build-example', uid=34567, **overrides):
+        fields = dict(pw_name=name, pw_passwd='x', pw_uid=uid, pw_gid=uid,
+                      pw_gecos='', pw_dir=str(self.state / 'build-users' / name),
+                      pw_shell='/usr/sbin/nologin')
+        fields.update(overrides)
+        return pwd.struct_passwd(tuple(fields.values()))
 
     def test_rerun_restores_only_traversal_without_recalculating_other_acl_rights(self):
         key = self.home / 'deploy_key'
@@ -280,52 +348,24 @@ class TestCicdStateAccess(unittest.TestCase):
 
         before = snapshot()
         owner = (self.state.stat().st_uid, self.state.stat().st_gid)
-        acl = struct.pack('<I', 2) + b''.join(
-            struct.pack('<HHI', tag, permission, identity)
-            for tag, permission, identity in (
-                (1, 7, 0xffffffff), (2, 1, 34567), (2, 7, 45678),
-                (4, 0, 0xffffffff), (16, 0, 0xffffffff), (32, 0, 0xffffffff),
-            )
-        )
-        try:
-            os.setxattr(self.state, 'system.posix_acl_access', acl)
-            os.setxattr(self.state, 'system.posix_acl_default', acl)
-        except OSError as exc:
-            if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP):
-                self.skipTest('temporary filesystem does not support POSIX ACLs')
-            raise
-
-        def command(command, **kwargs):
-            if command[0] == 'setfacl':
-                self.assertEqual(command[:-1], [
-                    'setfacl', '--no-mask', '-m',
-                    'u:12345:--x,u:23456:--x,m::--x', '--',
-                ])
-                self.assertEqual(Path(command[-1]).stat().st_ino, self.state.stat().st_ino)
-                # Model only the requested named ACL/mask changes on this temp inode.
-                current = os.getxattr(command[-1], 'system.posix_acl_access')
-                entries = [struct.unpack('<HHI', current[index:index + 8])
-                           for index in range(4, len(current), 8)]
-                entries = [entry for entry in entries
-                           if entry[0] != 16 and entry[2] not in (12345, 23456)]
-                entries.extend(((2, 1, 12345), (2, 1, 23456), (16, 1, 0xffffffff)))
-                entries.sort(key=lambda entry: (entry[0], entry[2]))
-                os.setxattr(command[-1], 'system.posix_acl_access',
-                            struct.pack('<I', 2) + b''.join(struct.pack('<HHI', *entry) for entry in entries))
-
-        self.run.side_effect = command
+        entries = {'user:': 7, 'user:34567': 1, 'user:45678': 7,
+                   'group:': 7, 'group:56789': 7, 'mask:': 0, 'other:': 0}
+        self._write_acl(self.state, entries)
+        acl = self._write_acl(self.state, entries, default=True)
+        self.native_accounts.return_value = [
+            self._manifest_account(), self._manifest_account('build-second', 34568),
+        ]
         for _ in range(2):
             # Match _ensure_local_runtime_state(): chmod masks every named ACL.
             self.state.chmod(0o700)
             self.steps.reconcile_cicd_state_access()
-            current = os.getxattr(self.state, 'system.posix_acl_access')
-            entries = [struct.unpack('<HHI', current[index:index + 8])
-                       for index in range(4, len(current), 8)]
-            self.assertIn((2, 1, 34567), entries)  # Existing manifest builder.
-            self.assertIn((2, 7, 45678), entries)  # Latent rw bits remain masked.
-            self.assertIn((16, 1, 0xffffffff), entries)
-            self.assertIn((4, 0, 0xffffffff), entries)
-            self.assertIn((32, 0, 0xffffffff), entries)
+            entries = self._acl_entries(self.state)
+            for uid in (12345, 23456, 34567, 34568):
+                self.assertEqual(entries[f'user:{uid}'] & entries['mask:'], 1)
+            for acl_key in ('user:45678', 'group:', 'group:56789'):
+                self.assertEqual(entries[acl_key] & entries['mask:'], 0)
+            self.assertEqual(entries['mask:'], 1)
+            self.assertEqual(entries['other:'], 0)
             self.assertEqual(self.state.stat().st_mode & 0o777, 0o710)
             self.assertEqual((self.state.stat().st_uid, self.state.stat().st_gid), owner)
             self.assertEqual(os.getxattr(self.state, 'system.posix_acl_default'), acl)
@@ -334,13 +374,68 @@ class TestCicdStateAccess(unittest.TestCase):
             self.assertEqual(runtime_secret.read_bytes(), b'private runtime state')
 
     def test_grant_preserves_existing_mask_read_write_bits(self):
-        for mode, mask in ((0o740, 'r-x'), (0o720, '-wx'), (0o760, 'rwx')):
-            with self.subTest(mode=mode):
-                self.state.chmod(mode)
+        for mask in range(8):
+            with self.subTest(mask=mask):
+                before = {'user:': 7, 'user:12345': 6, 'user:34567': 5,
+                          'user:45678': 7, 'user:45679': 4,
+                          'group:': 3, 'group:56789': 5, 'group:56790': 2,
+                          'mask:': mask, 'other:': 0}
+                self._write_acl(self.state, before)
+                self.native_accounts.return_value = [self._manifest_account()]
                 self.steps.reconcile_cicd_state_access()
-                grant = next(c.args[0] for c in self.run.call_args_list if c.args[0][0] == 'setfacl')
-                self.assertEqual(grant[3], f'u:12345:--x,u:23456:--x,m::{mask}')
+                after = self._acl_entries(self.state)
+                for key in ('user:45678', 'user:45679', 'group:', 'group:56789', 'group:56790'):
+                    self.assertEqual(after[key] & after['mask:'], before[key] & mask)
+                for key in ('user:12345', 'user:34567'):
+                    self.assertEqual(after[key] & after['mask:'], (before[key] & mask) | 1)
+                self.assertEqual(after['mask:'], mask | 1)
+                self.assertEqual(after['user:'], before['user:'])
+                self.assertEqual(after['other:'], before['other:'])
+
+    def test_account_convention_is_required_for_manifest_authorization(self):
+        invalid = [
+            self._manifest_account('other'),
+            self._manifest_account('build-'),
+            self._manifest_account('build-' + 'a' * 26),
+            self._manifest_account('build-bad\n'),
+            self._manifest_account(pw_dir='/home/build-example'),
+            self._manifest_account(pw_dir=str(self.state / 'build-users' / '..' / 'build-example')),
+            self._manifest_account(pw_shell='/bin/bash'),
+            self._manifest_account(uid=0),
+            self._manifest_account(pw_gid=0),
+        ]
+        for account in invalid:
+            with self.subTest(account=account):
+                self.native_accounts.return_value = [account]
+                self.assertEqual(self.steps._cicd_state_principals(str(self.state)), {12345, 23456})
+
+    def test_unrecognized_latent_named_user_does_not_gain_traversal(self):
+        self.native_accounts.return_value = [self._manifest_account(pw_dir='/home/build-example')]
+        self._write_acl(self.state, {'user:': 7, 'user:34567': 1, 'group:': 0,
+                                     'mask:': 0, 'other:': 0})
+        self.steps.reconcile_cicd_state_access()
+        entries = self._acl_entries(self.state)
+        self.assertEqual(entries['user:34567'] & entries['mask:'], 0)
+
+    def test_native_mode_without_extended_acl_keeps_group_and_other_permissions(self):
+        self.state.chmod(0o740)
+        self.steps.reconcile_cicd_state_access()
+        entries = self._acl_entries(self.state)
+        self.assertEqual(entries['group:'] & entries['mask:'], 4)
+        self.assertEqual(entries['other:'], 0)
+        self.assertEqual(entries['user:12345'] & entries['mask:'], 1)
+        self.assertEqual(entries['user:23456'] & entries['mask:'], 1)
+
+    def test_unreadable_or_invalid_acl_stops_before_mutation(self):
+        for output in ('', 'user::rwx\ngroup::---\nother::---\nuser:bad:--x',
+                       'user::rwx\ngroup::---\nother::---\nmask::---\nmask::rwx'):
+            with self.subTest(output=output):
                 self.run.reset_mock()
+                self.run.side_effect = None
+                self.run.return_value = subprocess.CompletedProcess([], 0, output, '')
+                with self.assertRaises(ValueError):
+                    self.steps.reconcile_cicd_state_access()
+                self.run.assert_called_once()
 
     def test_checks_use_each_runtime_uid_with_groups_and_capabilities_cleared(self):
         self.steps._check_cicd_state_access()
@@ -360,10 +455,18 @@ class TestCicdStateAccess(unittest.TestCase):
         self.assertEqual(self.run.call_args_list, expected)
 
     def test_acl_failure_stops_before_access_probes(self):
-        self.run.side_effect = RuntimeError('ACL unavailable')
-        with self.assertRaisesRegex(RuntimeError, 'ACL unavailable'):
-            self.steps.reconcile_cicd_state_access()
-        self.run.assert_called_once()
+        for utility in ('getfacl', 'setfacl'):
+            with self.subTest(utility=utility):
+                def command(command, **kwargs):
+                    if command[0] == utility:
+                        raise RuntimeError('ACL unavailable')
+                    return self._command(command, **kwargs)
+
+                self.run.reset_mock()
+                self.run.side_effect = command
+                with self.assertRaisesRegex(RuntimeError, 'ACL unavailable'):
+                    self.steps.reconcile_cicd_state_access()
+                self.assertEqual(self.run.call_count, 1 if utility == 'getfacl' else 2)
 
     def test_parent_symlink_is_rejected_without_granting_access(self):
         moved = self.root / 'moved'
@@ -380,15 +483,18 @@ class TestCicdStateAccess(unittest.TestCase):
         original = self.state.stat().st_ino
 
         def command(command, **kwargs):
-            self.state.rename(moved)
-            self.state.symlink_to(outside, target_is_directory=True)
+            if command[0] == 'setfacl':
+                self.state.rename(moved)
+                self.state.symlink_to(outside, target_is_directory=True)
             self.assertEqual(Path(command[-1]).stat().st_ino, original)
             self.assertNotEqual(Path(command[-1]).stat().st_ino, outside.stat().st_ino)
+            return self._command(command, **kwargs)
 
         self.run.side_effect = command
         with self.assertRaisesRegex(ValueError, 'symlink'):
             self.steps.reconcile_cicd_state_access()
-        self.run.assert_called_once()
+        self.assertEqual(self.run.call_count, 2)
+        self.assertEqual(self._acl_entries(moved)['user:12345'], 1)
         self.assertEqual(list(outside.iterdir()), [])
         self.assertEqual(outside.stat().st_mode & 0o777, 0o700)
 
