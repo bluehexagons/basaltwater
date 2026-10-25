@@ -32,8 +32,8 @@ installations; optional combinations need their own checks.
 | --- | --- | --- |
 | Agent setup and tools | Fresh setup, populated reruns, reboot, separate Codex enrollment, managed skills and selected developer/container tools | Other agent profiles/providers, browser/pairing enrollment and optional combinations |
 | Agent tasks and goals | Live Luna inspection, workspace edits and conversation/checkpoint continuation; permissions, cancellation, usage and attempt/deadline limits. Controlled probes cover receipt recovery, unknown usage, surviving-child exclusion and failure isolation | Longer goals, additional crash/claim/publication boundaries and physical write failures |
-| Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication with synthetic execution and no broker/provider actions; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries and manual reconciliation of uncertain remote outcomes; target-browser CA trust |
-| Admin jobs | Approved dry-run/applying refresh preserves tasks; failed and stopped fetches, HTTP CSRF/replay and controlled status races. Synthetic-source crash recovery and setup-exclusion probes use real files and processes | Package upgrades, power actions, power loss, other interruption boundaries and browser interaction |
+| Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication with synthetic execution and no broker/provider actions; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries, manual reconciliation of uncertain remote outcomes and remaining live follow-up browser flows |
+| Admin jobs | Approved dry-run/applying refresh preserves tasks; live Chromium review, cancellation, denial and completed-job status, plus Chromium/Firefox layouts and power-confirmation rejection. Controlled fetch/status failures and synthetic-source crash/setup-exclusion probes | Package upgrades, executed power actions, power loss and other interruption boundaries |
 | Proxmox guests | Provisioning, identity/reboot, lifecycle controls, disk/resource flags, snapshots, full/linked clones, selected storage moves, backups and same-host restores | Off-host restore/retention, reverse storage moves, EFI/TPM layouts and template retirement. LXC CRIU suspend failed |
 | Host storage and networking | Passive capacity audit, storage persistence, selected maintenance guards, local orphan protection, firewall allowlists and strict SSH/TLS | Management-network isolation, multi-node/HA/Ceph, interrupted host upgrades and live remote-node/RBD/VirtioFS deletion guards |
 | Sync and PAR2 | Mirrors, mount-loss guards, interrupted replacement, unreadable-source preservation and logical-damage repair; supervised CIFS preflight/teardown and incomplete-run health. Enumeration I/O failures have automated regressions | Power loss, stalled scrub preflight and further network-filesystem variants. A failed mirror can still apply unrelated deletions; kernel I/O can delay teardown indefinitely |
@@ -49,8 +49,8 @@ installations; optional combinations need their own checks.
 
 1. **Longer agent runs:** exercise recurrence, checkpoint/history retention and
    remaining worker-restart boundaries while preserving usage limits and recovery.
-2. **Agent administration:** qualify browser review/status and package upgrades
-   on a disposable target; extend interruption checks to other applying jobs.
+2. **Agent administration:** test package upgrades on a disposable target;
+   extend interruption checks to other applying jobs.
 3. **Storage failure handling:** check hard-mounted network storage and stalled
    scrub preflight, then Btrfs diagnostic integration and native scrub scheduling.
 4. **Recovery and developer workflows:** restore off-host backups and verify
