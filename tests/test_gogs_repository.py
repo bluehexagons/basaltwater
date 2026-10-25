@@ -288,29 +288,35 @@ class TestConfigureRepository(unittest.TestCase):
             git_arguments,
         )
 
-    def test_reconciles_existing_custom_mirror_push_urls(self):
+    def test_replaces_multivalue_fetch_urls_for_existing_custom_mirror(self):
         with tempfile.TemporaryDirectory() as root:
             local_config = f"file:{root}/.git/config"
+            stale_one = "https://old-one.invalid/team/project.git"
+            stale_two = "https://old-two.invalid/team/project.git"
             calls, runner = self._runner(
                 root,
                 local_remote_names={
                     "--local": (
                         "remote.origin.url",
+                        "remote.origin.fetch",
                         "remote.backup-mirror.url",
+                        "remote.backup-mirror.fetch",
                     )
                 },
                 config_origin_results={
                     "remote.origin.url": (
                         0,
                         _origin_records(
-                            (local_config, "https://github.com/team/project.git")
+                            (local_config, stale_one),
+                            (local_config, stale_two),
                         ),
                         "",
                     ),
                     "remote.backup-mirror.url": (
                         0,
                         _origin_records(
-                            (local_config, "https://git.example.test/team/project.git")
+                            (local_config, stale_one),
+                            (local_config, stale_two),
                         ),
                         "",
                     ),
@@ -333,12 +339,54 @@ class TestConfigureRepository(unittest.TestCase):
         ]
         self.assertIn(
             [
+                "config",
+                "--replace-all",
+                "remote.origin.url",
+                "https://github.com/team/project.git",
+            ],
+            git_arguments,
+        )
+        self.assertIn(
+            [
+                "config",
+                "--replace-all",
+                "remote.backup-mirror.url",
+                "https://git.example.test/team/project.git",
+            ],
+            git_arguments,
+        )
+        self.assertNotIn(
+            ["remote", "set-url", "origin", "https://github.com/team/project.git"],
+            git_arguments,
+        )
+        self.assertNotIn(
+            ["remote", "add", "origin", "https://github.com/team/project.git"],
+            git_arguments,
+        )
+        self.assertNotIn(
+            [
                 "remote",
                 "set-url",
                 "backup-mirror",
                 "https://git.example.test/team/project.git",
             ],
             git_arguments,
+        )
+        self.assertNotIn(
+            [
+                "remote",
+                "add",
+                "backup-mirror",
+                "https://git.example.test/team/project.git",
+            ],
+            git_arguments,
+        )
+        fetch_keys = {"remote.origin.fetch", "remote.backup-mirror.fetch"}
+        self.assertFalse(
+            any(
+                arguments[:1] == ["config"] and fetch_keys.intersection(arguments)
+                for arguments in git_arguments
+            )
         )
         self.assertIn(
             [
@@ -522,18 +570,18 @@ class TestConfigureRepository(unittest.TestCase):
         )
         self.assertIn(
             [
-                "remote",
-                "set-url",
-                "origin",
+                "config",
+                "--replace-all",
+                "remote.origin.url",
                 "https://github.com/team/project.git",
             ],
             git_arguments,
         )
         self.assertIn(
             [
-                "remote",
-                "set-url",
-                "gogs",
+                "config",
+                "--replace-all",
+                "remote.gogs.url",
                 "https://git.example.test/team/project.git",
             ],
             git_arguments,
@@ -659,7 +707,7 @@ class TestConfigureRepository(unittest.TestCase):
                     calls,
                 )
 
-    def test_local_include_remote_definition_uses_set_url(self):
+    def test_local_include_remote_definition_replaces_only_url(self):
         with tempfile.TemporaryDirectory() as root:
             origin = "file:/tmp/repository config include/remote.gitconfig"
             github = "https://github.com/team/project.git"
@@ -681,7 +729,10 @@ class TestConfigureRepository(unittest.TestCase):
         git_arguments = [
             command[3:] for command in calls if command[:2] == ["git", "-C"]
         ]
-        self.assertIn(["remote", "set-url", "origin", github], git_arguments)
+        self.assertIn(
+            ["config", "--replace-all", "remote.origin.url", github],
+            git_arguments,
+        )
         self.assertIn(
             [
                 "remote",
@@ -707,7 +758,7 @@ class TestConfigureRepository(unittest.TestCase):
             calls,
         )
 
-    def test_local_fetch_only_remote_definition_uses_set_url(self):
+    def test_local_fetch_only_remote_definition_replaces_url(self):
         with tempfile.TemporaryDirectory() as root:
             github = "https://github.com/team/project.git"
             calls, runner = self._runner(
@@ -725,9 +776,12 @@ class TestConfigureRepository(unittest.TestCase):
         git_arguments = [
             command[3:] for command in calls if command[:2] == ["git", "-C"]
         ]
-        self.assertIn(["remote", "set-url", "origin", github], git_arguments)
+        self.assertIn(
+            ["config", "--replace-all", "remote.origin.url", github],
+            git_arguments,
+        )
 
-    def test_worktree_remote_definition_uses_set_url(self):
+    def test_worktree_remote_definition_replaces_url(self):
         with tempfile.TemporaryDirectory() as root:
             github = "https://github.com/team/project.git"
             worktree_origin = f"file:{root}/.git/worktrees/feature/config.worktree"
@@ -756,7 +810,10 @@ class TestConfigureRepository(unittest.TestCase):
         git_arguments = [
             command[3:] for command in calls if command[:2] == ["git", "-C"]
         ]
-        self.assertIn(["remote", "set-url", "origin", github], git_arguments)
+        self.assertIn(
+            ["config", "--replace-all", "remote.origin.url", github],
+            git_arguments,
+        )
         self.assertIn(
             [
                 "git",

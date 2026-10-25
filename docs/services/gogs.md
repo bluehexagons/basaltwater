@@ -351,13 +351,15 @@ inherited destination stops configuration before repository actions; the helper
 does not rewrite global, system, included, or per-worktree config. Matching
 inherited URLs remain effective.
 
-The helper chooses `remote set-url` only when the selected remote has a local or
-enabled per-worktree config entry, including entries in local config includes.
-This includes fetch-only remote definitions. When a remote exists only in global
-or system config, the helper uses `remote add`; matching inherited URLs do not
-make it appear to be an existing local remote. This check does not inspect
-`insteadOf` or `pushInsteadOf` URL rewrite rules, which remain a separate
-transport layer.
+For an existing remote with a local or enabled per-worktree config entry,
+including entries in local config includes, the helper replaces its local fetch
+URL with `git config --replace-all remote.<name>.url`. This updates multiple
+local URL values and preserves fetch refspecs and other remote settings,
+including on fetch-only remote definitions. When a remote exists only in global
+or system config, the helper uses `remote add` to create the local remote and
+its fetch refspec. Matching inherited URLs do not make it appear to be an
+existing local remote. This check does not inspect `insteadOf` or `pushInsteadOf`
+URL rewrite rules, which remain a separate transport layer.
 
 A nonempty `GIT_CONFIG` environment override stops configuration before Git is
 run because it can redirect config writes away from the validated local target.
