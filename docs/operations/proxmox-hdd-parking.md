@@ -34,6 +34,13 @@ capacity, an active storage status, and a passing SMART summary do not establish
 that the data can be read. The normal move procedure below assumes readable
 source storage.
 
+A known-failing drive can be deliberately retained for disposable failure
+experiments when the operator accepts losing every affected guest and backup.
+Record that choice and keep those results separate from ordinary application
+qualification on healthy storage. A small successful read/write test does not
+clear earlier media errors or establish that other allocations are readable.
+This is a separate experiment, not a recovery step in the parking workflow.
+
 The tested lab workflow used a full-clone QEMU VM without snapshots, moved from
 LVM-thin raw storage to an ext4 directory pool. Linked clones, snapshot history,
 EFI/TPM, passthrough and LXC require their own checks. Keep reusable templates
