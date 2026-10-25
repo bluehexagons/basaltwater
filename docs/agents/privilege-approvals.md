@@ -24,7 +24,10 @@ The password flag prompts privately. Pick a 16–256 character password that is
 different from the Linux, Git, T3, and web-panel passwords. Only a salted hash
 is uploaded; saved configuration and reconstructed setup commands omit it.
 
-The approval page uses the managed VM host and HTTPS port 9444. Use
+The approval page uses the managed VM host and HTTPS port 9444. If setup uses an
+IPv4 address with a CIDR prefix, the approval origin uses that address and drops
+the prefix. An explicit `privilege_broker_host` continues to select the approval
+hostname. Use
 `--privilege-broker PORT` to choose another port above 1023, outside the shared
 gateway's 8443–8999 range. Restrict the VM with `--lan-access` or
 `--access-source`, and enroll the VM CA on the device that will approve

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 
 from lib.privilege_auth import validate_auth
@@ -13,6 +14,11 @@ DEFAULT_PRIVILEGE_BROKER_PORT = 9444
 def privilege_broker_origin(config) -> str:
     """Build the approval origin from managed host metadata and its port."""
     host = config.privilege_broker_host or config.host
+    if not config.privilege_broker_host and "/" in host:
+        try:
+            host = str(ipaddress.IPv4Interface(host).ip)
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, TypeError) as exc:
+            raise ValueError("Approval host CIDR must be a valid IPv4 address and prefix") from exc
     host = host.strip("[]").lower()
     displayed_host = f"[{host}]" if ":" in host else host
     return f"https://{displayed_host}:{config.privilege_broker_port}"

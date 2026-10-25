@@ -62,6 +62,23 @@ class SetupTests(unittest.TestCase):
             parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
                                "https://vm.example:9444"])
 
+    def test_ipv4_cidr_host_uses_address_for_approval_origin(self):
+        config = SetupConfig(host="10.100.0.106/16", username="agent", system_type="agent_vm",
+                             privilege_broker_port=9444)
+        self.assertEqual(privilege_broker_origin(config), "https://10.100.0.106:9444")
+
+    def test_malformed_cidr_host_is_rejected(self):
+        for host in ("10.100.0.106/33", "10.100.0.999/16", "vm.example/16"):
+            with self.subTest(host=host):
+                with self.assertRaises(ValueError):
+                    SetupConfig(host=host, username="agent", system_type="agent_vm",
+                                privilege_broker_port=9444)
+
+    def test_explicit_privilege_broker_host_takes_precedence(self):
+        config = SetupConfig(host="10.100.0.106/16", username="agent", system_type="agent_vm",
+                             privilege_broker_host="approval.example", privilege_broker_port=9444)
+        self.assertEqual(privilege_broker_origin(config), "https://approval.example:9444")
+
     def test_command_request_keeps_the_top_level_command(self):
         parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args([
