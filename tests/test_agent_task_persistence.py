@@ -160,6 +160,37 @@ class PersistentTaskTests(unittest.TestCase):
         self.assertEqual([run["id"] for run in store.pending_follow_ups(identifier)], [first_run])
         self.assertEqual(len(list(directory.glob("*.json"))), 2)
 
+    def test_corrupt_unresolved_receipt_does_not_hide_old_follow_up(self) -> None:
+        identifier = self.manager.create({**self.values, "history_limit": 1}, run_now=True, now=0)
+        self.run_task({**report(), "follow_up": follow_up(self.home)})
+        store = TaskContextStore(self.home)
+        first_run = self.manager.snapshot()["runs"][-1]["id"]
+        runs = store.directory(identifier) / "runs"
+        corrupt_run = "f" * 32
+        corrupt_path = runs / (corrupt_run + ".json")
+        corrupt_path.write_text("{unreadable receipt")
+
+        with patch.object(tasks, "MAX_RUNS", 1):
+            for run_number in range(41):
+                self.manager.action(identifier, "run")
+                self.run_task(report(), now=2 + 2 * run_number)
+
+        self.assertEqual(len(self.manager.snapshot()["runs"]), 1)
+        self.assertTrue((runs / (first_run + ".json")).exists())
+        self.assertEqual([run["id"] for run in store.pending_follow_ups(identifier)], [first_run])
+        self.assertTrue(store.has_pending_follow_up(identifier))
+        self.assertEqual(corrupt_path.read_text(), "{unreadable receipt")
+        self.assertFalse((runs / (corrupt_run + ".decision.json")).exists())
+
+        with patch("lib.agent_task_context.MAX_UNRESOLVED_FOLLOW_UPS", 2):
+            self.manager.action(identifier, "run")
+            with patch.object(tasks, "execute_prompt") as provider:
+                self.assertTrue(self.manager.tick(now=100))
+            provider.assert_not_called()
+
+        self.assertEqual([run["id"] for run in store.pending_follow_ups(identifier)], [first_run])
+        self.assertEqual(corrupt_path.read_text(), "{unreadable receipt")
+
     def test_unresolved_follow_up_limit_blocks_provider_before_workspace_preparation(self) -> None:
         identifier = self.manager.create({**self.values, "history_limit": 1, "workspace": "run-directory"},
                                          run_now=True, now=0)
@@ -201,6 +232,33 @@ class PersistentTaskTests(unittest.TestCase):
         self.assertEqual(outside.read_text(), "{}")
         self.assertTrue(store.has_pending_follow_up(identifier))
         self.assertEqual([run["id"] for run in store.pending_follow_ups(identifier)], [first_run])
+
+    def test_malformed_follow_up_decision_values_remain_unresolved(self) -> None:
+        from lib.atomic_io import write_json_atomic
+
+        identifier = self.manager.create({**self.values, "history_limit": 1}, run_now=True, now=0)
+        self.run_task({**report(), "follow_up": follow_up(self.home)})
+        store = TaskContextStore(self.home)
+        run_id = self.manager.snapshot()["runs"][-1]["id"]
+        decision_path = store.directory(identifier) / "runs" / (run_id + ".decision.json")
+        malformed_decisions = (
+            ("list status", {"status": [], "requests": {}}),
+            ("dict status", {"status": {}, "requests": {}}),
+            ("numeric status", {"status": 1, "requests": {}}),
+            ("list request state", {"status": "blocked", "requests": {
+                "example.service": {"id": "a" * 32, "state": []}}}),
+            ("dict request state", {"status": "blocked", "requests": {
+                "example.service": {"id": "a" * 32, "state": {}}}}),
+            ("numeric request state", {"status": "blocked", "requests": {
+                "example.service": {"id": "a" * 32, "state": 1}}}),
+        )
+
+        for label, decision in malformed_decisions:
+            with self.subTest(value=label):
+                write_json_atomic(str(decision_path), decision)
+                self.assertTrue(store.has_pending_follow_up(identifier))
+                self.assertEqual([item["id"] for item in store.pending_follow_ups(identifier)], [run_id])
+                self.assertEqual(json.loads(decision_path.read_text()), decision)
 
     def test_completed_process_reporting_blocked_counts_toward_failure_pausing(self) -> None:
         self.manager.create({**self.values, "failure_limit": 1}, run_now=True, now=0)
