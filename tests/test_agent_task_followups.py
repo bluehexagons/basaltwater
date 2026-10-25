@@ -372,7 +372,9 @@ class TaskPermissionProfileTests(unittest.TestCase):
                                               ("workspace", True, False), ("workspace", True, True)):
                 with self.subTest(mode=mode, network=network, temporary=temporary):
                     task = tasks.validate_task({"title": "Check", "prompt": "Check", "directory": home,
-                                                "interval": "once", "mode": mode, "network": network,
+                                                "interval": "once", "mode": mode,
+                                                "workspace": "run-directory" if mode == "workspace" else "existing",
+                                                "network": network,
                                                 "temporary_files": temporary}, home)
                     command = tasks.codex_command(task, "/test/codex")
                     overrides = tomllib.loads("\n".join(command[index + 1] for index, argument in enumerate(command) if argument == "-c"))

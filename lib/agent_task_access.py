@@ -9,6 +9,36 @@ from pathlib import Path
 from lib.validation import validate_filesystem_path
 
 
+_PROTECTED_HOME_PATHS = (".ssh", ".codex", ".agents", ".config", ".local/state/basaltwater")
+
+
+def _overlaps(first: str, second: str) -> bool:
+    try:
+        return os.path.commonpath((first, second)) in (first, second)
+    except ValueError:
+        return False
+
+
+def _overlaps_protected_home_path(path: str, home: str) -> bool:
+    """Check literal and resolved paths so symlink aliases cannot cross a protected boundary."""
+    candidates = {os.path.abspath(path), os.path.realpath(path)}
+    for relative in _PROTECTED_HOME_PATHS:
+        protected = os.path.join(home, relative)
+        protected_paths = {protected, os.path.realpath(protected)}
+        if any(_overlaps(candidate, target)
+               for candidate in candidates for target in protected_paths):
+            return True
+    return False
+
+
+def validate_existing_workspace(directory: str, home: str) -> None:
+    """Require a specific existing project directory outside protected home trees."""
+    if os.path.abspath(directory) == os.path.abspath(home):
+        raise ValueError("Workspace changes require a specific project directory, not the account's home")
+    if _overlaps_protected_home_path(directory, home):
+        raise ValueError("Workspace directory cannot overlap credentials, configuration, or task control state")
+
+
 def text_requirements(value: object) -> list[str]:
     if (not isinstance(value, list) or len(value) > 8 or any(
             not isinstance(item, str) or not item.strip() or len(item.encode()) > 500
@@ -22,7 +52,6 @@ def writable_directories(value: object, home: str, *, check: bool = True) -> lis
     if not isinstance(value, list) or len(value) > 8:
         raise ValueError("Select at most eight additional writable directories")
     result = []
-    protected = (".ssh", ".codex", ".agents", ".config", ".local/state/basaltwater")
     for path in value:
         if not isinstance(path, str):
             raise ValueError("Writable directories must be paths")
@@ -32,10 +61,8 @@ def writable_directories(value: object, home: str, *, check: bool = True) -> lis
         if (not os.path.isabs(path) or os.path.normpath(path) != path
                 or path == home or os.path.commonpath((path, home)) != home):
             raise ValueError("Additional writable directories must be specific directories inside the account's home")
-        for name in protected:
-            target = os.path.join(home, name)
-            if os.path.commonpath((path, target)) in (path, target):
-                raise ValueError("Task write grants cannot include credentials, agent configuration, or control state")
+        if _overlaps_protected_home_path(path, home):
+            raise ValueError("Task write grants cannot include credentials, agent configuration, or control state")
         if check:
             current = Path(home)
             for part in Path(path).relative_to(home).parts:

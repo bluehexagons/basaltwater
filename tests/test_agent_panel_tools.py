@@ -262,7 +262,8 @@ class AgentPanelToolsTest(unittest.TestCase):
         for operation in ("none", "review", "npm-content-cache", "go-build-cache", "podman-images"):
             with self.subTest(operation=operation), patch.object(agent_tasks, "execute_prompt") as execute:
                 page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"}, submitted={
-                    "title": "Storage task", "prompt": "Describe the selected action.", "mode": "workspace",
+                    "title": "Storage task", "prompt": "Describe the selected action.", "directory": str(self.directory),
+                    "mode": "workspace",
                     "storage_operation": operation,
                 })
                 form = TaskForm(page).values
