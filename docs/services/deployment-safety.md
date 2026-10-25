@@ -35,6 +35,14 @@ know.
   only under `.basaltwater_shared/<app>/<component>/data`; the component root
   and deployment backups remain root-controlled and outside the systemd unit's
   writable paths.
+- App-server setup and patch reruns reconcile only `/var/www` itself to
+  `root:deploy` mode `0775`, allowing deploy to create release directories.
+  Existing descendants keep their contents, ownership, permissions and ACLs,
+  including service databases, backups and private deployment state. Required
+  directory paths reject symlink components before directory mutations;
+  existing log and Nginx directory ownership and permissions are preserved.
+  This does not repair descendants changed by older recursive setup commands:
+  operators must restore their application-specific owners and permissions.
 - Manifest builds use per-application build users, stable automatic ports, and
   a deployment lock. Existing services continue running during the build.
   Service inventory verifies the generated unit's release or persistent paths
