@@ -93,7 +93,7 @@ in the evidence index below; raw logs and host inventories stay outside Git.
 | STO-JOBS | Path mirrors and PAR2 recovery | Live slice: small-file mirrors/PAR2, damage preservation and targeted recovery, unsafe-input rejection, populated rerun/reboot; missing endpoints block dependent jobs while independent jobs continue; absent nested mounts preserve backup subtrees; private mount views survive controlled source/destination detachment at endpoints and nested paths; native QEMU/LXC rsync and denied-namespace refusal checked; worker-discovered exclusions reach warning summaries and hold completion cadence until recovery. An unavailable CIFS source at launch hit a shortened test deadline without losing existing mirror files and synchronized after recovery. Real power loss and mid-transfer network-filesystem failure remain open | E12, E13, E14 |
 | STO-SMB | Samba server/client | Live slice: encrypted authenticated SMB3.1.1 read/write/rename/delete, readonly/user/anonymous rejection, fast access change/removal preserving data, TCP445-only reconciliation, headless CIFS helpers, failed-automount repair, service-user access, idle reactivation and reboot; bounded server-service outage and native reconnect without manual remount. Windows/macOS clients, silent network blackholes and interrupted writes remain open | E13, E14 |
 | STO-SYNCTHING | Syncthing | Live slice: direct two-device exchange, disconnected edits, concurrent edit conflicts retaining both versions, remote replacement/deletion and archived-version restoration to both peers; populated reruns, reboot and removal/re-enable preserving identity and folders; private-CA HTTPS/API authentication and credential rotation; injected generation/unit/policy/interruption failures restore the prior login and active service; runtime GUI folders in temporary paths are refused while approved storage works; unsafe-root and inaccessible-ancestor rejection. Browser GUI and relays/discovery remain open; staggered history coalesces versions within retention intervals | E13, E14 |
-| SYS-USER | Target-user rename | Not run: separate administrator, UID/home/units, interruption/resume | — |
+| SYS-USER | Target-user rename | Partial: separate/default administrator, overlapping login names, moved/retained home, UID/GID/groups/subordinate IDs, managed units, linger/cron, strict SSH/sudo and cache reconciliation; native partial-cutover recovery and final-verification retry without replay, followed by reboot and populated setup rerun checks. Initialized rootless storage blocks home moves; retained-home rename preserves Podman health. Later-phase identity drift and overlapping home-path retries have mocked regressions. Arbitrary application-state migration, all interruption points and native SMB mount migration remain unqualified | E17 |
 | SYS-PRIV | Privileged executor | Not run end to end on a disposable target: review/TLS lifecycle, lost response, worker interruption and recovery | — |
 | DEPLOY | Application deployment | Not run: signed webhook, healthy delivery and unhealthy activation rollback | — |
 | INTEGRATIONS | External services | Partial: Proxmox notifications tested on loopback; external alert receivers, public DNS/ACME/Cloudflare, provider sign-in and publishing accounts remain open | E2 |
@@ -133,6 +133,7 @@ basaltw agent memory get lab-testing-coverage --project . --json
 | E14 | 2026-10-24 | CIFS service-outage deadline/reconnect, Syncthing concurrent edits and archived-version restoration at `945b4012`; recovery/sandbox fixes, credential rotation, populated reruns and separate endpoint reboots at `00127f88`; incoming Proxmox panel inventory native collection/export/render and IPC-group regression |
 | E15 | 2026-10-24 | Native HDD parking, storage-declaration verification/adoption, stopped-guest setup wake and retained Git/LFS regression checks; controller source `78789105`; cold Podman maintenance diagnostics through `e1340e95` |
 | E16 | 2026-10-24 | Consistent stopped-guest Gogs backup from controller `477e4619`, isolated same-host HDD restore preserving the E6 runtime, fresh HTTPS Git/LFS recovery and reboot; exact health/recovery functions from `9a8ca7f7` exercised in memory against native services, SQLite and controlled port fixtures |
+| E17 | 2026-10-24 | Disposable Debian user-rename qualification from `5a13c802`; native isolated-Python startup, account/session race and partial-home recovery through `504eb459`, container-store move rejection at `06938d21`, authenticated polling at `b126b3e3`, retained-home rename and reboot. Home-rewrite idempotence and pre-activation identity validation fixed at `88baf054`; both-username storage expansion and malformed authenticated-status regressions fixed at `11e17aef`. Final stopped-guest setup wake, retained-home rename, identity/container checks and reboot passed at that revision; combined CI recorded separately |
 
 For each new batch, update affected rows and the private evidence mapping.
 Record preconditions, exact source/runtime revisions, expected/observed behavior,
@@ -149,10 +150,12 @@ branch coverage is not a live-feature coverage percentage.
 
 ## Next useful batches
 
-Next valuable cases are managed-user rename, a local signed deployment/rollback,
-fresh agent-profile setup without account-bound credentials, and GitHub/Gogs
+Next valuable cases are a local signed deployment/rollback, fresh agent-profile
+setup without account-bound credentials, and GitHub/Gogs
 mirror configuration with fresh-client LFS routing. Extend
 file-service testing to interrupted writes and silent network blackholes.
+Extend rename testing to additional interruption points and software-specific
+state; moving an account home is not a general application migration.
 Off-host restore, external notification
 delivery and native desktop qualification need their own explicit test boundary.
 Multi-node migration/HA/Ceph need additional infrastructure. Hardware stress,
