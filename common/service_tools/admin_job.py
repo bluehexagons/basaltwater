@@ -114,34 +114,44 @@ def unit_state() -> str:
 
 def job_status() -> dict:
     """Expose fixed result metadata, never privileged output or saved setup."""
-    active = unit_state()
     try:
-        protected_path(ADMIN_STATE)
-        value = read_json_file(ADMIN_STATE, max_bytes=4096)
-        if (not isinstance(value, dict) or value.get("action") not in ADMIN_ACTIONS
-                or value.get("status") not in {"running", "succeeded", "failed", "interrupted"}
-                or type(value.get("started")) not in {int, float} or not math.isfinite(value["started"])
-                or value.get("finished") is not None and (type(value["finished"]) not in {int, float} or not math.isfinite(value["finished"]))
-                or value.get("exit_code") is not None and type(value["exit_code"]) is not int
-                or value.get("stage") is not None and value["stage"] not in STAGE_LABELS
-                or value.get("failure") is not None and value["failure"] not in FAILURE_LABELS
-                or value.get("job_id") is not None and not valid_job_id(value["job_id"])
-                or value.get("command_index") is not None and (
-                    type(value["command_index"]) is not int or not 1 <= value["command_index"] <= 32)):
-            raise ValueError("Invalid maintenance result")
-        result = {key: value.get(key) for key in (
-            "action", "status", "started", "finished", "exit_code", "stage", "command_index", "failure", "job_id",
-        )}
-        result["setup_context"] = setup_details(value.get("setup_context"), value.get("job_id"))
-        if result["setup_context"] is None and result["status"] == "running":
-            result["setup_context"] = current_setup_context(value)
-        if result["status"] == "running" and active in {"inactive", "failed"}:
-            result["status"] = "interrupted"
-            result["failure"] = "job_interrupted"
-    except FileNotFoundError:
-        result = {}
+        # Confirm the broker state directory is trusted before interpreting a
+        # missing leaf. lstat preserves lookup errors (including EIO) and sees
+        # dangling symlinks, unlike exists()/lexists().
+        protected_path(os.path.dirname(ADMIN_STATE), directory=True)
+        try:
+            os.lstat(ADMIN_STATE)
+        except FileNotFoundError:
+            result = {}
+        else:
+            protected_path(ADMIN_STATE)
+            value = read_json_file(ADMIN_STATE, max_bytes=4096)
+            if (not isinstance(value, dict) or value.get("action") not in ADMIN_ACTIONS
+                    or value.get("status") not in {"running", "succeeded", "failed", "interrupted"}
+                    or type(value.get("started")) not in {int, float} or not math.isfinite(value["started"])
+                    or value.get("finished") is not None and (type(value["finished"]) not in {int, float} or not math.isfinite(value["finished"]))
+                    or value.get("exit_code") is not None and type(value["exit_code"]) is not int
+                    or value.get("stage") is not None and value["stage"] not in STAGE_LABELS
+                    or value.get("failure") is not None and value["failure"] not in FAILURE_LABELS
+                    or value.get("job_id") is not None and not valid_job_id(value["job_id"])
+                    or value.get("command_index") is not None and (
+                        type(value["command_index"]) is not int or not 1 <= value["command_index"] <= 32)):
+                raise ValueError("Invalid maintenance result")
+            result = {key: value.get(key) for key in (
+                "action", "status", "started", "finished", "exit_code", "stage", "command_index", "failure", "job_id",
+            )}
+            result["setup_context"] = setup_details(value.get("setup_context"), value.get("job_id"))
+            if result["setup_context"] is None and result["status"] == "running":
+                result["setup_context"] = current_setup_context(value)
     except (OSError, ValueError, RuntimeError, TypeError, OverflowError):
         result = {"status": "unavailable"}
+    # Read unit state only after reading the record it will be used to assess.
+    # A job published after an older inactive observation must not be marked
+    # interrupted using that stale observation.
+    active = unit_state()
+    if result.get("status") == "running" and active in {"inactive", "failed"}:
+        result["status"] = "interrupted"
+        result["failure"] = "job_interrupted"
     return {"unit_state": active, "latest": result, "blocked": availability()}
 
 

@@ -191,8 +191,13 @@ is persisted before its effects. Categories distinguish unavailable actions,
 rejected source, timeout, launch/validation errors, child failure/signal and
 interrupted jobs. Exception text and output remain private. Older results keep
 unknown stage/category values instead of inventing diagnostics; invalid values
-make the result unavailable. An inactive unit with a running record is reported
-as interrupted and is never retried automatically.
+make the result unavailable. Confirmed absence of the job-history file is shown
+as no latest result; unsafe, corrupt, or inaccessible state is unavailable. The
+helper validates the trusted state directory and checks the file without
+following its final symlink. It reads the job record before observing the unit,
+so an older inactive observation cannot mark a newly published running job as
+interrupted. An inactive unit with a running record is reported as interrupted
+and is never retried automatically.
 
 The CLI's `agent privilege admin-status --json` and the panel show the fixed
 diagnostics. Each helper invocation records a random `job_id` before effects;

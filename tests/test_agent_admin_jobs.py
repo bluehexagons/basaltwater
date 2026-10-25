@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import fcntl
 import json
 import os
@@ -265,6 +266,47 @@ class AdminJobTests(unittest.TestCase):
             self.assertNotIn("root-secret", json.dumps(result))
         with patch.object(admin_job, "unit_state", return_value="unavailable"):
             self.assertEqual(admin_job.job_status()["unit_state"], "unavailable")
+
+    def test_absent_job_history_is_empty_after_trusted_parent_check(self):
+        with patch.object(admin_job, "unit_state", return_value="inactive") as unit_state:
+            result = admin_job.job_status()
+        self.assertEqual(result["latest"], {})
+        self.assertEqual(result["unit_state"], "inactive")
+        unit_state.assert_called_once()
+
+    def test_job_history_lookup_errors_and_dangling_symlink_are_unavailable(self):
+        real_lstat = os.lstat
+
+        def fail_state_lstat(path):
+            if path == self.path:
+                raise OSError(errno.EIO, "I/O error")
+            return real_lstat(path)
+
+        with patch.object(admin_job.os, "lstat", side_effect=fail_state_lstat), \
+                patch.object(admin_job, "unit_state", return_value="inactive"):
+            self.assertEqual(admin_job.job_status()["latest"], {"status": "unavailable"})
+
+        Path(self.path).symlink_to(self.directory.name + "/missing-target")
+        with patch.object(admin_job, "unit_state", return_value="inactive"):
+            self.assertEqual(admin_job.job_status()["latest"], {"status": "unavailable"})
+
+    def test_new_record_published_after_inactive_observation_is_not_interrupted(self):
+        previous = {"action": "refresh", "status": "succeeded", "started": 123,
+                    "finished": 124, "exit_code": 0}
+        running = {"action": "refresh", "status": "running", "started": 125,
+                   "finished": None, "exit_code": None}
+        Path(self.path).write_text(json.dumps(previous))
+
+        def observe_inactive_then_publish():
+            # Model an old inactive observation followed by service-start's
+            # atomic publication of its new running record.
+            Path(self.path).write_text(json.dumps(running))
+            return "inactive"
+
+        with patch.object(admin_job, "unit_state", side_effect=observe_inactive_then_publish):
+            result = admin_job.job_status()
+        self.assertEqual(result["unit_state"], "inactive")
+        self.assertEqual(result["latest"]["status"], "succeeded")
 
     def test_corrupt_job_status_remains_unavailable(self):
         for values in ({"action": []}, {"action": "refresh", "status": "running", "started": float("nan")},
