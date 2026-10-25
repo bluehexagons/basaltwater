@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import stat
 import subprocess
 import tempfile
@@ -19,6 +20,7 @@ from unittest.mock import patch
 from lib import refresh
 from lib.config import AGENT_TOOLS, SetupConfig
 from lib.channel_manager import ChannelError
+from lib.operation_state import OperationStateStore
 from lib.plugin_registry import get_system_type_definition
 
 
@@ -28,9 +30,12 @@ class DebianRefreshTests(unittest.TestCase):
         self.addCleanup(stack.close)
         self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         self.state = self.root / "setup.json"
+        self.setup_marker = self.root / "setup-operation.json"
         self.state.write_text("{}")
         self.state.chmod(0o600)
         stack.enter_context(patch.object(refresh, "SETUP_CONFIG_FILE", str(self.state)))
+        stack.enter_context(patch.object(refresh, "STATE_DIR", str(self.root)))
+        stack.enter_context(patch("lib.privilege_policy.protected_path"))
         stack.enter_context(patch.object(refresh, "is_cachyos", return_value=False))
         stack.enter_context(patch.object(refresh, "read_os_release", return_value={"ID": "debian"}))
         self.uid = stack.enter_context(patch.object(refresh.os, "geteuid", return_value=0))
@@ -149,6 +154,43 @@ class DebianRefreshTests(unittest.TestCase):
         self.upgrade.assert_not_called()
         self.run.assert_not_called()
 
+    def test_in_progress_setup_marker_blocks_source_upgrade_and_preserves_job_evidence(self):
+        store = OperationStateStore(str(self.setup_marker))
+        record = store.begin("target_setup", "server_lite", "applying", context={
+            "machine_type": "hardware", "system_type": "server_lite", "username": "human",
+            "maintenance_job_id": "a" * 32, "setup_stage": "steps", "step_index": 2,
+        })
+        store.close()
+        before = self.setup_marker.read_bytes()
+
+        self.assertEqual(self.invoke(), 1)
+
+        self.upgrade.assert_not_called()
+        self.receipt.assert_not_called()
+        self.run.assert_not_called()
+        self.assertEqual(self.setup_marker.read_bytes(), before)
+        self.assertEqual(OperationStateStore(str(self.setup_marker)).load(), record)
+
+    def test_matching_recovery_required_setup_marker_can_still_replay_idempotent_setup(self):
+        store = OperationStateStore(str(self.setup_marker))
+        record = store.begin("target_setup", "server_lite", "applying", context={
+            "machine_type": "hardware", "system_type": "server_lite", "username": "human",
+            "maintenance_job_id": "a" * 32, "setup_stage": "steps", "step_index": 2,
+        })
+        recovered = store.transition(
+            record.operation_id, "recovery", status="recovery_required", expected_record=record,
+        )
+        store.close()
+        before = self.setup_marker.read_bytes()
+
+        self.assertEqual(self.invoke(), 0)
+
+        self.upgrade.assert_called_once()
+        self.receipt.assert_called_once()
+        self.run.assert_called_once()
+        self.assertEqual(OperationStateStore(str(self.setup_marker)).load(), recovered)
+        self.assertEqual(self.setup_marker.read_bytes(), before)
+
     def test_snapshot_branch_selection_is_validated(self):
         for branch, expected in ((None, "dev"), ("main", "dev"), ("feature/test", "branch-feature/test")):
             self.assertEqual(refresh._refresh_channel({"installation_type": "setup-snapshot", "branch": branch}), expected)
@@ -196,15 +238,24 @@ class SnapshotActivationTests(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0)
 
     def test_activation_preserves_state_link_deployments_and_previous_source(self):
+        state_inode = os.lstat(self.source / "state").st_ino
+        deployments_inode = os.stat(self.source / "deployments").st_ino
+        deployment_inode = os.stat(self.source / "deployments/app").st_ino
         refresh._upgrade_snapshot(str(self.source), "dev")
         self.assertEqual((self.source / "basaltwater.py").read_text(), "new source")
         self.assertTrue((self.source / "state").is_symlink())
+        self.assertEqual(os.lstat(self.source / "state").st_ino, state_inode)
         self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
         self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+        self.assertEqual(os.stat(self.source / "deployments").st_ino, deployments_inode)
+        self.assertEqual(os.stat(self.source / "deployments/app").st_ino, deployment_inode)
         backup, = self.root.glob(".basaltwater-before-refresh-*")
         self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
         self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
         self.assertIn("/deployments/", (self.source / ".git/info/exclude").read_text())
+        self.assertFalse((self.root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME).exists())
+        result = json.loads((self.root / (refresh.SOURCE_ACTIVATION_MARKER_FILENAME + ".last.json")).read_text())
+        self.assertEqual(result["outcome"], "succeeded")
 
     def test_activated_state_symlink_leaves_a_real_git_checkout_clean(self):
         environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -274,6 +325,9 @@ class SnapshotActivationTests(unittest.TestCase):
                 self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
 
     def test_activation_failure_restores_snapshot_and_runtime_data(self):
+        state_inode = os.lstat(self.source / "state").st_ino
+        deployments_inode = os.stat(self.source / "deployments").st_ino
+        deployment_inode = os.stat(self.source / "deployments/app").st_ino
         rename = os.rename
         def fail_activation(source, destination):
             if str(source).endswith("/source") and destination == str(self.source):
@@ -285,6 +339,11 @@ class SnapshotActivationTests(unittest.TestCase):
         self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
         self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
         self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+        self.assertEqual(os.lstat(self.source / "state").st_ino, state_inode)
+        self.assertEqual(os.stat(self.source / "deployments").st_ino, deployments_inode)
+        self.assertEqual(os.stat(self.source / "deployments/app").st_ino, deployment_inode)
+        result = json.loads((self.root / (refresh.SOURCE_ACTIVATION_MARKER_FILENAME + ".last.json")).read_text())
+        self.assertEqual(result["outcome"], "rolled_back")
 
     def test_failed_recovery_retains_every_copy_for_operator_repair(self):
         rename = os.rename
@@ -302,6 +361,78 @@ class SnapshotActivationTests(unittest.TestCase):
         self.assertEqual((staged / "state/setup.json").read_text(), "saved options")
         backup, = self.root.glob(".basaltwater-before-refresh-*")
         self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
+        marker = self.root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME
+        record = OperationStateStore(str(marker)).load()
+        self.assertIsNotNone(record)
+        self.assertEqual(record.status, "recovery_required")
+        self.assertEqual(record.context["repository_path"], str(self.source))
+        self.assertEqual(record.context["backup_path"], str(backup))
+        self.assertEqual(record.context["staged_path"], str(staged))
+
+    def test_sigkill_after_first_rename_leaves_exact_activation_paths_for_recovery(self):
+        script = """
+import os
+import signal
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from lib import refresh
+from lib.operation_state import OperationStateStore
+import lib.privilege_policy
+
+root = Path(sys.argv[1])
+repository = root / "basaltwater"
+lib.privilege_policy.protected_path = lambda *args, **kwargs: None
+
+def clone(command, **kwargs):
+    staged = Path(command[-1])
+    (staged / ".git/info").mkdir(parents=True)
+    (staged / "basaltwater.py").write_text("new source")
+    return SimpleNamespace(returncode=0)
+
+refresh.run = clone
+refresh.switch_channel = lambda staged, channel: {"commit": "new", "channel": channel}
+real_rename = os.rename
+
+def rename_then_kill(source, destination):
+    real_rename(source, destination)
+    if source == str(repository) and str(destination).startswith(str(root / ".basaltwater-before-refresh-")):
+        marker = root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME
+        if OperationStateStore(str(marker)).load() is None:
+            os._exit(91)
+        print("first rename completed with durable marker", flush=True)
+        os.kill(os.getpid(), signal.SIGKILL)
+
+os.rename = rename_then_kill
+refresh._upgrade_snapshot(str(repository), "dev")
+"""
+        completed = subprocess.run(
+            [refresh.sys.executable, "-c", script, str(self.root)],
+            cwd=Path(__file__).parents[1], capture_output=True, text=True, check=False,
+        )
+
+        self.assertEqual(completed.returncode, -signal.SIGKILL, completed.stderr)
+        self.assertIn("first rename completed with durable marker", completed.stdout)
+        self.assertFalse(self.source.exists())
+        marker = self.root / refresh.SOURCE_ACTIVATION_MARKER_FILENAME
+        record = OperationStateStore(str(marker)).load()
+        self.assertIsNotNone(record)
+        self.assertEqual(record.status, "in_progress")
+        self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+        backup = Path(record.context["backup_path"])
+        staged = Path(record.context["staged_path"])
+        self.assertEqual(Path(record.context["repository_path"]), self.source)
+        self.assertTrue(Path(record.context["temporary_path"]).is_dir())
+        self.assertEqual(record.context["runtime_data_names"], ["deployments", "state"])
+        self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
+        self.assertEqual((backup / "deployments/app").read_text(), "application data")
+        self.assertEqual((staged / "basaltwater.py").read_text(), "new source")
+
+        with patch.object(refresh, "run") as clone, self.assertRaisesRegex(
+            RuntimeError, "Unresolved Basaltwater source activation",
+        ):
+            refresh._upgrade_snapshot(str(self.source), "dev")
+        clone.assert_not_called()
 
     def test_source_data_conflict_stops_before_renaming_installation(self):
         def conflicting_clone(command, **kwargs):
