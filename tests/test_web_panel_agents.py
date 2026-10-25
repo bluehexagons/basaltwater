@@ -28,6 +28,8 @@ class AgentTaskTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.home = os.path.realpath(self.temporary.name)
+        self.project = Path(self.home) / "project"
+        self.project.mkdir()
         self.manager = tasks.AgentTasks(self.home)
         self.addCleanup(self.manager.close)
         self.available = patch.object(tasks.AgentTasks, "available", return_value=True)
@@ -37,7 +39,7 @@ class AgentTaskTest(unittest.TestCase):
         self.tool.start()
         self.addCleanup(self.tool.stop)
         self.values = {"title": "Dependencies", "prompt": "Update dependencies; preserve unrelated work.",
-                       "directory": self.home, "mode": "workspace", "interval": "weekly", "network": True, "model": ""}
+                       "directory": str(self.project), "mode": "workspace", "interval": "weekly", "network": True, "model": ""}
 
     def test_schedule_survives_restart_without_replaying_all_missed_intervals(self) -> None:
         identifier = self.manager.create(self.values, run_now=False, now=100)
@@ -75,8 +77,8 @@ class AgentTaskTest(unittest.TestCase):
     def test_editing_starters_finish_once_and_leave_review_work_untouched(self) -> None:
         for key in ("ci-repair", "dependencies", "documentation"):
             with self.subTest(template=key):
-                identifier = self.manager.create({**agents.PROMPT_TEMPLATES[key], "directory": self.home}, run_now=True, now=100)
-                review = Path(self.home) / (key + ".txt")
+                identifier = self.manager.create({**agents.PROMPT_TEMPLATES[key], "directory": str(self.project)}, run_now=True, now=100)
+                review = self.project / (key + ".txt")
 
                 def finish(*_args, **_kwargs):
                     review.write_text("Changes awaiting review")
@@ -399,7 +401,7 @@ class AgentTaskTest(unittest.TestCase):
             {"mode": "root"}, {"mode": "inspect", "network": True}, {"interval": "cron"},
             {"directory": "relative/path"}, {"directory": "/tmp", "mode": "workspace"},
             {"model": "--dangerously-bypass-approvals-and-sandbox"}, {"title": "bad\nname"},
-            {"prompt": "é" * 3000}, {"network": "true"}, {"directory": self.home + "/missing"},
+            {"prompt": "é" * 3000}, {"network": "true"}, {"directory": str(self.project / "missing")},
             {"timeout_minutes": "0"}, {"timeout_minutes": 10081}, {"timeout_minutes": True},
             {"timeout_minutes": "1.5"}, {"timeout_minutes": "-1"}, {"effort": "unlimited"},
             {"web_search": "shell"}, {"session_history": "true"}, {"temporary_files": "true"},
@@ -414,8 +416,19 @@ class AgentTaskTest(unittest.TestCase):
             link.symlink_to(outside)
             with self.assertRaises(ValueError):
                 tasks.validate_task({**self.values, "directory": str(link)}, self.home)
-        result = tasks.validate_task({**self.values, "directory": "~"}, self.home)
+        result = tasks.validate_task({**self.values, "directory": "~", "mode": "inspect", "network": False}, self.home)
         self.assertEqual(result["directory"], self.home)
+
+    def test_workspace_mode_rejects_home_and_protected_home_trees(self) -> None:
+        with self.assertRaisesRegex(ValueError, "specific project directory"):
+            tasks.validate_task({**self.values, "directory": self.home}, self.home)
+
+        for relative in (".ssh", ".codex", ".agents", ".config", ".local/state/basaltwater"):
+            with self.subTest(path=relative):
+                protected = Path(self.home) / relative
+                protected.mkdir(parents=True, exist_ok=True)
+                with self.assertRaisesRegex(ValueError, "cannot overlap credentials"):
+                    tasks.validate_task({**self.values, "directory": str(protected)}, self.home)
 
     def test_runtime_and_original_model_settings_survive_restart_and_edit(self) -> None:
         settings = {**self.values, "timeout_minutes": "10080", "model": "test-model", "effort": "high",
@@ -479,7 +492,8 @@ class AgentTaskTest(unittest.TestCase):
     def test_entire_template_catalog_validates_and_builds_bounded_commands(self) -> None:
         for key, template in agents.PROMPT_TEMPLATES.items():
             with self.subTest(template=key):
-                task = tasks.validate_task({**template, "directory": self.home}, self.home)
+                directory = self.project if template["scope"] == "repository" else self.home
+                task = tasks.validate_task({**template, "directory": str(directory)}, self.home)
                 command = tasks.codex_command(task, "/test/codex")
                 sandbox = command[command.index("--sandbox") + 1]
                 self.assertEqual(sandbox, "read-only" if task["mode"] == "inspect" else "workspace-write")
@@ -667,8 +681,11 @@ class AgentScreenTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
+        self.home = os.path.realpath(self.temporary.name)
+        self.project = Path(self.home) / "project"
+        self.project.mkdir()
         self.state = panel.WebPanelState({"host": "example.test", "username": "agent", "system_type": "agent_vm",
-                                         "features": {}, "services": [], "access": []}, agent_home=self.temporary.name)
+                                         "features": {}, "services": [], "access": []}, agent_home=self.home)
         self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git"}))))
         self.state.agent_diagnostics = agents.AgentDiagnostics(self.temporary.name, features=lambda: self.state.features())
         for target, attribute, value in ((tasks.AgentTasks, "available", True), (tasks, "_tool_path", "/test/codex")):
@@ -900,7 +917,8 @@ class AgentScreenTest(unittest.TestCase):
                 self.assertIn(f'<option value="{web_search}" selected>', page)
                 self.assertIn('<details class="agent-template-group" open>', page)
                 values = {"csrf": self.state.csrf_token, "title": template["title"], "prompt": template["prompt"],
-                          "directory": self.temporary.name, "mode": template["mode"], "interval": template["interval"],
+                          "directory": str(self.project if template["scope"] == "repository" else self.home),
+                          "mode": template["mode"], "interval": template["interval"],
                           "workspace": template.get("workspace", "existing"),
                           "timeout_minutes": str(template.get("timeout_minutes", tasks.DEFAULT_TIMEOUT_MINUTES)), "web_search": template.get("web_search", "disabled"),
                           "submit": "run" if interval == "once" else "schedule"}
@@ -937,7 +955,7 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_worktree_post_requires_selected_git_for_create_and_edit(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Worktree", "prompt": "Inspect later",
-                  "directory": self.temporary.name, "mode": "workspace", "interval": "once",
+                  "directory": str(self.project), "mode": "workspace", "interval": "once",
                   "workspace": "worktree", "submit": "draft"}
         identifier = self.state.agent_tasks.create({**values, "workspace": "existing"}, run_now=False, draft=True)
         before = self.state.agent_tasks.snapshot()
@@ -959,7 +977,7 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_save_draft_accepts_every_form_field_without_launching_or_scheduling(self) -> None:
         values = {"csrf": self.state.csrf_token, "id": "", "title": "Prepare work", "prompt": "Inspect later",
-                  "directory": self.temporary.name, "mode": "workspace", "interval": "daily", "submit": "draft",
+                  "directory": str(self.project), "mode": "workspace", "interval": "daily", "submit": "draft",
                   "model": "", "custom_model": "test-model", "effort": "high", "timeout_minutes": "120",
                   "web_search": "cached", "network": "1", "temporary_files": "1", "session_history": "1", "failure_limit": "5", "repeat_minutes": "60"}
         self.assertEqual(len(values), 18)
@@ -1009,7 +1027,7 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_persistent_goal_form_accepts_full_unicode_prompt_and_criteria(self) -> None:
         values = {"csrf": self.state.csrf_token, "id": "", "title": "Bounded goal", "prompt": "é" * 2000,
-                  "directory": self.temporary.name, "mode": "workspace", "interval": "once", "submit": "draft",
+                  "directory": str(self.project), "mode": "workspace", "interval": "once", "submit": "draft",
                   "model": "", "custom_model": "", "effort": "", "timeout_minutes": "30",
                   "web_search": "disabled", "failure_limit": "3", "repeat_minutes": "60",
                   "persistence": "checkpoint", "workspace": "directory", "continue_until_done": "1",
@@ -1045,7 +1063,7 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(len(self.state.agent_tasks.snapshot()["tasks"]), 0)
 
     def test_duplicate_and_reuse_links_prefill_reviewable_settings_without_mutation(self) -> None:
-        settings = {"title": "Review <repo>", "prompt": "Original <prompt>", "directory": self.temporary.name,
+        settings = {"title": "Review <repo>", "prompt": "Original <prompt>", "directory": str(self.project),
                     "mode": "workspace", "interval": "weekly", "network": True, "temporary_files": True,
                     "model": "historical-model", "effort": "high", "timeout_minutes": 120, "web_search": "cached", "failure_limit": 5}
         identifier = self.state.agent_tasks.create(settings, run_now=True)
@@ -1309,7 +1327,7 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_settings_form_saves_custom_model_effort_runtime_and_options(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Long review", "prompt": "Wait for a backup, then review",
-                  "directory": self.temporary.name, "mode": "workspace", "interval": "daily", "submit": "schedule",
+                  "directory": str(self.project), "mode": "workspace", "interval": "daily", "submit": "schedule",
                   "model": "", "custom_model": "custom-model", "effort": "medium", "timeout_minutes": "1440",
                   "web_search": "cached", "network": "1", "session_history": "1", "temporary_files": "1", "id": ""}
         handler = self.handler("/actions/agent-task/save", values)
