@@ -153,6 +153,7 @@ def _read_git_config_origins(
             "-C",
             repository,
             "config",
+            "--includes",
             "--null",
             "--show-origin",
             "--get-all",
@@ -167,7 +168,7 @@ def _read_git_config_origins(
         return []
     if result.returncode != 0:
         raise RuntimeError(
-            "Could not inspect Git push URL configuration; "
+            "Could not inspect Git remote URL configuration; "
             "the git config query failed"
         )
 
@@ -176,13 +177,13 @@ def _read_git_config_origins(
         fields.pop()
     if not fields or len(fields) % 2:
         raise RuntimeError(
-            "Could not inspect Git push URL configuration; "
+            "Could not inspect Git remote URL configuration; "
             "the git config query returned invalid data"
         )
     entries = list(zip(fields[::2], fields[1::2]))
     if any(not origin for origin, _value in entries):
         raise RuntimeError(
-            "Could not inspect Git push URL configuration; "
+            "Could not inspect Git remote URL configuration; "
             "the git config query returned invalid data"
         )
     return entries
@@ -197,12 +198,139 @@ def _config_origin_path(origin: str, repository: str) -> str | None:
         ord(character) < 32 or ord(character) == 127 for character in path
     ):
         raise RuntimeError(
-            "Could not inspect Git push URL configuration; "
+            "Could not inspect Git remote URL configuration; "
             "the git config query returned invalid data"
         )
     if not os.path.isabs(path):
         path = os.path.join(repository, path)
     return os.path.normcase(os.path.abspath(path))
+
+
+def _git_worktree_config_enabled(repository: str) -> bool:
+    """Check whether Git reads a per-worktree config file for this repository."""
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            repository,
+            "config",
+            "--local",
+            "--includes",
+            "--bool",
+            "--null",
+            "--get-all",
+            "extensions.worktreeConfig",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode == 1:
+        return False
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Could not inspect repository Git config; "
+            "the worktree config query failed"
+        )
+
+    values = result.stdout.split("\0") if result.stdout else []
+    if values and values[-1] == "":
+        values.pop()
+    if not values or any(value not in {"true", "false"} for value in values):
+        raise RuntimeError(
+            "Could not inspect repository Git config; "
+            "the worktree config query returned invalid data"
+        )
+    return values[-1] == "true"
+
+
+def _read_local_git_config_names(
+    repository: str,
+    pattern: str,
+    *,
+    scope: str,
+) -> list[str]:
+    """Read matching local config names without returning their values."""
+    if scope not in {"--local", "--worktree"}:
+        raise ValueError("Unsupported Git config scope")
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            repository,
+            "config",
+            scope,
+            "--includes",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            pattern,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode == 1:
+        return []
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Could not inspect repository Git config; "
+            "the remote-name query failed"
+        )
+
+    names = result.stdout.split("\0") if result.stdout else []
+    if names and names[-1] == "":
+        names.pop()
+    expression = re.compile(pattern, re.IGNORECASE)
+    if not names or any(not expression.match(name) for name in names):
+        raise RuntimeError(
+            "Could not inspect repository Git config; "
+            "the remote-name query returned invalid data"
+        )
+    return names
+
+
+def _has_local_remote_definition(
+    repository: str,
+    remote: str,
+    *,
+    worktree_config_enabled: bool,
+) -> bool:
+    """Check local and enabled worktree config, including their includes."""
+    scopes = ["--local"]
+    if worktree_config_enabled:
+        scopes.append("--worktree")
+    pattern = rf"^remote\.{re.escape(remote)}\."
+    for scope in scopes:
+        if _read_local_git_config_names(repository, pattern, scope=scope):
+            return True
+    return False
+
+
+def _validate_remote_fetch_urls(
+    repository: str,
+    config_target: str,
+    mirror_remote: str,
+    github_url: str,
+    gogs_url: str,
+) -> None:
+    """Reject inherited fetch URLs that differ from the selected destinations."""
+    writable_config = os.path.normcase(os.path.abspath(config_target))
+    expected_by_key = {
+        "remote.origin.url": github_url,
+        f"remote.{mirror_remote}.url": gogs_url,
+    }
+    for key, expected_url in expected_by_key.items():
+        for origin, value in _read_git_config_origins(repository, key):
+            origin_path = _config_origin_path(origin, repository)
+            if origin_path == writable_config or value == expected_url:
+                continue
+            raise ValueError(
+                f"Git fetch URL setting '{key}' has an inherited destination "
+                "outside the intended repository; its value is not shown"
+            )
 
 
 def _validate_push_url_configuration(
@@ -397,7 +525,24 @@ def configure_github_gogs_repository(
         gogs,
         combined_push=combined_push,
     )
-    remotes = set(_git(root, ["remote"]).stdout.splitlines())
+    _validate_remote_fetch_urls(
+        root,
+        config_target,
+        mirror_remote,
+        github,
+        gogs,
+    )
+    worktree_config_enabled = _git_worktree_config_enabled(root)
+    origin_defined = _has_local_remote_definition(
+        root,
+        "origin",
+        worktree_config_enabled=worktree_config_enabled,
+    )
+    mirror_defined = _has_local_remote_definition(
+        root,
+        mirror_remote,
+        worktree_config_enabled=worktree_config_enabled,
+    )
     _validate_lfs_endpoint_configuration(
         root,
         lfsconfig_path,
@@ -409,12 +554,12 @@ def configure_github_gogs_repository(
     actions: NestedStrList = [["lfs", "install", "--local"]]
     actions.append(
         ["remote", "set-url", "origin", github]
-        if "origin" in remotes
+        if origin_defined
         else ["remote", "add", "origin", github]
     )
     actions.append(
         ["remote", "set-url", mirror_remote, gogs]
-        if mirror_remote in remotes
+        if mirror_defined
         else ["remote", "add", mirror_remote, gogs]
     )
     actions.append(["config", "--replace-all", "remote.origin.pushurl", github])

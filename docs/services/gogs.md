@@ -335,21 +335,29 @@ objects to Gogs and sends Git refs and LFS pointer files to both GitHub and
 Gogs. Use `--no-combined-push` when Git refs should be pushed to the `gogs` remote
 separately. In either mode, the selected mirror remote's explicit push URL is
 reset in the repository's local config to its Gogs URL, including when using a
-custom mirror name. Combined
-pushes are not atomic: after a failure, inspect refs on both remotes before a
-deliberate retry because one may have advanced while the other did not.
+custom mirror name. Combined pushes are not atomic: after a failure, inspect
+refs on both remotes before a deliberate retry because one may have advanced
+while the other did not.
 
 Before applying changes, the command validates the repository's local Git config
-target and checks the origin of effective `remote.origin.pushurl` and the
-selected mirror's `remote.<name>.pushurl` values. Stale multiple values stored
-directly in that local config can be repaired. A push URL from global or system
-config, an included file, per-worktree config, or another inherited source is
-allowed only when it exactly matches a destination selected for that remote in
-the requested push mode. An unexpected inherited destination stops
-configuration before repository actions; the helper does not rewrite global,
-system, included, or per-worktree config. Matching inherited URLs remain
-effective. This check does not inspect `insteadOf` or `pushInsteadOf` URL rewrite
-rules, which remain a separate transport layer.
+target and checks the origins of effective `remote.origin.url`,
+`remote.origin.pushurl`, and the selected mirror's `remote.<name>.url` and
+`remote.<name>.pushurl` values. Stale multiple push URLs stored directly in that
+local config can be repaired.
+An inherited fetch URL is allowed only when it exactly matches the intended
+fetch URL. Inherited push URLs are allowed only when they exactly match the
+destinations selected for that remote in this push mode. An unexpected
+inherited destination stops configuration before repository actions; the helper
+does not rewrite global, system, included, or per-worktree config. Matching
+inherited URLs remain effective.
+
+The helper chooses `remote set-url` only when the selected remote has a local or
+enabled per-worktree config entry, including entries in local config includes.
+This includes fetch-only remote definitions. When a remote exists only in global
+or system config, the helper uses `remote add`; matching inherited URLs do not
+make it appear to be an existing local remote. This check does not inspect
+`insteadOf` or `pushInsteadOf` URL rewrite rules, which remain a separate
+transport layer.
 
 A nonempty `GIT_CONFIG` environment override stops configuration before Git is
 run because it can redirect config writes away from the validated local target.

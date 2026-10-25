@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -31,7 +32,8 @@ def _completed(
 
 def _is_mutating(arguments: StrList) -> bool:
     if arguments[:1] == ["config"]:
-        return "--get" not in arguments and "--get-all" not in arguments
+        query_options = {"--get", "--get-all", "--get-regexp"}
+        return not any(argument in query_options for argument in arguments)
     if arguments[:1] == ["remote"]:
         return len(arguments) > 1 and arguments[1] in {"add", "set-url"}
     return (
@@ -76,16 +78,20 @@ class TestConfigureRepository(unittest.TestCase):
         root: str,
         filesystem: str = "ext4",
         *,
-        remotes: str = "origin\n",
+        effective_remotes: str = "",
         config_results: dict[
             tuple[str | None, str], tuple[int, str, str]
         ] | None = None,
         config_origin_results: dict[str, tuple[int, str, str]] | None = None,
+        local_remote_names: dict[str, tuple[str, ...]] | None = None,
+        local_remote_name_query_result: tuple[int, str, str] | None = None,
+        worktree_config_result: tuple[int, str, str] = (1, "", ""),
         git_config_path: str | None = None,
     ):
         calls: list[StrList] = []
         configured_results = config_results or {}
         configured_origin_results = config_origin_results or {}
+        configured_local_remote_names = local_remote_names or {}
         local_config_path = git_config_path or os.path.join(root, ".git", "config")
 
         def run(command: StrList, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -98,7 +104,41 @@ class TestConfigureRepository(unittest.TestCase):
             if arguments == ["rev-parse", "--git-path", "config"]:
                 return _completed(command, f"{local_config_path}\n")
             if arguments == ["remote"]:
-                return _completed(command, remotes)
+                return _completed(command, effective_remotes)
+            if arguments[:1] == ["config"] and "extensions.worktreeConfig" in arguments:
+                returncode, stdout, stderr = worktree_config_result
+                return _completed(
+                    command,
+                    stdout=stdout,
+                    returncode=returncode,
+                    stderr=stderr,
+                )
+            if arguments[:1] == ["config"] and "--get-regexp" in arguments:
+                if local_remote_name_query_result is not None:
+                    returncode, stdout, stderr = local_remote_name_query_result
+                    return _completed(
+                        command,
+                        stdout=stdout,
+                        returncode=returncode,
+                        stderr=stderr,
+                    )
+                scope = next(
+                    (
+                        argument
+                        for argument in arguments
+                        if argument in {"--local", "--worktree"}
+                    ),
+                    "",
+                )
+                expression = re.compile(arguments[-1], re.IGNORECASE)
+                names = [
+                    name
+                    for name in configured_local_remote_names.get(scope, ())
+                    if expression.match(name)
+                ]
+                if not names:
+                    return _completed(command, returncode=1)
+                return _completed(command, "".join(f"{name}\0" for name in names))
             if arguments[:1] == ["config"] and "--show-origin" in arguments:
                 returncode, stdout, stderr = configured_origin_results.get(
                     arguments[-1],
@@ -250,9 +290,31 @@ class TestConfigureRepository(unittest.TestCase):
 
     def test_reconciles_existing_custom_mirror_push_urls(self):
         with tempfile.TemporaryDirectory() as root:
+            local_config = f"file:{root}/.git/config"
             calls, runner = self._runner(
                 root,
-                remotes="origin\nbackup-mirror\n",
+                local_remote_names={
+                    "--local": (
+                        "remote.origin.url",
+                        "remote.backup-mirror.url",
+                    )
+                },
+                config_origin_results={
+                    "remote.origin.url": (
+                        0,
+                        _origin_records(
+                            (local_config, "https://github.com/team/project.git")
+                        ),
+                        "",
+                    ),
+                    "remote.backup-mirror.url": (
+                        0,
+                        _origin_records(
+                            (local_config, "https://git.example.test/team/project.git")
+                        ),
+                        "",
+                    ),
+                },
             )
             with patch(
                 "lib.gogs_repository.subprocess.run",
@@ -349,12 +411,76 @@ class TestConfigureRepository(unittest.TestCase):
                 )
                 self.assertNotIn(["lfs", "env"], git_arguments)
 
+    def test_rejects_unexpected_inherited_fetch_urls_before_actions(self):
+        cases = (
+            (
+                "remote.origin.url",
+                "https://user:origin-fetch-secret@stale.invalid/private.git",
+                "file:/etc/gitconfig",
+                "gogs",
+            ),
+            (
+                "remote.gogs.url",
+                "https://user:mirror-fetch-secret@stale.invalid/private.git",
+                "file:/etc/gitconfig",
+                "gogs",
+            ),
+            (
+                "remote.backup-mirror.url",
+                "https://user:custom-fetch-secret@stale.invalid/private.git",
+                "file:/tmp/config include with spaces/extra.gitconfig",
+                "backup-mirror",
+            ),
+        )
+        for key, stale, origin, mirror_remote in cases:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as root:
+                calls, runner = self._runner(
+                    root,
+                    config_origin_results={
+                        key: (0, _origin_records((origin, stale)), "")
+                    },
+                )
+
+                with patch(
+                    "lib.gogs_repository.subprocess.run",
+                    side_effect=runner,
+                ):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "fetch URL.*inherited destination",
+                    ) as error:
+                        configure_github_gogs_repository(
+                            root,
+                            "https://github.com/team/project.git",
+                            "https://git.example.test/team/project.git",
+                            mirror_remote=mirror_remote,
+                        )
+
+                self.assertNotIn("stale.invalid", str(error.exception))
+                self.assertNotIn("secret", str(error.exception))
+                git_arguments = [
+                    command[3:]
+                    for command in calls
+                    if command[:2] == ["git", "-C"]
+                ]
+                self.assertFalse(
+                    any(_is_mutating(arguments) for arguments in git_arguments)
+                )
+                self.assertNotIn(["lfs", "env"], git_arguments)
+
     def test_repairs_stale_multivalue_push_urls_from_writable_config(self):
         with tempfile.TemporaryDirectory() as root:
             stale_one = "https://stale-one.invalid/private.git"
             stale_two = "https://stale-two.invalid/private.git"
+            local_config = f"file:{root}/.git/config"
             calls, runner = self._runner(
                 root,
+                local_remote_names={
+                    "--local": (
+                        "remote.origin.pushurl",
+                        "remote.gogs.pushurl",
+                    )
+                },
                 config_origin_results={
                     "remote.origin.pushurl": (
                         0,
@@ -396,6 +522,24 @@ class TestConfigureRepository(unittest.TestCase):
         )
         self.assertIn(
             [
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/team/project.git",
+            ],
+            git_arguments,
+        )
+        self.assertIn(
+            [
+                "remote",
+                "set-url",
+                "gogs",
+                "https://git.example.test/team/project.git",
+            ],
+            git_arguments,
+        )
+        self.assertIn(
+            [
                 "config",
                 "--replace-all",
                 "remote.gogs.pushurl",
@@ -430,6 +574,20 @@ class TestConfigureRepository(unittest.TestCase):
             ):
                 mirror = "file:/etc/gitconfig"
                 entries = {
+                    "remote.origin.url": (
+                        0,
+                        _origin_records(
+                            (mirror, "https://github.com/team/project.git")
+                        ),
+                        "",
+                    ),
+                    f"remote.{mirror_remote}.url": (
+                        0,
+                        _origin_records(
+                            (mirror, "https://git.example.test/team/project.git")
+                        ),
+                        "",
+                    ),
                     "remote.origin.pushurl": (
                         0,
                         _origin_records(*origin_entries),
@@ -445,7 +603,7 @@ class TestConfigureRepository(unittest.TestCase):
                 }
                 calls, runner = self._runner(
                     root,
-                    remotes=f"origin\n{mirror_remote}\n",
+                    effective_remotes=f"origin\n{mirror_remote}\n",
                     config_origin_results=entries,
                 )
 
@@ -462,12 +620,37 @@ class TestConfigureRepository(unittest.TestCase):
                     )
 
                 self.assertEqual(result["combined_push"], combined_push)
+                git_arguments = [
+                    command[3:]
+                    for command in calls
+                    if command[:2] == ["git", "-C"]
+                ]
+                self.assertIn(
+                    [
+                        "remote",
+                        "add",
+                        "origin",
+                        "https://github.com/team/project.git",
+                    ],
+                    git_arguments,
+                )
+                self.assertNotIn(["git", "-C", root, "remote"], calls)
+                self.assertIn(
+                    [
+                        "remote",
+                        "add",
+                        mirror_remote,
+                        "https://git.example.test/team/project.git",
+                    ],
+                    git_arguments,
+                )
                 self.assertIn(
                     [
                         "git",
                         "-C",
                         root,
                         "config",
+                        "--includes",
                         "--null",
                         "--show-origin",
                         "--get-all",
@@ -475,6 +658,152 @@ class TestConfigureRepository(unittest.TestCase):
                     ],
                     calls,
                 )
+
+    def test_local_include_remote_definition_uses_set_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            origin = "file:/tmp/repository config include/remote.gitconfig"
+            github = "https://github.com/team/project.git"
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.url": (0, _origin_records((origin, github)), "")
+                },
+                local_remote_names={"--local": ("remote.origin.url",)},
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                configure_github_gogs_repository(
+                    root,
+                    github,
+                    "https://git.example.test/team/project.git",
+                )
+
+        git_arguments = [
+            command[3:] for command in calls if command[:2] == ["git", "-C"]
+        ]
+        self.assertIn(["remote", "set-url", "origin", github], git_arguments)
+        self.assertIn(
+            [
+                "remote",
+                "add",
+                "gogs",
+                "https://git.example.test/team/project.git",
+            ],
+            git_arguments,
+        )
+        self.assertIn(
+            [
+                "git",
+                "-C",
+                root,
+                "config",
+                "--local",
+                "--includes",
+                "--null",
+                "--name-only",
+                "--get-regexp",
+                r"^remote\.origin\.",
+            ],
+            calls,
+        )
+
+    def test_local_fetch_only_remote_definition_uses_set_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            github = "https://github.com/team/project.git"
+            calls, runner = self._runner(
+                root,
+                local_remote_names={"--local": ("remote.origin.fetch",)},
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                configure_github_gogs_repository(
+                    root,
+                    github,
+                    "https://git.example.test/team/project.git",
+                )
+
+        git_arguments = [
+            command[3:] for command in calls if command[:2] == ["git", "-C"]
+        ]
+        self.assertIn(["remote", "set-url", "origin", github], git_arguments)
+
+    def test_worktree_remote_definition_uses_set_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            github = "https://github.com/team/project.git"
+            worktree_origin = f"file:{root}/.git/worktrees/feature/config.worktree"
+            calls, runner = self._runner(
+                root,
+                config_origin_results={
+                    "remote.origin.pushurl": (
+                        0,
+                        _origin_records((worktree_origin, github)),
+                        "",
+                    )
+                },
+                local_remote_names={
+                    "--worktree": ("remote.origin.pushurl",)
+                },
+                worktree_config_result=(0, "true\0", ""),
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                configure_github_gogs_repository(
+                    root,
+                    github,
+                    "https://git.example.test/team/project.git",
+                )
+
+        git_arguments = [
+            command[3:] for command in calls if command[:2] == ["git", "-C"]
+        ]
+        self.assertIn(["remote", "set-url", "origin", github], git_arguments)
+        self.assertIn(
+            [
+                "git",
+                "-C",
+                root,
+                "config",
+                "--worktree",
+                "--includes",
+                "--null",
+                "--name-only",
+                "--get-regexp",
+                r"^remote\.origin\.",
+            ],
+            calls,
+        )
+
+    def test_local_remote_name_query_error_is_sanitized_and_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            calls, runner = self._runner(
+                root,
+                local_remote_name_query_result=(
+                    128,
+                    "",
+                    "bad remote URL https://user:private-token@hidden.invalid/repo.git",
+                ),
+            )
+
+            with patch("lib.gogs_repository.subprocess.run", side_effect=runner):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "remote-name query failed",
+                ) as error:
+                    configure_github_gogs_repository(
+                        root,
+                        "https://github.com/team/project.git",
+                        "https://git.example.test/team/project.git",
+                    )
+
+        self.assertNotIn("private-token", str(error.exception))
+        self.assertNotIn("hidden.invalid", str(error.exception))
+        self.assertFalse(
+            any(
+                _is_mutating(command[3:])
+                for command in calls
+                if command[:2] == ["git", "-C"]
+            )
+        )
 
     def test_no_combined_push_rejects_inherited_gogs_origin_destination(self):
         with tempfile.TemporaryDirectory() as root:
