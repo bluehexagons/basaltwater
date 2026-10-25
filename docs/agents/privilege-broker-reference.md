@@ -91,8 +91,8 @@ Approval origins currently support DNS names and IPv4 literals. Literal IPv6
 origins are not supported by host validation; bracket formatting alone does not
 qualify that transport contract.
 Controller-to-target arguments carry the effective approval hostname, including
-an explicit override. IPv4 CIDR setup targets such as `10.100.0.106/16` use the
-address `10.100.0.106` for approvals; the prefix remains part of setup metadata.
+an explicit override. IPv4 CIDR setup targets such as `10.0.0.20/16` use the
+address `10.0.0.20` for approvals; the prefix remains part of setup metadata.
 
 ## Audit, limits, and recovery
 
