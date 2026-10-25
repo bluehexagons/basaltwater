@@ -21,7 +21,9 @@ from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
 from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
-from lib.agent_task_followups import follow_up_requires_review, follow_up_state, prepare_follow_up
+from lib.agent_task_followups import (
+    follow_up_has_retryable_cancellations, follow_up_requires_review, follow_up_state, prepare_follow_up,
+)
 from lib.agent_task_policy import task_policy_issues
 from lib.maintenance_defaults import (
     PODMAN_IMAGE_PRESSURE_RETENTION_DAYS, PODMAN_IMAGE_RETENTION_DAYS, PODMAN_KEEP_LABEL,
@@ -1078,11 +1080,13 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
     status = _follow_up_status(manager, run)
     pending = status['status'] == 'pending'
     actions = ''
+
+    def button(action: str, label: str) -> str:
+        return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}">{label}</button></form>'''
+
     if pending:
         legacy = follow_up_requires_review(proposal)
         recovering = status.get('submission') is not None
-        def button(action: str, label: str) -> str:
-            return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}">{label}</button></form>'''
         if recovering:
             actions = button('follow-up-approve', 'Finish saved submission')
         elif not legacy:
@@ -1098,6 +1102,20 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
             actions += '<p class="agent-help">This older proposal needs an access review. Select Review follow-up task, check its permissions and prerequisites, then Approve once.</p>'
         elif proposal.get('operator_requirements'):
             actions += '<p class="agent-help">Approve once confirms that the prerequisites listed above are satisfied and authorizes this task. Complete any outside preparation first; service approvals remain separate.</p>'
+    elif status['status'] == 'blocked':
+        actions = '<p class="agent-help">Follow-up blocked by the operator. This proposal will not be submitted.</p>'
+        if follow_up_has_retryable_cancellations(status):
+            actions += button('follow-up-block', 'Retry service cancellation')
+            actions += ('<p class="agent-help">This retries cancellation only for saved request IDs with unresolved states; '
+                        'it cannot queue a task. Check the separate privilege portal if cancellation remains unconfirmed.</p>')
+        requests_state = status.get('requests', {})
+        if any(not isinstance(request, dict) or not request.get('id') for request in requests_state.values()):
+            actions += ('<p class="agent-help">A service request has no recorded ID, so its outcome is unknown and it '
+                        'cannot be cancelled here. Check the existing request in the separate privilege portal before retrying.</p>')
+        has_saved_id = any(isinstance(request, dict) and request.get('id') for request in requests_state.values())
+        if has_saved_id and not follow_up_has_retryable_cancellations(status):
+            actions += ('<p class="agent-help">The saved broker states are terminal or already claimed. '
+                        'Cancellation cannot undo an action the broker has claimed; review the request in the separate privilege portal.</p>')
     else:
         actions = '<p class="agent-help">Follow-up ' + _escape(status['status']) + '.</p>'
     requests = _render_service_requests(status)
@@ -1112,7 +1130,7 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
 {_render_storage_operation(proposal.get('storage_operation', 'none'), approval=pending)}
 {''.join(access_details)}{requests}<div class="agent-buttons">{actions}</div>
 <details><summary>Proposed actions and verification</summary><pre>{_escape(_redact_log_message(proposal.get('prompt', '')))}</pre></details>
-<p class="agent-help">Approval queues one attempt. Service requests use the separate privilege portal and must succeed before launch. Blocking stops this proposal; it cannot undo a service action already executed.</p></aside>'''
+<p class="agent-help">Approval queues one attempt. Service requests use the separate privilege portal and must succeed before launch. Blocking stops this proposal; it cannot cancel a request without its recorded ID or undo an action already claimed.</p></aside>'''
 
 
 def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:

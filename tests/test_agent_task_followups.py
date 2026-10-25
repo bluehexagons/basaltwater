@@ -560,12 +560,194 @@ class TaskFollowUpTests(unittest.TestCase):
             self.assertEqual(state["requests"][unit]["state"], "submission-uncertain")
             self.assertNotIn("id", state["requests"][unit])
 
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
+            self.assertIn("outcome is unknown", page)
+            self.assertIn("separate privilege portal", page)
+            self.assertNotIn('value="follow-up-block">Retry service cancellation', page)
+            self.assertNotIn('value="follow-up-approve"', page)
+            self.assertNotIn('value="follow-up-privilege"', page)
+
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                decide_follow_up(self.manager, identifier, run_id, "block")
+            broker.assert_called_once()
+
             with self.assertRaisesRegex(ValueError, "blocked"):
                 decide_follow_up(self.manager, identifier, run_id, "approve")
             with self.assertRaisesRegex(ValueError, "blocked"):
                 decide_follow_up(self.manager, identifier, run_id, "request-privilege")
             broker.assert_called_once()
         self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+
+    def test_block_cancellation_failure_can_be_retried_from_run_history(self) -> None:
+        unit = "auto-update-node.service"
+        request_id = "d" * 32
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        identifier, run_id = self.record_request()
+        with patch("lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "pending"}) as broker:
+            decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+            broker.assert_called_once_with({"action": "request", "operation": "command.run",
+                                            "parameters": {"argv": ["/usr/bin/systemctl", "--no-ask-password",
+                                                                       "restart", "--", unit]},
+                                            "reason": "Task follow-up: " + self.proposal["title"]})
+
+        failure = OSError("broker temporarily unavailable")
+        with patch("lib.agent_task_followups.exchange", side_effect=[failure, failure]) as broker:
+            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+            self.assertEqual([call.args[0]["action"] for call in broker.call_args_list], ["cancel", "status"])
+        state = follow_up_state(self.manager, identifier, run_id)
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["requests"][unit]["state"], "cancellation-unconfirmed")
+
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
+        self.assertIn('value="follow-up-block">Retry service cancellation</button>', page)
+        self.assertIn("cannot queue a task", page)
+        self.assertIn("separate privilege portal", page)
+        self.assertNotIn('value="follow-up-approve"', page)
+        self.assertNotIn('value="follow-up-privilege"', page)
+
+        with patch("lib.agent_task_followups.exchange", side_effect=[failure, failure]) as broker:
+            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+            self.assertEqual([call.args[0]["action"] for call in broker.call_args_list], ["cancel", "status"])
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["requests"][unit]["state"],
+                         "cancellation-unconfirmed")
+
+        with patch("lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "cancelled"}) as broker:
+            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+            broker.assert_called_once_with({"action": "cancel", "id": request_id})
+        state = follow_up_state(self.manager, identifier, run_id)
+        self.assertEqual((state["status"], state["requests"][unit]["state"]), ("blocked", "cancelled"))
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
+        self.assertNotIn('value="follow-up-block">Retry service cancellation', page)
+        self.assertEqual([task for task in self.manager.snapshot()["tasks"]
+                          if task.get("source_run_id") == run_id], [])
+
+    def test_blocked_cancellation_retry_recovers_failed_state_publication(self) -> None:
+        unit = "auto-update-node.service"
+        request_id = "e" * 32
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        identifier, run_id = self.record_request()
+        with patch("lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "pending"}):
+            decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+
+        from lib.atomic_io import write_json_atomic
+
+        def fail_cancel_publication(path, value, **kwargs):
+            request = value.get("requests", {}).get(unit, {})
+            if value.get("status") == "blocked" and request.get("state") == "cancelled":
+                raise OSError("simulated cancellation-state publication failure")
+            return write_json_atomic(path, value, **kwargs)
+
+        with patch("lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "cancelled"}) as broker, \
+             patch("lib.agent_task_followups.write_json_atomic", side_effect=fail_cancel_publication):
+            with self.assertRaisesRegex(OSError, "cancellation-state publication"):
+                decide_follow_up(self.manager, identifier, run_id, "block")
+            broker.assert_called_once_with({"action": "cancel", "id": request_id})
+
+        state = follow_up_state(self.manager, identifier, run_id)
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["requests"][unit]["state"], "pending")
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
+        self.assertIn('value="follow-up-block">Retry service cancellation</button>', page)
+        self.assertNotIn('value="follow-up-approve"', page)
+
+        with patch("lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "cancelled"}) as broker:
+            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+            broker.assert_called_once_with({"action": "cancel", "id": request_id})
+        state = follow_up_state(self.manager, identifier, run_id)
+        self.assertEqual(state["requests"][unit]["state"], "cancelled")
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
+        self.assertNotIn('value="follow-up-block">Retry service cancellation', page)
+
+    def test_block_does_not_retry_terminal_or_claimed_request_states(self) -> None:
+        unit = "auto-update-node.service"
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        for request_state in ("cancelled", "expired", "denied", "invalidated", "executing", "dispatched",
+                              "succeeded", "failed", "uncertain"):
+            with self.subTest(request_state=request_state):
+                identifier, run_id = self.record_request()
+                request_id = "f" * 32
+                with patch("lib.agent_task_followups.exchange",
+                           return_value={"id": request_id, "state": request_state}):
+                    decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+                with patch("lib.agent_task_followups.exchange") as broker:
+                    self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+                    with self.assertRaisesRegex(ValueError, "blocked"):
+                        decide_follow_up(self.manager, identifier, run_id, "block")
+                    broker.assert_not_called()
+                state = follow_up_state(self.manager, identifier, run_id)
+                self.assertEqual(state["status"], "blocked")
+                self.assertEqual(state["requests"][unit]["state"], request_state)
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {"view": "history", "run": run_id})
+                self.assertNotIn('value="follow-up-block">Retry service cancellation', page)
+                self.assertNotIn('value="follow-up-approve"', page)
+                self.assertIn("already claimed", page)
+
+    def test_competing_approval_cannot_queue_while_blocked_cancellation_retries(self) -> None:
+        import fcntl
+
+        unit = "auto-update-node.service"
+        request_id = "a" * 32
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        identifier, run_id = self.record_request()
+        with patch("lib.agent_task_followups.exchange", return_value={"id": request_id, "state": "pending"}):
+            decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+        with patch("lib.agent_task_followups.exchange", side_effect=[OSError("cancel failed"),
+                                                                       OSError("status failed")]):
+            decide_follow_up(self.manager, identifier, run_id, "block")
+
+        cancel_entered, release_cancel, approver_waiting = threading.Event(), threading.Event(), threading.Event()
+        real_flock = fcntl.flock
+        outcomes: dict[str, object] = {}
+
+        def cancel_request(message: dict[str, str]) -> dict[str, str]:
+            self.assertEqual(message, {"action": "cancel", "id": request_id})
+            cancel_entered.set()
+            if not release_cancel.wait(5):
+                raise TimeoutError("test did not release cancellation retry")
+            return {"id": request_id, "state": "cancelled"}
+
+        def observe_approval_lock(descriptor: int, operation: int) -> object:
+            if threading.current_thread().name == "follow-up-approver" and operation == fcntl.LOCK_EX:
+                approver_waiting.set()
+            return real_flock(descriptor, operation)
+
+        def retry_block() -> None:
+            try:
+                outcomes["block"] = decide_follow_up(self.manager, identifier, run_id, "block")
+            except Exception as exc:  # Capture the worker error for the main test thread.
+                outcomes["block_error"] = exc
+
+        def approve() -> None:
+            try:
+                outcomes["approve"] = decide_follow_up(self.manager, identifier, run_id, "approve")
+            except Exception as exc:  # Capture the worker error for the main test thread.
+                outcomes["approve_error"] = exc
+
+        with patch("lib.agent_task_followups.exchange", side_effect=cancel_request), \
+             patch("lib.agent_task_followups.fcntl.flock", side_effect=observe_approval_lock), \
+             patch.object(self.manager, "create", wraps=self.manager.create) as create:
+            blocker = threading.Thread(target=retry_block, name="follow-up-blocker")
+            blocker.start()
+            self.assertTrue(cancel_entered.wait(3))
+            approver = threading.Thread(target=approve, name="follow-up-approver")
+            approver.start()
+            try:
+                self.assertTrue(approver_waiting.wait(3))
+            finally:
+                release_cancel.set()
+                blocker.join(5)
+                approver.join(5)
+            create.assert_not_called()
+
+        self.assertFalse(blocker.is_alive())
+        self.assertFalse(approver.is_alive())
+        self.assertNotIn("block_error", outcomes)
+        self.assertIsNone(outcomes.get("block"))
+        self.assertIsInstance(outcomes.get("approve_error"), ValueError)
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["status"], "blocked")
+        self.assertEqual(follow_up_state(self.manager, identifier, run_id)["requests"][unit]["state"], "cancelled")
+        self.assertEqual([task for task in self.manager.snapshot()["tasks"]
+                          if task.get("source_run_id") == run_id], [])
 
     def test_follow_up_never_queues_from_success_status_with_unbound_identity(self) -> None:
         unit = "auto-update-node.service"

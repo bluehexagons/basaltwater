@@ -303,11 +303,16 @@ controls might have been removed. Inspect retained history before blocking the
 proposal or preparing replacement work. Blocking can still finish when no child
 is saved. Repeated submission of a proposal returns the
 same child task. Blocking prevents that proposal from being launched and attempts
-to cancel known pending service requests. If submission is
-uncertain and no request ID was returned, blocking cannot cancel that broker
-request; check Privilege approvals before any retry. Blocking cannot undo an
-already executed action. The original task keeps its permissions, schedule and
-outcome.
+to cancel saved service request IDs. If cancellation or its final state write is
+unconfirmed, the blocked proposal offers **Retry service cancellation** in run
+history. This only retries cancellation for known IDs without a recorded terminal
+or claimed state; it never approves, queues a child, or submits another service
+request. Cancelled, expired, denied, invalidated, executing, dispatched, succeeded,
+failed, and uncertain outcomes are retained and not retried. Cancellation cannot
+stop or undo a request the broker has already claimed. If submission is uncertain
+and no request ID was returned, there is no local cancellation retry; check
+Privilege approvals before any request retry. The original task keeps its
+permissions, schedule and outcome.
 
 Use `service_restarts` for up to four exact service units. Registered targets
 use the broker's structured restart operation. For unregistered targets, the

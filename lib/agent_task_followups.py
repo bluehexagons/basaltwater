@@ -24,6 +24,12 @@ class ServiceApprovalUnavailable(RuntimeError):
     """A broker operation failed while the task review must remain available."""
 
 
+_CANCELLATION_NONRETRYABLE_STATES = frozenset({
+    "cancelled", "expired", "denied", "invalidated",
+    "executing", "dispatched", "succeeded", "failed", "uncertain",
+})
+
+
 def _request_key(identifier: str, run_id: str) -> str:
     return "follow-up-" + identifier + "-" + run_id
 
@@ -113,6 +119,49 @@ def follow_up_state(manager: AgentTasks, identifier: str, run_id: str) -> dict[s
         raise RuntimeError("Invalid follow-up decision record")
     _submission_intent(manager, identifier, run_id, value)
     return value
+
+
+def follow_up_has_retryable_cancellations(state: dict[str, Any]) -> bool:
+    """Whether a blocked decision has an unresolved cancellation for a saved request ID."""
+    return any(_cancellation_retryable(request) for request in state.get("requests", {}).values())
+
+
+def _cancellation_retryable(request: object) -> bool:
+    if not isinstance(request, dict):
+        return False
+    identifier = request.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        return False
+    state = request.get("state")
+    return not isinstance(state, str) or state not in _CANCELLATION_NONRETRYABLE_STATES
+
+
+def _broker_request_state(reply: object) -> str | None:
+    if not isinstance(reply, dict):
+        return None
+    state = reply.get("state")
+    return state if isinstance(state, str) and state else None
+
+
+def _cancel_known_requests(state: dict[str, Any]) -> None:
+    """Cancel or reconcile only saved request IDs, preserving terminal outcomes."""
+    for request in state["requests"].values():
+        if not _cancellation_retryable(request):
+            continue
+        request_id = request["id"]
+        try:
+            reply = exchange({"action": "cancel", "id": request_id})
+            current_state = _broker_request_state(reply)
+        except (OSError, ValueError, RuntimeError):
+            # A lost cancel response may follow a successful cancellation. A
+            # read-only status request can recover the exact outcome; if that
+            # also fails, the next Block may safely retry this same ID.
+            try:
+                reply = exchange({"action": "status", "id": request_id})
+                current_state = _broker_request_state(reply)
+            except (OSError, ValueError, RuntimeError):
+                current_state = None
+        request["state"] = current_state or "cancellation-unconfirmed"
 
 
 def prepare_follow_up(manager: AgentTasks, identifier: str, run_id: str, *, review: bool = False) -> dict[str, Any]:
@@ -222,6 +271,11 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
                 return state["task_id"]  # Refresh/double-click is idempotent.
             raise ValueError("This proposal was already submitted; control its saved task instead")
         if state["status"] == "blocked":
+            if decision == "block" and follow_up_has_retryable_cancellations(state):
+                path = manager.contexts.directory(identifier) / "runs" / (run_id + ".decision.json")
+                _cancel_known_requests(state)
+                write_json_atomic(str(path), state)
+                return None
             raise ValueError("This follow-up was blocked by the operator")
         path = manager.contexts.directory(identifier) / "runs" / (run_id + ".decision.json")
         request_key = _request_key(identifier, run_id)
@@ -271,13 +325,7 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
         if decision == "block":
             state["status"] = "blocked"
             write_json_atomic(str(path), state)
-            for request in state["requests"].values():
-                if request.get("id"):
-                    try:
-                        reply = exchange({"action": "cancel", "id": request["id"]})
-                        request["state"] = reply["state"]
-                    except (OSError, ValueError, RuntimeError):
-                        request["state"] = "cancellation-unconfirmed"
+            _cancel_known_requests(state)
             write_json_atomic(str(path), state)
             return None
         if decision == "approve":
