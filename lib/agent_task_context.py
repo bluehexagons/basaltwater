@@ -457,6 +457,8 @@ class TaskContextStore:
         except (OSError, RuntimeError, ValueError, RecursionError):
             return True
         status = decision.get("status")
+        if not isinstance(status, str):
+            return True
         if status == "pending":
             return True
         if status not in {"blocked", "approved", "draft"} or decision.get("submission") is not None:
@@ -471,7 +473,8 @@ class TaskContextStore:
             if not isinstance(request_id, str) or not _ID.fullmatch(request_id):
                 # A saved submission with no ID has an unknown outcome.
                 return True
-            if request.get("state") not in _RESOLVED_FOLLOW_UP_REQUEST_STATES:
+            request_state = request.get("state")
+            if not isinstance(request_state, str) or request_state not in _RESOLVED_FOLLOW_UP_REQUEST_STATES:
                 # Pending, claimed, uncertain and unrecognized states need
                 # their request ID for inspection or cancellation recovery.
                 return True
@@ -512,7 +515,9 @@ class TaskContextStore:
                 receipt = self.receipt(identifier, run_id)
             except FileNotFoundError:
                 continue  # Concurrent retention can remove an older receipt.
-            if receipt.get("follow_up") is not None:
+            except (OSError, RuntimeError, ValueError, RecursionError):
+                continue  # Keep an unreadable receipt protected without hiding other proposals.
+            if receipt.get("follow_up") is not None and type(receipt.get("started_at")) in {int, float}:
                 pending.append(receipt)
         return sorted(pending, key=lambda run: run["started_at"], reverse=True)
 
