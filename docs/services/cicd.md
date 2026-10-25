@@ -48,6 +48,11 @@ as the separate `cicd-build` account. An app server only needs nginx, rsync, and
 `deploy` account. The build server pushes artifacts over SSH; it does not need
 root access on the app server.
 
+`patch` preserves each saved build/app server role when its flag is omitted,
+including on a deploy-only patch. Use `--build-server` or `--app-server` to
+enable a role, and `--no-build-server` or `--no-app-server` to disable it in the
+patched configuration. Each role can be changed independently.
+
 Set up the app server first:
 
 ```bash

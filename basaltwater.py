@@ -1144,6 +1144,9 @@ def _swap_preserve_keys(args: argparse.Namespace) -> set[str]:
 
 def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
     preserve_keys = _swap_preserve_keys(args)
+    for field in ("is_build_server", "is_app_server"):
+        if getattr(args, field, None) is None:
+            preserve_keys.add(field)
     if getattr(args, "privilege_broker", None) is None and not getattr(args, "disable_privilege_broker", False):
         preserve_keys.update({"privilege_broker_port", "disable_privilege_broker"})
     if getattr(args, "nopasswd", None) is None:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stdout
+import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -10,8 +13,98 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import basaltwater
+from lib.cache import get_cache_path_for_host, load_setup_command, save_setup_command
+from lib.config import SetupConfig
 from web import cicd_steps
 from web.service_tools import cicd_config, cicd_executor, webhook_receiver
+
+
+class TestCicdPatchRoles(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
+    def _assert_patch_roles(self, saved_roles, options, expected_roles):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"BASALTWATER_WORKSPACE": directory}
+        ):
+            repository = Path(directory) / "repository"
+            repository.mkdir()
+            setup_options = [
+                flag for flag, enabled in zip(
+                    ("--build-server", "--app-server"), saved_roles
+                ) if enabled
+            ]
+            setup_args = self.parser.parse_args([
+                "setup", "server_web", "192.0.2.109", "labdeploy", *setup_options,
+            ])
+            save_setup_command(SetupConfig.from_args(setup_args, "server_web"))
+            args = self.parser.parse_args([
+                "patch", "192.0.2.109", "labdeploy",
+                "--deploy", "site.example.com", str(repository), *options,
+            ])
+            with patch.object(
+                basaltwater, "_prepare_runtime_config_for_cli",
+                side_effect=lambda config: config,
+            ), patch.object(basaltwater, "store_cli_credentials"), patch.object(
+                basaltwater, "run_remote_setup", return_value=0,
+            ) as run_remote, patch.object(
+                basaltwater, "adopt_verified_network_host", return_value=None,
+            ), patch.object(basaltwater, "get_last_remote_access_details"), patch.object(
+                basaltwater, "print_service_access_summary",
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(basaltwater.run_patch_command(args), 0)
+
+            run_remote.assert_called_once()
+            runtime_config = run_remote.call_args.args[0]
+            saved = load_setup_command(args.host)
+            self.assertIsNotNone(saved)
+            self.assertEqual(saved.username, "labdeploy")
+            self.assertEqual(saved.deploy_specs, [["site.example.com", str(repository)]])
+            record = json.loads(Path(get_cache_path_for_host(args.host)).read_text())
+            self.assertIs(record["last_success"], True)
+            for field, flag, expected in zip(
+                ("is_build_server", "is_app_server"),
+                ("--build-server", "--app-server"),
+                expected_roles,
+            ):
+                self.assertIs(getattr(runtime_config, field), expected)
+                self.assertIs(getattr(saved, field), expected)
+                self.assertIs(record["args"][field], expected)
+                self.assertEqual(flag in runtime_config.to_remote_args(), expected)
+                self.assertEqual(flag in saved.to_setup_command(), expected)
+
+    def test_deploy_only_patch_preserves_each_omitted_role(self):
+        for roles in ((True, True), (True, False), (False, True), (False, False)):
+            with self.subTest(roles=roles):
+                self._assert_patch_roles(roles, [], roles)
+
+    def test_explicit_role_disables_override_saved_roles_independently(self):
+        for options, expected in (
+            (["--no-build-server"], (False, True)),
+            (["--no-app-server"], (True, False)),
+            (["--no-build-server", "--no-app-server"], (False, False)),
+        ):
+            with self.subTest(options=options):
+                self._assert_patch_roles((True, True), options, expected)
+
+    def test_explicit_role_enables_override_saved_roles_independently(self):
+        for options, expected in (
+            (["--build-server"], (True, False)),
+            (["--app-server"], (False, True)),
+            (["--build-server", "--app-server"], (True, True)),
+        ):
+            with self.subTest(options=options):
+                self._assert_patch_roles((False, False), options, expected)
+
+    def test_mixed_role_changes_apply_both_explicit_choices(self):
+        for saved, options, expected in (
+            ((True, False), ["--no-build-server", "--app-server"], (False, True)),
+            ((False, True), ["--build-server", "--no-app-server"], (True, False)),
+        ):
+            with self.subTest(options=options):
+                self._assert_patch_roles(saved, options, expected)
 
 
 class TestCicdConfig(unittest.TestCase):
