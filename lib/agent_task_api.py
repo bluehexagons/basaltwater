@@ -140,7 +140,7 @@ class TaskAPI:
                 raise ValueError("Task settings must be an object")
             from lib.agent_tasks import validate_task
 
-            if set(task) - set(validate_task(task, self.manager.home)):
+            if set(task) - set(validate_task(task, self.manager.home, check_existing_workspace=False)):
                 raise ValueError("Unknown task settings")
             run_now = arguments.get("run_now", False)
             draft = arguments.get("draft", not run_now)
@@ -171,7 +171,10 @@ class TaskAPI:
                 raise ValueError("Task settings must be an object")
             from lib.agent_tasks import validate_task
 
-            if set(settings) - set(validate_task(task, self.manager.home)):
+            # This call discovers accepted setting names. AgentTasks.update
+            # validates the merged task strictly, allowing old unsafe tasks to
+            # be repaired without accepting an unsafe update.
+            if set(settings) - set(validate_task(task, self.manager.home, check_existing_workspace=False)):
                 raise ValueError("Unknown task settings")
             self.manager.update(identifier, settings, partial=True)
         elif operation == "action":

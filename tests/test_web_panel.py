@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import http.client
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -1154,6 +1155,30 @@ class WebPanelRenderingTest(unittest.TestCase):
         self.assertIn("limit_req zone=basaltwater_web_panel_auth", rendered)
         self.assertIn("proxy_pass http://unix:/run/basaltwater-web-panel/http.sock:/", rendered)
         self.assertIn("ssl_certificate /etc/basaltwater-web/tls/internal.crt", rendered)
+
+    def test_nginx_logs_only_submitted_authorization_failures(self) -> None:
+        rendered = render_web_panel_nginx(["agent-vm.local"], 80)
+        map_block = re.search(
+            r'map "\$http_authorization:\$status" '
+            r'\$basaltwater_web_panel_auth_failure \{(?P<body>.*?)\}',
+            rendered,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(map_block)
+        body = map_block.group("body")
+        failure_rule = re.search(r"^\s*(~\S+)\s+1;\s*$", body, re.MULTILINE)
+        self.assertIsNotNone(failure_rule)
+        failure_pattern = re.compile(failure_rule.group(1)[1:])
+
+        self.assertIsNone(failure_pattern.fullmatch(":401"))
+        self.assertIsNone(failure_pattern.fullmatch("Basic dXNlcjpwYXNz:200"))
+        self.assertIsNotNone(failure_pattern.fullmatch("Basic invalid:401"))
+        self.assertIn(
+            "log_format basaltwater_web_panel_auth '",
+            rendered,
+        )
+        log_format = rendered.split("log_format", 1)[1].split(";", 1)[0]
+        self.assertNotIn("$http_authorization", log_format)
 
     def test_nginx_ingest_route_bypasses_basic_auth_but_has_its_own_limits(self) -> None:
         rendered = render_web_panel_nginx(

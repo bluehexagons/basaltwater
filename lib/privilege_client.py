@@ -8,12 +8,23 @@ import socket
 import sys
 import time
 
-from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS, REQUEST_SOCKET, canonical
+from lib.privilege_policy import (
+    DEFAULT_REQUEST_TTL_SECONDS, ID_PATTERN, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS,
+    REQUEST_SOCKET, canonical,
+)
 from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, sanitize_admin_status
 
 
 class PrivilegeRequestRejected(ValueError):
-    """The broker definitively rejected a request without accepting work."""
+    """The broker definitively rejected a request before accepting work."""
+
+
+class PrivilegeRequestUnconfirmed(ValueError):
+    """The broker response did not establish whether a request was accepted."""
+
+
+class PrivilegeBrokerUnavailable(ConnectionError):
+    """The request socket could not be connected to before sending a request."""
 
 
 def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
@@ -22,16 +33,46 @@ def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
         raise ValueError("Request exceeds size limit")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(5)
-        connection.connect(path)
+        try:
+            connection.connect(path)
+        except (FileNotFoundError, ConnectionRefusedError) as exc:
+            raise PrivilegeBrokerUnavailable(str(exc)) from exc
         connection.sendall(data)
         with connection.makefile("rb") as stream:
             raw = stream.readline(MAX_MESSAGE + 1)
     if len(raw) > MAX_MESSAGE or not raw.endswith(b"\n"):
-        raise ValueError("Invalid broker response")
-    response = json.loads(raw)
-    if response.get("ok") is not True:
-        raise PrivilegeRequestRejected(response.get("error", "Broker rejected request"))
-    return response["result"]
+        raise PrivilegeRequestUnconfirmed("Invalid broker response framing; request acceptance is unknown")
+    try:
+        response = json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        raise PrivilegeRequestUnconfirmed("Malformed broker response; request acceptance is unknown") from exc
+    if not isinstance(response, dict):
+        raise PrivilegeRequestUnconfirmed("Invalid broker response; request acceptance is unknown")
+    if response.get("ok") is False:
+        error = response.get("error")
+        detail = error if isinstance(error, str) and error else "Broker returned an invalid error response"
+        if (message.get("action") == "request" and response.get("code") == "request_rejected"
+                and set(response) == {"ok", "code", "error"} and isinstance(error, str) and error):
+            raise PrivilegeRequestRejected(error)
+        raise PrivilegeRequestUnconfirmed("Broker did not confirm request acceptance: " + detail)
+    if response.get("ok") is not True or not isinstance(response.get("result"), dict):
+        raise PrivilegeRequestUnconfirmed("Invalid broker result; request acceptance is unknown")
+    result = response["result"]
+    action = message.get("action")
+    if action == "request":
+        request_id = result.get("id")
+        if not isinstance(request_id, str) or not ID_PATTERN.fullmatch(request_id):
+            raise PrivilegeRequestUnconfirmed(
+                "Broker response did not confirm a valid request ID; request acceptance is unknown"
+            )
+    elif action in {"status", "cancel", "decide"}:
+        request_id = result.get("id")
+        if (not isinstance(request_id, str) or not ID_PATTERN.fullmatch(request_id)
+                or request_id != message.get("id")):
+            raise PrivilegeRequestUnconfirmed(
+                "Broker response did not confirm the requested ID; outcome is unknown"
+            )
+    return result
 
 
 def add_privilege_parser(commands: argparse._SubParsersAction) -> None:

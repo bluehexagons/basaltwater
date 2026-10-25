@@ -18,6 +18,7 @@ from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import validate_report
 from lib.agent_tasks_cli import add_tasks_parser, run_tasks_command
 from lib.agent_tasks_mcp import TaskMCP
+from lib.privilege_client import PrivilegeBrokerUnavailable
 
 
 class TaskAccessFlowTests(unittest.TestCase):
@@ -56,6 +57,8 @@ class TaskAccessFlowTests(unittest.TestCase):
 
     def test_write_grants_are_narrow_owned_unshared_and_do_not_follow_symlinks(self) -> None:
         root = Path(self.home)
+        project = root / "project"
+        project.mkdir()
         allowed = root / ".nvm"
         allowed.mkdir(mode=0o700)
         (allowed / "versions").mkdir(mode=0o700)
@@ -69,7 +72,7 @@ class TaskAccessFlowTests(unittest.TestCase):
         credentials.mkdir(mode=0o700)
         (credentials / "keys").mkdir(mode=0o700)
         (root / ".local" / "state" / "basaltwater").mkdir(parents=True, mode=0o700)
-        values = {**self.values, "mode": "workspace"}
+        values = {**self.values, "directory": str(project), "mode": "workspace"}
         task = tasks.validate_task({**values, "writable_directories": [str(allowed), str(allowed)]}, self.home)
         self.assertEqual(task["writable_directories"], [str(allowed)])
         for path in (root, root.parent, credentials, credentials / "keys", root / ".local",
@@ -87,11 +90,113 @@ class TaskAccessFlowTests(unittest.TestCase):
         with patch.object(Path, "lstat", unowned), self.assertRaises(ValueError):
             tasks.validate_task({**values, "writable_directories": [str(allowed)]}, self.home)
 
+    def test_existing_workspace_rejects_home_and_protected_trees_but_allows_a_project(self) -> None:
+        root = Path(self.home)
+        project = root / "project"
+        project.mkdir()
+        protected = [
+            root / ".ssh", root / ".ssh" / "keys",
+            root / ".codex", root / ".codex" / "profiles",
+            root / ".agents", root / ".agents" / "skills",
+            root / ".config", root / ".config" / "codex",
+            root / ".local", root / ".local" / "state",
+            root / ".local" / "state" / "basaltwater",
+            root / ".local" / "state" / "basaltwater" / "task-contexts",
+        ]
+        for path in protected:
+            path.mkdir(parents=True, exist_ok=True)
+        alias = root / "credential-alias"
+        alias.symlink_to(root / ".ssh", target_is_directory=True)
+
+        task = tasks.validate_task({**self.values, "directory": str(project), "mode": "workspace"}, self.home)
+        self.assertEqual(task["directory"], str(project))
+        for path in [root, *protected, alias, alias / "keys"]:
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                tasks.validate_task({**self.values, "directory": str(path), "mode": "workspace"}, self.home)
+
+    def test_inspection_and_managed_host_reviews_keep_home_as_the_source(self) -> None:
+        inspected = tasks.validate_task(self.values, self.home)
+        self.assertEqual((inspected["directory"], inspected["mode"], inspected["workspace"]),
+                         (self.home, "inspect", "existing"))
+
+        for workspace in ("directory", "run-directory"):
+            with self.subTest(workspace=workspace):
+                managed = tasks.validate_task({**self.values, "mode": "workspace", "workspace": workspace}, self.home)
+                self.assertEqual((managed["directory"], managed["workspace"]), (self.home, workspace))
+                review = tasks.validate_task({**self.values, "mode": "workspace", "workspace": workspace,
+                                              "storage_operation": "review"}, self.home)
+                self.assertEqual((review["directory"], review["storage_operation"]), (self.home, "review"))
+
+        host_review = tasks.validate_task({**self.values, "storage_operation": "review"}, self.home)
+        self.assertEqual((host_review["directory"], host_review["mode"]), (self.home, "inspect"))
+
+    def test_create_and_update_reject_unsafe_existing_workspace_without_changing_inventory(self) -> None:
+        project = Path(self.home) / "project"
+        project.mkdir()
+        allowed = {**self.values, "directory": str(project), "mode": "workspace"}
+        identifier = self.manager.create(allowed, run_now=False, draft=True)
+        before = self.manager.snapshot()["tasks"]
+        credential_child = Path(self.home) / ".ssh" / "keys"
+        credential_child.mkdir(parents=True, mode=0o700)
+
+        for directory in (self.home, str(credential_child)):
+            unsafe = {**allowed, "directory": directory}
+            with self.subTest(directory=directory), self.assertRaisesRegex(ValueError, "Workspace"):
+                self.manager.create(unsafe, run_now=False, draft=True)
+            with self.subTest(directory=directory), self.assertRaisesRegex(ValueError, "Workspace"):
+                self.manager.update(identifier, unsafe)
+
+        after = self.manager.snapshot()["tasks"]
+        self.assertEqual(after, before)
+        self.assertEqual([task["id"] for task in after], [identifier])
+
+    def test_prelaunch_revalidates_existing_workspace_before_starting_codex(self) -> None:
+        unsafe = {**self.values, "mode": "workspace"}
+        with (patch.object(tasks.os, "geteuid", return_value=1234),
+              patch.object(tasks.subprocess, "Popen") as spawn,
+              self.assertRaisesRegex(ValueError, "Workspace")):
+            tasks.execute_prompt(unsafe, self.home, threading.Event())
+        spawn.assert_not_called()
+
+    def test_legacy_unsafe_task_fails_closed_without_losing_saved_inventory(self) -> None:
+        retained = self.manager.create(self.values, run_now=False, draft=True)
+        old_task = self.manager.create(self.values, run_now=True)
+        saved = json.loads(Path(self.manager.path).read_text())
+        legacy = next(task for task in saved["tasks"] if task["id"] == old_task)
+        legacy.update(mode="workspace", workspace="existing")
+        Path(self.manager.path).write_text(json.dumps(saved) + "\n")
+        self.manager._state = None
+
+        with (patch.object(self.manager.contexts, "prepare") as prepare,
+              patch.object(tasks, "execute_prompt") as launch):
+            self.assertTrue(self.manager.tick())
+        prepare.assert_not_called()
+        launch.assert_not_called()
+
+        current = self.manager.snapshot()
+        self.assertEqual({task["id"] for task in current["tasks"]}, {retained, old_task})
+        legacy = next(task for task in current["tasks"] if task["id"] == old_task)
+        self.assertEqual((legacy["directory"], legacy["mode"], legacy["workspace"]),
+                         (self.home, "workspace", "existing"))
+        run = next(run for run in current["runs"] if run["task"]["id"] == old_task)
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("Workspace", run["message"])
+
+        project = Path(self.home) / "project"
+        project.mkdir()
+        TaskAPI(self.manager).call("update", {"id": old_task, "task": {"directory": str(project)}})
+        repaired = next(task for task in self.manager.snapshot()["tasks"] if task["id"] == old_task)
+        self.assertEqual(repaired["directory"], str(project))
+        persisted = json.loads(Path(self.manager.path).read_text())
+        self.assertEqual(len(persisted["tasks"]), 2)
+
     def test_codex_command_grants_exact_additional_paths_for_fresh_and_resume(self) -> None:
+        project = Path(self.home) / "project"
+        project.mkdir()
         roots = [Path(self.home) / name for name in (".nvm", "cache with spaces")]
         for root in roots:
             root.mkdir(mode=0o700)
-        task = tasks.validate_task({**self.values, "mode": "workspace",
+        task = tasks.validate_task({**self.values, "directory": str(project), "mode": "workspace",
             "persistence": "conversation", "writable_directories": list(map(str, roots))}, self.home)
         for session in (None, "01234567-89ab-cdef-0123-456789abcdef"):
             with self.subTest(session=session):
@@ -276,7 +381,7 @@ class TaskAccessFlowTests(unittest.TestCase):
 
     def test_definitive_submission_failures_can_retry_and_block_cancels_owned_request(self) -> None:
         identifier, run_id = self.record_proposal(service_restarts=["example.service"])
-        with patch.object(followups, "exchange", side_effect=FileNotFoundError):
+        with patch.object(followups, "exchange", side_effect=PrivilegeBrokerUnavailable("missing broker socket")):
             with self.assertRaises(followups.ServiceApprovalUnavailable):
                 followups.decide_follow_up(self.manager, identifier, run_id, "request-privilege")
         self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["requests"], {})

@@ -19,11 +19,13 @@ from tests.test_agent_task_persistence import SESSION, report
 class TaskReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.home = self.enterContext(tempfile.TemporaryDirectory())
+        self.project = Path(self.home) / "project"
+        self.project.mkdir()
         self.manager = tasks.AgentTasks(self.home)
         self.addCleanup(self.manager.close)
         self.enterContext(patch.object(tasks.AgentTasks, "available", return_value=True))
         self.enterContext(patch.object(tasks, "_tool_path", return_value="/test/codex"))
-        self.values = {"title": "Review", "prompt": "Review the remaining checks", "directory": self.home,
+        self.values = {"title": "Review", "prompt": "Review the remaining checks", "directory": str(self.project),
                        "mode": "workspace", "interval": "hourly", "persistence": "checkpoint"}
 
     def execute(self, result: dict | None = None, *, now: float = 1) -> None:
@@ -176,7 +178,9 @@ class ProviderTurnReviewTests(unittest.TestCase):
 
     def test_zero_exit_without_terminal_turn_is_a_failed_invocation(self) -> None:
         with tempfile.TemporaryDirectory() as home:
-            task = tasks.validate_task({"title": "Review", "prompt": "Review", "directory": home,
+            project = Path(home) / "project"
+            project.mkdir()
+            task = tasks.validate_task({"title": "Review", "prompt": "Review", "directory": str(project),
                                       "mode": "workspace", "interval": "once", "persistence": "conversation"}, home)
             task["id"] = "a" * 32
             runtime = contexts.TaskContextStore(home).prepare(task, "b" * 32)

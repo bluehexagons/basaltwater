@@ -399,9 +399,9 @@ server {{
 limit_req_zone $binary_remote_addr zone=basaltwater_web_panel_auth:10m rate=120r/m;
 {ingest_zone}
 
-map $status $basaltwater_web_panel_auth_failure {{
+map "$http_authorization:$status" $basaltwater_web_panel_auth_failure {{
     default 0;
-    401 1;
+    ~^.+:401$ 1;
 }}
 
 log_format basaltwater_web_panel_auth '$remote_addr [$time_local] basaltwater-auth-failure';

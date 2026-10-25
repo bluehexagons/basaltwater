@@ -32,7 +32,7 @@ from lib.agent_task_context import (
 )
 from lib.agent_task_policy import task_policy_issues
 from lib.agent_task_templates import FOLLOW_UP_ACCESS_PROMPT
-from lib.agent_task_access import text_requirements, writable_directories
+from lib.agent_task_access import text_requirements, validate_existing_workspace, writable_directories
 from lib.agent_task_storage import run_storage_operation, validate_storage_operation
 from lib.maintenance_agent_config import POLICY_FILE, validate_policy
 from lib.validation import validate_filesystem_path
@@ -137,7 +137,8 @@ def _validate_model_effort(task: dict[str, Any], home: str) -> None:
                 raise ValueError(f"This model's cached effort levels are: {', '.join(model['efforts'])}")
 
 
-def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = True) -> dict[str, Any]:
+def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = True,
+                  check_existing_workspace: bool = True) -> dict[str, Any]:
     """Validate the finite set of prompt settings; never accept a command line."""
 
     title = _text(values.get("title"), "Task name", 120)
@@ -256,6 +257,9 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
             "backoff_minutes": _integer(values.get("backoff_minutes", 0), "Failure backoff", 0, MAX_REPEAT_MINUTES),
             "history_limit": _integer(values.get("history_limit", 100), "Evidence history", 1, 1000)}
     task["storage_operation"] = validate_storage_operation({**task, "storage_operation": values.get("storage_operation", "none")})
+    if (check_existing_workspace and mode == "workspace" and workspace == "existing"
+            and task["storage_operation"] in {"none", "review"}):
+        validate_existing_workspace(directory, home)
     if task["storage_operation"] not in {"none", "review"}:
         task["max_runs"] = 1
     return task
@@ -755,7 +759,10 @@ class AgentTasks:
             for task in value["tasks"]:
                 if not isinstance(task, dict):
                     raise ValueError("Invalid task")
-                task.update(validate_task(task, self.home, check_directory=False))
+                # Keep older saved settings readable so unsafe tasks can fail
+                # closed at prelaunch without discarding the whole inventory.
+                task.update(validate_task(task, self.home, check_directory=False,
+                                          check_existing_workspace=False))
                 if not _ID.fullmatch(task["id"]) or task["id"] in ids:
                     raise ValueError("Invalid task ID")
                 ids.add(task["id"])
@@ -800,7 +807,8 @@ class AgentTasks:
                     raise ValueError("Invalid run")
                 if not isinstance(run["task"], dict):
                     raise ValueError("Invalid run task")
-                run["task"].update(validate_task(run["task"], self.home, check_directory=False))
+                run["task"].update(validate_task(run["task"], self.home, check_directory=False,
+                                                  check_existing_workspace=False))
                 if not _ID.fullmatch(run["task"]["id"]) or not isinstance(run["message"], str) or len(run["message"]) > 500:
                     raise ValueError("Invalid run metadata")
                 for name in ("started_at", "finished_at"):
@@ -1154,6 +1162,9 @@ class AgentTasks:
             if cancellation.is_set():
                 result = {"status": "cancelled", "output": "", "message": "Cancelled before workspace preparation", "exit_code": None}
             else:
+                # Saved tasks can predate a stricter access rule. Revalidate
+                # before preparing context or launching any provider process.
+                validate_task(run["task"], self.home)
                 runtime = self.contexts.prepare(run["task"], run["id"])
                 execution_task = {**run["task"], "_runtime": runtime}
                 result = execute_prompt(execution_task, self.home, cancellation)

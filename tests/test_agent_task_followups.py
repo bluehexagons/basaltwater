@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socketserver
 import tempfile
 import threading
 import tomllib
@@ -16,9 +17,13 @@ from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
+from lib import privilege_client
 from lib.agent_task_api import TaskAPI
 from lib.agent_task_context import CodexEvents, FOLLOW_UP_WARNING, REPORT_SCHEMA, validate_follow_up, validate_report
-from lib.agent_task_followups import follow_up_state
+from lib.agent_task_followups import (
+    ServiceApprovalPending, ServiceApprovalUnavailable, decide_follow_up, follow_up_state,
+)
+from lib.privilege_client import PrivilegeRequestUnconfirmed
 from tests.test_agent_panel_tools import TaskForm
 from tests.test_agent_task_persistence import report
 
@@ -255,6 +260,84 @@ class TaskFollowUpTests(unittest.TestCase):
                     self.assertEqual(children[0]["prompt"], form["prompt"])
                 self.manager.action(children[0]["id"], "cancel")
 
+    def test_unknown_service_submission_is_not_retried_or_reported_cancelled(self) -> None:
+        unit = "auto-update-node.service"
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        identifier, run_id = self.record_request()
+        failure = PrivilegeRequestUnconfirmed("Broker did not confirm request acceptance: persistence may be uncertain")
+        with patch("lib.agent_task_followups.exchange", side_effect=failure) as broker:
+            with self.assertRaises(ServiceApprovalUnavailable):
+                decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+
+            with self.assertRaisesRegex(ServiceApprovalPending, "outcome is unknown"):
+                decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+            with self.assertRaisesRegex(ServiceApprovalPending, "Waiting for service approval"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+
+            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "block"))
+            broker.assert_called_once()
+            self.assertEqual(broker.call_args.args[0]["action"], "request")
+            state = follow_up_state(self.manager, identifier, run_id)
+            self.assertEqual(state["status"], "blocked")
+            self.assertEqual(state["requests"][unit]["state"], "submission-uncertain")
+            self.assertNotIn("id", state["requests"][unit])
+
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                decide_follow_up(self.manager, identifier, run_id, "approve")
+            with self.assertRaisesRegex(ValueError, "blocked"):
+                decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+            broker.assert_called_once()
+        self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+
+    def test_follow_up_never_queues_from_success_status_with_unbound_identity(self) -> None:
+        unit = "auto-update-node.service"
+        operation = "command.run"
+        parameters = {"argv": ["/usr/bin/systemctl", "--no-ask-password", "restart", "--", unit]}
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        for bad_identity in ("missing", "wrong", "malformed"):
+            with self.subTest(identity=bad_identity):
+                identifier, run_id = self.record_request()
+                request_id = "a" * 32
+                messages = []
+
+                class ResponseHandler(socketserver.StreamRequestHandler):
+                    def handle(self):
+                        message = json.loads(self.rfile.readline())
+                        messages.append(message)
+                        if message["action"] == "request":
+                            result = {"id": request_id, "state": "pending",
+                                      "review_url": "https://host.example:9444/requests/" + request_id}
+                        else:
+                            result = {"state": "succeeded", "plan": {
+                                "operation": operation, "parameters": parameters}}
+                            if bad_identity == "wrong":
+                                result["id"] = "b" * 32
+                            elif bad_identity == "malformed":
+                                result["id"] = "not-a-request-id"
+                        self.wfile.write((json.dumps({"ok": True, "result": result}) + "\n").encode())
+
+                with tempfile.TemporaryDirectory() as directory:
+                    path = os.path.join(directory, "broker.sock")
+                    server = socketserver.UnixStreamServer(path, ResponseHandler)
+                    worker = threading.Thread(target=server.serve_forever)
+                    worker.start()
+                    try:
+                        with patch("lib.agent_task_followups.exchange",
+                                   side_effect=lambda message: privilege_client.exchange(message, path)):
+                            self.assertIsNone(decide_follow_up(self.manager, identifier, run_id, "request-privilege"))
+                            with self.assertRaises(ServiceApprovalUnavailable):
+                                decide_follow_up(self.manager, identifier, run_id, "approve")
+                    finally:
+                        server.shutdown()
+                        server.server_close()
+                        worker.join(3)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual([message["action"] for message in messages], ["request", "status"])
+                children = [task for task in self.manager.snapshot()["tasks"]
+                            if task.get("source_run_id") == run_id]
+                self.assertEqual(children, [])
+
     def test_invalid_follow_up_does_not_discard_diagnostic_report(self) -> None:
         diagnostic = {**report("blocked"), "summary": "Service check completed", "evidence": ["unit was inactive"],
                       "environment_feedback": "é" * 1500,
@@ -372,7 +455,9 @@ class TaskPermissionProfileTests(unittest.TestCase):
                                               ("workspace", True, False), ("workspace", True, True)):
                 with self.subTest(mode=mode, network=network, temporary=temporary):
                     task = tasks.validate_task({"title": "Check", "prompt": "Check", "directory": home,
-                                                "interval": "once", "mode": mode, "network": network,
+                                                "interval": "once", "mode": mode,
+                                                "workspace": "run-directory" if mode == "workspace" else "existing",
+                                                "network": network,
                                                 "temporary_files": temporary}, home)
                     command = tasks.codex_command(task, "/test/codex")
                     overrides = tomllib.loads("\n".join(command[index + 1] for index, argument in enumerate(command) if argument == "-c"))

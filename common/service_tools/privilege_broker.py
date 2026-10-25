@@ -34,6 +34,14 @@ from lib.privilege_execution import (
 )
 
 
+class BrokerRequestRejected(ValueError):
+    """A request failed validation before its durable acceptance began."""
+
+
+class BrokerPermissionRejected(PermissionError):
+    """A request failed authorization before its durable acceptance began."""
+
+
 def execute(plan: dict) -> ExecutionResult:
     """Execute claimed actions; only approved command argv crosses the helper boundary."""
     try:
@@ -121,32 +129,40 @@ class Broker:
 
     def request(self, uid: int, operation: str, parameters: dict, reason: str) -> dict:
         if not isinstance(reason, str) or len(reason) > 1000 or any(unicodedata.category(c).startswith("C") for c in reason):
-            raise ValueError("Reason must be a single line of at most 1000 characters")
+            raise BrokerRequestRejected("Reason must be a single line of at most 1000 characters")
         with self.lock, self.db:
             self._expire()
-            policy = self.policy_loader()
-            plan = operation_plan(policy, uid, operation, parameters)
-            if operation == "admin.run":
-                for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
-                    if json.loads(row["plan"])["operation"] == "admin.run":
-                        raise ValueError("An administration request is already outstanding; review or cancel it first")
-            # Persistent quotas bound pending requests and repeated automatic actions.
-            count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
-                                    (uid, time.time() - 3600)).fetchone()[0]
-            pending = self.db.execute("SELECT count(*) FROM requests WHERE state IN ('pending','approved')").fetchone()[0]
-            if count >= 30 or pending >= 8:
-                raise ValueError("Request quota reached; wait before submitting more requests")
-            request_id = secrets.token_hex(16)
-            now = time.time()
-            fingerprint = digest({"id": request_id, "created": now, "expires": now + policy["ttl_seconds"], "plan": plan})
-            preview = {"id": request_id, "uid": uid, "created": now, "expires": now + policy["ttl_seconds"],
-                       "plan": plan, "digest": fingerprint, "reason": reason, "state": "pending",
-                       "actor": f"uid:{uid}", "execution": None,
-                       "review_url": policy["origin"] + "/requests/" + request_id}
-            # A valid input can double in size because the review contains both
-            # parameters and executable argv. Reserve space for outcome metadata.
-            if len(canonical({"ok": True, "result": preview}).encode()) > MAX_MESSAGE - 512:
-                raise ValueError("Reviewed request exceeds the response size limit")
+            try:
+                policy = self.policy_loader()
+                plan = operation_plan(policy, uid, operation, parameters)
+                if operation == "admin.run":
+                    for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
+                        if json.loads(row["plan"])["operation"] == "admin.run":
+                            raise ValueError("An administration request is already outstanding; review or cancel it first")
+                # Persistent quotas bound pending requests and repeated automatic actions.
+                count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
+                                        (uid, time.time() - 3600)).fetchone()[0]
+                pending = self.db.execute("SELECT count(*) FROM requests WHERE state IN ('pending','approved')").fetchone()[0]
+                if count >= 30 or pending >= 8:
+                    raise ValueError("Request quota reached; wait before submitting more requests")
+                request_id = secrets.token_hex(16)
+                now = time.time()
+                fingerprint = digest({"id": request_id, "created": now, "expires": now + policy["ttl_seconds"], "plan": plan})
+                preview = {"id": request_id, "uid": uid, "created": now, "expires": now + policy["ttl_seconds"],
+                           "plan": plan, "digest": fingerprint, "reason": reason, "state": "pending",
+                           "actor": f"uid:{uid}", "execution": None,
+                           "review_url": policy["origin"] + "/requests/" + request_id}
+                # A valid input can double in size because the review contains both
+                # parameters and executable argv. Reserve space for outcome metadata.
+                if len(canonical({"ok": True, "result": preview}).encode()) > MAX_MESSAGE - 512:
+                    raise ValueError("Reviewed request exceeds the response size limit")
+            except PermissionError as exc:
+                # Keep the public permission-error contract for direct callers.
+                raise BrokerPermissionRejected(str(exc)) from exc
+            except ValueError as exc:
+                # This scope ends before the first insert. Errors after it must
+                # use the generic response because persistence may have happened.
+                raise BrokerRequestRejected(str(exc)) from exc
             self.db.execute("INSERT INTO requests(id,uid,created,expires,plan,digest,reason,state,actor) VALUES(?,?,?,?,?,?,?,?,?)",
                             (request_id, uid, now, now + policy["ttl_seconds"], canonical(plan), fingerprint, reason, "pending", "requester"))
             self._transition(request_id, "pending", f"uid:{uid}")
@@ -288,6 +304,8 @@ class Handler(socketserver.StreamRequestHandler):
                 raise ValueError("Invalid message size or framing")
             result = self.server.broker.dispatch(json.loads(raw), uid, approval=self.server.approval)
             response = {"ok": True, "result": result}
+        except (BrokerRequestRejected, BrokerPermissionRejected) as exc:
+            response = {"ok": False, "code": "request_rejected", "error": str(exc)}
         except (OSError, ValueError, PermissionError, RecursionError, sqlite3.Error):
             response = {"ok": False, "error": "Broker rejected the request or could not persist it; inspect request status before retrying"}
         self.wfile.write((canonical(response) + "\n").encode())

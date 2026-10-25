@@ -149,6 +149,21 @@ directories to workspace mode. These grants accompany the execution directory,
 including when it is private scratch space. Whole-home grants, symlinks,
 shared writable directories and credential/configuration/control stores are
 rejected. The runner reapplies these grants when resuming a conversation.
+For `mode: "workspace"` with `workspace: "existing"`, the working directory
+must also be a specific project directory: the account's home and any path that
+overlaps `.ssh`, `.codex`, `.agents`, `.config`, or `.local/state/basaltwater`
+are rejected, including protected descendants and their ancestors. Creation,
+updates, and prelaunch checks enforce this boundary. Older saved tasks remain in
+the inventory, but an unsafe task fails before workspace preparation or provider
+launch. A draft without an established context can be edited to use a safe
+project directory through CLI or MCP. If an earlier run established its source
+binding, create a new task with the safe directory and pause or remove the old
+task. `reset-context` retains that source binding; it does not enable changing
+the old task's directory. Retained receipts remain readable after removal.
+Inspection can still use the home directory. Managed `directory` and
+`run-directory` workspaces can keep the home as their source because execution
+uses private empty task directories. Fixed native storage operations also
+intentionally use the home as their target and do not launch Codex.
 `operator_requirements` records unresolved prerequisites as up to eight short
 lines. A task with unresolved prerequisites stops before provider launch;
 review the evidence and clear resolved entries deliberately. For a follow-up,
@@ -277,8 +292,11 @@ Review opens
 an editable form with the source receipt, **Once**, and a one-attempt limit;
 opening it does not save or queue anything. Repeated submission of a proposal
 returns the same child task. Blocking prevents that proposal from being launched
-and attempts to cancel its pending service requests; it cannot undo an already
-executed action. The original task keeps its permissions, schedule and outcome.
+and attempts to cancel known pending service requests. If submission is
+uncertain and no request ID was returned, blocking cannot cancel that broker
+request; check Privilege approvals before any retry. Blocking cannot undo an
+already executed action. The original task keeps its permissions, schedule and
+outcome.
 
 Use `service_restarts` for up to four exact service units. Registered targets
 use the broker's structured restart operation. For unregistered targets, the
@@ -286,13 +304,20 @@ panel reads protected broker policy and requests individual approval of the
 exact argv `/usr/bin/systemctl --no-ask-password restart -- UNIT`, through the
 broker's existing command-approval contract. It adds no reusable service rule.
 The launch check binds the succeeded receipt to the selected operation and
-exact arguments. **Approve once** creates any missing service requests and
-opens their review without queuing the task or reporting a submission error.
+exact arguments. Broker request responses must include a valid 32-character
+hexadecimal ID; status, cancellation, and approval responses must echo the
+exact requested ID. Missing, malformed, or mismatched IDs leave the result
+unconfirmed, so the follow-up is not queued. **Approve once** creates any
+missing service requests and opens their review without queuing the task or
+reporting a submission error.
 Open **Open service approval** in its separate tab, approve with the broker
 password, then return and select **Check approval and launch**. The review form
 keeps edited settings and offers **Request or refresh service approval** for
 explicit retries of failed or expired actions. Repeated approval clicks reuse
-existing requests; uncertain submissions are never automatically replayed.
+existing requests; uncertain submissions are never automatically replayed. A
+generic or malformed broker error, including an older broker response, leaves
+submission status unknown. Check the privilege portal before retrying; a local
+Block cannot cancel a request without its broker ID.
 The operator approves in the separate privilege portal; before a follow-up can
 launch or be saved as a draft, the panel verifies that each exact restart
 succeeded. The task agent then verifies the results without repeating the

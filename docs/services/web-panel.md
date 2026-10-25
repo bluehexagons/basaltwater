@@ -794,5 +794,7 @@ sudo nginx -t
 | Login is repeatedly rejected | Check Nginx and the `basaltwater-web-panel` fail2ban jail |
 | Browser warns about the certificate | Follow [Client CA trust](client-ca-trust.md) |
 
-Failed browser logins are written to a privacy-preserving Nginx log. Passwords
-and Authorization headers are not logged.
+An initial browser request without credentials receives the normal HTTP 401
+Basic Auth challenge and does not count as a failed login. A 401 after the
+browser submits Authorization is recorded in the privacy-preserving Nginx log.
+Passwords and Authorization headers are not logged.
