@@ -149,6 +149,17 @@ directories to workspace mode. These grants accompany the execution directory,
 including when it is private scratch space. Whole-home grants, symlinks,
 shared writable directories and credential/configuration/control stores are
 rejected. The runner reapplies these grants when resuming a conversation.
+For `mode: "workspace"` with `workspace: "existing"`, the working directory
+must also be a specific project directory: the account's home and any path that
+overlaps `.ssh`, `.codex`, `.agents`, `.config`, or `.local/state/basaltwater`
+are rejected, including protected descendants and their ancestors. Creation,
+updates, and prelaunch checks enforce this boundary. Older saved tasks remain in
+the inventory, but an unsafe task fails before workspace preparation or provider
+launch so it can be edited to use a safe project directory.
+Inspection can still use the home directory. Managed `directory` and
+`run-directory` workspaces can keep the home as their source because execution
+uses private empty task directories. Fixed native storage operations also
+intentionally use the home as their target and do not launch Codex.
 `operator_requirements` records unresolved prerequisites as up to eight short
 lines. A task with unresolved prerequisites stops before provider launch;
 review the evidence and clear resolved entries deliberately. For a follow-up,

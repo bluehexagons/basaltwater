@@ -113,7 +113,9 @@ class TaskPolicyTests(unittest.TestCase):
     def test_execution_blocks_before_provider_without_settings_mutation(self) -> None:
         content = '[allowed_permission_profiles]\n":read-only" = true\n'
         self.path.write_text(content)
-        task = {"title": "Check", "prompt": "Inspect", "directory": self.home,
+        project = Path(self.home) / "project"
+        project.mkdir()
+        task = {"title": "Check", "prompt": "Inspect", "directory": str(project),
                 "mode": "workspace", "interval": "hourly", "token_budget": 100}
         original = copy.deepcopy(task)
         with patch.object(tasks.os, "geteuid", return_value=1000), patch.object(

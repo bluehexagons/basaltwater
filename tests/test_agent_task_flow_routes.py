@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
 from types import ModuleType
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
@@ -22,6 +23,8 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.home = os.path.realpath(temporary.name)
+        self.directory = Path(self.home) / "project"
+        self.directory.mkdir()
         self.state = panel.WebPanelState({"host": "host.example", "username": "operator",
             "system_type": "agent_vm", "features": {}, "services": [], "access": []}, agent_home=self.home)
         self.addCleanup(self.state.agent_tasks.close)
@@ -66,7 +69,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
                     handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
 
     def settings(self, **changes: str) -> dict[str, str]:
-        return {"title": "Follow-up", "prompt": "Inspect", "directory": self.home,
+        return {"title": "Follow-up", "prompt": "Inspect", "directory": str(self.directory),
                 "mode": "workspace", "interval": "once", "submit": "draft", **changes}
 
     def test_follow_up_form_normalizes_lists_and_forwards_draft_choice(self) -> None:
@@ -116,7 +119,7 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
     def test_partial_follow_up_provenance_rerenders_submitted_form(self) -> None:
         handler = self.handler("/actions/agent-task/save", {
             "source_task_id": "a" * 32, "source_run_id": "", "title": "Retain me",
-            "prompt": "Inspect", "directory": self.home, "mode": "workspace",
+            "prompt": "Inspect", "directory": str(self.directory), "mode": "workspace",
             "interval": "once", "submit": "draft", "writable_directories": "/srv/data",
             "keep": "1",
         })

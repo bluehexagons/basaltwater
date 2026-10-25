@@ -47,7 +47,10 @@ class StorageTaskTests(unittest.TestCase):
                 tasks.validate_task({**self.values, **changes}, self.home)
         task = tasks.validate_task({**self.values, "max_runs": 100}, self.home)
         self.assertEqual(task["max_runs"], 1)
-        self.assertEqual(tasks.validate_task({**self.values, "storage_operation": "none"}, self.home)["storage_operation"], "none")
+        project = Path(self.home) / "project"
+        project.mkdir()
+        self.assertEqual(tasks.validate_task({**self.values, "directory": str(project),
+            "storage_operation": "none"}, self.home)["storage_operation"], "none")
 
     def test_native_task_ignores_prompt_commands_and_does_not_launch_a_provider(self) -> None:
         values = {**self.values, "prompt": "Delete source and run arbitrary shell commands"}

@@ -27,10 +27,12 @@ def report(outcome: str = "progress") -> dict:
 class PersistentTaskTests(unittest.TestCase):
     def setUp(self) -> None:
         self.home = self.enterContext(tempfile.TemporaryDirectory())
+        self.project = Path(self.home) / "project"
+        self.project.mkdir()
         self.manager = tasks.AgentTasks(self.home)
         self.enterContext(patch.object(tasks.AgentTasks, "available", return_value=True))
         self.enterContext(patch.object(tasks, "_tool_path", return_value="/test/codex"))
-        self.values = {"title": "Fix checks", "prompt": "Fix the failing checks.", "directory": self.home,
+        self.values = {"title": "Fix checks", "prompt": "Fix the failing checks.", "directory": str(self.project),
                        "mode": "workspace", "interval": "hourly", "persistence": "checkpoint"}
         self.addCleanup(self.manager.close)
 
@@ -112,7 +114,7 @@ class PersistentTaskTests(unittest.TestCase):
         identifier = self.manager.create({**self.values, "workspace": "worktree"}, run_now=True, now=0)
         workspace = Path(self.home) / "managed-worktree"
         workspace.mkdir()
-        record = {"path": str(workspace), "repository": self.home, "branch": "agent/test",
+        record = {"path": str(workspace), "repository": str(self.project), "branch": "agent/test",
                   "managed": True, "task": "prompt-" + identifier, "dirty": True}
         with patch.object(agent_workspace, "create_agent_worktree", return_value=record) as create, patch.object(
             agent_workspace, "inspect_agent_worktree", return_value=record,
@@ -120,7 +122,7 @@ class PersistentTaskTests(unittest.TestCase):
             self.run_task(report())
             self.manager.action(identifier, "run")
             self.run_task(report(), now=2)
-        create.assert_called_once_with(self.home, "prompt-" + identifier, home=self.home)
+        create.assert_called_once_with(str(self.project), "prompt-" + identifier, home=self.home)
         self.assertEqual(inspect.call_count, 2)
         self.assertEqual(self.manager.context_snapshot(identifier)["workspace"]["path"], str(workspace))
         with self.assertRaises(ValueError):
@@ -389,7 +391,9 @@ class CodexTaskProtocolTests(unittest.TestCase):
     def test_structured_execution_keeps_full_private_log_and_persists_first_session(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             identifier, run_id = "a" * 32, "b" * 32
-            task = tasks.validate_task({"title": "Continue", "prompt": "Continue safely", "directory": home,
+            project = Path(home) / "project"
+            project.mkdir()
+            task = tasks.validate_task({"title": "Continue", "prompt": "Continue safely", "directory": str(project),
                                         "mode": "workspace", "interval": "once", "persistence": "conversation"}, home)
             task["id"] = identifier
             task["events"] = ["A" * 4000] * 32
