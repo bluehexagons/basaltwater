@@ -44,10 +44,19 @@ is treated as an unavailable mount so setup cannot write through a stale mount.
 ## Sync behavior
 
 Each due sync runs rsync with archive mode, delayed deletion, partial-transfer
-support, destination directory creation, and `.git` exclusion. The destination
+support, destination directory creation, and `.git` exclusion. Both normal and
+conservative copy modes keep interrupted replacements in `.rsync-partial`,
+separate from an existing destination file. That directory is excluded from
+mirroring. The destination
 is a mirror: files removed from the source are removed from the destination.
 Do not use `--sync` for an append-only backup unless that deletion behavior is
 acceptable.
+
+A failed mirror is not an atomic rollback: unrelated file updates and deletions
+may already have completed before an I/O error is reported. Keep independent
+backups or snapshots for recovery of an entire prior tree. Rsync's usual
+size/timestamp comparison can also skip unchanged files without reading their
+contents; successful mirroring does not replace integrity verification.
 
 Equal or nested sync paths are rejected, including aliases through symlinks.
 The source must be an existing directory. Output from both rsync pipes is
@@ -159,10 +168,38 @@ copy. Its duplicated metadata profile may provide another metadata copy on the
 same device; that is not a backup or device-failure protection. Setup does not
 start or schedule native Btrfs scrub, balance, or repair work.
 
+Inspect retained device counters and the latest native scrub result with:
+
+```bash
+sudo btrfs device stats --check /srv/data
+sudo btrfs scrub status /srv/data
+```
+
+Device counters retain historical errors, including after a later successful
+scrub; `--check` returns nonzero when any counter is nonzero. Keep that history
+when investigating failures. To explicitly read and check the filesystem's
+allocated data and metadata without requesting repairs:
+
+```bash
+sudo btrfs scrub start -B -r /srv/data
+```
+
+This reads the filesystem, not just the named directory, and can be substantial
+work. On a writable mount, even `-r` can cause internal filesystem writes; it is
+not a forensic no-write operation. See the upstream
+[scrub](https://btrfs.readthedocs.io/en/latest/btrfs-scrub.html) and
+[device statistics](https://btrfs.readthedocs.io/en/latest/btrfs-device.html)
+references. A clean result for selected allocations does not establish the
+health of the rest of a failing device.
+
 Basaltwater `--scrub` uses PAR2 files to protect and verify selected directory
 contents. It is independent of Btrfs scrub and can repair file corruption while
 enough PAR2 data remains available. Configure it explicitly with `--scrub` and
-keep a separate backup for failures beyond the configured parity.
+keep a separate backup for failures beyond the configured parity. A checksum
+failure can make the original file unreadable; Basaltwater's staged recovery
+requires retaining its original bytes and then stops with an I/O error. See
+the [recovery limits](scrub-recovery.md#recover-or-accept-one-file) before
+attempting to restore an unreadable file.
 
 `--scrub DIRECTORY DATABASE_PATH REDUNDANCY FREQUENCY` uses `par2` to create
 redundancy files, verify protected files, and repair corruption when possible.

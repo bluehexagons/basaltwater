@@ -77,6 +77,16 @@ staging. Repair and restore reject multiply hard-linked targets because replacin
 one name would leave the other names pointing at the old contents; separate the
 link deliberately before recovering it. Acceptance does not replace source data.
 
+Staging retains the original file before changing the live copy. If reading
+that original fails, repair, restore, and acceptance stop with an I/O error,
+even when an independent backup is readable. For example, Btrfs checksum
+rejection can make a damaged extent unreadable instead of returning its bytes.
+These commands do not bypass that preservation requirement or provide raw-device
+recovery. Keep the source and parity evidence, recover to a separate healthy
+target using an independent copy, and verify that copy before an explicit
+cutover. PAR2 repair of readable logical corruption does not establish recovery
+of an unreadable filesystem block.
+
 `accept` means **you have confirmed that the current content is the desired
 baseline**. It builds and verifies new parity in staging before replacing the
 active parity generation. It does not prove that the current content is historically
