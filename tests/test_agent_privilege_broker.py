@@ -234,6 +234,34 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(self.broker.status(request["id"])["state"], "uncertain")
         self.assertFalse(self.broker.execute_next())
 
+    def test_restart_expires_unclaimed_requests_and_keeps_success_without_replay(self):
+        succeeded = self.request()
+        self.broker.decide(succeeded["id"], succeeded["digest"], True, "operator")
+        self.assertTrue(self.broker.execute_next())
+        self.runner.assert_called_once_with(succeeded["plan"])
+        pending = self.request()
+        approved = self.request()
+        self.broker.decide(approved["id"], approved["digest"], True, "operator")
+        self.broker.db.close()
+        self.broker = Broker(self.path, lambda: self.policy, self.runner)
+        for request in (pending, approved):
+            with self.subTest(previous=request["id"]):
+                self.assertEqual(self.broker.status(request["id"])["state"], "expired")
+                with self.assertRaisesRegex(ValueError, "no longer pending"):
+                    self.broker.decide(request["id"], request["digest"], True, "operator")
+        self.assertEqual(self.broker.status(succeeded["id"])["state"], "succeeded")
+        self.assertFalse(self.broker.execute_next())
+        self.runner.assert_called_once()
+
+    def test_approved_request_expires_at_deadline_before_execution(self):
+        with patch("common.service_tools.privilege_broker.time.time", return_value=10000):
+            request = self.request()
+            self.broker.decide(request["id"], request["digest"], True, "operator")
+        with patch("common.service_tools.privilege_broker.time.time", return_value=request["expires"]):
+            self.assertFalse(self.broker.execute_next())
+            self.assertEqual(self.broker.status(request["id"])["state"], "expired")
+        self.runner.assert_not_called()
+
     def test_claim_is_committed_before_execution(self):
         request = self.request()
         self.broker.decide(request["id"], request["digest"], True, "operator")

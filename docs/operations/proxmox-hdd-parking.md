@@ -3,8 +3,9 @@
 Move a stopped VM's disks to a slower pool when it will be idle for an extended
 period. Keep its VMID, network configuration and guest identity, then shut it
 down with autostart disabled. This frees SSD capacity and guest RAM while
-retaining a bootable machine. Keep a separate backup: moving the live disks
-changes their location.
+retaining a bootable machine. Keep a backup on independent physical storage:
+moving the live disks changes their location. A backup on the same HDD as the
+parked disks does not protect against that drive failing.
 
 This guide uses native Proxmox disk moves followed by Basaltwater's existing
 storage verification. Basaltwater does not have a same-node parking command.
@@ -26,6 +27,12 @@ devices too. Use a destination with the required content types and enough free
 space; a directory pool needs **Disk image** (`images`) enabled for QEMU disks.
 When changing content types, retain the pool's existing uses. A mounted HDD
 pool should retain its mount-point guard.
+
+If normal I/O reports media or unrecoverable read errors, stop the parking
+workflow and assess recovery before moving or booting affected guests. Free
+capacity, an active storage status, and a passing SMART summary do not establish
+that the data can be read. The normal move procedure below assumes readable
+source storage.
 
 The tested lab workflow used a full-clone QEMU VM without snapshots, moved from
 LVM-thin raw storage to an ext4 directory pool. Linked clones, snapshot history,
