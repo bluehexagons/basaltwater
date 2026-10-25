@@ -17,6 +17,7 @@ import time
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from desktop.kiosk_network import STARTUP_SECONDS, wait_for_endpoint
 from lib.atomic_io import read_json_file, write_text_atomic
 from lib.kiosk_config import validate_kiosk_destinations, validate_kiosk_url
 
@@ -101,6 +102,13 @@ def supervise(url: str, *, start_page: bool = False) -> int:
         previous[signum] = signal.signal(signum, stop)
     attempts = 0
     try:
+        if not start_page:
+            print(f"Waiting up to {STARTUP_SECONDS} seconds for the homepage endpoint before opening Firefox.", flush=True)
+            connected = wait_for_endpoint(url, stopped)
+            if stopped.is_set():
+                return 0
+            print("Homepage endpoint accepts connections; opening Firefox." if connected else
+                  "Homepage endpoint unavailable; opening Firefox for manual recovery.", flush=True)
         while not stopped.is_set():
             started = time.monotonic()
             attempts += 1

@@ -24,6 +24,7 @@ class KioskRuntimeTests(unittest.TestCase):
         self.enterContext(patch.object(runtime, "RUNTIME_ROOT", self.home / "run"))
         self.enterContext(patch.object(runtime.pwd, "getpwnam", return_value=SimpleNamespace(
             pw_uid=12345, pw_dir=str(self.home), pw_gecos=runtime.ACCOUNT_COMMENT, pw_shell="/usr/sbin/nologin")))
+        self.connectivity = self.enterContext(patch.object(runtime, "wait_for_endpoint", return_value=True))
 
     def test_browser_uses_normal_navigation_and_literal_url(self):
         url = "https://pve.example:8006/a'b?x=$(id)&y=`id`#v1"
@@ -75,11 +76,36 @@ class KioskRuntimeTests(unittest.TestCase):
         self.assertEqual(runtime.supervise("http://localhost/", start_page=True), 0)
         self.assertEqual(popen.call_args.args[0][-1], (self.home / "start.html").as_uri())
         cleanup.assert_called_once()
+        self.connectivity.assert_not_called()
+
+    def test_offline_endpoint_still_opens_browser_without_a_retry_loop(self):
+        popen, cleanup, _, _ = self.supervisor([0])
+        self.connectivity.return_value = False
+        self.assertEqual(runtime.supervise("http://localhost/"), 0)
+        self.assertEqual(popen.call_count, 1)
+        self.connectivity.assert_called_once()
+        cleanup.assert_called_once()
+
+    def test_stop_during_startup_wait_never_launches_compositor(self):
+        popen, cleanup, event, handlers = self.supervisor([])
+
+        def stop_during_wait(_url, stopped):
+            self.assertIs(stopped, event)
+            handlers.call_args_list[0].args[1](signal.SIGTERM, None)
+            event.is_set.return_value = True
+            return False
+
+        self.connectivity.side_effect = stop_during_wait
+        self.assertEqual(runtime.supervise("http://localhost/"), 0)
+        popen.assert_not_called()
+        cleanup.assert_not_called()
+        self.assertEqual(handlers.call_count, 6)
 
     def test_crashes_exhaust_budget_and_clean_every_attempt(self):
         popen, cleanup, event, handlers = self.supervisor([1, -11, 1])
         self.assertEqual(runtime.supervise("http://localhost/"), 1)
         self.assertEqual(popen.call_count, runtime.MAX_ATTEMPTS)
+        self.connectivity.assert_called_once()
         self.assertEqual(cleanup.call_count, runtime.MAX_ATTEMPTS)
         self.assertEqual(event.wait.call_count, runtime.MAX_ATTEMPTS - 1)
         self.assertEqual(handlers.call_count, 6)

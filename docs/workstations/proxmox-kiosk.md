@@ -162,6 +162,24 @@ correcting a startup failure, use `systemctl reset-failed basaltwater-kiosk.serv
 before starting again if that limit was reached. A network failure leaves the
 browser on its error page and does not trigger kiosk restarts.
 
+When opening a direct homepage, the browser supervisor first waits up to 30
+seconds for a TCP connection to that URL's hostname and port. It retries short
+connection attempts within one startup budget, then opens Firefox even when
+the endpoint is still unavailable. Stopping the kiosk interrupts the wait,
+reaps its probe worker, and prevents Firefox from starting. Hostname resolution
+runs in that worker so a stalled resolver cannot hold the supervisor indefinitely.
+
+This is a startup connectivity check, not application or browser readiness.
+It sends no HTTP requests, URL paths, query strings, or authentication, and
+leaves certificate validation to Firefox. An HTTP error or certificate issue
+can still appear after the port accepts connections. The offline destination
+page opens immediately without checking any saved destination. Once Firefox
+opens, the supervisor does not monitor connectivity or reload, reopen, or
+restart tabs during a network interruption; use the browser to reconnect.
+Compositor crash retries do not repeat the startup wait. Startup messages appear
+in `journalctl -t basaltwater-kiosk`; status and doctor keep their existing
+read-only behavior without network probes.
+
 To remove the managed kiosk, patch with `--no-kiosk`. This removes only the
 managed service/configuration/preset and retains the account, browser data,
 and packages. Do not manually delete immutable generations while the feature
@@ -199,7 +217,10 @@ Record results for each intended hardware combination, including:
 - Reboot behavior, browser close/restart behavior, and the displayed guidance
   after a compositor failure.
 - Network unplug and recovery behavior in the browser, with the host console
-  available throughout; verify SSH access before and after reconnecting.
+  available throughout; verify SSH access before and after reconnecting. Cover
+  delayed homepage startup, a permanently offline endpoint, and stopping the
+  kiosk while it waits; verify existing console tabs remain untouched after
+  connectivity changes.
 - Service status and journals during startup, plus complete removal with
   `--no-kiosk` and preservation of the documented account/browser data.
 
