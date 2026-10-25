@@ -185,10 +185,16 @@ def _namespace_helper_restricted(stderr: str) -> bool:
                 return False
         messages.append(line)
     diagnostic = "\n".join(messages)
+    # A stale pause-process diagnostic can wrap the same namespace denial.
+    # Recognize its exact error chain, without acting on the migration hint.
+    namespace_prefix = (
+        r'(?:Error: |invalid internal status, try resetting the pause process with '
+        r'"(?:/[A-Za-z0-9_.-]+)*/podman system migrate": )'
+    )
     denied = any(
         re.search(rf'(?:^|: ){helper}: write to {mapping} failed: Operation not permitted$',
                   diagnostic, re.MULTILINE)
-        and re.search(rf'^Error: cannot set up namespace using "(?:/[A-Za-z0-9_.-]+)*/{helper}": exit status ?1$',
+        and re.search(rf'^{namespace_prefix}cannot set up namespace using "(?:/[A-Za-z0-9_.-]+)*/{helper}": exit status ?1$',
                       diagnostic, re.MULTILINE)
         for helper, mapping in (("newuidmap", "uid_map"), ("newgidmap", "gid_map"))
     )

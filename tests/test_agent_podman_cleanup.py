@@ -20,12 +20,20 @@ def _image(identifier: str, *, created: int, tags=None, containers=0, labels=Non
             "Labels": labels, "Size": size}
 
 
-def _map_denial(helper="newuidmap", mapping="uid_map", *, wrapped=False) -> str:
+def _map_denial(helper="newuidmap", mapping="uid_map", *, wrapped=False, internal_status=False) -> str:
     message = (f'running `/usr/bin/{helper} 783 0 1000 1 1 100000 65536`: '
                f'{helper}: write to {mapping} failed: Operation not permitted\n')
+    failure = f'cannot set up namespace using "/usr/bin/{helper}": exit status 1'
+    if internal_status:
+        failure = ('invalid internal status, try resetting the pause process with '
+                   '"/usr/bin/podman system migrate": ' + failure)
+    else:
+        failure = 'Error: ' + failure
     if wrapped:
         message = 'time="2026-10-24T16:09:41-05:00" level=error msg=' + json.dumps(message) + '\n'
-    return message + f'Error: cannot set up namespace using "/usr/bin/{helper}": exit status 1\n'
+        if internal_status:
+            failure = 'time="2026-10-24T16:09:41-05:00" level=error msg=' + json.dumps(failure)
+    return message + failure + '\n'
 
 
 _RESTRICTED_STATUS = b"Name:\tpython3\nNoNewPrivs:\t1\nCapBnd:\t0000000000000000\n"
@@ -325,6 +333,11 @@ class PodmanCleanupTests(unittest.TestCase):
             _map_denial(wrapped=True).replace("level=error", "level=warning"),
             _map_denial(wrapped=True).replace("msg=", "message="),
             _map_denial(wrapped=True).replace('msg="running', 'msg="\\q running'),
+            _map_denial(wrapped=True, internal_status=True).replace("Operation not permitted", "Permission denied"),
+            _map_denial(wrapped=True, internal_status=True).replace("podman system migrate", "podman system reset"),
+            _map_denial(wrapped=True, internal_status=True).replace('using \\"/usr/bin/newuidmap\\"', 'using \\"/usr/bin/newgidmap\\"'),
+            _map_denial(wrapped=True, internal_status=True).replace("exit status 1", "exit status 2"),
+            _map_denial(wrapped=True, internal_status=True).splitlines()[-1],
         ):
             with self.subTest(diagnostic=diagnostic), \
                     patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(
@@ -337,6 +350,28 @@ class PodmanCleanupTests(unittest.TestCase):
             self.assertFalse(result["cleanup_executed"])
             command.assert_called_once()
             source.assert_not_called()
+
+    def test_native_internal_status_map_denial_is_a_skip_without_migration_or_cleanup(self):
+        for apply in (False, True):
+            for helper, mapping in (("newuidmap", "uid_map"), ("newgidmap", "gid_map")):
+                with self.subTest(apply=apply, helper=helper), \
+                        patch.object(cleanup, "_command", return_value=subprocess.CompletedProcess(
+                            [], 1, "stdout secret",
+                            _map_denial(helper, mapping, wrapped=True, internal_status=True),
+                        )) as command, patch("builtins.open", mock_open(read_data=_RESTRICTED_STATUS)), \
+                        patch.object(cleanup, "plan_builders") as builders, \
+                        patch.object(cleanup, "_process_activity") as activity:
+                    result = cleanup.clean_podman_images(apply=apply)
+                self.assertEqual(result["status"], "deferred_restricted")
+                self.assertEqual(result["issue"], "namespace_helper_restricted")
+                self.assertFalse(result["cleanup_attempted"])
+                self.assertFalse(result["cleanup_executed"])
+                self.assertNotIn("secret", json.dumps(result))
+                command.assert_called_once()
+                self.assertEqual(command.call_args.args[2], ["info", "--format", "json"])
+                builders.assert_not_called()
+                activity.assert_not_called()
+                self.assertEqual(self.disk_reads, 0)
 
     def test_map_denial_needs_complete_current_kernel_restriction_evidence(self):
         for raw in (

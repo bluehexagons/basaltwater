@@ -294,6 +294,9 @@ The helper recognizes this only after the initial `podman info` fails, when
 bounded `/proc/self/status` observations confirm both restrictions and the
 diagnostics name the same `newuidmap`/`newgidmap` helper's `uid_map`/`gid_map`
 write failure with `Operation not permitted` and failure to set up the namespace.
+This includes Podman's quoted `invalid internal status` error chain only when
+it contains the same matching helper denial. The suggested `podman system migrate`
+command is diagnostic text; maintenance does not run it or reset the store.
 It reports `deferred_restricted` and fixed issue `namespace_helper_restricted`,
 with `cleanup_attempted=false` and `cleanup_executed=false`. No inventory,
 pruning or immediate retry follows. Generic permission errors, NNP alone,
