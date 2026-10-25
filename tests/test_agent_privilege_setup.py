@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack, redirect_stderr
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -250,7 +250,8 @@ class LifecycleTests(unittest.TestCase):
         self.units.mkdir()
         self.policy_path = self.directory / "policy.json"
         self.auth_path = self.directory / "auth.json"
-        self.polkit_path = self.root / "broker.rules"
+        self.polkit_path = self.root / "polkit" / "rules.d" / "broker.rules"
+        self.polkit_path.parent.mkdir(parents=True, mode=0o755)
         self.record = password_record("agent", "test-only approval password")
         self.config = SetupConfig(host="vm.example", username="agent", system_type="agent_vm",
                                   privilege_broker_port=9444,
@@ -260,6 +261,10 @@ class LifecycleTests(unittest.TestCase):
             stdout="",
             stderr="User agent is not allowed to run sudo on vm.example.",
         ))
+        self.states = {name: dict(LoadState="not-found", ActiveState="inactive", SubState="dead", UnitFileState="")
+                       for name in (steps.BROKER, steps.WEB)}
+        self.command_failure = lambda _command: None
+        self.run.side_effect = self.system_command
         self.ready = Mock(return_value=True)
         constants = {"CONFIG_DIR": str(self.directory), "POLICY_PATH": str(self.policy_path),
                      "AUTH_PATH": str(self.auth_path), "POLKIT_PATH": str(self.polkit_path),
@@ -268,9 +273,11 @@ class LifecycleTests(unittest.TestCase):
             self.stack.enter_context(patch.object(steps, name, value))
         functions = {"is_dry_run": Mock(return_value=False), "can_manage_system_services": Mock(return_value=True),
                      "is_vm": Mock(return_value=True), "protected_path": Mock(), "_approval_account": Mock(),
-                     "run": self.run, "is_service_active": Mock(return_value=True), "_https_ready": self.ready}
+                     "run": self.run, "is_service_active": Mock(side_effect=lambda name: self.states[name]["ActiveState"] == "active"),
+                     "_https_ready": self.ready}
         for name, value in functions.items():
             self.stack.enter_context(patch.object(steps, name, value))
+        self.stack.enter_context(patch("lib.unit_transaction.run", self.run))
         real_fstat = os.fstat
 
         def target_fstat(descriptor):
@@ -296,6 +303,48 @@ class LifecycleTests(unittest.TestCase):
         key.write_text("test key fixture")
         self.stack.enter_context(patch("common.godot_web_steps.configure_internal_web_host",
             return_value=("", "", str(cert), str(key), False)))
+
+    def system_command(self, command, **_kwargs):
+        failure = self.command_failure(command)
+        if failure is not None:
+            raise failure
+        if command[0] == "sudo":
+            return self.run.return_value
+        if command[:2] == ["systemd-analyze", "verify"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        self.assertEqual(command[0], "systemctl")
+        action = command[1]
+        if action == "daemon-reload":
+            for name, state in self.states.items():
+                if (self.units / (name + ".service")).exists():
+                    state["LoadState"] = "loaded"
+                    if not state["UnitFileState"]:
+                        state["UnitFileState"] = "disabled"
+                else:
+                    state["LoadState"] = "not-found"
+                    state["UnitFileState"] = ""
+        else:
+            name = next(value.removesuffix(".service") for value in command[2:] if value.endswith(".service"))
+            state = self.states[name]
+            if action == "show":
+                return SimpleNamespace(returncode=0, stdout="\n".join(f"{key}={value}" for key, value in state.items()), stderr="")
+            if action == "stop":
+                state.update(ActiveState="inactive", SubState="dead")
+            elif action == "disable":
+                state["UnitFileState"] = "disabled" if (self.units / (name + ".service")).exists() else ""
+            elif action == "enable":
+                state["UnitFileState"] = "enabled-runtime" if "--runtime" in command else "enabled"
+            elif action == "restart":
+                state.update(LoadState="loaded", ActiveState="active", SubState="running")
+            else:
+                self.fail("Unexpected system command: " + repr(command))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def broker_snapshot(self):
+        paths = [self.policy_path, self.auth_path, self.directory / "server.crt", self.directory / "server.key",
+                 self.polkit_path, *(self.units / (name + ".service") for name in self.states)]
+        return {path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode), path.stat().st_uid, path.stat().st_gid)
+                for path in paths if path.exists()}
 
     def test_install_preserve_policy_and_rotate_password(self):
         self.steps.configure_privilege_broker(self.config)
@@ -356,10 +405,19 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o755)
 
     def test_unsafe_directory_is_rejected_before_install(self):
+        real_fstat = os.fstat
         for uid, mode in ((1000, 0o755), (0, 0o775), (0, 0o757)):
+            def unsafe_directory(descriptor):
+                metadata = real_fstat(descriptor)
+                if stat.S_ISDIR(metadata.st_mode):
+                    values = list(metadata)
+                    values[0] = stat.S_IFDIR | mode
+                    values[4] = uid
+                    return os.stat_result(values)
+                return metadata
             with self.subTest(uid=uid, mode=mode), patch.object(
                 self.steps.os, "fstat",
-                return_value=SimpleNamespace(st_uid=uid, st_mode=stat.S_IFDIR | mode),
+                side_effect=unsafe_directory,
             ):
                 with self.assertRaisesRegex(ValueError, "Unsafe privilege configuration directory"):
                     self.steps.configure_privilege_broker(self.config)
@@ -385,7 +443,7 @@ class LifecycleTests(unittest.TestCase):
         self.steps.configure_privilege_broker(self.config)
         self.assertFalse(self.auth_path.exists())
         self.assertFalse(self.polkit_path.exists())
-        self.assertEqual(list(self.units.iterdir()), [])
+        self.assertEqual(list(self.units.glob("*.service")), [])
         self.assertTrue(self.policy_path.exists())
 
     def test_startup_failure_stops_both_services(self):
@@ -394,6 +452,10 @@ class LifecycleTests(unittest.TestCase):
             self.steps.configure_privilege_broker(self.config)
         stopped = [call.args[0] for call in self.run.call_args_list if "disable" in call.args[0]]
         self.assertEqual(len(stopped), 2)
+        for state in self.states.values():
+            self.assertEqual(state["ActiveState"], "inactive")
+            self.assertEqual(state["UnitFileState"], "")
+        self.assertEqual(self.broker_snapshot(), {})
 
     def test_unmanaged_unit_is_never_overwritten(self):
         path = self.units / (self.steps.BROKER + ".service")
@@ -401,6 +463,270 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unmanaged"):
             self.steps.configure_privilege_broker(self.config)
         self.assertEqual(path.read_text(), "administrator service")
+
+    def test_disable_stops_loaded_active_units_even_without_fragments(self):
+        self.steps.configure_privilege_broker(self.config)
+        for name in self.states:
+            (self.units / (name + ".service")).unlink()
+        self.run.reset_mock()
+        self.config.disable_privilege_broker = True
+        self.config.privilege_broker_auth = None
+
+        self.steps.configure_privilege_broker(self.config)
+
+        for name, state in self.states.items():
+            self.run.assert_any_call(["systemctl", "stop", name + ".service"])
+            self.assertEqual(state["ActiveState"], "inactive")
+        self.assertFalse(self.auth_path.exists())
+        self.assertTrue(self.policy_path.exists())
+
+    def test_stop_requires_observed_inactive_and_preserves_auth_on_failure(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = self.auth_path.read_bytes()
+        real_command = self.system_command
+
+        def ignored_stop(command, **kwargs):
+            if command[1] == "stop":
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return real_command(command, **kwargs)
+
+        self.run.side_effect = ignored_stop
+        self.config.disable_privilege_broker = True
+        self.config.privilege_broker_auth = None
+        with self.assertRaises(self.steps.BrokerRecoveryError):
+            self.steps.configure_privilege_broker(self.config)
+        self.assertEqual(self.auth_path.read_bytes(), original)
+        self.assertTrue((self.units / ".basaltwater-privilege-operation.json").exists())
+
+    def test_stop_command_failure_preserves_credentials_and_recovery_guard(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = self.broker_snapshot()
+        self.command_failure = lambda command: RuntimeError("stop failed") if command[1] == "stop" else None
+        self.config.disable_privilege_broker = True
+        self.config.privilege_broker_auth = None
+
+        with self.assertRaises(self.steps.BrokerRecoveryError):
+            self.steps.configure_privilege_broker(self.config)
+
+        self.assertEqual(self.broker_snapshot(), original)
+        self.assertTrue((self.units / ".basaltwater-privilege-operation.json").exists())
+
+    def test_unknown_post_stop_state_retains_auth_and_blocks_disable_success(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = self.broker_snapshot()
+        real_command = self.system_command
+
+        def unknown_after_stop(command, **kwargs):
+            result = real_command(command, **kwargs)
+            if command == ["systemctl", "stop", self.steps.WEB + ".service"]:
+                self.states[self.steps.WEB]["ActiveState"] = "unknown"
+            return result
+
+        self.run.side_effect = unknown_after_stop
+        self.config.disable_privilege_broker = True
+        self.config.privilege_broker_auth = None
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(self.steps.BrokerRecoveryError):
+            self.steps.configure_privilege_broker(self.config)
+        self.assertNotIn("disabled", output.getvalue())
+        self.assertEqual(self.broker_snapshot(), original)
+
+    def test_gateway_and_candidate_validation_failures_leave_healthy_services_running(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = self.broker_snapshot()
+        for stage in ("gateway", "unit-validation"):
+            with self.subTest(stage=stage), ExitStack() as patches:
+                self.run.reset_mock()
+                if stage == "gateway":
+                    patches.enter_context(patch("common.godot_web_steps.configure_internal_web_host",
+                                                side_effect=RuntimeError("gateway failed")))
+                else:
+                    self.command_failure = lambda command: RuntimeError("validation failed") if command[0] == "systemd-analyze" else None
+                with self.assertRaises(RuntimeError):
+                    self.steps.configure_privilege_broker(self.config)
+                self.assertEqual(self.broker_snapshot(), original)
+                self.assertTrue(all(state["ActiveState"] == "active" and state["UnitFileState"] == "enabled" for state in self.states.values()))
+                self.assertFalse(any(call.args[0][1] in {"stop", "disable", "restart"} for call in self.run.call_args_list))
+                self.assertFalse((self.units / ".basaltwater-privilege-operation.json").exists())
+
+    def test_unknown_and_failed_state_queries_never_remove_authority(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = self.broker_snapshot()
+        self.config.disable_privilege_broker = True
+        self.config.privilege_broker_auth = None
+        state = self.states[self.steps.WEB]
+        for failure in ("unknown", "query-error"):
+            with self.subTest(failure=failure):
+                if failure == "unknown":
+                    state["ActiveState"] = "unknown"
+                else:
+                    state["ActiveState"] = "active"
+                    self.command_failure = lambda command: RuntimeError("query failed") if command[1] == "show" else None
+                self.run.reset_mock()
+                with self.assertRaises(RuntimeError):
+                    self.steps.configure_privilege_broker(self.config)
+                self.assertEqual(self.broker_snapshot(), original)
+                self.assertFalse(any(call.args[0][1] in {"stop", "disable"} for call in self.run.call_args_list))
+
+    def test_rotation_restarts_and_expires_requests_without_replaying_approvals(self):
+        from common.service_tools.privilege_broker import Broker
+        from lib.privilege_auth import password_record
+        self.steps.configure_privilege_broker(self.config)
+        previous = self.policy_path.read_bytes()
+        audit = self.root / "requests.sqlite3"
+        runner = Mock()
+        broker = Broker(str(audit), lambda: json.loads(self.policy_path.read_text()), runner)
+        self.addCleanup(lambda: broker.db.close())
+        pending = broker.request(1000, "system.reboot", {}, "test pending request")
+        approved = broker.request(1000, "system.reboot", {}, "test approved request")
+        broker.decide(approved["id"], approved["digest"], True, "operator")
+        terminal = broker.request(1000, "system.reboot", {}, "test denied request")
+        broker.decide(terminal["id"], terminal["digest"], False, "operator")
+        events = [tuple(row) for row in broker.db.execute("SELECT * FROM events ORDER BY sequence")]
+        real_command = self.system_command
+
+        def process_lifecycle(command, **kwargs):
+            nonlocal broker
+            result = real_command(command, **kwargs)
+            if command == ["systemctl", "restart", self.steps.BROKER + ".service"]:
+                broker.db.close()
+                broker = Broker(str(audit), lambda: json.loads(self.policy_path.read_text()), runner)
+            return result
+
+        self.run.side_effect = process_lifecycle
+        self.config.privilege_broker_auth = json.dumps(password_record("agent", "new test-only password"))
+        self.run.reset_mock()
+
+        self.steps.configure_privilege_broker(self.config)
+
+        commands = [call.args[0] for call in self.run.call_args_list]
+        for name in self.states:
+            stop = commands.index(["systemctl", "stop", name + ".service"])
+            restart = commands.index(["systemctl", "restart", name + ".service"])
+            self.assertLess(stop, restart)
+        self.assertEqual(self.policy_path.read_bytes(), previous)
+        for request in (pending, approved):
+            self.assertEqual(broker.status(request["id"])["state"], "expired")
+            with self.assertRaises(ValueError):
+                broker.decide(request["id"], request["digest"], True, "operator")
+        self.assertEqual(broker.status(terminal["id"])["state"], "denied")
+        self.assertEqual([tuple(row) for row in broker.db.execute("SELECT * FROM events ORDER BY sequence")][:len(events)], events)
+        self.assertFalse(broker.execute_next())
+        runner.assert_not_called()
+        self.assertEqual(json.loads(self.auth_path.read_text()), json.loads(self.config.privilege_broker_auth))
+
+    def test_healthy_rerun_restores_files_modes_and_activation_for_each_failure(self):
+        from lib.privilege_auth import password_record
+        self.steps.configure_privilege_broker(self.config)
+        # Distinct safe modes make restoration different from normal publication.
+        (self.directory / "server.key").chmod(0o400)
+        (self.units / (self.steps.WEB + ".service")).chmod(0o640)
+        self.directory.chmod(0o750)
+        original = self.broker_snapshot()
+        self.config.privilege_broker_port = 9445
+        self.config.privilege_broker_auth = json.dumps(password_record("agent", "rotated test-only password"))
+        write_json = self.steps.write_json_atomic
+        for stage in ("policy", "auth", "unit", "activation", "readiness", "interruption"):
+            with self.subTest(stage=stage), ExitStack() as patches:
+                def fail_publication(path, *args, **kwargs):
+                    if path == str(self.policy_path) and stage in {"policy", "interruption"}:
+                        if stage == "interruption":
+                            raise KeyboardInterrupt()
+                        raise OSError("policy publication failed")
+                    if path == str(self.auth_path) and stage == "auth":
+                        # Model a failure after the atomic rename took effect.
+                        write_json(path, *args, **kwargs)
+                        raise OSError("auth publication durability failed")
+                    return write_json(path, *args, **kwargs)
+                patches.enter_context(patch.object(self.steps, "write_json_atomic", side_effect=fail_publication))
+                if stage == "unit":
+                    patches.enter_context(patch.object(self.steps, "_managed_write", side_effect=OSError("unit publication failed")))
+                if stage == "activation":
+                    failed = False
+                    def fail_activation(command):
+                        nonlocal failed
+                        if command == ["systemctl", "restart", self.steps.WEB + ".service"] and not failed:
+                            failed = True
+                            return RuntimeError("new activation failed")
+                        return None
+                    self.command_failure = fail_activation
+                self.ready.side_effect = lambda origin, _cert: origin == "https://vm.example:9444"
+                expected = KeyboardInterrupt if stage == "interruption" else (RuntimeError if stage in {"activation", "readiness"} else OSError)
+                with self.assertRaises(expected):
+                    self.steps.configure_privilege_broker(self.config)
+                self.assertEqual(self.broker_snapshot(), original)
+                self.assertEqual(stat.S_IMODE(self.directory.stat().st_mode), 0o750)
+                for state in self.states.values():
+                    self.assertEqual(state["ActiveState"], "active")
+                    self.assertEqual(state["UnitFileState"], "enabled")
+                self.assertFalse((self.units / ".basaltwater-privilege-operation.json").exists())
+                self.assertEqual(list(self.units.glob(".basaltwater-privilege-*/previous.json")), [])
+                self.command_failure = lambda _command: None
+
+    def test_failed_restore_retains_private_evidence_and_blocks_retry(self):
+        self.steps.configure_privilege_broker(self.config)
+        previous_auth = self.auth_path.read_text()
+        self.config.privilege_broker_port = 9445
+        self.ready.side_effect = lambda origin, _cert: origin == "https://vm.example:9444"
+        write_text = self.steps.write_text_atomic
+
+        def fail_restore(path, content, **kwargs):
+            if path == str(self.auth_path) and content == previous_auth:
+                raise OSError("restore failed")
+            return write_text(path, content, **kwargs)
+
+        output = io.StringIO()
+        with redirect_stdout(output), patch.object(self.steps, "write_text_atomic", side_effect=fail_restore):
+            with self.assertRaises(self.steps.BrokerRecoveryError) as caught:
+                self.steps.configure_privilege_broker(self.config)
+        marker_path = self.units / ".basaltwater-privilege-operation.json"
+        marker_bytes = marker_path.read_bytes()
+        marker = json.loads(marker_bytes)
+        self.assertEqual(marker["status"], "recovery_required")
+        backup = Path(marker["context"]["backup_dir"])
+        snapshot = backup / "previous.json"
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(marker_path.stat().st_mode), 0o600)
+        self.assertEqual(json.loads(snapshot.read_text())["files"][str(self.auth_path)]["content"], previous_auth)
+        for field in ("hash", "salt"):
+            self.assertNotIn(self.record[field], str(caught.exception) + marker_path.read_text() + output.getvalue())
+        self.assertTrue(all(state["ActiveState"] == "inactive" for state in self.states.values()))
+        self.run.reset_mock()
+        with self.assertRaisesRegex(ValueError, "Unfinished"):
+            self.steps.configure_privilege_broker(self.config)
+        self.run.assert_not_called()
+        self.assertEqual(marker_path.read_bytes(), marker_bytes)
+        self.assertTrue(snapshot.exists())
+
+    def test_rerun_restores_runtime_enablement_and_inactive_units(self):
+        self.steps.configure_privilege_broker(self.config)
+        self.states[self.steps.BROKER]["UnitFileState"] = "enabled-runtime"
+        self.states[self.steps.WEB].update(ActiveState="inactive", SubState="dead", UnitFileState="disabled")
+        original = self.broker_snapshot()
+        with patch.object(self.steps, "_managed_write", side_effect=OSError("publication failed")):
+            with self.assertRaises(OSError):
+                self.steps.configure_privilege_broker(self.config)
+        self.assertEqual(self.broker_snapshot(), original)
+        self.assertEqual(self.states[self.steps.BROKER]["UnitFileState"], "enabled-runtime")
+        self.assertEqual(self.states[self.steps.BROKER]["ActiveState"], "active")
+        self.assertEqual(self.states[self.steps.WEB]["UnitFileState"], "disabled")
+        self.assertEqual(self.states[self.steps.WEB]["ActiveState"], "inactive")
+
+    def test_first_install_interruption_removes_partial_credentials_and_units(self):
+        self.directory.rmdir()
+        write_json = self.steps.write_json_atomic
+        def interrupt_after_auth(path, *args, **kwargs):
+            write_json(path, *args, **kwargs)
+            if path == str(self.auth_path):
+                raise KeyboardInterrupt()
+        with patch.object(self.steps, "write_json_atomic", side_effect=interrupt_after_auth):
+            with self.assertRaises(KeyboardInterrupt):
+                self.steps.configure_privilege_broker(self.config)
+        self.assertEqual(self.broker_snapshot(), {})
+        self.assertFalse(self.directory.exists())
+        self.assertTrue(all(state["ActiveState"] == "inactive" and state["UnitFileState"] == "" for state in self.states.values()))
+        self.assertFalse((self.units / ".basaltwater-privilege-operation.json").exists())
 
     def test_sudo_grants_and_missing_password_fail_before_install(self):
         self.run.return_value.returncode = 0
