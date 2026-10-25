@@ -401,11 +401,23 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             return {"status": "failed", "output": "", "message": "Task deadline reached", "exit_code": None}
         timeout_message = "Task runtime or deadline reached"
     host_evidence = None
+    cancelled_before_provider = False
+
+    def cancelled_result() -> dict[str, Any]:
+        result = {"status": "cancelled", "output": "", "message": "Cancelled before provider launch",
+                  "exit_code": None, "usage": {"input_tokens": 0, "output_tokens": 0}}
+        if host_evidence is not None:
+            result["evidence"] = [json.dumps(host_evidence)]
+        return result
+
     if task["storage_operation"] != "none":
         host_started = time.monotonic()
         host_evidence = run_storage_operation(task["storage_operation"], home, cancel,
                                              timeout=min(timeout_seconds, 360), deadline_at=task["deadline_at"],
                                              lease_fd=lease_fd)
+        # Capture cancellation before timeout accounting or any post-review
+        # failure can hide the completed host evidence.
+        cancelled_before_provider = cancel.is_set()
         timeout_seconds -= time.monotonic() - host_started
         if runtime:
             # Retain the complete bounded evidence using the normal run log and
@@ -413,8 +425,9 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             descriptor = os.open(runtime["log_path"], os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
             with os.fdopen(descriptor, "w") as log:
                 log.write(json.dumps({"host_storage": host_evidence}) + "\n")
-        if task["storage_operation"] != "review" or host_evidence.get("cancelled"):
-            cancelled = bool(host_evidence.get("cancelled"))
+        if (task["storage_operation"] != "review" or host_evidence.get("cancelled")
+                or cancelled_before_provider or cancel.is_set()):
+            cancelled = bool(host_evidence.get("cancelled") or cancelled_before_provider or cancel.is_set())
             native = host_evidence.get("result", {})
             state = "cancelled" if cancelled else native.get("status", "failed")
             complete = (not cancelled and not host_evidence.get("error")
@@ -439,9 +452,13 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
                     "evidence": [json.dumps(host_evidence)], "follow_up": None, "retry_after_minutes": None,
                     "usage": {"input_tokens": 0, "output_tokens": 0}, "exit_code": exit_code}
         if timeout_seconds <= 0:
+            if cancel.is_set():
+                return cancelled_result()
             return {"status": "failed", "output": "", "message": timeout_message, "exit_code": None}
     executable = _tool_path("codex", home)
     if not executable:
+        if cancel.is_set():
+            return cancelled_result()
         raise RuntimeError("Codex is not installed for the panel account")
     environment = os.environ.copy()
     environment["HOME"] = home
@@ -572,11 +589,7 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             prompt_input.write(instruction)
             prompt_input.seek(0)
         if cancel.is_set():
-            result = {"status": "cancelled", "output": "", "message": "Cancelled before provider launch",
-                      "exit_code": None, "usage": {"input_tokens": 0, "output_tokens": 0}}
-            if host_evidence is not None:
-                result["evidence"] = [json.dumps(host_evidence)]
-            return result
+            return cancelled_result()
         process = resources.enter_context(subprocess.Popen(
             command, cwd=runtime["directory"] if runtime else task["directory"], env=environment,
             stdin=prompt_input, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
