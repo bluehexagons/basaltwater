@@ -776,6 +776,33 @@ class TestMountNamespace(unittest.TestCase):
         self.assertNotIn(op_id, state)
         self.assertIn(op_id, state['_attempts'])
 
+    def test_inline_setup_computes_coverage_only_in_supervised_worker(self):
+        from sync import sync_steps
+
+        mount = str(self.source / 'disk')
+        config = RuntimeConfig.from_dict({'username': 'agent', 'storage_mounts': [['data', mount]]})
+        realpath = os.path.realpath
+
+        def resolve(path):
+            self.assertTrue(self.in_worker, 'Filesystem access outside supervised worker')
+            return realpath(path)
+
+        with (
+            patch.object(sync_steps, 'create_operation_logger') as logger,
+            patch.object(sync_rsync.os.path, 'realpath', side_effect=resolve),
+            patch.object(sync_rsync, 'ensure_directory'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'Initial sync incomplete'):
+                sync_steps.create_sync_service(config, [str(self.source), str(self.destination), 'daily'])
+            self.assertEqual(self.filter_input, b'/disk\0')
+            self.assertEqual(logger.return_value.complete.call_args.args[0], 'failed')
+            # A mount restored before the namespace is captured is included;
+            # no stale controller exclusion can hide it or mark partial work complete.
+            self.before_namespace = lambda: self.host_mounts.add(mount)
+            sync_steps.create_sync_service(config, [str(self.source), str(self.destination), 'daily'])
+            self.assertIsNone(self.filter_input)
+            self.assertEqual(logger.return_value.complete.call_args.args[0], 'completed')
+
     def test_blocked_integrity_metadata_fails_inside_worker_before_rsync(self):
         from sync.service_tools import storage_ops
 

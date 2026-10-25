@@ -132,10 +132,16 @@ class StorageMountSafetyTests(unittest.TestCase):
             self.assertNotIn(op_id, state)
             self.assertIn(op_id, state['_attempts'])
 
-    def test_inline_sync_preserves_offline_nested_mounts(self):
+    def test_inline_sync_rejects_incomplete_worker_coverage(self):
         config = self.config(self.source / 'disk')
         config.username = 'agent'
-        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('lib.task_utils.os.path.ismount', return_value=False), patch.object(sync_rsync, 'run_rsync_with_notifications', return_value=0) as run:
-            sync_steps.create_sync_service(config, [str(self.source), str(self.destination), 'daily'])
+        def incomplete(*_args, **kwargs):
+            kwargs['precautions'].warning = 'Unavailable configured mount: disk'
+            kwargs['precautions'].retry_required = True
+            return 0
+        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_rsync, 'run_rsync_with_notifications', side_effect=incomplete) as run:
+            with self.assertRaisesRegex(RuntimeError, 'Initial sync incomplete'):
+                sync_steps.create_sync_service(config, [str(self.source), str(self.destination), 'daily'])
         run.assert_called_once_with(str(self.source), str(self.destination), suppress_notifications=True,
-                                    excluded_paths=('disk',), config=config, initial_setup=True)
+                                    config=config, initial_setup=True,
+                                    precautions=sync_rsync.SyncPrecautions('Unavailable configured mount: disk', True))

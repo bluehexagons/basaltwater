@@ -75,6 +75,11 @@ four-hour deadline. Output from both rsync pipes is drained without waiting
 for newlines, and retained output is bounded to prevent large runs from
 exhausting memory.
 
+Custom inline sync setup uses the same supervised validation and computes mount
+exclusions only inside that worker. Incomplete mount coverage fails the setup
+step after preserving the unavailable subtrees; restore the mount and rerun.
+The setup caller performs no additional filesystem capacity probes after sync.
+
 On timeout the caller sends TERM and then KILL to the worker process group, and
 waits for both its leader and any remaining process-group members to disappear
 before returning a failure or recording a retry. This retains the scheduled

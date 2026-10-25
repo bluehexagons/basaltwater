@@ -7,14 +7,8 @@ from typing import Optional, Any
 
 from lib.config import SetupConfig
 from lib.remote_utils import run, is_package_installed
-from lib.mount_utils import validate_mount_for_sync
-from lib.disk_utils import get_disk_usage_details
-from lib.validation import validate_filesystem_path
 from lib.operation_log import create_operation_logger
-from lib.task_utils import (
-    validate_frequency, validate_sync_paths, validate_configured_storage_mounts,
-    unavailable_sync_subtrees,
-)
+from lib.task_utils import validate_frequency, validate_sync_paths
 
 
 def install_rsync(config: SetupConfig) -> None:
@@ -59,45 +53,31 @@ def create_sync_service(config: SetupConfig, sync_spec: Optional[list[str]] = No
     logger = create_operation_logger("sync", source=source, destination=destination, interval=interval)
 
     try:
-        logger.log_step("validation", "started", "Validating sync paths and mounts")
-        validate_filesystem_path(source, must_exist=True, check_writable=False)
-        validate_filesystem_path(destination, check_writable=True)
-        validate_sync_paths(source, destination)
-        for path in (source, destination):
-            validate_configured_storage_mounts(path, config)
-        if not validate_mount_for_sync(source, "source"):
-            raise RuntimeError(f"Required source mount is unavailable: {source}")
-        if not validate_mount_for_sync(destination, "destination"):
-            raise RuntimeError(f"Required destination mount is unavailable: {destination}")
-        excluded_paths = unavailable_sync_subtrees(source, destination, config)
-        logger.log_step("validation", "completed", "Sync paths and mounts are valid")
-        logger.log_metric("validation_success", True)
-
-        print(f"  ✓ Sync spec validated: {source} → {destination}")
+        # Parsing above is lexical. All filesystem validation and preparation
+        # belongs to the supervised worker, including cold CIFS metadata.
+        logger.log_step("validation", "started", "Validating sync paths and mounts in worker")
         print("  ℹ Performing initial sync...")
-        if excluded_paths:
-            print(f"  ⚠ Preserving unavailable mount subtrees: {', '.join(excluded_paths[:5])}")
 
-        from sync.service_tools.sync_rsync import run_rsync_with_notifications
+        from sync.service_tools.sync_rsync import SyncPrecautions, run_rsync_with_notifications
         # Setup reports its own final success or failure. Avoid reading and
         # notifying with stale target state before this run saves its config.
+        precautions = SyncPrecautions()
         result = run_rsync_with_notifications(
             source,
             destination,
             suppress_notifications=True,
-            excluded_paths=excluded_paths,
             config=config,
             initial_setup=True,
+            precautions=precautions,
         )
         if result != 0:
             raise RuntimeError(f"Initial sync failed with exit code {result}")
+        if precautions.retry_required:
+            raise RuntimeError(f"Initial sync incomplete: {precautions.warning}")
 
+        logger.log_step("validation", "completed", "Sync paths and mounts are valid")
+        logger.log_metric("validation_success", True)
         logger.log_step("initial_sync", "completed", "Initial sync successful")
-
-        source_disk = get_disk_usage_details(source)
-        dest_disk = get_disk_usage_details(destination)
-        logger.log_metric("source_disk_usage_percent", source_disk['usage_percent'], "percent")
-        logger.log_metric("destination_disk_usage_percent", dest_disk['usage_percent'], "percent")
         logger.complete("completed", "Sync configured")
 
     except Exception as e:

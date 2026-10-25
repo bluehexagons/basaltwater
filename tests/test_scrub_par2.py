@@ -88,16 +88,15 @@ class TestSetupFailurePropagation(unittest.TestCase):
         from sync import sync_steps
 
         config = SimpleNamespace(username='agent', smb_mounts=[['/source'], ['/destination']])
-        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_filesystem_path'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('lib.task_utils.os.path.ismount', return_value=True), patch('sync.service_tools.sync_rsync.run_rsync_with_notifications', return_value=0) as sync:
+        with patch.object(sync_steps, 'create_operation_logger'), patch('sync.service_tools.sync_rsync.run_rsync_with_notifications', return_value=0) as sync:
             sync_steps.create_sync_service(config, ['/source', '/destination', 'daily'])
             self.assertIs(sync.call_args.kwargs['config'], config)
             self.assertTrue(sync.call_args.kwargs['initial_setup'])
 
     def test_mount_failure_prevents_initial_work(self):
-        from sync import scrub_steps, sync_steps
+        from sync import scrub_steps
 
         for module, function, spec in (
-            (sync_steps, sync_steps.create_sync_service, ['/mnt/a', '/mnt/b', 'daily']),
             (scrub_steps, scrub_steps.create_scrub_service, ['/mnt/a', '/mnt/b', '10%', 'daily']),
         ):
             for checks in ([False], [True, False]):
@@ -106,8 +105,7 @@ class TestSetupFailurePropagation(unittest.TestCase):
                     patch.object(module, 'create_operation_logger'),
                     patch.object(module, 'validate_filesystem_path'),
                     patch.object(module, 'validate_mount_for_sync', side_effect=checks),
-                    patch('sync.scrub_steps.ensure_directory' if module is scrub_steps else
-                          'sync.service_tools.sync_rsync.ensure_directory') as mkdir,
+                    patch('sync.scrub_steps.ensure_directory') as mkdir,
                     patch('sync.service_tools.sync_rsync.run_rsync_with_notifications') as sync,
                     patch.object(scrub_par2, 'scrub_directory') as scrub,
                 ):
@@ -123,9 +121,6 @@ class TestSetupFailurePropagation(unittest.TestCase):
         logger = Mock()
         with (
             patch.object(sync_steps, 'create_operation_logger', return_value=logger),
-            patch.object(sync_steps, 'validate_filesystem_path') as validate_path,
-            patch.object(sync_steps, 'validate_mount_for_sync') as validate_mount,
-            patch.object(sync_steps, 'get_disk_usage_details') as disk_usage,
             patch(
                 'sync.service_tools.sync_rsync.run_rsync_with_notifications',
                 return_value=1,
@@ -137,17 +132,15 @@ class TestSetupFailurePropagation(unittest.TestCase):
                     ['/source', '/destination', 'daily'],
                 )
 
-        self.assertEqual(validate_path.call_count, 2)
-        self.assertEqual(validate_mount.call_count, 2)
+        from sync.service_tools.sync_rsync import SyncPrecautions
         run_sync.assert_called_once_with(
             '/source',
             '/destination',
             suppress_notifications=True,
-            excluded_paths=(),
             config=SimpleNamespace(username='agent'),
             initial_setup=True,
+            precautions=SyncPrecautions(),
         )
-        disk_usage.assert_not_called()
         logger.complete.assert_called_once()
         self.assertEqual(logger.complete.call_args.args[0], 'failed')
 

@@ -358,6 +358,8 @@ def _mount_worker(report_fd: int) -> int:
         if username is not None:
             if not validate_username(username):
                 raise ValueError('Invalid initial sync username')
+            validate_filesystem_path(source, must_exist=True)
+            validate_filesystem_path(destination, check_writable=True)
             ensure_directory(source, username)
             ensure_directory(os.path.dirname(destination), username)
             if check_path_on_smb_mount(source, config) and not validate_smb_connectivity(source, writable=False):
