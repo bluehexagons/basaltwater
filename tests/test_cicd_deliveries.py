@@ -308,6 +308,47 @@ class TestDeliveries(unittest.TestCase):
                     self.assertEqual([call.args[3] for call in calls.clone_or_update_repo.call_args_list], ['b' * 40, 'c' * 40])
                     self.assertEqual(calls.run_script.call_count, 2)
 
+    def test_executor_blocks_on_read_error_even_when_path_observation_reports_absent(self):
+        keys = self.reserve_then_publish_later_delivery()
+        first = Path(self.jobs) / f'delivery-{keys[0]}.json'
+        load_job = executor._load_job_file
+        lexists = os.path.lexists
+        read_failed = False
+
+        def transient_read_error(path):
+            nonlocal read_failed
+            if Path(path) == first:
+                read_failed = True
+                raise OSError(errno.EIO, 'transient job read error')
+            return load_job(path)
+
+        def observe_path(path):
+            # lexists also hides EIO as False after the preclaim read fails.
+            if read_failed and Path(path) == first:
+                return False
+            return lexists(path)
+
+        with self.executor_drain() as calls:
+            with patch.object(executor, '_load_job_file', side_effect=transient_read_error), \
+                    patch.object(executor.os.path, 'lexists', side_effect=observe_path):
+                self.assertEqual(executor.main(), 1)
+            self.assertTrue(read_failed)
+            self.assertTrue(first.exists())
+            calls.claim.assert_not_called()
+            calls.clone_or_update_repo.assert_not_called()
+            calls.run_script.assert_not_called()
+            with closing(sqlite3.connect(self.ledger)) as connection:
+                self.assertEqual(dict(connection.execute('SELECT key, state FROM receipts')),
+                                 dict.fromkeys(keys, 'pending'))
+
+            self.assertEqual(executor.main(), 0)
+            self.assertEqual([call.args[2]['delivery_key'] for call in calls.claim.call_args_list], list(keys))
+            self.assertEqual([call.args[3] for call in calls.clone_or_update_repo.call_args_list], ['b' * 40, 'c' * 40])
+            for call, commit in zip(calls.run_script.call_args_list, ('b' * 40, 'c' * 40)):
+                self.assertIn(f'Commit: {commit}', Path(call.args[2]).read_text())
+            self.assertEqual(calls.run_script.call_count, 2)
+        self.assertEqual(list(Path(self.jobs).glob('*.json')), [])
+
     def test_executor_discards_malformed_legacy_job_once_and_drains_later_delivery(self):
         for reason, content in (('read error', '{}'), ('invalid JSON', '{'), ('invalid fields', '{}')):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory(dir=self.root) as directory, \

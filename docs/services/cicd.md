@@ -228,8 +228,10 @@ deliberately submitting a new push after an interrupted or failed attempt.
 Do not delete the ledger to force retries. Missing, invalid, or unavailable
 receipts retain their queued jobs and stop the drain before later jobs for
 operator repair. Receipt jobs that cannot be read or validated before claiming
-also remain queued and stop the drain. Repair the job before retrying; its
-payload must match the ledger. The receiver's `delivery-<digest>.json` filenames
+also remain queued and stop the drain, even when a subsequent filesystem probe
+reports the path absent. Retention is an explicit processing outcome. Repair the
+job before retrying; its payload must match the ledger. The receiver's
+`delivery-<digest>.json` filenames
 always require a matching receipt, even when the payload loses `delivery_key`.
 Upgrade receiver and executor together for this receipt protocol; old queue
 files without a receipt retain their previous one-attempt behavior.
