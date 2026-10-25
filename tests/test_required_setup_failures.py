@@ -134,7 +134,7 @@ class TestRequiredCICDMutations(unittest.TestCase):
             install_cicd_dependencies(_config())
 
         mock_run.assert_called_once_with(
-            ["apt-get", "install", "-y", "-qq", "git"],
+            ["apt-get", "install", "-y", "-qq", "git", "acl"],
         )
 
     @patch("web.cicd_steps.check_directory_path")

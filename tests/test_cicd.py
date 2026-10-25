@@ -53,13 +53,12 @@ class TestCICDSteps(unittest.TestCase):
     @patch('web.cicd_steps.run')
     def test_install_cicd_dependencies_missing(self, mock_run, mock_is_installed):
         """Test that we install missing dependencies."""
-        mock_is_installed.side_effect = [False, True]
+        mock_is_installed.side_effect = [False, True, True]
         mock_config = MagicMock()
         
         install_cicd_dependencies(mock_config)
         
-        # Should install git
-        mock_run.assert_called_once_with(["apt-get", "install", "-y", "-qq", "git"])
+        mock_run.assert_called_once_with(["apt-get", "install", "-y", "-qq", "git", "acl"])
         call_args = mock_run.call_args[0][0]
         self.assertEqual(call_args[:2], ['apt-get', 'install'])
         self.assertIn('git', call_args)
@@ -102,12 +101,16 @@ class TestCICDSteps(unittest.TestCase):
         self.assertIn('/var/lib/basaltwater/cicd/build', mock_run.call_args_list[1][0][0])
         self.assertIn('cicd-build', mock_run.call_args_list[1][0][0])
     
+    @patch('web.cicd_steps.reconcile_cicd_state_access')
     @patch('web.cicd_steps.create_isolated_build_directories')
     @patch('web.cicd_steps.secure_cicd_directories')
     @patch('web.cicd_steps.directory_fd')
     @patch('web.cicd_steps.check_directory_path')
-    def test_create_cicd_directories(self, check_path, directory, secure, isolated):
+    def test_create_cicd_directories(self, check_path, directory, secure, isolated, access):
         """Test that we create required directories."""
+        order = MagicMock()
+        for name, step in (('secure', secure), ('isolated', isolated), ('access', access)):
+            order.attach_mock(step, name)
         create_cicd_directories(MagicMock())
         self.assertEqual(check_path.call_count, 3)
         directory.assert_called_once_with('/etc/basaltwater/cicd', create=True)
@@ -116,6 +119,8 @@ class TestCICDSteps(unittest.TestCase):
             '/var/lib/basaltwater/cicd/logs',
         ])
         isolated.assert_called_once()
+        access.assert_called_once()
+        self.assertEqual([c[0] for c in order.mock_calls], ['secure', 'isolated', 'access'])
     
     @patch('web.cicd_steps.os.path.exists')
     @patch('web.cicd_steps.secrets.token_urlsafe')
@@ -174,20 +179,23 @@ class TestCICDSteps(unittest.TestCase):
         saved_config = mock_save.call_args.args[0]
         self.assertEqual(saved_config['repositories'][0]['branches'], ['main'])
     
+    @patch('web.cicd_steps._check_cicd_state_access')
     @patch('web.cicd_steps.replace_units')
     @patch('web.cicd_steps.run')
     @patch('web.cicd_steps.generate_webhook_secret')
-    def test_create_webhook_receiver_service(self, _secret, _run, replace):
+    def test_create_webhook_receiver_service(self, _secret, _run, replace, access):
         create_webhook_receiver_service(MagicMock())
         replace.assert_called_once()
         self.assertEqual(replace.call_args.kwargs['activate'], ('webhook-receiver.service',))
         unit = replace.call_args.args[0]['webhook-receiver.service']
         self.assertIn('Environment=HOME=/var/lib/basaltwater/cicd', unit)
         self.assertIn('ReadWritePaths=/var/lib/basaltwater/cicd\n', unit)
+        access.assert_called_once()
 
+    @patch('web.cicd_steps._check_cicd_state_access')
     @patch('web.cicd_steps.replace_units')
     @patch('web.cicd_steps.run')
-    def test_create_cicd_executor_service(self, _run, replace):
+    def test_create_cicd_executor_service(self, _run, replace, access):
         create_cicd_executor_service(MagicMock())
         replace.assert_called_once()
         self.assertEqual(replace.call_args.kwargs['activate'], ('cicd-executor.path',))
@@ -198,6 +206,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertIn('CAP_SETUID CAP_SETGID CAP_SETPCAP', units['cicd-executor.service'])
         self.assertIn('PathChanged=/var/lib/basaltwater/cicd/jobs', units['cicd-executor.path'])
         self.assertIn('Unit=cicd-executor.service', units['cicd-executor.path'])
+        access.assert_called_once()
 
     @patch('web.cicd_steps.os.path.exists')
     @patch('web.cicd_steps.os.makedirs')
@@ -228,6 +237,189 @@ class TestCICDSteps(unittest.TestCase):
         # Should reload nginx
         reload_calls = [call for call in mock_run.call_args_list if call.args[0] == ['systemctl', 'reload', 'nginx']]
         self.assertGreater(len(reload_calls), 0)
+
+
+class TestCicdStateAccess(unittest.TestCase):
+    def setUp(self):
+        from web import cicd_steps as steps
+
+        self.steps = steps
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.state = self.root / 'state'
+        self.home = self.state / 'cicd'
+        self.build = self.home / 'build'
+        self.directories = (
+            self.home, self.home / 'jobs', self.home / 'logs',
+            self.build, self.build / 'workspaces',
+        )
+        for directory in self.directories:
+            directory.mkdir(parents=True, exist_ok=True)
+            directory.chmod(0o700)
+        self.state.chmod(0o700)
+        self.enterContext(patch.object(steps, 'CICD_HOME', str(self.home)))
+        self.enterContext(patch.object(steps, 'BUILD_HOME', str(self.build)))
+        self.accounts = {
+            'webhook': MagicMock(pw_uid=12345, pw_gid=12346),
+            'cicd-build': MagicMock(pw_uid=23456, pw_gid=23457),
+        }
+        self.enterContext(patch.object(steps.pwd, 'getpwnam', side_effect=self.accounts.__getitem__))
+        self.run = self.enterContext(patch.object(steps, 'run'))
+
+    def test_rerun_restores_only_traversal_without_recalculating_other_acl_rights(self):
+        key = self.home / 'deploy_key'
+        key.write_bytes(b'private credential')
+        key.chmod(0o600)
+        runtime_secret = self.state / 'runtime_secret'
+        runtime_secret.write_bytes(b'private runtime state')
+        runtime_secret.chmod(0o600)
+
+        def snapshot():
+            return {path: (path.stat().st_ino, path.stat().st_mode,
+                           path.stat().st_uid, path.stat().st_gid, path.stat().st_mtime_ns)
+                    for path in (*self.directories, key, runtime_secret)}
+
+        before = snapshot()
+        owner = (self.state.stat().st_uid, self.state.stat().st_gid)
+        acl = struct.pack('<I', 2) + b''.join(
+            struct.pack('<HHI', tag, permission, identity)
+            for tag, permission, identity in (
+                (1, 7, 0xffffffff), (2, 1, 34567), (2, 7, 45678),
+                (4, 0, 0xffffffff), (16, 0, 0xffffffff), (32, 0, 0xffffffff),
+            )
+        )
+        try:
+            os.setxattr(self.state, 'system.posix_acl_access', acl)
+            os.setxattr(self.state, 'system.posix_acl_default', acl)
+        except OSError as exc:
+            if exc.errno in (errno.ENOTSUP, errno.EOPNOTSUPP):
+                self.skipTest('temporary filesystem does not support POSIX ACLs')
+            raise
+
+        def command(command, **kwargs):
+            if command[0] == 'setfacl':
+                self.assertEqual(command[:-1], [
+                    'setfacl', '--no-mask', '-m',
+                    'u:12345:--x,u:23456:--x,m::--x', '--',
+                ])
+                self.assertEqual(Path(command[-1]).stat().st_ino, self.state.stat().st_ino)
+                # Model only the requested named ACL/mask changes on this temp inode.
+                current = os.getxattr(command[-1], 'system.posix_acl_access')
+                entries = [struct.unpack('<HHI', current[index:index + 8])
+                           for index in range(4, len(current), 8)]
+                entries = [entry for entry in entries
+                           if entry[0] != 16 and entry[2] not in (12345, 23456)]
+                entries.extend(((2, 1, 12345), (2, 1, 23456), (16, 1, 0xffffffff)))
+                entries.sort(key=lambda entry: (entry[0], entry[2]))
+                os.setxattr(command[-1], 'system.posix_acl_access',
+                            struct.pack('<I', 2) + b''.join(struct.pack('<HHI', *entry) for entry in entries))
+
+        self.run.side_effect = command
+        for _ in range(2):
+            # Match _ensure_local_runtime_state(): chmod masks every named ACL.
+            self.state.chmod(0o700)
+            self.steps.reconcile_cicd_state_access()
+            current = os.getxattr(self.state, 'system.posix_acl_access')
+            entries = [struct.unpack('<HHI', current[index:index + 8])
+                       for index in range(4, len(current), 8)]
+            self.assertIn((2, 1, 34567), entries)  # Existing manifest builder.
+            self.assertIn((2, 7, 45678), entries)  # Latent rw bits remain masked.
+            self.assertIn((16, 1, 0xffffffff), entries)
+            self.assertIn((4, 0, 0xffffffff), entries)
+            self.assertIn((32, 0, 0xffffffff), entries)
+            self.assertEqual(self.state.stat().st_mode & 0o777, 0o710)
+            self.assertEqual((self.state.stat().st_uid, self.state.stat().st_gid), owner)
+            self.assertEqual(os.getxattr(self.state, 'system.posix_acl_default'), acl)
+            self.assertEqual(snapshot(), before)
+            self.assertEqual(key.read_bytes(), b'private credential')
+            self.assertEqual(runtime_secret.read_bytes(), b'private runtime state')
+
+    def test_grant_preserves_existing_mask_read_write_bits(self):
+        for mode, mask in ((0o740, 'r-x'), (0o720, '-wx'), (0o760, 'rwx')):
+            with self.subTest(mode=mode):
+                self.state.chmod(mode)
+                self.steps.reconcile_cicd_state_access()
+                grant = next(c.args[0] for c in self.run.call_args_list if c.args[0][0] == 'setfacl')
+                self.assertEqual(grant[3], f'u:12345:--x,u:23456:--x,m::{mask}')
+                self.run.reset_mock()
+
+    def test_checks_use_each_runtime_uid_with_groups_and_capabilities_cleared(self):
+        self.steps._check_cicd_state_access()
+        expected = []
+        for user, directories in (
+            ('webhook', self.directories[:3]), ('cicd-build', self.directories[3:]),
+        ):
+            account = self.accounts[user]
+            for directory in directories:
+                for permission in ('-x', '-w', '-r'):
+                    expected.append(call([
+                        '/usr/bin/setpriv', f'--reuid={account.pw_uid}',
+                        f'--regid={account.pw_gid}', '--clear-groups',
+                        '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all',
+                        '--no-new-privs', '--', '/usr/bin/test', permission, str(directory),
+                    ], timeout=30))
+        self.assertEqual(self.run.call_args_list, expected)
+
+    def test_acl_failure_stops_before_access_probes(self):
+        self.run.side_effect = RuntimeError('ACL unavailable')
+        with self.assertRaisesRegex(RuntimeError, 'ACL unavailable'):
+            self.steps.reconcile_cicd_state_access()
+        self.run.assert_called_once()
+
+    def test_parent_symlink_is_rejected_without_granting_access(self):
+        moved = self.root / 'moved'
+        self.state.rename(moved)
+        self.state.symlink_to(moved, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            self.steps.reconcile_cicd_state_access()
+        self.run.assert_not_called()
+
+    def test_grant_stays_on_opened_parent_if_path_is_swapped(self):
+        outside = self.root / 'outside'
+        outside.mkdir(mode=0o700)
+        moved = self.root / 'moved'
+        original = self.state.stat().st_ino
+
+        def command(command, **kwargs):
+            self.state.rename(moved)
+            self.state.symlink_to(outside, target_is_directory=True)
+            self.assertEqual(Path(command[-1]).stat().st_ino, original)
+            self.assertNotEqual(Path(command[-1]).stat().st_ino, outside.stat().st_ino)
+
+        self.run.side_effect = command
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            self.steps.reconcile_cicd_state_access()
+        self.run.assert_called_once()
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o700)
+
+    def test_both_plans_repair_access_before_toolchains_and_unit_activation(self):
+        from plugins.web import extend_build_server_steps, extend_cicd_steps
+
+        for build in (False, True):
+            with self.subTest(build=build):
+                config = MagicMock(enable_cicd=True, is_build_server=build,
+                                   install_node=True, install_python=True)
+                plan = []
+                extend_cicd_steps(config, plan)
+                extend_build_server_steps(config, plan)
+                names = [step.__name__ for _, step in plan]
+                directories = 'create_build_workspace_dirs' if build else 'create_cicd_directories'
+                self.assertLess(names.index('install_cicd_dependencies'), names.index(directories))
+                self.assertLess(names.index('create_cicd_user'), names.index(directories))
+                for later in ('create_webhook_receiver_service', 'create_cicd_executor_service',
+                              *(('install_build_node', 'install_build_python_tools') if build else ())):
+                    self.assertLess(names.index(directories), names.index(later))
+
+    def test_access_failure_prevents_both_unit_replacements(self):
+        for service in (create_webhook_receiver_service, create_cicd_executor_service):
+            for failure in (0, 9):  # Receiver home and isolated build home.
+                with self.subTest(service=service.__name__, failure=failure):
+                    self.run.side_effect = [None] * failure + [RuntimeError('access denied')]
+                    with patch.object(self.steps, 'generate_webhook_secret'), \
+                         patch.object(self.steps, 'replace_units') as replace:
+                        with self.assertRaisesRegex(RuntimeError, 'access denied'):
+                            service(MagicMock())
+                    replace.assert_not_called()
 
 
 class TestSetupDirectorySafety(unittest.TestCase):
@@ -726,6 +918,7 @@ class TestBuildServerSteps(unittest.TestCase):
         ssh_keygen_calls = [call for call in mock_run.call_args_list if 'ssh-keygen' in str(call)]
         self.assertEqual(len(ssh_keygen_calls), 1)
 
+    @patch('web.build_server_steps.reconcile_cicd_state_access')
     @patch('web.build_server_steps.secure_cicd_directories')
     @patch('web.build_server_steps.create_isolated_build_directories')
     @patch('web.build_server_steps.os.makedirs')
@@ -734,14 +927,45 @@ class TestBuildServerSteps(unittest.TestCase):
         mock_makedirs,
         mock_isolated,
         mock_secure_directories,
+        mock_access,
     ):
         from web.build_server_steps import create_build_workspace_dirs
 
+        order = MagicMock()
+        for name, step in (('secure', mock_secure_directories),
+                           ('isolated', mock_isolated), ('access', mock_access)):
+            order.attach_mock(step, name)
         create_build_workspace_dirs(MagicMock())
 
         mock_makedirs.assert_not_called()
         mock_isolated.assert_called_once()
         mock_secure_directories.assert_called_once()
+        mock_access.assert_called_once()
+        self.assertEqual([c[0] for c in order.mock_calls], ['secure', 'isolated', 'access'])
+
+    def test_both_dependency_paths_install_acl_when_only_acl_is_missing(self):
+        from web import build_server_steps, cicd_steps
+
+        for steps, install in (
+            (cicd_steps, cicd_steps.install_cicd_dependencies),
+            (build_server_steps, build_server_steps.install_build_dependencies),
+        ):
+            with self.subTest(install=install.__name__):
+                installed = set()
+
+                def is_installed(package):
+                    return package != 'acl' or package in installed
+
+                def run(command):
+                    self.assertEqual(command[:4], ['apt-get', 'install', '-y', '-qq'])
+                    self.assertIn('acl', command[4:])
+                    installed.update(command[4:])
+
+                with patch.object(steps, 'is_package_installed', side_effect=is_installed), \
+                     patch.object(steps, 'run', side_effect=run) as mocked:
+                    install(MagicMock())
+                    install(MagicMock())
+                mocked.assert_called_once()
 
     @patch('web.build_server_steps.install_node_for_user')
     def test_install_build_node_targets_cicd_home(self, mock_install_node):

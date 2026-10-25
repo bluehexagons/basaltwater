@@ -264,6 +264,19 @@ separate UID/group, no supplementary groups or capabilities, no new privileges,
 and a clean environment. The managed home is `/var/lib/basaltwater/cicd/build`
 (0700); workspaces live in its `workspaces` subdirectory. Deployment keys remain
 private under the separate `webhook` home and are not passed to build commands.
+
+Both `--cicd` and `--build-server` install the ACL tools and reconcile named,
+execute-only grants for `webhook` and `cicd-build` on the private
+`/var/lib/basaltwater` ancestor on every setup or patch. Runtime staging masks
+these grants before setup; CI setup restores traversal before build-user toolchain setup
+or service activation. The parent stays private to directory listing, its
+existing ACL entries are retained, and no recursive permission changes touch
+child files or credentials. Setup checks read/write/traversal access to each
+account's state directories under its actual UID without supplementary groups
+or capabilities, and checks again before replacing either unit. An ACL or access
+failure stops setup before service replacement. Later manifest deployments
+add their own build-account grants without removing the CI grants.
+
 Manifest discovery, generation, workflow execution, and Node selection also
 run under the build identity. The broker starts Python in isolated mode, so
 build-managed Python packages cannot become broker startup code. Receipt transactions use the receiver's

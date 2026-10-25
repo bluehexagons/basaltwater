@@ -12,7 +12,11 @@ from lib.cicd_build import BUILD_HOME, BUILD_USER
 from lib.remote_utils import run, is_package_installed
 from lib.ssh_enrollment import is_host_key_enrolled
 from lib.workspace import get_known_hosts_path
-from web.cicd_steps import create_isolated_build_directories, secure_cicd_directories
+from web.cicd_steps import (
+    create_isolated_build_directories,
+    reconcile_cicd_state_access,
+    secure_cicd_directories,
+)
 
 
 CICD_USER = "webhook"
@@ -149,6 +153,7 @@ def create_build_workspace_dirs(config: SetupConfig) -> None:
 
     secure_cicd_directories(directories)
     create_isolated_build_directories()
+    reconcile_cicd_state_access()
 
     print("  ✓ Created build workspace directories")
 
@@ -171,7 +176,7 @@ def install_build_python_tools(config: SetupConfig) -> None:
 
 def install_build_dependencies(config: SetupConfig) -> None:
     """Install common build dependencies."""
-    packages = ['git', 'rsync', 'openssh-client']
+    packages = ['git', 'rsync', 'openssh-client', 'acl']
     
     def all_installed() -> bool:
         return all(is_package_installed(pkg) for pkg in packages)
