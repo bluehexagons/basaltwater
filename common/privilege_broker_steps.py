@@ -165,6 +165,21 @@ def _configuration_directories() -> tuple[str, ...]:
             os.path.dirname(os.path.dirname(POLKIT_PATH)), os.path.dirname(POLKIT_PATH))
 
 
+def _snapshot_configuration_directories() -> dict[str, dict[str, int] | None]:
+    directories = {}
+    for path in dict.fromkeys(_configuration_directories()):
+        if os.path.lexists(path):
+            protected_path(path, directory=True)
+            with directory_fd(path) as descriptor:
+                info = os.fstat(descriptor)
+            if info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError(f"Unsafe privilege configuration directory: {path}")
+            directories[path] = dict(mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid)
+        else:
+            directories[path] = None
+    return directories
+
+
 @contextmanager
 def _broker_transaction():
     # Unit replacement alone cannot cover credential publication or the HTTPS
@@ -186,24 +201,14 @@ def _broker_transaction():
                 if os.path.lexists(path):
                     protected_path(path)
                 files[path] = snapshot_unit_file(path)
-            directories = {}
-            for path in dict.fromkeys(_configuration_directories()):
-                if os.path.lexists(path):
-                    protected_path(path, directory=True)
-                    with directory_fd(path) as descriptor:
-                        info = os.fstat(descriptor)
-                    if info.st_uid != 0 or info.st_mode & 0o022:
-                        raise ValueError(f"Unsafe privilege configuration directory: {path}")
-                    directories[path] = dict(mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid)
-                else:
-                    directories[path] = None
+            directories = _snapshot_configuration_directories()
             states = {name: inspect_unit_state(name + ".service") for name in (BROKER, WEB)}
             backup_dir = tempfile.mkdtemp(prefix=".basaltwater-privilege-", dir=UNIT_ROOT)
             store.transition(record.operation_id, "snapshotting", context={"backup_dir": backup_dir})
             write_json_atomic(backup_dir + "/previous.json", dict(files=files, directories=directories, states=states), mode=0o600)
 
             def begin_changes(units=None):
-                nonlocal modified
+                nonlocal modified, directories
                 if units:
                     candidates = []
                     for name, content in units.items():
@@ -211,6 +216,11 @@ def _broker_transaction():
                         write_text_atomic(path, content, mode=0o644)
                         candidates.append(path)
                     run(["systemd-analyze", "verify", *candidates])
+                # Prerequisites retain their shared gateway effects. Capture
+                # directory metadata after those effects, before broker changes,
+                # so rollback removes only directories created by the broker.
+                directories = _snapshot_configuration_directories()
+                write_json_atomic(backup_dir + "/previous.json", dict(files=files, directories=directories, states=states), mode=0o600)
                 store.transition(record.operation_id, "replacing")
                 modified = True
 

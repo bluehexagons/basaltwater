@@ -9,6 +9,7 @@ import socket
 from dataclasses import InitVar, dataclass, asdict, field
 from functools import lru_cache
 from typing import Optional, cast
+from urllib.parse import urlsplit
 from lib.plugin_registry import get_system_type_definition, get_system_type_names
 from lib.types import StrList, NestedStrList, JSONDict, MaybeStr
 
@@ -1131,8 +1132,11 @@ class SetupConfig:
         if self.disable_privilege_broker:
             args.append("--no-privilege-broker")
         elif self.privilege_broker_port is not None:
+            from lib.privilege_setup import privilege_broker_origin
+
+            approval_host = cast(str, urlsplit(privilege_broker_origin(self)).hostname)
             args.append(f"--privilege-broker {self.privilege_broker_port}")
-            args.append(f"--privilege-broker-host {shlex.quote(self.host)}")
+            args.append(f"--privilege-broker-host {shlex.quote(approval_host)}")
             if self.privilege_broker_auth:
                 args.append(f"--privilege-broker-auth {shlex.quote(self.privilege_broker_auth)}")
 

@@ -301,7 +301,7 @@ class LifecycleTests(unittest.TestCase):
         cert.write_text("test certificate fixture")
         key = self.root / "key"
         key.write_text("test key fixture")
-        self.stack.enter_context(patch("common.godot_web_steps.configure_internal_web_host",
+        self.gateway = self.stack.enter_context(patch("common.godot_web_steps.configure_internal_web_host",
             return_value=("", "", str(cert), str(key), False)))
 
     def system_command(self, command, **_kwargs):
@@ -456,6 +456,45 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(state["ActiveState"], "inactive")
             self.assertEqual(state["UnitFileState"], "")
         self.assertEqual(self.broker_snapshot(), {})
+
+    def test_first_install_failure_preserves_gateway_shared_parent_and_allows_retry(self):
+        shared = self.root / "basaltwater"
+        self.assertFalse(shared.exists())
+        self.directory = shared / "privilege-broker"
+        self.policy_path = self.directory / "policy.json"
+        self.auth_path = self.directory / "auth.json"
+        self.stack.enter_context(patch.multiple(self.steps, CONFIG_DIR=str(self.directory),
+            POLICY_PATH=str(self.policy_path), AUTH_PATH=str(self.auth_path)))
+        gateway_file = shared / "internal-web" / "gateway.conf"
+        gateway_result = self.gateway.return_value
+
+        def configure_gateway(*_args, **_kwargs):
+            gateway_file.parent.mkdir(parents=True, exist_ok=True)
+            shared.chmod(0o750)
+            gateway_file.write_text("retained gateway configuration")
+            return gateway_result
+
+        self.gateway.side_effect = configure_gateway
+        self.ready.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "services did not become active"):
+            self.steps.configure_privilege_broker(self.config)
+
+        self.assertEqual(gateway_file.read_text(), "retained gateway configuration")
+        self.assertEqual(stat.S_IMODE(shared.stat().st_mode), 0o750)
+        self.assertFalse(self.directory.exists())
+        self.assertEqual(self.broker_snapshot(), {})
+        for state in self.states.values():
+            self.assertEqual(state["ActiveState"], "inactive")
+            self.assertEqual(state["UnitFileState"], "")
+        self.assertFalse((self.units / ".basaltwater-privilege-operation.json").exists())
+        self.assertEqual(list(self.units.glob(".basaltwater-privilege-*/previous.json")), [])
+
+        self.ready.return_value = True
+        self.steps.configure_privilege_broker(self.config)
+        self.assertTrue(self.policy_path.exists())
+        self.assertEqual(gateway_file.read_text(), "retained gateway configuration")
+        self.assertTrue(all(state["ActiveState"] == "active" and state["UnitFileState"] == "enabled"
+                            for state in self.states.values()))
 
     def test_unmanaged_unit_is_never_overwritten(self):
         path = self.units / (self.steps.BROKER + ".service")

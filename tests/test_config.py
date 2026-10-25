@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 import unittest
 from argparse import Namespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -154,6 +156,36 @@ class TestSetupConfigToRemoteArgs(unittest.TestCase):
         self.assertIn('--system-type', args_str)
         self.assertIn('--username', args_str)
         self.assertIn('--machine', args_str)
+
+    def test_privilege_approval_host_survives_controller_remote_round_trip(self):
+        from basaltwater import create_basaltwater_parser
+        from lib.arg_parser import create_setup_argument_parser
+        from lib.privilege_setup import privilege_broker_origin
+        from remote_setup import config_from_remote_args
+
+        controller_parser, _, _ = create_basaltwater_parser()
+        remote_parser = create_setup_argument_parser('Remote setup', for_remote=True, allow_steps=True)
+        for host, override, expected in (
+            ('10.100.0.106/16', None, '10.100.0.106'),
+            ('10.100.0.106', None, '10.100.0.106'),
+            ('VM.Example', None, 'vm.example'),
+            ('10.100.0.106/16', 'Approval.Example', 'approval.example'),
+        ):
+            with self.subTest(host=host, override=override):
+                args = controller_parser.parse_args([
+                    'setup', 'agent_vm', host, 'testuser', '--privilege-broker', '9445',
+                    '--timezone', 'UTC',
+                ])
+                controller = SetupConfig.from_args(args, 'agent_vm')
+                controller.privilege_broker_host = override
+                remote_args = remote_parser.parse_args(shlex.split(' '.join(controller.to_remote_args())))
+                self.assertEqual(remote_args.privilege_broker_host, expected)
+                with patch('remote_setup.resolve_machine_type', return_value='vm'):
+                    received = config_from_remote_args(remote_args)
+                self.assertEqual(received.host, 'localhost')
+                self.assertEqual(privilege_broker_origin(received), f'https://{expected}:9445')
+                self.assertEqual(privilege_broker_origin(received), privilege_broker_origin(controller))
+                self.assertEqual(controller.host, host)
 
     def test_rdp_flag(self):
         config = self._make_config(enable_rdp=True)

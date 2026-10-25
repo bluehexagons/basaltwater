@@ -90,6 +90,9 @@ minute. Keep access source-restricted: flooding can affect availability.
 Approval origins currently support DNS names and IPv4 literals. Literal IPv6
 origins are not supported by host validation; bracket formatting alone does not
 qualify that transport contract.
+Controller-to-target arguments carry the effective approval hostname, including
+an explicit override. IPv4 CIDR setup targets such as `10.100.0.106/16` use the
+address `10.100.0.106` for approvals; the prefix remains part of setup metadata.
 
 ## Audit, limits, and recovery
 
@@ -157,7 +160,11 @@ This rollback covers broker-owned files and service state. Account creation or
 locking and shared internal-web-host effects (packages, CA/utility/static-site
 publication, and gateway configuration) remain outside this boundary and may
 persist after failure. They run before broker quiescence so a failure there
-leaves the previous broker endpoint running.
+leaves the previous broker endpoint running. The transaction validates directory
+safety before prerequisites and refreshes its directory snapshot afterward,
+before broker mutations. Rollback preserves a shared `/etc/basaltwater` parent
+created by the gateway and its `internal-web` subtree, while removing directories
+created by the broker. A safely rolled-back first installation permits a retry.
 
 ## Panel administration operations
 
