@@ -732,7 +732,29 @@ test.describe('agent task workflow', () => {
     await scheduling.locator('summary').focus();
     await page.keyboard.press('Enter');
     await page.getByLabel('Custom repeat interval (minutes)', { exact: true }).fill('360');
+
+    // The development server's home is a real temporary directory, but a
+    // workspace task must point at a project beneath it rather than HOME.
+    const saveURL = dev.url + '/actions/agent-task/save';
+    const workingDirectory = page.getByLabel('Working directory', { exact: true });
+    const home = await workingDirectory.inputValue();
+    expect(home).toBeTruthy();
+    diagnostics.allowed.add(saveURL);
+    const homeSave = page.waitForResponse(response => response.url() === saveURL
+      && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+    expect((await homeSave).status()).toBe(422);
+    await expect(page.getByRole('alert')).toContainText('Workspace changes require a specific project directory');
+    await expect(workingDirectory).toHaveValue(home);
+    await expect(page.getByLabel('Task name', { exact: true })).toHaveValue('Browser workflow draft');
+
+    const projectDirectory = path.join(home, 'browser-project');
+    fs.mkdirSync(projectDirectory, { mode: 0o700 });
+    await workingDirectory.fill(projectDirectory);
+    const projectSave = page.waitForResponse(response => response.url() === saveURL
+      && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+    expect((await projectSave).status()).toBe(303);
     const draft = page.getByRole('article', { name: 'Browser workflow draft', exact: true });
     await expect(draft.getByText('Draft', { exact: true })).toBeVisible();
     await expect(draft.getByText('Every 360 minutes', { exact: true })).toBeVisible();
@@ -748,8 +770,10 @@ test.describe('agent task workflow', () => {
 
     // Server validation preserves inputs and opens options needed for correction.
     await page.getByLabel('Working directory', { exact: true }).fill('/missing-synthetic-directory');
-    diagnostics.allowed.add(dev.url + '/actions/agent-task/save');
+    const invalidEdit = page.waitForResponse(response => response.url() === saveURL
+      && response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    expect((await invalidEdit).status()).toBe(422);
     await expect(page.getByRole('alert')).toBeVisible();
     await expect(page.getByLabel('Task name', { exact: true })).toHaveValue('Browser workflow draft');
     await expect(page.getByRole('combobox', { name: 'Context persistence', exact: true })).toBeVisible();
