@@ -15,6 +15,25 @@ from web.service_tools import cicd_executor as executor
 
 
 class TestCICDDeadline(unittest.TestCase):
+    def test_executor_timeout_rejects_success_and_preserves_retention(self):
+        for outcome, expected in (
+            (executor._JobOutcome.SUCCESS, executor._JobOutcome.FAILED),
+            (executor._JobOutcome.FAILED, executor._JobOutcome.FAILED),
+            (executor._JobOutcome.RETAINED, executor._JobOutcome.RETAINED),
+        ):
+            with self.subTest(outcome=outcome), \
+                    patch.object(executor, 'job_budget') as job_budget, \
+                    patch.object(executor, '_process_job', return_value=outcome), \
+                    patch.object(executor, 'log_event') as log:
+                budget = job_budget.return_value.__enter__.return_value
+                budget.timed_out = True
+                budget.phase = 'build'
+                budget.deployment_started = False
+                self.assertIs(executor._process_job_with_budget('job.json'), expected)
+                self.assertIs(executor.process_job('job.json'), False)
+                self.assertEqual(log.call_args.kwargs['stage'], 'build')
+                self.assertFalse(log.call_args.kwargs['deployment_started'])
+
     def test_commands_receive_remaining_time_and_expiry_stops_new_work(self):
         clock = [0]
         with patch.object(deadline.time, "monotonic", side_effect=lambda: clock[0]), patch.object(deadline, "run") as run:

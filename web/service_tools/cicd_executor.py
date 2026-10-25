@@ -23,6 +23,7 @@ import tempfile
 import hashlib
 import sqlite3
 import re
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +55,12 @@ WORKSPACES_DIR = os.path.join(BUILD_HOME, "workspaces")
 LOGS_DIR = os.path.join(STATE_DIR, "logs")
 LOCK_FILE = os.path.join(STATE_DIR, "executor.lock")
 DELIVERIES_FILE = os.path.join(STATE_DIR, 'deliveries.sqlite3')
+
+
+class _JobOutcome(Enum):
+    SUCCESS = 'success'
+    FAILED = 'failed'
+    RETAINED = 'retained'
 
 
 def load_config() -> dict:
@@ -285,6 +292,12 @@ def run_manifest_workflow(workspace: str, log_file: str, stage: Optional[str] = 
 
 
 def process_job(job_file: str) -> bool:
+    """Report whether a single job succeeded, including its deadline."""
+    return _process_job_with_budget(job_file) is _JobOutcome.SUCCESS
+
+
+def _process_job_with_budget(job_file: str) -> _JobOutcome:
+    """Preserve retention separately from success through the job deadline."""
     with job_budget() as budget:
         result = _process_job(job_file)
         if budget.timed_out:
@@ -292,18 +305,19 @@ def process_job(job_file: str) -> bool:
                 logger, "CI/CD job timed out", level=40, job_file=job_file,
                 stage=budget.phase, deployment_started=budget.deployment_started,
             )
-            return False
+            if result is _JobOutcome.SUCCESS:
+                return _JobOutcome.FAILED
         return result
 
 
-def _process_job(job_file: str) -> bool:
+def _process_job(job_file: str) -> _JobOutcome:
     """Process a single CI/CD job."""
     log_event(logger, "Processing job", job_file=job_file)
     try:
         config = load_config()
     except (OSError, ValueError) as exc:
         log_event(logger, 'CI/CD configuration unavailable; retaining job', level=40, error=str(exc))
-        return False
+        return _JobOutcome.RETAINED
     
     # The receiver reserves this filename namespace. Identify receipt jobs
     # before reading: unreadable JSON or a missing delivery_key must not turn
@@ -322,13 +336,13 @@ def _process_job(job_file: str) -> bool:
                     claimed = claim(DELIVERIES_FILE, job_file, job_data)
             except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
                 log_event(logger, 'Delivery receipt unavailable; retaining job', level=40, error=str(exc))
-                return False
+                return _JobOutcome.RETAINED
             # Only a completed, ledger-matched claim (including an already
             # terminal receipt) permits consumption. Uncertain claims stay put.
             consume = True
             if not claimed:
                 log_event(logger, 'Skipping expired or previously claimed delivery', level=30, job_file=job_file)
-                return False
+                return _JobOutcome.FAILED
         
         repos = config.get('repositories', [])
         
@@ -340,12 +354,12 @@ def _process_job(job_file: str) -> bool:
         
         if not repo_config:
             log_event(logger, "Repository not configured", level=40, repo_url=repo_url)
-            return False
+            return _JobOutcome.FAILED
 
         configured_branches = repo_config.get('branches', DEFAULT_BRANCHES)
         if branch not in configured_branches:
             log_event(logger, "Job branch is not configured", level=40, repo_url=repo_url, branch=branch)
-            return False
+            return _JobOutcome.FAILED
         
         workspace = get_repo_workspace(repo_url)
         os.makedirs(LOGS_DIR, exist_ok=True)
@@ -379,7 +393,7 @@ def _process_job(job_file: str) -> bool:
         if not clone_or_update_repo(repo_url, workspace, ref, commit_sha):
             log_event(logger, "Failed to clone/update repository", level=40, repo_url=repo_url, job_file=job_file)
             notify_failure(repo_url, commit_sha, "Failed to clone/update repository")
-            return False
+            return _JobOutcome.FAILED
         
         scripts = repo_config.get('scripts', {})
         enter_phase('manifest')
@@ -433,11 +447,11 @@ def _process_job(job_file: str) -> bool:
             repo_url=repo_url,
             commit_sha=commit_sha[:8],
         )
-        return success
+        return _JobOutcome.SUCCESS if success else _JobOutcome.FAILED
         
     except Exception as e:
         log_event(logger, "Error processing job", level=40, job_file=job_file, error=str(e))
-        return False
+        return _JobOutcome.FAILED if consume else _JobOutcome.RETAINED
     finally:
         try:
             if consume:
@@ -794,13 +808,14 @@ def main():
         failure_count = 0
         
         for job_file in job_files:
-            if process_job(str(job_file)):
+            result = _process_job_with_budget(str(job_file))
+            if result is _JobOutcome.RETAINED:
+                log_event(logger, 'Earlier job retained; stopping queue drain', level=40, job_file=str(job_file))
+                return 1
+            if result is _JobOutcome.SUCCESS:
                 success_count += 1
             else:
                 failure_count += 1
-                if os.path.lexists(job_file):
-                    log_event(logger, 'Earlier job retained; stopping queue drain', level=40, job_file=str(job_file))
-                    return 1
         
         log_event(
             logger,
