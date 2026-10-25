@@ -117,6 +117,48 @@ The web service receives its credentials through systemd `LoadCredential`.
 Root SSH remains the setup and recovery path. The first version has no
 passkeys, multi-user roles, push notifications, or browser password recovery.
 
+Setup and disable query the manager for both unit names even if their on-disk
+fragments are missing: loaded services can still hold credentials. Existing
+fragments must pass the root ownership/path checks and carry the broker's
+management marker. Disable requires both services to be observed inactive and
+disabled before removing authentication and reporting success. Unknown states,
+query errors, and failed stops fail closed and retain recovery evidence.
+
+A rerun, re-enable, or password rotation deliberately stops and restarts both
+services. This reloads systemd credentials and expires pending/approved requests;
+executing requests become uncertain on broker startup and are never replayed.
+The policy's machine identity and administrator choices, audit database, and
+terminal decisions are retained. Rollback never restores a database snapshot or
+replays an approval.
+
+Broker setup owns a transaction through activation and the HTTPS authentication
+challenge check. Before mutation it privately snapshots policy, authentication,
+certificate/key, polkit rule, unit files, their modes and ownership, directory
+metadata, and each unit's activation and persistent/runtime enablement. Failure
+or a catchable interruption quiesces the replacement, restores those files and
+metadata, reloads units, restores the prior activation/enablement, and verifies
+the previous endpoint if it was active. A failed first installation returns to
+stopped/disabled services and removes its partial broker files.
+
+The stable lock and operation marker are under `/etc/systemd/system/`:
+`.basaltwater-privilege-operation.json.lock` and
+`.basaltwater-privilege-operation.json`. Recovery snapshots are in a root-only
+`.basaltwater-privilege-*` directory there; its `previous.json` contains private
+credentials and must never be pasted into logs or agent chat. Failed or
+unverifiable restoration retains the marker and backup and blocks setup and
+disable retries. Process death also leaves the guard in place. Recover through
+root SSH or the console using the [transaction recovery guide](../operations/transaction-recovery.md):
+inspect actual service/file state and the recorded backup, quiesce the group,
+restore broker files and their metadata, reload units, then restore and verify
+the recorded activation/enablement and HTTPS endpoint. Resolve the marker only
+after recovery is verified; never delete the stable lock to bypass it.
+
+This rollback covers broker-owned files and service state. Account creation or
+locking and shared internal-web-host effects (packages, CA/utility/static-site
+publication, and gateway configuration) remain outside this boundary and may
+persist after failure. They run before broker quiescence so a failure there
+leaves the previous broker endpoint running.
+
 ## Panel administration operations
 
 The [Admin controls screen](../services/web-panel.md#admin-controls) requests `admin.run`
