@@ -185,6 +185,10 @@ and file lock prevent concurrent maintenance; cancelling a pending broker
 request does not stop an already dispatched job. Use administrator access to
 investigate or stop that unit deliberately.
 
+For `update-packages`, `apt-get update` uses
+`APT::Update::Error-Mode=any`, so an index error fails the job before the
+upgrade command. The update command keeps its 60-second dpkg lock wait.
+
 Sanitized job status includes a fixed stage (`preflight`, `source_verification`,
 or `command`), one-based command index and fixed failure category. Each stage
 is persisted before its effects. Categories distinguish unavailable actions,

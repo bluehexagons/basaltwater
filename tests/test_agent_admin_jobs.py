@@ -119,8 +119,13 @@ class AdminJobTests(unittest.TestCase):
         with patch.object(admin_job.subprocess, "run", side_effect=execute) as run:
             self.assertEqual(admin_job.run_action("update-packages"), 1)
             run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], [
+                "/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=60",
+                "-o", "APT::Update::Error-Mode=any", "update",
+            ])
         value = json.loads(Path(self.path).read_text())
         self.assertEqual(value["status"], "failed")
+        self.assertEqual(value["command_index"], 1)
         self.assertEqual(value["exit_code"], 7)
         self.assertEqual(value["failure"], "nonzero_exit")
         self.assertIsNotNone(value["finished"])
@@ -436,9 +441,14 @@ class AdminJobTests(unittest.TestCase):
 
     def test_package_and_refresh_commands_do_not_reboot_or_remove_packages(self):
         commands = admin_job.commands("update-packages")
-        self.assertEqual(commands[0][-1], "update")
-        self.assertEqual(commands[1][-1], "upgrade")
-        self.assertIn("Dpkg::Options::=--force-confold", commands[1])
+        self.assertEqual(commands[0], [
+            "/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=60",
+            "-o", "APT::Update::Error-Mode=any", "update",
+        ])
+        self.assertEqual(commands[1], [
+            "/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=60",
+            "-o", "Dpkg::Options::=--force-confold", "--assume-yes", "upgrade",
+        ])
         self.assertEqual(admin_job.commands("refresh-preview")[0][-2:], ["refresh", "--dry-run"])
         self.assertEqual(admin_job.commands("reboot"), [["/usr/sbin/shutdown", "-r", "+2"]])
 

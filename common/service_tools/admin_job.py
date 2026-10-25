@@ -20,6 +20,7 @@ from lib.admin_actions import ADMIN_ACTIONS, ADMIN_STATE, ADMIN_TIMEOUT, ADMIN_U
 from lib.admin_status import FAILURE_LABELS, JOB_ID_ENV, STAGE_LABELS, setup_details, valid_job_id
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.machine_state import STATE_DIR, SETUP_CONFIG_FILE, can_manage_system_services, can_restart_system
+from lib.maintenance_defaults import APT_UPDATE_OPTIONS
 from lib.operation_state import OperationStateStore
 from lib.installation_info import INSTALLATION_METADATA_FILENAME, read_installation_metadata
 from lib.privilege_policy import protected_path
@@ -231,7 +232,7 @@ def job_status() -> dict:
 def commands(action: str) -> list[list[str]]:
     action_spec(action)
     if action == "update-packages":
-        return [["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=60", "update"], [
+        return [["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=60", *APT_UPDATE_OPTIONS, "update"], [
             "/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=60",
             "-o", "Dpkg::Options::=--force-confold", "--assume-yes", "upgrade",
         ]]
