@@ -1529,7 +1529,10 @@ def _validate_renamed_account(manifest: dict[str, Any]) -> pwd.struct_passwd:
         if home == old_home and not os.path.isdir(os.path.dirname(new_home)):
             raise RenameError("Destination home parent is not a directory")
         if home == old_home:
-            _reject_rootless_container_home_move(old_home, new_home, manifest["old_username"])
+            # Storage may have been initialized before or after login cutover,
+            # while HOME still names the recorded original directory.
+            for username in (manifest["old_username"], account.pw_name):
+                _reject_rootless_container_home_move(old_home, new_home, username)
     return account
 
 

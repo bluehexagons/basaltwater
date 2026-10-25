@@ -51,16 +51,72 @@ class TestSysadminUser(unittest.TestCase):
                 self.assertEqual([call.args[1] for call in ssh.call_args_list], ["root", "root"])
                 sleep.assert_called_once()
 
-    def test_poll_falls_back_to_new_login_only_when_admin_has_no_valid_status(self):
+    def test_poll_falls_back_to_new_login_when_admin_ssh_is_unreachable(self):
         terminal = {"status": "success", "phase": "complete"}
-        for unavailable in (subprocess.CompletedProcess([], 255, "", "unreachable"), subprocess.CompletedProcess([], 0, "invalid JSON", "")):
-            with self.subTest(unavailable=unavailable), patch.object(sysadmin_user, "_run_ssh", side_effect=[
-                unavailable, subprocess.CompletedProcess([], 0, json.dumps(terminal), ""),
-            ]) as ssh:
-                self.assertEqual(sysadmin_user._wait_for_completion(
-                    "host.example", "olduser", "newuser", None, "0123456789abcdef",
-                ), terminal)
-            self.assertEqual([call.args[1] for call in ssh.call_args_list], ["olduser", "newuser"])
+        with patch.object(sysadmin_user, "_run_ssh", side_effect=[
+            subprocess.CompletedProcess([], 255, "", "unreachable"),
+            subprocess.CompletedProcess([], 0, json.dumps(terminal), ""),
+        ]) as ssh:
+            self.assertEqual(sysadmin_user._wait_for_completion(
+                "host.example", "olduser", "newuser", None, "0123456789abcdef",
+            ), terminal)
+        self.assertEqual([call.args[1] for call in ssh.call_args_list], ["olduser", "newuser"])
+
+    def test_malformed_status_retains_authenticated_identity_until_valid_result(self):
+        terminal = {"status": "success", "phase": "complete", "attempt_id": "new"}
+        for username in ("olduser", "newuser"):
+            for output in ('banner\n{"status":"success"}', '{"status":"success"', '["success"]', 'null'):
+                with self.subTest(username=username, output=output):
+                    prefix = [] if username == "olduser" else [subprocess.CompletedProcess([], 255, "", "unreachable")]
+                    with (
+                        patch.object(sysadmin_user, "_run_ssh", side_effect=[
+                            *prefix,
+                            subprocess.CompletedProcess([], 0, output, ""),
+                            subprocess.CompletedProcess([], 0, output, ""),
+                            subprocess.CompletedProcess([], 0, json.dumps(terminal), ""),
+                        ]) as ssh,
+                        patch.object(sysadmin_user.time, "sleep") as sleep,
+                    ):
+                        self.assertEqual(sysadmin_user._wait_for_completion(
+                            "host.example", "olduser", "newuser", None, "0123456789abcdef", attempt_id="new",
+                        ), terminal)
+                    self.assertEqual([call.args[1] for call in ssh.call_args_list],
+                                     (["olduser"] if prefix else []) + [username] * 3)
+                    self.assertEqual(sleep.call_count, 2)
+
+    def test_malformed_status_times_out_without_claiming_completion(self):
+        for username in ("olduser", "newuser"):
+            with self.subTest(username=username):
+                prefix = [] if username == "olduser" else [subprocess.CompletedProcess([], 255, "", "unreachable")]
+                with (
+                    patch.object(sysadmin_user, "_run_ssh", side_effect=[
+                        *prefix, *[subprocess.CompletedProcess([], 0, 'banner\n{"status":"success"}', "")] * 2,
+                    ]) as ssh,
+                    patch.object(sysadmin_user.time, "monotonic", side_effect=[0, 0, 1, 301]),
+                    patch.object(sysadmin_user.time, "sleep"),
+                ):
+                    self.assertIsNone(sysadmin_user._wait_for_completion(
+                        "host.example", "olduser", "newuser", None, "0123456789abcdef",
+                    ))
+                self.assertEqual([call.args[1] for call in ssh.call_args_list],
+                                 (["olduser"] if prefix else []) + [username] * 2)
+
+    def test_resume_retains_authenticated_identity_with_malformed_status(self):
+        manifest = {"old_username": "olduser", "new_username": "newuser"}
+        for username in ("olduser", "newuser"):
+            with self.subTest(username=username):
+                prefix = [] if username == "olduser" else [subprocess.CompletedProcess([], 255, "", "unreachable")]
+                with (
+                    patch.object(sysadmin_user, "_run_ssh", side_effect=[
+                        *prefix, subprocess.CompletedProcess([], 0, 'banner\n{"status":"success"}', ""),
+                    ]) as ssh,
+                    patch.object(sysadmin_user, "_read_manifest", side_effect=lambda _h, user, *_a: manifest if user == username else None),
+                ):
+                    self.assertEqual(sysadmin_user._read_resume_operation(
+                        "host.example", "olduser", "newuser", None, "0123456789abcdef",
+                    ), (username, {"status": "unavailable"}, manifest))
+                self.assertEqual([call.args[1] for call in ssh.call_args_list],
+                                 (["olduser"] if prefix else []) + [username])
 
     def test_unit_start_is_detached_from_the_renamed_users_session(self):
         completed = subprocess.CompletedProcess([], 0, "", "")

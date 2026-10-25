@@ -453,11 +453,14 @@ from that session. Prefer a separate administrative account with
 `--admin-user` to observe the job without starting sessions for the account
 being renamed. Polling uses that identity while it can read a valid status,
 including an earlier attempt's status while waiting for a resumed worker.
-The new username is a fallback when status cannot be read through the
-administrative identity. On resume, either identity can read the staged
+The new username is a fallback when the administrative identity cannot
+connect through SSH. On resume, either identity can read the staged
 operation; home-selection options and `--dry-run` cannot be changed.
-An authenticated session whose status command is temporarily unavailable waits
-without guessing another login. Once polling reaches the new identity, it
+An authenticated session whose status command is temporarily unavailable or
+returns malformed JSON (including shell banners or a non-object JSON value)
+waits without guessing another login. Malformed output cannot establish
+completion; polling remains bounded and reports an unresolved operation if
+no valid result arrives. Once polling reaches the new identity, it
 keeps using it instead of repeatedly trying the retired login and triggering
 failed-login protection.
 
@@ -536,8 +539,11 @@ rather than replaying an uncertain move. These checks preserve the original
 shell and service snapshots. Concurrent logins can still make native account
 tools reject a busy user; keep the affected account logged out during recovery.
 The container storage guard is rechecked before any pending home move on
-resume. Historical operations whose home has already moved can continue
-reconciliation; that does not establish that their container databases work.
+resume, expanding static paths with both the recorded old username and the
+current new username while using the original home. This covers storage
+initialized after login cutover but before the home move. Historical operations
+whose home has already moved can continue reconciliation; that does not
+establish that their container databases work.
 
 Each resume records a durable attempt ID before starting the detached job;
 the controller waits for that attempt's

@@ -381,6 +381,42 @@ class TestUserRenameHelpers(unittest.TestCase):
                     self._exercise_resume(phase, move_home=True, renamed=True, home_moved=home_moved, container_store=True)
         self._exercise_resume("identity-renamed", renamed=True, container_store=True)
 
+    def test_partial_cutover_checks_both_user_expansions_before_pending_home_move(self):
+        for store_username in ("alice", "alice2"):
+            with self.subTest(store_username=store_username), tempfile.TemporaryDirectory() as tmpdir:
+                home, new_home = Path(tmpdir, "alice"), Path(tmpdir, "alice2")
+                config = home / ".config/containers/storage.conf"
+                config.parent.mkdir(parents=True)
+                config.write_text('[storage]\ngraphroot = "$HOME/store-$USER"\n')
+                store = home / f"store-{store_username}"
+                store.mkdir()
+                (store / "db.sql").touch()
+                account = pwd.struct_passwd(("alice2", "x", os.getuid(), os.getgid(), "", str(home), "/bin/bash"))
+                manifest = dict(old_username="alice", new_username="alice2", old_uid=os.getuid(),
+                                old_gid=os.getgid(), old_shell="/bin/bash", old_home=str(home), new_home=str(new_home))
+                real_open = os.open
+
+                def observed_open(path, flags, *args, **kwargs):
+                    self.assertNotEqual(os.path.basename(path), "db.sql", "storage guard must not read databases")
+                    return real_open(path, flags, *args, **kwargs)
+
+                def lookup(username):
+                    if username == "alice2":
+                        return account
+                    raise user_rename.RenameError("missing")
+
+                with (
+                    patch.object(user_rename, "_account", side_effect=lookup),
+                    patch.object(user_rename, "_CONTAINER_SYSTEM_STORAGE_CONFIGS", ()),
+                    patch.object(user_rename.os, "open", side_effect=observed_open),
+                    patch.object(user_rename, "_run") as run,
+                ):
+                    with self.assertRaisesRegex(user_rename.RenameError, f"Rootless container storage would move.*store-{store_username}"):
+                        user_rename._validate_renamed_account(manifest)
+                    run.assert_not_called()
+                self.assertTrue(home.is_dir())
+                self.assertFalse(new_home.exists())
+
     def test_rejected_external_shell_drift_does_not_run_usermod_or_stop_services(self):
         for renamed in (False, True):
             with self.subTest(renamed=renamed):

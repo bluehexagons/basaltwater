@@ -337,6 +337,8 @@ def _read_status(
     ssh_key: Optional[str],
     operation_id: str,
 ) -> Optional[dict[str, Any]]:
+    """Return unavailable for authenticated but unreadable status, None for SSH 255."""
+
     command = shell_join(["sudo", "-n", "cat", _remote_status_path(operation_id)])
     result = _run_ssh(host, username, ssh_key, command, timeout=30)
     if result.returncode != 0:
@@ -346,8 +348,8 @@ def _read_status(
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+        return {"status": "unavailable"}
+    return payload if isinstance(payload, dict) else {"status": "unavailable"}
 
 
 def _read_manifest(
@@ -462,7 +464,8 @@ def _read_resume_operation(
     The controller cache intentionally retains the old username until the
     migration and new-name SSH login are verified. After identity cutover,
     that cached login no longer exists, so resume must also try the new name.
-    Reading either root-owned operation file proves SSH and passwordless sudo.
+    An authenticated status probe retains that identity even if its output is
+    unavailable; restarting the job still requires a readable manifest.
     """
 
     usernames = [configured_admin]
