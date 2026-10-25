@@ -101,7 +101,9 @@ access to the source home or checkout; temporary writes remain disabled. These
 prompts request read-only diagnostics and recommendations, without host repairs.
 Filesystem-only storage reviews retain inspection mode and select
 `storage_operation: "review"` for bounded host inventory/native preview evidence
-before the sandboxed model starts. The
+before the sandboxed model starts. Cancellation is checked again before model
+launch; if it arrives after the helper returns, its evidence is retained and
+the provider is skipped. The
 [storage cleanup workflow](storage-cleanup.md) gathers bounded metadata,
 ranks concrete candidates and proposes a separately approved follow-up.
 Saved tasks keep their original settings; create a new task from the refreshed
@@ -553,12 +555,12 @@ Private state uses atomic writes and a process lock for mutations; readers
 reload atomic snapshots. A separate lifetime worker lease prevents overlapping
 execution across the panel and foreground/system workers. Claims, attempt
 reservations and wake consumption are persisted before execution. The worker
-passes its lease descriptor to the Codex process, so if the scheduler crashes
-while Codex is still alive, a new worker cannot recover or dispatch another run
-until that process exits. The descriptor is runtime-only and never enters task
-state or receipts. It serializes the direct provider process; arbitrary
-descendants may not inherit it, so the managed service's cgroup remains
-necessary to terminate them after supervisor failure.
+passes its lease descriptor to the Codex process and fixed host storage helper,
+so if the scheduler crashes while either is still alive, a new worker cannot
+recover or dispatch another run until that child exits. The descriptor is
+runtime-only and never enters task state or receipts. It serializes each direct
+child process; arbitrary descendants may not inherit it, so the managed
+service's cgroup remains necessary to terminate them after supervisor failure.
 
 After the lease is available, a still-running claim without a final receipt is
 recorded as interrupted; inspect its edits before another invocation. If a

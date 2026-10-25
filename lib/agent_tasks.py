@@ -404,7 +404,8 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     if task["storage_operation"] != "none":
         host_started = time.monotonic()
         host_evidence = run_storage_operation(task["storage_operation"], home, cancel,
-                                             timeout=min(timeout_seconds, 360), deadline_at=task["deadline_at"])
+                                             timeout=min(timeout_seconds, 360), deadline_at=task["deadline_at"],
+                                             lease_fd=lease_fd)
         timeout_seconds -= time.monotonic() - host_started
         if runtime:
             # Retain the complete bounded evidence using the normal run log and
@@ -570,6 +571,12 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             prompt_input = resources.enter_context(tempfile.TemporaryFile(dir=runtime["context_directory"]))
             prompt_input.write(instruction)
             prompt_input.seek(0)
+        if cancel.is_set():
+            result = {"status": "cancelled", "output": "", "message": "Cancelled before provider launch",
+                      "exit_code": None, "usage": {"input_tokens": 0, "output_tokens": 0}}
+            if host_evidence is not None:
+                result["evidence"] = [json.dumps(host_evidence)]
+            return result
         process = resources.enter_context(subprocess.Popen(
             command, cwd=runtime["directory"] if runtime else task["directory"], env=environment,
             stdin=prompt_input, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
