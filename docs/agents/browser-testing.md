@@ -248,6 +248,13 @@ Aborted document navigations that complete as downloads and canceled optional
 favicon loads are distinguished from required request failures. Negative cases
 assert their expected rejections explicitly.
 
+The synthetic Admin browser checks follow a real review link, cancel the review
+without creating a request, submit an action and verify its rendered status,
+reject an incorrect power-host confirmation without creating a request, and
+check the form at a 320px viewport with 200% text. The development adapter
+currently records Admin submissions immediately as `succeeded` (or `failed` in
+`degraded`), so pending-action gating and request cancellation remain unqualified.
+
 ### Guacamole boundary
 
 With an installed current Guacamole release, the runner finds its

@@ -463,6 +463,71 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
   }
 });
 
+test.describe('admin controls', () => {
+  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+
+  test('review cancellation creates no request and the power form fits enlarged text', async ({ page, developmentServer: dev }) => {
+    const adminPosts = [];
+    page.on('request', request => {
+      if (request.method() === 'POST' && request.url() === dev.url + '/actions/admin') adminPosts.push(request.url());
+    });
+
+    await page.goto(dev.url + '/admin');
+    await expect(page.getByRole('heading', { name: 'Admin controls', exact: true })).toBeVisible();
+    await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Review action: Check web configuration', exact: true }).click();
+    await expect(page).toHaveURL(dev.url + '/admin?action=check-web');
+    await expect(page.getByRole('heading', { name: 'Review: Check web configuration', exact: true })).toBeVisible();
+    await expect(page.locator('form[action="/actions/admin"]')).toHaveCount(1);
+    await page.getByRole('link', { name: 'Cancel review', exact: true }).click();
+    await expect(page).toHaveURL(dev.url + '/admin');
+    await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
+    expect(adminPosts).toEqual([]);
+
+    await page.goto(dev.url + '/admin?action=reboot');
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await expect(page.getByRole('heading', { name: 'Review: Restart host', exact: true })).toBeVisible();
+    const confirmation = page.getByLabel(/Confirm host name/);
+    await expect(confirmation).toBeVisible();
+    const right = await confirmation.evaluate(input => input.getBoundingClientRect().right);
+    expect(right).toBeLessThanOrEqual(await page.evaluate(() => innerWidth + 1));
+    await expect(page.getByRole('button', { name: 'Create approval request', exact: true })).toBeVisible();
+  });
+
+  test('request submission shows the development adapter status', async ({ page, developmentServer: dev }) => {
+    await page.goto(dev.url + '/admin');
+    await page.getByRole('link', { name: 'Review action: Check web configuration', exact: true }).click();
+    const submitted = page.waitForResponse(response => response.url() === dev.url + '/actions/admin'
+      && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Create approval request', exact: true }).click();
+    expect((await submitted).status()).toBe(303);
+    await expect(page).toHaveURL(dev.url + '/admin');
+
+    const requests = page.getByRole('region', { name: 'Privilege approvals', exact: true });
+    const request = requests.locator('li').first();
+    await expect(request).toContainText('Administration job: Check web configuration');
+    await expect(request.locator('.badge')).toHaveText('succeeded');
+    await expect(request.getByRole('link', { name: /Review exact action/ }))
+      .toHaveAttribute('href', /^https:\/\/127\.0\.0\.1\/fixture-approvals\/[a-f0-9]{32}$/);
+    await expect(request.getByRole('button', { name: 'Cancel request', exact: true })).toHaveCount(0);
+  });
+
+  test('incorrect power host confirmation is rejected without a request', async ({ page, developmentServer: dev, diagnostics }) => {
+    await page.goto(dev.url + '/admin?action=reboot');
+    await page.getByLabel(/Confirm host name/).fill('wrong-host.example.test');
+    diagnostics.allowed.add(dev.url + '/actions/admin');
+    const submitted = page.waitForResponse(response => response.url() === dev.url + '/actions/admin'
+      && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Create approval request', exact: true }).click();
+    expect((await submitted).status()).toBe(409);
+    await expect(page.getByRole('alert')).toContainText('The action could not be submitted.');
+    await expect(page.getByText('No privilege requests for this panel account.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Privilege approvals', exact: true }).locator('li')).toHaveCount(0);
+  });
+});
+
 test.describe('agent task workflow', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
   test('panel menu exposes every destination and current section without JavaScript', async ({ page, developmentServer: dev }) => {
