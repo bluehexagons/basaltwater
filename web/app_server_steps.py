@@ -49,10 +49,17 @@ def create_deploy_user(config: SetupConfig) -> None:
     
     result = run(["id", user], check=False)
     if result.returncode == 0:
+        group_result = run(["getent", "group", "remoteusers"], check=False)
+        if group_result.returncode == 0:
+            run(["usermod", "-aG", "remoteusers", user])
         print("  ✓ Deploy user already exists")
         return
     
     run(["useradd", "--system", "--create-home", "--shell", "/bin/bash", user])
+
+    group_result = run(["getent", "group", "remoteusers"], check=False)
+    if group_result.returncode == 0:
+        run(["usermod", "-aG", "remoteusers", user])
     
     ssh_dir = f"/home/{user}/.ssh"
     run(["mkdir", "-p", ssh_dir])

@@ -393,15 +393,25 @@ class TestAppServerSteps(unittest.TestCase):
     
     @patch('web.app_server_steps.run')
     def test_create_deploy_user_already_exists(self, mock_run):
-        """Test that we skip user creation if user exists."""
-        mock_run.return_value = MagicMock(returncode=0)
+        """Existing deploy users are reconciled with the managed SSH group."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0),
+        ]
         mock_config = MagicMock()
         
         from web.app_server_steps import create_deploy_user
         create_deploy_user(mock_config)
         
-        self.assertEqual(mock_run.call_count, 1)
-        self.assertEqual(mock_run.call_args[0][0], ['id', 'deploy'])
+        self.assertEqual(
+            [entry.args[0] for entry in mock_run.call_args_list],
+            [
+                ['id', 'deploy'],
+                ['getent', 'group', 'remoteusers'],
+                ['usermod', '-aG', 'remoteusers', 'deploy'],
+            ],
+        )
     
     @patch('web.app_server_steps.run')
     def test_create_deploy_user_new(self, mock_run):
@@ -412,13 +422,52 @@ class TestAppServerSteps(unittest.TestCase):
             MagicMock(returncode=0),
             MagicMock(returncode=0),
             MagicMock(returncode=0),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0),
         ]
         mock_config = MagicMock()
         
         from web.app_server_steps import create_deploy_user
         create_deploy_user(mock_config)
         
-        self.assertGreater(mock_run.call_count, 1)
+        self.assertEqual(
+            [entry.args[0] for entry in mock_run.call_args_list],
+            [
+                ['id', 'deploy'],
+                ['useradd', '--system', '--create-home', '--shell', '/bin/bash', 'deploy'],
+                ['getent', 'group', 'remoteusers'],
+                ['usermod', '-aG', 'remoteusers', 'deploy'],
+                ['mkdir', '-p', '/home/deploy/.ssh'],
+                ['chmod', '700', '/home/deploy/.ssh'],
+                ['chown', '-R', 'deploy:deploy', '/home/deploy/.ssh'],
+            ],
+        )
+
+    @patch('web.app_server_steps.run')
+    def test_create_deploy_user_without_managed_ssh_group(self, mock_run):
+        """A host without remoteusers keeps the existing Gogs-compatible behavior."""
+        mock_run.side_effect = [MagicMock(returncode=0), MagicMock(returncode=2)]
+
+        from web.app_server_steps import create_deploy_user
+        create_deploy_user(MagicMock())
+
+        self.assertEqual(
+            [entry.args[0] for entry in mock_run.call_args_list],
+            [['id', 'deploy'], ['getent', 'group', 'remoteusers']],
+        )
+
+    @patch('web.app_server_steps.run')
+    def test_create_deploy_user_fails_when_group_membership_cannot_be_updated(self, mock_run):
+        """A failed required group mutation stops setup and propagates."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=0),
+            OSError('usermod failed'),
+        ]
+
+        from web.app_server_steps import create_deploy_user
+        with self.assertRaisesRegex(OSError, 'usermod failed'):
+            create_deploy_user(MagicMock())
 
     def test_deploy_sudoers_validation_and_rollback(self):
         from web import app_server_steps as steps

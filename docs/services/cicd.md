@@ -45,8 +45,10 @@ webhook-specific ingress uses a separate loopback listener; see the
 
 The build server runs the webhook receiver as `webhook` and repository code
 as the separate `cicd-build` account. An app server only needs nginx, rsync, and the restricted
-`deploy` account. The build server pushes artifacts over SSH; it does not need
-root access on the app server.
+`deploy` account. When the host has the managed `remoteusers` group, setup adds
+`deploy` to it so SSH access follows the host's shared `AllowGroups` policy.
+The build server pushes artifacts over SSH; it does not need root access on the
+app server.
 
 `patch` preserves each saved build/app server role when its flag is omitted,
 including on a deploy-only patch. Use `--build-server` or `--app-server` to
