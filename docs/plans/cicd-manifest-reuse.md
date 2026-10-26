@@ -126,10 +126,13 @@ Bound retention by age/count/bytes, pin active/retained rollback releases and
 pending transfers, and refuse admission when protected evidence fills storage.
 Explicit root-local [terminal settlement](../agents/contributing/build-retention.md)
 now lowers unused terminal-job reservation charges against verified retained
-bytes. Inspection and revision checks preserve replay identities and every
-payload; uncertain work stays fully charged. Payload pruning and automatic
-retention policies need separate durable
-deletion and transfer-protection contracts; admission must never delete evidence.
+bytes. Explicit root-local source/log pruning uses durable deletion intent,
+revision checks and per-job payload locks spanning service reads and streams
+while preserving bundles, terminal results and replay identities. Interrupted
+pruning retains its old charge until explicit resumption
+completes durably; uncertain work stays fully charged. Automatic retention,
+bundle deletion and replay-history expiry remain separate policy work; admission
+must never delete evidence.
 Deleting a cache must affect performance only. Checksum/metadata changes,
 including build commands and non-secret environment inputs, affect reuse keys;
 a commit alone is insufficient. Track secret version references without values.
@@ -261,10 +264,11 @@ retained reconciliation and compiler absence have selected native coverage.
 
 1. **Common release contract and on-demand Debian builds:** the bounded static/Go
    slice supplies build/activation separation, saved builder selection, typed SSH
-   operations, retained bundles and explicit terminal quota settlement. Qualify
-   additional interruption and saved-flow boundaries; selected native checks
-   cover repeat activation with clean protocol output and terminal settlement
-   preserving payloads and replay. Preserve default build-on-target
+   operations, retained bundles, terminal quota settlement and explicit source/log
+   pruning. Qualify additional interruption and saved-flow boundaries; native checks
+   cover repeat activation with clean protocol output, settlement preserving
+   payloads, and interrupted pruning with same-revision resumption and same-ID
+   replay. Preserve default build-on-target
    setup/redeploy behavior and saved settings.
 2. **Multi-component deployment and webhook adapter:** use the same activation
    path; prove a static SPA, Go service and stateful frontend/API application on
