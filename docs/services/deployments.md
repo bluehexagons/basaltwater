@@ -1,7 +1,7 @@
 # Deployments and manifests
 
 `basaltw` deploys a repository with `--deploy DOMAIN GIT_URL`. A repository
-can use automatic project-type detection, or place an `basaltwater.json` file at its
+can use automatic project-type detection, or place a `basaltwater.json` file at its
 root to describe one or more static sites and services explicitly. The manifest
 is validated before deployment; an invalid file stops deployment instead of
 falling back to automatic detection.
@@ -12,10 +12,11 @@ it. Existing files are preserved. Review the generated commands, output, and
 service settings before deployment; see [project tooling](../agents/project-tooling.md)
 for inference limits, CI workflows, and project Node selection.
 
-`--dry-run` performs a shallow clone into disposable local staging and validates
-the repository type and `basaltwater.json` without updating the persistent Git cache
-before target setup begins. It does not execute repository build commands;
-projects should run those commands in CI as a separate build preflight.
+For ordinary target builds, `--dry-run` performs a shallow clone into disposable
+local staging and validates the repository type and `basaltwater.json` without
+updating the persistent Git cache before target setup begins. It does not execute
+repository build commands; projects should run those commands in CI as a separate
+build preflight.
 Repositories with the same final name (for example, two different `site.git`
 URLs) receive distinct upload paths based on their complete URLs. Deployment
 source trees must not contain symlinks or special files; the controller checks
@@ -33,9 +34,122 @@ basaltw setup server_web web.example.com deploy \
 Each source selector receives its own cache and upload path. Setup fetches the
 selected ref on every run and stops if it is missing, including during dry runs.
 Without a selector, deployments continue to follow the repository's default branch.
-Use the controller's Git credential helper or SSH key for private repositories.
+For ordinary target builds, use the controller's Git credential helper or SSH
+key for private repositories. Selected-builder deployments accept public HTTPS
+source only, as described below.
 Displayed commands also replace sensitive URLs from older saved configurations
 with a placeholder that must be filled in before replay.
+
+## Build on a saved builder
+
+Add `--build-on SAVED-BUILDER` to build supported manifest deployments on an
+enrolled saved builder and deliver verified artifacts to the target. Omitting
+the selection keeps the existing build-on-target flow for ordinary deployments.
+This bounded public setup flow still requires live qualification; a successful
+dry run does not establish that a public build and deployment will succeed.
+
+For an already enrolled builder named `builds`, an existing remote target, and a
+controller-local typed target policy matching the manifest's routes:
+
+```bash
+basaltw setup server_web web.example.com deploy --machine vm \
+  --key /home/controller/.ssh/web_ed25519 \
+  --build-on builds --build-target-policy /home/controller/web-target.json \
+  --deploy app.example.com 'https://github.com/example/app.git#tag=v1' \
+  --dry-run
+```
+
+Review the preflight, then repeat without `--dry-run` to apply. Use the same
+workspace that holds the saved builder and enrolled host keys. Selection matches
+the entire saved host, friendly name or tag case-insensitively and requires one
+unique record; host matches have no priority over names or tags. Ambiguous,
+missing or unenrolled builders refuse. A chosen builder's failure never falls
+back to another builder or to building on the target.
+
+Both endpoints require managed Debian 13 x86_64 enrollment and an explicit VM or
+hardware machine type. The target must be remote and use `server_lite` or
+`server_web`, with an explicit `--build-target-policy`. The controller needs
+existing private SSH identity files, their Ed25519 public companions and its
+workspace `known_hosts`. Each selected public key must match an enrollment
+principal; typed SSH accounts come from that enrollment. The selected target key
+must also authorize root setup on that target. Credentials remain on the
+controller. See the contributor [selection contract](../agents/contributing/build-selection.md)
+for exact identity, permissions and trust requirements.
+
+Source must be a public HTTPS repository with an explicit, committed
+`basaltwater.json`. Default HEAD, `#branch=NAME` and `#tag=NAME` are pinned to
+complete commit IDs. The controller clones with history and tags in a private
+workspace and verifies snapshot and manifest identity; it does not use ambient
+Git credentials, private repositories, redirects, LFS, submodules or inferred
+manifests. There are 1–16 application destinations per setup. Each manifest's
+complete component/route map must match exactly one application granted to the
+selected target principal, and the builder must grant its project, platform and
+runtimes.
+
+Supported manifests contain ready static output (including SPA), Python static
+builds, or Go binary services. Declare `build_runtimes` explicitly for any build
+commands and export the serving files through `artifacts`; the manifest's
+`output` or `binary` supplies the default export when `artifacts` is omitted.
+Ready static output needs no runtime declaration. For example, a Python static
+build can declare:
+
+```json
+{
+  "version": 1,
+  "build_runtimes": ["python"],
+  "components": [{
+    "name": "site",
+    "type": "static",
+    "domain": "{{domain}}",
+    "build": "python3 scripts/build.py",
+    "output": "dist",
+    "artifacts": ["dist"]
+  }]
+}
+```
+
+Go services require `"go"` in `build_runtimes`, a literal `binary` export,
+automatic ports and default working directory/reverse proxy settings. Omit
+`port` to select automatic allocation. The verified binary must be a
+self-contained x86-64 ELF executable and honor generated `HOST=127.0.0.1` and
+`PORT` values. A canonical health path is supported.
+
+The selected-builder flow refuses Node builds, Godot/interpreter services,
+custom `exec`, `env_file`, `runtime_env`, custom working/data paths, SQLite
+backup settings, public UDP, fixed service ports, alternate proxy settings,
+nondefault backup retention and CI/publishing workflows. It also refuses target
+build-tool installation flags, build-host roles, custom setup steps, SSL and
+Cloudflare setup. The broader manifest examples below describe ordinary target
+builds; they do not expand this bounded scope.
+
+The controller checks sources, grants, tools, limits and retained-artifact
+capacity before minimally enrolling the target. Enrollment preserves the saved
+profile. It reserves all applications before submitting builds, stages every
+verified artifact before the first activation, then activates sequentially.
+The final full profile runs in artifact mode under exclusive target maintenance,
+checking exact installed releases and current completed admissions before its
+first profile mutation. It omits reenrollment. Several activations and profile
+application are separate durable boundaries, so the entire setup is not atomic.
+
+The target retains artifact mode and installed release evidence, without the
+builder reference or builder credentials. Local `basaltw refresh` reconciles
+retained descriptors and bundles without fetching application source, contacting
+a builder or invoking a compiler. Missing, unsafe or unavailable inputs refuse
+with controller deployment guidance. Patches preserve omitted builder selection;
+`--no-build-on` clears the controller's selection and artifact mode.
+
+Dry runs clone and pin sources in disposable local storage and perform read-only
+SSH capability/platform probes using existing trust. They never bootstrap,
+reserve, submit builds, stage, activate or save setup state. Non-dry attempts
+retain private inputs under `<workspace>/build-setups/HOST-HASH`, with at most 32
+attempts per host and no automatic garbage collection. On failure or an uncertain
+response, preserve the durable guard, pinned sources, prepared inputs, delivery
+receipts and exact request/operation IDs. Inspect actual target/enrollment state
+before explicit operator reconciliation. There are no automatic retries,
+replacement IDs, fallback or cancellation, including when delivery completed but
+the final profile failed. See [controller setup](../agents/contributing/build-setup.md),
+[source preparation](../agents/contributing/build-setup-sources.md) and
+[planning](../agents/contributing/build-setup-plan.md) for detailed contracts.
 
 ## Basic deployment
 
@@ -127,9 +241,10 @@ caller selecting a prebuilt package must declare them because there is no single
 binary to infer. Safe redundant segments in legacy `output` and `binary`
 defaults are normalized for export selection; explicit `artifacts` entries
 must already be canonical.
-This is parser and selection support only: current manifest deployments continue
-to build on the target and use the existing `output`, `binary`, or `exec` settings.
-There is not yet a `--build-on` option or remote build worker flow.
+Ordinary deployments build on the target using `output`, `binary` or `exec`.
+Selected-builder deployments use these exports within the narrower
+[supported manifest scope](#build-on-a-saved-builder); an exec-only service is
+outside that scope even when it declares `artifacts`.
 
 ### Static site
 
@@ -309,6 +424,9 @@ failure rejects the release and restores the previous release and service
 units.
 
 ## Runtime and update behavior
+
+The following describes ordinary build-on-target deployments. For selected
+builders and retained artifact refresh, use [the flow above](#build-on-a-saved-builder).
 
 - Manifest deployments build every component on each deployment; they do not
   use incremental builds.

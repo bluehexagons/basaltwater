@@ -2,17 +2,34 @@
 
 `lib.build_setup.run_build_setup(config, *, apply_setup)` composes a saved
 builder, pinned sources, minimal target enrollment, delivery and final artifact
-profile setup. Its caller must hold the controller's existing setup-target lock.
-It is an internal integration boundary until the public setup hook is wired.
+profile setup. The public `run_remote_setup` selected-builder branch calls it
+under the controller's existing setup-target lock. Without a selected builder,
+ordinary setup preserves its existing flow. See the operator
+[selected-builder guide](../../services/deployments.md#build-on-a-saved-builder).
 
-The first slice requires explicit typed target enrollment, an enrolled saved
-builder and controller-local SSH identity/trust files. The selected target key
-must also authorize root setup; builder keys stay on the controller. Read-only
+The first slice requires explicit `--build-target-policy`, an enrolled saved
+builder and controller-local SSH identity/trust files. Selection resolves an
+exact, case-insensitive unique saved host, friendly name or tag, then binds the
+selected public companion to its enrolled endpoint principal. The selected
+target key must authorize both root setup and typed target enrollment; builder
+keys stay on the controller. Read-only
 platform checks require Debian 13 x86-64 and refuse unfinished setup or legacy
 enrollment before bootstrap. Selected-builder failures never fall back to a
 target build. Custom steps, build-host roles, explicit build toolchains and
 Cloudflare/SSL profile setup are outside this first slice.
-Target profiles are restricted to `server_lite` and `server_web`.
+Targets must be remote, explicitly `vm` or `hardware`, with profiles restricted
+to `server_lite` and `server_web`. See [saved selection](build-selection.md) and
+[selection configuration](build-selection-config.md) for identity and replay rules.
+
+[Source preparation](build-setup-sources.md) accepts public HTTPS committed
+source with an explicit tracked `basaltwater.json`, pins complete revisions and
+verifies manifest/snapshot identity. [Planning](build-setup-plan.md) supports ready
+static outputs, Python static builds and Go binary services with declared exports
+and explicit `build_runtimes` for commands. It refuses Node, Godot, custom exec,
+interpreter services, environment files/runtime environment, custom paths,
+SQLite settings, UDP, fixed ports, alternate proxy settings and CI/publishing
+workflows. The target grant must match the complete component route map; its
+project selects the builder grant. Do not broaden this contract through inference.
 
 All manifests, source identities, application grants, tools, limits and aggregate
 retained artifact storage are checked before target bootstrap. Dry runs prepare
@@ -28,12 +45,19 @@ application. Delivery uses its own separate empty directory and receipt.
 New directory entries are synced through their parents before bootstrap can
 start, so a crash cannot discard the hierarchy containing acknowledged intent.
 
-All reservations precede submission, all verified artifacts stage before the
+Minimal enrollment preserves the previous successful saved profile. All
+reservations precede submission, all verified artifacts stage before the
 first activation, and activations remain sequential. Final setup receives
 transient expected release identities, excludes reenrollment, and must validate
-those identities under target maintenance ownership before applying its profile.
+those identities and their current completed admissions under target maintenance
+ownership before beginning the setup operation or applying any profile step.
+The maintenance lease spans the final profile and local response. Expectations
+remain transient and are rechecked during retained artifact reconciliation; see
+[activation and guarded replay](build-target-activation.md#artifact-mode-setup-replay).
 The target saves artifact mode; it receives no saved-builder reference or builder
-credentials. Ordinary setup without a selected builder retains its existing flow.
+credentials. Local refresh reconciles installed descriptors and retained bundles
+without a builder, source fetch or compiler. Missing or unsafe inputs refuse
+with controller guidance; they never trigger a target build.
 
 Failures or interrupts after the bootstrap intent retain the guard and evidence,
 even if the remote operation may have completed. There is no automatic retry,
@@ -42,3 +66,7 @@ IDs, target setup and enrollment markers, delivery receipts and actual installed
 state before explicit operator reconciliation. A completed delivery followed by
 a failed profile still requires reconciliation. Controller capacity checks do
 not reserve blocks against concurrent consumers, quotas or inode exhaustion.
+
+Mocked controller checks and read-only dry runs do not qualify the live public
+setup flow. Native public-source and end-to-end deployment qualification remain
+separate requirements.
