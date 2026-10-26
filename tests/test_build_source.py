@@ -19,20 +19,31 @@ from lib.build_source import (
 )
 
 
+def git_blob_oid(content: bytes) -> str:
+    header = b"blob " + str(len(content)).encode("ascii") + b"\0"
+    return hashlib.sha1(header + content).hexdigest()
+
+
 class FakeGit:
     def __init__(self, repository: Path, *, entries=None, dirty: bytes = b"", shallow: bool = False,
                  tags: bytes = b"cccccccccccccccccccccccccccccccccccccccc refs/tags/v1.2.3\n",
-                 move_tag_during_bundle: bool = False, filter_value: bytes = b"unspecified",
-                 staged: bytes = b""):
+                 move_tag_during_bundle: bool = False, move_head_during_bundle: bool = False,
+                 bundle_head_override: str | None = None,
+                 filter_value: bytes = b"unspecified", staged: bytes = b""):
         self.repository = repository
         self.revision = "a" * 40
+        self.head_revision = self.revision
         self.dirty = dirty
         self.shallow = shallow
         self.tags = tags
         self.move_tag_during_bundle = move_tag_during_bundle
+        self.move_head_during_bundle = move_head_during_bundle
+        self.bundle_head_override = bundle_head_override
         self.filter_value = filter_value
         self.staged = staged
         self.bundle = b"private-filtered-history-bundle"
+        self.bundle_head = self.revision
+        self.bundle_tags = tags
         self.calls: list[tuple[list[str], dict]] = []
         self.entries = entries or [
             (".gitattributes", "100644", "blob", b"*.txt text\n"),
@@ -45,7 +56,7 @@ class FakeGit:
         self.object_by_path = {}
         for path, mode, kind, content in self.entries:
             if kind == "blob":
-                object_id = hashlib.sha1(content).hexdigest()
+                object_id = git_blob_oid(content)
                 self.objects[object_id] = content
             else:
                 object_id = "b" * 40
@@ -73,7 +84,7 @@ class FakeGit:
             elif "--git-path" in command:
                 result = os.fsencode(self.repository / ".git/info/grafts") + b"\n"
             else:
-                result = self.revision.encode("ascii") + b"\n"
+                result = self.head_revision.encode("ascii") + b"\n"
         elif subcommand == "status":
             result = self.dirty
         elif subcommand == "ls-files":
@@ -124,14 +135,29 @@ class FakeGit:
         elif subcommand == "for-each-ref":
             result = self.tags
         elif subcommand == "bundle":
-            bundle_index = command.index("--version=3") + 1
-            if command[bundle_index].startswith("--"):
-                raise AssertionError("Git bundle revision options must follow its destination")
-            bundle_path = Path(command[bundle_index])
-            bundle_path.write_bytes(self.bundle)
-            if self.move_tag_during_bundle:
-                self.tags = b"dddddddddddddddddddddddddddddddddddddddd refs/tags/v1.2.3\n"
-            result = b""
+            if "create" in command:
+                bundle_index = command.index("--version=3") + 1
+                if command[bundle_index].startswith("--"):
+                    raise AssertionError("Git bundle revision options must follow its destination")
+                bundle_path = Path(command[bundle_index])
+                bundle_arguments = command[bundle_index + 1:]
+                if "--filter=blob:none" not in bundle_arguments:
+                    raise AssertionError("Git bundle must retain its blob filter")
+                has_head = "HEAD" in bundle_arguments
+                if self.move_head_during_bundle:
+                    self.head_revision = "b" * 40
+                self.bundle_head = self.head_revision if has_head else self.revision
+                self.head_revision = self.revision
+                self.bundle_tags = self.tags
+                bundle_path.write_bytes(self.bundle)
+                if self.move_tag_during_bundle:
+                    self.tags = b"dddddddddddddddddddddddddddddddddddddddd refs/tags/v1.2.3\n"
+                result = b""
+            elif "list-heads" in command:
+                recorded_head = self.bundle_head_override or self.bundle_head
+                result = f"{recorded_head} HEAD\n".encode("ascii") + self.bundle_tags
+            else:
+                raise AssertionError(f"Unexpected Git bundle command: {command}")
         else:
             raise AssertionError(f"Unexpected Git command: {command}")
         if len(result) > max_output_bytes:
@@ -163,8 +189,7 @@ class BuildSourceTest(unittest.TestCase):
         (self.repository / ".gitmodules").write_bytes(b"[submodule \"docs\"]\npath = docs\n")
         (self.repository / "basaltwater.json").write_bytes(b'{ "version": 1 }\n')
         (self.repository / "src").mkdir()
-        # A live file is deliberately different from the committed object FakeGit returns.
-        (self.repository / "src/main.py").write_text("uncommitted-worktree-bytes\n")
+        (self.repository / "src/main.py").write_bytes(b"committed-source\n")
         (self.repository / "src/main.py").chmod(0o755)
         self.snapshot = self.root / "source.bws"
         self.output = self.root / "unpacked"
@@ -223,11 +248,19 @@ class BuildSourceTest(unittest.TestCase):
         bundle_command = next(command for command, _ in self.git.calls if "bundle" in command)
         self.assertIn("--version=3", bundle_command)
         self.assertIn("--filter=blob:none", bundle_command)
+        destination_index = bundle_command.index("--version=3") + 1
+        filter_index = bundle_command.index("--filter=blob:none")
+        revision_index = bundle_command.index(self.git.revision)
+        self.assertGreater(filter_index, destination_index)
+        self.assertGreater(revision_index, filter_index)
+        self.assertNotIn("HEAD", bundle_command)
         self.assertLess(bundle_command.index("--version=3") + 1,
                         bundle_command.index("--filter=blob:none"))
-        self.assertIn("HEAD", bundle_command)
         self.assertIn("refs/tags/v1.2.3", bundle_command)
         self.assertNotIn("--all", bundle_command)
+        self.assertEqual(
+            sum("list-heads" in command for command, _ in self.git.calls), 1,
+        )
         env = next(call[1]["env"] for call in self.git.calls if "status" in call[0])
         self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
         self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
@@ -300,6 +333,44 @@ class BuildSourceTest(unittest.TestCase):
             self.create()
         self.assertFalse(self.snapshot.exists())
 
+    def test_bundle_uses_the_resolved_revision_across_a_head_aba_race(self):
+        self.git = FakeGit(self.repository, move_head_during_bundle=True)
+        source = self.create()
+        self.assertEqual(source["revision"], "a" * 40)
+        self.assertEqual(self.git.head_revision, "a" * 40)
+        self.assertEqual(self.git.bundle_head, "a" * 40)
+        bundle_calls = [
+            command for command, _ in self.git.calls
+            if "bundle" in command and "create" in command
+        ]
+        self.assertEqual(len(bundle_calls), 1)
+        self.assertIn("a" * 40, bundle_calls[0])
+        self.assertNotIn("HEAD", bundle_calls[0])
+
+    def test_bundle_with_a_different_advertised_head_is_rejected(self):
+        self.git = FakeGit(self.repository, bundle_head_override="b" * 40)
+        with self.assertRaisesRegex(ValueError, "bundle HEAD does not match"):
+            self.create()
+        self.assertFalse(self.snapshot.exists())
+
+    def test_same_size_worktree_edit_with_restored_mtime_is_rejected(self):
+        tracked = self.repository / "src/main.py"
+        original = tracked.stat()
+        replacement = b"modified--source\n"
+        self.assertEqual(len(replacement), original.st_size)
+        tracked.write_bytes(replacement)
+        os.utime(tracked, ns=(original.st_atime_ns, original.st_mtime_ns))
+        self.assertEqual(tracked.stat().st_mtime_ns, original.st_mtime_ns)
+        (self.repository / ".git/config").write_text(
+            "[core]\n\ttrustctime = false\n\tcheckStat = minimal\n",
+        )
+
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            self.create()
+        self.assertFalse(self.snapshot.exists())
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(any("bundle" in command for command, _ in self.git.calls))
+
     def test_symlinks_gitlinks_special_files_and_forbidden_metadata_are_rejected(self):
         invalid_entries = (
             [("basaltwater.json", "100644", "blob", b"{}\n"),
@@ -325,6 +396,29 @@ class BuildSourceTest(unittest.TestCase):
             b"version https://git-lfs.github.com/spec/v1\n"
             + b"oid sha256:" + b"d" * 64 + b"\nsize 4096\n"
         )
+        self.git = FakeGit(self.repository, entries=[
+            ("basaltwater.json", "100644", "blob", b"{}\n"),
+            ("src/asset.bin", "100644", "blob", pointer),
+        ])
+        (self.repository / "basaltwater.json").write_bytes(b"{}\n")
+        (self.repository / "src/asset.bin").write_bytes(pointer)
+        with self.assertRaisesRegex(ValueError, "Git LFS"):
+            self.create()
+        self.assertFalse(self.snapshot.exists())
+
+    def test_extended_lfs_pointer_is_rejected_when_oid_and_size_follow_512_bytes(self):
+        extensions = b"".join(
+            f"ext-{index}-filter-{index} sha256:".encode("ascii")
+            + bytes((ord("a") + index,)) * 64 + b"\n"
+            for index in range(8)
+        )
+        pointer = (
+            b"version https://git-lfs.github.com/spec/v1\n"
+            + extensions
+            + b"oid sha256:" + b"d" * 64 + b"\nsize 4096\n"
+        )
+        self.assertGreater(pointer.index(b"oid sha256:"), 512)
+        self.assertLess(len(pointer), 1024)
         self.git = FakeGit(self.repository, entries=[
             ("basaltwater.json", "100644", "blob", b"{}\n"),
             ("src/asset.bin", "100644", "blob", pointer),

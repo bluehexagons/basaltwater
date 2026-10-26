@@ -20,10 +20,13 @@ checkout_path, history_bundle_path = unpack_source_snapshot(
 whose parent already exists, is owned by the calling UID, and has no group or
 other permissions. It rejects a dirty index/worktree, visible untracked files,
 shallow repositories, local graft metadata, hidden/sparse index entries, and a
-destination inside the repository. Ignored local files are not copied. Source
-bytes always come from the resolved full `HEAD` object via Git plumbing, never
-from the live worktree. It also checks that `HEAD` and the dirty state remain
-unchanged before publishing.
+destination inside the repository. It hashes each tracked worktree file against
+its committed Git blob ID with bounded, no-follow reads, so repository stat-cache
+settings cannot hide same-size edits. External filters are refused before Git
+status runs. Ignored local files are not copied. Source bytes always come from
+the resolved full `HEAD` object via Git plumbing, never from the live worktree.
+It also checks that `HEAD` and the dirty state remain unchanged before
+publishing.
 
 The return value is exactly the build-protocol `source` mapping:
 
@@ -80,22 +83,28 @@ No privileged tar extraction or replacement of an existing destination is
 used. A post-publication filesystem-sync error can leave a complete result for
 the operation owner to reconcile.
 
-The history payload is a Git bundle with `HEAD` and reachable tag references,
-using the `blob:none` filter. This retains commit/tag metadata needed for
-`git describe --tags --always` while leaving historical file blobs out of the
-bundle. It carries no original remotes, local config, hooks, credentials, or
-unrelated refs. The source checkout itself has no `.git` directory. Tracked
-`.gitignore`, `.gitattributes`, and `.gitmodules` remain ordinary source files;
-their contents are never executed by snapshot preparation or extraction.
-Git filter attributes are refused before the cleanliness check, so configured
-clean/smudge commands cannot run during privileged snapshot preparation.
+The history payload is a Git bundle pinned to the resolved commit and its
+reachable tag references, using the `blob:none` filter. The bundle's advertised
+`HEAD` and tags are checked against that commit and the tags selected from it.
+This retains commit/tag metadata needed for `git describe --tags --always` while
+leaving historical file blobs out of the bundle. It carries no original
+remotes, local config, hooks, credentials, or unrelated refs. The source
+checkout itself has no `.git` directory. Tracked `.gitignore`, `.gitattributes`,
+and `.gitmodules` remain ordinary source files; their contents are never
+executed by snapshot preparation or extraction. Git filter attributes are
+refused before Git status, so configured clean/smudge commands cannot run during
+privileged snapshot preparation.
 
 The first slice rejects tracked symlinks, gitlinks/submodules, special Git
-modes, Git LFS pointer files, malformed/non-portable paths, case-folding path
-collisions, and reserved Git/credential metadata names. It does not attempt to
-scan arbitrary application source for secrets. Git status checks tracked and
-visible untracked changes; Git-ignored files are outside the snapshot and do
-not affect its identity.
+modes, files beginning with the Git LFS pointer signature (including extended
+pointers), malformed/non-portable paths, case-folding path collisions, and
+reserved Git/credential metadata names. The LFS check conservatively rejects
+the signature line without assuming where an extension-bearing pointer places
+its `oid` or `size` fields. It does not attempt to scan arbitrary application
+source for secrets. Git status checks staged and visible untracked changes;
+direct blob-ID checks verify tracked worktree bytes even when Git's stat cache
+would report them clean. Git-ignored files are outside the snapshot and do not
+affect its identity.
 
 ## Fixed ceilings
 
