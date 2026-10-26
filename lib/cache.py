@@ -15,9 +15,11 @@ from lib.state_read import StateReadError, read_state_object
 from lib.config import RetiredSetupConfigError, SetupConfig, _normalize_nested_specs
 from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
+from lib.cicd_deploy_policy import validate_nginx_path
+from lib.deploy_utils import parse_deploy_spec
 from lib.validators import validate_host, validate_username
 from lib.validation import (
-    _memory_string_kib, validate_filesystem_path, validate_network_interface_name, validate_network_ip,
+    _memory_string_kib, validate_deploy_specs, validate_filesystem_path, validate_network_interface_name, validate_network_ip,
     validate_no_control_characters, validate_proxmox_storage_name, validate_system_hostname,
     validate_vm_storage_name,
 )
@@ -488,6 +490,37 @@ def load_all_setup_cache_records(workspace: Optional[str] = None) -> list[dict[s
     return records
 
 
+def _merge_selected_deploy_specs(
+    cached: list[list[str]] | None, patched: list[list[str]],
+) -> list[list[str]]:
+    """Replace explicitly patched destinations for an effective selected builder."""
+    def destinations(specs: list[list[str]] | None) -> Iterator[tuple[str, str]]:
+        validate_deploy_specs(specs)
+        for targets, source in specs or []:
+            for raw in targets.split(","):
+                domain, path = parse_deploy_spec(raw.strip())
+                if domain is None:
+                    raise ValueError("Build destination requires a literal domain")
+                path = validate_nginx_path(path).rstrip("/")
+                yield domain.lower().removesuffix(".") + path, source
+
+    replacements: dict[str, str] = {}
+    for destination, source in destinations(patched):
+        if destination in replacements and replacements[destination] != source:
+            raise ValueError(f"Conflicting deploy sources for destination {destination}")
+        replacements[destination] = source
+
+    # Remove every old selection for touched destinations, including aliases
+    # and destinations that shared a comma-separated declaration with siblings.
+    retained = dict.fromkeys(
+        (destination, source) for destination, source in destinations(cached)
+        if destination not in replacements
+    )
+    return [[destination, source] for destination, source in (
+        *retained, *replacements.items(),
+    )]
+
+
 def merge_setup_configs(
     cached_config: SetupConfig,
     new_config: SetupConfig,
@@ -499,6 +532,21 @@ def merge_setup_configs(
     preserve_keys = set(preserve_keys or ())
     if "is_build_server" in preserve_keys:
         preserve_keys.add("disable_build_host")
+
+    if not {"build_on", "clear_build_on", "artifact_deployments"}.intersection(
+        preserve_keys
+    ):
+        if new_config.clear_build_on:
+            merged_dict["build_on"] = None
+            merged_dict["clear_build_on"] = True
+            merged_dict["artifact_deployments"] = False
+        elif new_config.build_on is not None:
+            merged_dict["build_on"] = new_config.build_on
+            merged_dict["clear_build_on"] = False
+            merged_dict["artifact_deployments"] = True
+        elif new_config.artifact_deployments:
+            merged_dict["artifact_deployments"] = True
+            merged_dict["clear_build_on"] = False
 
     # Selecting passwordless sudo is an explicit request for the capable,
     # non-hardened posture. SetupConfig still rejects callers that explicitly
@@ -521,7 +569,9 @@ def merge_setup_configs(
             continue
 
         if key == 'deploy_specs' and key in merged_dict:
-            if merged_dict[key] is None:
+            if merged_dict["build_on"] is not None and value is not None:
+                merged_dict[key] = _merge_selected_deploy_specs(merged_dict[key], value)
+            elif merged_dict[key] is None:
                 merged_dict[key] = value
             elif value is not None:
                 existing_deploys = {(spec[0], spec[1]) for spec in merged_dict[key]}
@@ -596,21 +646,6 @@ def merge_setup_configs(
         merged_dict["disable_build_target"] = True
     elif new_config.build_target_enrollment is not None:
         merged_dict["disable_build_target"] = False
-
-    if not {"build_on", "clear_build_on", "artifact_deployments"}.intersection(
-        preserve_keys
-    ):
-        if new_config.clear_build_on:
-            merged_dict["build_on"] = None
-            merged_dict["clear_build_on"] = True
-            merged_dict["artifact_deployments"] = False
-        elif new_config.build_on is not None:
-            merged_dict["build_on"] = new_config.build_on
-            merged_dict["clear_build_on"] = False
-            merged_dict["artifact_deployments"] = True
-        elif new_config.artifact_deployments:
-            merged_dict["artifact_deployments"] = True
-            merged_dict["clear_build_on"] = False
 
     # An explicit off clears a previously saved homepage and destination list.
     # Explicit nonempty homepage settings with off are rejected before merging.

@@ -536,6 +536,114 @@ class TestMergeSetupConfigs(unittest.TestCase):
         merged = merge_setup_configs(cached, new)
         self.assertEqual(len(merged.deploy_specs), 2)
 
+    def test_selected_deploy_patch_replaces_destination_and_preserves_siblings(self):
+        old = "https://example.com/site.git#tag=v1"
+        updated = "https://example.com/site.git#tag=v2"
+        cached = self._make_config(build_on="builder", deploy_specs=[
+            ["EXAMPLE.COM./, sibling.example/Guide/", old],
+            ["other.example", "https://example.com/other.git"],
+        ])
+        new = self._make_config(deploy_specs=[
+            ["example.com, EXAMPLE.COM/", updated], ["example.com/", updated],
+        ])
+        merged = merge_setup_configs(cached, new)
+        self.assertEqual(merged.deploy_specs, [
+            ["sibling.example/Guide", old],
+            ["other.example", "https://example.com/other.git"],
+            ["example.com", updated],
+        ])
+        self.assertEqual(merged.build_on, "builder")
+        self.assertEqual(cached.deploy_specs[0], ["EXAMPLE.COM./, sibling.example/Guide/", old])
+        self.assertEqual(new.deploy_specs[0][0], "example.com, EXAMPLE.COM/")
+
+    def test_selected_deploy_merge_uses_effective_builder(self):
+        old = "https://example.com/site.git#tag=v1"
+        updated = "https://example.com/site.git#tag=v2"
+        for saved, changes, expected_builder in (
+            ({}, {"build_on": "new-builder"}, "new-builder"),
+            ({"build_on": "old-builder"}, {"build_on": "new-builder"}, "new-builder"),
+            ({"clear_build_on": True}, {"build_on": "new-builder"}, "new-builder"),
+            ({"build_on": "old-builder"}, {}, "old-builder"),
+        ):
+            with self.subTest(saved=saved, changes=changes):
+                merged = merge_setup_configs(
+                    self._make_config(**saved, deploy_specs=[["example.com", old]]),
+                    self._make_config(**changes, deploy_specs=[["example.com", updated]]),
+                )
+                self.assertEqual(merged.deploy_specs, [["example.com", updated]])
+                self.assertEqual(merged.build_on, expected_builder)
+
+    def test_selected_deploy_addition_splits_and_deduplicates_new_destinations(self):
+        source = "https://example.com/site.git#tag=v2"
+        merged = merge_setup_configs(
+            self._make_config(),
+            self._make_config(build_on="builder", deploy_specs=[
+                ["EXAMPLE.COM./Guide/, example.com/Guide, example.com/guide", source],
+                ["example.com/Guide", source],
+            ]),
+        )
+        self.assertEqual(merged.deploy_specs, [
+            ["example.com/Guide", source], ["example.com/guide", source],
+        ])
+
+    def test_ordinary_deploy_merge_including_clear_keeps_pair_semantics(self):
+        old = ["EXAMPLE.COM./", "https://example.com/site.git#tag=v1"]
+        updated = ["EXAMPLE.COM./", "https://example.com/site.git#tag=v2"]
+        for saved, changes in (
+            ({}, {}),
+            ({"artifact_deployments": True}, {}),
+            ({"build_on": "builder"}, {"clear_build_on": True}),
+        ):
+            with self.subTest(saved=saved, changes=changes):
+                merged = merge_setup_configs(
+                    self._make_config(**saved, deploy_specs=[old]),
+                    self._make_config(**changes, deploy_specs=[old, updated, updated]),
+                )
+                self.assertIsNone(merged.build_on)
+                self.assertEqual(merged.deploy_specs, [old, updated])
+
+    def test_selected_deploy_patch_rejects_conflicting_normalized_destinations(self):
+        old = "https://example.com/site.git#tag=v1"
+        updated = "https://example.com/site.git#tag=v2"
+        for first, second in (
+            ("example.com", "EXAMPLE.COM./"),
+            ("sibling.example, example.com/Guide/", "example.com/Guide"),
+        ):
+            with self.subTest(first=first, second=second), self.assertRaisesRegex(
+                ValueError, "Conflicting deploy sources for destination"
+            ):
+                merge_setup_configs(
+                    self._make_config(build_on="builder"),
+                    self._make_config(deploy_specs=[[first, old], [second, updated]]),
+                )
+
+    def test_selected_deploy_patch_validates_destinations_before_replacement(self):
+        source = "https://example.com/site.git"
+        for destination in ("bad domain", "example.com,,other.example", "/srv/site",
+                            "example.com/../private", "example.com//path"):
+            with self.subTest(destination=destination), self.assertRaises(ValueError):
+                merge_setup_configs(
+                    self._make_config(build_on="builder"),
+                    self._make_config(deploy_specs=[[destination, source]]),
+                )
+
+    def test_selected_deploy_omission_and_preserved_selection_are_respected(self):
+        old = ["EXAMPLE.COM./", "https://example.com/site.git#tag=v1"]
+        cached = self._make_config(build_on="builder", deploy_specs=[old])
+        omitted = merge_setup_configs(cached, self._make_config())
+        self.assertEqual(omitted.deploy_specs, [old])
+        updated = ["example.com", "https://example.com/site.git#tag=v2"]
+        preserved = merge_setup_configs(
+            cached, self._make_config(clear_build_on=True, deploy_specs=[updated]),
+            preserve_keys={"build_on"},
+        )
+        self.assertEqual(preserved.build_on, "builder")
+        self.assertEqual(preserved.deploy_specs, [updated])
+        preserved_deploys = merge_setup_configs(
+            cached, self._make_config(deploy_specs=[updated]), preserve_keys={"deploy_specs"},
+        )
+        self.assertEqual(preserved_deploys.deploy_specs, [old])
+
     def test_samba_shares_merge(self):
         cached = self._make_config(samba_shares=[['read', 'share1', '/mnt/data', 'u:p']])
         new = self._make_config(samba_shares=[['write', 'share2', '/mnt/docs', 'u:p']])
