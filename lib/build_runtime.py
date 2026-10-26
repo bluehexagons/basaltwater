@@ -46,6 +46,7 @@ _DT_NEEDED = 1
 
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+_SYSTEMD_PATH_META = frozenset("%$'\"\\")
 
 
 def validate_prebuilt_runtime(
@@ -99,6 +100,10 @@ def validate_prebuilt_runtime(
             )
         service_paths.append((component.name, executable))
 
+    for component_name, executable in service_paths:
+        emitted_path = os.path.normpath(os.path.join(release_directory, executable))
+        _validate_literal_systemd_path(emitted_path, f"Service executable for {component_name!r}")
+
     try:
         with directory_fd(release_directory) as root:
             for component_name, executable in service_paths:
@@ -116,6 +121,9 @@ def _normalize_binary_path(value: object) -> str:
     if os.path.isabs(value):
         raise ValueError("Service binary must be relative to the release directory")
     normalized = os.path.normpath(value)
+    if "{{" in normalized or "}}" in normalized:
+        raise ValueError("Service binary must be a literal relative release path")
+    _validate_literal_systemd_path(normalized, "Service binary")
     try:
         return validate_artifact_path(normalized)
     except ValueError as exc:
@@ -134,8 +142,13 @@ def _exec_binary_path(value: object) -> str:
     if not arguments:
         raise ValueError("Service exec must name an executable")
 
+    raw_first = value.split(None, 1)[0]
+    if raw_first != arguments[0]:
+        raise ValueError("Service exec executable must be an unquoted literal token")
+    _validate_literal_systemd_path(raw_first, "Service exec executable")
+
     prefix = "{{release_dir}}/"
-    first = arguments[0]
+    first = raw_first
     if not first.startswith(prefix):
         raise ValueError(
             "Exec-only services must start with {{release_dir}}/relative/path"
@@ -143,10 +156,20 @@ def _exec_binary_path(value: object) -> str:
     relative = first[len(prefix):]
     if "{{" in relative or "}}" in relative:
         raise ValueError("Service executable path cannot contain additional placeholders")
+    _validate_literal_systemd_path(relative, "Service exec executable path")
     try:
         return validate_artifact_path(relative)
     except ValueError as exc:
         raise ValueError("Service exec must name a safe relative release executable") from exc
+
+
+def _validate_literal_systemd_path(value: str, where: str) -> None:
+    """Keep the checked executable path identical to raw generated ExecStart."""
+    if any(character in _SYSTEMD_PATH_META or character.isspace() for character in value):
+        raise ValueError(
+            f"{where} must not contain systemd specifiers, variable expansion, "
+            "quoting, escapes, or whitespace"
+        )
 
 
 def _is_exported(executable: str, exports: list[str]) -> bool:
