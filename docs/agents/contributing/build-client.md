@@ -29,10 +29,10 @@ Paths must be absolute. The identity file must be an effective-UID-owned,
 single-link regular file with mode `0600` or stricter. The known-hosts file must
 be a root or effective-UID-owned, single-link regular file that is not writable
 by group or other users. Both are opened without following the final symlink
-and passed to SSH by their pinned file descriptors. The known-hosts file must
-contain the host key for this host and port. Hostnames and Unix usernames use
-the repository validators. The timeout must be finite, greater than zero, and
-no more than the server's 900-second connection ceiling.
+and referenced by SSH through their pinned file descriptors. The known-hosts
+file must contain the host key for this host and port. Hostnames and Unix
+usernames use the repository validators. The timeout must be finite, greater
+than zero, and no more than the server's 900-second connection ceiling.
 
 The methods return the service's validated public data:
 
@@ -51,7 +51,9 @@ includes `request_id` and any fixed service error code. Admission may already
 be durable for any submit error, including `rejected` and `unavailable`, or
 when the reply is lost. Query `status()` and reconcile using the same request ID
 and exact inputs. Never create a replacement ID because a submit reply was
-uncertain.
+uncertain. A keyboard interrupt after SSH starts also raises
+`BuildSubmissionUnconfirmed` after local transport cleanup; an interrupt before
+the process starts remains an ordinary `KeyboardInterrupt`.
 
 Calling `cancel()` sends the service's durable cancellation request. Interrupting
 or dropping a local call only stops its SSH process group; it does not stop an
@@ -66,7 +68,11 @@ all forwarding, proxy commands and jumps, host canonicalization, local commands,
 and connection multiplexing. It sends exactly the remote command
 `basaltwater-build-v1`; no request field can select a command, path, principal,
 or SSH option. It starts one local process group and kills only that group on
-timeout, interruption, or protocol failure.
+timeout, interruption, or protocol failure. For each call, the client
+duplicates both credential descriptors and keeps them open until SSH cleanup.
+SSH reads those duplicates through `/proc/<controller-pid>/fd/N`; SSH receives
+no inherited credential descriptors, and the original configured pathnames
+are never used as a fallback.
 
 Requests use the service's schema-1 JSON header and the exact action fields.
 Submit streams the source snapshot after its header; other actions send EOF
@@ -86,7 +92,12 @@ private `0700` directory reached through no-follow, trusted ancestors. The
 client verifies the expected total size and SHA-256 before publishing with
 Linux `renameat2(RENAME_NOREPLACE)`, then syncs the file and directory. Existing
 destination names are never replaced; unsupported no-replace publication
-fails closed.
+fails closed. If the rename succeeds but syncing the destination directory
+fails, `ArtifactPublicationUncertain` exposes `destination`, `expected_sha256`,
+and `expected_size`. The verified bytes are already present at that destination,
+but crash durability of the directory entry is uncertain. Check that exact
+destination against the expected size and digest before retrying; never delete
+or overwrite it automatically.
 
 SSH stderr is drained throughout the call, with at most 64 KiB retained and
 excess bytes discarded. The client does not include remote exception text or

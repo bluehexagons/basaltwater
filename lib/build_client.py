@@ -75,7 +75,7 @@ _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 
 
 class BuildClientError(RuntimeError):
-    """A local transport or protocol failure with no remote details attached."""
+    """A local client failure that does not expose remote details."""
 
     def __init__(self, message: str, *, transport_started: bool = False) -> None:
         super().__init__(message)
@@ -109,6 +109,21 @@ class BuildSubmissionUnconfirmed(BuildClientError):
         super().__init__(description, transport_started=True)
         self.request_id = request_id
         self.error_code = code
+
+
+class ArtifactPublicationUncertain(BuildClientError):
+    """A verified artifact was published but its directory sync failed."""
+
+    def __init__(self, destination: str, expected_sha256: str, expected_size: int) -> None:
+        super().__init__(
+            f"Artifact was verified and published at {destination}, "
+            "but its directory sync failed; "
+            f"reconcile size={expected_size} and sha256={expected_sha256} before retrying, "
+            "and do not overwrite the destination",
+        )
+        self.destination = destination
+        self.expected_sha256 = expected_sha256
+        self.expected_size = expected_size
 
 
 @dataclass(frozen=True)
@@ -431,7 +446,7 @@ def _validate_job_record(value: object, request_id: str,
             raise ValueError("Invalid expired build metadata")
         if state == "cancelled" and not value["cancel_requested"]:
             raise ValueError("Invalid cancellation metadata")
-        if state != "cancelled" and started_at is None:
+        if state not in {"cancelled", "expired"} and started_at is None:
             raise ValueError("Terminal build result has no start time")
     if state == "succeeded":
         artifact = _validate_public_artifact(artifact_value, {
@@ -760,7 +775,12 @@ class BuildHostClient:
             temporary_fd = -1
             _rename_noreplace(parent_fd, temporary_name, leaf)
             temporary_name = None
-            os.fsync(parent_fd)
+            try:
+                os.fsync(parent_fd)
+            except (OSError, KeyboardInterrupt) as exc:
+                raise ArtifactPublicationUncertain(
+                    target_path, expected_sha256, expected_size,
+                ) from exc
             return target_path
         finally:
             if temporary_fd >= 0:
@@ -805,9 +825,10 @@ class BuildHostClient:
             os.close(descriptor)
             raise
 
-    def _ssh_arguments(self) -> list[str]:
-        identity = f"/proc/self/fd/{self._identity_fd}"
-        known_hosts = f"/proc/self/fd/{self._known_hosts_fd}"
+    def _ssh_arguments(self, identity_fd: int, known_hosts_fd: int) -> list[str]:
+        controller_pid = os.getpid()
+        identity = f"/proc/{controller_pid}/fd/{identity_fd}"
+        known_hosts = f"/proc/{controller_pid}/fd/{known_hosts_fd}"
         connect_timeout = max(1, min(60, math.ceil(self.timeout)))
         return [
             "/usr/bin/ssh", "-F", "/dev/null", "-p", str(self.port),
@@ -853,6 +874,8 @@ class BuildHostClient:
         process: subprocess.Popen[bytes] | None = None
         selector: selectors.BaseSelector | None = None
         started = False
+        identity_fd = -1
+        known_hosts_fd = -1
         stderr_capture = bytearray()
         stdout_header = bytearray()
         collected_payload = bytearray()
@@ -960,15 +983,19 @@ class BuildHostClient:
         try:
             if time.monotonic() >= deadline:
                 raise TimeoutError
+            identity_fd = os.dup(self._identity_fd)
+            known_hosts_fd = os.dup(self._known_hosts_fd)
+            _verify_credential(identity_fd, self._identity_identity, "SSH identity file")
+            _verify_credential(known_hosts_fd, self._known_hosts_identity, "SSH known-hosts file")
             if source is not None:
                 current_source = _file_identity(os.fstat(source.descriptor))
                 named_source = _file_identity(os.stat(source.path, follow_symlinks=False))
                 if current_source != source.identity or named_source != source.identity:
                     raise ValueError("Build source changed before SSH started")
             process = subprocess.Popen(
-                self._ssh_arguments(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                self._ssh_arguments(identity_fd, known_hosts_fd),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, bufsize=0, close_fds=True,
-                pass_fds=(self._identity_fd, self._known_hosts_fd),
                 start_new_session=True, cwd="/", umask=0o077,
                 env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C", "LC_ALL": "C"},
             )
@@ -1055,6 +1082,11 @@ class BuildHostClient:
             return reply.result, bytes(collected_payload)
         except BuildClientError:
             raise
+        except KeyboardInterrupt as exc:
+            if started or process is not None:
+                raise BuildHostTransportError("SSH operation was interrupted",
+                                              transport_started=True) from exc
+            raise
         except TimeoutError:
             raise BuildHostTransportError("SSH operation exceeded its finite timeout",
                                           transport_started=started) from None
@@ -1076,6 +1108,12 @@ class BuildHostClient:
                             stream.close()
                         except OSError:
                             pass
+            for descriptor in (identity_fd, known_hosts_fd):
+                if descriptor >= 0:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
 
     def _verify_credentials(self) -> None:
         _verify_credential(self._identity_fd, self._identity_identity, "SSH identity file")
@@ -1084,7 +1122,8 @@ class BuildHostClient:
 
 
 __all__ = [
-    "BuildClientError", "BuildHostClient", "BuildHostProtocolError",
+    "ArtifactPublicationUncertain", "BuildClientError", "BuildHostClient",
+    "BuildHostProtocolError",
     "BuildHostRemoteError", "BuildHostTransportError", "BuildLogChunk",
     "BuildSubmissionUnconfirmed", "MAX_ARTIFACT_BUNDLE_BYTES", "MAX_LOG_BYTES",
     "MAX_TIMEOUT_SECONDS", "REMOTE_COMMAND",

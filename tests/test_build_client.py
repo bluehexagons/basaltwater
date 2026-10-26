@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import threading
@@ -12,6 +13,7 @@ from unittest.mock import patch
 
 from lib import build_client
 from lib.build_client import (
+    ArtifactPublicationUncertain,
     BuildHostClient,
     BuildHostProtocolError,
     BuildHostTransportError,
@@ -74,7 +76,7 @@ def job_result(request_id: str, request: dict, *, state: str = "queued") -> dict
         "created_at": 1.0,
         "expires_at": 901.0,
         "started_at": started,
-        "finished_at": 3.0 if terminal else None,
+        "finished_at": (902.0 if state == "expired" else 3.0) if terminal else None,
         "artifact": artifact,
         "reason": {
             "failed": "build_failed", "cancelled": "cancelled",
@@ -261,12 +263,25 @@ class BuildHostClientTests(unittest.TestCase):
             "tool_versions": {"go": "go version go1.24.4 linux/amd64"},
         }
 
-        result, fake = self.invoke(
+        fake = FakePopen(server(
             lambda _request, _payload, output, _error, _stop: (
                 write_all(output, success(capabilities)) or 0
             ),
-            self.client.capabilities,
-        )
+        ))
+        pinned_files = {}
+
+        def capture_spawn(arguments, **options):
+            identity_path = arguments[arguments.index("-i") + 1]
+            known_hosts_path = next(
+                item.split("=", 1)[1] for item in arguments
+                if item.startswith("UserKnownHostsFile=")
+            )
+            pinned_files["identity"] = os.stat(identity_path)
+            pinned_files["known_hosts"] = os.stat(known_hosts_path)
+            return fake(arguments, **options)
+
+        with patch.object(build_client.subprocess, "Popen", side_effect=capture_spawn):
+            result = self.client.capabilities()
 
         self.assertEqual(result, capabilities)
         args = fake.arguments
@@ -285,8 +300,20 @@ class BuildHostClientTests(unittest.TestCase):
         self.assertIn("ControlMaster=no", args)
         self.assertIn("ControlPath=none", args)
         self.assertIn("CertificateFile=none", args)
-        self.assertEqual(fake.options["pass_fds"],
-                         (self.client._identity_fd, self.client._known_hosts_fd))
+        self.assertRegex(args[args.index("-i") + 1],
+                         rf"^/proc/{os.getpid()}/fd/\d+$")
+        self.assertTrue(any(
+            re.fullmatch(rf"UserKnownHostsFile=/proc/{os.getpid()}/fd/\d+", item)
+            for item in args
+        ))
+        self.assertNotIn(str(self.identity), args)
+        self.assertNotIn(str(self.known_hosts), args)
+        self.assertNotIn("pass_fds", fake.options)
+        self.assertTrue(fake.options["close_fds"])
+        self.assertEqual((pinned_files["identity"].st_dev, pinned_files["identity"].st_ino),
+                         (self.identity.stat().st_dev, self.identity.stat().st_ino))
+        self.assertEqual((pinned_files["known_hosts"].st_dev, pinned_files["known_hosts"].st_ino),
+                         (self.known_hosts.stat().st_dev, self.known_hosts.stat().st_ino))
         self.assertEqual(fake.options["start_new_session"], True)
         self.assertEqual(fake.options["cwd"], "/")
 
@@ -401,6 +428,96 @@ class BuildHostClientTests(unittest.TestCase):
         self.assertEqual(fake.calls, 1)
         self.assertEqual(received, [(request["request_id"], data)])
 
+    def test_submit_interrupt_after_ssh_starts_is_unconfirmed_and_cleans_up(self) -> None:
+        data = b"interrupted source"
+        source = self.root / "source.snapshot"
+        source.write_bytes(data)
+        request = build_request(snapshot_sha256=hashlib.sha256(data).hexdigest())
+        admitted = threading.Event()
+        accepted_requests = []
+
+        def handler(message, payload, _output, _error, stop_event):
+            accepted_requests.append((message["request"]["request_id"], payload))
+            admitted.set()
+            stop_event.wait(1)
+            return 0
+
+        fake = FakePopen(server(handler))
+        selector_type = build_client.selectors.DefaultSelector
+
+        class InterruptAfterAdmissionSelector:
+            def __init__(self) -> None:
+                self.selector = selector_type()
+
+            def register(self, *args, **kwargs):
+                return self.selector.register(*args, **kwargs)
+
+            def unregister(self, *args, **kwargs):
+                return self.selector.unregister(*args, **kwargs)
+
+            def close(self) -> None:
+                self.selector.close()
+
+            def select(self, timeout=None):
+                events = self.selector.select(timeout)
+                if admitted.is_set():
+                    raise KeyboardInterrupt
+                return events
+
+        def terminate_fake(_pid, _signal):
+            assert fake.process is not None
+            fake.process.terminate()
+            raise ProcessLookupError
+
+        with patch.object(build_client.subprocess, "Popen", side_effect=fake), \
+                patch.object(build_client.selectors, "DefaultSelector", InterruptAfterAdmissionSelector), \
+                patch.object(build_client.os, "killpg", side_effect=terminate_fake):
+            with self.assertRaises(BuildSubmissionUnconfirmed) as caught:
+                self.client.submit(request, source)
+
+        self.assertEqual(caught.exception.request_id, request["request_id"])
+        self.assertIsNone(caught.exception.error_code)
+        self.assertIn("same request ID", str(caught.exception))
+        self.assertEqual(accepted_requests, [(request["request_id"], data)])
+        self.assertEqual(fake.calls, 1)
+        self.assertIsNotNone(fake.process)
+        self.assertIsNotNone(fake.process.wait(timeout=0.5))
+        self.assertTrue(fake.process.stdin.closed)
+        self.assertTrue(fake.process.stdout.closed)
+        self.assertTrue(fake.process.stderr.closed)
+        identity_path = fake.arguments[fake.arguments.index("-i") + 1]
+        known_hosts_path = next(
+            item.split("=", 1)[1] for item in fake.arguments
+            if item.startswith("UserKnownHostsFile=")
+        )
+        for descriptor_path in (identity_path, known_hosts_path):
+            with self.assertRaises(FileNotFoundError):
+                os.stat(descriptor_path)
+
+    def test_submit_interrupt_before_ssh_starts_remains_keyboard_interrupt(self) -> None:
+        data = b"not yet sent"
+        source = self.root / "source.snapshot"
+        source.write_bytes(data)
+        request = build_request(snapshot_sha256=hashlib.sha256(data).hexdigest())
+        arguments_seen = []
+
+        def interrupt_before_spawn(arguments, **_options):
+            arguments_seen.extend(arguments)
+            raise KeyboardInterrupt
+
+        with patch.object(build_client.subprocess, "Popen", side_effect=interrupt_before_spawn):
+            with self.assertRaises(KeyboardInterrupt):
+                self.client.submit(request, source)
+
+        identity_path = arguments_seen[arguments_seen.index("-i") + 1]
+        known_hosts_path = next(
+            item.split("=", 1)[1] for item in arguments_seen
+            if item.startswith("UserKnownHostsFile=")
+        )
+        for descriptor_path in (identity_path, known_hosts_path):
+            with self.assertRaises(FileNotFoundError):
+                os.stat(descriptor_path)
+
     def test_status_rejects_wrong_id_and_extra_public_fields(self) -> None:
         request_id = "a" * 32
         receipt = job_result(request_id, build_request(request_id))
@@ -420,6 +537,20 @@ class BuildHostClientTests(unittest.TestCase):
 
         with self.assertRaises(BuildHostProtocolError):
             self.invoke(extra_field, lambda: self.client.status(request_id))
+
+    def test_status_accepts_expired_queued_job_with_no_start_time(self) -> None:
+        request_id = "a" * 32
+        receipt = job_result(request_id, build_request(request_id), state="expired")
+
+        def handler(_message, _payload, output, _error, _stop):
+            write_all(output, success(receipt))
+            return 0
+
+        result, _fake = self.invoke(handler, lambda: self.client.status(request_id))
+        self.assertEqual(result["state"], "expired")
+        self.assertEqual(result["reason"], "queue_expired")
+        self.assertIsNone(result["started_at"])
+        self.assertGreaterEqual(result["finished_at"], result["expires_at"])
 
     def test_cancel_returns_matching_durable_job_receipt(self) -> None:
         request_id = "a" * 32
@@ -600,6 +731,33 @@ class BuildHostClientTests(unittest.TestCase):
                     lambda: self.client.download_artifact("a" * 32, destination, digest, len(payload)),
                 )
         self.assertEqual(destination.read_bytes(), b"created concurrently")
+        self.assertEqual([item.name for item in destination.parent.iterdir()], [destination.name])
+
+    def test_artifact_directory_sync_failure_reports_published_identity(self) -> None:
+        payload = b"verified published bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        destination = self.root / "downloads" / "bundle.bin"
+        destination.parent.mkdir(mode=0o700)
+
+        def handler(_message, _payload, output, _error, _stop):
+            write_all(output, success({"sha256": digest, "size": len(payload)},
+                                      payload_bytes=len(payload)))
+            write_all(output, payload)
+            return 0
+
+        with patch.object(build_client.os, "fsync", side_effect=[None, OSError("directory sync failed")]):
+            with self.assertRaises(ArtifactPublicationUncertain) as caught:
+                self.invoke(
+                    handler,
+                    lambda: self.client.download_artifact("a" * 32, destination, digest, len(payload)),
+                )
+
+        self.assertEqual(caught.exception.destination, str(destination))
+        self.assertEqual(caught.exception.expected_sha256, digest)
+        self.assertEqual(caught.exception.expected_size, len(payload))
+        self.assertIn("reconcile", str(caught.exception))
+        self.assertIn("do not overwrite", str(caught.exception))
+        self.assertEqual(destination.read_bytes(), payload)
         self.assertEqual([item.name for item in destination.parent.iterdir()], [destination.name])
 
     def test_destination_parent_must_be_private_and_no_follow(self) -> None:
