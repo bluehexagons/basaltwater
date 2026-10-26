@@ -17,10 +17,13 @@ import lib.build_inputs as build_inputs
 import lib.build_retention as build_retention
 from lib.build_artifacts import MAGIC
 from lib.build_inputs import BuildInputStore
+from lib.build_host_service import BuildHostService
 from lib.build_jobs import BuildJobStore
+from lib.build_manifest import DEBIAN_PLATFORM
+from lib.build_payloads import payload_lease
 from lib.build_protocol import MAX_DESCRIPTOR_BYTES, encode_document, request_digest
 from lib.build_retention import BuildRetentionStore, FILE_CHARGE_FLOOR
-from tests.test_build_inputs import build_request
+from tests.test_build_inputs import CountingStream, InterruptingStream, build_request
 
 
 class BuildRetentionTests(unittest.TestCase):
@@ -106,6 +109,10 @@ class BuildRetentionTests(unittest.TestCase):
     def settle(self, plan=None):
         return self.retention.settle_terminal(self.request["request_id"],
                                              expected_revision=(plan or self.inspect())["revision"])
+
+    def prune(self, plan, kinds=("source", "log")):
+        return self.retention.prune_terminal(self.request["request_id"],
+                                             expected_revision=plan["revision"], kinds=kinds)
 
     def test_explicit_settlement_frees_capacity_preserves_all_bytes_and_replay_after_reopen(self):
         terminal = self.terminal("succeeded")
@@ -558,6 +565,456 @@ class BuildRetentionTests(unittest.TestCase):
                                 scratch_root=str(self.roots["inputs"]),
                                 artifacts_root=str(self.roots["artifacts"]),
                                 logs_root=str(self.roots["logs"]))
+
+    def test_prune_preserves_success_and_cancellation_orphan_bundles_and_exact_results(self):
+        for number, outcome in enumerate(("succeeded", "cancelled", "failed"), 1):
+            with self.subTest(outcome=outcome):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                terminal = self.terminal(outcome, orphan=True)
+                plan = self.settle()
+                bundle = self.path("artifacts", ".bundle")
+                identity = bundle.stat().st_ino, bundle.read_bytes()
+                ledger = (self.roots["state"] / "jobs.json").read_bytes()
+                result = self.prune(plan)
+                self.assertEqual(result["charge_bytes"], plan["charge_bytes"] - 2 * FILE_CHARGE_FLOOR)
+                self.assertEqual(result["availability"], {"source": "pruned", "log": "pruned", "bundle": "present"})
+                self.assertFalse(self.path("inputs", ".source").exists())
+                self.assertFalse(self.path("logs", ".log").exists())
+                self.assertEqual((bundle.stat().st_ino, bundle.read_bytes()), identity)
+                self.assertEqual((self.roots["state"] / "jobs.json").read_bytes(), ledger)
+                self.retention = self.reopen()
+                self.assertEqual(self.prune(plan), result)
+                self.assertEqual(self.inspect(), result)
+                with patch.object(self.jobs, "submit", side_effect=AssertionError("must not queue")):
+                    for stream in (None, CountingStream(self.payload)):
+                        self.assertEqual(self.inputs.admit(
+                            self.request, owner="controller", source=stream,
+                            source_size=len(self.payload), jobs=self.jobs), terminal)
+                        if stream is not None:
+                            self.assertGreater(stream.read_calls, 0)
+
+    def test_prune_requires_settlement_and_only_source_log_selections(self):
+        self.terminal()
+        plan = self.inspect()
+        with self.assertRaisesRegex(ValueError, "settlement before"):
+            self.prune(plan)
+        plan = self.settle(plan)
+        for kinds in ((), ("bundle",), ("source", "source"), "source", (None,)):
+            with self.subTest(kinds=kinds), self.assertRaises(ValueError):
+                self.prune(plan, kinds)
+        self.assertEqual(self.intent()["schema"], 2)
+        result = self.prune(plan)
+        self.assertEqual(result["charge_bytes"], plan["charge_bytes"] - FILE_CHARGE_FLOOR)
+        self.assertEqual(result["metadata_charge_bytes"], plan["metadata_charge_bytes"])
+        self.assertEqual(self.intent()["reservation_bytes"], self.reservation)
+
+    def test_source_and_log_can_be_selected_separately_with_bounded_exact_retry_history(self):
+        self.terminal("succeeded")
+        initial = self.settle()
+        first = self.prune(initial, ("source",))
+        self.assertTrue(self.path("logs", ".log").exists())
+        second = self.prune(first, ("log",))
+        self.assertNotEqual(first["revision"], initial["revision"])
+        self.assertNotEqual(second["revision"], first["revision"])
+        self.assertEqual(self.prune(initial, ("source",)), first)
+        self.assertEqual(self.prune(first, ("log",)), second)
+        self.assertEqual(len(self.intent()["pruning"]["operations"]), 2)
+        self.assertLessEqual(self.path("inputs", ".upload.json").stat().st_size,
+                             build_inputs.MAX_PRUNING_INTENT_BYTES)
+        with self.assertRaisesRegex(ValueError, "already pruned"):
+            self.prune(second, ("source",))
+
+    def test_partial_deletion_preserves_old_charge_and_requires_explicit_same_operation_resume(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        real_unlink = os.unlink
+
+        def interrupt_log(name, *args, **kwargs):
+            if name == self.request["request_id"] + ".log":
+                raise KeyboardInterrupt
+            return real_unlink(name, *args, **kwargs)
+
+        with patch.object(build_retention.os, "unlink", side_effect=interrupt_log):
+            with self.assertRaises(KeyboardInterrupt):
+                self.prune(plan)
+        self.assertFalse(self.path("inputs", ".source").exists())
+        self.assertTrue(self.path("logs", ".log").exists())
+        self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"])
+        pending = self.inspect()
+        self.assertEqual(pending["availability"]["source"], "pending_absent")
+        self.assertEqual(pending["availability"]["log"], "pending_present")
+        self.assertEqual(pending["current_charge_bytes"], plan["charge_bytes"])
+        self.assertLess(pending["charge_bytes"], pending["current_charge_bytes"])
+        untouched = CountingStream(self.payload)
+        with self.assertRaisesRegex(ValueError, "pending explicit"):
+            self.inputs.admit(self.request, owner="controller", source=untouched,
+                              source_size=len(self.payload), jobs=self.jobs)
+        self.assertEqual(untouched.read_calls, 0)
+        with self.assertRaisesRegex(ValueError, "changed selected kinds"):
+            self.prune(plan, ("log",))
+        with self.assertRaisesRegex(ValueError, "original revision"):
+            self.prune({"revision": "f" * 64})
+        with self.assertRaisesRegex(ValueError, "explicit completion"):
+            self.settle(plan)
+        before = self.path("inputs", ".upload.json").read_bytes()
+        self.inspect()
+        self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), before)
+        self.inputs = BuildInputStore(self.roots["inputs"], max_bytes=self.reservation + 65536)
+        self.retention = self.reopen()
+        receipt = self.prune(plan)
+        self.assertEqual(self.prune(plan), receipt)
+        self.assertEqual(receipt["charge_bytes"], plan["charge_bytes"] - 8192)
+
+    def test_prune_sync_and_final_save_failures_resume_without_early_credit(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        with patch.object(self.retention, "_sync_deleted", side_effect=OSError("sync failed")):
+            with self.assertRaisesRegex(OSError, "sync failed"):
+                self.prune(plan)
+        self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"])
+        self.assertEqual(self.inspect()["availability"]["log"], "pending_absent")
+        real_save = self.inputs._save_settlement
+        synced = []
+        real_sync = self.retention._sync_deleted
+
+        def sync(*args):
+            real_sync(*args)
+            synced.append(True)
+
+        def fail_final(directory, record):
+            if record["pruning"]["operations"][-1]["state"] == "completed":
+                self.assertTrue(synced)
+                raise OSError("final save failed")
+            real_save(directory, record)
+
+        with patch.object(self.retention, "_sync_deleted", side_effect=sync), \
+             patch.object(self.inputs, "_save_settlement", side_effect=fail_final):
+            with self.assertRaisesRegex(OSError, "final save failed"):
+                self.prune(plan)
+        self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"])
+        self.retention = self.reopen()
+        result = self.prune(plan)
+        self.assertEqual(result, self.prune(plan))
+
+    def test_prune_intent_replace_failure_and_completed_reply_ambiguity(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        with patch.object(build_inputs.os, "replace", side_effect=OSError("intent replace failed")):
+            with self.assertRaisesRegex(OSError, "intent replace failed"):
+                self.prune(plan)
+        self.assertTrue(self.path("inputs", ".source").exists())
+        self.assertEqual(self.intent()["schema"], 2)
+        real_save = self.inputs._save_settlement
+
+        def lose_completed_reply(directory, record):
+            real_save(directory, record)
+            if record["pruning"]["operations"][-1]["state"] == "completed":
+                raise OSError("completed reply lost")
+
+        with patch.object(self.inputs, "_save_settlement", side_effect=lose_completed_reply):
+            with self.assertRaisesRegex(OSError, "completed reply lost"):
+                self.prune(plan)
+        self.retention = self.reopen()
+        self.assertEqual(self.intent()["pruning"]["operations"][-1]["state"], "completed")
+        self.assertEqual(self.prune(plan), self.prune(plan))
+
+    def test_prune_caps_are_checked_before_unlink_and_records_remain_charged(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        for module, name, limit in ((build_retention, "MAX_PRUNING_INTENT_BYTES", 1024),
+                                    (build_retention, "MAX_RETAINED_METADATA_BYTES", 1024)):
+            with patch.object(module, name, limit):
+                with self.assertRaises(ValueError):
+                    self.prune(plan)
+            self.assertTrue(self.path("inputs", ".source").exists())
+            self.assertEqual(self.intent()["schema"], 2)
+        self.prune(plan)
+        self.inputs.max_records = 1
+        with self.assertRaisesRegex(ValueError, "cannot be pruned"):
+            self.admit({**self.request, "request_id": "b" * 32})
+
+    def test_prune_refuses_replaced_and_missing_unselected_evidence_on_resume(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        with patch.object(self.retention, "_sync_deleted", side_effect=OSError("interrupted")):
+            with self.assertRaises(OSError):
+                self.prune(plan, ("source",))
+        real_payload = build_retention._payload
+
+        def missing_log(directory, name, **kwargs):
+            return None if name.endswith(".log") else real_payload(directory, name, **kwargs)
+
+        with patch.object(build_retention, "_payload", side_effect=missing_log):
+            with self.assertRaisesRegex(ValueError, "payload evidence changed"):
+                self.prune(plan, ("source",))
+        source = self.path("inputs", ".source")
+        source.write_bytes(self.payload)
+        source.chmod(0o400)
+        with self.assertRaisesRegex(ValueError, "payload evidence changed"):
+            self.prune(plan, ("source",))
+        source.unlink()
+        self.prune(plan, ("source",))
+        source.write_bytes(self.payload)
+        source.chmod(0o400)
+        with self.assertRaisesRegex(ValueError, "conflicts with pruning"):
+            self.inspect()
+
+    def test_pruned_replay_checks_owner_input_exact_stream_and_existing_terminal_before_read(self):
+        terminal = self.terminal("succeeded")
+        self.prune(self.settle())
+        for owner, request, size in (("other", self.request, len(self.payload)),
+                                     ("controller", {**self.request, "project": "other"}, len(self.payload)),
+                                     ("controller", self.request, len(self.payload) + 1)):
+            stream = CountingStream(self.payload)
+            with self.subTest(owner=owner, size=size), self.assertRaises((PermissionError, ValueError)):
+                self.inputs.admit(request, owner=owner, source=stream, source_size=size, jobs=self.jobs)
+            self.assertEqual(stream.read_calls, 0)
+        for content in (self.payload[:-1], self.payload + b"x", b"X" * len(self.payload)):
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                self.inputs.admit(self.request, owner="controller", source=BytesIO(content),
+                                  source_size=len(self.payload), jobs=self.jobs)
+        with self.assertRaises(KeyboardInterrupt):
+            self.inputs.admit(self.request, owner="controller", source=InterruptingStream(self.payload),
+                              source_size=len(self.payload), jobs=self.jobs)
+        self.assertEqual(self.jobs.status(self.request["request_id"], owner="controller"), terminal)
+        with self.jobs._locked() as (state, directory):
+            state["jobs"][self.request["request_id"]]["finished_at"] += 1
+            state["last_time"] += 1
+            self.jobs._save(directory, state)
+        stream = CountingStream(self.payload)
+        with self.assertRaisesRegex(ValueError, "terminal job identity changed"):
+            self.inputs.admit(self.request, owner="controller", source=stream,
+                              source_size=len(self.payload), jobs=self.jobs)
+        self.assertEqual(stream.read_calls, 0)
+        with self.jobs._locked() as (state, directory):
+            state["jobs"].clear()
+            state["last_sequence"] = 0
+            self.jobs._save(directory, state)
+        with patch.object(self.jobs, "submit", side_effect=AssertionError("must never queue")):
+            with self.assertRaisesRegex(ValueError, "not found"):
+                self.inputs.admit(self.request, owner="controller", source=stream,
+                                  source_size=len(self.payload), jobs=self.jobs)
+        self.assertEqual(stream.read_calls, 0)
+
+    def test_shared_payload_reader_makes_pruning_busy_without_changing_intent(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        before = self.intent()
+        with payload_lease(self.jobs, self.request["request_id"], exclusive=False):
+            with self.assertRaisesRegex(BlockingIOError, "busy"):
+                self.prune(plan)
+        self.assertEqual(self.intent(), before)
+        self.prune(plan)
+
+    def test_pruning_credit_admits_exactly_one_more_reservation_without_freeing_history(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        self.inputs.max_bytes = self.reservation + plan["charge_bytes"] - 8192
+        second = {**self.request, "request_id": "b" * 32}
+        with self.assertRaisesRegex(ValueError, "lacks capacity"):
+            self.admit(second)
+        self.prune(plan)
+        self.assertEqual(self.admit(second)["sequence"], 2)
+        with self.assertRaisesRegex(ValueError, "lacks capacity"):
+            self.admit({**self.request, "request_id": "c" * 32})
+
+    def test_stale_revision_and_replacement_between_intent_save_and_unlink_are_refused(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        with self.assertRaisesRegex(ValueError, "stale"):
+            self.prune({"revision": "f" * 64})
+        replacement = self.root / "replacement-source"
+        replacement.write_bytes(self.payload)
+        replacement.chmod(0o400)
+        real_save = self.inputs._save_settlement
+
+        def replace_after_intent(directory, record):
+            real_save(directory, record)
+            replacement.replace(self.path("inputs", ".source"))
+
+        with patch.object(self.inputs, "_save_settlement", side_effect=replace_after_intent):
+            with self.assertRaisesRegex(ValueError, "replaced before unlink"):
+                self.prune(plan)
+        self.assertEqual(self.path("inputs", ".source").read_bytes(), self.payload)
+        self.assertTrue(self.path("logs", ".log").exists())
+        self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"])
+
+    def test_explicit_resume_reconciles_only_exact_complete_staged_metadata(self):
+        for number, stage in enumerate(("pending", "completed"), 1):
+            self.request = {**self.request, "request_id": f"{number:032x}"}
+            self.terminal("succeeded")
+            plan = self.settle()
+            real_save = self.inputs._save_settlement
+
+            def crash_with_staged_record(directory, record):
+                if record["pruning"]["operations"][-1]["state"] == stage:
+                    self.write("inputs", ".settlement.tmp", encode_document(record))
+                    raise OSError("simulated crash before replace")
+                real_save(directory, record)
+
+            with patch.object(self.inputs, "_save_settlement", side_effect=crash_with_staged_record):
+                with self.assertRaisesRegex(OSError, "simulated crash"):
+                    self.prune(plan)
+            with self.assertRaisesRegex(ValueError, "unrecognized retained"):
+                self.admit()
+            temporary = self.path("inputs", ".settlement.tmp")
+            self.retention = self.reopen()
+            original = temporary.read_bytes()
+            temporary.write_bytes(original[:-1])
+            with self.assertRaises(ValueError):
+                self.prune(plan)
+            self.assertTrue(temporary.exists())
+            temporary.write_bytes(original)
+            self.assertTrue(self.prune(plan)["pruning"][-1]["state"] == "completed")
+            self.assertFalse(temporary.exists())
+
+    def test_completed_replace_sync_failure_reconciles_on_reopen_before_lower_charge(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        real_save = self.inputs._save_settlement
+        real_sync = os.fsync
+
+        def save(directory, record):
+            if record["pruning"]["operations"][-1]["state"] != "completed":
+                return real_save(directory, record)
+
+            def sync(descriptor):
+                if descriptor == directory:
+                    raise OSError("completed directory sync failed")
+                real_sync(descriptor)
+
+            with patch.object(build_inputs.os, "fsync", side_effect=sync):
+                return real_save(directory, record)
+
+        with patch.object(self.inputs, "_save_settlement", side_effect=save):
+            with self.assertRaisesRegex(OSError, "completed directory sync failed"):
+                self.prune(plan)
+        self.assertEqual(self.intent()["pruning"]["operations"][-1]["state"], "completed")
+        self.retention = self.reopen()
+        with patch.object(build_inputs.os, "fsync", side_effect=OSError("still unavailable")):
+            with self.assertRaises(OSError):
+                self.admit({**self.request, "request_id": "b" * 32})
+        self.assertEqual(self.prune(plan), self.inspect())
+
+    def test_prune_refuses_active_uncertain_and_scratch_partial_evidence(self):
+        self.admit()
+        for outcome in ("queued", "running", "uncertain"):
+            with self.subTest(outcome=outcome), self.assertRaisesRegex(ValueError, "certain terminal"):
+                self.prune({"revision": "f" * 64})
+            if outcome == "queued":
+                with self.jobs.worker() as lease:
+                    lease.claim()
+            elif outcome == "running":
+                with self.jobs.worker() as lease:
+                    lease.recover_interrupted(self.request["request_id"], cleanup=lambda *_: True)
+        self.inputs.max_bytes += self.reservation
+        self.request = {**self.request, "request_id": "b" * 32}
+        self.terminal("succeeded")
+        plan = self.settle()
+        scratch = self.path("scratch", "")
+        scratch.mkdir(mode=0o700)
+        with self.assertRaisesRegex(ValueError, "scratch evidence"):
+            self.prune(plan)
+        scratch.rmdir()
+        partial = self.path("inputs", ".part")
+        partial.write_bytes(b"")
+        partial.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "both published and partial"):
+            self.prune(plan)
+
+    def test_busy_service_stream_keeps_pruning_out_until_interrupted_response_cleanup(self):
+        self.request["platform"] = dict(DEBIAN_PLATFORM)
+        terminal = self.terminal("succeeded")
+        plan = self.settle()
+        policy = {"schema": 1, "principals": {"controller": {"projects": {
+            self.request["project"]: {"platform": self.request["platform"],
+                                      "limits": self.request["limits"], "runtimes": []},
+        }}}}
+        service = BuildHostService(jobs=self.jobs, load_policy=lambda: policy,
+                                   admit_source=self.inputs.admit, tool_versions=lambda: {},
+                                   logs_root=str(self.roots["logs"]),
+                                   artifacts_root=str(self.roots["artifacts"]))
+        for action in ("artifact", "log"):
+            entered = threading.Event()
+            resume = threading.Event()
+            errors = []
+
+            class Output(BytesIO):
+                def write(self, value):
+                    entered.set()
+                    if not resume.wait(5):
+                        raise RuntimeError("test synchronization timed out")
+                    raise KeyboardInterrupt
+
+            fields = {"offset": 0, "max_bytes": 64} if action == "log" else {}
+            header = encode_document({"schema": 1, "action": action,
+                                      "request_id": self.request["request_id"], **fields}) + b"\n"
+
+            def stream():
+                try:
+                    service.handle(header, principal="controller", input_stream=BytesIO(),
+                                   output_stream=Output())
+                except BaseException as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=stream)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                with self.assertRaisesRegex(BlockingIOError, "busy"):
+                    self.prune(plan)
+                self.assertEqual(self.jobs.status(self.request["request_id"], owner="controller"), terminal)
+                self.assertTrue(self.jobs.set_draining(True))
+            finally:
+                resume.set()
+                thread.join(5)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([type(error) for error in errors], [KeyboardInterrupt])
+        self.prune(plan)
+
+    def test_log_only_prune_replay_never_submits_and_remaining_source_can_be_pruned_later(self):
+        terminal = self.terminal("succeeded")
+        first = self.prune(self.settle(), ("log",))
+        self.assertTrue(self.path("inputs", ".source").exists())
+        with patch.object(self.jobs, "submit", side_effect=AssertionError("must not submit")):
+            self.assertEqual(self.admit(), terminal)
+        self.prune(first, ("source",))
+        self.inputs.max_records = 128
+        with patch("lib.build_jobs.MAX_OPERATIONS", 1):
+            with self.assertRaisesRegex(ValueError, "cannot be pruned"):
+                self.admit({**self.request, "request_id": "b" * 32})
+
+    def test_corrupt_pruning_tombstones_and_byte_metadata_caps_fail_closed(self):
+        self.terminal("succeeded")
+        self.prune(self.settle())
+        original = self.intent()
+        path = self.path("inputs", ".upload.json")
+        variants = []
+        for mutation in ("charge", "operations", "kinds", "job", "source"):
+            changed = copy.deepcopy(original)
+            if mutation == "charge":
+                changed["charge_bytes"] -= 1
+            elif mutation == "operations":
+                changed["pruning"]["operations"] *= 3
+            elif mutation == "kinds":
+                changed["pruning"]["operations"][0]["kinds"] = ["bundle"]
+            elif mutation == "job":
+                changed["pruning"]["job_sha256"] = "x" * 64
+            else:
+                changed["pruning"]["payloads"]["source"]["sha256"] = "f" * 64
+            variants.append(changed)
+        for value in variants:
+            path.write_bytes(encode_document(value))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.inspect()
+        raw = encode_document(original)
+        path.write_bytes(raw)
+        for name, bound in (("MAX_PRUNING_INTENT_BYTES", len(raw) - 1),
+                            ("MAX_RETAINED_METADATA_BYTES", len(raw) - 1)):
+            with patch.object(build_inputs, name, bound):
+                with self.assertRaises(ValueError):
+                    self.admit()
+        self.assertEqual(self.inspect()["current_charge_bytes"], original["charge_bytes"])
 
 
 if __name__ == "__main__":

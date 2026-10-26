@@ -111,14 +111,26 @@ being reported as completed work.
   arbitrary owner lookup.
 - `log` reads at most the requested chunk, within the job's own log limit.
   Missing logs for queued or running jobs return an empty payload with
-  `waiting: true`. A terminal job with no log is unavailable.
+  `waiting: true`. A terminal job with no log, including an explicitly pruned
+  log, returns fixed `unavailable`.
 - `artifact` is available only for a succeeded job. The bundle's stored size
   must match the private regular file and the complete file hash must match
   the job store before the response header is written. Bytes are streamed in
   64 KiB blocks. File and directory-entry identity are checked again after
   transfer; a transfer-time mutation terminates the stream. Reads do not
-  mutate job state or release retention pins. This first slice has no garbage
-  collector.
+  mutate job state or release retention pins. Bundles are always retained.
+
+Log and artifact reads hold shared nonblocking per-job protection from
+`lib.build_payloads` before opening bytes through response streaming, flush and
+cleanup. Owner and current project checks precede protection and are repeated
+with a fresh job snapshot after acquisition. Exclusive root-local pruning and
+shared reads report busy safely; the service projects this as fixed
+`unavailable`. Cleanup closes descriptors and releases protection on all paths,
+including `BaseException`. Linux OFD byte-range locks reuse the stable worker
+lock inode independently of the worker flock; no additional files or byte
+allocation are needed. See [terminal retention](build-retention.md) for lock
+ordering, explicit deletion and finite history limits. No protocol schema or
+SSH action changes.
 
 The service uses only fixed filenames derived from the validated request ID.
 It does not create source, log, or artifact storage, choose arbitrary paths,

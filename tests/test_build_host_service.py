@@ -17,6 +17,7 @@ from lib.build_host_service import (
     MAX_RESPONSE_LINE_BYTES,
 )
 from lib.build_jobs import BuildJobStore
+from lib.build_payloads import payload_lease
 from lib.build_manifest import DEBIAN_PLATFORM
 from lib.build_protocol import DEFAULT_LIMITS, request_digest
 
@@ -470,6 +471,124 @@ class BuildHostServiceTests(unittest.TestCase):
         response = json.loads(output_stream.getvalue().split(b"\n", 1)[0])
         self.assertTrue(response["ok"])
         self.assertEqual(response["payload_bytes"], 0)
+
+    def test_payload_protection_covers_log_response_and_artifact_verification_stream_cleanup(self):
+        request = build_request()
+        content = b"bundle"
+        self._complete_job(request, digest=hashlib.sha256(content).hexdigest(), size=len(content))
+        for root, suffix in ((self.logs_root, ".log"), (self.artifacts_root, ".bundle")):
+            path = root / (request["request_id"] + suffix)
+            path.write_bytes(content)
+            path.chmod(0o600)
+        owner = self
+
+        def assert_busy():
+            with owner.assertRaises(BlockingIOError):
+                with payload_lease(owner.jobs, request["request_id"], exclusive=True):
+                    owner.fail("read lost payload protection")
+
+        class Output(BytesIO):
+            def write(self, value):
+                assert_busy()
+                return super().write(value)
+
+            def flush(self):
+                assert_busy()
+                super().flush()
+
+        import lib.build_host_service as service_module
+        real_open = service_module._open_private_file
+
+        def protected_open(*args, **kwargs):
+            assert_busy()
+            return real_open(*args, **kwargs)
+
+        for action in ("log", "artifact"):
+            fields = {"offset": 0, "max_bytes": 64} if action == "log" else {}
+            message = header(action, request_id=request["request_id"], **fields)
+            with patch.object(service_module, "_open_private_file", side_effect=protected_open):
+                self.service.handle(message, principal="alice@example", input_stream=BytesIO(),
+                                    output_stream=Output())
+            with payload_lease(self.jobs, request["request_id"], exclusive=True):
+                response, _, _ = self.exchange(message)
+                self.assertEqual(response["error"], "unavailable")
+            for error in (OSError("write failed"), KeyboardInterrupt()):
+                output = Mock()
+                output.write.side_effect = error
+                with self.assertRaises(type(error)):
+                    self.service.handle(message, principal="alice@example", input_stream=BytesIO(),
+                                        output_stream=output)
+                with payload_lease(self.jobs, request["request_id"], exclusive=True):
+                    pass
+
+    def test_interrupted_artifact_open_and_response_encoding_close_descriptors_and_lease(self):
+        request = build_request()
+        content = b"bundle"
+        self._complete_job(request, digest=hashlib.sha256(content).hexdigest(), size=len(content))
+        path = self.artifacts_root / (request["request_id"] + ".bundle")
+        path.write_bytes(content)
+        path.chmod(0o600)
+        import lib.build_host_service as service_module
+        real_open = service_module._open_private_file
+        real_artifact = self.service._open_artifact
+        descriptors = []
+
+        def opened(*args, **kwargs):
+            result = real_open(*args, **kwargs)
+            descriptors.append(result[0])
+            return result
+
+        def artifact(*args):
+            result = real_artifact(*args)
+            descriptors.extend((result.descriptor, result.root_fd))
+            return result
+
+        for stage in ("hash", "response"):
+            descriptors.clear()
+            with patch.object(service_module, "_open_private_file", side_effect=opened), \
+                 patch.object(self.service, "_open_artifact", side_effect=artifact):
+                target = "os.pread" if stage == "hash" else "_fixed_response"
+                with patch("lib.build_host_service." + target, side_effect=KeyboardInterrupt):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.service.handle(header("artifact", request_id=request["request_id"]),
+                                            principal="alice@example", input_stream=BytesIO(),
+                                            output_stream=BytesIO())
+            for descriptor in descriptors:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            with payload_lease(self.jobs, request["request_id"], exclusive=True):
+                pass
+
+    def test_terminal_missing_log_returns_fixed_unavailable_and_revocation_blocks_reads(self):
+        request = build_request()
+        self.jobs.submit(request, owner="alice@example")
+        self.jobs.cancel(request["request_id"], owner="alice@example")
+        response, _, _ = self.exchange(header("log", request_id=request["request_id"],
+                                              offset=0, max_bytes=32))
+        self.assertEqual(response, {"schema": 1, "ok": False, "error": "unavailable", "payload_bytes": 0})
+        self.policy = build_policy(project="revoked")
+        with patch("lib.build_host_service.payload_lease") as protection:
+            for action in ("log", "artifact"):
+                fields = {"offset": 0, "max_bytes": 32} if action == "log" else {}
+                response, _, _ = self.exchange(header(action, request_id=request["request_id"], **fields))
+                self.assert_rejected(response)
+            protection.assert_not_called()
+
+    def test_interruption_while_checking_open_root_closes_its_descriptor(self):
+        import lib.build_host_service as service_module
+        descriptors = []
+        real_fstat = os.fstat
+
+        def interrupt(descriptor):
+            descriptors.append(descriptor)
+            raise KeyboardInterrupt
+
+        with patch.object(service_module.os, "fstat", side_effect=interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                service_module._private_root(str(self.artifacts_root))
+        self.assertEqual(len(descriptors), 1)
+        with self.assertRaises(OSError):
+            real_fstat(descriptors[0])
 
 
 if __name__ == "__main__":

@@ -561,6 +561,26 @@ class BuildJobStore:
             with self._locked() as (state, _parent_fd):
                 return copy.deepcopy(self._record(state, request_id))
 
+    def replay_terminal(self, request: object, *, owner: str, expected_job_sha256: str) -> dict[str, Any]:
+        """Return an existing exact certain-terminal receipt; never create work.
+
+        Pruned input admission uses this short snapshot before consuming replay
+        bytes. It neither expires queued work nor hashes files under state lock.
+        """
+        principal = _owner(owner)
+        job = parse_build_request(request)
+        digest = request_digest(job)
+        expected_job_sha256 = _identifier(expected_job_sha256, "Terminal job identity", _SHA256)
+        with self._locked() as (state, _parent_fd):
+            record = self._owned_record(state, job["request_id"], principal)
+            if record["request_sha256"] != digest:
+                raise ValueError("Build request ID is already bound to different inputs")
+            if record["state"] not in {"succeeded", "failed", "cancelled", "expired"}:
+                raise ValueError("Build input replay requires an existing certain terminal job")
+            if hashlib.sha256(encode_document(record, maximum=MAX_STORE_BYTES)).hexdigest() != expected_job_sha256:
+                raise ValueError("Build input replay terminal job identity changed")
+            return self._public(record)
+
     def cancel(self, request_id: str, *, owner: str) -> dict[str, Any]:
         """Cancel queued work or set a cooperative flag on running work."""
         request_id = _identifier(request_id, "Request ID")

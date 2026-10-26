@@ -21,6 +21,7 @@ from typing import Any, BinaryIO
 
 from lib.build_jobs import BuildJobStore
 from lib.build_protocol import (
+    MAX_ARTIFACT_BYTES,
     MAX_DESCRIPTOR_BYTES,
     decode_document,
     encode_document,
@@ -36,6 +37,7 @@ DEFAULT_MAX_BYTES = 64 * 1024**3
 MAX_RECORDS = 4096
 MAX_RETAINED_METADATA_BYTES = MAX_RECORDS * 1024
 MAX_INTENT_BYTES = 1024
+MAX_PRUNING_INTENT_BYTES = 4096
 READ_CHUNK_BYTES = 64 * 1024
 RENAME_NOREPLACE = 1
 _ID = re.compile(r"[0-9a-f]{32}")
@@ -49,6 +51,7 @@ _INTENT_FIELDS = frozenset({
     "source_sha256", "reservation_bytes",
 })
 _SETTLED_FIELDS = _INTENT_FIELDS | {"charge_bytes", "settlement_revision"}
+_PRUNING_FIELDS = _SETTLED_FIELDS | {"pruning"}
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
 
@@ -69,6 +72,85 @@ def _identifier(value: object, label: str, pattern: re.Pattern[str] = _ID) -> st
 def _positive_integer(value: object, label: str, maximum: int) -> int:
     if type(value) is not int or not 1 <= value <= maximum:
         raise ValueError(f"{label} is outside supported limits")
+    return value
+
+
+def _prune_revision(revision: str, kinds: list[str]) -> str:
+    return hashlib.sha256(encode_document({"previous_revision": revision, "pruned": kinds})).hexdigest()
+
+
+def _validate_pruning(value: object, record: dict[str, Any]) -> dict[str, Any]:
+    """Validate a bounded two-operation tombstone, without reading payloads."""
+    if not isinstance(value, dict) or set(value) != {"payloads", "operations", "job_sha256"}:
+        raise ValueError("Build input pruning evidence is invalid")
+    _identifier(value["job_sha256"], "Pruning job identity", _SHA256)
+    payloads = value["payloads"]
+    if not isinstance(payloads, dict) or set(payloads) != {"source", "bundle", "log"}:
+        raise ValueError("Build input pruning payload evidence is invalid")
+    for kind, item in payloads.items():
+        if item is None:
+            if kind == "source":
+                raise ValueError("Build input pruning requires original source evidence")
+            continue
+        fields = {"identity", "size", "sha256"}
+        if kind == "bundle":
+            fields |= {"descriptor_sha256", "descriptor_bytes"}
+        if not isinstance(item, dict) or set(item) != fields:
+            raise ValueError("Build input pruning payload identity is invalid")
+        identity = item["identity"]
+        if (not isinstance(identity, list) or len(identity) != 8
+                or any(type(number) is not int or not 0 <= number <= 2**64 - 1 for number in identity)
+                or identity[2] != os.geteuid() or identity[3] != 1
+                or identity[4] != stat.S_IFREG | (0o400 if kind == "source" else 0o600)
+                or type(item["size"]) is not int or item["size"] != identity[5]):
+            raise ValueError("Build input pruning file identity is invalid")
+        maximum = {"source": DEFAULT_SOURCE_LIMITS.max_snapshot_bytes,
+                   "bundle": MAX_ARTIFACT_BYTES + MAX_DESCRIPTOR_BYTES + 1024,
+                   "log": 16 * 1024**2}[kind]
+        if not 0 <= item["size"] <= maximum:
+            raise ValueError("Build input pruning payload exceeds its byte bound")
+        _identifier(item["sha256"], "Pruning payload digest", _SHA256)
+        if kind == "bundle":
+            _identifier(item["descriptor_sha256"], "Pruning descriptor digest", _SHA256)
+            _positive_integer(item["descriptor_bytes"], "Pruning descriptor size", MAX_DESCRIPTOR_BYTES)
+        if kind == "source" and (item["size"] != record["source_size"]
+                                 or item["sha256"] != record["source_sha256"]):
+            raise ValueError("Build input pruning source identity changed")
+    operations = value["operations"]
+    if not isinstance(operations, list) or not 1 <= len(operations) <= 2:
+        raise ValueError("Build input pruning operation bound exceeded")
+    seen: set[str] = set()
+    revision = record["settlement_revision"]
+    previous = None
+    for index, operation in enumerate(operations):
+        if not isinstance(operation, dict) or set(operation) != {
+            "expected_revision", "kinds", "state", "previous_charge_bytes", "charge_bytes",
+        }:
+            raise ValueError("Build input pruning operation is invalid")
+        kinds = operation["kinds"]
+        if (not isinstance(kinds, list) or not kinds
+                or any(not isinstance(kind, str) or kind not in {"source", "log"} for kind in kinds)
+                or kinds != [kind for kind in ("source", "log") if kind in kinds]
+                or seen.intersection(kinds) or operation["expected_revision"] != revision
+                or not isinstance(operation["state"], str) or operation["state"] not in {"pending", "completed"}
+                or operation["state"] == "pending" and index != len(operations) - 1):
+            raise ValueError("Build input pruning operation identity is invalid")
+        old = _positive_integer(operation["previous_charge_bytes"], "Previous charge",
+                                record["reservation_bytes"])
+        new = _positive_integer(operation["charge_bytes"], "Pruned charge", old)
+        credit = sum(max(4096, payloads[kind]["size"]) for kind in kinds if payloads[kind] is not None)
+        if not credit or new != old - credit or previous is not None and old != previous:
+            raise ValueError("Build input pruning charge is invalid")
+        if index == 0 and old - sum(max(4096, item["size"]) for item in payloads.values()
+                                   if item is not None) < 6 * 4096:
+            raise ValueError("Build input pruning omits metadata charge")
+        seen.update(kinds)
+        previous = new
+        revision = _prune_revision(revision, kinds)
+    last = operations[-1]
+    if record["charge_bytes"] != last["charge_bytes" if last["state"] == "completed"
+                                      else "previous_charge_bytes"]:
+        raise ValueError("Build input pruning released charge before completion")
     return value
 
 
@@ -182,8 +264,8 @@ class BuildInputStore:
 
     ``root`` must already be the effective UID's private ``0700`` worker input
     directory. Every accepted request keeps its immutable intent and original
-    reservation. Only explicit trusted terminal settlement can lower its charge;
-    admission never settles or removes evidence.
+    reservation. Only explicit trusted terminal settlement/pruning can lower its
+    charge; admission never settles, prunes or resumes pending deletion.
     """
 
     def __init__(
@@ -283,9 +365,9 @@ class BuildInputStore:
         if not isinstance(value, dict):
             raise ValueError("Build input store contains an invalid retained intent")
         schema = value.get("schema")
-        if type(schema) is not int or schema not in {1, 2}:
+        if type(schema) is not int or schema not in {1, 2, 3}:
             raise ValueError("Build input intent has an unsupported schema")
-        if set(value) != (_INTENT_FIELDS if schema == 1 else _SETTLED_FIELDS):
+        if set(value) != {1: _INTENT_FIELDS, 2: _SETTLED_FIELDS, 3: _PRUNING_FIELDS}[schema]:
             raise ValueError("Build input store contains an invalid retained intent")
         actual_id = _identifier(value["request_id"], "Request ID")
         if actual_id != request_id:
@@ -308,14 +390,16 @@ class BuildInputStore:
             "source_sha256": source_sha256,
             "reservation_bytes": reservation,
         }
-        if schema == 2:
+        if schema in {2, 3}:
             charge = _positive_integer(value["charge_bytes"], "Retained charge", reservation)
-            if charge < source_size + MAX_INTENT_BYTES:
+            if schema == 2 and charge < source_size + MAX_INTENT_BYTES:
                 raise ValueError("Build input retained charge omits source or metadata")
             result["charge_bytes"] = charge
             result["settlement_revision"] = _identifier(
                 value["settlement_revision"], "Settlement revision", _SHA256,
             )
+        if schema == 3:
+            result["pruning"] = _validate_pruning(value["pruning"], result)
         return result
 
     def _read_intent(self, root_fd: int, request_id: str) -> tuple[dict[str, Any], int]:
@@ -324,26 +408,27 @@ class BuildInputStore:
         descriptor = os.open(name, _READ, dir_fd=root_fd)
         try:
             opened = os.fstat(descriptor)
-            _check_regular(opened, "intent", modes=frozenset({0o600}), max_size=MAX_INTENT_BYTES)
+            _check_regular(opened, "intent", modes=frozenset({0o600}), max_size=MAX_PRUNING_INTENT_BYTES)
             if not _same_file(named, opened):
                 raise ValueError("Build input intent changed while opening")
             chunks = []
             total = 0
-            while total <= MAX_INTENT_BYTES:
-                chunk = os.read(descriptor, min(READ_CHUNK_BYTES, MAX_INTENT_BYTES + 1 - total))
+            while total <= MAX_PRUNING_INTENT_BYTES:
+                chunk = os.read(descriptor, min(READ_CHUNK_BYTES, MAX_PRUNING_INTENT_BYTES + 1 - total))
                 if not chunk:
                     break
                 chunks.append(chunk)
                 total += len(chunk)
             raw = b"".join(chunks)
-            if len(raw) > MAX_INTENT_BYTES:
+            if len(raw) > MAX_PRUNING_INTENT_BYTES:
                 raise ValueError("Build input intent exceeds its encoded-size limit")
-            record = self._validate_intent(decode_document(raw, maximum=MAX_INTENT_BYTES), request_id=request_id)
-            if encode_document(record, maximum=MAX_INTENT_BYTES) != raw:
+            record = self._validate_intent(decode_document(raw, maximum=MAX_PRUNING_INTENT_BYTES), request_id=request_id)
+            maximum = MAX_PRUNING_INTENT_BYTES if record["schema"] == 3 else MAX_INTENT_BYTES
+            if encode_document(record, maximum=maximum) != raw:
                 raise ValueError("Build input intent is not canonically encoded")
             # Reconcile a replacement whose directory sync/reply was lost before
             # admission can use its lower charge. Failure still refuses admission.
-            if record["schema"] == 2:
+            if record["schema"] in {2, 3}:
                 os.fsync(descriptor)
                 os.fsync(root_fd)
             return record, len(raw)
@@ -374,7 +459,7 @@ class BuildInputStore:
         return named
 
     def _scan_intents(
-        self, root_fd: int,
+        self, root_fd: int, *, pruning_temporary: str | None = None,
     ) -> tuple[dict[str, tuple[dict[str, Any], int, os.stat_result | None, os.stat_result | None]], int, int]:
         names = set(os.listdir(root_fd))
         allowed = {_LOCK_NAME, _INITIALIZED_NAME}
@@ -383,6 +468,10 @@ class BuildInputStore:
         part_ids: set[str] = set()
         for name in names:
             if name in allowed:
+                continue
+            # Only explicit prune may inspect its own fixed temporary. It must
+            # validate an exact staged transition before discarding that file.
+            if name == pruning_temporary:
                 continue
             match = re.fullmatch(r"([0-9a-f]{32})\.upload\.json", name)
             if match is not None:
@@ -411,12 +500,18 @@ class BuildInputStore:
             part_info = self._payload_info(root_fd, request_id, record, published=False)
             if source_info is not None and part_info is not None:
                 raise ValueError("Build input has both published and partial source evidence")
+            if record["schema"] == 3:
+                operations = record["pruning"]["operations"]
+                selected = [op for op in operations if "source" in op["kinds"]]
+                if (part_info is not None or source_info is None and not selected
+                        or source_info is not None and selected and selected[0]["state"] == "completed"):
+                    raise ValueError("Build input source conflicts with pruning evidence")
             intents[request_id] = record, encoded_size, source_info, part_info
             reserved += record.get("charge_bytes", record["reservation_bytes"])
             metadata_bytes += encoded_size
         if reserved > self.max_bytes:
             raise ValueError("Build input store exceeds its retained byte reservation")
-        if metadata_bytes > min(MAX_RETAINED_METADATA_BYTES, self.max_records * MAX_INTENT_BYTES):
+        if metadata_bytes > min(MAX_RETAINED_METADATA_BYTES, self.max_records * MAX_PRUNING_INTENT_BYTES):
             raise ValueError("Build input store exceeds its retained metadata bound")
         return intents, reserved, metadata_bytes
 
@@ -467,7 +562,8 @@ class BuildInputStore:
         """
         request_id = record["request_id"]
         self._validate_intent(record, request_id=request_id)
-        encoded = encode_document(record, maximum=MAX_INTENT_BYTES)
+        encoded = encode_document(record, maximum=(MAX_PRUNING_INTENT_BYTES
+                                  if record["schema"] == 3 else MAX_INTENT_BYTES))
         name = request_id + ".upload.json"
         temporary = request_id + ".settlement.tmp"
         descriptor = os.open(
@@ -621,7 +717,9 @@ class BuildInputStore:
 
         Authentication and authorization must already have succeeded. A
         repeated call may omit ``source`` only after the matching source file
-        has been published; a supplied replay stream is consumed and verified.
+        has been published or durably pruned; a supplied replay stream is
+        consumed and verified. Pruned replay requires the exact terminal job
+        and never calls submit or recreates source.
         """
         principal = _owner(owner)
         job = parse_build_request(request)
@@ -659,6 +757,19 @@ class BuildInputStore:
                         raise ValueError("Build input request ID is already bound to different inputs")
                     if part_info is not None:
                         raise ValueError("Incomplete build input intent is retained for operator reconciliation")
+                    if record["schema"] == 3:
+                        if any(op["state"] == "pending" for op in record["pruning"]["operations"]):
+                            raise ValueError("Build input pruning is pending explicit completion")
+                        # Never call submit after pruning: a missing job must
+                        # not create replacement work, even if source remains.
+                        receipt = jobs.replay_terminal(
+                            job, owner=principal, expected_job_sha256=record["pruning"]["job_sha256"],
+                        )
+                        if source_info is not None:
+                            self._verify_published(root_fd, request_id, source_size, expected_source_sha256)
+                        if source is not None:
+                            self._consume_stream(source, source_size, expected_source_sha256)
+                        return receipt
                     if source_info is None:
                         raise ValueError("Build input intent has no complete published source")
                     self._verify_published(root_fd, request_id, source_size, expected_source_sha256)
@@ -674,7 +785,7 @@ class BuildInputStore:
                     raise ValueError("Build input store lacks capacity for the full retention reservation")
                 if len(encoded_intent) > MAX_INTENT_BYTES:
                     raise ValueError("Build input intent exceeds its encoded-size limit")
-                metadata_limit = min(MAX_RETAINED_METADATA_BYTES, self.max_records * MAX_INTENT_BYTES)
+                metadata_limit = min(MAX_RETAINED_METADATA_BYTES, self.max_records * MAX_PRUNING_INTENT_BYTES)
                 if metadata_bytes + len(encoded_intent) > metadata_limit:
                     raise ValueError("Build input store lacks retained metadata capacity")
 

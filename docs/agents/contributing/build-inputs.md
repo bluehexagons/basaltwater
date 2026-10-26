@@ -87,17 +87,27 @@ root-local [terminal settlement](build-retention.md) can replace that charge
 with a verified conservative retained-byte charge; admission never invokes
 settlement. Version-2 intents retain all original identity fields and immutable
 `reservation_bytes`, adding only `charge_bytes` and `settlement_revision`.
-Replay compares the original inputs and still submits the same ID to the job
-store, including after reopening a settled intent.
+Version-2 replay compares original inputs and submits the same ID to the job
+store, including after reopening. Explicit source/log pruning writes version 3
+with bounded tombstones and at most two disjoint pruning operations. Pending
+pruning refuses replay before reading bytes and never resumes during admission.
+Completed version-3 replay requires an existing exact certain-terminal job under
+the short job lock, including its retained private job digest. It never calls
+`submit()`, recreates payloads or queues work if a job record is absent. Owner,
+request and source identity/size mismatches fail before stream reads. A supplied
+stream must still pass bounded exact length, EOF and SHA-256 checks; an exact
+replay may omit the stream after durable source pruning.
 
-Encoded intents remain individually limited to 1024 bytes, including settlement
-metadata, and the aggregate encoded metadata cap remains
-`min(MAX_RETAINED_METADATA_BYTES, max_records * 1024)`. Each intent uses at most
+Version-1/2 intents remain limited to 1024 bytes. Version 3 is capped at 4096
+bytes, covered by settlement's existing 4096-byte intent allowance; the original
+reservation formula retains its immutable 1024-byte overhead. Aggregate metadata
+is capped at `min(4 MiB, max_records * 4096)`. Each intent uses at most
 one fixed `.part` path, covered by its source-size reservation. Default input
 capacity remains 128 retained intents; the independently bounded job store
-retains at most 4096 jobs. Neither ceiling is relaxed by settlement. There is
-no garbage collection: full capacity rejects new input and never discards
-source, logs, bundles, descriptors, or replay evidence.
+retains at most 4096 jobs. Neither ceiling is relaxed by settlement or pruning.
+Full capacity rejects new input; only explicit root-local pruning can delete
+selected terminal source/log files. Bundles, descriptors and replay evidence
+remain retained, with no automatic garbage collection.
 
 Settlement atomically replaces the bounded intent under the stable input lock.
 A failed replacement leaves the previous charge intact. If replacement succeeds
@@ -105,7 +115,10 @@ but directory sync or acknowledgement fails, subsequent reads sync the settled
 intent and directory before using its charge; explicit retry reconciles the
 same verified revision without applying another credit. A leftover settlement
 temporary file after a crash is ambiguous evidence and fails closed for root
-reconciliation. Payload files are never removed or changed by settlement.
+reconciliation. Only an exact explicit pruning retry can reconcile a complete
+canonical temporary matching its pending/completed transition, as described in
+[terminal retention](build-retention.md). Payload files are never removed or
+changed by settlement.
 
 The transport owns stream deadline supervision and must ensure each read is
 bounded by its deadline. It can use its deadline-aware stream wrapper before
