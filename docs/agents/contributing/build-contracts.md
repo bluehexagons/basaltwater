@@ -10,8 +10,11 @@ supervised execution and packaging. [Runtime validation](build-runtime.md) check
 the initial static and self-contained service scope before target activation.
 The internal [process entrypoint](build-host-entrypoint.md) connects a typed
 SSH dispatcher, project policy, bounded source admission and an independent
-worker. Setup enrollment and `--build-on` selection are not connected yet.
-Standard deployments continue to build on the destination.
+worker. The public [controller setup flow](build-setup.md) connects explicit
+`--build-on` selection, managed enrollment, pinned sources, artifact delivery and
+guarded final profile application within its bounded static/Go scope. Ordinary
+deployments without a selected builder retain build-on-target behavior. Live
+public-flow qualification remains separate from these contracts and dry runs.
 The [shared build-host
 plan](../../plans/cicd-manifest-reuse.md) describes the remaining work.
 

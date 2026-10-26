@@ -20,6 +20,7 @@ managed coding VM or workstation, use the sibling
 | Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
 | Authenticated builder transport and admission | [Process entrypoint](build-host-entrypoint.md), [dispatcher](build-host-service.md), [project policy](build-host-policy.md), [source admission](build-inputs.md) |
 | Managed builder enrollment and controller transport | [Setup configuration](build-host-config.md), [installer](build-host-setup.md), [SSH client](build-client.md) |
+| Public selected-builder setup and recovery | [Controller setup](build-setup.md), [saved selection](build-selection.md), [selection configuration](build-selection-config.md), [pinned sources](build-setup-sources.md), [delivery planning](build-setup-plan.md) |
 | Prebuilt service compatibility | [Runtime validation](build-runtime.md) |
 | Authenticated prebuilt target deployment | [Target policy](build-target-policy.md), [staging](build-target-artifacts.md), [dispatcher](build-target-service.md), [activation](build-target-activation.md), [process entrypoint](build-target-entrypoint.md), [SSH client](build-target-client.md) |
 
@@ -27,7 +28,7 @@ managed coding VM or workstation, use the sibling
 
 | Boundary | Responsibility |
 | --- | --- |
-| `basaltw setup` | Parses and validates user-facing configuration, then stages source for the target |
+| `basaltw setup` | Parses and validates configuration; stages source for ordinary target builds or coordinates an explicitly selected saved builder through `lib.build_setup` |
 | `remote_setup.py` | Runs one target-side step plan, including optional post-profile work composed by `plugins/post_setup.py` |
 | `plugins/` | Owns setup composition through builders and capability extensions |
 | `bootstrap` / `self-setup` | Configures the local orchestration host through `lib/orchestrator_bootstrap.py` |
@@ -35,6 +36,17 @@ managed coding VM or workstation, use the sibling
 When adding a setup feature, implement it in its owning package, wire it into
 the relevant plugin builder or extension, add focused tests, and update the
 operator documentation.
+
+For `--build-on`, the public remote-setup hook holds the controller setup-target
+lock across preflight, minimal target enrollment, artifact delivery and guarded
+final profile application. Minimal enrollment preserves the saved profile; final
+setup carries transient expected release identities and omits reenrollment.
+Keep builder selection and credentials on the controller. Targets retain artifact
+mode and installed releases for local reconciliation without source fetches or
+build commands. Preserve guards, retained inputs and exact IDs on uncertain
+responses; do not add retries or replacement identities. See
+[controller setup](build-setup.md) for the bounded scope and recovery contract.
+Live public-flow qualification remains separate from mocked checks and dry runs.
 
 ## Standard checks
 

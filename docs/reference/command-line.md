@@ -187,6 +187,12 @@ a controller. Provider credentials and existing local account passwords are
 retained; transient credential-copy, network-activation, and swap-initialization
 requests are not replayed.
 
+Artifact-mode targets reconcile their installed release descriptors and retained
+bundles without fetching application source, contacting a builder, or running a
+compiler. Missing or unsafe retained inputs refuse with controller deployment
+guidance; refresh does not create a replacement build. See
+[selected-builder deployments](../services/deployments.md#build-on-a-saved-builder).
+
 On CachyOS, run `basaltw refresh` **without sudo** as the original desktop user.
 Its private successful selection is saved by new `agent_cachyos` setup runs.
 After upgrading an older checkout, run your full setup command once to create
@@ -1788,7 +1794,7 @@ deployment workflows.
 | `--no-build-server` | Remove only the managed enrollment and its key authority; retain build records and evidence |
 | `--build-target-policy FILE` | Load up to 4 MiB of public typed-target enrollment policy from a controller-local file |
 | `--no-build-target` | Remove managed typed-target authority while preserving applications and their data |
-| `--build-on SAVED-BUILDER` | Select a saved builder reference for artifact deployments |
+| `--build-on SAVED-BUILDER` | Build supported deployments on one uniquely matched, enrolled saved host, friendly name, or exact tag; deliver verified artifacts to the target |
 | `--no-build-on` | Clear the saved builder selection and artifact deployment mode |
 | `--app-server` | Configure an app server to receive deployments |
 | `--deploy-target HOST` | Target app server for deployments |
@@ -1816,16 +1822,42 @@ saved de-enrollment intent.
 transports its decoded JSON during setup. Omitting the policy preserves saved
 policy and saved `--no-build-target` intent. `--no-build-target` clears the
 saved policy and forwards explicit de-enrollment intent; supplying a policy
-again resets that intent. This is configuration transport only: there is no
-builder resolution or execution flow yet. Disabling typed-target authority does
-not delete applications or their data.
-`--build-on SAVED-BUILDER` stores an opaque saved builder reference in the
-controller setup and enables artifact deployment mode. Omitting both builder
-selection flags during a patch preserves the saved selection and mode.
-`--no-build-on` clears both. The hidden `--artifact-deployments` flag carries
-target-only artifact mode through setup replay; remote setup receives that mode
-without a builder reference or clear intent. This slice stores and transports
-intent only: builder resolution and controller execution are not available yet.
+again resets that intent. Disabling typed-target authority does not delete
+applications or their data.
+
+`--build-on SAVED-BUILDER` resolves an exact, case-insensitive match across saved
+hosts, friendly names and tags. Exactly one record must match, even if an
+ineligible record shares the label. The selected record must have managed builder
+enrollment. Its saved SSH key and public companion must identify an enrolled
+principal, with existing controller-owned identity and workspace `known_hosts`
+files. There is no alternate builder or target-build fallback on failure.
+
+The first supported setup flow requires a remote Debian 13 x86_64 VM or hardware
+target, explicit `--machine vm` or `--machine hardware`, `server_lite` or
+`server_web`, deployments from public HTTPS committed source with an explicit
+`basaltwater.json`, and explicit `--build-target-policy FILE`. The selected target
+key must authorize both root setup and the typed target principal. Supported
+manifests cover ready static output, Python static builds and Go binary services;
+build commands require explicit `build_runtimes` and declared artifact exports.
+Node, custom execution/runtime settings, target build-tool installs, custom steps,
+builder roles, SSL and Cloudflare setup are outside this flow. See
+[selected-builder usage and restrictions](../services/deployments.md#build-on-a-saved-builder).
+
+The controller preflights before minimal enrollment, reserves all applications
+before builds, stages all artifacts before sequential activation, then applies
+the full profile under expected-release guards. The target retains artifact mode
+and installed release state without a saved-builder reference or builder
+credentials. A dry run clones and pins source locally and uses read-only SSH
+probes; it never bootstraps, reserves, builds, activates or saves setup state.
+Uncertain outcomes retain guards, inputs and IDs for operator reconciliation;
+there are no automatic retries or replacement IDs.
+
+Omitting both builder selection flags during a patch preserves the saved
+selection and artifact mode. `--no-build-on` clears both. The hidden
+`--artifact-deployments` flag carries target-only artifact mode through setup
+replay. Without a selected builder or retained artifact mode, deployment keeps
+the existing build-on-target behavior.
+
 Runner host patches preserve omitted repositories, allowed users and labels.
 An explicit repository list replaces the saved list; an organization scope
 replaces repository scopes.
@@ -2348,8 +2380,10 @@ See [`sysadmin.md`](../operations/sysadmin.md) for the host shortcut commands (`
 
 Interactive remote setup confirms a new host key through OpenSSH's normal
 fingerprint prompt, saves it in the workspace, and continues without a separate
-enrollment command. Changed keys remain rejected. Dry runs do not connect or
-save trust. See [first connection during setup](../operations/ssh.md#first-connection-during-setup).
+enrollment command. Changed keys remain rejected. Ordinary setup dry runs do not
+connect or save trust. Selected-builder dry runs require existing trust and use
+read-only SSH probes as described above. See
+[first connection during setup](../operations/ssh.md#first-connection-during-setup).
 
 For unattended setup or administration commands before the first setup,
 enroll the key and verify the displayed fingerprint independently:
