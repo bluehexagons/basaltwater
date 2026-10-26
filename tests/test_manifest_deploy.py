@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import sqlite3
+import struct
 import sys
 import tempfile
 import unittest
@@ -57,6 +58,41 @@ def _service_component(**overrides: object) -> Component:
     }
     data.update(overrides)
     return parse_manifest({"version": 1, "components": [data]}).components[0]
+
+
+def _prebuilt_elf64(*, interpreter: bool = False, needed_library: bool = False) -> bytes:
+    """Build the small static x86-64 ELF shape used by runtime validation tests."""
+    header = struct.Struct("<16sHHIQQQIHHHHHH")
+    program = struct.Struct("<IIQQQQQQ")
+    dynamic_entry = struct.Struct("<qQ")
+    load_offset = 0
+    dynamic_offset = 0x200
+    dynamic_bytes = (
+        dynamic_entry.pack(1, 0x1000) + dynamic_entry.pack(0, 0)
+        if needed_library else b""
+    )
+    interpreter_offset = 0x300
+    interpreter_bytes = b"/lib64/ld-linux-x86-64.so.2\0" if interpreter else b""
+    file_size = max(4096, dynamic_offset + len(dynamic_bytes),
+                    interpreter_offset + len(interpreter_bytes))
+    programs = [(1, 5, load_offset, 0x400000, 0x400000, file_size, file_size, 0x1000)]
+    if needed_library:
+        programs.append((2, 6, dynamic_offset, 0x400000 + dynamic_offset,
+                         0x400000 + dynamic_offset, len(dynamic_bytes), len(dynamic_bytes), 8))
+    if interpreter:
+        programs.append((3, 4, interpreter_offset, 0x400000 + interpreter_offset,
+                         0x400000 + interpreter_offset, len(interpreter_bytes),
+                         len(interpreter_bytes), 1))
+    ident = b"\x7fELF" + bytes((2, 1, 1, 0, 0)) + bytes(7)
+    contents = bytearray(file_size)
+    contents[:64] = header.pack(
+        ident, 2, 62, 1, 0x400080, 64, 0, 0, 64, 56, len(programs), 0, 0, 0,
+    )
+    table = b"".join(program.pack(*item) for item in programs)
+    contents[64:64 + len(table)] = table
+    contents[dynamic_offset:dynamic_offset + len(dynamic_bytes)] = dynamic_bytes
+    contents[interpreter_offset:interpreter_offset + len(interpreter_bytes)] = interpreter_bytes
+    return bytes(contents)
 
 
 def _old_unit_snapshot() -> dict:
@@ -672,8 +708,8 @@ class TestDeployManifest(unittest.TestCase):
         with open(os.path.join(self.source, "dist", "index.html"), "w") as f:
             f.write("<html></html>")
         os.makedirs(os.path.join(self.source, "server"))
-        with open(os.path.join(self.source, "server", "app"), "w") as f:
-            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.source, "server", "app"), "wb") as f:
+            f.write(_prebuilt_elf64())
         os.chmod(os.path.join(self.source, "server", "app"), 0o755)
         with open(os.path.join(self.source, "basaltwater.json")) as f:
             self.manifest: Manifest = parse_manifest(json.load(f))
@@ -954,6 +990,56 @@ class TestDeployManifest(unittest.TestCase):
                 run.assert_not_called()
                 self.assertFalse(os.path.exists(os.path.join(self.base_dir, ".basaltwater_shared")))
                 self.assertFalse(os.path.exists(os.path.join(self.base_dir, "example_com")))
+
+    def test_prebuilt_runtime_refusals_precede_activation(self):
+        runtime_refusals = (
+            ("interpreter", _prebuilt_elf64(interpreter=True), None, "interpreter"),
+            ("dynamic dependency", _prebuilt_elf64(needed_library=True), None, "shared ELF library"),
+            ("non-ELF", b"#!/bin/sh\n" + bytes(100), None, "not ELF"),
+            (
+                "unsupported platform", _prebuilt_elf64(),
+                {"os": "linux", "architecture": "x86_64", "baseline": "debian-12"},
+                "only linux/x86_64/debian-13",
+            ),
+        )
+
+        for label, executable, platform, expected_error in runtime_refusals:
+            with self.subTest(label=label):
+                with open(os.path.join(self.source, "server", "app"), "wb") as handle:
+                    handle.write(executable)
+                bundle_path = os.path.join(self.base_dir, "release.bwa")
+                if os.path.exists(bundle_path):
+                    os.unlink(bundle_path)
+                request = self._prebuilt_request()
+                if platform is not None:
+                    request["platform"] = platform
+                request, bundle_path, artifact = self._package_prebuilt(request)
+                with patch.object(self.orch, "_deploy_manifest_common") as deploy, patch.object(
+                    self.orch, "_open_deployment_lock",
+                ) as open_lock, patch("lib.deployment.run") as run, patch(
+                    "lib.deployment.create_managed_service",
+                ) as create_service:
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        self._deploy_prebuilt(request, bundle_path, artifact["sha256"])
+
+                deploy.assert_not_called()
+                open_lock.assert_not_called()
+                run.assert_not_called()
+                create_service.assert_not_called()
+                self.assertFalse(os.path.exists(self._operation_marker_path()))
+                self.assertFalse(os.path.exists(os.path.join(self.base_dir, "example_com")))
+
+    def test_prebuilt_runtime_checks_final_release_path_literalness(self):
+        request, bundle_path, artifact = self._package_prebuilt()
+        self.orch.base_dir = self.base_dir + "%"
+        with patch.object(self.orch, "_deploy_manifest_common") as deploy, patch.object(
+            self.orch, "_open_deployment_lock",
+        ) as open_lock:
+            with self.assertRaisesRegex(ValueError, "release path"):
+                self._deploy_prebuilt(request, bundle_path, artifact["sha256"])
+
+        deploy.assert_not_called()
+        open_lock.assert_not_called()
 
     @patch.object(DeploymentOrchestrator, '_poll_health')
     @patch('lib.deployment.create_managed_service')

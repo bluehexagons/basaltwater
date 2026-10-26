@@ -61,12 +61,19 @@ know.
   and exported bytes before taking the deployment lock or changing target
   state. It stages only the verified extracted tree and uses the same service
   identity, persistent data, port, SQLite backup, health-check, unit and release
-  rollback flow as a local manifest deployment. This API does not run
-  repository build commands or provision a build identity or toolchain. The
-  caller must provide authenticated admission, operation/generation
-  authorization and runtime policy; a matching digest and platform establish
-  byte and compatibility identity, not authorization or provenance. Standard
-  `deploy_manifest` deployments still build on the target.
+  rollback flow as a local manifest deployment. Before entering that shared
+  activation transaction, it validates the verified private release against
+  the initial Debian 13 x86-64 runtime slice: static components and services
+  with self-contained ELF64 x86-64 executables. Dynamic interpreters, shared
+  library dependencies, non-ELF executables and unsupported platforms fail
+  before the deployment lock or service/release mutations. It also checks that
+  the final release path remains literal in generated service commands. This
+  API does not run repository build commands or provision a build identity or
+  toolchain. The caller still provides authenticated admission and
+  operation/generation authorization; digest and runtime checks establish byte
+  identity and narrow compatibility, not authorization or provenance. Standard
+  `deploy_manifest` deployments still build on the target and do not use this
+  prebuilt runtime guard.
 - Manifest runtime environment values preserve literal percent signs, including
   percent-encoded URLs, instead of expanding systemd unit specifiers.
 - Proxy routes preserve application `Cache-Control` and `Expires` headers.
