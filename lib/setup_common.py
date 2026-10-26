@@ -549,7 +549,7 @@ def _activate_local_runtime(build_dir: str) -> None:
 
 
 def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
-    if not config.deploy_specs:
+    if config.artifact_deployments or not config.deploy_specs:
         return
         
     print(f"\n{'='*60}")
@@ -1433,7 +1433,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
     try:
         copy_project_files(build_dir)
         
-        if config.deploy_specs:
+        if config.deploy_specs and not config.artifact_deployments:
             deploy_dir = os.path.join(build_dir, "deployments")
             os.makedirs(deploy_dir, exist_ok=True)
             prepare_deployments(config, deploy_dir)
@@ -1494,6 +1494,8 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 print(f"  Upload files to {config.host}:{REMOTE_INSTALL_DIR}")
                 print(f"  Run: {shlex.join(command_tokens)}")
             print("  Refuse retired infra-tools installations; migrate with the documented intermediate version")
+            if config.artifact_deployments:
+                print("  Reconcile retained target artifacts (controller deployment required for missing inputs)")
             if config.activate_network:
                 print("  Verify SSH on every requested address, then persist the network change")
             print("=" * 60)

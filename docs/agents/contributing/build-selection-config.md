@@ -14,6 +14,15 @@ controller and remote parsers so a target-only setup replay retains its mode
 without receiving a builder reference. Remote arguments never include the
 builder reference or clear intent.
 
-This slice transports saved intent only. Builder resolution, capability checks,
-build submission, artifact transfer, and target execution remain outside this
-configuration change.
+Saved artifact mode also selects [retained target reconciliation](build-target-activation.md#artifact-mode-setup-replay)
+during target setup replay. The controller transport skips deployment repository
+preparation/upload; the target skips inferred build runtimes and uses installed
+descriptors and retained artifacts even without `deploy_specs`. Missing target
+inputs require deployment from the controller and never fall back to uploaded
+source or a target build. Explicit runtime-install flags keep their ordinary
+meanings. Dry runs report reconciliation without reading installed artifacts.
+Cloudflare/SSL setup options are outside this target policy and are refused.
+
+Builder resolution, capability checks, build submission, initial external
+bootstrap and artifact delivery remain separate controller work. This replay
+integration does not start that flow or create new admission/build identities.

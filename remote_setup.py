@@ -288,9 +288,10 @@ def enable_detected_build_runtimes(config: SetupConfig) -> None:
     The controller already uploads repositories before remote setup starts, so
     the target can select a build runtime without project-specific CLI flags.
     Explicit runtime choices remain supported; detection only adds missing
-    requirements.
+    requirements. Artifact-mode replay uses only retained target inputs and
+    must not inspect uploaded source or infer build tools.
     """
-    if not config.deploy_specs:
+    if config.artifact_deployments or not config.deploy_specs:
         return
 
     required_versions: list[tuple[int, int, int]] = []
