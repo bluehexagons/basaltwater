@@ -33,6 +33,13 @@ application/game-server activation needs its own runtime/recovery adapter.
 Code signing, installer distribution and store publication require separately
 authorized credentials and remain outside initial build qualification.
 
+Add named package-only build targets before the Windows workload phase. They
+declare platform, project-owned commands and exported files without requiring
+an HTTP domain, port or service component. Select a target explicitly; native
+commands must not be inferred by translating a Linux shell command. Deployment
+components may consume those outputs later. Keep this manifest extension
+separate from the first Debian application-build slice.
+
 ## Native setup and execution
 
 Begin with one manually prepared, current stable Windows 11 x64 Proxmox VM.
@@ -41,9 +48,17 @@ provisioning or a historical platform matrix. Reuse `install.ps1` where useful.
 Tools-only installation remains independent of runner, build service and panel.
 Optional T3 Code is a package convenience, not an agent/desktop integration.
 
-Use Git, PowerShell and a small native backend with explicit optional Node,
-Go, Python, MSVC Build Tools/Windows SDK, CMake/Ninja and engine/export-template
-requirements. Projects own versions and commands; Basaltwater verifies selected
+Use a small native Python 3 backend for shared protocol, policy and job records,
+with PowerShell for installation and Windows process/ACL adapters. Use the same
+typed SSH transport as Debian through Windows OpenSSH; scope its dispatcher to
+configured operations and projects. The native proof must verify portable
+imports and this account/transport boundary before expanding the backend.
+The dispatcher submits to the managed worker and reports unavailable while it
+is stopped; an SSH connection must not become an unsupervised inline worker.
+
+Git and PowerShell accompany the backend; Node, project Python versions, Go,
+MSVC Build Tools/Windows SDK, CMake/Ninja and engine/export templates are explicit
+optional requirements. Projects own versions and commands; verify selected
 tools under the actual worker account. Use exact WinGet identities or verified
 vendor installers, handle restart/resume and report manual license/enrollment
 steps. Initialize MSVC through its supported [developer environment](https://learn.microsoft.com/en-us/visualstudio/ide/reference/command-prompt-powershell)
@@ -64,9 +79,12 @@ and qualify nesting/breakaway behavior with runner workers and project tools.
 Do not release a slot or report cancellation complete while owned work may
 still run. Preserve interrupted state rather than silently replaying jobs.
 
-Owner-login startup is sufficient for the first proof; expose that availability
-limit clearly. Qualify locked sessions and RDP disconnect separately from logoff
-and reboot/login. Prefer an unattended service/task mode for headless workloads
+Login startup under the dedicated non-admin build account is sufficient for
+the first proof; the human operator uses a separate account. Do not reuse the
+operator's desktop owner or saved logins. That initial worker stops at build-
+account logoff and starts after its next login; expose the availability limit.
+Qualify locked sessions and RDP disconnect separately from logoff and the next
+login after reboot. Prefer unattended service/task mode for headless workloads
 after account permissions, startup and cleanup are proven. Interactive tools
 must explicitly require a suitable session; a service is not GUI qualification.
 
@@ -76,8 +94,9 @@ Reuse the shared panel's job/artifact schema, authorization and backend actions,
 with native collectors and lifecycle adapters. The full Debian panel is not a
 porting target. Offer current host/capacity/tool readiness, bounded build status,
 logs and package downloads, runner registration/rules and outgoing notifications.
-Add start/cancel/retry/drain controls only after the same operations work through
-the authenticated controller interface. GitHub keeps workflow/log authority.
+Add start/cancel/retry/drain controls for local on-demand/webhook jobs only after
+the same operations work through the authenticated controller interface. Runner
+jobs show GitHub links; GitHub keeps workflow, cancellation and log authority.
 
 Use authenticated HTTPS with a private backend, native ACLs, CSRF protection,
 bounded forms/results and one-time token handoff. Policy edits share validators
@@ -89,7 +108,7 @@ separate from build success; reuse the [notification contract](../services/notif
 
 ## Delivery and qualification
 
-1. **Native proof:** select one small backend and SSH/controller transport;
+1. **Native proof:** qualify the shared Python/PowerShell backend and SSH transport;
    demonstrate protected status, typed build submission, version detection,
    packaging, Windows ACLs and process-tree cancellation without WSL.
 2. **First real workload:** use [Antistatic's project-owned Windows setup](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md)

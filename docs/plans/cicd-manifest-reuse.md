@@ -39,10 +39,29 @@ into a new workflow language. Keep scripts explicit and unprivileged.
 
 A proposed `setup ... --build-on BUILDER` selects a saved builder reference.
 The controller pins source, validates project inputs and builder capabilities,
-submits a bounded request, retrieves the verified artifact, then stages it on
-the target. The controller needs access to both machines; the builder needs no
-target key in this mode. Never forward the controller's SSH agent or credentials.
+reserves deployment intent on the target, submits the build, retrieves the
+verified artifact, then stages it on the target. The controller needs access
+to both machines; the builder needs no target key in this mode. Never forward
+the controller's SSH agent or credentials.
 Read-only source access may use a scoped builder credential or controller upload.
+
+Before the build, the target's typed admission helper validates application
+authorization and records the controller's idempotency key, source/input digest
+and requested target bindings. It returns an operation ID and per-application
+generation. A new target first receives the minimal protected helper and policy
+through authenticated setup bootstrap, without build tools or application
+activation. Preflight precedes this bootstrap; a build failure leaves existing
+applications intact, but does not roll back new-host bootstrap work. Build-only
+requests without deployment need no target reservation.
+
+Initially the controller uploads a clean snapshot of one resolved Git commit;
+dirty working-tree builds are outside the first slice. Hash the actual source
+snapshot and manifest as well as recording the commit. Disable checkout hooks,
+exclude local credentials/configuration, and supply only sanitized Git metadata
+needed by declared version commands. LFS objects and pinned submodules must be
+materialized and validated, or rejected as unsupported before build admission;
+never build pointer files or silently omit dependencies. Builder-side fetches
+can follow later under explicit source-access policy.
 
 Save the builder reference for later deploy/patch operations; resolve credentials
 locally rather than embedding them in target setup arguments. Distinguish this
@@ -51,6 +70,15 @@ existing build-on-target behavior. An unavailable selected builder fails without
 silently installing tools or building on the destination. Dry runs report source,
 builder, target and missing requirements without executing repository commands,
 installing tools, registering runners or starting builds.
+
+The reference belongs to the controller workspace and applies to all deployment
+repositories in that setup initially. Targets retain external-build mode and
+the installed artifact/descriptor, not controller credentials or a requirement
+to contact the builder. Target-only Admin refresh reconciles that installed
+release; it does not fetch a new revision or rebuild it. Missing retained inputs
+fail with controller guidance. Controller-driven setup/patch/deploy prepares new
+artifacts after admission and before target-side application setup. Artifact
+mode uses runtime declarations rather than source-based build-tool detection.
 
 Check source identity, host keys, protocol compatibility, OS/architecture and
 required tool versions before target mutation. Build and verify every requested
@@ -77,6 +105,18 @@ build work ends, rather than trusting a job-writable archive or live directory.
 Apply bounded extraction, path/type/permission checks and authenticated transfer
 on both ends. A digest identifies bytes; it does not authorize their source.
 
+Add an optional per-component `artifacts` list of repository-relative files or
+directories, preserving their relative layout. Static/Godot outputs and a lone
+service `binary` provide defaults; `exec` services require an explicit list for
+remote builds. Include assets and vendored runtime dependencies deliberately;
+do not copy the whole checkout or infer them from `exec`. Initially reject
+symlinks and special files, omit Git/control metadata, and impose configurable
+file/count/expanded-byte limits. Project packaging can produce a portable tree
+where dependency layouts otherwise use links or absolute build paths. Existing
+local version-1 manifests keep their source-tree behavior without new fields.
+Declare target runtimes separately from `build_runtimes`; requested packages
+must come from supported runtime policy, not arbitrary privileged install hooks.
+
 Retain successful artifacts independently of temporary workspaces and caches.
 Bound retention by age/count/bytes, pin active/retained rollback releases and
 pending transfers, and refuse admission when protected evidence fills storage.
@@ -100,6 +140,27 @@ or uncertain outcomes and preserve evidence; cancellation cannot undo completed
 deployment or external side effects. Serialize activation per application and
 target. Delayed older builds cannot replace a newer desired deployment; rollback
 is an explicit selection of a retained compatible release.
+
+Allocate a target-owned per-application generation when deployment is admitted,
+before the build, and compare it again under the activation lock. Wall clocks,
+commit ancestry and build-completion order do not establish deployment order.
+Activation carries the admitted operation/generation, source/input identity and
+artifact digest. Validate them against the protected reservation, then bind the
+digest durably before mutation; another digest for the same operation is an
+error. Superseded, cancelled or expired reservations cannot activate. Repeating
+admission or activation queries/reuses that operation, never allocates a new
+generation or rebuilds implicitly. Failed builds require an explicit new request
+to change desired intent; they do not revive an older reservation.
+
+Persist admission before acknowledging or starting a build. Bind each request
+ID to its authenticated owner, project and input digest; the same ID with
+different inputs is an error. Store queued/running/terminal state outside the
+SSH connection, with status, bounded logs, cancel and artifact retrieval by ID.
+Retain replay protection independently of ordinary log/artifact pruning; expired
+retry identities cannot create fresh work. A worker crash leaves uncertain work
+stopped for reconciliation, rather than automatically replaying build scripts.
+Before activation, cancellation preserves the live release; after mutation
+starts, finish or reconcile recovery before reporting cancellation complete.
 
 ## Capacity, credentials and maintenance
 
@@ -125,6 +186,10 @@ Draining stops admission and new local starts, exposes already assigned
 GitHub jobs, and leaves active jobs running unless explicitly cancelled. A
 panel restart or disconnected controller must not kill accepted jobs. Stage
 compatible protocol upgrades and reject mismatches before activation.
+Hold accepted local queued work during drain; fail assigned-but-waiting GitHub
+workers before workflow steps so they cannot start against changed tools or
+policy. Bound local queue length and wait time. After capacity acquisition,
+revalidate the current authorization policy immediately before execution.
 
 Existing target `env_file` bindings can support the first release. Integrate
 [secret references](deploy-secrets.md) incrementally; full secret-store and
@@ -162,6 +227,23 @@ editable deployment authority. Sensitive registration payloads use a private
 one-time channel, not durable job history. Privileged actions use narrow helpers
 or existing approvals without giving the panel/build identity general admin
 rights. Record actor, action, IDs and result without secret values.
+
+## First implementation boundary
+
+Begin with manifest-driven Debian Trixie x86-64 builds relayed by the controller,
+one supervised build slot and no automatic cache reuse. Qualify a static site
+and self-contained Go service on a separate target without build toolchains.
+Use the shared artifact and activation interfaces from the outset; leave Node/
+Python services, additional platforms and package-only build targets for their
+own runtime/packaging cases. Standard local deployment, including inferred Go
+and ready-to-serve static projects, must retain its existing behavior.
+
+The first implementation should lock the versioned request/artifact schemas
+with contract tests before wiring SSH or target setup. Require payload identity,
+explicit exports, platform/runtime compatibility, durable admission and recovery
+tests, plus controller-to-target replay tests. Round-trip saved settings through
+setup, patch, redeploy and target-only refresh; prove artifact mode installs no
+build tools and never falls back to compiling on the destination.
 
 ## Delivery order and acceptance
 

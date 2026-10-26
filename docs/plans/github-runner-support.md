@@ -54,12 +54,18 @@ job timeout and hold capacity through owned cleanup. Action downloads/setup may
 precede the hook; do not claim a global FIFO queue or zero resource use while
 waiting. Nested Basaltwater builds must not deadlock on a second slot. Test
 worker/guardian failure and surviving children before reporting slot release.
+Recheck current policy after acquiring capacity, immediately before workflow
+steps; authorization granted before a wait does not survive a policy change.
 
 Drain all installed entry points before setup, policy/toolchain replacement or
 reboot. Report assigned GitHub jobs waiting locally, active jobs and remaining
 admission honestly. Coordinate listener changes with GitHub assignment rather
 than describing a local drain as control of GitHub's remote queue. Keep job and
 runner execution independent of panel or notification availability.
+Fail assigned-but-waiting workers before their steps when draining, with a
+bounded local reason; active jobs finish normally. This local hook failure is
+not a claim that Basaltwater cancelled the workflow upstream. Qualify policy
+edits and drain while a job is waiting, not only before assignment.
 
 ## Panel and platform scope
 
@@ -73,7 +79,8 @@ Debian uses native services. The [Windows plan](windows-support.md) supplies
 native workers for software, game and dedicated-server builds without WSL.
 Both platforms share policy, artifact and capacity contracts, with separate
 permissions/process adapters. Windows owner-login proof is acceptable first;
-unattended headless startup needs additional qualification.
+unattended headless startup needs additional qualification. The login account
+is the dedicated build account, separate from the human operator.
 
 ## Acceptance
 
