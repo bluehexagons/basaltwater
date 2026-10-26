@@ -89,6 +89,24 @@ class BuildExecutionTests(unittest.TestCase):
                 self.assertEqual(args["pause"].call_count, 2)
                 stop.assert_called_once()
 
+    def test_failed_helper_stops_live_descendants_before_releasing_capacity(self):
+        for code, status in (("1", "1"), ("2", "9")):
+            with self.subTest(code=code, status=status):
+                fields = [observation(load="not-found", active="inactive", sub="dead"),
+                          observation(code=code, status=status),
+                          observation(active="inactive", sub="dead", code=code, status=status),
+                          observation(active="inactive", sub="dead", code=code, status=status)]
+                args = self.arguments()
+                with patch.object(execution, "_observation", side_effect=fields), \
+                        patch.object(execution, "_empty_cgroup", side_effect=[True, False, True]), \
+                        patch.object(execution, "_stop") as stop, \
+                        patch.object(execution, "run_command", return_value=Mock(returncode=0)):
+                    args["pause"].side_effect = lambda _: self.assertEqual(stop.call_count, 1)
+                    result = execution.run_systemd_build(build_request(), **args)
+                self.assertEqual(result, execution.BuildExecutionResult("failed", int(status), "command-failed"))
+                self.assertEqual(args["pause"].call_count, 2)
+                stop.assert_called_once_with(execution.unit_name("a" * 32))
+
     def test_unconfirmed_launch_probe_or_stop_never_returns_success(self):
         for failure in ("existing", "launch", "status", "stop"):
             with self.subTest(failure=failure):

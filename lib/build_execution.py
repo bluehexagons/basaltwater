@@ -167,6 +167,7 @@ def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, ho
     if launched.returncode != 0:
         raise RuntimeError("Build service launch is unconfirmed; retain worker ownership")
     stop_reason = ""
+    failed_exit_code = None
     while True:
         fields = _observation(unit)
         if fields["LoadState"] != "loaded":
@@ -176,6 +177,13 @@ def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, ho
                 stop_reason = "cancelled"
             elif clock() >= deadline:
                 stop_reason = "timeout"
+            elif fields["ExecMainCode"] != "0" and (
+                    fields["ExecMainCode"] != "1" or fields["ExecMainStatus"] != "0"):
+                try:
+                    failed_exit_code = int(fields["ExecMainStatus"])
+                except ValueError as exc:
+                    raise RuntimeError("Build service exit status is unavailable") from exc
+                stop_reason = "command-failed"
             if stop_reason:
                 _stop(unit)
         if _settled(fields, unit):
@@ -186,7 +194,7 @@ def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, ho
             # remain; _settled checked the recursive population first.
             if stop_reason:
                 return BuildExecutionResult("cancelled" if stop_reason == "cancelled" else "failed",
-                                            None, stop_reason)
+                                            failed_exit_code, stop_reason)
             try:
                 exit_code = int(fields["ExecMainStatus"])
             except ValueError as exc:
