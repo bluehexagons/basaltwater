@@ -17,6 +17,8 @@ The caller places the verified history bundle, workspace, private home and
 imports local history and checks the restored source before project commands.
 `/tmp` and `/var/tmp` are read-only inside the unit; `TMPDIR` selects `home/tmp`,
 so ordinary temporary files cannot bypass the scratch capacity limit.
+The managed `HOME` and `TMPDIR` values take precedence over component environment
+entries; project-specific build inputs cannot redirect these managed paths.
 
 The transient system service applies memory, swap, CPU, process-count and work
 time limits. A fixed `setpriv` command drops UID/GID, supplementary groups and

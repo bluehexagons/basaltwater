@@ -232,7 +232,8 @@ def execute_request(input_path: str, expected_digest: str, workspace: str, home:
         for command in component["commands"]:
             process = subprocess.Popen(
                 ["/bin/bash", "--noprofile", "--norc", "-c", command], cwd=workspace,
-                env={**base, **component["env"]}, stdin=subprocess.DEVNULL,
+                env={**base, **component["env"], "HOME": home,
+                     "TMPDIR": os.path.join(home, "tmp")}, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             assert process.stdout is not None

@@ -155,6 +155,7 @@ class BuildExecutionTests(unittest.TestCase):
             job = build_request()
             job["limits"]["log_bytes"] = 3
             job["components"][0]["commands"] = ["first", "must-not-run"]
+            job["components"][0]["env"] = {"TMPDIR": "/dev/shm", "HOME": "/other-home"}
             path.write_bytes(encode_document(job))
             output = io.BytesIO()
             process = Mock(stdout=io.BytesIO(b"more than three bytes"))
@@ -172,6 +173,7 @@ class BuildExecutionTests(unittest.TestCase):
                 self.assertEqual(spawn.call_args.args[0], ["/bin/bash", "--noprofile", "--norc", "-c", "first"])
                 environment = spawn.call_args.kwargs["env"]
                 self.assertEqual(environment["HOME"], temporary)
+                self.assertEqual(environment["TMPDIR"], str(Path(temporary) / "tmp"))
                 self.assertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
                 with self.assertRaisesRegex(ValueError, "changed"):
                     execution.execute_request(str(path), "f" * 64, temporary, temporary, "/work/history.bundle")
