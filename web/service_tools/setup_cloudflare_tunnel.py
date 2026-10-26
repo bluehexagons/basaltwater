@@ -25,11 +25,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..
 from lib.types import StrDict, JSONDict
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.machine_state import can_manage_firewall
+from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
 from lib.remote_utils import CommandTimeoutError, run as run_bounded_command
 from lib.validators import validate_host
 from lib.validation import validate_cloudflare_tunnel_name
 from lib.setup_prompts import setup_input
 from web.cloudflare_firewall import normalize_access_sources, reconcile_tunnel_firewall
+from web.cloudflared_runtime import refresh_cloudflared_service
 
 
 CONFIG_DIR = "/etc/cloudflared"
@@ -89,19 +91,18 @@ def check_root():
 
 
 def install_cloudflared():
-    """Install cloudflared from Cloudflare's signed APT repository."""
-    if shutil.which('cloudflared'):
-        print("✓ cloudflared already installed")
-        return
-
-    print("Installing cloudflared...")
+    """Reconcile the signed APT source and install or upgrade cloudflared."""
+    print("Installing or updating cloudflared...")
 
     # The old release download used a floating URL and wrote into the current
     # directory before invoking dpkg.  Use Cloudflare's signed repository so
     # APT verifies the package and no attacker-controlled working directory is
     # involved.
-    run_command(["apt-get", "update"])
-    run_command(["apt-get", "install", "-y", "ca-certificates", "curl"])
+    # Repair the signing key before refreshing indexes on existing hosts:
+    # an expired key must not prevent setup from installing its replacement.
+    if not shutil.which("curl") or not os.path.isfile("/etc/ssl/certs/ca-certificates.crt"):
+        run_command(["apt-get", "update", *APT_LOCK_OPTIONS, *APT_UPDATE_OPTIONS])
+        run_command(["apt-get", "install", "-y", *APT_LOCK_OPTIONS, "ca-certificates", "curl"])
     os.makedirs(os.path.dirname(CLOUDFLARE_APT_KEYRING), mode=0o755, exist_ok=True)
 
     file_descriptor, temporary_key = tempfile.mkstemp(
@@ -130,9 +131,9 @@ def install_cloudflared():
             os.unlink(temporary_key)
 
     write_text_atomic(CLOUDFLARE_APT_SOURCE, CLOUDFLARE_APT_SOURCE_CONTENT, mode=0o644)
-    run_command(["apt-get", "update"])
-    run_command(["apt-get", "install", "-y", "cloudflared"])
-    print("✓ cloudflared installed successfully")
+    run_command(["apt-get", "update", *APT_LOCK_OPTIONS, *APT_UPDATE_OPTIONS])
+    run_command(["apt-get", "install", "-y", *APT_LOCK_OPTIONS, "cloudflared"])
+    print("✓ cloudflared package is up to date")
 
 
 def authenticate_cloudflare():
@@ -554,6 +555,13 @@ def install_and_start_service(*, restart: bool = False) -> bool:
         _show_service_diagnostics()
         return False
     if not _ensure_service_running(restart=restart and not newly_installed):
+        return False
+    try:
+        if refresh_cloudflared_service():
+            print("✓ Restarted cloudflared to load the updated package")
+    except (OSError, TimeoutError, RuntimeError) as exc:
+        print(f"  ⚠ Could not activate the cloudflared package: {exc}")
+        _show_service_diagnostics()
         return False
 
     print("✓ Service started and enabled")

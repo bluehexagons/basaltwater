@@ -101,7 +101,8 @@ sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --access-source
 sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --clear-access-sources
 ```
 
-An unchanged ingress does not restart the tunnel for a firewall-only change.
+An unchanged ingress and package do not restart the tunnel for a firewall-only
+change.
 Owned stale direct-access rules are removed when narrowing sources or returning
 to tunnel-only mode. Antistatic and manifest UDP allowances remain independent.
 Setup inspects the remaining active UFW rules before reporting success. An
@@ -122,7 +123,8 @@ manual recovery or configuration changes on the host:
 sudo setup-cloudflare-tunnel
 ```
 
-The helper installs `cloudflared` from Cloudflare's signed APT repository when needed, runs Cloudflare authentication,
+The helper installs or upgrades `cloudflared` from Cloudflare's signed APT
+repository on every run, runs Cloudflare authentication when creating a tunnel,
 creates or reuses a tunnel, discovers hostnames from enabled Nginx sites, writes
 `/etc/cloudflared/config.yml`, and can install and enable the `cloudflared`
 systemd service. After verifying the service is active, the helper applies the
@@ -139,7 +141,8 @@ failure when the service cannot be started instead of claiming success.
 Changed ingress restarts cloudflared before recording the routes as applied;
 failed restarts leave the prior route state and a `pending_activation` flag so
 the next refresh retries even when only repairing an unchanged route set.
-An unchanged, valid configuration leaves the running daemon alone.
+An unchanged, valid configuration leaves the running daemon alone when it is
+already using the installed executable.
 Interactive updates reuse the installed service. A restart briefly interrupts
 existing tunnel connections; use replicas if uninterrupted edge access is needed.
 New installations keep the connection established by `cloudflared service
@@ -187,6 +190,54 @@ configured in the Cloudflare account. The generated ingress uses
 `http://localhost:80`; keep the catch-all `http_status:404` rule last. See the
 generated `/etc/cloudflared/README.md` for manual configuration steps and
 [Cloudflare's DNS instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/dns/).
+
+## Package updates
+
+Every setup, patch, or helper run that refreshes a saved tunnel also refreshes
+Cloudflare's signing key and stable APT source, refreshes package indexes, and
+installs the current APT candidate. This migrates older standalone `.deb`
+installations that lacked a repository. An installed `cloudflared` command no
+longer skips the package check. Index download or signature failures stop setup
+instead of accepting stale indexes as a successful update.
+This package check runs even when general setup skips its already-completed
+system package upgrade; `--refresh-packages` is not required for tunnel updates.
+
+On security-enabled hosts, `auto-update-apt.timer` also upgrades packages from
+this repository daily at 06:00, with the normal randomized delay. Cloudflare's
+[package installations require package-manager updates](https://developers.cloudflare.com/tunnel/guides/update-cloudflared/);
+the client's built-in updater does not maintain these installations.
+
+Both tunnel setup and successful scheduled APT upgrades compare the running
+service's executable with `/usr/bin/cloudflared`. A daemon still using the old
+executable is restarted and checked for activation, even when ingress is
+unchanged. A current daemon is left running. Scheduled updates leave an
+inactive or missing service alone. A failed restart fails the maintenance job
+and uses its normal failure notification. Later runs retry an older executable
+that is still running, even without another package upgrade. If a failed
+restart leaves the service inactive, inspect its journal and start it again
+with `sudo systemctl start cloudflared`. A service configured to run another
+executable must have its `ExecStart` path corrected before activation can pass.
+
+Updating the controller checkout alone does not update a server. Rerun its
+saved setup or patch to stage the current helper and scheduled updater:
+
+```bash
+basaltw patch server.example deploy --cloudflare
+```
+
+Then inspect package availability, the daemon's startup version, and the timer:
+
+```bash
+cloudflared --version
+apt-cache policy cloudflared
+sudo journalctl -u cloudflared -n 100 --no-pager
+sudo systemctl status auto-update-apt.timer
+sudo journalctl -u auto-update-apt.service -n 100 --no-pager
+```
+
+`cloudflared --version` reports the executable on disk; an older startup
+version in the current daemon's journal can indicate that it still needs a
+restart. Package activation briefly interrupts existing tunnel connections.
 
 ## Webhooks and direct services
 

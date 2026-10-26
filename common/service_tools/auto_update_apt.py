@@ -40,6 +40,7 @@ from lib.proxmox_preflight import (
     check_proxmox_upgrade_candidate,
     is_proxmox_host,
 )
+from web.cloudflared_runtime import refresh_cloudflared_service
 
 
 # Initialize centralized logger
@@ -160,6 +161,8 @@ def _update_packages(notification_configs) -> int:
         check_proxmox_installation()
         check_proxmox_upgrade_candidate(require_current=True)
         check_proxmox_update_safety(allow_inactive_storage=True)
+    if refresh_cloudflared_service():
+        log_event(logger, "Restarted cloudflared to load the updated package")
     log_event(logger, "APT package update completed successfully")
     return 0
 
