@@ -87,6 +87,7 @@ exposes `journal_path` and concrete same-identity inspection guidance.
 ## Ordering and waiting
 
 1. Validate every plan, projection, snapshot hash, identity and wire bound locally.
+   Check aggregate retained workspace capacity and headroom before remote probes.
 2. Check every target application grant and builder project/platform/resource/tool
    capability. No target reservation or builder submission precedes these checks.
 3. Persist all recovery identities, then reserve **all** target intents before
@@ -134,6 +135,28 @@ trusted sticky parents such as `/tmp` are supported. Validation occurs before
 the first write or network call. Snapshot files must be single-link private
 regular files owned by the effective UID under a similarly trusted `0700`
 parent. Preserve source snapshots separately from the output workspace.
+
+Before any target reservation or builder submission, the controller checks
+available filesystem bytes through the validated workspace directory descriptor
+using `fstatvfs` and `f_bavail` (excluding privileged reserved blocks). It sums
+**all** request ceilings: twice `artifact_bytes` per plan for the retained bundle
+payload and extracted verification tree, plus the maximum descriptor and 1024
+framing bytes for each bundle. Filesystem allocation/metadata allowance adds
+one allocation unit plus 4 KiB for every permitted artifact entry, bundle and
+extraction root. The unit is the larger of 4 KiB, filesystem fragment size and
+block size. Another 4 MiB plus eight allocation units covers journal, receipt,
+lock and atomic-write overhead. Available capacity must also leave the greater
+of **256 MiB or 10%** of that aggregate budget as headroom (rounded upward).
+Thus a 2 GiB export ceiling cannot be admitted with only 3 GiB available.
+
+Insufficient or unavailable capacity refuses delivery before remote calls or
+intent persistence; only the private stable lock may have been created. Request
+ceilings deliberately govern admission even when actual outputs might be small.
+This check does not preallocate files or reserve filesystem capacity against
+other processes. Concurrent consumption, quotas, inode exhaustion and unusual
+filesystem metadata costs can still cause later I/O failures; existing durable
+guards and same-ID recovery semantics apply unchanged. No retained evidence is
+removed to make room.
 
 The compositor uses `OperationStateStore` ownership and `delivery.json` as a
 fixed unfinished guard. Before each remote mutation it syncs bounded context
