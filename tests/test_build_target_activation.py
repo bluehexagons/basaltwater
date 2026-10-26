@@ -7,9 +7,10 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import uuid
 
 from lib.build_manifest import DEBIAN_PLATFORM, validate_manifest_request
@@ -19,6 +20,10 @@ from lib.build_protocol import DEFAULT_LIMITS, encode_document
 from lib.build_target_activation import TargetReleaseActivator, parse_expected_releases
 from lib.build_target_artifacts import BuildTargetArtifactStore
 from lib.build_target_policy import authorize_target_deployment
+from lib.deployment import DeploymentOrchestrator
+from lib.nginx_config import generate_merged_nginx_config
+from lib.systemd_service import generate_managed_service
+from tests.test_manifest_deploy import _prebuilt_elf64
 
 
 class TargetReleaseActivationTests(unittest.TestCase):
@@ -41,13 +46,14 @@ class TargetReleaseActivationTests(unittest.TestCase):
             yield str(self.bundle_path)
 
         self.activator = TargetReleaseActivator(str(self.state), str(self.verify), open_artifact=open_artifact)
+        self.real_deploy_prebuilt = DeploymentOrchestrator.deploy_prebuilt
         self.deploy = self.enterContext(patch(
             "lib.build_target_activation.DeploymentOrchestrator.deploy_prebuilt",
             autospec=True, side_effect=self.deploy_prebuilt,
         ))
         self.publish = self.enterContext(patch("lib.build_target_activation.create_nginx_sites_for_groups"))
 
-    def inputs(self, app="shop", *, route="/", domain="shop.example", service=False):
+    def inputs(self, app="shop", *, route="/", domain="shop.example", service=False, with_api=False):
         name = "api" if service else "site"
         export = "bin/api" if service else "dist"
         component = {"name": name, "type": "service" if service else "static",
@@ -71,6 +77,18 @@ class TargetReleaseActivationTests(unittest.TestCase):
             "limits": {key: DEFAULT_LIMITS[key] for key in ("artifact_bytes", "artifact_entries")},
             "components": {name: {key: target_component[key] for key in ("type", "domain", "path")}},
         }}}
+        if with_api:
+            request["components"].append({
+                "name": "api", "type": "service", "artifacts": ["bin/api"],
+                "commands": ["CGO_ENABLED=0 go build -o bin/api ./cmd/api"], "env": {},
+            })
+            projection["components"].append({
+                "name": "api", "type": "service", "artifacts": ["bin/api"],
+                "domain": domain, "path": "/api", "binary": "bin/api", "health": "/health",
+            })
+            policy["applications"][app]["components"]["api"] = {
+                "type": "service", "domain": domain, "path": "/api",
+            }
         return authorize_target_deployment(policy, principal="controller", application=app,
                                            request=request, deployment=projection)["bindings"], request
 
@@ -146,52 +164,155 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.assertIsNone(component.working_dir)
         self.assertEqual(component.health, "/health")
 
-    def test_real_staging_and_admission_compose_without_reentering_the_admission_lock(self):
-        bindings, request = self.inputs()
-        request["components"][0]["commands"] = []
-        workspace = self.root / "workspace"
-        (workspace / "dist").mkdir(parents=True)
-        (workspace / "dist" / "index.html").write_text("<p>verified export</p>")
-        bundle = self.root / "export.bundle"
-        artifact = create_artifact(str(workspace), request, str(bundle))
-        admission_root = self.root / "admission"
-        admission_root.mkdir(mode=0o700)
-        admissions = DeploymentAdmissionStore(admission_root / "state.json")
-        binding_digest = hashlib.sha256(encode_document(bindings)).hexdigest()
-        reservation = admissions.reserve("shop", request, owner="controller",
-                                         idempotency_key=uuid.uuid4().hex,
-                                         bindings_sha256=binding_digest)
+    def test_combined_spa_api_admission_activation_and_retained_shared_domain_reconcile(self):
+        # Exercise real release verification/activation, without host services,
+        # compilers, source fetches or sockets. The ELF fixture models the
+        # self-contained Go output accepted by the runtime validator.
+        self.deploy.side_effect = self.real_deploy_prebuilt
+        units = self.root / "units"
+        units.mkdir(mode=0o700)
+        self.enterContext(patch("lib.deployment.SYSTEMD_UNIT_DIR", str(units)))
+        self.enterContext(patch.object(DeploymentOrchestrator, "_get_used_ports", return_value=set()))
+        find_port = self.enterContext(patch.object(
+            DeploymentOrchestrator, "_find_free_port", return_value=8123,
+        ))
+        self.enterContext(patch("lib.unit_transaction.run", return_value=MagicMock(
+            returncode=0, stdout="LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=enabled",
+        )))
+
+        def run(command, **_kwargs):
+            self.assertFalse(any(token in command for token in ("git ", "curl ", "wget ", "go build")))
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        self.enterContext(patch("lib.deployment.run", side_effect=run))
+        for method in ("_ensure_build_user", "_prepare_build_toolchain", "_run_component_build"):
+            self.enterContext(patch.object(DeploymentOrchestrator, method, side_effect=AssertionError(method)))
+
+        def install_unit(*args, **kwargs):
+            (units / (args[0] + ".service")).write_text(generate_managed_service(*args, **kwargs))
+
+        service = self.enterContext(patch("lib.deployment.create_managed_service", side_effect=install_unit))
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        health = self.enterContext(patch("lib.deployment.open_loopback", return_value=response))
+        admissions = self.admission_store()
         artifact_root = self.root / "artifacts"
         artifact_root.mkdir(mode=0o700)
         artifacts = BuildTargetArtifactStore(artifact_root)
-        with bundle.open("rb") as stream:
-            artifacts.stage(reservation["operation_id"], reservation["generation"], request,
-                            application="shop", owner="controller", bindings_sha256=binding_digest,
-                            artifact_sha256=artifact["sha256"], artifact_size=artifact["size"],
-                            source=stream, admissions=admissions)
-        self.bundle_path = artifact_root / (reservation["operation_id"] + ".bundle")
         self.activator = TargetReleaseActivator(str(self.state), str(self.verify),
                                                open_artifact=artifacts.open_verified_bundle)
 
-        def activate():
-            return self.activator(bindings=bindings, request=request,
-                                  operation_id=reservation["operation_id"], generation=1,
-                                  artifact_sha256=artifact["sha256"], principal="controller")
+        def stage_and_activate(bindings, request, *, api=False):
+            app = bindings["application"]
+            request["components"][0].update(commands=[], env={})
+            workspace = self.root / (app + "-workspace")
+            (workspace / "dist").mkdir(parents=True, mode=0o700)
+            (workspace / "dist" / "index.html").write_text(app + " frontend")
+            if api:
+                (workspace / "bin").mkdir()
+                (workspace / "bin" / "api").write_bytes(_prebuilt_elf64())
+                (workspace / "bin" / "api").chmod(0o755)
+            bundle = self.root / (app + ".bundle")
+            artifact = create_artifact(str(workspace), request, str(bundle))
+            digest = hashlib.sha256(encode_document(bindings)).hexdigest()
+            reservation = admissions.reserve(app, request, owner="controller",
+                                             idempotency_key=uuid.uuid4().hex, bindings_sha256=digest)
+            with bundle.open("rb") as stream:
+                staged = artifacts.stage(
+                    reservation["operation_id"], reservation["generation"], request,
+                    application=app, owner="controller", bindings_sha256=digest,
+                    artifact_sha256=artifact["sha256"], artifact_size=artifact["size"],
+                    source=stream, admissions=admissions,
+                )
 
-        result = admissions.activate(reservation["operation_id"], 1, request, artifact["sha256"],
-                                     owner="controller", bindings_sha256=binding_digest, action=activate)
-        replay = admissions.activate(reservation["operation_id"], 1, request, artifact["sha256"],
-                                     owner="controller", bindings_sha256=binding_digest, action=activate)
-        self.assertEqual(result, replay)
+            def activate():
+                return self.activator(bindings=bindings, request=request,
+                                      operation_id=reservation["operation_id"],
+                                      generation=reservation["generation"],
+                                      artifact_sha256=artifact["sha256"], principal="controller")
+
+            result = admissions.activate(
+                reservation["operation_id"], reservation["generation"], request, artifact["sha256"],
+                owner="controller", bindings_sha256=digest, action=activate,
+            )
+            replay = admissions.activate(
+                reservation["operation_id"], reservation["generation"], request, artifact["sha256"],
+                owner="controller", bindings_sha256=digest, action=activate,
+            )
+            self.assertEqual(result, replay)
+            self.assertEqual(staged["request_id"], request["request_id"])
+            self.assertEqual(staged["generation"], result["generation"])
+            self.assertEqual(staged["artifact_sha256"], result["artifact_sha256"])
+            shutil.rmtree(workspace)
+            bundle.unlink()
+            return result
+
+        neighbor, neighbor_request = self.inputs("neighbor", route="/neighbor")
+        neighbor_result = stage_and_activate(neighbor, neighbor_request)
+        neighbor_record = json.loads((self.state / "releases.json").read_text())["applications"]["neighbor"]
+        neighbor_bytes = (self.apps / "neighbor" / "dist" / "index.html").read_bytes()
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        bindings, request = self.inputs(with_api=True)
+        with patch.object(admissions, "reserve", wraps=admissions.reserve) as reserve:
+            result = stage_and_activate(bindings, request, api=True)
+        reserve.assert_called_once()
+        self.assertEqual(result["generation"], 1)
         self.assertEqual(result["state"], "completed")
         self.assertEqual(self.deploy.call_count, 1)
         self.assertEqual(self.publish.call_count, 1)
-        self.assertEqual(self.bundle_path.stat().st_mode & 0o777, 0o400)
-        self.assertEqual(self.manifests[0].components[0].build, [])
-        refreshed = self.activator.reconcile_installed()
-        self.assertEqual(refreshed[0]["operation_id"], reservation["operation_id"])
-        self.assertEqual(self.manifests[-1].components[0].build, [])
+        self.assertEqual(len(list(artifact_root.glob("*.bundle"))), 2)
+        staged_bundle = artifact_root / (result["operation_id"] + ".bundle")
+        self.assertEqual(staged_bundle.stat().st_mode & 0o777, 0o400)
+        self.assertEqual((self.apps / "shop" / "dist" / "index.html").read_text(), "shop frontend")
+        self.assertEqual((self.apps / "shop" / "bin" / "api").read_bytes(), _prebuilt_elf64())
+        self.assertTrue((self.apps / "shop" / "bin" / "api").stat().st_mode & 0o111)
+        service.assert_called_once()
+        self.assertEqual(service.call_args.args[:5], (
+            "app-shop-api", str(self.apps / "shop" / "bin" / "api"), str(self.apps / "shop"),
+            "app-shop-api", "app-shop-api",
+        ))
+        self.assertEqual(service.call_args.kwargs["runtime_env"], {"PORT": "8123", "HOST": "127.0.0.1"})
+        self.assertEqual(health.call_args.args[0].full_url, "http://127.0.0.1:8123/health")
+        groups = self.publish.call_args.args[0]
+        self.assertEqual(set(groups), {"shop.example"})
+        routes = {item["path"]: item for item in groups["shop.example"]}
+        self.assertEqual(set(routes), {"/", "/api", "/neighbor"})
+        self.assertEqual(routes["/neighbor"], neighbor_record["deployments"][0])
+        self.assertTrue(routes["/"]["spa"])
+        self.assertTrue(routes["/api"]["preserve_path"])
+        self.assertEqual(self.publish.call_args.kwargs["managed_domains"], {"shop.example"})
+        rendered = generate_merged_nginx_config("shop.example", groups["shop.example"], enable_https_redirect=False)
+        self.assertIn("try_files $uri $uri.html $uri/ /index.html;", rendered)
+        self.assertIn("location /api/ {", rendered)
+        self.assertIn("proxy_pass http://127.0.0.1:8123;", rendered)
+        self.assertIn("location /neighbor/ {", rendered)
+        before = (self.state / "releases.json").read_bytes()
+        state = json.loads(before)["applications"]
+        self.assertEqual(set(state), {"shop", "neighbor"})
+        self.assertEqual(state["neighbor"], neighbor_record)
+        self.assertEqual(state["shop"]["request"], request)
+        self.assertEqual(state["shop"]["operation_id"], result["operation_id"])
+        self.assertEqual(len(state["shop"]["deployments"]), 2)
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        original_unit = (units / "app-shop-api.service").read_bytes()
+        with patch.object(admissions, "reserve") as reserve, patch.object(admissions, "activate") as activate:
+            refreshed = self.activator.reconcile_installed(expected_releases=[self.identity(result)], admissions=admissions)
+        reserve.assert_not_called()
+        activate.assert_not_called()
+        self.assertEqual({item["application"]: self.identity(item) for item in refreshed},
+                         {item["application"]: self.identity(item) for item in (result, neighbor_result)})
+        self.assertTrue(all(item["state"] == "reconciled" for item in refreshed))
+        self.assertEqual((self.state / "releases.json").read_bytes(), before)
+        self.assertEqual((self.apps / "neighbor" / "dist" / "index.html").read_bytes(), neighbor_bytes)
+        self.assertEqual((self.apps / "shop" / "dist" / "index.html").read_text(), "shop frontend")
+        self.assertEqual((self.apps / "shop" / "bin" / "api").read_bytes(), _prebuilt_elf64())
+        self.assertEqual((units / "app-shop-api.service").read_bytes(), original_unit)
+        find_port.assert_called_once()
         self.assertEqual(self.deploy.call_count, 2)
+        self.publish.assert_called_once_with(groups, managed_domains={"shop.example"})
+        self.assertFalse((self.state / "activation.json").exists())
 
     def test_second_application_preserves_shared_domain_route_group(self):
         first, request = self.inputs()

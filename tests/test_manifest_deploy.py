@@ -1073,21 +1073,41 @@ class TestDeployManifest(unittest.TestCase):
     @patch('lib.deployment.run')
     def test_prebuilt_health_failure_restores_previous_release_and_unit(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-        request, bundle_path, artifact = self._package_prebuilt()
+        site, api = self.manifest.components
+        site.build = []
+        site.spa = True
+        api.build = ["CGO_ENABLED=0 go build -o server/app ./server"]
+        api.domain = "example.com"
+        api.path = "/api"
+        api.env_file = None
+        api.runtime_env = {"PORT": "{{port}}", "HOST": "127.0.0.1"}
+        request = self._prebuilt_request()
+        for component, inputs in zip(self.manifest.components, request["components"]):
+            inputs["commands"] = list(component.build)
+        request, bundle_path, artifact = self._package_prebuilt(request)
         active = os.path.join(self.base_dir, "example_com")
-        os.makedirs(active)
-        previous_release = os.path.join(active, "previous.txt")
-        with open(previous_release, "w", encoding="utf-8") as handle:
-            handle.write("still serving")
+        previous_files = {
+            os.path.join(active, "dist", "index.html"): b"previous frontend",
+            os.path.join(active, "server", "app"): _prebuilt_elf64() + b"previous API",
+        }
+        neighbor_root = os.path.join(self.base_dir, "neighbor")
+        neighbor_file = os.path.join(neighbor_root, "dist", "index.html")
+        previous_files[neighbor_file] = b"retained neighbor"
+        for filename, contents in previous_files.items():
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            with open(filename, "wb") as handle:
+                handle.write(contents)
+        os.chmod(os.path.join(active, "server", "app"), 0o755)
 
         unit_name = "app-example_com-api.service"
         unit_path = os.path.join(self.base_dir, "units", unit_name)
         old_content = generate_managed_service(
-            unit_name.removesuffix(".service"), "/bin/true", active,
+            unit_name.removesuffix(".service"), os.path.join(active, "server", "app"), active,
             web_user="app-example_com-api", web_group="app-example_com-api",
             description="basaltwater.json service: api",
-            writable_paths=[self.orch._component_data_dir(active, self.manifest.components[1])],
-        )
+            runtime_env={"PORT": "8090", "HOST": "127.0.0.1"},
+            writable_paths=[self.orch._component_data_dir(active, api)],
+        ) + "# previous unit\n"
         with open(unit_path, "w", encoding="utf-8") as handle:
             handle.write(old_content)
         os.chmod(unit_path, 0o640)
@@ -1108,31 +1128,59 @@ class TestDeployManifest(unittest.TestCase):
             },
         }
 
-        def write_rejected_unit(*_args, **_kwargs):
+        def write_rejected_unit(*args, **kwargs):
             with open(unit_path, "w", encoding="utf-8") as handle:
-                handle.write(old_content.replace("ExecStart=/bin/true", "ExecStart=/bin/false"))
+                handle.write(generate_managed_service(*args, **kwargs))
             os.chmod(unit_path, 0o644)
+
+        def reject_candidate(component):
+            self.assertEqual((component.name, component.path, component.health), ("api", "/api", "/health"))
+            # Prove the candidate reached health verification after replacing
+            # both exports, while the neighbor kept serving its old release.
+            for relative in (os.path.join("dist", "index.html"), os.path.join("server", "app")):
+                with open(os.path.join(active, relative), "rb") as deployed, open(
+                    os.path.join(self.source, relative), "rb",
+                ) as candidate:
+                    self.assertEqual(deployed.read(), candidate.read())
+            with open(neighbor_file, "rb") as handle:
+                self.assertEqual(handle.read(), previous_files[neighbor_file])
+            raise RuntimeError("health check failed")
 
         active_state = {
             "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled",
         }
         with patch.object(self.orch, "_app_unit_snapshots", return_value=unit_snapshots), patch.object(
             self.orch, "_stop_app_unit", return_value=True,
+        ), patch.object(
+            self.orch, "_get_used_ports", return_value=set(),
         ), patch(
             "lib.deployment.inspect_unit_state", return_value=active_state,
         ), patch(
             "lib.deployment.create_managed_service", side_effect=write_rejected_unit,
         ), patch.object(
-            self.orch, "_poll_health", side_effect=RuntimeError("health check failed"),
-        ):
+            self.orch, "_poll_health", side_effect=reject_candidate,
+        ) as health, patch.object(
+            self.orch, "_run_component_build", side_effect=AssertionError("target build ran"),
+        ), patch("lib.deployment.save_deployment_metadata") as metadata:
             with self.assertRaisesRegex(RuntimeError, "health check failed"):
                 self._deploy_prebuilt(request, bundle_path, artifact["sha256"])
 
-        self.assertTrue(os.path.isfile(previous_release))
+        health.assert_called_once()
+        metadata.assert_not_called()
+        for filename, contents in previous_files.items():
+            with self.subTest(filename=filename), open(filename, "rb") as handle:
+                self.assertEqual(handle.read(), contents)
+        self.assertTrue(os.access(os.path.join(active, "server", "app"), os.X_OK))
         with open(unit_path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), old_content)
         self.assertEqual(os.stat(unit_path).st_mode & 0o777, 0o640)
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        self.assertIn("systemctl enable app-example_com-api.service", commands)
+        self.assertIn("systemctl restart app-example_com-api.service", commands)
+        self.assertFalse(any("neighbor" in command for command in commands))
         self.assertFalse(os.path.exists(self._operation_marker_path()))
+        with open(self._operation_marker_path() + ".last.json", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["outcome"], "rolled_back")
 
     @patch.object(DeploymentOrchestrator, '_poll_health')
     @patch('lib.deployment.create_managed_service')
