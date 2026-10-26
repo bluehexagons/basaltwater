@@ -142,6 +142,57 @@ class BuildExecutionTests(unittest.TestCase):
                 self.assertEqual(args["pause"].call_count, 2)
                 stop.assert_called_once_with(execution.unit_name("a" * 32))
 
+    def test_missing_unit_after_confirmed_stop_waits_for_cgroup_and_returns_reason(self):
+        missing = observation(load="not-found", active="inactive", sub="dead")
+        for reason in ("cancelled", "timeout", "command-failed"):
+            with self.subTest(reason=reason):
+                fields = [missing, observation(), missing]
+                populations = [True, True]
+                args = self.arguments()
+                if reason == "cancelled":
+                    args["cancelled"] = Mock(side_effect=[False, True])
+                    fields.append(missing)
+                    populations = [True, False, True]
+                elif reason == "timeout":
+                    args["clock"] = Mock(side_effect=[0.0, 3601.0])
+                else:
+                    fields[1] = observation(code="2", status="9")
+                with patch.object(execution, "_observation", side_effect=fields), \
+                        patch.object(execution, "_empty_cgroup", side_effect=populations) as empty, \
+                        patch.object(execution, "_stop") as stop, \
+                        patch.object(execution, "run_command", return_value=Mock(returncode=0)):
+                    result = execution.run_systemd_build(build_request(), **args)
+
+                expected_exit = 9 if reason == "command-failed" else None
+                self.assertEqual(result, execution.BuildExecutionResult(
+                    "cancelled" if reason == "cancelled" else "failed", expected_exit, reason))
+                stop.assert_called_once_with(execution.unit_name("a" * 32))
+                self.assertEqual(empty.call_count, len(populations))
+                self.assertEqual(args["pause"].call_count, 2 if reason == "cancelled" else 1)
+
+    def test_missing_unit_after_stop_with_cgroup_error_is_unconfirmed(self):
+        missing = observation(load="not-found", active="inactive", sub="dead")
+        args = self.arguments()
+        args["cancelled"] = Mock(side_effect=[False, True])
+        with patch.object(execution, "_observation", side_effect=[missing, observation(), missing]), \
+                patch.object(execution, "_empty_cgroup",
+                             side_effect=[True, OSError("cgroup EIO")]), \
+                patch.object(execution, "_stop") as stop, \
+                patch.object(execution, "run_command", return_value=Mock(returncode=0)):
+            with self.assertRaisesRegex(OSError, "cgroup EIO"):
+                execution.run_systemd_build(build_request(), **args)
+        stop.assert_called_once_with(execution.unit_name("a" * 32))
+
+    def test_service_disappearance_before_stop_remains_unconfirmed(self):
+        missing = observation(load="not-found", active="inactive", sub="dead")
+        with patch.object(execution, "_observation", side_effect=[missing, missing]), \
+                patch.object(execution, "_empty_cgroup", return_value=True), \
+                patch.object(execution, "_stop") as stop, \
+                patch.object(execution, "run_command", return_value=Mock(returncode=0)):
+            with self.assertRaisesRegex(RuntimeError, "disappeared"):
+                execution.run_systemd_build(build_request(), **self.arguments())
+        stop.assert_not_called()
+
     def test_unconfirmed_launch_probe_or_stop_never_returns_success(self):
         for failure in ("existing", "launch", "status", "stop"):
             with self.subTest(failure=failure):
@@ -297,6 +348,11 @@ class BuildExecutionTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(OSError, "EIO"):
                         execution._empty_cgroup(unit)
+        with patch("builtins.open", return_value=io.BytesIO(b"cpu memory pids\n")), \
+                patch.object(execution, "directory_fd", return_value=nullcontext(11)), \
+                patch.object(execution.os, "open", side_effect=FileNotFoundError("cgroup.events")):
+            with self.assertRaisesRegex(RuntimeError, "cgroup status is unavailable"):
+                execution._empty_cgroup(unit)
         for raw, expected in ((b"populated 0\nfrozen 0\n", True),
                               (b"populated 1\nfrozen 0\n", False), (b"unavailable\n", None)):
             with self.subTest(raw=raw), \
