@@ -4,11 +4,11 @@ import errno
 import hashlib
 import json
 import os
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from lib.build_admission import DeploymentAdmissionStore
 from lib.build_manifest import DEBIAN_PLATFORM
@@ -517,6 +517,19 @@ class BuildTargetServiceTests(unittest.TestCase):
         self.activate_release.assert_not_called()
         self.assertEqual(self.admissions.status(record["operation_id"], owner="alice@example")["state"],
                          "uncertain")
+
+    def test_activation_console_diagnostics_do_not_enter_the_protocol_stream(self) -> None:
+        record = self.reserve()
+        self.activate_release.side_effect = lambda **_fields: print("Activating /srv/private/release")
+        diagnostics = StringIO()
+        with patch("sys.stderr", diagnostics):
+            response, _payload, wire = self.exchange(header(
+                "activate", operation_id=record["operation_id"], generation=record["generation"],
+                request=build_request(), deployment=deployment(), artifact_sha256="f" * 64,
+            ))
+        self.assertTrue(response["ok"])
+        self.assertNotIn(b"/srv/private", wire)
+        self.assertEqual(diagnostics.getvalue(), "Activating /srv/private/release\n")
 
     def test_os_permission_failures_are_unavailable_and_callback_details_never_escape(self) -> None:
         self.load_policy.side_effect = PermissionError(errno.EACCES, "private policy path")

@@ -9,8 +9,10 @@ shell, build, or enable any setup or command-line path.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import redirect_stdout
 import math
 import re
+import sys
 from typing import Any, BinaryIO
 
 from lib.build_admission import (
@@ -290,7 +292,10 @@ class BuildTargetService:
             owner = _safe_principal(principal)
             if action != "stage":
                 _require_eof(input_stream)
-            result = self._dispatch(action, fields, owner=owner, input_stream=input_stream)
+            # Existing deployment helpers print operational diagnostics. Keep
+            # those separate from the explicitly supplied binary protocol stream.
+            with redirect_stdout(sys.stderr):
+                result = self._dispatch(action, fields, owner=owner, input_stream=input_stream)
             response = _fixed_response(result=result)
         except Exception as error:
             response = _fixed_response(error=_error_code(error))
