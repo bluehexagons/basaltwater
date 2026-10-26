@@ -26,7 +26,8 @@ def git_blob_oid(content: bytes) -> str:
 
 
 class FakeGit:
-    def __init__(self, repository: Path, *, entries=None, dirty: bytes = b"", shallow: bool = False,
+    def __init__(self, repository: Path, *, entries=None, untracked: bytes = b"",
+                 ignored_untracked: bytes = b"", shallow: bool = False,
                  tags: bytes = b"cccccccccccccccccccccccccccccccccccccccc refs/tags/v1.2.3\n",
                  move_tag_during_bundle: bool = False, move_head_during_bundle: bool = False,
                  bundle_head_override: str | None = None,
@@ -34,7 +35,8 @@ class FakeGit:
         self.repository = repository
         self.revision = "a" * 40
         self.head_revision = self.revision
-        self.dirty = dirty
+        self.untracked = untracked
+        self.ignored_untracked = ignored_untracked
         self.shallow = shallow
         self.tags = tags
         self.move_tag_during_bundle = move_tag_during_bundle
@@ -103,9 +105,13 @@ class FakeGit:
                 else:
                     result = self.head_revision.encode("ascii") + b"\n"
         elif subcommand == "status":
-            result = self.dirty
+            raise AssertionError("Snapshot preparation must not invoke Git status")
         elif subcommand == "ls-files":
-            if "--stage" in command:
+            if "--others" in command:
+                result = self.untracked
+                if "--exclude-standard" not in command:
+                    result += self.ignored_untracked
+            elif "--stage" in command:
                 records = []
                 for path, (mode, _kind, object_id) in sorted(self.object_by_path.items()):
                     if self.staged and path == "src/main.py":
@@ -357,7 +363,13 @@ class BuildSourceTest(unittest.TestCase):
             self.git.alternates_content,
             os.fsencode(self.repository / ".git/objects") + b"\n",
         )
-        env = next(call[1]["env"] for call in self.git.calls if "status" in call[0])
+        untracked_command = next(
+            call for call in self.git.calls if "--others" in call[0]
+        )
+        self.assertIn("--exclude-standard", untracked_command[0])
+        self.assertIn("-z", untracked_command[0])
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        env = untracked_command[1]["env"]
         self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
         self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
         self.assertEqual(env["GIT_NO_LAZY_FETCH"], "1")
@@ -365,13 +377,11 @@ class BuildSourceTest(unittest.TestCase):
 
     def test_clean_crlf_text_checkout_matches_its_normalized_blob(self):
         canonical = self.prepare_crlf_checkout()
-        # Git may report a stat-cache false positive for a converted path even
-        # after its bytes normalize to the committed blob.
-        self.git.dirty = b" M src/settings.txt\0"
         self.source = self.create()
         checkout, _history = self.unpack()
         self.assertEqual((Path(checkout) / "src/settings.txt").read_bytes(), canonical)
         self.assertIn("src/settings.txt", self.git.normalization_paths)
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
 
     def test_same_size_crlf_text_edit_is_rejected_after_normalization(self):
         self.prepare_crlf_checkout()
@@ -387,6 +397,7 @@ class BuildSourceTest(unittest.TestCase):
             self.create()
         self.assertIn("src/settings.txt", self.git.normalization_paths)
         self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(any("--others" in command for command, _ in self.git.calls))
         self.assertFalse(self.snapshot.exists())
 
     def test_ident_and_working_tree_encoding_checkouts_are_normalized(self):
@@ -416,24 +427,44 @@ class BuildSourceTest(unittest.TestCase):
         self.assertIn("src/value.id", self.git.normalization_paths)
         self.assertIn("src/value.utf16", self.git.normalization_paths)
 
-    def test_dirty_repository_is_rejected_before_source_or_history_copy(self):
-        self.git.dirty = b"?? untracked.tmp\0"
+    def test_visible_untracked_file_is_rejected_before_source_or_history_copy(self):
+        self.git.untracked = b"src/new.txt\0"
+        (self.repository / "src/new.txt").write_text("visible untracked\n")
         with self.assertRaisesRegex(ValueError, "dirty"):
             self.create()
         self.assertFalse(self.snapshot.exists())
         self.assertFalse(any("cat-file" in command for command, _ in self.git.calls))
+        untracked_command = next(
+            call[0] for call in self.git.calls if "--others" in call[0]
+        )
+        self.assertIn("--exclude-standard", untracked_command)
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
+
+    def test_gitignored_untracked_files_do_not_affect_snapshot(self):
+        self.git.ignored_untracked = b"ignored.tmp\0"
+        (self.repository / "ignored.tmp").write_text("ignored\n")
+
+        source = self.create()
+
+        self.assertEqual(source["revision"], self.git.revision)
+        untracked_command = next(
+            call[0] for call in self.git.calls if "--others" in call[0]
+        )
+        self.assertIn("--exclude-standard", untracked_command)
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
 
     def test_staged_and_filter_configured_repositories_are_rejected_safely(self):
         self.git.staged = b"staged"
         with self.assertRaisesRegex(ValueError, "dirty"):
             self.create()
-        self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(any("--others" in command for command, _ in self.git.calls))
 
         self.git = FakeGit(self.repository, filter_value=b"custom-filter")
         with self.assertRaisesRegex(ValueError, "filters are unsupported"):
             self.create()
-        self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(any("--others" in command for command, _ in self.git.calls))
         self.assertFalse(any("hash-object" in command for command, _ in self.git.calls))
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
 
     def test_sentinel_filter_values_without_named_drivers_remain_allowed(self):
         for sentinel in (b"unspecified", b"unset"):
@@ -443,7 +474,7 @@ class BuildSourceTest(unittest.TestCase):
                 source = self.create()
                 self.assertEqual(source["revision"], self.git.revision)
 
-    def test_configured_sentinel_filter_drivers_are_rejected_before_status(self):
+    def test_configured_sentinel_filter_drivers_are_rejected_before_untracked_enumeration(self):
         cases = ((b"unspecified", "clean"), (b"unset", "process"))
         for sentinel, action in cases:
             with self.subTest(sentinel=sentinel, action=action):
@@ -457,6 +488,7 @@ class BuildSourceTest(unittest.TestCase):
 
                 commands = [command for command, _ in self.git.calls]
                 self.assertFalse(any("status" in command for command in commands))
+                self.assertFalse(any("--others" in command for command in commands))
                 self.assertFalse(any("hash-object" in command for command in commands))
                 self.assertFalse(any("bundle" in command for command in commands))
                 self.assertFalse(self.snapshot.exists())
@@ -548,6 +580,7 @@ class BuildSourceTest(unittest.TestCase):
             self.create()
         self.assertFalse(self.snapshot.exists())
         self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(any("--others" in command for command, _ in self.git.calls))
         self.assertFalse(any("bundle" in command for command, _ in self.git.calls))
 
     def test_symlinks_gitlinks_special_files_and_forbidden_metadata_are_rejected(self):

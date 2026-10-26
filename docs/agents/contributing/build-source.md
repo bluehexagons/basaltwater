@@ -27,10 +27,10 @@ Git metadata view normalizes them using the pinned commit's attributes, bounded
 local `.git/info/attributes`, and validated built-in conversion settings. This
 accepts clean `text`/`eol`, `ident`, and `working-tree-encoding` checkouts. The
 view has no original filter-driver configuration; external filters are refused
-before Git status runs. Ignored local files are not copied. Source bytes always
-come from the resolved full `HEAD` object via Git plumbing, never from the live
-worktree. It also checks that `HEAD` and the dirty state remain unchanged before
-publishing.
+before non-filtering untracked-file enumeration. Ignored local files are not
+copied. Source bytes always come from the resolved full `HEAD` object via Git
+plumbing, never from the live worktree. It also checks that `HEAD` and the dirty
+state remain unchanged before publishing.
 
 The return value is exactly the build-protocol `source` mapping:
 
@@ -102,9 +102,12 @@ remotes, local config, hooks, credentials, or unrelated refs. The source
 checkout itself has no `.git` directory. Tracked `.gitignore`, `.gitattributes`,
 and `.gitmodules` remain ordinary source files; their contents are never
 executed by snapshot preparation or extraction. Git filter attributes are
-refused before Git status. The ambiguous `unset` and `unspecified` values are
-also refused when a matching filter driver is configured, so original local
-configuration cannot cause a clean, smudge, or process helper to run.
+refused before untracked-file enumeration. The ambiguous `unset` and
+`unspecified` values are also refused when a matching filter driver is
+configured. Snapshot preparation does not run Git status: after exact index and
+tracked-byte checks, `git ls-files --others --exclude-standard -z` checks only
+visible untracked paths without applying original clean, smudge, or process
+helpers.
 
 The first slice rejects tracked symlinks, gitlinks/submodules, special Git
 modes, files beginning with the Git LFS pointer signature (including extended
@@ -112,12 +115,11 @@ pointers), malformed/non-portable paths, case-folding path collisions, and
 reserved Git/credential metadata names. The LFS check conservatively rejects
 the signature line without assuming where an extension-bearing pointer places
 its `oid` or `size` fields. It does not attempt to scan arbitrary application
-source for secrets. Exact index comparison detects staged changes, and Git
-status identifies visible untracked files. Bounded no-follow checks compare
-tracked worktree bytes after Git's built-in path normalization; tracked status
-flags are not used as a substitute for those checks because repository stat
-settings can report clean converted files as modified. Git-ignored files are
-outside the snapshot and do not affect its identity.
+source for secrets. Exact index comparison detects staged changes, and Git's
+non-filtering untracked-file enumeration identifies visible untracked files.
+Bounded no-follow checks compare tracked worktree bytes after Git's built-in
+path normalization. Git-ignored files are outside the snapshot and do not
+affect its identity.
 
 ## Fixed ceilings
 
