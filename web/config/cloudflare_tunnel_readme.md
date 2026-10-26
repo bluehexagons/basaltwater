@@ -15,7 +15,8 @@ For recovery or manual changes, run the helper on the configured host:
 sudo setup-cloudflare-tunnel
 ```
 
-It installs `cloudflared` when needed, authenticates with Cloudflare, creates
+It installs or upgrades `cloudflared` from Cloudflare's signed APT repository
+on every run, authenticates with Cloudflare when creating a tunnel, creates
 or reuses a tunnel, discovers enabled Nginx sites, writes the tunnel
 configuration, and can install and enable the systemd service. Direct public
 HTTP/HTTPS remains open until the helper verifies that service is active; only
@@ -41,6 +42,23 @@ The helper stores configuration and tunnel credentials under
 `/etc/cloudflared`. Its state file is
 `/etc/cloudflared/tunnel-state.json`; rerun the helper after adding or removing
 an Nginx site to refresh ingress rules.
+
+Each refresh also repairs Cloudflare's signing key and APT source so older
+standalone package installations can receive updates. On security-enabled
+hosts, `auto-update-apt.timer` checks all configured repositories daily at
+06:00 with a randomized delay. Setup and scheduled APT updates restart an
+active daemon if it is still using a replaced executable, then verify that it
+loaded the installed package. An unchanged package and ingress do not require
+a restart. A restart briefly interrupts existing tunnel connections.
+
+Check package availability and scheduled update failures with:
+
+```bash
+cloudflared --version
+apt-cache policy cloudflared
+sudo systemctl status auto-update-apt.timer
+sudo journalctl -u auto-update-apt.service -n 100 --no-pager
+```
 
 ## Manual setup
 

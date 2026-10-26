@@ -20,6 +20,7 @@ def setUpModule() -> None:
     for target, kwargs in (
         ("maintenance_lock", {"side_effect": lambda: nullcontext(True)}),
         ("is_proxmox_host", {"return_value": False}),
+        ("refresh_cloudflared_service", {"return_value": False}),
     ):
         mocker = patch(f"common.service_tools.auto_update_apt.{target}", **kwargs)
         mocker.start()
@@ -49,7 +50,10 @@ class TestAutoUpdateApt(unittest.TestCase):
     @patch("common.service_tools.auto_update_apt.update_package_lists", return_value=True)
     @patch("common.service_tools.auto_update_apt.load_notification_configs_from_state", return_value=[])
     def test_successful_update(self, _configs, _update, _upgrade):
-        with self.assertLogs(auto_update_apt.logger, level="INFO") as logs:
+        events = []
+        _upgrade.side_effect = lambda: (events.append("upgrade") or True, "")
+        with patch.object(auto_update_apt, "refresh_cloudflared_service", side_effect=lambda: events.append("restart") or True), \
+                self.assertLogs(auto_update_apt.logger, level="INFO") as logs:
             result = auto_update_apt.main()
         self.assertEqual(result, 0)
         _update.assert_called_once()
@@ -57,6 +61,19 @@ class TestAutoUpdateApt(unittest.TestCase):
         joined = "\n".join(logs.output)
         self.assertIn("Starting APT package update", joined)
         self.assertIn("APT package update completed successfully", joined)
+        self.assertIn("Restarted cloudflared", joined)
+        self.assertEqual(events, ["upgrade", "restart"])
+
+    @patch("common.service_tools.auto_update_apt.send_notification_safe")
+    @patch("common.service_tools.auto_update_apt.refresh_cloudflared_service", side_effect=RuntimeError("cloudflared restart failed"))
+    @patch("common.service_tools.auto_update_apt.upgrade_packages", return_value=(True, ""))
+    @patch("common.service_tools.auto_update_apt.update_package_lists", return_value=True)
+    @patch("common.service_tools.auto_update_apt.load_notification_configs_from_state", return_value=["cfg"])
+    def test_cloudflared_activation_failure_notifies_after_successful_upgrade(self, _configs, _update, _upgrade, refresh, notify):
+        self.assertEqual(auto_update_apt.main(), 1)
+        refresh.assert_called_once()
+        notify.assert_called_once()
+        self.assertIn("cloudflared restart failed", notify.call_args.kwargs["message"])
 
     @patch("common.service_tools.auto_update_apt.send_notification_safe")
     @patch("common.service_tools.auto_update_apt.update_package_lists", return_value=False)

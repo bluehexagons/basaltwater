@@ -17,6 +17,7 @@ from unittest.mock import call, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from web.service_tools import setup_cloudflare_tunnel as tunnel_setup
+from web import cloudflared_runtime
 
 
 class TestCloudflareTunnelState(unittest.TestCase):
@@ -173,6 +174,11 @@ class TestCloudflareTunnelState(unittest.TestCase):
 
 
 class TestCloudflareTunnelRefresh(unittest.TestCase):
+    def setUp(self):
+        self.refresh_package = self.enterContext(
+            patch.object(tunnel_setup, "refresh_cloudflared_service", return_value=False)
+        )
+
     def test_failed_initial_activation_preserves_direct_policy_for_resume(self):
         with tempfile.TemporaryDirectory() as tmp:
             credentials = os.path.join(tmp, 'tunnel.json')
@@ -414,6 +420,20 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             ["systemctl", "restart", "cloudflared"],
             ["systemctl", "is-active", "cloudflared"],
         ])
+
+    def test_package_activation_without_ingress_changes_reports_success_or_failure(self):
+        for fails in (False, True):
+            with self.subTest(fails=fails), tempfile.TemporaryDirectory() as tmp:
+                self.refresh_package.reset_mock()
+                self.refresh_package.return_value = True
+                self.refresh_package.side_effect = RuntimeError("old executable still running") if fails else None
+                with patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", os.path.join(tmp, "startup.conf")), \
+                        patch.object(tunnel_setup, "run_command", return_value=SimpleNamespace(
+                            returncode=0, stdout="loaded\n", stderr="",
+                        )), patch.object(tunnel_setup, "_show_service_diagnostics") as diagnostics:
+                    self.assertEqual(tunnel_setup.install_and_start_service(), not fails)
+                self.refresh_package.assert_called_once()
+                self.assertEqual(diagnostics.call_count, int(fails))
 
     def test_new_service_keeps_initial_connection_and_has_grace_before_install(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -681,10 +701,138 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 tunnel_setup.install_cloudflared()
 
             commands = [mock_call.args[0] for mock_call in mock_run.call_args_list]
-            self.assertIn(["apt-get", "install", "-y", "cloudflared"], commands)
+            self.assertIn(["apt-get", "install", "-y", *tunnel_setup.APT_LOCK_OPTIONS, "cloudflared"], commands)
             self.assertFalse(any(command[:1] == ["dpkg"] for command in commands))
             with open(source, encoding="utf-8") as source_file:
                 self.assertIn("signed-by=", source_file.read())
+
+    def test_installed_cloudflared_repairs_repository_before_checking_for_updates(self):
+        for existing_source in (False, True):
+            with self.subTest(existing_source=existing_source), tempfile.TemporaryDirectory() as tmp:
+                keyring = os.path.join(tmp, "cloudflare-main.gpg")
+                source = os.path.join(tmp, "cloudflared.list")
+                with open(keyring, "w", encoding="utf-8") as handle:
+                    handle.write("expired key")
+                if existing_source:
+                    with open(source, "w", encoding="utf-8") as handle:
+                        handle.write("old repository")
+
+                def command_result(command, **_kwargs):
+                    if command[0] == "curl":
+                        with open(command[command.index("--output") + 1], "w", encoding="utf-8") as handle:
+                            handle.write("current key")
+                    if command[:2] == ["apt-get", "update"]:
+                        with open(keyring, encoding="utf-8") as handle:
+                            self.assertEqual(handle.read(), "current key")
+                        with open(source, encoding="utf-8") as handle:
+                            self.assertEqual(handle.read(), tunnel_setup.CLOUDFLARE_APT_SOURCE_CONTENT)
+                        self.assertIn("APT::Update::Error-Mode=any", command)
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                with patch.object(tunnel_setup.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"), \
+                        patch.object(tunnel_setup.os.path, "isfile", return_value=True), \
+                        patch.object(tunnel_setup, "CLOUDFLARE_APT_KEYRING", keyring), \
+                        patch.object(tunnel_setup, "CLOUDFLARE_APT_SOURCE", source), \
+                        patch.object(tunnel_setup, "run_command", side_effect=command_result) as commands:
+                    tunnel_setup.install_cloudflared()
+                self.assertEqual([item.args[0][:2] for item in commands.call_args_list], [
+                    ["curl", "--fail"], ["apt-get", "update"], ["apt-get", "install"],
+                ])
+                self.assertEqual(commands.call_args.args[0][-1], "cloudflared")
+
+
+class TestCloudflaredPackageActivation(unittest.TestCase):
+    def setUp(self):
+        self.directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.binary = os.path.join(self.directory, "cloudflared")
+        self.proc = os.path.join(self.directory, "proc")
+        self.exe = os.path.join(self.proc, "123", "exe")
+        os.makedirs(os.path.dirname(self.exe))
+        with open(self.binary, "w", encoding="utf-8") as handle:
+            handle.write("installed executable")
+        os.symlink(self.binary, self.exe)
+        self.enterContext(patch.object(cloudflared_runtime, "CLOUDFLARED_BINARY", self.binary))
+        self.enterContext(patch.object(cloudflared_runtime, "PROC_ROOT", self.proc))
+        self.commands = self.enterContext(patch.object(cloudflared_runtime, "run", side_effect=self.command_result))
+
+    def command_result(self, command, **_kwargs):
+        if command[1] == "restart":
+            os.unlink(self.exe)
+            os.symlink(self.binary, self.exe)
+        return subprocess.CompletedProcess(command, 0, "LoadState=loaded\nMainPID=123\n", "")
+
+    def replace_package(self):
+        old_binary = self.binary + ".old"
+        os.rename(self.binary, old_binary)
+        os.unlink(self.exe)
+        os.symlink(old_binary, self.exe)
+        with open(self.binary, "w", encoding="utf-8") as handle:
+            handle.write("updated executable")
+
+    def test_updated_package_restarts_and_verifies_the_running_executable(self):
+        self.replace_package()
+        self.assertTrue(cloudflared_runtime.refresh_cloudflared_service())
+        self.assertEqual([item.args[0][1] for item in self.commands.call_args_list], [
+            "show", "restart", "is-active", "show",
+        ])
+        self.assertEqual(self.commands.call_args_list[1].kwargs["timeout"], 240)
+        self.assertFalse(cloudflared_runtime.refresh_cloudflared_service())
+
+    def test_current_missing_or_inactive_service_does_not_restart(self):
+        self.assertFalse(cloudflared_runtime.refresh_cloudflared_service())
+        for output in ("LoadState=not-found\n", "LoadState=loaded\nMainPID=0\n"):
+            with self.subTest(output=output):
+                self.commands.reset_mock()
+                self.commands.side_effect = None
+                self.commands.return_value = subprocess.CompletedProcess([], 0, output, "")
+                self.assertFalse(cloudflared_runtime.refresh_cloudflared_service())
+                self.commands.assert_called_once()
+        os.unlink(self.binary)
+        self.commands.reset_mock()
+        self.assertFalse(cloudflared_runtime.refresh_cloudflared_service())
+        self.commands.assert_not_called()
+
+    def test_still_running_old_process_is_retried_after_restart_failure(self):
+        self.replace_package()
+
+        def failed_restart(command, **kwargs):
+            if command[1] == "restart":
+                return subprocess.CompletedProcess(command, 1, "", "restart failed")
+            return self.command_result(command, **kwargs)
+
+        self.commands.side_effect = failed_restart
+        with self.assertRaisesRegex(RuntimeError, "restart"):
+            cloudflared_runtime.refresh_cloudflared_service()
+        self.commands.side_effect = self.command_result
+        self.assertTrue(cloudflared_runtime.refresh_cloudflared_service())
+
+    def test_restart_that_keeps_the_old_executable_is_rejected(self):
+        self.replace_package()
+        self.commands.side_effect = None
+        self.commands.return_value = subprocess.CompletedProcess([], 0, "LoadState=loaded\nMainPID=123\n", "")
+        with self.assertRaisesRegex(RuntimeError, "ExecStart"):
+            cloudflared_runtime.refresh_cloudflared_service()
+
+    def test_failed_inspection_or_invalid_pid_cannot_report_success(self):
+        self.commands.side_effect = None
+        for result in (
+            subprocess.CompletedProcess([], 1, "", "systemd unavailable"),
+            subprocess.CompletedProcess([], 0, "LoadState=loaded\nMainPID=../bad\n", ""),
+        ):
+            with self.subTest(result=result):
+                self.commands.return_value = result
+                with self.assertRaises(RuntimeError):
+                    cloudflared_runtime.refresh_cloudflared_service()
+
+    def test_exited_process_or_unreadable_procfs_is_handled(self):
+        os.unlink(self.exe)
+        self.assertFalse(cloudflared_runtime.refresh_cloudflared_service())
+        self.commands.assert_called_once()
+        with patch.object(cloudflared_runtime.os, "stat", side_effect=[
+            os.stat(self.binary), PermissionError("procfs access denied"),
+        ]):
+            with self.assertRaises(PermissionError):
+                cloudflared_runtime.refresh_cloudflared_service()
 
 
 if __name__ == "__main__":
