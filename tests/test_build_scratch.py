@@ -38,12 +38,37 @@ class MockNative:
         self.keep_mounted_after_umount = False
         self.fail_findmnt_call: int | None = None
         self.findmnt_calls = 0
-        self.mount_before_marker = False
+        self.native_before_final_identity = False
         self.replace_mountpoint = False
+        self.replace_root_on_native: tuple[Path, Path] | None = None
+        self.root_replaced = False
 
     def __call__(self, command: list[str], **kwargs) -> subprocess.CompletedProcess:
         self.calls.append(command)
         executable = command[0]
+        if self.replace_root_on_native is not None and not self.root_replaced:
+            root, planted = self.replace_root_on_native
+            root.rename(root.with_name(root.name + "-held"))
+            root.symlink_to(planted, target_is_directory=True)
+            self.root_replaced = True
+
+        if executable == "/usr/bin/findmnt":
+            target = Path(command[command.index("--mountpoint") + 1])
+            marker_path = target.parent / "identity.json"
+        elif executable == "/usr/sbin/mkfs.ext4":
+            marker_path = Path(command[-1]).parent / "identity.json"
+        elif executable == "/usr/bin/mount":
+            source = command[command.index("--source") + 1]
+            marker_path = Path(source).parent / "identity.json"
+        else:
+            marker_path = Path(command[-1]).parent / "identity.json"
+        try:
+            marker = json.loads(marker_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            marker = None
+        if not isinstance(marker, dict) or marker.get("phase") != "prepared":
+            self.native_before_final_identity = True
+
         if executable == "/usr/bin/findmnt":
             self.findmnt_calls += 1
             if self.fail_findmnt_call == self.findmnt_calls:
@@ -61,18 +86,14 @@ class MockNative:
             return _completed(command, 0 if records else 1,
                               json.dumps({"filesystems": records}) if records else "")
         if executable == "/usr/sbin/mkfs.ext4":
-            marker = Path(command[-1]).parent / "identity.json"
-            self.mount_before_marker = not marker.is_file()
             if self.replace_mountpoint:
-                mountpoint = marker.parent / "fs"
+                mountpoint = marker_path.parent / "fs"
                 mountpoint.rmdir()
                 mountpoint.symlink_to(self.root.parent, target_is_directory=True)
             return _completed(command, 1 if self.fail_mkfs else 0)
         if executable == "/usr/bin/mount":
             self.image_path = command[command.index("--source") + 1]
             self.target = command[command.index("--target") + 1]
-            marker = Path(self.image_path).parent / "identity.json"
-            self.mount_before_marker = self.mount_before_marker or not marker.is_file()
             if self.fail_mount:
                 self.mounted = True  # Model an ambiguous command result.
                 return _completed(command, 1)
@@ -112,8 +133,8 @@ class BuildScratchTests(unittest.TestCase):
     def create(self, *, request_id: str = REQUEST_ID, size_bytes: int = SIZE) -> scratch.ScratchHandle:
         return scratch.create_scratch(str(self.root), request_id, size_bytes=size_bytes)
 
-    def _paths(self) -> tuple[Path, Path, Path]:
-        request_dir = self.root / REQUEST_ID
+    def _paths(self, request_id: str = REQUEST_ID) -> tuple[Path, Path, Path]:
+        request_dir = self.root / request_id
         return request_dir, request_dir / "scratch.ext4", request_dir / "identity.json"
 
     def _assert_evidence(self) -> None:
@@ -136,11 +157,12 @@ class BuildScratchTests(unittest.TestCase):
         self.assertEqual(image.stat().st_uid, os.geteuid())
         self.assertEqual(stat.S_IMODE(marker_path.stat().st_mode), 0o600)
         self.assertEqual(marker["request_id"], REQUEST_ID)
+        self.assertEqual(marker["phase"], "prepared")
         self.assertEqual(marker["image_path"], str(image))
         self.assertEqual(marker["mount_path"], handle.mount_path)
         self.assertEqual(marker["mountpoint_dev"], (request_dir / "fs").stat().st_dev)
         self.assertEqual(marker["mountpoint_ino"], (request_dir / "fs").stat().st_ino)
-        self.assertFalse(self.native.mount_before_marker)
+        self.assertFalse(self.native.native_before_final_identity)
 
         mkfs = next(command for command in self.native.calls if command[0] == "/usr/sbin/mkfs.ext4")
         self.assertEqual(mkfs, [
@@ -212,6 +234,87 @@ class BuildScratchTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.create()
         self.assertEqual(self.native.calls, [])
+
+    def test_untrusted_writable_ancestor_is_rejected_before_native_path_resolution(self) -> None:
+        writable_parent = Path(self.temporary.name) / "untrusted-parent"
+        writable_parent.mkdir(mode=0o777)
+        writable_parent.chmod(0o777)
+        root = writable_parent / "scratch-root"
+        root.mkdir(mode=0o700)
+        root.chmod(0o700)
+        planted = Path(self.temporary.name) / "planted-target"
+        planted.mkdir(mode=0o700)
+        (planted / "sentinel").write_text("untouched")
+
+        self.root = root
+        self.native.root = root
+        self.native.replace_root_on_native = (root, planted)
+        with self.assertRaisesRegex(ValueError, "ancestor|rename"):
+            self.create()
+
+        # If any native path resolution were reached, the mock attacker would
+        # replace the root pathname with a symlink to the planted target.
+        self.assertEqual(self.native.calls, [])
+        self.assertFalse(self.native.root_replaced)
+        self.assertTrue(root.is_dir())
+        self.assertFalse(root.is_symlink())
+        self.assertEqual((planted / "sentinel").read_text(), "untouched")
+        self.assertFalse((planted / REQUEST_ID).exists())
+
+    def test_staging_failures_retain_preparation_identity_without_native_commands(self) -> None:
+        for request_id, failure in (
+                ("b" * 32, OSError("injected truncate failure")),
+                ("c" * 32, KeyboardInterrupt()),
+        ):
+            with self.subTest(request_id=request_id):
+                with patch.object(scratch.os, "ftruncate", side_effect=failure):
+                    with self.assertRaises(type(failure)):
+                        self.create(request_id=request_id)
+                request_dir, image, marker_path = self._paths(request_id)
+                marker = json.loads(marker_path.read_text())
+                self.assertEqual(set(marker), scratch._PREPARATION_MARKER_FIELDS)
+                self.assertEqual(marker["schema"], 2)
+                self.assertEqual(marker["phase"], "preparing")
+                self.assertEqual(marker["request_id"], request_id)
+                self.assertEqual(marker["root_path"], str(self.root))
+                self.assertEqual(marker["request_dev"], request_dir.stat().st_dev)
+                self.assertEqual(marker["request_ino"], request_dir.stat().st_ino)
+                self.assertTrue((request_dir / "fs").is_dir())
+                self.assertTrue(image.is_file())
+                self.assertEqual(image.stat().st_size, 0)
+                self.assertEqual(self.native.calls, [])
+                with self.assertRaises(FileExistsError):
+                    self.create(request_id=request_id)
+
+        request_id = "d" * 32
+        image_descriptor: int | None = None
+        real_ftruncate = os.ftruncate
+        real_fsync = os.fsync
+
+        def record_image_descriptor(descriptor: int, length: int) -> None:
+            nonlocal image_descriptor
+            image_descriptor = descriptor
+            real_ftruncate(descriptor, length)
+
+        def fail_image_fsync(descriptor: int) -> None:
+            if descriptor == image_descriptor:
+                raise OSError("injected image fsync failure")
+            real_fsync(descriptor)
+
+        with patch.object(scratch.os, "ftruncate", side_effect=record_image_descriptor), \
+                patch.object(scratch.os, "fsync", side_effect=fail_image_fsync):
+            with self.assertRaisesRegex(OSError, "image fsync"):
+                self.create(request_id=request_id)
+        request_dir, image, marker_path = self._paths(request_id)
+        marker = json.loads(marker_path.read_text())
+        self.assertEqual(set(marker), scratch._PREPARATION_MARKER_FIELDS)
+        self.assertEqual(marker["schema"], 2)
+        self.assertEqual(marker["phase"], "preparing")
+        self.assertEqual(image.stat().st_size, SIZE)
+        self.assertTrue((request_dir / "fs").is_dir())
+        self.assertEqual(self.native.calls, [])
+        with self.assertRaises(FileExistsError):
+            self.create(request_id=request_id)
 
     def test_format_and_ambiguous_mount_failures_leave_identity_and_image(self) -> None:
         self.native.fail_mkfs = True

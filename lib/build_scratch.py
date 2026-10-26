@@ -29,6 +29,7 @@ _MAJOR_MINOR = re.compile(r"([0-9]+):([0-9]+)")
 _ROOT_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 _FILE_NOFOLLOW = os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 _MARKER_NAME = "identity.json"
+_MARKER_NEXT_NAME = ".identity.json.next"
 _IMAGE_NAME = "scratch.ext4"
 _MOUNT_NAME = "fs"
 _MARKER_LIMIT = 4096
@@ -59,6 +60,45 @@ def _directory_mode(info: os.stat_result, label: str, *, allow_traverse: bool = 
             or mode & 0o700 != 0o700 or mode & 0o7000
             or mode & 0o077 & ~allowed_other):
         raise ValueError(f"{label} must be a private root-owned directory")
+
+
+def _require_trusted_ancestors(path: str) -> None:
+    """Reject paths an unprivileged user could redirect while native tools run."""
+    trusted_uids = {0, os.geteuid()}
+    descriptor = os.open("/", _ROOT_FLAGS)
+    try:
+        parent_info = os.fstat(descriptor)
+        if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid not in trusted_uids:
+            raise ValueError("Scratch path ancestor does not have trusted ownership")
+
+        for component in path.split(os.sep):
+            if not component:
+                continue
+            child_fd = os.open(component, _ROOT_FLAGS, dir_fd=descriptor)
+            try:
+                child_info = os.fstat(child_fd)
+                if (not stat.S_ISDIR(child_info.st_mode)
+                        or parent_info.st_uid not in trusted_uids
+                        or child_info.st_uid not in trusted_uids):
+                    raise ValueError("Scratch path ancestor does not have trusted ownership")
+
+                parent_mode = stat.S_IMODE(parent_info.st_mode)
+                if parent_mode & 0o022:
+                    sticky_protection = bool(parent_info.st_mode & stat.S_ISVTX)
+                    if not sticky_protection:
+                        raise ValueError("Scratch path ancestor permits untrusted renames")
+                    # In a sticky directory, its owner and the child owner can
+                    # still rename the child. Both must therefore be trusted.
+                    if parent_info.st_uid not in trusted_uids or child_info.st_uid not in trusted_uids:
+                        raise ValueError("Scratch path ancestor permits untrusted renames")
+            except BaseException:
+                os.close(child_fd)
+                raise
+            os.close(descriptor)
+            descriptor = child_fd
+            parent_info = child_info
+    finally:
+        os.close(descriptor)
 
 
 def _regular_file(info: os.stat_result, label: str, *, expected_size: int | None = None) -> None:
@@ -230,6 +270,33 @@ def _create_marker(request_fd: int, marker: dict[str, Any]) -> None:
         os.close(descriptor)
 
 
+def _replace_marker(request_fd: int, marker: dict[str, Any]) -> None:
+    """Atomically replace the durable preparation identity with final identity."""
+    content = _marker_bytes(marker)
+    if len(content) > _MARKER_LIMIT:
+        raise ValueError("Scratch identity marker is oversized")
+    descriptor = os.open(
+        _MARKER_NEXT_NAME,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | _FILE_NOFOLLOW,
+        0o600,
+        dir_fd=request_fd,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        _regular_file(os.fstat(descriptor), "identity marker")
+        _write_all(descriptor, content)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(
+        _MARKER_NEXT_NAME,
+        _MARKER_NAME,
+        src_dir_fd=request_fd,
+        dst_dir_fd=request_fd,
+    )
+    os.fsync(request_fd)
+
+
 def _marker_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -260,9 +327,13 @@ def _read_marker(request_fd: int) -> dict[str, Any]:
 
 
 _MARKER_FIELDS = {
-    "schema", "request_id", "root_path", "root_dev", "root_ino",
+    "schema", "phase", "request_id", "root_path", "root_dev", "root_ino",
     "request_dev", "request_ino", "image_path", "image_dev", "image_ino",
     "image_size_bytes", "mount_path", "mountpoint_dev", "mountpoint_ino",
+}
+_PREPARATION_MARKER_FIELDS = {
+    "schema", "phase", "request_id", "root_path", "root_dev", "root_ino",
+    "request_dev", "request_ino",
 }
 
 
@@ -283,8 +354,10 @@ def _validate_marker(
         "image_path": f"{root_path}/{request_id}/{_IMAGE_NAME}",
         "mount_path": f"{root_path}/{request_id}/{_MOUNT_NAME}",
     }
-    if type(marker["schema"]) is not int or marker["schema"] != 1:
+    if type(marker["schema"]) is not int or marker["schema"] != 2:
         raise ValueError("Scratch identity marker schema is unsupported")
+    if marker["phase"] != "prepared":
+        raise ValueError("Scratch identity marker is not a final prepared identity")
     if any(marker[key] != value for key, value in expected_strings.items()):
         raise ValueError("Scratch identity marker paths do not match the request")
     expected_numbers = {
@@ -358,8 +431,12 @@ def create_scratch(
 ) -> ScratchHandle:
     """Create and verify a fresh root-worker ext4 image for one build request.
 
-    Any error after the request directory is created leaves its marker and
-    whatever image or mount state exists for operator reconciliation.
+    Any error after the preparation marker is durably written leaves the
+    preparation or final identity and whatever staging state exists for
+    operator reconciliation.
+    Request-directory creation or the initial marker write can fail before a
+    durable identity exists; if the request directory was created, it still
+    blocks replay.
     """
     _require_root()
     if not isinstance(request_id, str) or _REQUEST_ID.fullmatch(request_id) is None:
@@ -368,6 +445,7 @@ def create_scratch(
             or size_bytes % MIB != 0):
         raise ValueError("Scratch image size must be MiB-aligned between 256 MiB and 128 GiB")
     root_path = _canonical_root(root)
+    _require_trusted_ancestors(root_path)
     request_path = f"{root_path}/{request_id}"
     image_path = f"{request_path}/{_IMAGE_NAME}"
     mount_path = f"{request_path}/{_MOUNT_NAME}"
@@ -390,6 +468,23 @@ def create_scratch(
             os.fchmod(request_fd, 0o700)
             request_info = os.fstat(request_fd)
             _directory_mode(request_info, "Scratch request directory")
+
+            preparation_marker = {
+                "schema": 2,
+                "phase": "preparing",
+                "request_id": request_id,
+                "root_path": root_path,
+                "root_dev": root_info.st_dev,
+                "root_ino": root_info.st_ino,
+                "request_dev": request_info.st_dev,
+                "request_ino": request_info.st_ino,
+            }
+            if set(preparation_marker) != _PREPARATION_MARKER_FIELDS:
+                raise AssertionError("Scratch preparation identity shape is inconsistent")
+            _create_marker(request_fd, preparation_marker)
+            if _read_marker(request_fd) != preparation_marker:
+                raise ValueError("Scratch preparation identity could not be verified")
+
             os.mkdir(_MOUNT_NAME, mode=0o700, dir_fd=request_fd)
             os.fsync(request_fd)
             mountpoint_fd = os.open(_MOUNT_NAME, _ROOT_FLAGS, dir_fd=request_fd)
@@ -416,7 +511,8 @@ def create_scratch(
                 os.close(image_fd)
 
             marker: dict[str, Any] = {
-                "schema": 1,
+                "schema": 2,
+                "phase": "prepared",
                 "request_id": request_id,
                 "root_path": root_path,
                 "root_dev": root_info.st_dev,
@@ -431,7 +527,7 @@ def create_scratch(
                 "mountpoint_dev": mountpoint_info.st_dev,
                 "mountpoint_ino": mountpoint_info.st_ino,
             }
-            _create_marker(request_fd, marker)
+            _replace_marker(request_fd, marker)
             _validate_marker(marker, root_path=root_path, request_id=request_id,
                              root_info=root_info, request_info=request_info, size_bytes=size_bytes)
             _verify_image(request_fd, marker)
@@ -487,6 +583,7 @@ def _release(handle: ScratchHandle) -> None:
             or type(handle._mount_id) is not int or handle._mount_id <= 0):
         raise ValueError("Scratch handle is invalid")
     root_path = _canonical_root(handle._root_path)
+    _require_trusted_ancestors(root_path)
     request_path = f"{root_path}/{handle.request_id}"
     image_path = f"{request_path}/{_IMAGE_NAME}"
     mount_path = f"{request_path}/{_MOUNT_NAME}"
