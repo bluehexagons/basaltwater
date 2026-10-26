@@ -12,13 +12,29 @@ handle.release(work_stopped=True)
 ```
 
 The configured scratch root must already exist, be canonical, root-owned and
-mode `0700`. Every path component is opened without following symlinks. A
-fresh per-request directory, sparse image, mountpoint and identity marker are
-created exclusively; an existing request directory blocks replay. The image
-is limited to a MiB-aligned size from 256 MiB through 128 GiB and is formatted
-only with fixed `mkfs.ext4` arguments. The marker records request, root,
-directory, image and mountpoint identities before formatting or mounting.
-The image and marker are root-owned mode `0600` files.
+mode `0700`. Every path component is opened without following symlinks, and
+every ancestor must be protected from renames by unprivileged users. An
+ancestor writable by group or other users is rejected unless it is sticky and
+both its owner and the next child are trusted; this permits a root-owned sticky
+directory such as `/tmp` when its child is root-owned. Tests may model the
+worker with the current effective UID. The image and marker are root-owned
+mode `0600` files.
+
+After creating the request directory, the worker writes and syncs a
+`preparing` identity marker before creating the mountpoint or image. Once those
+staging operations are complete, it atomically replaces that marker with the
+final `prepared` identity and syncs the directory before running any native
+command. An existing request directory blocks replay, including requests with
+only a preparation marker or partially staged files. There is no automatic
+cleanup or replay of those states. Request-directory creation or the initial
+marker write and sync can fail before a complete durable marker exists; a
+directory already created still blocks replay, but cannot always contain a
+complete identity record.
+
+The sparse image is limited to a MiB-aligned size from 256 MiB through 128
+GiB and is formatted only with fixed `mkfs.ext4` arguments. The final marker
+records request, root, directory, image and mountpoint identities before
+formatting or mounting.
 
 Mounting uses the fixed `mount -t ext4 -o loop,nodev,nosuid` boundary. The
 kernel's automatic loop-device autoclear handles the device after unmount;
