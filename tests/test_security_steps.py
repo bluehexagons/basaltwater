@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import nullcontext
 import sys
 import tempfile
 import unittest
@@ -138,6 +139,8 @@ class TestAppArmorProfiles(unittest.TestCase):
 
 class TestHardenSSH(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("security.security_steps.managed_transport_groups", return_value=[]))
+        self.enterContext(patch("security.security_steps.ssh_admission_lock", side_effect=lambda _: nullcontext()))
         self.enterContext(patch("security.security_steps._verify_ssh_policy"))
         self.enterContext(patch("security.security_steps.open", mock_open()))
         self.enterContext(patch("security.security_steps.can_manage_system_services", return_value=True))

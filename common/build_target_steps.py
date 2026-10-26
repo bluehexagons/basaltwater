@@ -13,6 +13,7 @@ import stat
 from typing import Any
 
 from common.build_host_steps import _public_ed25519_key
+from common.build_ssh_admission import admission_content
 from common.service_tools import build_target as entrypoint
 from lib.atomic_io import remove_file_durable, write_bytes_atomic
 from lib.build_protocol import decode_document, encode_document
@@ -28,6 +29,7 @@ from lib.validators import validate_username
 ETC_DIR = "/etc/basaltwater/build-target"
 MARKER_PATH = ETC_DIR + "/.managed.json"
 CONFIG_PATH = ETC_DIR + "/config.json"
+SSH_ADMISSION_PATH = ETC_DIR + "/ssh-admission"
 DATA_ROOT = "/var/lib/basaltwater/build-target"
 SSH_ROOT = "/var/lib/basaltwater-build-target-ssh"
 _LEGACY_SSH_ROOT = "/var/lib/basaltwater/build-target-ssh"
@@ -249,7 +251,7 @@ def _file_paths(principal: str) -> tuple[str, str]:
 def _file_mode(path: str) -> int:
     if path.startswith(SUDOERS_DIR + "/"):
         return 0o440
-    return 0o600 if path == CONFIG_PATH else 0o644
+    return 0o600 if path in {CONFIG_PATH, SSH_ADMISSION_PATH} else 0o644
 
 
 def _parse_marker(raw: bytes) -> dict:
@@ -265,7 +267,7 @@ def _parse_marker(raw: bytes) -> dict:
         raise RuntimeError("Incomplete target enrollment requires operator reconciliation")
     if not isinstance(marker["principals"], dict) or not isinstance(marker["files"], dict):
         raise ValueError("Invalid target ownership inventory")
-    allowed = {CONFIG_PATH}
+    allowed = {CONFIG_PATH, SSH_ADMISSION_PATH}
     names = set()
     for principal, identity in marker["principals"].items():
         if not isinstance(principal, str) or _SLUG.fullmatch(principal) is None:
@@ -333,7 +335,7 @@ def _preflight(marker: dict | None, desired: set[str]) -> None:
         for path, mode in ((ETC_DIR, 0o700), (DATA_ROOT, 0o700), (SSH_ROOT, 0o711),
                            *((root, 0o700) for root in ROOTS.values())):
             _directory(path, mode)
-        if not set(os.listdir(ETC_DIR)) <= {".managed.json", ".maintenance.lock", "config.json"}:
+        if not set(os.listdir(ETC_DIR)) <= {".managed.json", ".maintenance.lock", "config.json", "ssh-admission"}:
             raise ValueError("Refusing unmarked target configuration files")
     for principal in principals | desired:
         if principal not in principals:
@@ -348,7 +350,7 @@ def _preflight(marker: dict | None, desired: set[str]) -> None:
         if (set(os.listdir(_home(principal))) != {".ssh"}
                 or not set(os.listdir(_home(principal) + "/.ssh")) <= {"authorized_keys"}):
             raise ValueError("Refusing unmarked files in target SSH home")
-    paths = {CONFIG_PATH}
+    paths = {CONFIG_PATH, SSH_ADMISSION_PATH}
     for principal in principals:
         paths.update(_file_paths(principal))
     inventory = marker["files"] if marker else {}
@@ -394,6 +396,7 @@ def _reconcile(marker: dict, enrollment: dict | None, descriptor: int) -> None:
         runtime = {key: enrollment[key] for key in ("schema", "policy", "max_records", "max_bytes")}
         runtime["roots"] = dict(ROOTS)
         files[CONFIG_PATH] = encode_document(runtime, maximum=MAX_ENROLLMENT_BYTES) + b"\n"
+        files[SSH_ADMISSION_PATH] = admission_content("build-target", [_username(p) for p in desired])
         for principal, key in desired.items():
             sudo, auth = _file_paths(principal)
             files[sudo], files[auth] = _sudoers(principal), _authorized_key(principal, key)
@@ -426,12 +429,19 @@ def _reconcile(marker: dict, enrollment: dict | None, descriptor: int) -> None:
                 _directory(_home(principal) + "/.ssh", 0o755, create=True)
         for principal in desired:
             _validate_sudoers(_sudoers(principal))
+    # Update SSH under the same exclusive ownership and durable serving hold.
+    from security.security_steps import refresh_transport_ssh_admission
+
+    if enrollment is None:
+        refresh_transport_ssh_admission("build-target", [])
     # Revoke old grants before keys. Serving remains held across every write.
     for path in sorted(set(marker["files"]) - set(files), key=lambda item: item.endswith("authorized_keys")):
         remove_file_durable(path)
     for path, raw in files.items():
         if read_protected(path, mode=_file_mode(path), maximum=MAX_ENROLLMENT_BYTES) != raw:
             _write(path, raw, _file_mode(path))
+    if enrollment is not None:
+        refresh_transport_ssh_admission("build-target", [_username(p) for p in desired])
     marker.update(state="enabled" if enrollment is not None else "disabled",
                   files={path: _hash(raw) for path, raw in files.items()}, pending=None)
     _save(marker)

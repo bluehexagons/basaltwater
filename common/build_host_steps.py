@@ -13,6 +13,7 @@ import re
 import stat
 from typing import TYPE_CHECKING, Any
 
+from common.build_ssh_admission import admission_content
 from lib.build_host_policy import MAX_POLICY_BYTES, parse_build_host_policy
 from lib.build_protocol import decode_document, encode_document
 from lib.maintenance_defaults import APT_LOCK_OPTIONS
@@ -33,6 +34,7 @@ SERVICE_UNIT = "/etc/systemd/system/" + SERVICE_NAME
 ETC_DIR = "/etc/basaltwater/build-host"
 MARKER_PATH = ETC_DIR + "/.managed.json"
 CONFIG_PATH = ETC_DIR + "/config.json"
+SSH_ADMISSION_PATH = ETC_DIR + "/ssh-admission"
 DATA_ROOT = "/var/lib/basaltwater/build-host"
 SSH_ROOT = "/var/lib/basaltwater-build-host-ssh"
 _LEGACY_SSH_ROOT = "/var/lib/basaltwater/build-host-ssh"
@@ -362,7 +364,7 @@ def _hash(content: bytes) -> str:
 
 def _empty_marker() -> dict[str, Any]:
     return {"schema": _MARKER_SCHEMA, "worker": None, "disabled": False, "principals": {},
-            "files": {"config": [], "unit": []}, "pending": None}
+            "files": {"config": [], "unit": [], "ssh": []}, "pending": None}
 
 
 def _parse_marker(raw: bytes) -> dict[str, Any]:
@@ -408,7 +410,10 @@ def _parse_marker(raw: bytes) -> dict[str, Any]:
                 or len(set(record["sudo_hashes"])) != len(record["sudo_hashes"])):
             raise ValueError("Invalid managed sudoers hash list")
         principals[principal] = record
-    files = _record(marker["files"], {"config", "unit"}, "managed build-host files")
+    # Schema-2 installs predating SSH admission migrate only in guarded setup.
+    raw_files = _plain_mapping(marker["files"], "managed build-host files")
+    raw_files.setdefault("ssh", [])
+    files = _record(raw_files, {"config", "unit", "ssh"}, "managed build-host files")
     for name, hashes in files.items():
         if (not isinstance(hashes, list) or len(hashes) > 2
                 or any(not isinstance(item, str) or _HASH.fullmatch(item) is None for item in hashes)
@@ -466,7 +471,7 @@ def _require_exclusive_transport_account(username: str, home: str, uid: int | No
         raise RuntimeError(f"Managed build-host transport account is incomplete: {username}")
     if (account.pw_name != username or account.pw_dir != home or account.pw_shell != "/bin/sh"
             or account.pw_uid <= 0 or account.pw_gid <= 0 or group.gr_name != username
-            or group.gr_gid != account.pw_gid or any(member not in {username} for member in group.gr_mem)):
+            or group.gr_gid != account.pw_gid or group.gr_mem):
         raise ValueError(f"Managed build-host transport account has unexpected attributes: {username}")
     if uid is not None and account.pw_uid != uid or gid is not None and account.pw_gid != gid:
         raise ValueError(f"Managed build-host transport account identity changed: {username}")
@@ -802,6 +807,7 @@ def _preflight_managed_state(marker: dict[str, Any], enrollment: dict[str, Any],
                              enrollment_digest: str) -> None:
     """Reject foreign accounts and files before unit, package, or policy changes."""
     _require_ssh_traversal()
+    _preflight_ssh_admission(marker)
     _validate_transport_namespace(set(marker["principals"]) | set(enrollment["keys"]))
     pending = marker["pending"]
     if pending is not None and pending["enrollment_sha256"] != enrollment_digest:
@@ -942,6 +948,17 @@ def _prepare_enrollment(config: SetupConfig, enrollment: dict[str, Any], marker:
     _write_file(CONFIG_PATH, config_content, mode=0o600)
     marker["files"]["config"] = [_hash(config_content)]
     _write_marker(marker)
+    # The worker lease is still held, the store drained and the unit inactive.
+    from security.security_steps import refresh_transport_ssh_admission
+
+    users = [_transport_username(principal) for principal in enrollment["keys"]]
+    content = admission_content("build-host", users)
+    marker["files"]["ssh"] = sorted(set(marker["files"]["ssh"] + [_hash(content)]))[-2:]
+    _write_marker(marker)
+    _write_file(SSH_ADMISSION_PATH, content, mode=0o600)
+    refresh_transport_ssh_admission("build-host", users)
+    marker["files"]["ssh"] = [_hash(content)]
+    _write_marker(marker)
     return config_content
 
 
@@ -980,6 +997,7 @@ def _quiesce_missing_managed_unit() -> None:
 
 def _preflight_disable(marker: dict[str, Any]) -> None:
     """Verify ownership records and persistent roots before draining the worker."""
+    _preflight_ssh_admission(marker)
     pending = {} if marker["pending"] is None else marker["pending"]["keys"]
     _validate_transport_namespace(set(marker["principals"]) | set(pending))
     _trusted_path(ETC_DIR, final_directory=True)
@@ -1057,7 +1075,23 @@ def _preflight_disable(marker: dict[str, Any]) -> None:
         raise ValueError(f"Refusing an unmanaged or modified systemd unit: {SERVICE_NAME}")
 
 
+def _preflight_ssh_admission(marker: dict[str, Any]) -> None:
+    content = (_read_file(SSH_ADMISSION_PATH, mode=0o600, maximum=_MARKER_LIMIT)
+               if os.path.lexists(ETC_DIR) else None)
+    hashes = marker["files"]["ssh"]
+    if ((content is None) != (not hashes)
+            or content is not None and _hash(content) not in hashes):
+        raise ValueError("Unowned, missing or modified build-host SSH admission")
+
+
 def _revoke_managed_access(marker: dict[str, Any]) -> None:
+    from security.security_steps import refresh_transport_ssh_admission
+
+    refresh_transport_ssh_admission("build-host", [])
+    if marker["files"]["ssh"]:
+        _remove_file(SSH_ADMISSION_PATH, mode=0o600, maximum=_MARKER_LIMIT)
+        marker["files"]["ssh"] = []
+        _write_marker(marker)
     pending_keys = {} if marker["pending"] is None else marker["pending"]["keys"]
     for principal, record in sorted(marker["principals"].items()):
         if not record["managed"] and not (record["auth_managed"] or record["sudo_managed"]):

@@ -228,6 +228,46 @@ Use `sshd.service` on systems that provide that unit name. The journal is
 needed to distinguish a stopped daemon from a configuration, listener, or
 service-unit failure.
 
+## Managed build transport admission
+
+Human and root SSH continue to require `remoteusers`. Managed builder and
+target enrollment adds only the exact enrolled accounts' same-named primary
+groups to the managed hardening drop-in's global `AllowGroups` directive.
+There are no `bw-*` patterns or shared supplementary groups. Transport
+UIDs/GIDs must remain exclusive, with no group aliases or explicit members;
+passwords remain locked. Transport accounts never join `remoteusers`, which
+also authorizes RDP. The builder worker gains no SSH or desktop access.
+Root-owned forced-command keys and exact per-principal sudo rules continue
+to enforce the protocol boundary.
+
+Each role owns a mode-`0600` `ssh-admission` file in its private configuration
+directory, with its hash in the schema-2 ownership marker. It contains only
+literal enrolled primary-group names. Hardening reads completed inventories
+and rechecks the recorded identities, group exclusivity and password lock
+before preserving those groups. It checks effective key-only authentication
+and `AllowGroups` for root, the setup user and each admitted transport account.
+Missing, modified or unsafe inventories refuse hardening before policy writes.
+
+Both installers update admission only while holding their existing role
+maintenance ownership: a drained idle builder with the unit inactive, or an
+exclusive target lease with the durable serving gate held. Existing hardened
+hosts receive a change only to the current managed drop-in's `AllowGroups`
+line, followed by syntax/effective-policy checks and service reconciliation.
+Other SSH settings are preserved. Without that drop-in, enrollment records
+intent for later hardening and leaves administrator SSH policy untouched.
+Daemon policy edits share the nonblocking, root-owned mode-`0600` lock
+`/etc/ssh/sshd_config.d/.basaltwater-ssh-admission.lock`; busy ownership refuses
+the update. The lock inode is retained.
+
+Existing schema-2 installs need one explicit installer enrollment rerun under
+those guards to add the admission inventory. Hardening alone refuses active
+enrollment without it. This does not adopt schema-1 markers or legacy SSH
+layouts. Disable revokes the role's admitted groups, keys and sudo authority
+while retaining identities, maintenance state and deployment/build evidence.
+SSH activation failures restore the previous daemon policy, report failure
+and leave role recovery guards in force. Mocked checks do not qualify live SSH;
+validate new connections separately during native deployment.
+
 ## Troubleshooting
 
 An older setup can change the firewall successfully and then fail in a later

@@ -49,7 +49,7 @@ The installer creates root-owned mode-0700 configuration and data
 directories:
 
 - `/etc/basaltwater/build-host`, with a mode-0600 runtime `config.json` and a
-  mode-0600 ownership marker.
+  mode-0600 ownership marker and `ssh-admission` inventory.
 - `/var/lib/basaltwater/build-host/{state,inputs,scratch,artifacts,logs}`.
 - `/var/lib/basaltwater-build-host-ssh` is root-owned mode 0711 so transport
   accounts can traverse the known path without listing other homes. Each
@@ -93,6 +93,22 @@ entrypoint arguments for that principal and preserves
 worker `authorized_keys` file is created, and the transport identity receives
 no interactive or general sudo access.
 
+The shared [SSH admission contract](../../operations/ssh.md#managed-build-transport-admission)
+adds only the exact enrolled transport primary-group names to managed
+`AllowGroups`, alongside `remoteusers`. It grants no worker SSH, supplementary
+group or RDP access. Enrollment records the group list in the root-owned
+`ssh-admission` file and its hash in `files.ssh`. While drained, with the worker
+lease held and the unit inactive, setup refreshes only the existing managed
+hardening drop-in's `AllowGroups` line and validates/reloads SSH. On a host
+without that drop-in it records admission for subsequent hardening, leaving
+ordinary SSH policy intact. Hardening reruns validate and preserve the inventory.
+
+Existing schema-2 markers without `files.ssh` migrate on an explicit guarded
+enrollment rerun. Hardening alone refuses an active enrollment without this
+inventory; it cannot migrate outside the role's idle ownership. Schema-1
+markers still require operator reconciliation. SSH validation/activation
+failures retain the drain and existing reconciliation evidence.
+
 The independent root unit is `basaltwater-build-host.service`. It uses the
 installed entrypoint in isolated `--worker` mode, `UMask=0077`,
 `KillMode=control-group`, and `Restart=no`. Disabling automatic restart avoids
@@ -122,6 +138,8 @@ marker-owned service, runtime configuration, enrolled forced-command key, and
 per-principal sudoers grant. The ownership marker, accounts, groups, homes,
 queue, ledger, inputs, scratch files, artifacts, logs, and other evidence are
 retained. The store stays drained until a later successful re-enrollment.
+Disable also removes the managed primary groups from SSH admission and removes
+the recorded `ssh-admission` file. The shared SSH policy lock is retained.
 
 The installer never adopts unmarked accounts, paths, keys, sudoers files, or
 units. A missing marker with build-host resources, or a modified managed file
