@@ -31,7 +31,7 @@ installations; optional combinations need their own checks.
 | Area | Selected coverage | Important gaps |
 | --- | --- | --- |
 | Agent setup and tools | Fresh setup, populated reruns, reboot, separate Codex enrollment, managed skills and selected developer/container tools | Other agent profiles/providers, browser/pairing enrollment and optional combinations |
-| Agent tasks and goals | Live Luna inspection, workspace edits and conversation/checkpoint continuation, including an idle worker restart, receipt pruning and a token-budget stop; permissions, cancellation and attempt/deadline limits. Controlled probes cover receipt recovery, unknown usage, surviving-child exclusion and failure isolation | Longer goals, additional crash/claim/publication boundaries and physical write failures. Token budgets are checked between invocations |
+| Agent tasks and goals | Live Luna inspection, workspace edits and conversation/checkpoint continuation, pruning and a token-budget stop. Permission/cancellation/limit guards; controlled synthetic-CLI recurrence, worker restarts and receipt recovery, including interrupted-run review stops; unknown usage, surviving-child exclusion and failure isolation | Longer provider-backed goals, additional crash/claim/publication boundaries and physical write failures. Token budgets are checked between invocations |
 | Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication with synthetic execution and no broker/provider actions; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries, manual reconciliation of uncertain remote outcomes and remaining live follow-up browser flows |
 | Admin jobs | Approved refresh and no-op APT updates preserve tasks; live Chromium approval controls and job status; Chromium/Firefox layouts and rejected power confirmations. Controlled metadata/fetch/status failures and synthetic-source crash/setup-exclusion probes | Package-changing upgrades, executed power actions, power loss and other interruption boundaries |
 | Proxmox guests | Provisioning, identity/reboot, lifecycle controls, disk/resource flags, snapshots, full/linked clones, selected storage moves, backups and same-host restores | Off-host restore/retention, reverse storage moves, EFI/TPM layouts and template retirement. LXC CRIU suspend failed |
@@ -47,8 +47,8 @@ installations; optional combinations need their own checks.
 
 ## Next useful checks
 
-1. **Longer agent runs:** exercise sustained recurrence and remaining worker
-   crash/restart boundaries while preserving usage limits and recovery.
+1. **Longer agent runs:** exercise longer provider-backed goals and remaining
+   worker crash/restart boundaries while preserving usage limits and recovery.
 2. **Agent administration:** test package-changing upgrades on a disposable target;
    extend interruption checks to other applying jobs.
 3. **Storage failure handling:** check hard-mounted network storage, then Btrfs
