@@ -67,6 +67,16 @@ users and group aliases; supplementary groups and explicit group members are
 refused. No root SSH key is enrolled. The root-owned public SSH layout lets
 sshd and the transport account read the key without permitting writes.
 
+Before bootstrap or any installation mutation, enrollment checks every existing
+ancestor of the SSH root for transport search access, in addition to the root
+ownership, no-symlink and safe-mode checks. Other execute permission is required;
+ancestors with a non-root group also require group execute permission because
+that group could match a transport identity. An existing shared parent such as
+root:root mode-`0700` `/var/lib/basaltwater` is refused without changing it.
+Missing shared parents are created root:root with exact mode `0755`, independent
+of umask; the SSH root retains exact mode `0711`. Explicit disable can still
+revoke authority when an ancestor has become inaccessible.
+
 Every key has `restrict` and exactly this forced command for its fixed slug:
 
 ```text
