@@ -158,7 +158,14 @@ lock.
 Use [transaction recovery](../operations/transaction-recovery.md) for phase-specific guidance.
 Completed operations retain a private last-result record beside the marker.
 
-Restore a manifest component's latest SQLite backup by resolving its generated
+For a replacement host, first deploy the matching application revision to create
+its service and private data directory. Keep the original instance stopped while
+verifying recovery. Resolve ownership from the replacement unit; do not assume
+numeric user IDs carry across hosts. Retain required configuration, secrets and
+other persistent files separately; a SQLite archive alone is not a full application
+backup.
+
+Restore a manifest component's verified SQLite backup by resolving its generated
 service identity, stopping it, removing stale journal files, installing the
 database with service ownership, checking it, and starting the service again:
 
