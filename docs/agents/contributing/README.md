@@ -13,6 +13,7 @@ managed coding VM or workstation, use the sibling
 | Basaltwater subagent workflows | [Subagent guidance](../agent-subagents.md) |
 | Types, validators, capability helpers, setup composition, and command contracts | [Quick reference](quick-reference.md) |
 | Common failures and debugging | [Troubleshooting](troubleshooting.md) |
+| Shared build request and artifact interfaces | [Build contracts](build-contracts.md) |
 
 ## Core architecture
 

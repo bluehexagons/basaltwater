@@ -1,0 +1,69 @@
+# Build request and artifact contracts
+
+The shared build-host implementation starts with two internal interfaces:
+`lib.build_protocol` validates version-1 documents and `lib.build_artifacts`
+packages and verifies selected outputs. These interfaces do not yet provide
+`--build-on`, an SSH dispatcher, a job service or target admission. Standard
+deployments continue to build on the destination. The [shared build-host
+plan](../../plans/cicd-manifest-reuse.md) describes the remaining work.
+
+## Build requests
+
+A request contains exactly `schema`, `request_id`, `project`, `source`,
+`platform`, `components` and `limits`. IDs are 32 lowercase hexadecimal digits;
+source records a full Git revision plus SHA-256 hashes of the source snapshot
+and manifest. Platform records OS, architecture and baseline. Parsing validates
+their shape; a worker must separately enforce its supported platform and tools.
+
+Each component carries a name, type, explicit relative export paths, literal
+build commands and build environment inputs. The controller resolves manifest
+defaults with `lib.project_manifest.artifact_paths()`. Target paths, ports,
+runtime environment values, secret bindings and deployment credentials are
+excluded from this request. Build inputs are visible to build code; never insert
+runtime secrets. Commands are data until an authorized worker executes them
+under its unprivileged identity.
+
+Limits cover elapsed build time, memory, CPU percentage (100 is one CPU), export
+bytes and entry count, and log bytes. The parser imposes upper bounds; admitting
+policy can lower them. Parsing alone does not reserve or enforce resources.
+The request digest covers the normalized complete request, including attempt
+ID, source, commands, environment, exports, platform and limits.
+
+## Retained descriptor and bundle
+
+The descriptor retains request/project/source/platform identity, the request
+digest, component export lists, observed tool versions and a sorted inventory.
+It does not retain build commands or environment values. Each inventory entry
+has a relative path, regular-file/directory kind, byte count, SHA-256 for files
+and an executable flag. Every parent directory is inventoried. Directory
+metadata has zero bytes, an empty checksum and no executable flag. Consumers
+normalize directories to `0755`, files to `0644` or `0755`, and the private
+extraction root to `0700`; ownership, set-ID bits and extended metadata are not
+transported.
+
+The uncompressed bundle is `BASALTWATER-ARTIFACT\0\x01\n`, followed by an
+eight-byte unsigned big-endian descriptor length, the UTF-8 JSON descriptor,
+then the exact bytes of each regular file in inventory order. There are no
+per-file archive headers, links or trailing bytes. JSON is deterministic and
+rejects duplicate keys and non-finite numbers. The descriptor is at most 64 MiB;
+inventory and payload must satisfy both protocol and admitted request limits.
+
+`create_artifact()` copies exports through no-follow file/directory descriptors
+into a private snapshot before calculating inventory or writing the bundle.
+The caller must first stop all build work and use a broker-owned parent that
+the build identity cannot access. Symbolic links, hard-linked files and special
+files are rejected. Whole-root static exports omit Git and other control
+metadata. Packaging preserves repository-relative layout and does not silently
+remove explicitly exported dependency directories.
+
+`unpack_artifact()` checks the descriptor against the admitted request, verifies
+every file checksum and the expected whole-bundle digest, and only then
+publishes a new private tree. Both APIs require a private parent owned by their
+effective UID, reject symlink path components, and refuse existing destination
+entries. A post-publication filesystem-sync error may leave a complete output;
+the operation owner must reconcile it rather than blindly replacing it.
+
+These checks establish byte identity, not authorization or provenance. The
+transport and durable job/admission layers must bind authenticated ownership,
+source identity and target generation before execution or activation. They must
+also manage artifact retention, cancellation, transfer pins and replay recovery.
