@@ -82,7 +82,10 @@ def _assert_managed_config_names(current_config_names: set[str]) -> None:
                 )
 
 
-def _reconcile_deployment_sites(current_config_names: set[str]) -> None:
+def _reconcile_deployment_sites(
+    current_config_names: set[str],
+    managed_config_names: Optional[set[str]] = None,
+) -> None:
     """Remove stale app deployment nginx sites before writing current ones.
 
     App deployments own unprefixed ``sites-available``/``sites-enabled`` names
@@ -94,10 +97,9 @@ def _reconcile_deployment_sites(current_config_names: set[str]) -> None:
             continue
 
         for name in os.listdir(directory):
-            if (
-                name in current_config_names
-                or name.startswith(PRESERVED_SITE_PREFIXES)
-            ):
+            if name in current_config_names or name.startswith(PRESERVED_SITE_PREFIXES):
+                continue
+            if managed_config_names is not None and name not in managed_config_names:
                 continue
 
             path = os.path.join(directory, name)
@@ -112,14 +114,21 @@ def _reconcile_deployment_sites(current_config_names: set[str]) -> None:
                 print(f"  ✓ Removed stale nginx config: {path}")
 
 
-def _snapshot_deployment_sites(current_config_names: set[str], extra_paths: tuple[str, ...]) -> dict[str, tuple[str, object]]:
+def _snapshot_deployment_sites(
+    current_config_names: set[str],
+    extra_paths: tuple[str, ...],
+    managed_config_names: Optional[set[str]] = None,
+) -> dict[str, tuple[str, object]]:
     snapshot: dict[str, tuple[str, object]] = {}
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         if not os.path.isdir(directory):
             continue
         for name in os.listdir(directory):
             path = os.path.join(directory, name)
-            if name not in current_config_names and not _is_basaltwater_deployment_site(path):
+            if managed_config_names is not None:
+                if name not in managed_config_names:
+                    continue
+            elif name not in current_config_names and not _is_basaltwater_deployment_site(path):
                 continue
             if os.path.islink(path):
                 info = os.lstat(path)
@@ -584,6 +593,7 @@ server {{
 def _write_nginx_sites_for_groups(
     grouped_deployments: dict[Optional[str], Deployments],
     enable_https_redirect: bool = True,
+    managed_config_names: Optional[set[str]] = None,
 ) -> None:
     """Create nginx site configurations for grouped deployments."""
     
@@ -591,7 +601,7 @@ def _write_nginx_sites_for_groups(
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         os.makedirs(directory, exist_ok=True)
     current_config_names = {_config_name_for_domain(domain) for domain in grouped_deployments}
-    _reconcile_deployment_sites(current_config_names)
+    _reconcile_deployment_sites(current_config_names, managed_config_names)
     
     for domain, deployments in grouped_deployments.items():
         cert_domain = domain or 'default'
@@ -628,11 +638,28 @@ def _write_nginx_sites_for_groups(
 def create_nginx_sites_for_groups(
     grouped_deployments: dict[Optional[str], Deployments],
     enable_https_redirect: bool = True,
+    *,
+    managed_domains: Optional[set[Optional[str]] | list[Optional[str]]] = None,
 ) -> None:
     """Recoverably reconcile deployment sites and their generated TLS files."""
+    if not isinstance(grouped_deployments, dict):
+        raise ValueError("Nginx deployment groups must be a mapping")
     for domain in grouped_deployments:
         if domain is not None and (not isinstance(domain, str) or not validate_host(domain)):
             raise ValueError("Nginx deployment domain must be a valid host")
+    managed_domain_values: Optional[list[Optional[str]]] = None
+    if managed_domains is not None:
+        if not isinstance(managed_domains, (set, list)):
+            raise ValueError("managed_domains must be a set or list of literal domains")
+        managed_domain_values = list(managed_domains)
+        for domain in managed_domain_values:
+            if domain is not None and (not isinstance(domain, str) or not validate_host(domain)):
+                raise ValueError("Managed Nginx domain must be a valid host or None")
+        if len(set(managed_domain_values)) != len(managed_domain_values):
+            raise ValueError("managed_domains must not contain duplicate domains")
+        outside_scope = set(grouped_deployments) - set(managed_domain_values)
+        if outside_scope:
+            raise ValueError("Every Nginx deployment domain must be in managed_domains")
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         validate_filesystem_path(directory)
         if os.path.islink(directory):
@@ -640,7 +667,16 @@ def create_nginx_sites_for_groups(
     current_config_names = {_config_name_for_domain(domain) for domain in grouped_deployments}
     if len(current_config_names) != len(grouped_deployments):
         raise ValueError("Nginx deployment domains produce duplicate configuration names")
-    extra_paths = tuple(path for domain in grouped_deployments for path in _self_signed_cert_path(domain or "default"))
+    managed_config_names = None
+    snapshot_domains = list(grouped_deployments)
+    if managed_domain_values is not None:
+        managed_config_names = {_config_name_for_domain(domain) for domain in managed_domain_values}
+        if len(managed_config_names) != len(managed_domain_values):
+            raise ValueError("Managed Nginx domains produce duplicate configuration names")
+        if any(name.startswith(PRESERVED_SITE_PREFIXES) for name in managed_config_names):
+            raise ValueError("Managed Nginx domain conflicts with a prefix-owned Nginx site")
+        snapshot_domains = managed_domain_values
+    extra_paths = tuple(path for domain in snapshot_domains for path in _self_signed_cert_path(domain or "default"))
     for path in extra_paths:
         validate_filesystem_path(path)
         if os.path.islink(os.path.dirname(path)):
@@ -663,7 +699,9 @@ def create_nginx_sites_for_groups(
             # daemon before changing files rather than trying to start it.
             if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
                 raise RuntimeError("Nginx must be active before reconciling deployment sites")
-            snapshot = _snapshot_deployment_sites(current_config_names, extra_paths)
+            snapshot = _snapshot_deployment_sites(
+                current_config_names, extra_paths, managed_config_names,
+            )
             backup_dir = tempfile.mkdtemp(prefix=".basaltwater-nginx-", dir=os.path.dirname(store.path))
             paths = set(snapshot) | set(extra_paths) | {
                 os.path.join(directory, name)
@@ -684,10 +722,20 @@ def create_nginx_sites_for_groups(
                     previous[path] = dict(kind=kind, content_base64=base64.b64encode(content).decode("ascii"),
                                           mode=mode, uid=uid, gid=gid)
             write_json_atomic(os.path.join(backup_dir, "previous.json"), previous, mode=0o600)
-            context = {"backup_dir": backup_dir, "config_names": sorted(current_config_names)}
+            context = {
+                "backup_dir": backup_dir,
+                "config_names": sorted(current_config_names),
+                "managed_config_names": (
+                    sorted(managed_config_names) if managed_config_names is not None else None
+                ),
+            }
             store.transition(record.operation_id, "applying", context=context)
             modified = True
-            _write_nginx_sites_for_groups(grouped_deployments, enable_https_redirect=enable_https_redirect)
+            _write_nginx_sites_for_groups(
+                grouped_deployments,
+                enable_https_redirect=enable_https_redirect,
+                managed_config_names=managed_config_names,
+            )
             for directory in dict.fromkeys((NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR,
                                             *(os.path.dirname(path) for path in extra_paths))):
                 if os.path.isdir(directory):

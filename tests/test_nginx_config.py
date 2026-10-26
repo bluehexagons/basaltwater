@@ -635,8 +635,11 @@ class TestNginxTransaction(unittest.TestCase):
                 raise CommandTimeoutError(command, 1)
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    def apply(self):
-        create_nginx_sites_for_groups(self.groups)
+    def apply(self, managed_domains=None):
+        if managed_domains is None:
+            create_nginx_sites_for_groups(self.groups)
+        else:
+            create_nginx_sites_for_groups(self.groups, managed_domains=managed_domains)
 
     def assert_restored(self):
         self.assertEqual(self.config.read_bytes(), self.old)
@@ -658,6 +661,76 @@ class TestNginxTransaction(unittest.TestCase):
         self.assertFalse(list(self.root.glob(".basaltwater-nginx-*/")))
         result = json.loads(Path(str(self.marker) + ".last.json").read_text())
         self.assertEqual(result["outcome"], "succeeded")
+
+    def test_scoped_update_preserves_other_managed_deployment_and_unmanaged_sites(self):
+        other = self.available / "other_example_com"
+        other.write_bytes(self.old)
+        other_link = self.enabled / "other_example_com"
+        other_link.symlink_to(other)
+        unmanaged = self.available / "operator_site"
+        unmanaged.write_bytes(b"operator config")
+        prefixed = self.available / "gogs_git_com"
+        prefixed.write_bytes(self.old)
+
+        self.apply(["example.com"])
+
+        self.assertIn(b"/srv/new", self.config.read_bytes())
+        self.assertEqual(other.read_bytes(), self.old)
+        self.assertEqual(os.readlink(other_link), str(other))
+        self.assertEqual(unmanaged.read_bytes(), b"operator config")
+        self.assertEqual(prefixed.read_bytes(), self.old)
+        self.assertTrue(self.stale.exists())
+
+    def test_scoped_reconcile_removes_explicitly_retired_owned_domain(self):
+        retired = self.available / "retired_example_com"
+        retired.write_bytes(self.old)
+        retired_link = self.enabled / "retired_example_com"
+        retired_link.symlink_to(retired)
+
+        self.apply(["example.com", "retired.example.com"])
+
+        self.assertFalse(retired.exists())
+        self.assertFalse(os.path.lexists(retired_link))
+        self.assertEqual(self.stale.read_bytes(), self.old)
+
+    def test_scoped_rollback_restores_scope_tls_and_leaves_unrelated_sites_untouched(self):
+        other = self.available / "other_example_com"
+        other.write_bytes(self.old)
+        other.chmod(0o604)
+        other_link = self.enabled / "other_example_com"
+        other_link.symlink_to(other)
+        other_cert = self.ssl / "other.example.com.crt"
+        other_cert.write_bytes(b"unrelated certificate")
+        other_cert.chmod(0o640)
+        stale_cert = self.ssl / "stale.example.com.crt"
+        stale_key = self.ssl / "stale.example.com.key"
+        stale_cert.write_bytes(b"retired certificate")
+        stale_key.write_bytes(b"retired private key")
+        stale_key.chmod(0o600)
+        original_atomic_write = nginx.write_bytes_atomic
+        touched_paths = []
+
+        def track_write(path, content, **kwargs):
+            touched_paths.append(path)
+            original_atomic_write(path, content, **kwargs)
+
+        self.fail_validation = True
+        with patch.object(nginx, "write_bytes_atomic", side_effect=track_write):
+            with self.assertRaisesRegex(RuntimeError, "configuration test failed"):
+                self.apply(["example.com", "stale.example.com"])
+
+        self.assert_restored()
+        self.assertEqual(other.read_bytes(), self.old)
+        self.assertEqual(other.stat().st_mode & 0o777, 0o604)
+        self.assertEqual(os.readlink(other_link), str(other))
+        self.assertEqual(other_cert.read_bytes(), b"unrelated certificate")
+        self.assertEqual(other_cert.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(stale_cert.read_bytes(), b"retired certificate")
+        self.assertEqual(stale_key.read_bytes(), b"retired private key")
+        self.assertEqual(stale_key.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(str(other), touched_paths)
+        self.assertNotIn(str(other_cert), touched_paths)
+        self.assertIn(str(stale_cert), touched_paths)
 
     def test_validation_failure_restores_sites_tls_and_reloads_previous_config(self):
         self.fail_validation = True
@@ -773,6 +846,29 @@ with patch.object(n, "run", side_effect=lambda command, **kwargs: CompletedProce
             self.apply()
         self.assertEqual(self.config.read_bytes(), self.old)
         self.assertEqual(self.reloads, 0)
+
+    def test_invalid_or_colliding_scope_fails_before_writes(self):
+        cases = (
+            ("example.com", ["other.example.com"]),
+            ("example.com", ["example.com", None, "default"]),
+            ("example.com", ("example.com",)),
+            ("example.com", ["../escape"]),
+        )
+        for current, scope in cases:
+            with self.subTest(scope=scope):
+                before = self.config.read_bytes()
+                with self.assertRaises(ValueError):
+                    create_nginx_sites_for_groups({current: []}, managed_domains=scope)
+                self.assertEqual(self.config.read_bytes(), before)
+                self.assertEqual(self.commands, [])
+                self.assertEqual(self.reloads, 0)
+
+    def test_default_site_can_be_explicitly_scoped_without_aliases(self):
+        create_nginx_sites_for_groups({None: []}, managed_domains=[None])
+        self.assertTrue((self.available / "default").is_file())
+
+        with self.assertRaisesRegex(ValueError, "duplicate configuration names"):
+            create_nginx_sites_for_groups({None: []}, managed_domains=[None, "default"])
 
     def test_dry_run_creates_no_recovery_artifacts(self):
         with patch.object(nginx, "is_dry_run", return_value=True):
