@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import selectors
 import subprocess
 import sys
 import time
@@ -242,16 +243,28 @@ def execute_request(input_path: str, expected_digest: str, workspace: str, home:
             )
             assert process.stdout is not None
             with process.stdout:
-                while chunk := process.stdout.read1(65536):
-                    kept = chunk[:remaining]
-                    if kept:
-                        sys.stdout.buffer.write(kept)
-                        sys.stdout.buffer.flush()
-                    remaining -= len(kept)
-                    if len(chunk) > len(kept):
-                        # The coordinator sees a failed main process and stops
-                        # its entire cgroup before packaging or releasing capacity.
-                        return 1
+                with selectors.DefaultSelector() as readiness:
+                    readiness.register(process.stdout, selectors.EVENT_READ)
+                    while True:
+                        if readiness.select(timeout=0.2):
+                            chunk = os.read(process.stdout.fileno(), 65536)
+                            if not chunk:
+                                break
+                            kept = chunk[:remaining]
+                            if kept:
+                                sys.stdout.buffer.write(kept)
+                                sys.stdout.buffer.flush()
+                            remaining -= len(kept)
+                            if len(chunk) > len(kept):
+                                # The coordinator sees a failed main process and stops
+                                # its entire cgroup before packaging or releasing capacity.
+                                return 1
+                        exit_code = process.poll()
+                        if exit_code is not None and exit_code != 0:
+                            # A command can fail while a descendant still holds
+                            # stdout open. Report the failure so the coordinator
+                            # can stop and drain the whole unit cgroup.
+                            return 1
             if process.wait() != 0:
                 return 1
     return 0

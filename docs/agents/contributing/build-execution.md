@@ -44,8 +44,14 @@ checks the recursive [`cgroup.events` population](https://www.kernel.org/doc/htm
 A successful main process alone never authorizes artifact packaging. Timeout
 or cancellation requests stop the entire service; cleanup may wait past the
 work deadline while kernel I/O prevents process exit.
-An observed helper failure also stops the service immediately, including log
-overflow and command failures that leave descendants alive.
+The helper waits for stdout readiness in short intervals and polls each command
+between waits. It reports a nonzero command exit promptly even when a descendant
+keeps the output pipe open, so the coordinator can stop the whole service
+without waiting for pipe EOF.
+Successful commands still drain stdout through EOF. An observed helper failure
+stops the service immediately, including log overflow and command failures that
+leave descendants alive; the coordinator still waits for an empty cgroup before
+packaging artifacts or releasing capacity.
 
 The caller must hold both the host worker lease and a durable running-job
 record throughout execution and cleanup. Launch, observation or stop errors

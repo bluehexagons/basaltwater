@@ -18,6 +18,37 @@ def observation(*, load="loaded", active="active", sub="running", code="0", stat
             "ExecMainCode": code, "ExecMainStatus": status, "Result": result}
 
 
+class FakePipe:
+    def fileno(self):
+        return 42
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+class FakeSelector:
+    def __init__(self, readable):
+        self.readable = iter(readable)
+        self.registered = None
+        self.timeouts = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def register(self, fileobj, events):
+        self.registered = (fileobj, events)
+
+    def select(self, *, timeout=None):
+        self.timeouts.append(timeout)
+        return [self.registered] if next(self.readable) else []
+
+
 class BuildExecutionTests(unittest.TestCase):
     def arguments(self):
         return {"uid": 1234, "gid": 1234, "scratch_path": "/var/lib/build-scratch/owned/fs",
@@ -151,34 +182,109 @@ class BuildExecutionTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         execution._observation(execution.unit_name("a" * 32))
 
-    def test_unprivileged_helper_checks_request_and_bounds_total_logs(self):
+    def test_unprivileged_helper_preserves_successful_output_until_pipe_eof(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "input.json"
             job = build_request()
-            job["limits"]["log_bytes"] = 3
-            job["components"][0]["commands"] = ["first", "must-not-run"]
-            job["components"][0]["env"] = {"TMPDIR": "/dev/shm", "HOME": "/other-home"}
+            job["components"][0]["commands"] = ["build"]
             path.write_bytes(encode_document(job))
             output = io.BytesIO()
-            process = Mock(stdout=io.BytesIO(b"more than three bytes"))
+            readiness = FakeSelector([True, True])
+            process = Mock(stdout=FakePipe(), poll=Mock(return_value=0),
+                           wait=Mock(return_value=0))
             with patch.object(execution.os, "getuid", return_value=1234), \
                     patch.object(execution.os, "getgid", return_value=1234), \
                     patch.object(execution.os, "getgroups", return_value=[]), \
                     patch.object(execution.sys, "stdout", Mock(buffer=output)), \
                     patch.object(execution, "prepare_history") as history, \
-                    patch.object(execution.subprocess, "Popen", return_value=process) as spawn:
-                result = execution.execute_request(str(path), request_digest(job), temporary, temporary, "/work/history.bundle")
-                self.assertEqual(result, 1)
-                history.assert_called_once_with("/work/history.bundle", job["source"]["revision"], temporary, temporary)
-                self.assertEqual(output.getvalue(), b"mor")
-                spawn.assert_called_once()
-                self.assertEqual(spawn.call_args.args[0], ["/bin/bash", "--noprofile", "--norc", "-c", "first"])
-                environment = spawn.call_args.kwargs["env"]
-                self.assertEqual(environment["HOME"], temporary)
-                self.assertEqual(environment["TMPDIR"], str(Path(temporary) / "tmp"))
-                self.assertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+                    patch.object(execution.subprocess, "Popen", return_value=process) as spawn, \
+                    patch.object(execution.selectors, "DefaultSelector", return_value=readiness), \
+                    patch.object(execution.os, "read", side_effect=[b"build output", b""]):
+                result = execution.execute_request(str(path), request_digest(job), temporary, temporary,
+                                                   "/work/history.bundle")
+
+        self.assertEqual(result, 0)
+        history.assert_called_once_with("/work/history.bundle", job["source"]["revision"],
+                                        temporary, temporary)
+        self.assertEqual(output.getvalue(), b"build output")
+        spawn.assert_called_once()
+        self.assertEqual(spawn.call_args.args[0], ["/bin/bash", "--noprofile", "--norc", "-c", "build"])
+        process.wait.assert_called_once_with()
+        self.assertEqual(readiness.timeouts, [0.2, 0.2])
+
+    def test_failed_command_is_detected_while_descendant_holds_stdout_open(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "input.json"
+            job = build_request()
+            job["components"][0]["commands"] = ["failed", "must-not-run"]
+            path.write_bytes(encode_document(job))
+            output = io.BytesIO()
+            readiness = FakeSelector([False, False])
+            process = Mock(stdout=FakePipe(), poll=Mock(side_effect=[None, 1]),
+                           wait=Mock(side_effect=AssertionError("poll already observed command exit")))
+            with patch.object(execution.os, "getuid", return_value=1234), \
+                    patch.object(execution.os, "getgid", return_value=1234), \
+                    patch.object(execution.os, "getgroups", return_value=[]), \
+                    patch.object(execution.sys, "stdout", Mock(buffer=output)), \
+                    patch.object(execution, "prepare_history"), \
+                    patch.object(execution.subprocess, "Popen", return_value=process) as spawn, \
+                    patch.object(execution.selectors, "DefaultSelector", return_value=readiness), \
+                    patch.object(execution.os, "read") as read:
+                result = execution.execute_request(str(path), request_digest(job), temporary, temporary,
+                                                   "/work/history.bundle")
+
+        self.assertEqual(result, 1)
+        process.wait.assert_not_called()
+        self.assertEqual(readiness.timeouts, [0.2, 0.2])
+        read.assert_not_called()
+        spawn.assert_called_once()
+        self.assertEqual(spawn.call_args.args[0][-1], "failed")
+        self.assertEqual(output.getvalue(), b"")
+
+    def test_unprivileged_helper_bounds_combined_logs_across_components(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "input.json"
+            job = build_request()
+            job["limits"]["log_bytes"] = 3
+            job["components"][0]["commands"] = ["first"]
+            job["components"][0]["env"] = {"TMPDIR": "/dev/shm", "HOME": "/other-home"}
+            second = {**job["components"][0], "name": "worker", "artifacts": ["worker-dist"],
+                      "commands": ["second", "must-not-run"], "env": {}}
+            job["components"].append(second)
+            path.write_bytes(encode_document(job))
+            output = io.BytesIO()
+            first = Mock(stdout=FakePipe(), poll=Mock(side_effect=[None, 0]),
+                          wait=Mock(return_value=0))
+            second_process = Mock(stdout=FakePipe(), poll=Mock(return_value=None),
+                                  wait=Mock(side_effect=AssertionError("log overflow must fail immediately")))
+            readiness = [FakeSelector([True, True]), FakeSelector([True])]
+            with patch.object(execution.os, "getuid", return_value=1234), \
+                    patch.object(execution.os, "getgid", return_value=1234), \
+                    patch.object(execution.os, "getgroups", return_value=[]), \
+                    patch.object(execution.sys, "stdout", Mock(buffer=output)), \
+                    patch.object(execution, "prepare_history") as history, \
+                    patch.object(execution.subprocess, "Popen", side_effect=[first, second_process]) as spawn, \
+                    patch.object(execution.selectors, "DefaultSelector", side_effect=readiness), \
+                    patch.object(execution.os, "read", side_effect=[b"ab", b"", b"cd"]):
+                result = execution.execute_request(str(path), request_digest(job), temporary, temporary,
+                                                   "/work/history.bundle")
                 with self.assertRaisesRegex(ValueError, "changed"):
-                    execution.execute_request(str(path), "f" * 64, temporary, temporary, "/work/history.bundle")
+                    execution.execute_request(str(path), "f" * 64, temporary, temporary,
+                                              "/work/history.bundle")
+
+        self.assertEqual(result, 1)
+        history.assert_called_once_with("/work/history.bundle", job["source"]["revision"],
+                                        temporary, temporary)
+        self.assertEqual(output.getvalue(), b"abc")
+        self.assertEqual(spawn.call_count, 2)
+        self.assertEqual(spawn.call_args_list[0].args[0][-1], "first")
+        self.assertEqual(spawn.call_args_list[1].args[0][-1], "second")
+        first.wait.assert_called_once_with()
+        second_process.wait.assert_not_called()
+        environment = spawn.call_args_list[0].kwargs["env"]
+        self.assertEqual(environment["HOME"], temporary)
+        self.assertEqual(environment["TMPDIR"], str(Path(temporary) / "tmp"))
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
 
     def test_cgroup_lookup_errors_are_not_treated_as_empty(self):
         unit = execution.unit_name("a" * 32)
