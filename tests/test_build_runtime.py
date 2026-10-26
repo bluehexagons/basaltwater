@@ -281,9 +281,10 @@ class BuildRuntimeTests(unittest.TestCase):
                     self.validate(manifest)
 
     def test_binary_and_resolved_release_paths_cannot_transform_in_execstart(self):
+        self.executable()
         for binary in (
             "bin/%n", "bin/$SERVICE", "bin/'api'", 'bin/"api"',
-            "bin/server name", "{{release_dir}}/bin/api",
+            "bin/server name", "{{release_dir}}/bin/api", "{{release_dir}}/../bin/api",
         ):
             with self.subTest(binary=binary):
                 manifest = self.manifest(binary=binary)

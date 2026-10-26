@@ -120,9 +120,9 @@ def _normalize_binary_path(value: object) -> str:
     validate_filesystem_path(value, must_exist=False)
     if os.path.isabs(value):
         raise ValueError("Service binary must be relative to the release directory")
-    normalized = os.path.normpath(value)
-    if "{{" in normalized or "}}" in normalized:
+    if "{{" in value or "}}" in value:
         raise ValueError("Service binary must be a literal relative release path")
+    normalized = os.path.normpath(value)
     _validate_literal_systemd_path(normalized, "Service binary")
     try:
         return validate_artifact_path(normalized)
