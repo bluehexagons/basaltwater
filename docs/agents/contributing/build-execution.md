@@ -52,6 +52,11 @@ Successful commands still drain stdout through EOF. An observed helper failure
 stops the service immediately, including log overflow and command failures that
 leave descendants alive; the coordinator still waits for an empty cgroup before
 packaging artifacts or releasing capacity.
+Systemd may garbage-collect the transient unit after a stop request. The
+coordinator accepts a missing unit only after its own stop request succeeded
+and the unified cgroup is confirmed absent or unpopulated. A populated cgroup,
+an unreadable cgroup state, or disappearance before a stop remains unconfirmed
+and keeps the running claim in place.
 
 The caller must hold both the host worker lease and a durable running-job
 record throughout execution and cleanup. Launch, observation or stop errors

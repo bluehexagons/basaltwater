@@ -125,10 +125,13 @@ def _empty_cgroup(unit: str) -> bool:
         controllers.read(4096)
     try:
         with directory_fd("/sys/fs/cgroup/system.slice/" + unit) as parent:
-            descriptor = os.open("cgroup.events", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                                 dir_fd=parent)
-            with os.fdopen(descriptor, "rb") as source:
-                raw = source.read(4097)
+            try:
+                descriptor = os.open("cgroup.events", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                     dir_fd=parent)
+                with os.fdopen(descriptor, "rb") as source:
+                    raw = source.read(4097)
+            except FileNotFoundError as exc:
+                raise RuntimeError("Build cgroup status is unavailable") from exc
     except FileNotFoundError:
         return True
     if len(raw) > 4096:
@@ -178,6 +181,14 @@ def run_systemd_build(request: object, *, uid: int, gid: int, scratch_path: str,
     failed_exit_code = None
     while True:
         fields = _observation(unit)
+        if fields["LoadState"] == "not-found":
+            if not stop_reason:
+                raise RuntimeError("Build service disappeared; retain worker ownership")
+            if not _empty_cgroup(unit):
+                pause(0.2)
+                continue
+            return BuildExecutionResult("cancelled" if stop_reason == "cancelled" else "failed",
+                                        failed_exit_code, stop_reason)
         if fields["LoadState"] != "loaded":
             raise RuntimeError("Build service disappeared; retain worker ownership")
         if not stop_reason:
