@@ -30,6 +30,27 @@ Deployment roots cannot overlap the protected source, private state,
 configuration, SSH or sudoers trees. This check does not provision application
 roots or permit a client to choose a different root.
 
+Enrollment does bootstrap missing **parent** directories of each administrator
+policy's `deployment_root` (for `/srv/apps/shop`, only `/srv` and `/srv/apps`
+if missing). Before any mutation, including the initial marker/lock bootstrap,
+it preflights every existing component of every parent chain: all must be
+directories owned by root, without symlinks or group/other write permission.
+Writable sticky ancestors are also refused for deployment parents. Safe
+existing directories keep their modes, ownership, contents and identities;
+setup never chmods or adopts unsafe parents.
+
+Under the exclusive lease, setup rechecks the plan, closes the durable serving
+gate and saves an `updating` marker whose
+`pending.deployment_parents_to_create` lists all missing directories in parent
+order. Only then does it create those directories through no-follow directory
+descriptors with root:root ownership and exact mode `0755`, independent of
+umask. The actual application root remains for activation. Setup does not
+create releases or change application services or Nginx publication. Failed
+creation retains the plan, any created parents and the serving hold for
+operator reconciliation; it does not replay or remove them automatically.
+Explicit disable never preflights or creates deployment parents and retains
+existing ones.
+
 `configure_build_target(config)` reads `config.build_target_enrollment` as an
 already-decoded mapping. `None` is a no-op. Only an explicitly boolean
 `config.disable_build_target=True` requests de-enrollment and takes precedence
@@ -57,7 +78,7 @@ Managed root:root resources are:
   `.managed.json` and the stable `.maintenance.lock`, each mode `0600`.
 - `/var/lib/basaltwater/build-target` and its `admission`, `artifacts`,
   `releases`, `verify` directories, all mode `0700`.
-- `/var/lib/basaltwater/build-target-ssh` mode `0711`; each hashed principal
+- `/var/lib/basaltwater-build-target-ssh` mode `0711`; each hashed principal
   home mode `0555`, `.ssh` mode `0755`, and `authorized_keys` mode `0644`.
 - One mode-`0440` `/etc/sudoers.d/bw-target-<12-hex-id>` per enrolled principal.
 
@@ -72,11 +93,25 @@ Before bootstrap or any installation mutation, enrollment checks every existing
 ancestor of the SSH root for transport search access, in addition to the root
 ownership, no-symlink and safe-mode checks. Other execute permission is required;
 ancestors with a non-root group also require group execute permission because
-that group could match a transport identity. An existing shared parent such as
-root:root mode-`0700` `/var/lib/basaltwater` is refused without changing it.
+that group could match a transport identity. The fixed public SSH root is a
+sibling of the private `/var/lib/basaltwater` tree. Ordinary setup keeps that
+private parent root:root mode `0700`; enrollment and refresh work with that
+mode and never widen it or change unrelated ACLs or state permissions.
 Missing shared parents are created root:root with exact mode `0755`, independent
 of umask; the SSH root retains exact mode `0711`. Explicit disable can still
 revoke authority when an ancestor has become inaccessible.
+
+Installer ownership markers now use schema 2; enrollment and runtime
+configuration remain schema 1. Schema-1 markers and any existing legacy
+`/var/lib/basaltwater/build-target-ssh` path (including a symlink) refuse both
+enrollment and disable before mutations, with operator guidance. There is no
+automatic migration, account-home rewrite or adoption of old files. An operator
+must reconcile the old installation or perform a clean reinstall: preserve the
+marker, stable lock, accounts, target data and admission/activation evidence,
+coordinate active requests and revoke old key/sudo authority under operator
+control before replacing the enrollment. Do not widen the private parent, move
+homes or edit/delete the marker or lock to bypass the refusal. Native lab
+migration is separate operator work.
 
 Every key has `restrict` and exactly this forced command for its fixed slug:
 

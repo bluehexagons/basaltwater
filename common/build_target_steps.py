@@ -28,13 +28,20 @@ ETC_DIR = "/etc/basaltwater/build-target"
 MARKER_PATH = ETC_DIR + "/.managed.json"
 CONFIG_PATH = ETC_DIR + "/config.json"
 DATA_ROOT = "/var/lib/basaltwater/build-target"
-SSH_ROOT = "/var/lib/basaltwater/build-target-ssh"
+SSH_ROOT = "/var/lib/basaltwater-build-target-ssh"
+_LEGACY_SSH_ROOT = "/var/lib/basaltwater/build-target-ssh"
 SOURCE_ROOT = "/opt/basaltwater"
 ENTRYPOINT_PATH = SOURCE_ROOT + "/common/service_tools/build_target.py"
 SUDOERS_DIR = "/etc/sudoers.d"
 ROOTS = {name: DATA_ROOT + "/" + name for name in ("admission", "artifacts", "releases", "verify")}
 MAX_ENROLLMENT_BYTES = MAX_POLICY_BYTES + 256 * 1024
 _MARKER_LIMIT = 1024 * 1024
+_MARKER_SCHEMA = 2
+_LEGACY_LAYOUT_GUIDANCE = (
+    "Legacy build-target transport layout requires operator reconciliation or a clean reinstall; "
+    "preserve accounts, markers, the stable lock and retained data, revoke old authority under "
+    "operator control, and do not widen /var/lib/basaltwater or move homes/edit markers to bypass this check"
+)
 _PREFIX = "bw-target-"
 _SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?")
 _HASH = re.compile(r"[0-9a-f]{64}")
@@ -131,6 +138,57 @@ def _directory(path: str, mode: int, *, create: bool = False) -> None:
         raise ValueError("Unexpected managed target directory permissions: " + path)
 
 
+def _missing_parent_directories(path: str) -> list[str]:
+    """Check the complete deployment-parent chain without adopting unsafe paths."""
+    validate_filesystem_path(path)
+    missing = []
+    for component in (*reversed(Path(path).parents), Path(path)):
+        try:
+            info = component.lstat()
+        except FileNotFoundError:
+            missing.append(str(component))
+            continue
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != 0 or info.st_mode & 0o022):
+            raise ValueError("Unsafe target deployment parent ancestor; requires root-owned "
+                             "nonwritable directories without symlinks: " + str(component))
+    return missing
+
+
+def _deployment_parent_plan(enrollment: dict | None) -> list[str]:
+    if enrollment is None:
+        return []
+    parents = {os.path.dirname(app["deployment_root"])
+               for app in enrollment["policy"]["applications"].values()}
+    missing = {path for parent in sorted(parents) for path in _missing_parent_directories(parent)}
+    return sorted(missing, key=lambda path: (len(Path(path).parts), path))
+
+
+def _create_deployment_parents(paths: list[str]) -> None:
+    """Create only the recorded missing parents; preserve safe existing modes."""
+    for path in paths:
+        missing = _missing_parent_directories(path)
+        if not missing:
+            continue
+        if missing != [path]:
+            raise ValueError("Target deployment parent creation plan changed: " + path)
+        parent, name = os.path.split(path)
+        with directory_fd(parent) as parent_fd:
+            info = os.fstat(parent_fd)
+            if info.st_uid != 0 or info.st_mode & 0o022:
+                raise ValueError("Unsafe target deployment parent: " + parent)
+            os.mkdir(name, 0o755, dir_fd=parent_fd)
+            descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                 dir_fd=parent_fd)
+            try:
+                os.fchown(descriptor, 0, 0)
+                os.fchmod(descriptor, 0o755)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.fsync(parent_fd)
+
+
 def _account(username: str):
     try:
         return pwd.getpwnam(username)
@@ -196,7 +254,9 @@ def _file_mode(path: str) -> int:
 def _parse_marker(raw: bytes) -> dict:
     marker = _record(decode_document(raw, maximum=_MARKER_LIMIT),
                      {"schema", "state", "principals", "files", "pending"}, "Target ownership marker")
-    if type(marker["schema"]) is not int or marker["schema"] != 1:
+    if type(marker["schema"]) is int and marker["schema"] == 1:
+        raise ValueError(_LEGACY_LAYOUT_GUIDANCE)
+    if type(marker["schema"]) is not int or marker["schema"] != _MARKER_SCHEMA:
         raise ValueError("Unsupported target ownership marker")
     if marker["state"] not in {"enabled", "disabled", "updating"}:
         raise ValueError("Invalid target enrollment state")
@@ -326,6 +386,7 @@ def _validate_sudoers(content: bytes) -> None:
 
 
 def _reconcile(marker: dict, enrollment: dict | None, descriptor: int) -> None:
+    parents_to_create = _deployment_parent_plan(enrollment)
     desired = {} if enrollment is None else enrollment["keys"]
     files = {}
     if enrollment is not None:
@@ -338,10 +399,12 @@ def _reconcile(marker: dict, enrollment: dict | None, descriptor: int) -> None:
     set_serving(descriptor, False)
     marker["state"] = "updating"
     marker["pending"] = {"files": {path: _hash(raw) for path, raw in files.items()},
+                         "deployment_parents_to_create": parents_to_create,
                          "enrollment_sha256": None if enrollment is None else
                          _hash(encode_document(enrollment, maximum=MAX_ENROLLMENT_BYTES))}
     _save(marker)
     if enrollment is not None:
+        _create_deployment_parents(parents_to_create)
         _install_packages()
         for path, mode in ((DATA_ROOT, 0o700), (SSH_ROOT, 0o711),
                            *((root, 0o700) for root in ROOTS.values())):
@@ -400,6 +463,11 @@ def configure_build_target(config: object) -> None:
     entrypoint.require_platform()
     # Trust installed code before installing packages, accounts or authority.
     _trusted_source_tree()
+    if os.path.lexists(_LEGACY_SSH_ROOT):
+        raise ValueError(_LEGACY_LAYOUT_GUIDANCE + ": " + _LEGACY_SSH_ROOT)
+    # Check all policy-derived parents before even the first-install bootstrap.
+    # Reconcile rechecks and records the plan under the exclusive lease.
+    _deployment_parent_plan(enrollment)
     initial = not os.path.lexists(ETC_DIR)
     if initial:
         _preflight(None, set() if enrollment is None else set(enrollment["keys"]))
@@ -415,7 +483,7 @@ def configure_build_target(config: object) -> None:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
             os.fsync(parent_fd)
         _directory(ETC_DIR, 0o700)
-        marker = {"schema": 1, "state": "updating", "principals": {}, "files": {}, "pending": None}
+        marker = {"schema": _MARKER_SCHEMA, "state": "updating", "principals": {}, "files": {}, "pending": None}
         _save(marker)
     with target_lease(installer=True, create=initial) as descriptor:
         if not initial:
