@@ -257,6 +257,71 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 self.assertEqual(call.kwargs["timeout"], 10)
                 self.assertNotIn("SSH_AUTH_SOCK", call.kwargs["env"])
 
+    def test_retention_modes_require_local_root_and_isolation_before_trust_or_config_reads(self):
+        inspect = ["--inspect-retention", "a" * 32]
+        settle = ["--settle-terminal", "a" * 32, "--expected-revision", "b" * 64]
+        with patch.object(build_host, "_trusted_code") as trusted, \
+             patch.object(build_host, "load_config") as loader, \
+             patch.object(build_host.sys, "stderr"), \
+             patch.dict(os.environ, {}, clear=True):
+            for arguments in (inspect, settle):
+                with patch.object(build_host.os, "geteuid", return_value=1000), \
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
+                    self.assertEqual(build_host.main(arguments), 1)
+                with patch.object(build_host.os, "geteuid", return_value=0), \
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=0)):
+                    self.assertEqual(build_host.main(arguments), 1)
+                for name in ("SSH_ORIGINAL_COMMAND", "SSH_CONNECTION", "SSH_CLIENT"):
+                    with patch.dict(os.environ, {name: build_host.SSH_COMMAND}), \
+                         patch.object(build_host.os, "geteuid", return_value=0), \
+                         patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
+                        self.assertEqual(build_host.main(arguments), 1)
+            trusted.assert_not_called()
+            loader.assert_not_called()
+
+    def test_local_retention_passes_only_configured_roots_and_exact_id_revision(self):
+        configured = config()
+        with patch.object(build_host.os, "geteuid", return_value=0), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host, "_trusted_code"), \
+             patch.object(build_host, "_trusted_libraries"), \
+             patch.object(build_host, "require_platform"), \
+             patch.object(build_host, "load_config", return_value=configured), \
+             patch.object(build_host, "retain_terminal", return_value={"revision": "b" * 64}) as retain, \
+             patch.object(build_host.sys, "stdout"), \
+             patch.object(build_host.sys, "stderr"), \
+             patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(build_host.main(["--inspect-retention", "a" * 32]), 0)
+            retain.assert_called_once_with(configured, request_id="a" * 32, expected_revision=None)
+            retain.reset_mock()
+            self.assertEqual(build_host.main(["--settle-terminal", "a" * 32,
+                                               "--expected-revision", "b" * 64]), 0)
+            retain.assert_called_once_with(configured, request_id="a" * 32, expected_revision="b" * 64)
+            retain.reset_mock()
+            for arguments in (["--settle-terminal", "a" * 32],
+                              ["--inspect-retention", "a" * 32, "--expected-revision", "b" * 64],
+                              ["--inspect-retention", "a" * 32, "--once"],
+                              ["--inspect-retention", "a" * 32, "--principal", "controller"],
+                              ["--worker", "--expected-revision", "b" * 64]):
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(build_host.main(arguments), 1)
+            retain.assert_not_called()
+
+    def test_retention_composes_trusted_config_without_worker_launch_or_transport(self):
+        configured = config()
+        with patch("lib.build_jobs.BuildJobStore") as jobs, \
+             patch("lib.build_inputs.BuildInputStore") as inputs, \
+             patch("lib.build_retention.BuildRetentionStore") as retention:
+            result = build_host.retain_terminal(configured, request_id="a" * 32, expected_revision=None)
+            retention.assert_called_once_with(inputs=inputs.return_value, jobs=jobs.return_value,
+                                               scratch_root=configured["roots"]["scratch"],
+                                               artifacts_root=configured["roots"]["artifacts"],
+                                               logs_root=configured["roots"]["logs"])
+            self.assertEqual(result, retention.return_value.inspect_retention.return_value)
+            retention.return_value.inspect_retention.assert_called_once_with("a" * 32)
+            build_host.retain_terminal(configured, request_id="a" * 32, expected_revision="b" * 64)
+            retention.return_value.settle_terminal.assert_called_once_with("a" * 32, expected_revision="b" * 64)
+
 
 if __name__ == "__main__":
     unittest.main()

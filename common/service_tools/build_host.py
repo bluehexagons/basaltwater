@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import grp
+import json
 import os
 from pathlib import Path
 import platform
@@ -259,11 +260,32 @@ def serve(config: dict, *, principal: str, config_path: str) -> None:
                            principal=principal)
 
 
+def retain_terminal(config: dict, *, request_id: str, expected_revision: str | None) -> dict:
+    """Run explicit local maintenance using only administrator-configured roots."""
+    from lib.build_inputs import BuildInputStore
+    from lib.build_jobs import BuildJobStore
+    from lib.build_retention import BuildRetentionStore
+
+    roots = config["roots"]
+    retention = BuildRetentionStore(
+        inputs=BuildInputStore(roots["inputs"], max_records=config["max_records"],
+                               max_bytes=config["max_bytes"]),
+        jobs=BuildJobStore(os.path.join(roots["state"], "jobs.json")),
+        scratch_root=roots["scratch"], artifacts_root=roots["artifacts"], logs_root=roots["logs"],
+    )
+    if expected_revision is None:
+        return retention.inspect_retention(request_id)
+    return retention.settle_terminal(request_id, expected_revision=expected_revision)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the managed on-demand build host")
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--serve", action="store_true")
     modes.add_argument("--worker", action="store_true")
+    modes.add_argument("--inspect-retention", metavar="ID")
+    modes.add_argument("--settle-terminal", metavar="ID")
+    parser.add_argument("--expected-revision", metavar="DIGEST")
     parser.add_argument("--principal")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
@@ -271,9 +293,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if os.geteuid() != 0 or not sys.flags.isolated:
             raise ValueError("Use the root-controlled isolated Python launcher")
+        maintenance = args.inspect_retention is not None or args.settle_terminal is not None
         if (args.serve and (not args.principal or args.once
                             or os.environ.get("SSH_ORIGINAL_COMMAND") != SSH_COMMAND)
-                or args.worker and args.principal is not None):
+                or args.worker and args.principal is not None
+                or (args.expected_revision is not None) != (args.settle_terminal is not None)
+                or maintenance and (args.principal is not None or args.once
+                                    or any(name in os.environ for name in
+                                           ("SSH_ORIGINAL_COMMAND", "SSH_CONNECTION", "SSH_CLIENT")))):
             raise ValueError("Invalid builder invocation")
         script = Path(os.path.abspath(__file__))
         _trusted_code(script)
@@ -283,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         if args.serve:
             serve(config, principal=args.principal, config_path=args.config)
+        elif maintenance:
+            result = retain_terminal(config, request_id=args.inspect_retention or args.settle_terminal,
+                                     expected_revision=args.expected_revision)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         else:
             run_worker(config, config_path=args.config, once=args.once)
         return 0
