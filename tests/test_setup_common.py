@@ -31,6 +31,10 @@ def _make_setup_args() -> MagicMock:
     args.disable_build_host = False
     args.build_host_policy = None
     args.build_host_enrollment_json = None
+    args.build_target_enrollment = None
+    args.disable_build_target = False
+    args.build_target_policy = None
+    args.build_target_enrollment_json = None
     return args
 
 

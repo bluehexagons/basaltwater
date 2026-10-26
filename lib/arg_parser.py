@@ -1402,6 +1402,11 @@ def add_setup_arguments(
             help=argparse.SUPPRESS,
         )
         parser.add_argument(
+            "--disable-build-target",
+            action="store_true",
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
             "--build-host-enrollment-json",
             help=argparse.SUPPRESS,
         )
@@ -1415,6 +1420,28 @@ def add_setup_arguments(
         build_host_policy.add_argument(
             "--build-host-enrollment-json",
             help=argparse.SUPPRESS,
+        )
+    if for_remote:
+        parser.add_argument(
+            "--build-target-enrollment-json",
+            help=argparse.SUPPRESS,
+        )
+    else:
+        build_target_policy = parser.add_mutually_exclusive_group()
+        build_target_policy.add_argument(
+            "--build-target-policy",
+            metavar="FILE",
+            help="Load the public typed target enrollment policy from FILE",
+        )
+        build_target_policy.add_argument(
+            "--build-target-enrollment-json",
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--no-build-target",
+            dest="disable_build_target",
+            action="store_true",
+            help="Remove managed typed target authority while preserving applications and their data",
         )
     
     parser.add_argument("--app-server", dest="is_app_server",

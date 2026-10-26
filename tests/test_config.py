@@ -279,6 +279,11 @@ class TestBuildHostEnrollmentConfig(unittest.TestCase):
 class TestBuildTargetEnrollmentConfig(unittest.TestCase):
     POLICY = TestBuildHostEnrollmentConfig.TARGET_POLICY
 
+    def _setup_parser(self, *, remote=False):
+        from lib.arg_parser import create_setup_argument_parser
+
+        return create_setup_argument_parser("Target test", for_remote=remote)
+
     def _config_from_attrs(self, **attrs):
         values = {"host": "target", "username": "agent", "system_type": "server_lite"}
         values.update(attrs)
@@ -288,10 +293,10 @@ class TestBuildTargetEnrollmentConfig(unittest.TestCase):
         from lib.config import _decode_build_target_enrollment_json
 
         self.assertEqual(_decode_build_target_enrollment_json(json.dumps(self.POLICY)), self.POLICY)
-        from lib.arg_parser import create_setup_argument_parser
-        args = create_setup_argument_parser("Target test").parse_args(["target", "agent"])
-        args.build_target_policy = None
-        args.build_target_enrollment_json = json.dumps(self.POLICY)
+        args = self._setup_parser().parse_args([
+            "target", "agent", "--build-target-enrollment-json",
+            json.dumps(self.POLICY),
+        ])
         config = SetupConfig.from_args(args, "server_lite")
         self.assertEqual(config.build_target_enrollment, self.POLICY)
 
@@ -319,12 +324,21 @@ class TestBuildTargetEnrollmentConfig(unittest.TestCase):
             path = os.path.join(directory, "target.json")
             with open(path, "w", encoding="utf-8") as policy_file:
                 json.dump(self.POLICY, policy_file)
-            from lib.arg_parser import create_setup_argument_parser
-            args = create_setup_argument_parser("Target test").parse_args(["target", "agent"])
-            args.build_target_policy = path
-            args.build_target_enrollment_json = None
+            args = self._setup_parser().parse_args(
+                ["target", "agent", "--build-target-policy", path]
+            )
             config = SetupConfig.from_args(args, "server_lite")
         self.assertEqual(config.build_target_enrollment, self.POLICY)
+
+    def test_policy_file_and_hidden_json_are_mutually_exclusive(self):
+        parser = self._setup_parser()
+        with tempfile.NamedTemporaryFile() as policy_file:
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args([
+                        "target", "agent", "--build-target-policy", policy_file.name,
+                        "--build-target-enrollment-json", "{}",
+                    ])
 
     def test_policy_cache_round_trip_and_transport_contain_no_file_or_secrets(self):
         config = self._config_from_attrs(build_target_enrollment=self.POLICY)
@@ -338,13 +352,71 @@ class TestBuildTargetEnrollmentConfig(unittest.TestCase):
         self.assertNotIn("--build-target-policy", config.to_setup_command())
         self.assertNotIn("/controller/", " ".join(config.to_remote_args()))
 
+        setup_args = self._setup_parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        self.assertEqual(
+            SetupConfig.from_args(setup_args, "server_lite").build_target_enrollment,
+            self.POLICY,
+        )
+        remote_args = self._setup_parser(remote=True).parse_args(
+            shlex.split(" ".join(config.to_remote_args()))
+        )
+        remote_args.host = config.host
+        self.assertEqual(
+            SetupConfig.from_args(remote_args, "server_lite").build_target_enrollment,
+            self.POLICY,
+        )
+
     def test_no_build_target_disables_and_is_forwarded(self):
-        config = self._config_from_attrs(disable_build_target=True)
+        args = self._setup_parser().parse_args(
+            ["target", "agent", "--no-build-target"]
+        )
+        config = SetupConfig.from_args(args, "server_lite")
         self.assertIn("--no-build-target", config.to_setup_command())
         self.assertIn("--disable-build-target", config.to_remote_args())
+        remote_args = self._setup_parser(remote=True).parse_args(
+            shlex.split(" ".join(config.to_remote_args()))
+        )
+        remote_args.host = config.host
+        self.assertTrue(
+            SetupConfig.from_args(remote_args, "server_lite").disable_build_target
+        )
         with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
             self._config_from_attrs(disable_build_target=True,
                                     build_target_enrollment=self.POLICY)
+
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as policy_file:
+            json.dump(self.POLICY, policy_file)
+            policy_file.flush()
+            policy_args = self._setup_parser().parse_args([
+                "target", "agent", "--build-target-policy", policy_file.name,
+                "--no-build-target",
+            ])
+            with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
+                SetupConfig.from_args(policy_args, "server_lite")
+
+    def test_remote_parser_accepts_json_but_not_controller_policy_file(self):
+        remote_parser = self._setup_parser(remote=True)
+        parsed = remote_parser.parse_args([
+            "--build-target-enrollment-json", json.dumps(self.POLICY),
+        ])
+        self.assertEqual(parsed.build_target_enrollment_json, json.dumps(self.POLICY))
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                remote_parser.parse_args(["--build-target-policy", "/tmp/policy.json"])
+
+    def test_omitted_target_flags_keep_defaults_and_do_not_forward_transport(self):
+        args = self._setup_parser().parse_args(["target", "agent"])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertIsNone(config.build_target_enrollment)
+        self.assertFalse(config.disable_build_target)
+        remote_args = self._setup_parser(remote=True).parse_args(
+            shlex.split(" ".join(config.to_remote_args()))
+        )
+        remote_args.host = config.host
+        self.assertIsNone(remote_args.build_target_enrollment_json)
+        self.assertFalse(remote_args.disable_build_target)
 
     def test_target_policy_omission_preserves_disable_and_explicit_disable_clears(self):
         from lib.cache import merge_setup_configs
