@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -91,11 +92,12 @@ def _validate_placeholders(text: str, field: str, where: str) -> None:
         raise ValueError(f"{where}: {field} contains a malformed template placeholder")
 
 _COMMON_FIELDS = {"name", "type", "domain", "path", "build", "env"}
-_STATIC_FIELDS = {"output"}
+_STATIC_FIELDS = {"output", "artifacts"}
 _SPA_FIELDS = {"spa"}
 _SERVICE_FIELDS = {
     "binary",
     "exec",
+    "artifacts",
     "port",
     "env_file",
     "runtime_env",
@@ -142,6 +144,8 @@ class Component:
     public_udp: list[PublicUDP] = field(default_factory=list)
     # static SPA fallback
     spa: bool = False
+    # prebuilt packaging/export selection; appended to preserve positional callers
+    artifacts: Optional[StrList] = None
 
     @property
     def is_static(self) -> bool:
@@ -150,6 +154,42 @@ class Component:
     @property
     def is_service(self) -> bool:
         return self.type == "service"
+
+
+def artifact_paths(component: Component) -> StrList:
+    """Return validated repository paths selected for prebuilt packaging.
+
+    This helper does not affect normal manifest deployment behavior. Explicit
+    declarations take precedence; otherwise static outputs and built service
+    binaries are selected. Exec services need an explicit declaration because
+    they have no single repository artifact to infer.
+    """
+    if not isinstance(component, Component):
+        raise ValueError("artifact selection requires a Component")
+    if not isinstance(component.type, str) or component.type not in {
+        "static", "godot-web", "service"
+    }:
+        raise ValueError(f"unsupported component type for artifacts: {component.type!r}")
+
+    if component.type == "service":
+        has_binary = component.binary is not None
+        has_exec = component.exec is not None
+        if has_binary == has_exec:
+            raise ValueError("service component must declare exactly one of binary or exec")
+
+    if component.artifacts is not None:
+        return _validate_artifact_paths(
+            component.artifacts, component.type, f"component {component.name!r}"
+        )
+
+    where = f"component {component.name!r}"
+    if component.type in {"static", "godot-web"}:
+        return _validate_artifact_paths([component.output], component.type, where)
+    if component.binary is not None:
+        return _validate_artifact_paths([component.binary], component.type, where)
+    raise ValueError(
+        f"{where}: exec services require explicit artifacts for prebuilt packaging"
+    )
 
 
 @dataclass
@@ -388,6 +428,10 @@ def _parse_component(entry: object, index: int) -> Component:
         path=path,
         build=build,
         env=env,
+        artifacts=(
+            _validate_artifact_paths(entry["artifacts"], comp_type, where)
+            if "artifacts" in entry else None
+        ),
     )
 
     if comp_type in ("static", "godot-web"):
@@ -577,6 +621,47 @@ def _require_repo_relative(value: str, key: str, where: str) -> None:
     normalized = os.path.normpath(value)
     if normalized == ".." or normalized.startswith(".." + os.sep):
         raise ValueError(f"{where}: {key} must not escape the repo root: {value}")
+
+
+def _validate_artifact_paths(value: object, component_type: str, where: str) -> StrList:
+    """Validate canonical, repository-relative paths used for prebuilt payloads."""
+    if not isinstance(value, list) or not 1 <= len(value) <= 128:
+        raise ValueError(f"{where}: artifacts must be an array containing 1–128 paths")
+
+    paths: StrList = []
+    seen: set[str] = set()
+    for path in value:
+        if not isinstance(path, str) or not path or len(path) > 4096:
+            raise ValueError(
+                f"{where}: artifact paths must be non-empty strings of at most 4096 characters"
+            )
+        # Keep the shared path/control checks here, but do not resolve or inspect
+        # any path on disk: declarations are lexical packaging metadata.
+        validate_filesystem_path(path, must_exist=False)
+        validate_no_control_characters(path, f"{where} artifact path")
+        if any(unicodedata.category(char) == "Cc" for char in path):
+            raise ValueError(f"{where}: artifact paths must not contain control characters")
+
+        if path == ".":
+            if component_type not in {"static", "godot-web"}:
+                raise ValueError(f"{where}: '.' is allowed only for whole-root static artifacts")
+        else:
+            if os.path.isabs(path) or path.startswith("/"):
+                raise ValueError(f"{where}: artifact paths must be repository-relative: {path}")
+            if "\\" in path or ":" in path:
+                raise ValueError(f"{where}: artifact paths must use canonical slash paths: {path}")
+            segments = path.split("/")
+            if any(segment in {"", ".", ".."} for segment in segments):
+                raise ValueError(f"{where}: artifact paths must not contain empty, '.' or '..' segments: {path}")
+
+        if path in seen:
+            raise ValueError(f"{where}: duplicate artifact path: {path!r}")
+        seen.add(path)
+        paths.append(path)
+
+    if "." in seen and len(paths) > 1:
+        raise ValueError(f"{where}: '.' must be the only artifact path for whole-root selection")
+    return paths
 
 
 def _reject_unknown_keys(data: dict, allowed: set[str], where: str) -> None:

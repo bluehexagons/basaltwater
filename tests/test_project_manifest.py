@@ -12,8 +12,10 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.project_manifest import (
+    Component,
     MANIFEST_FILENAME,
     Manifest,
+    artifact_paths,
     has_placeholder,
     infer_manifest,
     load_manifest,
@@ -350,6 +352,118 @@ class TestRejects(unittest.TestCase):
 
     def test_backup_retention_is_bounded(self):
         self._assert_rejected(_manifest(_service(backup_retention=0)), "backup_retention")
+
+
+class TestArtifactPaths(unittest.TestCase):
+    def test_legacy_components_keep_default_artifact_selection(self):
+        manifest = parse_manifest(_manifest(_static(), _static(
+            name="godot", type="godot-web", output="exports/web"
+        ), _service()))
+        site, godot, service = manifest.components
+
+        self.assertIsNone(site.artifacts)
+        self.assertEqual(artifact_paths(site), ["dist"])
+        self.assertEqual(artifact_paths(godot), ["exports/web"])
+        self.assertEqual(artifact_paths(service), ["server/app"])
+
+        # The existing positional Component constructor still maps output in
+        # the same slot; artifacts was appended after the prior fields.
+        positional = Component("site", "static", "example.com", "/", [], {}, "public")
+        self.assertEqual(artifact_paths(positional), ["public"])
+
+    def test_explicit_artifacts_override_defaults_for_supported_types(self):
+        declarations = (
+            (_static(artifacts=["dist/index.html", "dist/assets/app.js"]),
+             ["dist/index.html", "dist/assets/app.js"]),
+            (_static(type="godot-web", artifacts=["exports/web/index.html", "exports/web/game.wasm"]),
+             ["exports/web/index.html", "exports/web/game.wasm"]),
+            (_service(artifacts=["server/app", "server/config/default.json"]),
+             ["server/app", "server/config/default.json"]),
+        )
+        for declaration, expected in declarations:
+            with self.subTest(component_type=declaration["type"]):
+                component = parse_manifest(_manifest(declaration)).components[0]
+                self.assertEqual(artifact_paths(component), expected)
+
+    def test_exec_service_parses_without_artifacts_but_selection_requires_them(self):
+        component = parse_manifest(
+            _manifest(_service(binary=None, exec="/usr/bin/app --serve"))
+        ).components[0]
+        self.assertEqual(component.exec, "/usr/bin/app --serve")
+        self.assertIsNone(component.artifacts)
+        with self.assertRaisesRegex(ValueError, "require explicit artifacts"):
+            artifact_paths(component)
+
+        declared = parse_manifest(_manifest(_service(
+            binary=None, exec="/usr/bin/app --serve", artifacts=["server/app"]
+        ))).components[0]
+        self.assertEqual(artifact_paths(declared), ["server/app"])
+
+    def test_explicit_results_are_independent_copies(self):
+        component = parse_manifest(_manifest(_static(
+            artifacts=["dist/index.html", "dist/assets/app.js"]
+        ))).components[0]
+
+        selected = artifact_paths(component)
+        selected.append("outside.txt")
+
+        self.assertEqual(component.artifacts, ["dist/index.html", "dist/assets/app.js"])
+        self.assertEqual(artifact_paths(component), ["dist/index.html", "dist/assets/app.js"])
+
+    def test_static_root_artifact_is_explicit_and_unambiguous(self):
+        for component_type in ("static", "godot-web"):
+            with self.subTest(component_type=component_type):
+                component = parse_manifest(_manifest(_static(
+                    type=component_type, output=".", artifacts=["."]
+                ))).components[0]
+                self.assertEqual(artifact_paths(component), ["."])
+
+        with self.assertRaisesRegex(ValueError, "only for whole-root"):
+            parse_manifest(_manifest(_service(artifacts=["."])))
+        with self.assertRaisesRegex(ValueError, "only artifact path"):
+            parse_manifest(_manifest(_static(artifacts=[".", "dist/index.html"])))
+
+    def test_artifacts_reject_invalid_lists_and_paths(self):
+        invalid_values = (
+            None, "dist", {}, [], [""], [1], [True], ["/absolute/path"],
+            ["//server/share"], ["../outside"], ["dist/../secret"], ["./dist"],
+            ["dist/."], ["dist//index.html"], ["dist/"], [r"dist\index.html"],
+            [r"\\server\share"], ["C:/dist"], ["file:stream"],
+            ["dist/\x00index"], ["dist/\x85index"],
+            ["x" * 4097], ["dist/index.html", "dist/index.html"],
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    parse_manifest(_manifest(_static(artifacts=value)))
+
+        with self.assertRaisesRegex(ValueError, "1–128"):
+            parse_manifest(_manifest(_static(artifacts=[f"asset-{index}" for index in range(129)])))
+
+    def test_artifact_list_and_path_limits_accept_their_boundaries(self):
+        declarations = [f"asset-{index}" for index in range(127)] + ["x" * 4096]
+        component = parse_manifest(_manifest(_static(artifacts=declarations))).components[0]
+
+        selected = artifact_paths(component)
+        self.assertEqual(len(selected), 128)
+        self.assertEqual(selected[-1], "x" * 4096)
+
+    def test_artifact_paths_revalidate_directly_constructed_components(self):
+        invalid_artifact = Component(
+            "site", "static", "example.com", output="dist", artifacts=["../outside"]
+        )
+        with self.assertRaisesRegex(ValueError, "artifact paths"):
+            artifact_paths(invalid_artifact)
+
+        invalid_output = Component("site", "static", "example.com", output="./dist")
+        with self.assertRaisesRegex(ValueError, "segments"):
+            artifact_paths(invalid_output)
+
+        invalid_artifacts_type = Component(
+            "site", "static", "example.com", output="dist", artifacts="dist/index.html"
+        )
+        with self.assertRaisesRegex(ValueError, "artifacts must be an array"):
+            artifact_paths(invalid_artifacts_type)
 
 
 class TestTemplating(unittest.TestCase):
