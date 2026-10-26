@@ -55,5 +55,41 @@ it does not contact a builder, fetch source, run build commands or reserve new
 deployment intent. Revoked SSH authority does not supply new inputs to an
 installed release. Missing evidence requires controller deployment; failures
 retain the same recovery guard and prevent automatic replay. Reconciliation
-across several applications is not atomic. Setup/Admin refresh wiring and
-artifact retention remain separate work.
+across several applications is not atomic. Artifact retention remains separate
+work; replay requires the installed bundles to remain available.
+
+## Artifact-mode setup replay
+
+`common.build_target_refresh.reconcile_artifact_deployments(config)` is the
+trusted root-local setup wrapper. `plugins.post_setup` selects it whenever
+`config.artifact_deployments` is true, including when `deploy_specs` is absent.
+It requires Debian 13 x86-64 VM/physical system services. It acquires
+`target_maintenance()` exclusive ownership before the first protected
+`common.service_tools.build_target.load_config()` read, retaining it through
+the complete `reconcile_installed()` call and local success response. It
+constructs `BuildTargetArtifactStore` from the installed quotas and roots and
+passes `open_verified_bundle` to `TargetReleaseActivator`. No admission store
+is constructed and no build/request identity or deployment generation is
+created. The result is the reconciler's list of identity-only receipts.
+
+Missing, unsafe, held/disabled or busy enrollment refuses before configuration
+is read. Missing configuration, installed descriptors or retained artifacts
+fails closed with controller guidance. Recovery guards remain authoritative;
+inspect protected evidence before operator reconciliation. There is no source
+or build fallback. A first artifact-mode setup without installed releases
+refuses; initial external bootstrap and artifact delivery must precede the final
+profile and belong to the controller, outside this wrapper.
+
+Artifact-mode transport skips repository preparation and source upload, and
+target runtime inference returns before inspecting uploaded repositories. Explicit
+runtime-install flags retain their ordinary meanings. Post-setup never calls
+ordinary `deploy_repository`, unscoped Nginx pruning or manifest UDP setup in
+this mode; the activator owns scoped retained-route publication. Cloudflare and
+SSL setup options are refused during plan construction because they have no
+supported target policy in this slice. This does not add runtime environment,
+UDP or Node packaging support.
+
+A dry run reports retained artifact reconciliation without entering maintenance,
+loading target state, opening artifacts, contacting a builder or changing target
+files. It does not establish that installed inputs are available. Ordinary
+setup without artifact mode continues to stage source and build on the target.

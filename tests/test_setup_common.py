@@ -314,6 +314,43 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
 
+    def test_artifact_transport_omits_source_staging_and_deployment_archive(self):
+        import io
+        import tarfile
+        from lib import setup_common
+
+        config = _make_config(
+            host="example.com", artifact_deployments=True,
+            deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+        )
+        with patch.object(setup_common, "copy_project_files"), \
+             patch.object(setup_common, "prepare_deployments") as prepare, \
+             patch.object(setup_common, "_write_remote_args_file", wraps=setup_common._write_remote_args_file) as write_args, \
+             patch.object(setup_common, "build_ssh_command", return_value=["ssh"]), \
+             patch.object(setup_common, "run_streamed", return_value=0) as stream:
+            self.assertEqual(setup_common.run_remote_setup(config), 0)
+        prepare.assert_not_called()
+        with tarfile.open(fileobj=io.BytesIO(stream.call_args.kwargs["input_data"]), mode="r:gz") as archive:
+            self.assertFalse(any(name.startswith("./deployments") for name in archive.getnames()))
+        self.assertIn("--artifact-deployments", write_args.call_args.args[1])
+
+    def test_artifact_transport_dry_run_reports_reconcile_without_source_preflight(self):
+        import io
+        from lib import setup_common
+
+        config = _make_config(
+            host="example.com", artifact_deployments=True, dry_run=True,
+            deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+        )
+        with patch.object(setup_common, "copy_project_files"), \
+             patch.object(setup_common, "prepare_deployments") as prepare, \
+             patch.object(setup_common, "run_streamed") as stream, \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(setup_common.run_remote_setup(config), 0)
+        self.assertIn("Reconcile retained target artifacts", output.getvalue())
+        prepare.assert_not_called()
+        stream.assert_not_called()
+
     def test_overlapping_same_target_setup_is_rejected_before_staging(self):
         from lib import setup_common
         from lib.concurrency import resource_lock
@@ -682,6 +719,39 @@ class TestAgentCredentialStaging(unittest.TestCase):
 
 
 class TestCloneRepository(unittest.TestCase):
+    def test_artifact_prepare_deployments_is_noop_even_for_direct_callers(self):
+        from lib import setup_common
+
+        for dry_run in (False, True):
+            with self.subTest(dry_run=dry_run), tempfile.TemporaryDirectory() as directory:
+                config = _make_config(
+                    artifact_deployments=True, dry_run=dry_run,
+                    deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+                )
+                with patch.object(setup_common, "clone_repository") as clone, \
+                     patch("lib.project_manifest.load_manifest") as manifest, \
+                     patch("lib.project_manifest.collect_public_udp") as udp:
+                    setup_common.prepare_deployments(config, directory)
+                self.assertEqual(os.listdir(directory), [])
+                for forbidden in (clone, manifest, udp):
+                    forbidden.assert_not_called()
+
+    def test_ordinary_prepare_deployments_still_stages_source_and_commit(self):
+        from lib import setup_common
+
+        config = _make_config(deploy_specs=[["app.example.com", "https://example.com/app.git"]])
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = os.path.join(directory, "app")
+            os.mkdir(checkout)
+            with patch.object(setup_common, "clone_repository", return_value=(checkout, "abc123")) as clone, \
+                 patch("lib.project_manifest.collect_public_udp") as udp:
+                setup_common.prepare_deployments(config, directory)
+            clone.assert_called_once_with("https://example.com/app.git", directory,
+                                          cache_dir=setup_common.GIT_CACHE_DIR, dry_run=False)
+            with open(os.path.join(directory, "app.commit"), encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "abc123")
+            udp.assert_called_once_with([("app.example.com", None)])
+
     def test_dry_run_clones_into_disposable_staging_for_preflight(self):
         from lib import setup_common
         from lib.deploy_utils import repository_stage_name

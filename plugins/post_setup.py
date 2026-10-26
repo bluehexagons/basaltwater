@@ -32,6 +32,11 @@ def build_post_setup_steps(
     steps: list[tuple[str, StepFunc]] = []
     deployments: Deployments = []
 
+    if config.artifact_deployments:
+        from common.build_target_refresh import validate_artifact_refresh
+
+        validate_artifact_refresh(config)
+
     if config.enable_cloudflare:
         def prepare_cloudflare(_config: SetupConfig) -> None:
             from web.cloudflare_steps import (
@@ -47,7 +52,11 @@ def build_post_setup_steps(
 
         steps.append(("Preparing Cloudflare tunnel support", prepare_cloudflare))
 
-    if config.deploy_specs:
+    if config.artifact_deployments:
+        from common.build_target_refresh import reconcile_artifact_deployments
+
+        steps.append(("Reconciling retained target artifacts", reconcile_artifact_deployments))
+    elif config.deploy_specs:
         public_udp = []
 
         def deploy_repositories(_config: SetupConfig) -> None:

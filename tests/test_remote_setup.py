@@ -642,6 +642,25 @@ class TestRepositorySourcePath(unittest.TestCase):
 
 
 class TestBuildRuntimeDetection(unittest.TestCase):
+    def test_artifact_mode_never_inspects_source_or_adds_runtime_flags(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit):
+                config = SetupConfig(
+                    host="localhost", username="root", system_type="server_lite",
+                    artifact_deployments=True,
+                    deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+                    install_go=explicit, install_node=explicit, install_python=explicit,
+                )
+                with patch.object(remote_setup, "_find_project_runtime_files") as detect, \
+                     patch.object(remote_setup, "load_manifest") as manifest, \
+                     patch.dict(os.environ, {"BASALTWATER_GO_VERSION": "existing"}):
+                    remote_setup.enable_detected_build_runtimes(config)
+                    self.assertEqual(os.environ["BASALTWATER_GO_VERSION"], "existing")
+                detect.assert_not_called()
+                manifest.assert_not_called()
+                self.assertEqual((config.install_go, config.install_node, config.install_python),
+                                 (explicit, explicit, explicit))
+
     def test_finds_runtime_markers_in_monorepo_children(self):
         with tempfile.TemporaryDirectory() as repo_path:
             os.makedirs(os.path.join(repo_path, "frontend"))
@@ -708,6 +727,111 @@ class TestBuildRuntimeDetection(unittest.TestCase):
 
         self.assertTrue(config.install_node)
         self.assertTrue(config.install_python)
+
+
+class TestPostSetupArtifactReplay(unittest.TestCase):
+    def test_artifact_mode_selects_only_retained_reconciliation_with_or_without_specs(self):
+        from plugins.post_setup import build_post_setup_steps
+
+        for specs in (None, [["app.example.com", "https://example.com/app.git"]]):
+            with self.subTest(specs=specs):
+                config = SetupConfig(
+                    host="localhost", username="root", system_type="server_lite",
+                    artifact_deployments=True, deploy_specs=specs,
+                )
+                source = MagicMock(side_effect=AssertionError("uploaded source accessed"))
+                with patch("common.build_target_refresh.reconcile_artifact_deployments") as reconcile, \
+                     patch("deploy.deploy_steps.deploy_repository") as deploy, \
+                     patch("lib.project_manifest.load_manifest") as manifest, \
+                     patch("lib.project_manifest.collect_public_udp") as collect_udp, \
+                     patch("deploy.network_steps.configure_public_udp") as udp, \
+                     patch("lib.nginx_config.create_nginx_sites_for_groups") as nginx:
+                    steps = build_post_setup_steps(config, source)
+                    self.assertEqual([name for name, _step in steps], ["Reconciling retained target artifacts"])
+                    for _name, step in steps:
+                        step(config)
+                    reconcile.assert_called_once_with(config)
+                    for forbidden in (source, deploy, manifest, collect_udp, udp, nginx):
+                        forbidden.assert_not_called()
+
+    def test_missing_retained_state_propagates_without_fallback_to_uploaded_source(self):
+        from plugins.post_setup import build_post_setup_steps
+
+        config = SetupConfig(
+            host="localhost", username="root", system_type="server_lite",
+            artifact_deployments=True,
+            deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+        )
+        source = MagicMock()
+        with patch("common.build_target_refresh.reconcile_artifact_deployments", side_effect=RuntimeError(
+            "run deployment from the controller",
+        )), patch("deploy.deploy_steps.deploy_repository") as deploy:
+            steps = build_post_setup_steps(config, source)
+            with self.assertRaisesRegex(RuntimeError, "controller"):
+                for _name, step in steps:
+                    step(config)
+        source.assert_not_called()
+        deploy.assert_not_called()
+
+    def test_unsupported_route_setup_refuses_during_plan_construction(self):
+        from plugins.post_setup import build_post_setup_steps
+
+        for option in ("enable_cloudflare", "enable_ssl"):
+            with self.subTest(option=option):
+                config = SetupConfig(
+                    host="localhost", username="root", system_type="server_lite",
+                    artifact_deployments=True, **{option: True},
+                )
+                with self.assertRaisesRegex(ValueError, "does not support Cloudflare or SSL"):
+                    build_post_setup_steps(config, MagicMock())
+
+    def test_artifact_remote_dry_run_reports_reconcile_without_accessing_target_inputs(self):
+        self.addCleanup(lambda: set_dry_run(False))
+        config = SetupConfig(
+            host="localhost", username="root", system_type="server_lite",
+            artifact_deployments=True, dry_run=True,
+            deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+        )
+        args = SimpleNamespace(deploy_latest=False, dry_run=True, custom_steps=None, system_type="server_lite")
+        with patch.object(remote_setup, "create_setup_argument_parser") as parser, \
+             patch.object(remote_setup, "config_from_remote_args", return_value=config), \
+             patch.object(remote_setup, "detect_os", return_value="Debian"), \
+             patch.object(remote_setup, "print_setup_summary"), \
+             patch.object(remote_setup, "get_steps_for_system_type", return_value=[]), \
+             patch.object(remote_setup, "_find_project_runtime_files") as detect, \
+             patch.object(remote_setup, "get_repository_source_path") as source, \
+             patch("common.build_target_refresh.reconcile_artifact_deployments") as reconcile, \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            parser.return_value.parse_args.return_value = args
+            self.assertEqual(remote_setup._run_main(), 0)
+        self.assertIn("Reconciling retained target artifacts", output.getvalue())
+        for forbidden in (detect, source, reconcile):
+            forbidden.assert_not_called()
+
+    def test_ordinary_setup_still_deploys_uploaded_source_and_configures_routes(self):
+        from plugins.post_setup import build_post_setup_steps
+
+        config = SetupConfig(
+            host="localhost", username="root", system_type="server_lite",
+            deploy_specs=[["app.example.com", "https://example.com/app.git"]],
+        )
+        source = MagicMock(return_value=("/uploaded/app", "commit"))
+        deployment = {"domain": "app.example.com"}
+        with patch("common.build_target_refresh.reconcile_artifact_deployments") as reconcile, \
+             patch("deploy.deploy_steps.deploy_repository", return_value=[deployment]) as deploy, \
+             patch("lib.project_manifest.load_manifest", return_value=None), \
+             patch("deploy.network_steps.configure_public_udp") as udp, \
+             patch("lib.nginx_config.create_nginx_sites_for_groups") as nginx:
+            for _name, step in build_post_setup_steps(config, source):
+                step(config)
+        source.assert_called_once_with("https://example.com/app.git", config.deployment_mode, False)
+        deploy.assert_called_once_with(
+            source_path="/uploaded/app", deploy_spec="app.example.com", git_url="https://example.com/app.git",
+            commit_hash="commit", full_deploy=config.full_deploy, keep_source=True,
+        )
+        nginx.assert_called_once_with({"app.example.com": [deployment]}, enable_https_redirect=True)
+        udp.assert_called_once_with([])
+        reconcile.assert_not_called()
 
 
 class TestAgentPayloadCleanup(unittest.TestCase):
