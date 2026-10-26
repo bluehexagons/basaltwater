@@ -109,6 +109,19 @@ inventory; it cannot migrate outside the role's idle ownership. Schema-1
 markers still require operator reconciliation. SSH validation/activation
 failures retain the drain and existing reconciliation evidence.
 
+The schema-2 marker's optional `ssh_pending` field records an exact `create`
+or `remove` action and inventory `sha256` before the corresponding file change.
+Creation is tied to the pending enrollment's exact primary groups; removal
+requires the disabled state. Only these recorded transitions permit an absent
+inventory with a recorded hash. Publication, unlink or subsequent marker-save
+failure can therefore resume under the same drain, worker lease and inactive
+unit checks. Retry the identical enrollment after interrupted creation, or
+explicitly disable it. After interrupted removal, finish explicit disable
+before re-enrollment. Completed installs with missing inventory still refuse
+enrollment and disable for operator review; an ordinary pending enrollment
+alone does not authorize recreating a missing inventory. Older schema-2 markers
+without `ssh_pending` normalize to no transition; schema-1 adoption stays refused.
+
 The independent root unit is `basaltwater-build-host.service`. It uses the
 installed entrypoint in isolated `--worker` mode, `UMask=0077`,
 `KillMode=control-group`, and `Restart=no`. Disabling automatic restart avoids

@@ -642,21 +642,28 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
         if effective.returncode != 0:
             raise RuntimeError("Could not inspect effective SSH configuration")
         settings = {}
+        allowed_groups: set[str] = set()
         for line in (effective.stdout or "").splitlines():
             key, separator, value = line.partition(" ")
             if separator:
-                settings[key] = value.strip()
+                if key == "allowgroups":
+                    # OpenSSH may emit one line per group rather than a single
+                    # space-separated value. Every literal entry contributes.
+                    allowed_groups.update(value.split())
+                else:
+                    settings[key] = value.strip()
         required = {
             "passwordauthentication": {"no"},
             "kbdinteractiveauthentication": {"no"},
             "pubkeyauthentication": {"yes"},
             "permitrootlogin": {"prohibit-password", "without-password"},
-            "allowgroups": {" ".join(["remoteusers", *transport_groups])},
             "authenticationmethods": {"publickey"},
         }
         if config is not None and config.harden_user and username == config.username:
             required.update({"disableforwarding": {"yes"}, "permituserrc": {"no"}})
         conflicts = [key for key, values in required.items() if settings.get(key) not in values]
+        if allowed_groups != {"remoteusers", *transport_groups}:
+            conflicts.append("allowgroups")
         if conflicts:
             raise RuntimeError(
                 f"Effective SSH policy for {username} conflicts with hardening: "
