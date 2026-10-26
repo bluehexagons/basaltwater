@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import struct
 import tempfile
@@ -44,6 +45,11 @@ class FakeGit:
         self.bundle = b"private-filtered-history-bundle"
         self.bundle_head = self.revision
         self.bundle_tags = tags
+        self.text_paths: set[str] = set()
+        self.ident_paths: set[str] = set()
+        self.encoding_paths: set[str] = set()
+        self.normalization_paths: list[str] = []
+        self.conversion_config: dict[str, str] = {}
         self.calls: list[tuple[list[str], dict]] = []
         self.entries = entries or [
             (".gitattributes", "100644", "blob", b"*.txt text\n"),
@@ -72,7 +78,8 @@ class FakeGit:
         }))
         subcommand = next(
             (item for item in ("rev-parse", "status", "ls-tree", "cat-file", "for-each-ref",
-                               "bundle", "check-attr", "ls-files", "init", "update-ref")
+                               "bundle", "check-attr", "ls-files", "init", "update-ref",
+                               "config", "hash-object")
              if item in command),
             None,
         )
@@ -82,7 +89,12 @@ class FakeGit:
             elif "--is-shallow-repository" in command:
                 result = b"true\n" if self.shallow else b"false\n"
             elif "--git-path" in command:
-                git_path = "objects" if "objects" in command else "info/grafts"
+                if "objects" in command:
+                    git_path = "objects"
+                elif "attributes" in command:
+                    git_path = "info/attributes"
+                else:
+                    git_path = "info/grafts"
                 result = os.fsencode(self.repository / ".git" / git_path) + b"\n"
             else:
                 if any(item.startswith("--git-dir=") for item in command):
@@ -138,6 +150,23 @@ class FakeGit:
             )
         elif subcommand == "for-each-ref":
             result = self.tags
+        elif subcommand == "config":
+            name = command[-1]
+            default = command[command.index("--default") + 1]
+            result = (self.conversion_config.get(name, default) + "\n").encode("ascii")
+        elif subcommand == "hash-object":
+            if env.get("GIT_ATTR_SOURCE") != self.revision:
+                raise AssertionError("Git normalization must use the pinned attribute source")
+            path = next(item.split("=", 1)[1] for item in command if item.startswith("--path="))
+            self.normalization_paths.append(path)
+            content = input_data or b""
+            if path in self.text_paths:
+                content = content.replace(b"\r\n", b"\n")
+            if path in self.ident_paths:
+                content = re.sub(rb"\$Id: [0-9a-f]{40,64} \$", b"$Id$", content)
+            if path in self.encoding_paths:
+                content = content.decode("utf-16le").encode("utf-8")
+            result = git_blob_oid(content).encode("ascii") + b"\n"
         elif subcommand == "init":
             self.private_git_directory = Path(command[-1])
             (self.private_git_directory / "objects/info").mkdir(parents=True)
@@ -240,6 +269,20 @@ class BuildSourceTest(unittest.TestCase):
             expected_source=source or self.source, **kwargs,
         )
 
+    def prepare_crlf_checkout(self):
+        attributes = b"*.txt text eol=crlf\n"
+        canonical = b"line one\nline two\n"
+        self.git = FakeGit(self.repository, entries=[
+            (".gitattributes", "100644", "blob", attributes),
+            ("basaltwater.json", "100644", "blob", b"{}\n"),
+            ("src/settings.txt", "100644", "blob", canonical),
+        ])
+        self.git.text_paths.add("src/settings.txt")
+        (self.repository / ".gitattributes").write_bytes(attributes)
+        (self.repository / "basaltwater.json").write_bytes(b"{}\n")
+        (self.repository / "src/settings.txt").write_bytes(canonical.replace(b"\n", b"\r\n"))
+        return canonical
+
     def test_clean_head_is_frozen_from_objects_and_returns_protocol_source_identity(self):
         source = self.create()
         self.source = source
@@ -316,8 +359,61 @@ class BuildSourceTest(unittest.TestCase):
         self.assertEqual(env["GIT_NO_LAZY_FETCH"], "1")
         self.assertNotIn("GIT_CONFIG_PARAMETERS", env)
 
+    def test_clean_crlf_text_checkout_matches_its_normalized_blob(self):
+        canonical = self.prepare_crlf_checkout()
+        # Git may report a stat-cache false positive for a converted path even
+        # after its bytes normalize to the committed blob.
+        self.git.dirty = b" M src/settings.txt\0"
+        self.source = self.create()
+        checkout, _history = self.unpack()
+        self.assertEqual((Path(checkout) / "src/settings.txt").read_bytes(), canonical)
+        self.assertIn("src/settings.txt", self.git.normalization_paths)
+
+    def test_same_size_crlf_text_edit_is_rejected_after_normalization(self):
+        self.prepare_crlf_checkout()
+        tracked = self.repository / "src/settings.txt"
+        original = tracked.stat()
+        replacement = b"line uno\r\nline two\r\n"
+        self.assertEqual(len(replacement), original.st_size)
+        tracked.write_bytes(replacement)
+        os.utime(tracked, ns=(original.st_atime_ns, original.st_mtime_ns))
+        self.snapshot = self.root / "changed-source.bws"
+
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            self.create()
+        self.assertIn("src/settings.txt", self.git.normalization_paths)
+        self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(self.snapshot.exists())
+
+    def test_ident_and_working_tree_encoding_checkouts_are_normalized(self):
+        attributes = b"*.id ident\n*.utf16 working-tree-encoding=UTF-16LE\n"
+        canonical_ident = b"$Id$\n"
+        canonical_encoding = b"encoded text\n"
+        expanded_ident = b"$Id: " + git_blob_oid(canonical_ident).encode("ascii") + b" $\n"
+        encoded_worktree = canonical_encoding.decode("utf-8").encode("utf-16le")
+        self.git = FakeGit(self.repository, entries=[
+            (".gitattributes", "100644", "blob", attributes),
+            ("basaltwater.json", "100644", "blob", b"{}\n"),
+            ("src/value.id", "100644", "blob", canonical_ident),
+            ("src/value.utf16", "100644", "blob", canonical_encoding),
+        ])
+        self.git.ident_paths.add("src/value.id")
+        self.git.encoding_paths.add("src/value.utf16")
+        (self.repository / ".gitattributes").write_bytes(attributes)
+        (self.repository / "basaltwater.json").write_bytes(b"{}\n")
+        (self.repository / "src/value.id").write_bytes(expanded_ident)
+        (self.repository / "src/value.utf16").write_bytes(encoded_worktree)
+
+        self.source = self.create()
+        checkout, _history = self.unpack()
+        checkout_path = Path(checkout)
+        self.assertEqual((checkout_path / "src/value.id").read_bytes(), canonical_ident)
+        self.assertEqual((checkout_path / "src/value.utf16").read_bytes(), canonical_encoding)
+        self.assertIn("src/value.id", self.git.normalization_paths)
+        self.assertIn("src/value.utf16", self.git.normalization_paths)
+
     def test_dirty_repository_is_rejected_before_source_or_history_copy(self):
-        self.git.dirty = b" M src/main.py\0"
+        self.git.dirty = b"?? untracked.tmp\0"
         with self.assertRaisesRegex(ValueError, "dirty"):
             self.create()
         self.assertFalse(self.snapshot.exists())
@@ -333,6 +429,7 @@ class BuildSourceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "filters are unsupported"):
             self.create()
         self.assertFalse(any("status" in command for command, _ in self.git.calls))
+        self.assertFalse(any("hash-object" in command for command, _ in self.git.calls))
 
     def test_symlink_and_special_worktree_files_are_not_followed(self):
         tracked = self.repository / "src/main.py"

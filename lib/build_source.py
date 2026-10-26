@@ -514,6 +514,110 @@ def _reject_grafts(
         raise ValueError("Local Git graft metadata is unsupported for shared builds")
 
 
+def _copy_info_attributes(
+    invoke: Callable[..., bytes], repository: str, private_git_directory: str,
+    limits: SourceLimits,
+) -> None:
+    """Copy bounded local attribute data into the isolated Git view."""
+    raw = invoke(
+        ["rev-parse", "--git-path", "info/attributes"], max_output_bytes=8192,
+    )
+    if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+        raise ValueError("Git returned invalid attributes file metadata")
+    try:
+        path = os.fsdecode(raw[:-1])
+    except UnicodeError as exc:
+        raise ValueError("Git returned invalid attributes file metadata") from exc
+    if not os.path.isabs(path):
+        path = os.path.join(repository, path)
+    path = os.path.abspath(path)
+    validate_filesystem_path(path)
+    if not os.path.lexists(path):
+        return
+
+    source_parent, source_name = os.path.split(path)
+    with _directory(source_parent) as parent:
+        descriptor = os.open(source_name, _READ, dir_fd=parent)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError("Git info attributes must be a regular file")
+            if before.st_size > limits.max_metadata_bytes:
+                raise ValueError("Git info attributes exceed their byte limit")
+            contents = bytearray()
+            while True:
+                read_size = min(_CHUNK, limits.max_metadata_bytes + 1 - len(contents))
+                chunk = os.read(descriptor, read_size)
+                if not chunk:
+                    break
+                contents.extend(chunk)
+                if len(contents) > limits.max_metadata_bytes:
+                    raise ValueError("Git info attributes exceed their byte limit")
+            after = os.fstat(descriptor)
+            try:
+                current_path = os.stat(source_name, dir_fd=parent, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("Git info attributes changed during snapshot preparation") from exc
+
+            def identity(info: os.stat_result) -> tuple[int, ...]:
+                return (
+                    info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                    info.st_mtime_ns, info.st_ctime_ns,
+                )
+            if identity(before) != identity(after) or identity(after) != identity(current_path):
+                raise ValueError("Git info attributes changed during snapshot preparation")
+        finally:
+            os.close(descriptor)
+
+    private_info = os.path.join(private_git_directory, "info")
+    if not os.path.lexists(private_info):
+        with _directory(private_git_directory) as git_directory:
+            os.mkdir("info", mode=0o700, dir_fd=git_directory)
+    with _directory(private_info) as info:
+        copied = os.open(
+            "attributes", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600, dir_fd=info,
+        )
+        with os.fdopen(copied, "wb") as output:
+            output.write(contents)
+            output.flush()
+            os.fsync(output.fileno())
+
+
+def _git_conversion_options(invoke: Callable[..., bytes]) -> list[str]:
+    """Return validated, built-in conversion settings from the source repo."""
+    unset = "__basaltwater_unset__"
+    settings = (
+        ("core.autocrlf", "false", frozenset({"false", "true", "input"})),
+        ("core.eol", "native", frozenset({"lf", "crlf", "native"})),
+        ("core.safecrlf", "false", frozenset({"false", "true", "warn"})),
+        ("core.checkRoundtripEncoding", unset, None),
+    )
+    options: list[str] = []
+    for name, default, allowed in settings:
+        raw = invoke(
+            ["config", "--default", default, "--get", name],
+            max_output_bytes=256,
+        )
+        if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+            raise ValueError("Git returned invalid worktree conversion configuration")
+        try:
+            value = raw[:-1].decode("ascii").strip()
+        except UnicodeError as exc:
+            raise ValueError("Git returned invalid worktree conversion configuration") from exc
+        if value == unset:
+            continue
+        if allowed is not None:
+            value = value.lower()
+            if value not in allowed:
+                raise ValueError("Git worktree conversion configuration is unsupported")
+        elif (len(value) > 128
+              or re.fullmatch(r"[A-Za-z0-9._,+-]*", value) is None):
+            raise ValueError("Git worktree encoding configuration is unsupported")
+        options.extend(("-c", f"{name}={value}"))
+    return options
+
+
 def _prepare_history_repository(
     invoke: Callable[..., bytes], repository: str, history_directory: str,
     revision: str, tags: Sequence[tuple[str, str]], limits: SourceLimits,
@@ -543,6 +647,8 @@ def _prepare_history_repository(
         init_command.append("--object-format=sha256")
     init_command.append(private_git_directory)
     invoke(init_command, max_output_bytes=8192)
+
+    _copy_info_attributes(invoke, repository, private_git_directory, limits)
 
     with _directory(os.path.join(private_git_directory, "objects", "info")) as info:
         descriptor = os.open(
@@ -581,6 +687,27 @@ def _prepare_history_repository(
     return history_invoke
 
 
+def _normalized_blob_id(
+    invoke: Callable[..., bytes], revision: str, options: Sequence[str],
+    path: str, content: bytes,
+) -> str:
+    raw = invoke(
+        [*options, "hash-object", "--stdin", f"--path={path}"],
+        env_overrides={"GIT_ATTR_SOURCE": revision}, input_data=content,
+        max_output_bytes=len(revision) + 1,
+    )
+    if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+        raise ValueError("Git returned invalid normalized source object metadata")
+    try:
+        object_id = raw[:-1].decode("ascii", errors="strict")
+    except UnicodeError as exc:
+        raise ValueError("Git returned invalid normalized source object metadata") from exc
+    if (len(object_id) != len(revision)
+            or _MAX_REVISION.fullmatch(object_id.encode("ascii")) is None):
+        raise ValueError("Git returned invalid normalized source object metadata")
+    return object_id
+
+
 def _reject_external_filters(
     invoke: Callable[..., bytes], files: Sequence[_TreeEntry], limits: SourceLimits,
 ) -> None:
@@ -605,9 +732,9 @@ def _reject_external_filters(
 
 def _check_clean_repository(
     invoke: Callable[..., bytes], repository: str, files: Sequence[_TreeEntry],
-    limits: SourceLimits,
+    limits: SourceLimits, normalize_blob: Callable[[str, bytes], str],
 ) -> None:
-    """Reject staged/hidden changes and disable external filters before status."""
+    """Verify the index and tracked bytes, then reject visible untracked files."""
     index = invoke(
         ["ls-files", "--stage", "-z"],
         max_output_bytes=limits.max_metadata_bytes,
@@ -648,14 +775,26 @@ def _check_clean_repository(
         source_bytes = 0
         for entry in files:
             source_bytes += _check_worktree_blob(
-                root, entry, limits, source_bytes,
+                root, entry, limits, source_bytes, normalize_blob,
             )
     status = invoke(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
         max_output_bytes=limits.max_metadata_bytes,
     )
-    if status:
-        raise ValueError("Git repository is dirty")
+    if status and not status.endswith(b"\x00"):
+        raise ValueError("Git returned incomplete status metadata")
+    expected_paths = {entry.path.encode("utf-8") for entry in files}
+    for record in status[:-1].split(b"\x00") if status else ():
+        if len(record) < 4 or record[2:3] != b" ":
+            raise ValueError("Git returned malformed status metadata")
+        state, path = record[:2], record[3:]
+        if state == b"??":
+            raise ValueError("Git repository is dirty")
+        # Tracked index state and every no-follow worktree byte were checked
+        # directly above. Git status can still mark a clean converted file
+        # modified when repository stat-cache settings are unusual.
+        if state != b" M" or path not in expected_paths:
+            raise ValueError("Git repository is dirty")
 
 
 class _SnapshotWriter:
@@ -690,8 +829,9 @@ def _metadata_record(writer: _SnapshotWriter, kind: bytes, flags: int, path: str
 
 def _check_worktree_blob(
     root: int, entry: _TreeEntry, limits: SourceLimits, source_bytes: int,
+    normalize_blob: Callable[[str, bytes], str],
 ) -> int:
-    """Hash one no-follow worktree file against its committed Git blob ID."""
+    """Compare a no-follow worktree file with its normalized Git blob ID."""
     with _relative_parent(root, entry.path) as (parent, leaf):
         try:
             path_info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
@@ -713,7 +853,7 @@ def _check_worktree_blob(
             raise ValueError("Git repository is dirty") from exc
         try:
             opened_info = os.fstat(descriptor)
-            def identity(info):
+            def identity(info: os.stat_result) -> tuple[int, ...]:
                 return (
                     info.st_dev, info.st_ino, info.st_mode, info.st_size,
                     info.st_mtime_ns, info.st_ctime_ns,
@@ -721,19 +861,22 @@ def _check_worktree_blob(
             if (not stat.S_ISREG(opened_info.st_mode)
                     or identity(opened_info) != identity(path_info)):
                 raise ValueError("Git repository is dirty")
+
             algorithm = "sha1" if len(entry.object_id) == 40 else "sha256"
             digest = hashlib.new(algorithm, usedforsecurity=False)
             digest.update(b"blob " + str(opened_info.st_size).encode("ascii") + b"\0")
             read_bytes = 0
+            worktree_content = bytearray()
             while True:
-                content = os.read(descriptor, _CHUNK)
-                if not content:
+                chunk = os.read(descriptor, _CHUNK)
+                if not chunk:
                     break
-                read_bytes += len(content)
+                read_bytes += len(chunk)
                 if (read_bytes > limits.max_file_bytes
                         or source_bytes + read_bytes > limits.max_source_bytes):
                     raise ValueError("Git source exceeds its byte limit")
-                digest.update(content)
+                digest.update(chunk)
+                worktree_content.extend(chunk)
             final_info = os.fstat(descriptor)
             try:
                 final_path_info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
@@ -741,9 +884,12 @@ def _check_worktree_blob(
                 raise ValueError("Git repository is dirty") from exc
             if (read_bytes != opened_info.st_size
                     or identity(final_info) != identity(opened_info)
-                    or identity(final_path_info) != identity(opened_info)
-                    or digest.hexdigest() != entry.object_id):
+                    or identity(final_path_info) != identity(opened_info)):
                 raise ValueError("Git repository is dirty")
+            if digest.hexdigest() != entry.object_id:
+                normalized_oid = normalize_blob(entry.path, bytes(worktree_content))
+                if normalized_oid != entry.object_id:
+                    raise ValueError("Git repository is dirty")
             return read_bytes
         finally:
             os.close(descriptor)
@@ -878,9 +1024,15 @@ def create_source_snapshot(
         except OSError as exc:
             raise ValueError("Invalid source snapshot destination") from exc
 
-        def invoke(args: Sequence[str], **kwargs) -> bytes:
+        def invoke(
+            args: Sequence[str], *, env_overrides: Mapping[str, str] | None = None,
+            **kwargs,
+        ) -> bytes:
+            command_env = dict(env)
+            if env_overrides:
+                command_env.update(env_overrides)
             return _invoke(
-                selected_runner, args, cwd=root, env=env, deadline=deadline,
+                selected_runner, args, cwd=root, env=command_env, deadline=deadline,
                 limits=limits, **kwargs,
             )
 
@@ -898,24 +1050,7 @@ def create_source_snapshot(
         )
         entries = _source_tree(tree_raw, revision, limits)
         source_files = [entry for entry in entries if entry.kind == "file"]
-        _check_clean_repository(invoke, root, source_files, limits)
-        size_input = b"".join(entry.object_id.encode("ascii") + b"\n" for entry in source_files)
-        sizes_raw = invoke(
-            ["cat-file", "--batch-check"], input_data=size_input,
-            max_output_bytes=limits.max_metadata_bytes,
-        )
-        sized = _object_sizes(sizes_raw, source_files, limits)
-        size_by_path = {entry.path: entry for entry in sized}
-        entries = [size_by_path.get(entry.path, entry) for entry in entries]
         tags = _git_tags(invoke, revision, limits)
-        metadata_size = len(MAGIC) + 2 + len(revision) + 4 + 1 + 8 + 32 + 1
-        metadata_size += sum(
-            1 + 1 + 4 + len(entry.path.encode("utf-8")) + (8 if entry.kind == "file" else 0) +
-            (32 if entry.kind == "file" else 0)
-            for entry in entries
-        )
-        if metadata_size > limits.max_metadata_bytes:
-            raise ValueError("Git source snapshot metadata exceeds its byte limit")
 
         with parent_context as (output_parent, output_name), tempfile.TemporaryDirectory(
             prefix="basaltw-source-history-", dir=os.path.dirname(destination_path),
@@ -925,6 +1060,33 @@ def create_source_snapshot(
             history_invoke = _prepare_history_repository(
                 invoke, root, history_directory, revision, tags, limits,
             )
+            conversion_options = _git_conversion_options(invoke)
+
+            def normalize_blob(path: str, content: bytes) -> str:
+                return _normalized_blob_id(
+                    history_invoke, revision, conversion_options, path, content,
+                )
+
+            _check_clean_repository(invoke, root, source_files, limits, normalize_blob)
+            size_input = b"".join(
+                entry.object_id.encode("ascii") + b"\n" for entry in source_files
+            )
+            sizes_raw = invoke(
+                ["cat-file", "--batch-check"], input_data=size_input,
+                max_output_bytes=limits.max_metadata_bytes,
+            )
+            sized = _object_sizes(sizes_raw, source_files, limits)
+            size_by_path = {entry.path: entry for entry in sized}
+            entries = [size_by_path.get(entry.path, entry) for entry in entries]
+            metadata_size = len(MAGIC) + 2 + len(revision) + 4 + 1 + 8 + 32 + 1
+            metadata_size += sum(
+                1 + 1 + 4 + len(entry.path.encode("utf-8"))
+                + (8 if entry.kind == "file" else 0)
+                + (32 if entry.kind == "file" else 0)
+                for entry in entries
+            )
+            if metadata_size > limits.max_metadata_bytes:
+                raise ValueError("Git source snapshot metadata exceeds its byte limit")
             bundle_path = os.path.join(history_directory, "history.bundle")
             bundle_command = [
                 "bundle", "create", "--version=3", bundle_path, "--filter=blob:none",
@@ -996,7 +1158,7 @@ def create_source_snapshot(
                 os.fchmod(descriptor, 0o400)
                 os.fsync(descriptor)
 
-                _check_clean_repository(invoke, root, source_files, limits)
+                _check_clean_repository(invoke, root, source_files, limits, normalize_blob)
                 final_revision = invoke(
                     ["rev-parse", "--verify", "HEAD^{commit}"], max_output_bytes=80,
                 ).strip()
