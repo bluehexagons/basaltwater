@@ -912,16 +912,16 @@ class BuildTargetArtifactStore:
         owner: str,
         bindings_sha256: str,
         artifact_sha256: str,
-        artifact_size: int,
-    ) -> Iterator[BinaryIO]:
-        """Open retained bytes for a trusted activation callback.
+    ) -> Iterator[str]:
+        """Yield the protected bundle path for a trusted activation callback.
 
         The caller must already hold the admission activation lock and have
         checked current owner, application policy, generation, expiry,
         cancellation, request identity, and bindings. This accessor deliberately
-        does not call ``admissions.status()``. It holds the staging lock and a
-        read-only file descriptor until the context exits, verifies the intent
-        and full bundle hash/identity, and accepts no path from the caller.
+        does not call ``admissions.status()``. It derives size and reservation
+        from the validated matching intent, accepts no path from the caller,
+        and holds the staging lock and a read-only file descriptor while yielding
+        the protected path.
         """
         operation_id = _hex(operation_id, "Operation ID")
         if type(generation) is not int or not 1 <= generation <= 2**63 - 1:
@@ -930,7 +930,6 @@ class BuildTargetArtifactStore:
         principal = _owner(owner)
         bindings = _hex(bindings_sha256, "Bindings digest", _SHA256)
         artifact = _hex(artifact_sha256, "Artifact digest", _SHA256)
-        size = _positive_integer(artifact_size, "Artifact size", 2**63 - 1)
         job = parse_build_request(request)
         expected = {
             "schema": 1,
@@ -943,9 +942,7 @@ class BuildTargetArtifactStore:
             "source": job["source"],
             "bindings_sha256": bindings,
             "artifact_sha256": artifact,
-            "artifact_size": size,
             "expanded_limit": job["limits"]["artifact_bytes"],
-            "reservation_bytes": self._reservation(size, job["limits"]["artifact_bytes"]),
         }
         if operation_id == job["request_id"]:
             raise ValueError("Admission operation ID must differ from the build request ID")
@@ -956,6 +953,11 @@ class BuildTargetArtifactStore:
             if retained is None:
                 raise ValueError("Verified target artifact was not found")
             record, _encoded_size, suffixes = retained
+            size = record["artifact_size"]
+            expected["artifact_size"] = size
+            expected["reservation_bytes"] = self._reservation(
+                size, job["limits"]["artifact_bytes"],
+            )
             self._intent_matches(expected, record)
             if ".uncertain" in suffixes:
                 raise RuntimeError("Target artifact staging is uncertain and requires reconciliation")
@@ -969,6 +971,7 @@ class BuildTargetArtifactStore:
                 raise ValueError("Target artifact ready marker does not match its intent")
             identity = self._verify_file(root_fd, record, ".bundle")
             name = self._entry_name(operation_id, ".bundle")
+            bundle_path = os.path.join(self.root, name)
             descriptor = os.open(name, _READ, dir_fd=root_fd)
             try:
                 opened = os.fstat(descriptor)
@@ -980,7 +983,20 @@ class BuildTargetArtifactStore:
                 stream = os.fdopen(descriptor, "rb")
                 descriptor = -1
                 with stream:
-                    yield stream
+                    yield bundle_path
+                    opened_after = os.fstat(stream.fileno())
+                    named_after = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                    _check_regular(
+                        opened_after, "published bundle", modes=frozenset({0o400}),
+                        exact_size=size,
+                    )
+                    _check_regular(
+                        named_after, "published bundle", modes=frozenset({0o400}),
+                        exact_size=size,
+                    )
+                    if (_identity(opened_after) != identity
+                            or _identity(named_after) != identity):
+                        raise ValueError("Target artifact bundle changed during activation")
             finally:
                 if descriptor >= 0:
                     os.close(descriptor)

@@ -73,9 +73,8 @@ with store.open_verified_bundle(
     owner=authenticated_principal,
     bindings_sha256=authorized_bindings_digest,
     artifact_sha256=bundle_sha256,
-    artifact_size=bundle_size,
-) as bundle_stream:
-    return activate_release(bundle_stream)
+) as bundle_path:
+    return activate_release(bundle_path)
 ```
 
 The exact accessor signature is:
@@ -90,17 +89,18 @@ open_verified_bundle(
     owner: str,
     bindings_sha256: str,
     artifact_sha256: str,
-    artifact_size: int,
-) -> Iterator[BinaryIO]
+) -> Iterator[str]
 ```
 
 The trusted caller must already hold the admission activation lock and have
 checked current admission and application policy. The accessor intentionally
 does not call `admissions.status()`, avoiding an admission-lock/staging-lock
 inversion. It checks all supplied identities against the protected staging
-intent, verifies the published file's type, mode, link count, stable identity,
-size and full hash, then holds the staging lock and read-only file descriptor
-until the context exits. It accepts no path from the caller. The admission
+intent, derives size and reservation from that validated intent, verifies the
+published file's type, mode, link count, stable identity, size and full hash,
+then yields its protected path while holding the staging lock and read-only file
+descriptor through activation. It checks the named file identity again as the
+context exits and accepts no path from the caller. The admission
 activation method still rechecks reservation state, generation, expiry,
 cancellation, request, bindings and the same artifact digest before invoking
 the callback.

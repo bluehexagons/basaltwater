@@ -359,9 +359,9 @@ class BuildTargetArtifactStoreTests(unittest.TestCase):
             with self.store.open_verified_bundle(
                 record["operation_id"], record["generation"], self.request,
                 application="web", owner=OWNER, bindings_sha256=BINDINGS,
-                artifact_sha256=receipt["artifact_sha256"], artifact_size=receipt["artifact_size"],
-            ) as bundle:
-                digest = hashlib.sha256(bundle.read()).hexdigest()
+                artifact_sha256=receipt["artifact_sha256"],
+            ) as bundle_path:
+                digest = hashlib.sha256(Path(bundle_path).read_bytes()).hexdigest()
             return {"bundle_sha256": digest}
 
         result = self.admissions.activate(
@@ -384,16 +384,15 @@ class BuildTargetArtifactStoreTests(unittest.TestCase):
             "owner": OWNER,
             "bindings_sha256": BINDINGS,
             "artifact_sha256": self.artifact_sha256,
-            "artifact_size": self.artifact_size,
         }
-        with self.store.open_verified_bundle(**arguments) as bundle:
-            self.assertEqual(bundle.read(), self.bundle)
+        with self.store.open_verified_bundle(**arguments) as bundle_path:
+            self.assertIsInstance(bundle_path, str)
+            self.assertEqual(Path(bundle_path).read_bytes(), self.bundle)
         for field, value in (
             ("owner", "another-controller"),
             ("application", "other-app"),
             ("bindings_sha256", "d" * 64),
             ("artifact_sha256", "e" * 64),
-            ("artifact_size", self.artifact_size + 1),
             ("generation", record["generation"] + 1),
         ):
             changed = dict(arguments)
