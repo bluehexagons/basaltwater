@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 from types import ModuleType, SimpleNamespace
@@ -15,6 +16,7 @@ import unittest
 from unittest.mock import ANY, Mock, patch
 
 from common.service_tools import build_target
+from lib import build_target_maintenance
 from lib.build_manifest import DEBIAN_PLATFORM
 from lib.build_protocol import MAX_ARTIFACT_BYTES
 
@@ -52,6 +54,27 @@ def config(*, root_base: str = "/var/lib/basaltwater/target") -> dict:
 class BinaryStreams:
     def __init__(self, buffer: BytesIO) -> None:
         self.buffer = buffer
+
+
+@contextmanager
+def stdio_channels():
+    """Give fd1/fd2 disposable destinations without changing the test runner."""
+    with tempfile.TemporaryFile() as wire, tempfile.TemporaryFile() as diagnostics:
+        saved = [(fd, os.dup(fd), os.get_inheritable(fd)) for fd in (1, 2)]
+        try:
+            os.dup2(wire.fileno(), 1)
+            os.dup2(diagnostics.fileno(), 2)
+            with os.fdopen(1, "w", closefd=False) as stdout, \
+                 os.fdopen(2, "w", buffering=1, closefd=False) as stderr, \
+                 patch.object(sys, "stdout", stdout), patch.object(sys, "stderr", stderr):
+                yield SimpleNamespace(stdout=stdout, stderr=stderr, wire=wire,
+                                      diagnostics=diagnostics)
+        finally:
+            for fd, duplicate, inheritable in saved:
+                try:
+                    os.dup2(duplicate, fd, inheritable=inheritable)
+                finally:
+                    os.close(duplicate)
 
 
 class BuildTargetEntrypointTests(unittest.TestCase):
@@ -274,7 +297,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
              patch.object(build_target, "_trusted_code") as trusted_code, \
              patch.object(build_target, "_trusted_libraries") as trusted_libraries, \
              patch.object(build_target, "require_platform") as require_platform, \
-             patch("lib.build_target_maintenance.target_lease", side_effect=lease), \
+             patch.object(build_target_maintenance, "target_lease", side_effect=lease), \
              patch.object(build_target, "load_config", side_effect=load) as load_config, \
              patch.object(build_target, "serve", side_effect=lambda *_args, **_kwargs: events.append("response")) as serve, \
              patch.object(build_target.sys, "stderr", stderr), \
@@ -293,24 +316,31 @@ class BuildTargetEntrypointTests(unittest.TestCase):
     def test_serve_composes_exact_stores_under_deadline_and_preserves_binary_stdout(self) -> None:
         configured = build_target.parse_config(config())
         input_bytes = BytesIO(b"header\n")
-        stdout = BinaryStreams(BytesIO())
-        stderr = StringIO()
         admissions, artifact_store, activator, service = Mock(), Mock(), Mock(), Mock()
         artifact_module = ModuleType("lib.build_target_artifacts")
         artifact_module.BuildTargetArtifactStore = Mock(return_value=artifact_store)
+        protocol_streams = []
 
         def service_once(**kwargs):
             self.assertIs(sys.stdout, sys.stderr)
             sys.stdout.write("deployment and nginx diagnostic\n")
-            self.assertIs(kwargs["output_stream"], stdout.buffer)
+            os.write(1, b"native diagnostic\n")
+            subprocess.run(["id", "app-go-api"], check=False)
+            # A cached Python stdout reference can still hold buffered text.
+            channels.stdout.write("buffered deployment diagnostic")
+            protocol_streams.append(kwargs["output_stream"])
+            self.assertFalse(os.get_inheritable(kwargs["output_stream"].fileno()))
+            self.assertNotEqual(kwargs["output_stream"].fileno(), 1)
             kwargs["output_stream"].write(b'{"ok":true}\n')
+            kwargs["output_stream"].flush()
 
         service.serve_once.side_effect = service_once
         service_factory = Mock(return_value=service)
         activation_factory = Mock(return_value=activator)
         stdin = BinaryStreams(input_bytes)
         events = []
-        with patch.dict(sys.modules, {"lib.build_target_artifacts": artifact_module}), \
+        with stdio_channels() as channels, \
+             patch.dict(sys.modules, {"lib.build_target_artifacts": artifact_module}), \
              patch("lib.build_admission.DeploymentAdmissionStore", return_value=admissions) as admission_factory, \
              patch("lib.build_target_activation.TargetReleaseActivator", activation_factory), \
              patch("lib.build_target_service.BuildTargetService", service_factory), \
@@ -318,9 +348,15 @@ class BuildTargetEntrypointTests(unittest.TestCase):
              patch.object(build_target.signal, "signal", return_value="old"), \
              patch.object(build_target.signal, "alarm", side_effect=lambda seconds: events.append(seconds)), \
              patch.object(build_target.sys, "stdin", stdin), \
-             patch.object(build_target.sys, "stdout", stdout), \
-             patch.object(build_target.sys, "stderr", stderr):
+             patch.object(subprocess, "run", side_effect=lambda *_args, **_kwargs:
+                          os.write(1, b"uid=995(app-go-api) inherited child diagnostic\n")) as child:
+            channels.stdout.write("queued before serving")
             build_target.serve(configured, principal="alice@example", config_path="/etc/target.json")
+            self.assertIs(sys.stdout, channels.stdout)
+            channels.wire.seek(0)
+            self.assertEqual(channels.wire.read(), b'{"ok":true}\n')
+            channels.diagnostics.seek(0)
+            diagnostic_bytes = channels.diagnostics.read()
 
         self.assertEqual(events, [900, 0])
         deadline.assert_called_once_with()
@@ -339,10 +375,98 @@ class BuildTargetEntrypointTests(unittest.TestCase):
             activate_release=activator,
         )
         service.serve_once.assert_called_once_with(
-            principal="alice@example", input_stream=input_bytes, output_stream=stdout.buffer,
+            principal="alice@example", input_stream=input_bytes, output_stream=protocol_streams[0],
         )
-        self.assertEqual(stdout.buffer.getvalue(), b'{"ok":true}\n')
-        self.assertIn("deployment and nginx diagnostic", stderr.getvalue())
+        child.assert_called_once_with(["id", "app-go-api"], check=False)
+        self.assertTrue(protocol_streams[0].closed)
+        for diagnostic in (b"deployment and nginx diagnostic", b"native diagnostic",
+                           b"uid=995(app-go-api)", b"buffered deployment diagnostic",
+                           b"queued before serving"):
+            self.assertIn(diagnostic, diagnostic_bytes)
+
+    def test_serve_failure_restores_stdout_and_closes_protocol_under_deadline(self) -> None:
+        artifact_module = ModuleType("lib.build_target_artifacts")
+        artifact_module.BuildTargetArtifactStore = Mock()
+        for phase in ("composition", "response", "interruption"):
+            with self.subTest(phase=phase), stdio_channels() as channels:
+                # Also preserve a caller's deliberately non-inheritable fd1.
+                os.set_inheritable(1, phase != "interruption")
+                original = os.fstat(1)
+                inheritable = os.get_inheritable(1)
+                protocol_streams = []
+                events = []
+
+                def fail(**kwargs):
+                    os.write(1, b"failure diagnostic\n")
+                    channels.stdout.write("buffered failure diagnostic")
+                    protocol_streams.append(kwargs["output_stream"])
+                    if phase == "interruption":
+                        kwargs["output_stream"].write(b'{"ok":true}\n')
+                        raise KeyboardInterrupt
+                    with patch.object(kwargs["output_stream"], "write",
+                                      side_effect=BrokenPipeError("response disconnected")):
+                        kwargs["output_stream"].write(b'{"ok":true}\n')
+
+                failure = (OSError if phase == "composition" else
+                           KeyboardInterrupt if phase == "interruption" else BrokenPipeError)
+                real_fdopen = os.fdopen
+                with patch.dict(sys.modules, {"lib.build_target_artifacts": artifact_module}), \
+                     patch("lib.build_admission.DeploymentAdmissionStore",
+                           side_effect=OSError("setup failed") if phase == "composition" else None), \
+                     patch("lib.build_target_activation.TargetReleaseActivator"), \
+                     patch("lib.build_target_service.BuildTargetService") as service, \
+                     patch.object(build_target.os, "fdopen", wraps=real_fdopen) as fdopen, \
+                     patch.object(build_target.signal, "signal", return_value="old") as handler, \
+                     patch.object(build_target.signal, "alarm", side_effect=events.append), \
+                     patch.object(build_target.sys, "stdin", BinaryStreams(BytesIO())), \
+                     self.assertRaises(failure):
+                    service.return_value.serve_once.side_effect = fail
+                    build_target.serve(config(), principal="alice@example", config_path="/unused")
+
+                self.assertIs(sys.stdout, channels.stdout)
+                restored = os.fstat(1)
+                self.assertEqual((restored.st_dev, restored.st_ino),
+                                 (original.st_dev, original.st_ino))
+                self.assertEqual(os.get_inheritable(1), inheritable)
+                with self.assertRaises(OSError):
+                    os.fstat(fdopen.call_args.args[0])
+                self.assertTrue(all(stream.closed for stream in protocol_streams))
+                self.assertEqual(events, [900, 0])
+                self.assertEqual(handler.call_args_list[-1].args,
+                                 (build_target.signal.SIGALRM, "old"))
+                channels.wire.seek(0)
+                self.assertEqual(channels.wire.read(),
+                                 b'{"ok":true}\n' if phase == "interruption" else b"")
+                if phase != "composition":
+                    channels.diagnostics.seek(0)
+                    self.assertEqual(channels.diagnostics.read(),
+                                     b"failure diagnostic\nbuffered failure diagnostic")
+
+    def test_protocol_stdout_setup_and_flush_failures_close_duplicate_and_restore_fd(self) -> None:
+        for phase in ("fdopen", "redirect", "initial_flush", "flush"):
+            with self.subTest(phase=phase), stdio_channels() as channels:
+                original = os.fstat(1)
+                inheritable = os.get_inheritable(1)
+                real_dup2, real_fdopen = os.dup2, os.fdopen
+                flush_failures = {
+                    "initial_flush": [OSError("initial flush failed"), None],
+                    "flush": [None, OSError("flush failed")],
+                }
+                with patch.object(build_target.os, "fdopen", wraps=real_fdopen) as fdopen, \
+                     patch.object(build_target.os, "dup2", wraps=real_dup2) as redirect, \
+                     patch.object(channels.stdout, "flush", side_effect=flush_failures.get(phase)), \
+                     self.assertRaises(OSError):
+                    if phase == "fdopen":
+                        fdopen.side_effect = OSError("fdopen failed")
+                    elif phase == "redirect":
+                        redirect.side_effect = [OSError("dup2 failed"), None]
+                    with build_target._protocol_stdout():
+                        pass
+                self.assertIs(sys.stdout, channels.stdout)
+                self.assertEqual(os.fstat(1), original)
+                self.assertEqual(os.get_inheritable(1), inheritable)
+                with self.assertRaises(OSError):
+                    os.fstat(fdopen.call_args.args[0])
 
     def test_connection_deadline_restores_alarm_and_handler_after_failure(self) -> None:
         with patch.object(build_target.signal, "signal", return_value="old") as handler, \
@@ -362,7 +486,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
              patch.object(build_target, "_trusted_code"), \
              patch.object(build_target, "_trusted_libraries"), \
              patch.object(build_target, "require_platform"), \
-             patch("lib.build_target_maintenance.target_lease", return_value=nullcontext()), \
+             patch.object(build_target_maintenance, "target_lease", return_value=nullcontext()), \
              patch.object(build_target, "load_config", side_effect=RuntimeError("/private token=secret")), \
              patch.object(build_target.sys, "stderr", stderr), \
              patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": build_target.SSH_COMMAND}):
@@ -376,7 +500,7 @@ class BuildTargetEntrypointTests(unittest.TestCase):
              patch.object(build_target, "_trusted_code"), \
              patch.object(build_target, "_trusted_libraries"), \
              patch.object(build_target, "require_platform"), \
-             patch("lib.build_target_maintenance.target_lease", side_effect=RuntimeError("busy")), \
+             patch.object(build_target_maintenance, "target_lease", side_effect=RuntimeError("busy")), \
              patch.object(build_target, "load_config") as loader, \
              patch.object(build_target, "serve") as serve, \
              patch.object(build_target.sys, "stderr", StringIO()), \

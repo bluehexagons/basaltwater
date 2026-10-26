@@ -16,7 +16,7 @@ import re
 import signal
 import stat
 import sys
-from typing import Iterator
+from typing import BinaryIO, Iterator
 
 
 DEFAULT_CONFIG = "/etc/basaltwater/build-target/config.json"
@@ -241,14 +241,40 @@ def connection_deadline(seconds: int = CONNECTION_SECONDS) -> Iterator[None]:
         signal.signal(signal.SIGALRM, previous)
 
 
+@contextmanager
+def _protocol_stdout() -> Iterator[BinaryIO]:
+    """Keep the wire private while Python and inherited fd1 use diagnostics."""
+    stdout = sys.stdout
+    inheritable = os.get_inheritable(1)
+    # os.dup() returns a non-inheritable descriptor: exec'd helpers must not
+    # receive another way to write to the protocol channel.
+    descriptor = os.dup(1)
+    try:
+        output_stream = os.fdopen(descriptor, "wb", buffering=0)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with output_stream:
+        try:
+            os.dup2(2, 1)
+            stdout.flush()
+            with redirect_stdout(sys.stderr):
+                yield output_stream
+        finally:
+            # Cached references to the original Python stdout still use fd1.
+            # Drain their diagnostics before restoring the transport descriptor,
+            # even when serving or flushing raises (including interruption).
+            try:
+                stdout.flush()
+            finally:
+                os.dup2(descriptor, 1, inheritable=inheritable)
+
+
 def serve(config: dict, *, principal: str, config_path: str) -> None:
     """Compose target admission, artifact verification and activation for SSH."""
-    # Preserve the binary protocol channel before redirecting incidental text
-    # emitted by deployment and Nginx composition to stderr.
-    output_stream = sys.stdout.buffer
     input_stream = sys.stdin.buffer
     with connection_deadline():
-        with redirect_stdout(sys.stderr):
+        with _protocol_stdout() as output_stream:
             from lib.build_admission import DeploymentAdmissionStore
             from lib.build_target_activation import TargetReleaseActivator
             from lib.build_target_artifacts import BuildTargetArtifactStore
