@@ -147,6 +147,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
 
     def test_real_staging_and_admission_compose_without_reentering_the_admission_lock(self):
         bindings, request = self.inputs()
+        request["components"][0]["commands"] = []
         workspace = self.root / "workspace"
         (workspace / "dist").mkdir(parents=True)
         (workspace / "dist" / "index.html").write_text("<p>verified export</p>")
@@ -185,6 +186,11 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.assertEqual(self.deploy.call_count, 1)
         self.assertEqual(self.publish.call_count, 1)
         self.assertEqual(self.bundle_path.stat().st_mode & 0o777, 0o400)
+        self.assertEqual(self.manifests[0].components[0].build, [])
+        refreshed = self.activator.reconcile_installed()
+        self.assertEqual(refreshed[0]["operation_id"], reservation["operation_id"])
+        self.assertEqual(self.manifests[-1].components[0].build, [])
+        self.assertEqual(self.deploy.call_count, 2)
 
     def test_second_application_preserves_shared_domain_route_group(self):
         first, request = self.inputs()

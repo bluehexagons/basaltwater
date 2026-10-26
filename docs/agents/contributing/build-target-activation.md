@@ -9,6 +9,9 @@ without reentering the admission store.
 
 The callback reconstructs a manifest from the authorized static/service
 projection and the exact ordered build inputs. It executes no build commands.
+Ready static exports omit the manifest's optional `build` field when their
+request has no commands; activation and retained-release replay preserve that
+empty command list.
 Service binaries use the first-slice convention of reading `PORT` and `HOST`
 from fixed generated runtime values; `HOST` is `127.0.0.1`. A program must honor
 those values and its declared health path. Custom commands, arguments, runtime

@@ -130,7 +130,9 @@ def _bindings_manifest(bindings: object, request: object, principal: str) -> tup
         component = copy.deepcopy(serving[build["name"]])
         if component.get("health") is None:
             component.pop("health", None)
-        component.update(build=build["commands"], env=build["env"])
+        component["env"] = build["env"]
+        if build["commands"]:
+            component["build"] = build["commands"]
         if component["type"] == "service":
             # First-slice service convention; the client cannot supply runtime
             # values, arbitrary arguments or secret paths through this projection.
