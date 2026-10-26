@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 from common import build_target_steps as setup
 from lib import build_target_maintenance as maintenance
+from lib.maintenance_defaults import APT_LOCK_OPTIONS
 from tests.test_build_target_entrypoint import target_policy
 from tests.test_build_target_maintenance import root_view
 
@@ -163,7 +164,7 @@ class BuildTargetSetupTests(unittest.TestCase):
                                                pw_gid=self.groups[name].gr_gid,
                                                pw_dir=args[args.index("--home-dir") + 1], pw_shell="/bin/sh")
         elif args[0] == "apt-get":
-            self.installed.update(args[4:])
+            self.installed.update(package for package in setup._PACKAGES if package in args)
         return SimpleNamespace(returncode=0, stdout=(args[-1] + " L today\n") if args[0] == "passwd" else "")
 
     def snapshot(self):
@@ -193,6 +194,9 @@ class BuildTargetSetupTests(unittest.TestCase):
             self.assertEqual(auth.read_text(), f'restrict,command="/usr/bin/sudo -n {command}" '
                              + public_key(1 if principal == "alice" else 2) + "\n")
         self.assertEqual(self.installed, {"openssh-server", "sudo", "nginx"})
+        apt_install = next(command for command in self.commands if command[:2] == ["apt-get", "install"])
+        self.assertEqual(apt_install[4:4 + len(APT_LOCK_OPTIONS)], APT_LOCK_OPTIONS)
+        self.assertEqual(set(apt_install[4 + len(APT_LOCK_OPTIONS):]), self.installed)
         self.assertTrue(any(command[0] == "visudo" for command in self.commands))
         self.assertTrue(all(command[0] != "userdel" for command in self.commands))
         for root in (setup.ETC_DIR, setup.DATA_ROOT, *setup.ROOTS.values()):

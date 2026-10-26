@@ -71,6 +71,7 @@ Only missing `openssh-server`, `sudo` and `nginx` prerequisites are installed
 and then verified. Python 3, system services and service runtime libraries come
 from the existing OS. This installer does not edit SSH daemon configuration,
 open firewall ports, install runtime dependencies or qualify service binaries.
+Prerequisite installs use the shared 300-second APT lock timeout.
 
 Managed root:root resources are:
 
