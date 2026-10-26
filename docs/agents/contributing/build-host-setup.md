@@ -1,0 +1,106 @@
+# Build-host setup
+
+`common.build_host_steps` owns target-side installation and explicit
+de-enrollment of the on-demand build-host service. Configuration parsing and
+plugin selection are owned by the setup configuration and plugin layers.
+
+## Python API
+
+`parse_build_host_enrollment(value)` accepts either a decoded mapping or
+bounded UTF-8 JSON bytes. It returns a detached mapping with exactly these
+fields:
+
+```json
+{
+  "schema": 1,
+  "policy": {"schema": 1, "principals": {}},
+  "keys": {"alice": "ssh-ed25519 BASE64"},
+  "max_records": 128,
+  "max_bytes": 2147483648
+}
+```
+
+The shared build-host policy parser validates `policy`. `keys` must have the
+same principal set as that policy. Initial principal labels are lowercase
+ASCII slugs of at most 32 characters: letters and digits, with optional
+interior hyphens. Each value must be one canonical, uncommented
+`ssh-ed25519` public-key line whose SSH wire blob contains one 32-byte public
+key. Key options, comments, private keys, other key types, duplicate keys,
+extra fields, and out-of-range limits are rejected.
+
+`configure_build_host(config)` reads the already-decoded
+`config.build_host_enrollment` mapping. `None` is a no-op unless
+`config.disable_build_host` is explicitly `True`. The disable flag takes
+precedence over enrollment; it is intended for an explicit setup transition,
+not an inference from omitted policy. The function does not import
+`SetupConfig` at runtime.
+
+## Supported host and installed resources
+
+An enabled build host must be Debian 13 x86-64 on a VM or physical machine.
+Unprivileged and privileged LXC are unsupported even when a container can
+start persistent services. The source must already be installed as a trusted,
+root-controlled tree at `/opt/basaltwater`; setup does not copy code from a
+user home directory. A requested role on an unsupported machine type fails
+before package, account, or configuration changes once service capability and
+dry-run handling permit setup to continue.
+
+The installer creates root-owned mode-0700 configuration and data
+directories:
+
+- `/etc/basaltwater/build-host`, with a mode-0600 runtime `config.json` and a
+  mode-0600 ownership marker.
+- `/var/lib/basaltwater/build-host/{state,inputs,scratch,artifacts,logs}`.
+- `/var/lib/basaltwater/build-host-ssh/<12-hex-id>` for each transport
+  account, with a root-owned read-only home and root-controlled `.ssh` data.
+
+The `basaltwater-build` worker account and group use `/nonexistent` and
+`nologin`. Each principal gets a separate locked transport account and
+same-named private group. Its shell is `/bin/sh`, it has no supplementary
+groups, and its UID/GID must be exclusive. The enrolled public key is installed
+with OpenSSH `restrict` and a forced command that invokes the trusted installed
+entrypoint with that principal. Per-account sudoers permits only the exact
+entrypoint arguments for that principal and preserves
+`SSH_ORIGINAL_COMMAND`; `visudo` validates the file before publication. No
+worker `authorized_keys` file is created, and the transport identity receives
+no interactive or general sudo access.
+
+The independent root unit is `basaltwater-build-host.service`. It uses the
+installed entrypoint in isolated `--worker` mode, `UMask=0077`,
+`KillMode=control-group`, and `Restart=no`. Disabling automatic restart avoids
+replaying a job whose claim outcome is uncertain. Required packages are
+`git`, `e2fsprogs`, `openssh-server`, and `sudo`; `nodejs` is added only when
+Node installation is selected. Go installation remains with the common
+setup flow, and Python uses the operating-system Python 3.
+
+## Drain, update, and de-enrollment
+
+Before changing policy, tools, or the unit, setup sets the job store to
+draining, acquires the worker lease, and checks the retained ledger for a
+running claim. It never stops an active worker to force an update. If the lease
+is busy, the prior drain setting is restored when no reconciliation is
+pending. If a running claim or incomplete reconciliation makes state
+uncertain, setup leaves the store drained and refuses the update. On a
+successful idle enable or update, the prior drain setting is restored; an
+explicit re-enrollment after de-enrollment releases the intentional hold.
+Queued jobs remain queued through handoff.
+
+Only `disable_build_host=True` requests de-enrollment. It drains and checks the
+worker lease and retained running claims before removing the managed service.
+If the worker is active or a running claim remains, it refuses teardown and
+does not stop the worker. A successful de-enrollment removes only the
+marker-owned service, runtime configuration, enrolled forced-command key, and
+per-principal sudoers grant. The ownership marker, accounts, groups, homes,
+queue, ledger, inputs, scratch files, artifacts, logs, and other evidence are
+retained. The store stays drained until a later successful re-enrollment.
+
+The installer never adopts unmarked accounts, paths, keys, sudoers files, or
+units. A missing marker with build-host resources, or a modified managed file
+whose ownership hash no longer matches, is refused for operator review. An
+ordinary setup with no enrollment and no explicit disable flag does not remove
+anything. Package installation is additive; de-enrollment does not remove
+packages or delete managed identities and data.
+
+Focused tests mock host commands and use temporary paths. They do not execute
+project commands or qualify a real Debian host; native VM qualification is a
+separate deployment check.
