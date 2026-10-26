@@ -7,8 +7,9 @@ and that the generated descriptors drive correct nginx config.
 
 from __future__ import annotations
 
-import json
+import copy
 import io
+import json
 import os
 import shutil
 import sqlite3
@@ -23,6 +24,8 @@ from unittest.mock import MagicMock, mock_open, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.deployment import DeploymentOrchestrator
+from lib.build_artifacts import create_artifact, unpack_artifact
+from lib.build_protocol import DEFAULT_LIMITS, request_digest
 from lib.local_http import open_loopback
 from lib.nginx_config import generate_merged_nginx_config
 from lib.operation_state import OperationStateError, OperationStateStore
@@ -688,6 +691,62 @@ class TestDeployManifest(unittest.TestCase):
             "manifest-operation.json",
         )
 
+    def _prebuilt_request(self) -> dict:
+        return {
+            "schema": 1,
+            "request_id": "a" * 32,
+            "project": "shop",
+            "source": {
+                "revision": "b" * 40,
+                "snapshot_sha256": "c" * 64,
+                "manifest_sha256": "d" * 64,
+            },
+            "platform": {
+                "os": "linux",
+                "architecture": "x86_64",
+                "baseline": "debian-13",
+            },
+            "components": [
+                {
+                    "name": "site",
+                    "type": "static",
+                    "artifacts": ["dist"],
+                    "commands": ["npm run build"],
+                    "env": {},
+                },
+                {
+                    "name": "api",
+                    "type": "service",
+                    "artifacts": ["server/app"],
+                    "commands": ["server/build.sh"],
+                    "env": {},
+                },
+            ],
+            "limits": dict(DEFAULT_LIMITS),
+        }
+
+    def _package_prebuilt(self, request: dict | None = None) -> tuple[dict, str, dict]:
+        request = request or self._prebuilt_request()
+        bundle_path = os.path.join(self.base_dir, "release.bwa")
+        artifact = create_artifact(self.source, request, bundle_path)
+        return request, bundle_path, artifact
+
+    def _deploy_prebuilt(self, request: dict, bundle_path: str, digest: str):
+        staging_root = os.path.join(self.base_dir, "artifact-staging")
+        os.makedirs(staging_root, mode=0o700, exist_ok=True)
+        os.chmod(staging_root, 0o700)
+        return self.orch.deploy_prebuilt(
+            manifest=self.manifest,
+            artifact_path=bundle_path,
+            build_request=request,
+            artifact_sha256=digest,
+            domain="example.com",
+            path="/",
+            git_url="https://git.example.com/shop.git",
+            staging_root=staging_root,
+            target_platform=request["platform"],
+        )
+
     def test_service_unit_snapshot_failure_aborts_closed(self):
         with patch("lib.deployment.os.path.isdir", return_value=True), patch(
             "lib.deployment.os.listdir",
@@ -809,6 +868,184 @@ class TestDeployManifest(unittest.TestCase):
         # Metadata persisted, and the deployed tree is in place.
         mock_meta.assert_called_once()
         self.assertTrue(os.path.exists(os.path.join(dest, "basaltwater.json")))
+        self.assertFalse(os.path.exists(self._operation_marker_path()))
+
+    @patch.object(DeploymentOrchestrator, '_poll_health')
+    @patch('lib.deployment.create_managed_service')
+    @patch('lib.deployment.save_deployment_metadata')
+    @patch('lib.deployment.run')
+    def test_prebuilt_bundle_verifies_and_activates_static_and_service_exports(
+        self, mock_run, mock_meta, mock_service, _mock_health,
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        request, bundle_path, artifact = self._package_prebuilt()
+        with open(bundle_path, "rb") as handle:
+            bundle_before = handle.read()
+
+        with patch.object(
+            self.orch, "_ensure_build_user", side_effect=AssertionError("build user setup ran"),
+        ), patch.object(
+            self.orch, "_prepare_build_toolchain", side_effect=AssertionError("toolchain setup ran"),
+        ), patch.object(
+            self.orch, "_run_component_build", side_effect=AssertionError("repository command ran"),
+        ):
+            deps = self._deploy_prebuilt(request, bundle_path, artifact["sha256"])
+
+        destination = os.path.join(self.base_dir, "example_com")
+        self.assertEqual(len(deps), 2)
+        self.assertTrue(os.path.isfile(os.path.join(destination, "dist", "index.html")))
+        self.assertTrue(os.access(os.path.join(destination, "server", "app"), os.X_OK))
+        self.assertEqual(
+            [dep["project_type"] for dep in deps],
+            ["static", "service"],
+        )
+        self.assertFalse(any(
+            isinstance(call.args[0], str) and "chown -R build-" in call.args[0]
+            for call in mock_run.call_args_list
+        ))
+        mock_meta.assert_called_once_with(
+            destination, "https://git.example.com/shop.git", request["source"]["revision"],
+        )
+        with open(bundle_path, "rb") as handle:
+            self.assertEqual(handle.read(), bundle_before)
+        with open(self._operation_marker_path() + ".last.json", encoding="utf-8") as handle:
+            operation = json.load(handle)["operation"]
+        self.assertEqual(operation["context"]["commit"], request["source"]["revision"])
+        self.assertEqual(operation["context"]["artifact_request_id"], request["request_id"])
+        self.assertEqual(
+            operation["context"]["artifact_request_sha256"], request_digest(request),
+        )
+        self.assertEqual(operation["context"]["artifact_sha256"], artifact["sha256"])
+
+    def test_prebuilt_input_platform_and_digest_errors_precede_deployment_mutations(self):
+        request, bundle_path, artifact = self._package_prebuilt()
+        staging_root = os.path.join(self.base_dir, "artifact-staging")
+        os.makedirs(staging_root, mode=0o700)
+        os.chmod(staging_root, 0o700)
+        wrong_inputs = copy.deepcopy(request)
+        wrong_inputs["components"][0]["commands"] = ["npm run publish"]
+        cases = (
+            ("manifest inputs", wrong_inputs, request["platform"], artifact["sha256"], "inputs"),
+            ("platform", request, {**request["platform"], "baseline": "debian-12"}, artifact["sha256"], "platform"),
+            ("digest", request, request["platform"], "0" * 64, "checksum"),
+        )
+
+        for label, candidate, platform, digest, expected_error in cases:
+            with self.subTest(label=label), patch.object(
+                self.orch, "_open_deployment_lock",
+            ) as open_lock, patch.object(
+                self.orch, "_ensure_build_user",
+            ) as build_user, patch.object(
+                self.orch, "_prepare_build_toolchain",
+            ) as toolchain, patch.object(
+                self.orch, "_run_component_build",
+            ) as build, patch("lib.deployment.run") as run:
+                with self.assertRaisesRegex(ValueError, expected_error):
+                    self.orch.deploy_prebuilt(
+                        self.manifest, bundle_path, candidate, digest,
+                        "example.com", "/", "https://git.example.com/shop.git",
+                        staging_root=staging_root,
+                        target_platform=platform,
+                    )
+                open_lock.assert_not_called()
+                build_user.assert_not_called()
+                toolchain.assert_not_called()
+                build.assert_not_called()
+                run.assert_not_called()
+                self.assertFalse(os.path.exists(os.path.join(self.base_dir, ".basaltwater_shared")))
+                self.assertFalse(os.path.exists(os.path.join(self.base_dir, "example_com")))
+
+    @patch.object(DeploymentOrchestrator, '_poll_health')
+    @patch('lib.deployment.create_managed_service')
+    @patch('lib.deployment.run')
+    def test_prebuilt_missing_export_does_not_stop_existing_service(
+        self, mock_run, _mock_service, _mock_health,
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        request, bundle_path, artifact = self._package_prebuilt()
+        original_unpack = unpack_artifact
+
+        def remove_static_export(bundle, job, destination, *, expected_sha256):
+            descriptor = original_unpack(
+                bundle, job, destination, expected_sha256=expected_sha256,
+            )
+            shutil.rmtree(os.path.join(destination, "dist"))
+            return descriptor
+
+        snapshots = _old_unit_snapshot()
+        with patch.object(self.orch, "_app_unit_snapshots", return_value=snapshots), patch.object(
+            self.orch, "_stop_app_unit", return_value=True,
+        ) as stop_unit, patch(
+            "lib.deployment.unpack_artifact", side_effect=remove_static_export,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "static output not found"):
+                self._deploy_prebuilt(request, bundle_path, artifact["sha256"])
+
+        stop_unit.assert_not_called()
+        self.assertFalse(os.path.exists(self._operation_marker_path()))
+
+    @patch('lib.deployment.run')
+    def test_prebuilt_health_failure_restores_previous_release_and_unit(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        request, bundle_path, artifact = self._package_prebuilt()
+        active = os.path.join(self.base_dir, "example_com")
+        os.makedirs(active)
+        previous_release = os.path.join(active, "previous.txt")
+        with open(previous_release, "w", encoding="utf-8") as handle:
+            handle.write("still serving")
+
+        unit_name = "app-example_com-api.service"
+        unit_path = os.path.join(self.base_dir, "units", unit_name)
+        old_content = generate_managed_service(
+            unit_name.removesuffix(".service"), "/bin/true", active,
+            web_user="app-example_com-api", web_group="app-example_com-api",
+            description="basaltwater.json service: api",
+            writable_paths=[self.orch._component_data_dir(active, self.manifest.components[1])],
+        )
+        with open(unit_path, "w", encoding="utf-8") as handle:
+            handle.write(old_content)
+        os.chmod(unit_path, 0o640)
+        previous_stat = os.stat(unit_path)
+        unit_snapshots = {
+            "app-example_com-api": {
+                "file": {
+                    "content": old_content,
+                    "mode": 0o640,
+                    "uid": previous_stat.st_uid,
+                    "gid": previous_stat.st_gid,
+                },
+                "state": {
+                    "LoadState": "loaded",
+                    "ActiveState": "active",
+                    "UnitFileState": "enabled",
+                },
+            },
+        }
+
+        def write_rejected_unit(*_args, **_kwargs):
+            with open(unit_path, "w", encoding="utf-8") as handle:
+                handle.write(old_content.replace("ExecStart=/bin/true", "ExecStart=/bin/false"))
+            os.chmod(unit_path, 0o644)
+
+        active_state = {
+            "LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled",
+        }
+        with patch.object(self.orch, "_app_unit_snapshots", return_value=unit_snapshots), patch.object(
+            self.orch, "_stop_app_unit", return_value=True,
+        ), patch(
+            "lib.deployment.inspect_unit_state", return_value=active_state,
+        ), patch(
+            "lib.deployment.create_managed_service", side_effect=write_rejected_unit,
+        ), patch.object(
+            self.orch, "_poll_health", side_effect=RuntimeError("health check failed"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "health check failed"):
+                self._deploy_prebuilt(request, bundle_path, artifact["sha256"])
+
+        self.assertTrue(os.path.isfile(previous_release))
+        with open(unit_path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), old_content)
+        self.assertEqual(os.stat(unit_path).st_mode & 0o777, 0o640)
         self.assertFalse(os.path.exists(self._operation_marker_path()))
 
     @patch.object(DeploymentOrchestrator, '_poll_health')

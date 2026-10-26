@@ -54,6 +54,19 @@ know.
   including service retirement: manifest services run directly, and their
   snapshots do not manage operator-created activators. Stop and remove the
   activator or choose another service identity before retrying.
+- The internal verified-prebuilt manifest API checks the build request's
+  ordered component names, types, artifact exports, commands and build
+  environment against the manifest. It requires the request platform to match
+  the caller-observed target platform and verifies the bundle digest, descriptor
+  and exported bytes before taking the deployment lock or changing target
+  state. It stages only the verified extracted tree and uses the same service
+  identity, persistent data, port, SQLite backup, health-check, unit and release
+  rollback flow as a local manifest deployment. This API does not run
+  repository build commands or provision a build identity or toolchain. The
+  caller must provide authenticated admission, operation/generation
+  authorization and runtime policy; a matching digest and platform establish
+  byte and compatibility identity, not authorization or provenance. Standard
+  `deploy_manifest` deployments still build on the target.
 - Manifest runtime environment values preserve literal percent signs, including
   percent-encoded URLs, instead of expanding systemd unit specifiers.
 - Proxy routes preserve application `Cache-Control` and `Expires` headers.
