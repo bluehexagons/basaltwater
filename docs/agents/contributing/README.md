@@ -15,6 +15,7 @@ managed coding VM or workstation, use the sibling
 | Common failures and debugging | [Troubleshooting](troubleshooting.md) |
 | Shared build request and artifact interfaces | [Build contracts](build-contracts.md) |
 | Target deployment reservations and replay safety | [Build admission](build-admission.md) |
+| Debian build process and resource supervision | [Build execution](build-execution.md) |
 
 ## Core architecture
 
