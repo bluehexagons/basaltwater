@@ -101,12 +101,105 @@ class TestBuildHostEnrollmentConfig(unittest.TestCase):
         )
         update = SetupConfig(
             host="target", username="agent", system_type="server_lite",
-            is_build_server=True,
         )
 
-        merged = merge_setup_configs(cached, update)
+        merged = merge_setup_configs(
+            cached, update, preserve_keys={"is_build_server"}
+        )
 
         self.assertEqual(merged.build_host_enrollment, self.POLICY)
+        self.assertTrue(merged.is_build_server)
+        self.assertFalse(merged.disable_build_host)
+
+    def test_explicit_no_build_server_marks_managed_de_enrollment(self):
+        omitted = SetupConfig.from_args(
+            self._setup_parser().parse_args(["target", "agent"]),
+            "server_lite",
+        )
+        disabled = SetupConfig.from_args(
+            self._setup_parser().parse_args(
+                ["target", "agent", "--no-build-server"]
+            ),
+            "server_lite",
+        )
+
+        self.assertFalse(omitted.disable_build_host)
+        self.assertTrue(disabled.disable_build_host)
+        self.assertFalse(disabled.is_build_server)
+        self.assertIn("--no-build-server", disabled.to_setup_command())
+        self.assertTrue(any(
+            arg == "--disable-build-host"
+            for arg in disabled.to_remote_args()
+        ))
+
+    def test_internal_remote_de_enrollment_flag_round_trips(self):
+        from lib.arg_parser import create_setup_argument_parser
+
+        config = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            disable_build_host=True,
+        )
+        parser = create_setup_argument_parser("Remote", for_remote=True)
+        args = parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        args.host = config.host
+
+        received = SetupConfig.from_args(args, "server_lite")
+
+        self.assertTrue(received.disable_build_host)
+        self.assertFalse(received.is_build_server)
+
+    def test_contradictory_enable_and_de_enrollment_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Cannot enable and disable"):
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                is_build_server=True, disable_build_host=True,
+            )
+        with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                disable_build_host=True, build_host_enrollment=self.POLICY,
+            )
+
+    def test_de_enrollment_clears_saved_role_and_policy_and_reenable_resets_intent(self):
+        from lib.cache import merge_setup_configs
+
+        cached = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            is_build_server=True, build_host_enrollment=self.POLICY,
+        )
+        disabled = merge_setup_configs(
+            cached,
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                disable_build_host=True,
+            ),
+        )
+        reenabled = merge_setup_configs(
+            disabled,
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                is_build_server=True,
+            ),
+            preserve_keys=set(),
+        )
+
+        self.assertFalse(disabled.is_build_server)
+        self.assertIsNone(disabled.build_host_enrollment)
+        self.assertTrue(disabled.disable_build_host)
+        self.assertTrue(reenabled.is_build_server)
+        self.assertFalse(reenabled.disable_build_host)
+        self.assertIsNone(reenabled.build_host_enrollment)
+
+    def test_de_enrollment_intent_persists_in_saved_configuration(self):
+        disabled = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            disable_build_host=True,
+        )
+
+        restored = SetupConfig.from_dict("target", "server_lite", disabled.to_dict())
+
+        self.assertFalse(restored.is_build_server)
+        self.assertTrue(restored.disable_build_host)
 
     def test_policy_requires_build_server_but_bare_role_remains_valid(self):
         with self.assertRaisesRegex(ValueError, "requires --build-server"):
@@ -761,7 +854,7 @@ class TestSetupConfigFromArgs(unittest.TestCase):
             ssl_email=None,
             enable_cloudflare=False,
             enable_cicd=False,
-            is_build_server=False,
+            is_build_server=None,
             is_app_server=False,
             deploy_targets=None,
             enable_samba=False,

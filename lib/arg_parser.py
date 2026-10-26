@@ -1393,9 +1393,14 @@ def add_setup_arguments(
 
     parser.add_argument("--build-server", dest="is_build_server",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
-                       default=None if not for_remote else False,
+                       default=None,
                        help="Configure as a build server that deploys to app servers")
     if for_remote:
+        parser.add_argument(
+            "--disable-build-host",
+            action="store_true",
+            help=argparse.SUPPRESS,
+        )
         parser.add_argument(
             "--build-host-enrollment-json",
             help=argparse.SUPPRESS,

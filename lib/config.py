@@ -686,12 +686,19 @@ class SetupConfig:
     include_web_server: bool = False
     include_web_firewall: bool = False
     target_host: MaybeStr = None  # Client-facing identity retained during target-local setup
+    disable_build_host: bool = False
     build_host_enrollment: JSONDict | None = None
     # Construction-only: never persist or inherit a saved-root policy exception
     # when merge_setup_configs constructs the effective patch configuration.
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        if type(self.disable_build_host) is not bool:
+            raise ValueError("disable_build_host must be a boolean")
+        if self.disable_build_host and self.is_build_server:
+            raise ValueError("Cannot enable and disable the build host in one setup")
+        if self.disable_build_host and self.build_host_enrollment is not None:
+            raise ValueError("Build host enrollment policy conflicts with de-enrollment")
         if self.build_host_enrollment is not None:
             if not self.is_build_server:
                 raise ValueError("Build host enrollment policy requires --build-server")
@@ -1558,7 +1565,9 @@ class SetupConfig:
         if self.ci_registration_payload:
             args.append("--ci-registration-payload")
         
-        if self.is_build_server:
+        if self.disable_build_host:
+            args.append("--disable-build-host")
+        elif self.is_build_server:
             args.append("--build-server")
         if self.build_host_enrollment is not None:
             policy_json = json.dumps(self.build_host_enrollment, separators=(",", ":"))
@@ -2153,7 +2162,9 @@ class SetupConfig:
         cmd_parts.extend(self._github_runner_args())
         
         # Build/App Server
-        if self.is_build_server:
+        if self.disable_build_host:
+            cmd_parts.append("--no-build-server")
+        elif self.is_build_server:
             cmd_parts.append("--build-server")
         if self.build_host_enrollment is not None:
             policy_json = json.dumps(self.build_host_enrollment, separators=(",", ":"))
@@ -2601,7 +2612,11 @@ class SetupConfig:
         syncthing_admin = _optional_str_arg(args, 'syncthing_admin')
         syncthing_root = _optional_str_arg(args, 'syncthing_root')
 
-        is_build_server = bool(getattr(args, 'is_build_server', False))
+        raw_is_build_server = getattr(args, 'is_build_server', None)
+        is_build_server = raw_is_build_server is True
+        disable_build_host = bool(getattr(args, 'disable_build_host', False)) or (
+            raw_is_build_server is False
+        )
         policy_file = getattr(args, 'build_host_policy', None)
         policy_json = getattr(args, 'build_host_enrollment_json', None)
         if policy_file is not None and policy_json is not None:
@@ -2617,6 +2632,12 @@ class SetupConfig:
                 else None
             )
         )
+        if disable_build_host and is_build_server:
+            raise ValueError("Cannot enable and disable the build host in one setup")
+        if build_host_enrollment is not None and disable_build_host:
+            raise ValueError(
+                "Build host enrollment policy conflicts with de-enrollment"
+            )
         if build_host_enrollment is not None and not is_build_server:
             raise ValueError("Build host enrollment policy requires --build-server")
         is_app_server = bool(getattr(args, 'is_app_server', False))
@@ -3098,6 +3119,7 @@ class SetupConfig:
             ci_register_with_gh=_optional_bool_arg(args, 'ci_register_with_gh') is True,
             ci_registration_payload=_optional_bool_arg(args, 'ci_registration_payload') is True,
             is_build_server=is_build_server,
+            disable_build_host=disable_build_host,
             build_host_enrollment=build_host_enrollment,
             is_app_server=is_app_server,
             deploy_targets=getattr(args, 'deploy_targets', None),

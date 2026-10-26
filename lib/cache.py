@@ -496,7 +496,9 @@ def merge_setup_configs(
 ) -> SetupConfig:
     merged_dict = asdict(cached_config)
     new_dict = asdict(new_config)
-    preserve_keys = preserve_keys or set()
+    preserve_keys = set(preserve_keys or ())
+    if "is_build_server" in preserve_keys:
+        preserve_keys.add("disable_build_host")
 
     # Selecting passwordless sudo is an explicit request for the capable,
     # non-hardened posture. SetupConfig still rejects callers that explicitly
@@ -574,6 +576,14 @@ def merge_setup_configs(
         merged_dict["enable_syncthing"] = False
         merged_dict["disable_syncthing"] = True
         merged_dict["syncthing_admin"] = None
+
+    if new_config.disable_build_host:
+        merged_dict["is_build_server"] = False
+        merged_dict["build_host_enrollment"] = None
+        merged_dict["disable_build_host"] = True
+    elif new_config.is_build_server and "is_build_server" not in preserve_keys:
+        merged_dict["is_build_server"] = True
+        merged_dict["disable_build_host"] = False
 
     # An explicit off clears a previously saved homepage and destination list.
     # Explicit nonempty homepage settings with off are rejected before merging.

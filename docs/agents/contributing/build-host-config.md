@@ -18,6 +18,6 @@ configuration. This slice does not compose or enable a build-host role.
 
 The decoded mapping is saved with the rest of `SetupConfig` and reconstructed
 for setup commands and controller-to-target arguments. Omitted policies remain
-`None`; the generic config patch merge treats `None` as omission, so clearing a
-saved policy requires an explicit merge-level clear rule if a caller needs that
-operation.
+`None` and are preserved by patch merging. Explicit `--no-build-server` records
+de-enrollment intent and clears the saved role and policy; explicit
+`--build-server` clears that intent when re-enabling the role.

@@ -1784,6 +1784,8 @@ deployment workflows.
 | Flag | Description |
 |------|-------------|
 | `--build-server` | Configure a build server that deploys to app servers |
+| `--build-host-policy FILE` | Load up to 4 MiB of public JSON enrollment policy from a controller-local file for a build server |
+| `--no-build-server` | Remove only the managed enrollment and its key authority; retain build records and evidence |
 | `--app-server` | Configure an app server to receive deployments |
 | `--deploy-target HOST` | Target app server for deployments |
 | `--cicd` | Install the signed GitHub webhook receiver and isolated executor |
@@ -1798,6 +1800,14 @@ deployment workflows.
 See [Debian GitHub runner](../services/github-runner.md) for the dedicated
 profile, supported triggers, local fail-closed gate, panel registration and
 qualification requirements. Docker is not required or installed.
+
+Build-host enrollment policy is optional for legacy `--build-server` setups.
+`--build-host-policy FILE` accepts only public policy and key data. On a patch,
+omitting both build-host flags preserves the saved role and enrollment policy.
+Use `--no-build-server` to remove only the managed enrollment and its key
+authority; build records and enrollment evidence remain. De-enrollment is
+blocked while builds are active. Re-enabling with `--build-server` clears the
+saved de-enrollment intent.
 Runner host patches preserve omitted repositories, allowed users and labels.
 An explicit repository list replaces the saved list; an organization scope
 replaces repository scopes.
