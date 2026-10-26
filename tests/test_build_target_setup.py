@@ -106,7 +106,7 @@ class BuildTargetSetupTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
-        self.base.chmod(0o700)
+        self.base.chmod(0o711)
         self.users = {}
         self.groups = {}
         self.commands = []
@@ -223,6 +223,60 @@ class BuildTargetSetupTests(unittest.TestCase):
                     setup.configure_build_target(config)
         self.run.assert_not_called()
         self.assertEqual(self.snapshot(), before)
+
+    def test_inaccessible_shared_ssh_ancestor_refuses_before_bootstrap_or_changes(self) -> None:
+        shared_parent = Path(setup.SSH_ROOT).parent
+        shared_parent.mkdir(mode=0o700)
+        for ancestor in (shared_parent, self.base):
+            with self.subTest(ancestor=ancestor):
+                shared_parent.chmod(0o755)
+                self.base.chmod(0o711)
+                ancestor.chmod(0o700)
+                before = {str(path): stat.S_IMODE(path.stat().st_mode)
+                          for path in (self.base, *self.base.rglob("*"))}
+                with patch.object(setup, "_write") as publish, \
+                     patch.object(setup.os, "mkdir") as mkdir, \
+                     patch.object(setup.os, "fchmod") as chmod, \
+                     self.assertRaisesRegex(ValueError, "SSH ancestor is not traversable"):
+                    setup.configure_build_target(configuration())
+                publish.assert_not_called()
+                mkdir.assert_not_called()
+                chmod.assert_not_called()
+                self.run.assert_not_called()
+                self.assertEqual({str(path): stat.S_IMODE(path.stat().st_mode)
+                                  for path in (self.base, *self.base.rglob("*"))}, before)
+                self.assertFalse(Path(setup.ETC_DIR).exists())
+                self.assertEqual(self.users, {})
+                self.assertEqual(self.groups, {})
+
+    def test_new_shared_parents_are_traversable_with_restrictive_umask(self) -> None:
+        previous = os.umask(0o077)
+        try:
+            setup.configure_build_target(configuration())
+        finally:
+            os.umask(previous)
+        self.assertEqual(stat.S_IMODE(Path(setup.SSH_ROOT).parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(Path(setup.SSH_ROOT).stat().st_mode), 0o711)
+        auth = Path(setup._file_paths("alice")[1])
+        self.assertEqual(stat.S_IMODE(auth.parent.parent.stat().st_mode), 0o555)
+        self.assertEqual(stat.S_IMODE(auth.parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(auth.stat().st_mode), 0o644)
+
+    def test_inaccessible_shared_parent_refuses_update_without_preventing_disable(self) -> None:
+        setup.configure_build_target(configuration())
+        shared_parent = Path(setup.SSH_ROOT).parent
+        shared_parent.chmod(0o700)
+        before = self.snapshot()
+        self.run.reset_mock()
+        with self.assertRaisesRegex(ValueError, "SSH ancestor is not traversable"):
+            setup.configure_build_target(configuration())
+        self.run.assert_not_called()
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(stat.S_IMODE(shared_parent.stat().st_mode), 0o700)
+        setup.configure_build_target(configuration(disable_build_target=True))
+        self.assertFalse(Path(setup.CONFIG_PATH).exists())
+        self.assertTrue(all(not Path(path).exists() for path in setup._file_paths("alice")))
+        self.assertEqual(stat.S_IMODE(shared_parent.stat().st_mode), 0o700)
 
     def test_omission_dry_run_unsupported_and_source_trust_failure_do_not_mutate(self) -> None:
         setup.configure_build_target(configuration(build_target_enrollment=None))

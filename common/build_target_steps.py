@@ -241,8 +241,26 @@ def _namespace(principals: set[str]) -> None:
             raise ValueError("Refusing unmarked target SSH homes")
 
 
+def _require_ssh_traversal() -> None:
+    """Refuse shared parents that hide public keys from transport identities."""
+    trusted_path(SSH_ROOT, directory=True, missing=True)
+    for ancestor in reversed(Path(SSH_ROOT).parents):
+        try:
+            info = ancestor.lstat()
+        except FileNotFoundError:
+            # Missing parents are created root:root 0755 by _directory().
+            break
+        # Transport identities never have UID/GID zero. Require other search
+        # access, and group search too if a non-root group could match theirs.
+        if (not info.st_mode & stat.S_IXOTH
+                or info.st_gid != 0 and not info.st_mode & stat.S_IXGRP):
+            raise ValueError("Target SSH ancestor is not traversable by transport identities: " + str(ancestor))
+
+
 def _preflight(marker: dict | None, desired: set[str]) -> None:
     """Validate all retained identities/files before any installation mutation."""
+    if desired:
+        _require_ssh_traversal()
     principals = set(marker["principals"]) if marker else set()
     _namespace(principals)
     if marker is None:
