@@ -488,11 +488,18 @@ def _run_main() -> int:
     if args.deploy_latest and config.deployment_mode == "lite":
         config.deployment_mode = "default"
 
-    enable_detected_build_runtimes(config)
-    
     if not validate_username(config.username):
         print(f"Error: Invalid username: {config.username}")
         return 1
+
+    if config.custom_steps == "bootstrap_build_target":
+        from common.build_target_bootstrap import bootstrap_build_target
+
+        with machine_type_context(config.machine_type):
+            bootstrap_build_target(config)
+        return 0
+
+    enable_detected_build_runtimes(config)
 
     if config.custom_steps == "reconcile_samba_shares":
         from smb.samba_steps import reconcile_samba_shares

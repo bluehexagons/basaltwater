@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import re
@@ -11,6 +12,8 @@ import stat
 import subprocess
 
 from lib.state_read import read_state_object
+from lib.build_target_maintenance import target_lease
+from lib.operation_state import OperationStateStore
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -114,7 +117,7 @@ def repair_syncthing_state_access(root: Path) -> None:
     )
 
 
-def prepare_target_runtime(source: str, username: str) -> None:
+def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target: bool = False) -> None:
     """Activate current runtime; leave retired installations untouched."""
     from lib import setup_common
 
@@ -133,18 +136,34 @@ def prepare_target_runtime(source: str, username: str) -> None:
                     f"Retired infra-tools installation at {legacy}; use the intermediate "
                     "version in docs/migration-guide.md before setup"
                 )
-    setup_common._activate_local_runtime(source)
-    repair_syncthing_state_access(root)
+    # Exclude setup before changing the code it runs. Ordinary explicit recovery
+    # retains its existing runner checks; bootstrap must not replace that plan.
+    marker = root / "var/lib/basaltwater/setup-operation.json"
+    _safe(marker)
+    with OperationStateStore(str(marker)).ownership() as setup:
+        record = setup.load()
+        if record is not None and (bootstrap_build_target or record.status == "in_progress"):
+            raise ValueError("Unfinished target setup requires reconciliation before runtime activation")
+        # Requests execute installed modules. Replace that tree only when no
+        # typed request can still be using it, including disabled enrollments.
+        enrolled = os.path.lexists(root / "etc/basaltwater/build-target")
+        with target_lease(installer=True) if enrolled else nullcontext():
+            setup_common._activate_local_runtime(source)
+            repair_syncthing_state_access(root)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--username", required=True)
+    parser.add_argument("--bootstrap-build-target", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
         if os.geteuid() != 0:
             raise ValueError("Target runtime activation requires root")
-        prepare_target_runtime(str(Path(__file__).resolve().parents[1]), args.username)
+        prepare_target_runtime(
+            str(Path(__file__).resolve().parents[1]), args.username,
+            bootstrap_build_target=args.bootstrap_build_target,
+        )
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"Setup stopped before running setup steps: {exc}", flush=True)

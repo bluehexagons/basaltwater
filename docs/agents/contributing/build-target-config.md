@@ -16,7 +16,8 @@ mapping is saved in setup cache and transported as hidden
 during patch merging. Supplying a policy again clears that intent. Omitted
 policy and disable intent preserve saved state.
 
-This slice carries configuration only. There is no `--build-on` controller
-flow, and it does not make target enrollment ready for controller use. Removing
-managed typed-target authority must preserve applications and their data; the
-installer owns those target-side effects and is outside this change.
+The [managed installer](build-target-setup.md) consumes this configuration.
+The [minimal bootstrap phase](build-target-bootstrap.md) preserves an existing
+saved application profile during initial controller preparation. There is no
+`--build-on` controller flow yet. Removing managed typed-target authority
+preserves applications and their data; the installer owns those effects.

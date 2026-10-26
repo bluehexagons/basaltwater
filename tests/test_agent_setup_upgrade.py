@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from lib import setup_common, setup_upgrade
+from lib.operation_state import OperationStateStore
 
 
 class SetupUpgradeTests(unittest.TestCase):
@@ -107,6 +108,54 @@ class SetupUpgradeTests(unittest.TestCase):
         after = setup_upgrade._traversal_acl(before, 1001)
         self.assertIn("user:1001:r-x\n", after)
         self.assertIn("group::r--\n", after)
+
+    def test_runtime_activation_checks_setup_guard_before_displacing_source(self):
+        marker = self.root / "var/lib/basaltwater/setup-operation.json"
+        store = OperationStateStore(str(marker))
+        record = store.begin("target_setup", "server_web", "applying")
+        store.close()
+        with patch.object(setup_common, "_activate_local_runtime") as activate:
+            with self.assertRaisesRegex(ValueError, "Unfinished target setup"):
+                setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+            store.transition(record.operation_id, "recovery", status="recovery_required")
+            store.close()
+            with self.assertRaisesRegex(ValueError, "Unfinished target setup"):
+                setup_upgrade.prepare_target_runtime(
+                    str(self.source), "agent", bootstrap_build_target=True,
+                )
+        activate.assert_not_called()
+        # Ordinary setup retains the runner's existing explicit recovery path.
+        setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+
+    def test_runtime_replacement_excludes_typed_requests_through_acl_repair(self):
+        from contextlib import contextmanager
+
+        (self.root / "etc/basaltwater/build-target").mkdir(parents=True)
+        held = False
+
+        @contextmanager
+        def lease(**kwargs):
+            nonlocal held
+            self.assertEqual(kwargs, {"installer": True})
+            held = True
+            try:
+                yield
+            finally:
+                held = False
+
+        def protected(*_args):
+            self.assertTrue(held)
+
+        with patch.object(setup_upgrade, "target_lease", side_effect=lease), \
+             patch.object(setup_common, "_activate_local_runtime", side_effect=protected), \
+             patch.object(setup_upgrade, "repair_syncthing_state_access", side_effect=protected):
+            setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        self.assertFalse(held)
+        with patch.object(setup_upgrade, "target_lease", side_effect=RuntimeError("active request")), \
+             patch.object(setup_common, "_activate_local_runtime") as activate:
+            with self.assertRaisesRegex(RuntimeError, "active request"):
+                setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        activate.assert_not_called()
 
 
 if __name__ == "__main__":

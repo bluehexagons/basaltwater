@@ -1408,6 +1408,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
     relay_prompts = bool(config.enable_cloudflare and sys.stdin.isatty() and sys.stdout.isatty())
     prompt_options = {"on_input_request": answer_setup_prompt, "interactive": True} if relay_prompts else {}
     is_local = config.host in {"localhost", "127.0.0.1", "::1"}
+    bootstrap_target = config.custom_steps == "bootstrap_build_target"
     
     if is_local and not config.dry_run and os.geteuid() != 0:
         print("Error: Local setup requires root privileges. Please run with sudo.")
@@ -1519,7 +1520,10 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 with _target_setup_lock(), payload_workspace(setup_timeout) as payload:
                     move_payloads(build_dir, payload)
                     from lib.setup_upgrade import prepare_target_runtime
-                    prepare_target_runtime(build_dir, config.username)
+                    if bootstrap_target:
+                        prepare_target_runtime(build_dir, config.username, bootstrap_build_target=True)
+                    else:
+                        prepare_target_runtime(build_dir, config.username)
                     with link_payloads(payload, REMOTE_INSTALL_DIR):
                         command_tokens[-1] = os.path.join(payload, REMOTE_ARGS_FILENAME)
                         returncode = run_streamed(
@@ -1548,7 +1552,8 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 'export PYTHONDONTWRITEBYTECODE=1; '
                 f'export {PROMPT_RELAY_ENV}={"1" if relay_prompts else "0"}; '
                 'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; '
-                f'python3 -u -m lib.setup_upgrade --username {shlex.quote(config.username)}; '
+                f'python3 -u -m lib.setup_upgrade --username {shlex.quote(config.username)}'
+                + (' --bootstrap-build-target' if bootstrap_target else '') + '; '
                 f'cd {shlex.quote(REMOTE_INSTALL_DIR)}; '
                 f'python3 -u -m lib.setup_payloads --timeout {setup_timeout} --payload-bytes {len(private_data)}'
             )
