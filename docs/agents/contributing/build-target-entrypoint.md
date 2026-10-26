@@ -5,7 +5,8 @@ entrypoint for externally built target deployments. It accepts only
 `--serve --principal LABEL [--config ABSOLUTE_PATH]`, requires root and
 isolated Python, and requires the exact `SSH_ORIGINAL_COMMAND` value
 `basaltwater-target-v1`. It serves one typed request with a 15-minute deadline.
-No installer, setup integration, plugin, public CLI or service role is wired.
+The internal [target installer](build-target-setup.md) provisions its authority;
+setup configuration/plugin selection and a public CLI remain separate work.
 Ordinary local deployment still builds on the destination.
 
 ## Protected installation and configuration
@@ -15,6 +16,16 @@ outside account-writable directories. The entrypoint validates the script,
 all ancestors, and the same complete package set as `build_host.py` before it
 adds the repository root to `sys.path` or imports project modules. Launch it
 with `/usr/bin/python3 -I`. It does not probe or install target toolchains.
+
+Before the first configuration read, `main()` takes the protected, nonblocking
+shared lease from `lib.build_target_maintenance.target_lease()`. It holds that
+lease until the complete typed operation and response finish. The fixed lock
+is `/etc/basaltwater/build-target/.maintenance.lock`, regardless of `--config`;
+an alternate configuration cannot bypass enrollment coordination. The installer
+holds it exclusively for updates and disable. Requests arriving during an update
+refuse immediately. A missing/unsafe lock, disabled enrollment or retained
+incomplete-install hold also refuses before loading configuration. The stable
+lock must be provisioned by the installer and must never be replaced or removed.
 
 The default configuration is
 `/etc/basaltwater/build-target/config.json`. Its parent must be root-owned mode
@@ -30,10 +41,10 @@ The configuration has exactly these fields:
 {
   "schema": 1,
   "roots": {
-    "admission": "/var/lib/basaltwater/target/admission",
-    "artifacts": "/var/lib/basaltwater/target/artifacts",
-    "releases": "/var/lib/basaltwater/target/releases",
-    "verify": "/var/lib/basaltwater/target/verify"
+    "admission": "/var/lib/basaltwater/build-target/admission",
+    "artifacts": "/var/lib/basaltwater/build-target/artifacts",
+    "releases": "/var/lib/basaltwater/build-target/releases",
+    "verify": "/var/lib/basaltwater/build-target/verify"
   },
   "policy": {
     "schema": 1,
@@ -59,8 +70,9 @@ with trusted ancestors. Private roots cannot overlap any policy deployment
 root. `max_records` is between 1 and 4096. `max_bytes` is between 256 MiB and
 8 TiB. These quotas are passed to the target artifact store; admission itself
 retains at most 4096 operations and 16 MiB of ledger state. Changing a root or
-quota during a request requires a drained restart; policy is reloaded for each
-authorization operation.
+quota is coordinated by the exclusive installer lease; policy is reloaded for
+each authorization operation. Direct root configuration edits must independently
+exclude requests; structural changes observed within a request still refuse.
 
 ## Composition and current boundary
 
@@ -71,8 +83,10 @@ verification roots. The admission, [dispatcher](build-target-service.md),
 [policy](build-target-policy.md), and [activation callback](build-target-activation.md)
 contracts are implemented together. The artifact store's `stage()` and
 `open_verified_bundle()` APIs pin and verify artifacts without reentering the
-admission store. Managed target enrollment and controller setup selection
-remain separate work; this entrypoint does not install its own authority.
+admission store. Managed enrollment belongs to the installer; controller setup
+selection remains separate work. This entrypoint does not install its own
+authority. Internal `serve()` expects the caller to hold the request lease;
+the SSH boundary is `main()`.
 
 Only the binary protocol response stream is retained from stdout. Composition,
 deployment and Nginx text output is redirected to stderr so it cannot corrupt
