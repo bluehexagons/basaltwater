@@ -41,19 +41,22 @@ installations; optional combinations need their own checks.
 | Samba and Syncthing | SMB3 encryption/access control, automount repair/reconnect and selected soft-mounted Linux CIFS stopped-server/blackhole cases; two-peer exchange, conflicts, version restoration, credential rotation, rerun/reboot and removal/re-enable | Hard-mounted CIFS, other network filesystems, Windows/macOS SMB clients, Syncthing browser GUI and relays/discovery |
 | Gogs and Git mirrors | HTTPS/SSH Git, LFS hashes, access control, rerun/reboot and same-host recovery; mirror routing/configuration guards and transfers against Gogs plus a local primary | Actual GitHub transport/permissions, off-host recovery, database migration rollback, restored SSH transfers and attachments |
 | Deployment | Signed loopback webhooks, separate build/app hosts, SSH publication and queue recovery; real Go services, Node-built root/subpath sites and a same-origin React/Go/SQLite app. Manifest SPA reloads, populated reruns/reboots, selected Chromium flows, private SQLite backups and unhealthy-candidate rollback. Separate-guest restore on the same physical host preserves login, data and new writes over verified private HTTPS | Native SPA webhook publication, off-host recovery, public sender/Tunnel/ACME, Godot publishing, database migration recovery and power loss |
+| Shared-builder internals | Native Debian worker builds static and self-contained Go artifacts; separate-target activation and verified HTTPS work without Go/Node/compiler packages. Controlled scratch exhaustion, cancellation, log overflow and held-output descendants preserve cleanup; build commands run without supplementary groups or capabilities | Internal adapters only: authenticated SSH, setup selection, admission-before-build composition, retention and restart qualification remain. No untrusted-job isolation claim |
 | Panels | Setup/auth/TLS, journals/timers, Chromium agent forms, synthetic Chromium/Firefox Guacamole checks and native cached Proxmox inventory export | Native PVE console, Firefox ESR, inventory timer/full HTTP lifecycle, additional application browser flows and collaborative preview CA trust |
 | User rename | Identity/groups, moved or retained home, selected interruption recovery, rerun/reboot and initialized-container-store guards | More interruption points, software-specific state and native SMB mount migration; home moves are not general application migration |
 | Other surfaces | Selected loopback notifications and external Codex enrollment | Native desktop/kiosk/CachyOS/WSL/Windows, GitHub runner jobs, game publishing, external alerts/public DNS and exact-candidate installer qualification |
 
 ## Next useful checks
 
-1. **Longer agent runs:** exercise longer provider-backed goals and remaining
+1. **Shared build hosts:** wire authenticated controller submission and target
+   admission before builds; preserve saved setup and default on-target builds.
+2. **Longer agent runs:** exercise longer provider-backed goals and remaining
    worker crash/restart boundaries while preserving usage limits and recovery.
-2. **Agent administration:** test package-changing upgrades on a disposable target;
+3. **Agent administration:** test package-changing upgrades on a disposable target;
    extend interruption checks to other applying jobs.
-3. **Storage failure handling:** check hard-mounted network storage, then Btrfs
+4. **Storage failure handling:** check hard-mounted network storage, then Btrfs
    diagnostic integration and native scrub scheduling.
-4. **Recovery and developer workflows:** restore backups onto another physical
+5. **Recovery and developer workflows:** restore backups onto another physical
    host; test real GitHub mirror permissions and additional deployment
    manifests. Account-bound tests need their own explicit scope.
 

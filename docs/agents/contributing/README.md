@@ -16,6 +16,9 @@ managed coding VM or workstation, use the sibling
 | Shared build request and artifact interfaces | [Build contracts](build-contracts.md) |
 | Target deployment reservations and replay safety | [Build admission](build-admission.md) |
 | Debian build process and resource supervision | [Build execution](build-execution.md) |
+| Pinned build inputs and bounded workspace | [Source snapshots](build-source.md), [scratch storage](build-scratch.md) |
+| Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
+| Prebuilt service compatibility | [Runtime validation](build-runtime.md) |
 
 ## Core architecture
 
