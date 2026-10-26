@@ -797,24 +797,14 @@ def _check_clean_repository(
             source_bytes += _check_worktree_blob(
                 root, entry, limits, source_bytes, normalize_blob,
             )
-    status = invoke(
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
+    untracked = invoke(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
         max_output_bytes=limits.max_metadata_bytes,
     )
-    if status and not status.endswith(b"\x00"):
-        raise ValueError("Git returned incomplete status metadata")
-    expected_paths = {entry.path.encode("utf-8") for entry in files}
-    for record in status[:-1].split(b"\x00") if status else ():
-        if len(record) < 4 or record[2:3] != b" ":
-            raise ValueError("Git returned malformed status metadata")
-        state, path = record[:2], record[3:]
-        if state == b"??":
-            raise ValueError("Git repository is dirty")
-        # Tracked index state and every no-follow worktree byte were checked
-        # directly above. Git status can still mark a clean converted file
-        # modified when repository stat-cache settings are unusual.
-        if state != b" M" or path not in expected_paths:
-            raise ValueError("Git repository is dirty")
+    if untracked and not untracked.endswith(b"\x00"):
+        raise ValueError("Git returned incomplete untracked file metadata")
+    if untracked:
+        raise ValueError("Git repository is dirty")
 
 
 class _SnapshotWriter:
