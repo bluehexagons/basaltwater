@@ -51,8 +51,14 @@ Each distinct repository URL is cloned once with full history and tags, using a
 bare, no-checkout clone into a private `.git` directory. Local configuration then
 enables the worktree. All requested refs, including the original default HEAD,
 resolve to complete commit IDs before any detached checkout. Explicit heads
-and tags use their exact namespaces. There is no shallow clone, LFS fetch,
-submodule recursion, branch guessing or subsequent remote refresh.
+and tags first use `show-ref --verify --hash` to require their exact namespaces.
+Only the returned full object ID is then peeled with `rev-parse --verify
+OBJECT_ID^{commit}`, preserving annotated tags without namespace fallback.
+A missing branch cannot resolve through a tag such as
+`refs/tags/refs/heads/NAME`, and a missing tag cannot resolve through a branch.
+Default HEAD continues to use `rev-parse --verify HEAD^{commit}`. There is no
+shallow clone, LFS fetch, submodule recursion, branch guessing or subsequent
+remote refresh.
 
 Each distinct URL/commit pair gets one checkout and one
 `create_source_snapshot()` call. Multiple destinations and different selectors

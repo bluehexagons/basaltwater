@@ -352,8 +352,17 @@ def prepare_setup_sources(
                 repositories[url] = repository
                 # Freeze every selection before any detached checkout changes HEAD.
                 for selected_ref in dict.fromkeys(item[2] for item in plans if item[1] == url):
+                    revision_spec = "HEAD"
+                    if selected_ref is not None:
+                        # Even refs/... names undergo rev-parse's DWIM fallback.
+                        # Verify the exact namespace, then peel only its object ID.
+                        object_raw = git(repository, ["show-ref", "--verify", "--hash",
+                                                      selected_ref], 80)
+                        if _REVISION.fullmatch(object_raw) is None:
+                            raise ValueError("Git did not return a full explicit ref object ID")
+                        revision_spec = object_raw[:-1].decode("ascii")
                     raw = git(repository, ["rev-parse", "--verify",
-                                           (selected_ref or "HEAD") + "^{commit}"], 80)
+                                           revision_spec + "^{commit}"], 80)
                     if _REVISION.fullmatch(raw) is None:
                         raise ValueError("Git did not return a full pinned commit")
                     selections[url, selected_ref] = raw[:-1].decode("ascii")
