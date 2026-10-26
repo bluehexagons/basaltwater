@@ -109,8 +109,8 @@ build can declare:
 ```
 
 Go services require `"go"` in `build_runtimes`, a literal `binary` export,
-automatic ports and default working directory/reverse proxy settings. Omit
-`port` to select automatic allocation. The verified binary must be a
+automatic ports and default working directory/reverse proxy settings. Declare
+`"port": "auto"` to select automatic allocation. The verified binary must be a
 self-contained x86-64 ELF executable and honor generated `HOST=127.0.0.1` and
 `PORT` values. A canonical health path is supported.
 
