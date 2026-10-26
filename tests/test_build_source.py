@@ -72,7 +72,7 @@ class FakeGit:
         }))
         subcommand = next(
             (item for item in ("rev-parse", "status", "ls-tree", "cat-file", "for-each-ref",
-                               "bundle", "check-attr", "ls-files")
+                               "bundle", "check-attr", "ls-files", "init", "update-ref")
              if item in command),
             None,
         )
@@ -82,9 +82,13 @@ class FakeGit:
             elif "--is-shallow-repository" in command:
                 result = b"true\n" if self.shallow else b"false\n"
             elif "--git-path" in command:
-                result = os.fsencode(self.repository / ".git/info/grafts") + b"\n"
+                git_path = "objects" if "objects" in command else "info/grafts"
+                result = os.fsencode(self.repository / ".git" / git_path) + b"\n"
             else:
-                result = self.head_revision.encode("ascii") + b"\n"
+                if any(item.startswith("--git-dir=") for item in command):
+                    result = self.history_refs["HEAD"].encode("ascii") + b"\n"
+                else:
+                    result = self.head_revision.encode("ascii") + b"\n"
         elif subcommand == "status":
             result = self.dirty
         elif subcommand == "ls-files":
@@ -134,6 +138,35 @@ class FakeGit:
             )
         elif subcommand == "for-each-ref":
             result = self.tags
+        elif subcommand == "init":
+            self.private_git_directory = Path(command[-1])
+            (self.private_git_directory / "objects/info").mkdir(parents=True)
+            (self.private_git_directory / "refs/tags").mkdir(parents=True)
+            (self.private_git_directory / "config").write_text(
+                "[core]\n\trepositoryformatversion = 0\n\tbare = true\n",
+            )
+            (self.private_git_directory / "HEAD").write_text("ref: refs/heads/master\n")
+            result = b""
+        elif subcommand == "update-ref":
+            self.history_git_directory = next(
+                Path(item.split("=", 1)[1]) for item in command
+                if item.startswith("--git-dir=")
+            )
+            self.alternates_content = (
+                self.history_git_directory / "objects/info/alternates"
+            ).read_bytes()
+            self.history_refs = {}
+            for record in (input_data or b"").decode("ascii").splitlines():
+                fields = record.split()
+                if len(fields) == 3 and fields[0] in {"update", "create"}:
+                    self.history_refs[fields[1]] = fields[2]
+            self.bundle_head = self.history_refs["HEAD"]
+            self.bundle_tags = b"".join(
+                f"{object_id} {ref}\n".encode("ascii")
+                for ref, object_id in sorted(self.history_refs.items())
+                if ref.startswith("refs/tags/")
+            )
+            result = b""
         elif subcommand == "bundle":
             if "create" in command:
                 bundle_index = command.index("--version=3") + 1
@@ -143,12 +176,12 @@ class FakeGit:
                 bundle_arguments = command[bundle_index + 1:]
                 if "--filter=blob:none" not in bundle_arguments:
                     raise AssertionError("Git bundle must retain its blob filter")
-                has_head = "HEAD" in bundle_arguments
+                if "HEAD" not in bundle_arguments:
+                    raise AssertionError("Git bundle must use the private view's HEAD")
                 if self.move_head_during_bundle:
                     self.head_revision = "b" * 40
-                self.bundle_head = self.head_revision if has_head else self.revision
+                self.bundle_head = self.history_refs["HEAD"]
                 self.head_revision = self.revision
-                self.bundle_tags = self.tags
                 bundle_path.write_bytes(self.bundle)
                 if self.move_tag_during_bundle:
                     self.tags = b"dddddddddddddddddddddddddddddddddddddddd refs/tags/v1.2.3\n"
@@ -178,6 +211,7 @@ class BuildSourceTest(unittest.TestCase):
         self.repository = self.root / "repo"
         (self.repository / ".git").mkdir(parents=True)
         (self.repository / ".git/config").write_text("credential.helper=private-canary\n")
+        (self.repository / ".git/objects/info").mkdir(parents=True)
         hooks = self.repository / ".git/hooks"
         hooks.mkdir()
         (hooks / "pre-commit").write_text("hook-canary\n")
@@ -250,16 +284,31 @@ class BuildSourceTest(unittest.TestCase):
         self.assertIn("--filter=blob:none", bundle_command)
         destination_index = bundle_command.index("--version=3") + 1
         filter_index = bundle_command.index("--filter=blob:none")
-        revision_index = bundle_command.index(self.git.revision)
+        head_index = bundle_command.index("HEAD")
         self.assertGreater(filter_index, destination_index)
-        self.assertGreater(revision_index, filter_index)
-        self.assertNotIn("HEAD", bundle_command)
+        self.assertGreater(head_index, filter_index)
         self.assertLess(bundle_command.index("--version=3") + 1,
                         bundle_command.index("--filter=blob:none"))
         self.assertIn("refs/tags/v1.2.3", bundle_command)
         self.assertNotIn("--all", bundle_command)
         self.assertEqual(
             sum("list-heads" in command for command, _ in self.git.calls), 1,
+        )
+        self.assertEqual(self.git.history_refs["HEAD"], self.git.revision)
+        self.assertEqual(
+            self.git.history_refs["refs/tags/v1.2.3"],
+            "c" * 40,
+        )
+        self.assertIn(
+            f"--git-dir={self.git.history_git_directory}", bundle_command,
+        )
+        self.assertNotEqual(
+            os.path.commonpath((self.repository, self.git.history_git_directory)),
+            str(self.repository),
+        )
+        self.assertEqual(
+            self.git.alternates_content,
+            os.fsencode(self.repository / ".git/objects") + b"\n",
         )
         env = next(call[1]["env"] for call in self.git.calls if "status" in call[0])
         self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
@@ -344,8 +393,11 @@ class BuildSourceTest(unittest.TestCase):
             if "bundle" in command and "create" in command
         ]
         self.assertEqual(len(bundle_calls), 1)
-        self.assertIn("a" * 40, bundle_calls[0])
-        self.assertNotIn("HEAD", bundle_calls[0])
+        self.assertIn("HEAD", bundle_calls[0])
+        self.assertIn(
+            f"--git-dir={self.git.history_git_directory}", bundle_calls[0],
+        )
+        self.assertEqual(self.git.history_refs["HEAD"], "a" * 40)
 
     def test_bundle_with_a_different_advertised_head_is_rejected(self):
         self.git = FakeGit(self.repository, bundle_head_override="b" * 40)
