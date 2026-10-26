@@ -22,9 +22,12 @@ existing active application require operator reconciliation. Overlapping roots,
 generated identity collisions and route conflicts with other retained active
 applications are rejected before deployment.
 
-A private, bounded registry retains the current route descriptors for up to 256
-applications within 4 MiB. The registry and initialization witness are private
-effective-UID-owned files under an existing `0700` directory with trusted,
+A private, bounded registry retains the current route descriptors and installed
+request/bindings for up to 256 applications within 4 MiB. These private inputs
+include build commands and non-secret build environment; they are never returned
+through transport receipts. Admission refuses oversized retained inputs before
+release changes, reserving 1 MiB for rendered routes. The registry and
+initialization witness are private effective-UID-owned files under an existing `0700` directory with trusted,
 non-renamable ancestors. Missing initialized state and malformed records fail
 closed. The verification directory must be separately provisioned and must not
 overlap that registry or an application root.
@@ -41,5 +44,16 @@ durable boundaries. Failure or interruption retains the operation guard and
 requires inspection; this adapter does not automatically replay or promise an
 atomic rollback across all three. The admission store retains its independent
 uncertain-activation guard. Preserve both records and actual service/route state
-before an operator resolves recovery. Artifact retention and target-only refresh
-integration remain separate work.
+before an operator resolves recovery.
+
+`reconcile_installed()` is an internal trusted-local setup operation. Its caller
+must exclude typed requests and enrollment changes throughout the call. It
+validates every installed descriptor and retained bundle before reapplying
+releases through `deploy_prebuilt()`, then republishes the complete scoped route
+group. It preserves operation IDs, generations, source and artifact identities;
+it does not contact a builder, fetch source, run build commands or reserve new
+deployment intent. Revoked SSH authority does not supply new inputs to an
+installed release. Missing evidence requires controller deployment; failures
+retain the same recovery guard and prevent automatic replay. Reconciliation
+across several applications is not atomic. Setup/Admin refresh wiring and
+artifact retention remain separate work.

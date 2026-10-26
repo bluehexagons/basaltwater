@@ -199,6 +199,7 @@ class TargetReleaseActivator:
             if (not isinstance(app, str) or _SLUG.fullmatch(app) is None
                     or not isinstance(record, dict) or set(record) != {
                         "operation_id", "generation", "artifact_sha256", "request_sha256", "root", "deployments",
+                        "request", "bindings",
                     }):
                 raise ValueError("Invalid target release registry record")
             if (not isinstance(record["operation_id"], str) or _ID.fullmatch(record["operation_id"]) is None
@@ -211,6 +212,14 @@ class TargetReleaseActivator:
                     or os.path.normpath(root) != root or root == "/"):
                 raise ValueError("Invalid target release registry root")
             _deployments(record["deployments"], root)
+            checked, _manifest = _bindings_manifest(
+                record["bindings"], record["request"], record["bindings"].get("principal")
+                if isinstance(record["bindings"], dict) else None,
+            )
+            if (checked["bindings"]["application"] != app
+                    or checked["bindings"]["deployment_root"] != root
+                    or request_digest(record["request"]) != record["request_sha256"]):
+                raise ValueError("Installed target descriptor differs from its release identity")
         if not initialized:
             if state["applications"]:
                 raise ValueError("Target release witness is missing with retained applications")
@@ -233,6 +242,71 @@ class TargetReleaseActivator:
                 seen.add(identity)
                 groups.setdefault(deployment["domain"], []).append(deployment)
         return groups
+
+    def reconcile_installed(self) -> list[dict[str, Any]]:
+        """Reapply retained releases for a trusted local setup, without a build.
+
+        This is not a transport action. The root setup caller must exclude
+        typed requests and enrollment changes throughout the call. Retained
+        bindings describe the installed release; revoking a transport grant
+        does not replace that release with new project inputs.
+        """
+        with _trusted_directory(self.root, private=True), _trusted_directory(self.staging_root, private=True):
+            operation = OperationStateStore(os.path.join(self.root, "activation.json"))
+            with operation.ownership():
+                if operation.load() is not None:
+                    raise ValueError("Unfinished target activation requires operator reconciliation")
+                state = self._load()
+                if not state["applications"]:
+                    raise ValueError("No retained target releases; run deployment from the controller")
+                prepared = []
+                # Check every descriptor and retained bundle before changing an
+                # application. Accessors use one shared staging lock, so open
+                # them sequentially rather than nesting their contexts.
+                for app, record in sorted(state["applications"].items()):
+                    binding = record["bindings"]
+                    checked, manifest = _bindings_manifest(binding, record["request"], binding["principal"])
+                    parent, basename = os.path.split(record["root"])
+                    with _trusted_directory(parent, private=False):
+                        pass
+                    arguments = dict(application=app, owner=binding["principal"],
+                                     bindings_sha256=checked["bindings_sha256"],
+                                     artifact_sha256=record["artifact_sha256"])
+                    with self.open_artifact(record["operation_id"], record["generation"],
+                                            record["request"], **arguments):
+                        pass
+                    prepared.append((app, record, manifest, parent, basename, arguments))
+                marker = operation.begin("target-release-refresh", self.root, "reconciling", context={
+                    "applications": [app for app, *_ in prepared],
+                })
+                try:
+                    old_groups = self._groups(state["applications"])
+                    for app, record, manifest, parent, basename, arguments in prepared:
+                        manager = DeploymentOrchestrator(base_dir=parent)
+                        with self.open_artifact(record["operation_id"], record["generation"],
+                                                record["request"], **arguments) as bundle:
+                            deployments = manager.deploy_prebuilt(
+                                manifest, bundle, record["request"], record["artifact_sha256"],
+                                None, "/" + basename,
+                                "https://basaltwater.invalid/" + record["request"]["project"] + ".git",
+                                staging_root=self.staging_root, target_platform=DEBIAN_PLATFORM,
+                            )
+                        record["deployments"] = _deployments(deployments, record["root"])
+                    groups = self._groups(state["applications"])
+                    encode_document(state, maximum=MAX_REGISTRY_BYTES)
+                    operation.transition(marker.operation_id, "publishing")
+                    create_nginx_sites_for_groups(groups, managed_domains=set(old_groups) | set(groups))
+                    self._save(state)
+                    operation.complete(marker.operation_id)
+                except BaseException:
+                    try:
+                        operation.transition(marker.operation_id, "recovery", status="recovery_required")
+                    except BaseException:
+                        pass
+                    raise
+        return [{"application": app, "operation_id": record["operation_id"],
+                 "generation": record["generation"], "artifact_sha256": record["artifact_sha256"],
+                 "state": "reconciled"} for app, record, *_ in prepared]
 
     def __call__(self, *, bindings: object, request: object, operation_id: str,
                  generation: int, artifact_sha256: str, principal: str) -> dict[str, Any]:
@@ -274,6 +348,17 @@ class TargetReleaseActivator:
                     if any((item.domain, item.path.rstrip("/") or "/") in existing_routes
                            for item in manifest.components):
                         raise ValueError("Target release conflicts with another active application's route")
+                installed = {
+                    "operation_id": operation_id, "generation": generation,
+                    "artifact_sha256": artifact_sha256, "request_sha256": request_digest(job),
+                    "root": root, "request": job, "bindings": binding, "deployments": [],
+                }
+                candidate = copy.deepcopy(state)
+                candidate["applications"][binding["application"]] = installed
+                # Keep room for bounded rendered routes before changing the
+                # release. Large retained input documents consume the same
+                # registry capacity as other protected evidence.
+                encode_document(candidate, maximum=MAX_REGISTRY_BYTES - 1024**2)
                 marker = operation.begin("target-release", root, "activating", context={
                     "admission_operation_id": operation_id, "generation": generation,
                     "artifact_sha256": artifact_sha256, "application": binding["application"],
@@ -293,11 +378,8 @@ class TargetReleaseActivator:
                             "https://basaltwater.invalid/" + job["project"] + ".git",
                             staging_root=self.staging_root, target_platform=DEBIAN_PLATFORM,
                         )
-                    state["applications"][binding["application"]] = {
-                        "operation_id": operation_id, "generation": generation,
-                        "artifact_sha256": artifact_sha256, "request_sha256": request_digest(job),
-                        "root": root, "deployments": _deployments(deployments, root),
-                    }
+                    installed["deployments"] = _deployments(deployments, root)
+                    state["applications"][binding["application"]] = installed
                     groups = self._groups(state["applications"])
                     # Bound the next registry before changing Nginx; the release
                     # operation remains inspectable if either boundary fails.

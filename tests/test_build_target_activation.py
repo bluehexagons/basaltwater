@@ -171,6 +171,95 @@ class TargetReleaseActivationTests(unittest.TestCase):
         state = json.loads((self.state / "releases.json").read_text())
         self.assertEqual(set(state["applications"]), {"shop", "api-app"})
 
+    def test_local_refresh_reuses_installed_inputs_and_preserves_generation(self):
+        bindings, request = self.inputs()
+        first = self.activate(bindings, request)
+        other, service = self.inputs("api-app", route="/v1", service=True)
+        second = self.activate(other, service)
+        before = json.loads((self.state / "releases.json").read_text())
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        refreshed = self.activator.reconcile_installed()
+        self.assertEqual(self.deploy.call_count, 2)
+        self.assertEqual(self.publish.call_count, 1)
+        self.assertEqual({item["operation_id"] for item in refreshed},
+                         {first["operation_id"], second["operation_id"]})
+        self.assertTrue(all(item["state"] == "reconciled" for item in refreshed))
+        self.assertEqual(json.loads((self.state / "releases.json").read_text()), before)
+        self.assertEqual({item["path"] for item in self.publish.call_args.args[0]["shop.example"]},
+                         {"/", "/v1"})
+        self.assertEqual(self.manifests[-2].components[0].runtime_env,
+                         {"PORT": "{{port}}", "HOST": "127.0.0.1"})
+        self.assertFalse((self.state / "activation.json").exists())
+
+    def test_refresh_checks_all_retained_bundles_before_any_release_change(self):
+        first, request = self.inputs()
+        self.activate(first, request)
+        other, service = self.inputs("api-app", route="/v1", service=True)
+        self.activate(other, service)
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+
+        @contextmanager
+        def missing_second(*_args, **kwargs):
+            if kwargs["application"] == "shop":
+                raise FileNotFoundError("retained bundle unavailable")
+            yield str(self.bundle_path)
+
+        self.activator.open_artifact = missing_second
+        with self.assertRaises(FileNotFoundError):
+            self.activator.reconcile_installed()
+        self.deploy.assert_not_called()
+        self.publish.assert_not_called()
+
+    def test_refresh_rejects_missing_or_changed_installed_descriptor(self):
+        bindings, request = self.inputs()
+        self.activate(bindings, request)
+        path = self.state / "releases.json"
+        original = json.loads(path.read_text())
+        self.deploy.reset_mock()
+        for change in ("missing", "request", "root"):
+            with self.subTest(change=change):
+                state = copy.deepcopy(original)
+                record = state["applications"]["shop"]
+                if change == "missing":
+                    del record["request"]
+                elif change == "request":
+                    record["request"]["components"][0]["commands"] = ["different build"]
+                else:
+                    record["bindings"]["deployment_root"] = str(self.apps / "elsewhere")
+                path.write_bytes(encode_document(state))
+                with self.assertRaises(ValueError):
+                    self.activator.reconcile_installed()
+        self.deploy.assert_not_called()
+
+    def test_refresh_failure_retains_guard_and_prevents_replay(self):
+        bindings, request = self.inputs()
+        self.activate(bindings, request)
+        self.deploy.reset_mock()
+        self.deploy.side_effect = RuntimeError("unit replacement failed")
+        with self.assertRaisesRegex(RuntimeError, "unit replacement failed"):
+            self.activator.reconcile_installed()
+        marker = json.loads((self.state / "activation.json").read_text())
+        self.assertEqual(marker["status"], "recovery_required")
+        self.assertEqual(marker["operation_type"], "target-release-refresh")
+        self.deploy.side_effect = self.deploy_prebuilt
+        with self.assertRaisesRegex(ValueError, "Unfinished"):
+            self.activator.reconcile_installed()
+        self.assertEqual(self.deploy.call_count, 1)
+
+    def test_refresh_without_installed_releases_requires_controller(self):
+        with self.assertRaisesRegex(ValueError, "run deployment from the controller"):
+            self.activator.reconcile_installed()
+        self.deploy.assert_not_called()
+
+    def test_large_installed_descriptor_is_refused_before_release_changes(self):
+        bindings, request = self.inputs()
+        with patch("lib.build_target_activation.MAX_REGISTRY_BYTES", 1024**2 + 64):
+            with self.assertRaises(ValueError):
+                self.activate(bindings, request)
+        self.deploy.assert_not_called()
+
     def test_route_replacement_explicitly_includes_retired_domain_in_scope(self):
         first, request = self.inputs()
         self.activate(first, request)
