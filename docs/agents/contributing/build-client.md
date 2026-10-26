@@ -3,8 +3,9 @@
 `lib.build_client.BuildHostClient` is the controller-side transport for the
 typed `basaltwater-build-v1` service described in
 [build-host service](build-host-service.md) and
-[build contracts](build-contracts.md). It is an internal library only; setup,
-CLI, and configuration do not select or enable it.
+[build contracts](build-contracts.md). The public
+[selected-builder setup flow](build-setup.md) resolves its explicit endpoint
+from saved controller configuration.
 
 ## Construction and results
 

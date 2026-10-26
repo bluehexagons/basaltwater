@@ -1,8 +1,9 @@
 # Shared build-host policy
 
-Status: internal. The [process entrypoint](build-host-entrypoint.md) applies
-these pure helpers at SSH admission and worker launch. Setup enrollment and
-controller selection remain pending. Standard deployments remain unchanged.
+The [process entrypoint](build-host-entrypoint.md) applies these pure helpers
+at SSH admission and worker launch. Managed [enrollment](build-host-setup.md)
+and [controller selection](build-selection.md) use this contract. Standard
+deployments retain their existing flow.
 
 `lib.build_host_policy.parse_build_host_policy()` accepts a decoded mapping or
 raw JSON bytes and returns a normalized, detached version-1 policy:

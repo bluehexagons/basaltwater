@@ -5,8 +5,8 @@ entrypoint for externally built target deployments. It accepts only
 `--serve --principal LABEL [--config ABSOLUTE_PATH]`, requires root and
 isolated Python, and requires the exact `SSH_ORIGINAL_COMMAND` value
 `basaltwater-target-v1`. It serves one typed request with a 15-minute deadline.
-The internal [target installer](build-target-setup.md) provisions its authority;
-setup configuration/plugin selection and a public CLI remain separate work.
+The [target installer](build-target-setup.md) provisions its authority through
+setup enrollment and the [selected-builder flow](build-setup.md).
 Ordinary local deployment still builds on the destination.
 
 ## Protected installation and configuration
@@ -83,8 +83,8 @@ verification roots. The admission, [dispatcher](build-target-service.md),
 [policy](build-target-policy.md), and [activation callback](build-target-activation.md)
 contracts are implemented together. The artifact store's `stage()` and
 `open_verified_bundle()` APIs pin and verify artifacts without reentering the
-admission store. Managed enrollment belongs to the installer; controller setup
-selection remains separate work. This entrypoint does not install its own
+admission store. Managed enrollment belongs to the installer and controller
+setup composes the typed operations. This entrypoint does not install its own
 authority. Internal `serve()` expects the caller to hold the request lease;
 the SSH boundary is `main()`.
 

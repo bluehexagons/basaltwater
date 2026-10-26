@@ -18,6 +18,7 @@ managed coding VM or workstation, use the sibling
 | Debian build process and resource supervision | [Build execution](build-execution.md) |
 | Pinned build inputs and bounded workspace | [Source snapshots](build-source.md), [scratch storage](build-scratch.md) |
 | Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
+| Explicit terminal builder quota maintenance | [Reservation settlement](build-retention.md) |
 | Authenticated builder transport and admission | [Process entrypoint](build-host-entrypoint.md), [dispatcher](build-host-service.md), [project policy](build-host-policy.md), [source admission](build-inputs.md) |
 | Managed builder enrollment and controller transport | [Setup configuration](build-host-config.md), [installer](build-host-setup.md), [SSH client](build-client.md) |
 | Public selected-builder setup and recovery | [Controller setup](build-setup.md), [saved selection](build-selection.md), [selection configuration](build-selection-config.md), [pinned sources](build-setup-sources.md), [delivery planning](build-setup-plan.md) |

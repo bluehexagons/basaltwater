@@ -1,7 +1,8 @@
 # Build-host process entrypoint
 
 `common/service_tools/build_host.py` composes the internal builder behind a
-root-controlled launcher. Setup and controller selection are not connected yet.
+root-controlled launcher. Managed [enrollment](build-host-setup.md) installs
+its authority, and [selected-builder setup](build-setup.md) uses its SSH service.
 The initial host platform is Debian 13 x86-64. Standard deployment is unchanged.
 
 Install the source beneath a root-controlled tree outside `/home` and invoke
@@ -48,6 +49,10 @@ Runtime secret values and target credentials do not belong in build inputs.
 
 The entrypoint connects [bounded source admission](build-inputs.md) and the
 [typed dispatcher](build-host-service.md) to the independent worker. Selected
-native Debian checks cover manually enrolled SSH builds and artifact retrieval;
-setup-owned account/key enrollment and controller selection remain pending.
+native Debian checks cover SSH builds, artifact retrieval and selected public
+setup flows; see the [coverage map](../../plans/testing-coverage.md) for limits.
 Persistent jobs sharing an identity must be mutually trusted.
+
+Explicit root-local [terminal settlement](build-retention.md) can lower unused
+reservation charges after verifying certain terminal jobs and retained payloads.
+It preserves payloads and replay IDs and is unavailable through SSH.

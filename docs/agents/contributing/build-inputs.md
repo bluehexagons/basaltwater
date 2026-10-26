@@ -116,5 +116,6 @@ This is local durability and byte-identity handling, not protection from a
 malicious process running as the same effective UID, proof of authorization,
 source provenance, or build isolation. The internal
 [process entrypoint](build-host-entrypoint.md) connects this store to
-authenticated transport, project policy, durable jobs and the worker. Setup
-enrollment and controller selection remain pending.
+authenticated transport, project policy, durable jobs and the worker. Managed
+[enrollment](build-host-setup.md) and [controller setup](build-setup.md) compose
+those boundaries.
