@@ -229,6 +229,34 @@ class TestPluginRegistry(unittest.TestCase):
         self.assertEqual([function for _, function in steps].count(configure_build_host), 1)
         self.assertNotIn("Creating CI/CD executor service", names)
 
+    def test_managed_target_enrollment_and_disable_replace_legacy_app_access(self):
+        from common.build_target_steps import configure_build_target
+        from tests.test_build_target_setup import enrollment
+
+        for profile in ("server_lite", "server_web", "workstation_dev"):
+            for disable in (False, True):
+                with self.subTest(profile=profile, disable=disable):
+                    config = SetupConfig(
+                        host="host", username="user", system_type=profile,
+                        machine_type="vm", is_app_server=True,
+                        build_target_enrollment=None if disable else enrollment(),
+                        disable_build_target=disable,
+                    )
+                    steps = get_steps_for_system_type(config)
+                    self.assertEqual([function for _, function in steps].count(configure_build_target), 1)
+                    names = [name for name, _ in steps]
+                    self.assertNotIn("Configuring deploy sudoers", names)
+                    self.assertNotIn("Configuring deploy SSH access", names)
+                    self.assertNotIn("Installing app server dependencies", names)
+        self.assertIs(resolve_custom_step("configure_build_target"), configure_build_target)
+
+    def test_target_enrollment_omission_keeps_ordinary_app_server_steps(self):
+        config = SetupConfig(host="host", username="user", system_type="server_web", is_app_server=True)
+        names = [name for name, _ in get_steps_for_system_type(config)]
+        self.assertIn("Configuring deploy sudoers", names)
+        self.assertIn("Configuring deploy SSH access", names)
+        self.assertNotIn("Configuring managed target deployment access", names)
+
     def test_server_dev_adds_agent_vm_steps(self):
         config = SetupConfig(
             host="host",

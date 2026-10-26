@@ -2,9 +2,10 @@
 
 `common.build_target_steps` installs explicit SSH authority for typed target
 deployment requests. It performs no builds and installs no compiler toolchain.
-Setup configuration, CLI parsing and plugin selection are separate owners;
-this module is an internal setup step, not a new public command. Ordinary local
-deployment behavior is unchanged.
+Setup accepts `--build-target-policy FILE` and explicit `--no-build-target`.
+The web capability selects this step for enrollment or removal, including on
+the lite server profile. When selected, it replaces the legacy app-server
+SSH/sudo setup. Omission keeps ordinary local deployment behavior.
 
 ## API
 
@@ -146,6 +147,6 @@ local deploy commands, root edits or external
 replacement of installed code. Existing admission and activation uncertainty
 guards still apply after a killed connection. There is no automatic garbage
 collection of retired identities and no migration/adoption of manual target
-installations. Configuration/plugin wiring and native Debian VM/SSH qualification
-remain parent-owned. Mocked commands and temporary-directory/flock tests do not
+installations. Controller builder selection and native Debian VM/SSH qualification
+remain separate work. Mocked commands and temporary-directory/flock tests do not
 establish native qualification.

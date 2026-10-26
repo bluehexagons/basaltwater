@@ -52,6 +52,7 @@ PLUGIN = PluginDefinition(
         "install_build_python_tools",
         "install_build_dependencies",
         "configure_build_host",
+        "configure_build_target",
     ),
     custom_step_provider="plugins.web:get_custom_step_functions",
 )
@@ -114,6 +115,14 @@ def extend_cicd_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) ->
 
 def extend_app_server_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:
     """Append app-server deployment steps when enabled."""
+
+    if config.build_target_enrollment is not None or config.disable_build_target:
+        from common.build_target_steps import configure_build_target
+
+        label = ("Removing managed target deployment access" if config.disable_build_target
+                 else "Configuring managed target deployment access")
+        steps.append((label, configure_build_target))
+        return
 
     from web.steps import (
         configure_app_nginx,
@@ -213,6 +222,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
     """Return plugin-owned custom step functions exported by the web capability."""
 
     from common.build_host_steps import configure_build_host
+    from common.build_target_steps import configure_build_target
 
     from web.steps import (
         configure_app_nginx,
@@ -287,4 +297,5 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "install_build_python_tools": install_build_python_tools,
         "install_build_dependencies": install_build_dependencies,
         "configure_build_host": configure_build_host,
+        "configure_build_target": configure_build_target,
     }
