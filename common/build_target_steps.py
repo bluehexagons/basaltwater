@@ -18,6 +18,7 @@ from lib.atomic_io import remove_file_durable, write_bytes_atomic
 from lib.build_protocol import decode_document, encode_document
 from lib.build_target_maintenance import read_protected, set_serving, target_lease, trusted_path
 from lib.build_target_policy import MAX_POLICY_BYTES, parse_target_policy
+from lib.maintenance_defaults import APT_LOCK_OPTIONS
 from lib.remote_utils import is_dry_run, is_package_installed, run
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path, validate_package_name
@@ -369,7 +370,7 @@ def _install_packages() -> None:
     if missing:
         environment = os.environ.copy()
         environment["DEBIAN_FRONTEND"] = "noninteractive"
-        run(["apt-get", "install", "-y", "-qq", *missing], env=environment)
+        run(["apt-get", "install", "-y", "-qq", *APT_LOCK_OPTIONS, *missing], env=environment)
         if any(not is_package_installed(package) for package in missing):
             raise RuntimeError("Target prerequisite installation was not verified")
 

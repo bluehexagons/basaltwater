@@ -18,6 +18,7 @@ from unittest.mock import patch
 from common import build_host_steps as setup
 from lib.build_host_policy import parse_build_host_policy
 from lib.build_manifest import DEBIAN_PLATFORM
+from lib.maintenance_defaults import APT_LOCK_OPTIONS
 from lib.build_protocol import DEFAULT_LIMITS, encode_document
 from tests.test_build_target_maintenance import root_view
 
@@ -348,7 +349,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                 return package in installed
 
             def install(args, **_kwargs):
-                installed.update(args[4:])
+                installed.update(package for package in expected if package in args)
                 return SimpleNamespace(returncode=0)
 
             with self.subTest(install_node=install_node), \
@@ -359,7 +360,9 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                 self.assertEqual(installed, expected)
                 self.assertEqual(os.environ["DEBIAN_FRONTEND"], "existing-value")
                 run.assert_called_once()
-                self.assertEqual(set(run.call_args.args[0][4:]), expected)
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[4:4 + len(APT_LOCK_OPTIONS)], APT_LOCK_OPTIONS)
+                self.assertEqual(set(argv[4 + len(APT_LOCK_OPTIONS):]), expected)
                 self.assertEqual(run.call_args.kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
 
     def test_service_and_ssh_sudo_configuration_are_fixed(self) -> None:

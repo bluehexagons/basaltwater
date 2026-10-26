@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from lib.build_host_policy import MAX_POLICY_BYTES, parse_build_host_policy
 from lib.build_protocol import decode_document, encode_document
+from lib.maintenance_defaults import APT_LOCK_OPTIONS
 from lib.remote_utils import is_dry_run, is_package_installed, run
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path, validate_package_name
@@ -775,7 +776,7 @@ def _install_packages(config: SetupConfig) -> None:
         return
     environment = os.environ.copy()
     environment["DEBIAN_FRONTEND"] = "noninteractive"
-    run(["apt-get", "install", "-y", "-qq", *missing], env=environment)
+    run(["apt-get", "install", "-y", "-qq", *APT_LOCK_OPTIONS, *missing], env=environment)
     remaining = [package for package in missing if not is_package_installed(package)]
     if remaining:
         raise RuntimeError("Build-host package installation was not verified: " + ", ".join(remaining))

@@ -100,6 +100,7 @@ replaying a job whose claim outcome is uncertain. Required packages are
 `git`, `e2fsprogs`, `openssh-server`, and `sudo`; `nodejs` is added only when
 Node installation is selected. Go installation remains with the common
 setup flow, and Python uses the operating-system Python 3.
+Prerequisite installs use the shared 300-second APT lock timeout.
 
 ## Drain, update, and de-enrollment
 
