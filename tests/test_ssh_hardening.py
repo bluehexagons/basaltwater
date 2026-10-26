@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+from contextlib import ExitStack, contextmanager, nullcontext
+import hashlib
 import os
 from pathlib import Path
 import tempfile
@@ -10,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from lib.config import SetupConfig
+from common.build_ssh_admission import admission_content, ssh_admission_lock
 from security import security_steps as ssh
 
 
@@ -22,12 +26,139 @@ allowgroups remoteusers
 """
 
 
+@contextmanager
+def transport_ssh_fixture(base: Path, role: str):
+    """Exercise real admission publication using only temporary files/fake SSH."""
+    from common import build_host_steps as host, build_target_steps as target
+
+    other = target if role == "build-host" else host
+    path = base / "ssh-hardening.conf"
+    path.write_text("# Managed by basaltwater - SSH hardening drop-in.\n"
+                    "PermitRootLogin prohibit-password\nPasswordAuthentication no\n"
+                    "KbdInteractiveAuthentication no\nPubkeyAuthentication yes\n"
+                    "AuthenticationMethods publickey\nClientAliveInterval 300\n"
+                    "AllowGroups remoteusers\n")
+    path.chmod(0o600)
+
+    def command(command, **_kwargs):
+        if " -T " in command:
+            output = "\n".join(line.lower() for line in path.read_text().splitlines()
+                               if not line.startswith("#"))
+        elif command.startswith("id -nG "):
+            name = command.split()[-1]
+            output = "root remoteusers" if name == "root" else name
+        else:
+            output = ""
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(other, "MARKER_PATH", str(base / "other-role/missing")))
+        stack.enter_context(patch.object(ssh, "_SSHD_DROPIN_DIR", str(base)))
+        stack.enter_context(patch.object(ssh, "_SSHD_DROPIN_FILE", str(path)))
+        stack.enter_context(patch.object(ssh, "_LEGACY_SSHD_DROPIN_FILE", str(base / "legacy.conf")))
+        stack.enter_context(patch.object(ssh.shutil, "which", return_value="/usr/sbin/sshd"))
+        stack.enter_context(patch.object(ssh, "is_dry_run", return_value=False))
+        stack.enter_context(patch.object(ssh, "can_manage_system_services", return_value=True))
+        run = stack.enter_context(patch.object(ssh, "run", side_effect=command))
+        activate = stack.enter_context(patch.object(ssh, "_activate_ssh_service"))
+        yield path, run, activate
+
+
+class TestManagedSSHGroupSyntax(unittest.TestCase):
+    def test_both_roles_union_and_sequential_migration_do_not_grant_unmigrated_access(self):
+        from common import build_host_steps as host, build_target_steps as target
+        from common import build_ssh_admission as admission
+        from lib.build_protocol import encode_document
+
+        host_name, target_name = host._transport_username("alice"), target._username("alice")
+        host_content = admission_content("build-host", [host_name])
+        target_content = admission_content("build-target", [target_name])
+        wire = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20" + bytes([1]) * 32
+        host_marker = host._empty_marker()
+        host_marker["principals"]["alice"] = {
+            "username": host_name, "uid": 2001, "gid": 2002,
+            "key": "ssh-ed25519 " + base64.b64encode(wire).decode("ascii"),
+            "managed": True, "auth_managed": True, "sudo_managed": True,
+            "sudo_hashes": ["a" * 64],
+        }
+        host_marker["files"]["ssh"] = [hashlib.sha256(host_content).hexdigest()]
+        target_marker = {"schema": 2, "state": "enabled", "principals": {"alice": {"uid": 3001, "gid": 3002}},
+                         "files": {target.CONFIG_PATH: "b" * 64,
+                                   target._file_paths("alice")[1]: "c" * 64,
+                                   target.SSH_ADMISSION_PATH: hashlib.sha256(target_content).hexdigest()},
+                         "pending": None}
+        files = {host.SSH_ADMISSION_PATH: host_content, target.SSH_ADMISSION_PATH: target_content}
+
+        def read(path, **_kwargs):
+            if path == host.MARKER_PATH:
+                return encode_document(host_marker)
+            if path == target.MARKER_PATH:
+                return encode_document(target_marker)
+            return files.get(path)
+
+        with patch.object(admission, "read_protected", side_effect=read), \
+             patch.object(host, "_require_exclusive_transport_account") as host_identity, \
+             patch.object(target, "_identity") as target_identity:
+            self.assertEqual(admission.managed_transport_groups(), [host_name, target_name])
+            host_identity.assert_called_once_with(host_name, host.SSH_ROOT + "/" + host_name.removeprefix("bw-build-"),
+                                                  2001, 2002)
+            target_identity.assert_called_once_with("alice", {"uid": 3001, "gid": 3002})
+            # An unmigrated schema-2 peer remains blocked until its own guarded
+            # enrollment, while the first role can still refresh its admission.
+            del target_marker["files"][target.SSH_ADMISSION_PATH]
+            del files[target.SSH_ADMISSION_PATH]
+            with self.assertRaisesRegex(RuntimeError, "Rerun build-target enrollment"):
+                admission.managed_transport_groups()
+            self.assertEqual(admission.managed_transport_groups(require_admission=False), [host_name])
+            self.assertEqual(admission.managed_transport_groups(exclude_role="build-host", require_admission=False), [])
+            files[target.SSH_ADMISSION_PATH] = target_content
+            with self.assertRaisesRegex(ValueError, "Unowned, missing or modified"):
+                admission.managed_transport_groups(require_admission=False)
+            files.pop(target.SSH_ADMISSION_PATH)
+            target_marker["schema"] = 1
+            with self.assertRaisesRegex(ValueError, "Legacy build-target"):
+                admission.managed_transport_groups(require_admission=False)
+
+    def test_shared_lock_refuses_busy_or_unsafe_inode_and_retains_it(self):
+        from tests.test_build_target_maintenance import root_view
+
+        with tempfile.TemporaryDirectory() as temporary, root_view():
+            parent = Path(temporary)
+            parent.chmod(0o755)
+            path = parent / ".basaltwater-ssh-admission.lock"
+            with ssh_admission_lock(str(parent)):
+                inode = path.stat().st_ino
+                with self.assertRaisesRegex(RuntimeError, "update is active"):
+                    with ssh_admission_lock(str(parent)):
+                        self.fail("Acquired a held SSH policy lock")
+            with ssh_admission_lock(str(parent)):
+                self.assertEqual(path.stat().st_ino, inode)
+            path.chmod(0o666)
+            with self.assertRaisesRegex(ValueError, "Unsafe shared SSH admission lock"):
+                with ssh_admission_lock(str(parent)):
+                    self.fail("Accepted unsafe SSH policy lock")
+            self.assertEqual(path.stat().st_ino, inode)
+
+    def test_literal_groups_only_and_role_separation(self):
+        for role, prefix in (("build-host", "bw-build-"), ("build-target", "bw-target-")):
+            name = prefix + "0123456789ab"
+            self.assertEqual(admission_content(role, [name, name]), (name + "\n").encode())
+            for invalid in (prefix + "*", name + "\n", name + ",root", "root", "remoteusers",
+                            "basaltwater-build", prefix + "ABCDEF012345", prefix + "123", "!" + name):
+                with self.subTest(role=role, name=invalid), self.assertRaises(ValueError):
+                    admission_content(role, [invalid])
+        with self.assertRaises(ValueError):
+            admission_content("build-host", ["bw-target-0123456789ab"])
+
+
 class TestEffectiveSSHPolicy(unittest.TestCase):
     def setUp(self):
         self.config = SetupConfig(host="pve1", username="root", system_type="server_proxmox")
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": "198.51.100.10 12345 192.0.2.10 22"}))
         self.enterContext(patch.object(ssh, "can_manage_system_services", return_value=True))
         self.activate = self.enterContext(patch.object(ssh, "_activate_ssh_service"))
+        self.managed_groups = self.enterContext(patch.object(ssh, "managed_transport_groups", return_value=[]))
+        self.enterContext(patch.object(ssh, "ssh_admission_lock", side_effect=lambda _: nullcontext()))
 
     def test_conflicting_password_setting_or_missing_group_is_rejected(self):
         for output, groups, error in (
@@ -52,6 +183,20 @@ class TestEffectiveSSHPolicy(unittest.TestCase):
         commands = [call.args[0] for call in run.call_args_list]
         self.assertIn("/usr/sbin/sshd -T -C user=root,host=198.51.100.10,addr=198.51.100.10", commands)
         self.assertIn("/usr/sbin/sshd -T -C user=agent,host=198.51.100.10,addr=198.51.100.10", commands)
+
+    def test_checks_both_roles_without_requiring_transport_remoteusers_membership(self):
+        names = ["bw-build-0123456789ab", "bw-target-0123456789ab"]
+        self.managed_groups.return_value = names
+        output = EFFECTIVE.replace("allowgroups remoteusers", "allowgroups remoteusers " + " ".join(names))
+
+        def command(command, **_kwargs):
+            name = command.split()[-1]
+            return SimpleNamespace(returncode=0, stdout=output if " -T " in command else
+                                   "remoteusers" if name == "root" else name)
+
+        with patch.object(ssh, "run", side_effect=command) as run:
+            ssh._verify_ssh_policy("/usr/sbin/sshd", self.config)
+        self.assertEqual(sum(" -T " in call.args[0] for call in run.call_args_list), 3)
 
     def test_effective_conflict_rolls_back_and_never_reloads(self):
         with tempfile.TemporaryDirectory() as root:

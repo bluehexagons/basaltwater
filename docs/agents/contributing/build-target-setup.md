@@ -69,14 +69,15 @@ It does not copy code from a setup checkout or user home.
 
 Only missing `openssh-server`, `sudo` and `nginx` prerequisites are installed
 and then verified. Python 3, system services and service runtime libraries come
-from the existing OS. This installer does not edit SSH daemon configuration,
-open firewall ports, install runtime dependencies or qualify service binaries.
+from the existing OS. This installer refreshes only managed SSH group admission;
+it does not open firewall ports, install runtime dependencies or qualify service binaries.
 Prerequisite installs use the shared 300-second APT lock timeout.
 
 Managed root:root resources are:
 
 - `/etc/basaltwater/build-target` mode `0700`, with `config.json`,
   `.managed.json` and the stable `.maintenance.lock`, each mode `0600`.
+  The mode-`0600` `ssh-admission` file records exact admitted primary groups.
 - `/var/lib/basaltwater/build-target` and its `admission`, `artifacts`,
   `releases`, `verify` directories, all mode `0700`.
 - `/var/lib/basaltwater-build-target-ssh` mode `0711`; each hashed principal
@@ -89,6 +90,21 @@ prefix `bw-target-`, a SHA-256-derived 12-hex suffix, the managed home and
 users and group aliases; supplementary groups and explicit group members are
 refused. No root SSH key is enrolled. The root-owned public SSH layout lets
 sshd and the transport account read the key without permitting writes.
+
+The shared [SSH admission contract](../../operations/ssh.md#managed-build-transport-admission)
+adds only these exact enrolled primary groups to managed `AllowGroups`, alongside
+`remoteusers`, without supplementary membership or RDP access. The group list
+and its hash are recorded in `ssh-admission` and the existing file inventory.
+Under the exclusive maintenance lease and durable serving hold, enrollment
+refreshes only the current managed hardening drop-in's `AllowGroups` line,
+validates effective SSH policy and reconciles the SSH service. If hardening
+is absent, enrollment records intent for subsequent hardening and leaves
+ordinary SSH policy intact. Hardening reruns validate and preserve the grant.
+
+An explicit guarded enrollment rerun can add the admission inventory to an
+existing schema-2 install. Hardening alone refuses an active enrollment missing
+that inventory rather than migrating outside maintenance ownership. Schema-1
+refusal and incomplete-installation recovery rules remain unchanged.
 
 Before bootstrap or any installation mutation, enrollment checks every existing
 ancestor of the SSH root for transport search access, in addition to the root
@@ -169,6 +185,8 @@ principal authority; unchanged enrollment is idempotent. Disable removes only
 the recorded configuration, sudo grants and forced-command key files and writes
 `disabled`, leaving the gate held. A successful explicit re-enrollment can
 reopen it.
+Disable also removes the role's exact groups from managed SSH admission and
+removes its recorded `ssh-admission` file, retaining the shared SSH policy lock.
 
 Accounts, groups, SSH homes, the marker, lock, all target data and admission
 evidence, application releases, services and Nginx publication are retained on

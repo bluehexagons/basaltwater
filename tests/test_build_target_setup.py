@@ -19,6 +19,7 @@ from lib import build_target_maintenance as maintenance
 from lib.maintenance_defaults import APT_LOCK_OPTIONS
 from tests.test_build_target_entrypoint import target_policy
 from tests.test_build_target_maintenance import root_view
+from tests.test_ssh_hardening import transport_ssh_fixture
 
 
 def public_key(seed: int = 1) -> str:
@@ -139,6 +140,8 @@ class BuildTargetSetupTests(unittest.TestCase):
             stack.enter_context(patch.object(setup, name, str(path)))
         stack.enter_context(patch.object(setup, "MARKER_PATH", setup.ETC_DIR + "/.managed.json"))
         stack.enter_context(patch.object(setup, "CONFIG_PATH", setup.ETC_DIR + "/config.json"))
+        stack.enter_context(patch.object(setup, "SSH_ADMISSION_PATH", setup.ETC_DIR + "/ssh-admission"))
+        stack.enter_context(patch("security.security_steps._SSHD_DROPIN_FILE", str(self.base / "ssh-hardening.conf")))
         stack.enter_context(patch.object(setup, "ROOTS", {name: setup.DATA_ROOT + "/" + name for name in setup.ROOTS}))
         stack.enter_context(patch.object(maintenance, "LOCK_PATH", setup.ETC_DIR + "/.maintenance.lock"))
         stack.enter_context(patch.object(setup, "is_dry_run", return_value=False))
@@ -170,6 +173,116 @@ class BuildTargetSetupTests(unittest.TestCase):
     def snapshot(self):
         return {str(path.relative_to(self.base)): (stat.S_IMODE(path.stat().st_mode), path.read_bytes())
                 for path in self.base.rglob("*") if path.is_file()}
+
+    def test_hardened_enrollment_rerun_retirement_and_disable_preserve_primary_groups(self) -> None:
+        from common.build_ssh_admission import managed_transport_groups
+        from security import security_steps as ssh
+        from lib.config import SetupConfig
+
+        refresh = ssh.refresh_transport_ssh_admission
+
+        def under_hold(role, users):
+            self.assertEqual(Path(maintenance.LOCK_PATH).read_bytes(), b"held\n")
+            with self.assertRaisesRegex(RuntimeError, "active"):
+                with maintenance.target_lease():
+                    pass
+            refresh(role, users)
+
+        with transport_ssh_fixture(self.base, "build-target") as (path, run, _activate), \
+             patch.object(ssh, "refresh_transport_ssh_admission", side_effect=under_hold):
+            setup.configure_build_target(configuration(build_target_enrollment=enrollment(("alice", "bob"))))
+            names = sorted(setup._username(p) for p in ("alice", "bob"))
+            self.assertIn("AllowGroups remoteusers " + " ".join(names) + "\n", path.read_text())
+            self.assertEqual(managed_transport_groups(), names)
+            config = SetupConfig(host="h", username="root", system_type="server_lite")
+            ssh.harden_ssh(config)
+            before = path.read_bytes()
+            ssh.harden_ssh(config)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertTrue(all(any(f"user={name}," in call.args[0] for call in run.call_args_list)
+                                for name in names))
+            setup.configure_build_target(configuration())
+            self.assertNotIn(setup._username("bob"), path.read_text())
+            identities = copy.deepcopy((self.users, self.groups))
+            setup.configure_build_target(configuration(disable_build_target=True))
+            self.assertIn("AllowGroups remoteusers\n", path.read_text())
+            self.assertFalse(Path(setup.SSH_ADMISSION_PATH).exists())
+            self.assertEqual(managed_transport_groups(), [])
+            self.assertEqual((self.users, self.groups), identities)
+            self.assertTrue(Path(setup.MARKER_PATH).exists())
+            self.assertTrue(Path(maintenance.LOCK_PATH).exists())
+
+    def test_schema2_admission_migration_requires_maintenance_and_valid_groups(self) -> None:
+        from common.build_ssh_admission import managed_transport_groups
+        from security import security_steps as ssh
+        from lib.config import SetupConfig
+
+        setup.configure_build_target(configuration())
+        Path(setup.SSH_ADMISSION_PATH).unlink()
+        marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+        del marker["files"][setup.SSH_ADMISSION_PATH]
+        setup._save(marker)
+        with transport_ssh_fixture(self.base, "build-target") as (path, _run, _activate):
+            before = path.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "Rerun build-target enrollment"):
+                ssh.harden_ssh(SetupConfig(host="h", username="root", system_type="server_lite"))
+            self.assertEqual(path.read_bytes(), before)
+            with maintenance.target_lease():
+                with self.assertRaisesRegex(RuntimeError, "active"):
+                    setup.configure_build_target(configuration())
+            self.assertFalse(Path(setup.SSH_ADMISSION_PATH).exists())
+            name = setup._username("alice")
+            self.groups[name].gr_mem = ["intruder"]
+            with self.assertRaises(ValueError):
+                setup.configure_build_target(configuration())
+            self.groups[name].gr_mem = []
+            setup.configure_build_target(configuration())
+            self.assertEqual(managed_transport_groups(), [name])
+            with patch.object(setup.os, "getgrouplist", return_value=[self.groups[name].gr_gid, 27]):
+                with self.assertRaises(ValueError):
+                    ssh.harden_ssh(SetupConfig(host="h", username="root", system_type="server_lite"))
+
+    def test_admission_tampering_refuses_refresh_disable_and_hardening(self) -> None:
+        from common.build_ssh_admission import managed_transport_groups
+
+        setup.configure_build_target(configuration())
+        path = Path(setup.SSH_ADMISSION_PATH)
+        original = path.read_bytes()
+        for change in ("modified", "missing", "unsafe-mode", "symlink"):
+            with self.subTest(change=change):
+                if change == "modified":
+                    path.write_bytes(b"bw-target-*\n")
+                elif change == "missing":
+                    path.unlink()
+                elif change == "unsafe-mode":
+                    path.chmod(0o644)
+                else:
+                    path.unlink()
+                    path.symlink_to(self.base / "missing")
+                with patch("common.build_host_steps.MARKER_PATH", str(self.base / "other/missing")):
+                    for action in (lambda: setup.configure_build_target(configuration()),
+                                   lambda: setup.configure_build_target(configuration(disable_build_target=True)),
+                                   managed_transport_groups):
+                        with self.assertRaises((ValueError, OSError)):
+                            action()
+                if path.is_symlink() or path.exists():
+                    path.unlink()
+                path.write_bytes(original)
+                path.chmod(0o600)
+
+    def test_ssh_activation_failure_restores_policy_and_retains_serving_hold(self) -> None:
+        with transport_ssh_fixture(self.base, "build-target") as (path, _run, activate):
+            before = path.read_bytes()
+            activate.side_effect = [RuntimeError("SSH activation failed"), None]
+            with self.assertRaisesRegex(RuntimeError, "SSH activation failed"):
+                setup.configure_build_target(configuration())
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(Path(maintenance.LOCK_PATH).read_bytes(), b"held\n")
+            marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+            self.assertEqual(marker["state"], "updating")
+            self.assertIsNotNone(marker["pending"])
+            self.assertTrue(Path(setup.SSH_ADMISSION_PATH).exists())
+            self.assertTrue(Path(setup._file_paths("alice")[1]).exists())
 
     def test_install_permissions_exact_grants_rotation_retirement_disable_and_reenable(self) -> None:
         private = Path(setup.DATA_ROOT).parent

@@ -12,6 +12,7 @@ import stat
 import time
 from urllib.parse import quote
 
+from common.build_ssh_admission import admission_content, managed_transport_groups, ssh_admission_lock
 from lib.atomic_io import write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import install_kernel_restart_hook
@@ -617,15 +618,19 @@ findtime = 600
         print("  ✓ fail2ban configured (sshd jail, 1 hour ban)")
 
 
-def _verify_ssh_policy(sshd_path: str, config: SetupConfig) -> None:
-    """Check effective authentication for root and the setup identity."""
+def _verify_ssh_policy(sshd_path: str, config: SetupConfig | None,
+                       transport_groups: list[str] | None = None) -> None:
+    """Check human and exact managed transport admission and authentication."""
+    if transport_groups is None:
+        transport_groups = managed_transport_groups()
     address = "127.0.0.1"
     connection = os.environ.get("SSH_CONNECTION", "").split()
     if connection:
         if len(connection) != 4 or not validate_ip_address(connection[0]):
             raise RuntimeError("Cannot determine the SSH setup peer")
         address = connection[0]
-    for username in dict.fromkeys(("root", config.username)):
+    setup_user = config.username if config is not None else "root"
+    for username in dict.fromkeys(("root", setup_user, *transport_groups)):
         if not validate_username(username):
             raise ValueError("Cannot verify SSH policy for an invalid username")
         context = f"user={username},host={address},addr={address}"
@@ -646,10 +651,10 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig) -> None:
             "kbdinteractiveauthentication": {"no"},
             "pubkeyauthentication": {"yes"},
             "permitrootlogin": {"prohibit-password", "without-password"},
-            "allowgroups": {"remoteusers"},
+            "allowgroups": {" ".join(["remoteusers", *transport_groups])},
             "authenticationmethods": {"publickey"},
         }
-        if config.harden_user and username == config.username:
+        if config is not None and config.harden_user and username == config.username:
             required.update({"disableforwarding": {"yes"}, "permituserrc": {"no"}})
         conflicts = [key for key, values in required.items() if settings.get(key) not in values]
         if conflicts:
@@ -658,8 +663,72 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig) -> None:
                 + ", ".join(conflicts)
             )
         groups = run(f"id -nG {shlex.quote(username)}", check=False, capture_output=True)
-        if groups.returncode != 0 or "remoteusers" not in (groups.stdout or "").split():
-            raise RuntimeError(f"SSH identity {username} is not a member of remoteusers")
+        expected = username if username in transport_groups else "remoteusers"
+        if groups.returncode != 0 or expected not in (groups.stdout or "").split():
+            raise RuntimeError(f"SSH identity {username} is not a member of {expected}")
+
+
+def refresh_transport_ssh_admission(role: str, usernames: list[str]) -> None:
+    """Refresh only managed AllowGroups under the caller's role maintenance hold.
+
+    Enrollment has already validated each same-named exclusive primary group.
+    On an unhardened host record intent in the role inventory only; ordinary
+    SSH semantics are left to the administrator until hardening is selected.
+    """
+    from lib.build_target_maintenance import read_protected
+
+    admission_content(role, usernames)
+    if read_protected(_SSHD_DROPIN_FILE, mode=0o600, maximum=1024 * 1024) is None:
+        return
+    with ssh_admission_lock(os.path.dirname(_SSHD_DROPIN_FILE)):
+        _refresh_transport_ssh_admission_locked(role, usernames)
+
+
+def _refresh_transport_ssh_admission_locked(role: str, usernames: list[str]) -> None:
+    from lib.build_target_maintenance import read_protected
+    from common.build_host_steps import _write_file
+
+    existing = read_protected(_SSHD_DROPIN_FILE, mode=0o600, maximum=1024 * 1024)
+    if existing is None:
+        return
+    content = existing.decode("utf-8")
+    if not content.startswith("# Managed by basaltwater - SSH hardening drop-in.\n"):
+        raise ValueError("Refusing unmanaged SSH hardening configuration")
+    lines = content.splitlines(keepends=True)
+    positions = [index for index, line in enumerate(lines) if line.startswith("AllowGroups ")]
+    if len(positions) != 1:
+        raise ValueError("Managed SSH hardening must contain one global AllowGroups directive")
+    position = positions[0]
+    if any(line.lstrip().lower().startswith("match ") for line in lines[:position]):
+        raise ValueError("Managed SSH admission must be global")
+    old_groups = lines[position].split()[1:]
+    if not old_groups or old_groups[0] != "remoteusers":
+        raise ValueError("Refusing modified human SSH admission")
+    for name in old_groups[1:]:
+        admission_content("build-host" if name.startswith("bw-build-") else "build-target", [name])
+    groups = sorted(set(managed_transport_groups(exclude_role=role, require_admission=False)) | set(usernames))
+    lines[position] = "AllowGroups " + " ".join(["remoteusers", *groups]) + "\n"
+    updated = "".join(lines).encode("utf-8")
+    sshd_path = shutil.which("sshd") or "/usr/sbin/sshd"
+    changed = updated != existing
+    attempted = False
+    try:
+        if changed:
+            _write_file(_SSHD_DROPIN_FILE, updated, mode=0o600)
+        _validate_ssh_config(sshd_path)
+        _verify_ssh_policy(sshd_path, None, groups)
+        attempted = True
+        _activate_ssh_service(changed=changed)
+    except Exception:
+        if changed:
+            _write_file(_SSHD_DROPIN_FILE, existing, mode=0o600)
+        if attempted:
+            try:
+                _validate_ssh_config(sshd_path)
+                _activate_ssh_service(changed=True)
+            except Exception as recovery_error:
+                print(f"  ⚠ SSH admission restored, but service recovery failed: {recovery_error}")
+        raise
 
 
 def _validate_ssh_config(sshd_path: str) -> None:
@@ -826,6 +895,16 @@ Match all
         )
         return
 
+    with ssh_admission_lock(os.path.dirname(_SSHD_DROPIN_FILE)):
+        _apply_ssh_hardening(config, sshd_path, hardening_content)
+
+
+def _apply_ssh_hardening(config: SetupConfig, sshd_path: str, hardening_content: str) -> None:
+    transport_groups = managed_transport_groups()
+    hardening_content = hardening_content.replace(
+        "AllowGroups remoteusers\n",
+        "AllowGroups " + " ".join(["remoteusers", *transport_groups]) + "\n",
+    )
     existing: str | None = None
     if os.path.exists(_SSHD_DROPIN_FILE):
         try:
@@ -864,7 +943,7 @@ Match all
             os.remove(_LEGACY_SSHD_DROPIN_FILE)
             legacy_removed = True
             _validate_ssh_config(sshd_path)
-        _verify_ssh_policy(sshd_path, config)
+        _verify_ssh_policy(sshd_path, config, transport_groups)
         if can_manage_system_services(config.machine_type):
             activation_attempted = True
             _activate_ssh_service(changed=changed or legacy_removed)
@@ -889,7 +968,7 @@ Match all
                 print(f"  ⚠ Previous SSH configuration restored, but service recovery failed: {recovery_error}")
         raise
 
-    details = "key-only auth, timeouts, AllowGroups remoteusers"
+    details = "key-only auth, timeouts, remoteusers and exact managed transport groups"
     if config.harden_user:
         details += ", coding-user forwarding disabled"
     print(f"  ✓ SSH hardening verified (drop-in: {details})")
