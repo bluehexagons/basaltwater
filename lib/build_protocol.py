@@ -31,7 +31,9 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _ID = re.compile(r"[0-9a-f]{32}")
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
-CONTROL_NAMES = frozenset({".git", ".gitconfig", ".git-credentials", ".hg", ".svn"})
+CONTROL_NAMES = frozenset({
+    ".git", ".gitconfig", ".git-credentials", ".gitmodules", ".gitattributes", ".gitignore", ".hg", ".svn",
+})
 DEFAULT_LIMITS = {
     "timeout_seconds": 3600,
     "memory_bytes": 2 * 1024**3,

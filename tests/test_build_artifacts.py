@@ -70,6 +70,9 @@ class BuildArtifactsTest(unittest.TestCase):
                                        "artifacts": ["."], "commands": [], "env": {}}]
         (self.workspace / ".git").mkdir()
         (self.workspace / ".git/config").write_text("credential-canary")
+        (self.workspace / ".gitmodules").write_text("submodule-url-canary")
+        (self.workspace / ".gitattributes").write_text("* filter=lfs")
+        (self.workspace / ".gitignore").write_text("ignored-private-file")
         (self.workspace / ".git-credentials").symlink_to("/missing")
         (self.workspace / "bin/.GIT").mkdir()
         (self.workspace / "empty").mkdir()
@@ -78,6 +81,9 @@ class BuildArtifactsTest(unittest.TestCase):
         self.assertTrue((self.destination / "empty").is_dir())
         self.assertFalse((self.destination / ".git").exists())
         self.assertNotIn(b"credential-canary", self.bundle.read_bytes())
+        self.assertNotIn(b"submodule-url-canary", self.bundle.read_bytes())
+        self.assertFalse((self.destination / ".gitattributes").exists())
+        self.assertFalse((self.destination / ".gitignore").exists())
 
     def test_inventory_comes_from_private_snapshot_after_workspace_changes(self):
         original = build_artifacts._inventory

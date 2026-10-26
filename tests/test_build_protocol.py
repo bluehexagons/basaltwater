@@ -125,7 +125,7 @@ class BuildProtocolTest(unittest.TestCase):
     def test_paths_are_portable_relative_and_not_control_metadata(self):
         for path in ("/etc/passwd", "../secret", "a/../b", "a//b", "a/./b", "a/", "",
                      "C:/secret", "a\\b", "a\nfile", ".git/config", "dist/.GIT/config",
-                     ".git-credentials", ".", "//server/share"):
+                     ".git-credentials", ".gitmodules", ".gitattributes", ".gitignore", ".", "//server/share"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 validate_artifact_path(path)
         self.assertEqual(validate_artifact_path(".", allow_root=True), ".")

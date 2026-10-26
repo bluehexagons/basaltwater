@@ -430,7 +430,7 @@ class TestArtifactPaths(unittest.TestCase):
             ["dist/."], ["dist//index.html"], ["dist/"], [r"dist\index.html"],
             [r"\\server\share"], ["C:/dist"], ["file:stream"],
             ["dist/\x00index"], ["dist/\x85index"], [".git/config"],
-            ["dist/.GIT/config"], [".git-credentials"],
+            ["dist/.GIT/config"], [".git-credentials"], [".gitmodules"], [".gitattributes"], [".gitignore"],
             ["x" * 4097], ["dist/index.html", "dist/index.html"],
         )
         for value in invalid_values:
