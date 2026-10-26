@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.build_protocol import MAX_REQUEST_BYTES, decode_document, parse_build_request, request_digest
+from lib.build_git import prepare_history
 from lib.cicd_deadline import run_command
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path
@@ -52,12 +53,13 @@ def _path(value: str) -> str:
 
 
 def execution_argv(request: object, *, uid: int, gid: int, workspace: str,
-                   home: str, input_path: str, log_path: str) -> list[str]:
+                   home: str, input_path: str, log_path: str, history_path: str) -> list[str]:
     """Use fixed executables; literal commands travel only in a checked file."""
     job = parse_build_request(request)
     if any(type(value) is not int or value <= 0 for value in (uid, gid)):
         raise ValueError("Build identity must have an unprivileged UID and GID")
-    workspace, home, input_path, log_path = map(_path, (workspace, home, input_path, log_path))
+    workspace, home, input_path, log_path, history_path = map(
+        _path, (workspace, home, input_path, log_path, history_path))
     helper = _path(os.path.abspath(__file__))
     limits = job["limits"]
     properties = [
@@ -67,7 +69,8 @@ def execution_argv(request: object, *, uid: int, gid: int, workspace: str,
         "KillMode=control-group", "TimeoutStopSec=15", "SendSIGKILL=yes",
         f"RuntimeMaxSec={limits['timeout_seconds']}", f"MemoryMax={limits['memory_bytes']}",
         "MemorySwapMax=0", f"CPUQuota={limits['cpu_percent']}%", "TasksMax=256",
-        "LimitCORE=0", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
+        "LimitCORE=0", "ProtectSystem=strict", "ProtectHome=yes",
+        "TemporaryFileSystem=/tmp:ro /var/tmp:ro",
         "PrivateDevices=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
         "ProtectKernelLogs=yes", "ProtectControlGroups=yes", "RestrictSUIDSGID=yes",
         "LockPersonality=yes", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
@@ -84,7 +87,7 @@ def execution_argv(request: object, *, uid: int, gid: int, workspace: str,
         "--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all", "--no-new-privs",
         "--", "/usr/bin/env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin",
         "LANG=C.UTF-8", "HOME=" + home, "/usr/bin/python3", "-I", helper,
-        "--execute", input_path, request_digest(job), workspace, home,
+        "--execute", input_path, request_digest(job), workspace, home, history_path,
     ]
 
 
@@ -144,7 +147,7 @@ def _stop(unit: str) -> None:
 
 
 def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, home: str,
-                      input_path: str, log_path: str,
+                      input_path: str, log_path: str, history_path: str,
                       cancelled: Callable[[], bool],
                       clock: Callable[[], float] = time.monotonic,
                       pause: Callable[[float], None] = time.sleep) -> BuildExecutionResult:
@@ -156,7 +159,7 @@ def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, ho
     """
     job = parse_build_request(request)
     argv = execution_argv(job, uid=uid, gid=gid, workspace=workspace, home=home,
-                          input_path=input_path, log_path=log_path)
+                          input_path=input_path, log_path=log_path, history_path=history_path)
     unit = unit_name(job["request_id"])
     if _observation(unit)["LoadState"] != "not-found" or not _empty_cgroup(unit):
         raise RuntimeError("Build service already exists; do not replay this attempt")
@@ -206,7 +209,8 @@ def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, ho
         pause(0.2)
 
 
-def execute_request(input_path: str, expected_digest: str, workspace: str, home: str) -> int:
+def execute_request(input_path: str, expected_digest: str, workspace: str, home: str,
+                    history_path: str) -> int:
     """Fixed unprivileged service helper; never import project Python code."""
     if os.getuid() == 0 or os.getgid() == 0 or os.getgroups():
         raise RuntimeError("Build helper requires a separate identity without supplementary groups")
@@ -217,8 +221,11 @@ def execute_request(input_path: str, expected_digest: str, workspace: str, home:
         raise ValueError("Build input changed before launch")
     _path(workspace)
     _path(home)
+    _path(history_path)
+    prepare_history(history_path, job["source"]["revision"], workspace, home)
     base = {"PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
-            "HOME": home, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": home, "TMPDIR": os.path.join(home, "tmp"),
+            "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null"}
     remaining = job["limits"]["log_bytes"]
     for component in job["components"]:
@@ -246,7 +253,7 @@ def execute_request(input_path: str, expected_digest: str, workspace: str, home:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6 or sys.argv[1] != "--execute":
+    if len(sys.argv) != 7 or sys.argv[1] != "--execute":
         raise SystemExit("Use the managed build worker")
     try:
         raise SystemExit(execute_request(*sys.argv[2:]))

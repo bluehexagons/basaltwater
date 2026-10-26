@@ -22,7 +22,8 @@ class BuildExecutionTests(unittest.TestCase):
     def arguments(self):
         return {"uid": 1234, "gid": 1234, "workspace": "/var/lib/build-work/checkout",
                 "home": "/var/lib/build-work/home", "input_path": "/var/lib/build-work/request.json",
-                "log_path": "/var/lib/build-private/log", "cancelled": lambda: False,
+                "log_path": "/var/lib/build-private/log", "history_path": "/var/lib/build-work/history.bundle",
+                "cancelled": lambda: False,
                 "pause": Mock(), "clock": lambda: 1000.0}
 
     def test_fixed_execution_boundary_and_resource_limits(self):
@@ -41,11 +42,12 @@ class BuildExecutionTests(unittest.TestCase):
                          "--property=NoNewPrivileges=yes", "--property=AmbientCapabilities=",
                          "--property=MemoryMax=2147483648", "--property=CPUQuota=100%",
                          "--property=MemorySwapMax=0", "--property=ProtectSystem=strict",
+                         "--property=TemporaryFileSystem=/tmp:ro /var/tmp:ro",
                          "--property=TasksMax=256", "--clear-groups", "--bounding-set=-all",
                          "--reuid=1234", "--regid=1234", "/usr/bin/env", "-i"):
             self.assertIn(required, argv)
-        self.assertEqual(argv[-5:], ["--execute", args["input_path"], request_digest(job),
-                                    args["workspace"], args["home"]])
+        self.assertEqual(argv[-6:], ["--execute", args["input_path"], request_digest(job),
+                                    args["workspace"], args["home"], args["history_path"]])
         self.assertNotIn("kept-in-private-input", " ".join(argv))
         self.assertNotIn("PRIVATE_BUILD_INPUT", " ".join(argv))
         for changed in ({"uid": 0}, {"gid": True}, {"workspace": "/var/lib/../etc"},
@@ -160,9 +162,11 @@ class BuildExecutionTests(unittest.TestCase):
                     patch.object(execution.os, "getgid", return_value=1234), \
                     patch.object(execution.os, "getgroups", return_value=[]), \
                     patch.object(execution.sys, "stdout", Mock(buffer=output)), \
+                    patch.object(execution, "prepare_history") as history, \
                     patch.object(execution.subprocess, "Popen", return_value=process) as spawn:
-                result = execution.execute_request(str(path), request_digest(job), temporary, temporary)
+                result = execution.execute_request(str(path), request_digest(job), temporary, temporary, "/work/history.bundle")
                 self.assertEqual(result, 1)
+                history.assert_called_once_with("/work/history.bundle", job["source"]["revision"], temporary, temporary)
                 self.assertEqual(output.getvalue(), b"mor")
                 spawn.assert_called_once()
                 self.assertEqual(spawn.call_args.args[0], ["/bin/bash", "--noprofile", "--norc", "-c", "first"])
@@ -170,7 +174,7 @@ class BuildExecutionTests(unittest.TestCase):
                 self.assertEqual(environment["HOME"], temporary)
                 self.assertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
                 with self.assertRaisesRegex(ValueError, "changed"):
-                    execution.execute_request(str(path), "f" * 64, temporary, temporary)
+                    execution.execute_request(str(path), "f" * 64, temporary, temporary, "/work/history.bundle")
 
     def test_cgroup_lookup_errors_are_not_treated_as_empty(self):
         unit = execution.unit_name("a" * 32)

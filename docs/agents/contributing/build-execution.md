@@ -12,6 +12,11 @@ passes only fixed helper arguments to systemd; repository commands and their
 non-secret environment inputs remain in the private request file. The helper
 checks the request digest before execution. No controller or deployment
 credentials belong in the build account or its input.
+The caller places the verified history bundle, workspace, private home and
+`home/tmp` on the bounded scratch filesystem. The fixed unprivileged helper
+imports local history and checks the restored source before project commands.
+`/tmp` and `/var/tmp` are read-only inside the unit; `TMPDIR` selects `home/tmp`,
+so ordinary temporary files cannot bypass the scratch capacity limit.
 
 The transient system service applies memory, swap, CPU, process-count and work
 time limits. A fixed `setpriv` command drops UID/GID, supplementary groups and
@@ -37,8 +42,8 @@ until supervised processes are proved stopped; do not automatically relaunch
 the request. A host restart also requires this reconciliation. The unit name
 contains the admitted request ID and cannot be reused for a new attempt.
 
-This adapter does not provision disk quotas, enrollment, toolchains, credentials,
-source history or retention. Those remain prerequisites for enabling the first
+This adapter does not provision bounded scratch storage, enrollment, toolchains,
+credentials or retention. Those remain prerequisites for enabling the first
 end-to-end build-host slice. Its tests mock systemd and process boundaries;
 native capability, cgroup, cancellation and resource-limit qualification is
 still required. Persistent jobs under one build identity are mutually trusted;

@@ -52,6 +52,12 @@ from the verified bundle under its unprivileged build UID; extraction itself
 never runs Git or interprets Git metadata as configuration. The caller must
 securely hand ownership/access for the published directory and bundle to that
 UID; this API does not change ownership.
+`lib.build_git.prepare_history()` performs that unprivileged materialization
+inside the supervised service: local unbundle, pinned HEAD and tag installation,
+index reset, then a clean-tree check. It does not fetch or run checkout hooks.
+Version commands can inspect the retained commits and tags without historical
+file blobs. Git's [bundle command](https://git-scm.com/docs/git-bundle) requires
+the filter revision option after the destination filename.
 
 Both functions accept a `SourceLimits` value for tighter per-call bounds. The
 optional `runner` argument on `create_source_snapshot()` accepts a callable
