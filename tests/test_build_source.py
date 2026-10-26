@@ -50,6 +50,7 @@ class FakeGit:
         self.encoding_paths: set[str] = set()
         self.normalization_paths: list[str] = []
         self.conversion_config: dict[str, str] = {}
+        self.filter_driver_config: dict[str, str] = {}
         self.calls: list[tuple[list[str], dict]] = []
         self.entries = entries or [
             (".gitattributes", "100644", "blob", b"*.txt text\n"),
@@ -153,7 +154,10 @@ class FakeGit:
         elif subcommand == "config":
             name = command[-1]
             default = command[command.index("--default") + 1]
-            result = (self.conversion_config.get(name, default) + "\n").encode("ascii")
+            value = self.filter_driver_config.get(
+                name, self.conversion_config.get(name, default),
+            )
+            result = (value + "\n").encode("ascii")
         elif subcommand == "hash-object":
             if env.get("GIT_ATTR_SOURCE") != self.revision:
                 raise AssertionError("Git normalization must use the pinned attribute source")
@@ -430,6 +434,32 @@ class BuildSourceTest(unittest.TestCase):
             self.create()
         self.assertFalse(any("status" in command for command, _ in self.git.calls))
         self.assertFalse(any("hash-object" in command for command, _ in self.git.calls))
+
+    def test_sentinel_filter_values_without_named_drivers_remain_allowed(self):
+        for sentinel in (b"unspecified", b"unset"):
+            with self.subTest(sentinel=sentinel):
+                self.git = FakeGit(self.repository, filter_value=sentinel)
+                self.snapshot = self.root / f"{sentinel.decode('ascii')}.bws"
+                source = self.create()
+                self.assertEqual(source["revision"], self.git.revision)
+
+    def test_configured_sentinel_filter_drivers_are_rejected_before_status(self):
+        cases = ((b"unspecified", "clean"), (b"unset", "process"))
+        for sentinel, action in cases:
+            with self.subTest(sentinel=sentinel, action=action):
+                self.git = FakeGit(self.repository, filter_value=sentinel)
+                driver_key = f"filter.{sentinel.decode('ascii')}.{action}"
+                self.git.filter_driver_config[driver_key] = "marker-helper"
+                self.snapshot = self.root / f"blocked-{sentinel.decode('ascii')}.bws"
+
+                with self.assertRaisesRegex(ValueError, "Ambiguous Git filter driver"):
+                    self.create()
+
+                commands = [command for command, _ in self.git.calls]
+                self.assertFalse(any("status" in command for command in commands))
+                self.assertFalse(any("hash-object" in command for command in commands))
+                self.assertFalse(any("bundle" in command for command in commands))
+                self.assertFalse(self.snapshot.exists())
 
     def test_symlink_and_special_worktree_files_are_not_followed(self):
         tracked = self.repository / "src/main.py"
