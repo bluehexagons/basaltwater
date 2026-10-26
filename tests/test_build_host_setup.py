@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import copy
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -13,7 +13,7 @@ import stat
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from common import build_host_steps as setup
 from lib.build_host_policy import parse_build_host_policy
@@ -218,6 +218,57 @@ class BuildHostSetupUnitTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not controlled by root"):
                 setup._trusted_path("/safe/file")
 
+    def test_transport_path_modes_allow_lookup_without_transport_write_access(self) -> None:
+        modes = (
+            setup.SSH_ROOT_MODE,
+            setup.SSH_HOME_MODE,
+            setup.SSH_DIRECTORY_MODE,
+            setup.AUTHORIZED_KEYS_MODE,
+        )
+        required_other_access = (0o1, 0o5, 0o5, 0o4)
+        self.assertEqual(modes, (0o711, 0o555, 0o755, 0o644))
+        for mode, required in zip(modes, required_other_access, strict=True):
+            other_bits = mode & 0o7
+            self.assertEqual(other_bits & required, required)
+            self.assertEqual(mode & 0o022, 0)
+
+    def test_authorized_key_reader_accepts_only_exact_legacy_and_public_modes(self) -> None:
+        allowed = setup._ALLOWED_AUTHORIZED_KEYS_MODES
+        self.assertEqual(allowed, (0o600, 0o644))
+        for mode in allowed:
+            self.assertTrue(setup._mode_is_allowed(mode, allowed))
+        for mode in (0o400, 0o640, 0o660, 0o664, 0o666):
+            with self.subTest(mode=oct(mode)):
+                self.assertFalse(setup._mode_is_allowed(mode, allowed))
+
+    def test_authorized_key_file_reader_accepts_only_legacy_and_public_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "authorized_keys"
+            content = b'restrict,command="fixed" ssh-ed25519 AAAA\n'
+            path.write_bytes(content)
+            real_fstat = os.fstat
+
+            def as_root_owned(descriptor):
+                actual = real_fstat(descriptor)
+                return SimpleNamespace(
+                    st_mode=actual.st_mode, st_uid=0, st_gid=0, st_nlink=actual.st_nlink,
+                    st_size=actual.st_size, st_dev=actual.st_dev, st_ino=actual.st_ino,
+                    st_mtime_ns=actual.st_mtime_ns, st_ctime_ns=actual.st_ctime_ns,
+                )
+
+            with patch.object(setup, "_trusted_path"), \
+                 patch.object(setup.os, "fstat", side_effect=as_root_owned):
+                for mode in setup._ALLOWED_AUTHORIZED_KEYS_MODES:
+                    with self.subTest(mode=oct(mode)):
+                        os.chmod(path, mode)
+                        self.assertEqual(setup._read_file(
+                            str(path), mode=setup._ALLOWED_AUTHORIZED_KEYS_MODES,
+                            maximum=64 * 1024), content)
+                os.chmod(path, 0o664)
+                with self.assertRaisesRegex(ValueError, "file is unsafe"):
+                    setup._read_file(str(path), mode=setup._ALLOWED_AUTHORIZED_KEYS_MODES,
+                                     maximum=64 * 1024)
+
     def test_unmarked_transport_account_namespace_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             with patch.object(setup, "SUDOERS_DIR", temp), \
@@ -227,6 +278,69 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                  patch.object(setup.grp, "getgrall", return_value=[]), \
                  self.assertRaisesRegex(ValueError, "unmarked build-host transport"):
                 setup._validate_transport_namespace({"alice"})
+
+    def test_marker_namespace_accepts_only_legacy_or_public_lookup_directories(self) -> None:
+        username = setup._transport_username("alice")
+        home_name = username.removeprefix("bw-build-")
+        ssh_root = "/trusted/build-host-ssh"
+        ssh_path = ssh_root + "/" + home_name + "/.ssh"
+
+        class Entry:
+            def __init__(self, name: str, info):
+                self.name = name
+                self.info = info
+
+            def stat(self, *, follow_symlinks: bool):
+                return self.info
+
+        class Scan:
+            def __init__(self, entries):
+                self.entries = entries
+
+            def __enter__(self):
+                return iter(self.entries)
+
+            def __exit__(self, *_args):
+                return False
+
+        home_entry = Entry(home_name, SimpleNamespace(
+            st_mode=stat.S_IFDIR | setup.SSH_HOME_MODE, st_uid=0, st_gid=0))
+        key_entry = Entry("authorized_keys", SimpleNamespace(
+            st_mode=stat.S_IFREG | setup.AUTHORIZED_KEYS_MODE, st_uid=0, st_gid=0))
+
+        def validate_layout(root_mode: int, ssh_mode: int) -> None:
+            def trusted(path: str, **_kwargs):
+                mode = root_mode if path == ssh_root else ssh_mode
+                return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=0, st_gid=0)
+
+            def scan(path: str):
+                return Scan([home_entry] if path == ssh_root else [key_entry])
+
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(setup, "SUDOERS_DIR", "/missing/sudoers.d"))
+                stack.enter_context(patch.object(setup, "SSH_ROOT", ssh_root))
+                stack.enter_context(patch.object(setup, "_trusted_path", side_effect=trusted))
+                stack.enter_context(patch.object(Path, "lstat", autospec=True,
+                                                  return_value=SimpleNamespace(
+                                                      st_mode=stat.S_IFDIR | root_mode,
+                                                      st_uid=0, st_gid=0)))
+                stack.enter_context(patch.object(setup.os.path, "lexists",
+                                                  side_effect=lambda path: path in {ssh_root, ssh_path}))
+                stack.enter_context(patch.object(setup.os, "scandir", side_effect=scan))
+                stack.enter_context(patch.object(setup.pwd, "getpwall",
+                                                  return_value=[SimpleNamespace(pw_name=username)]))
+                stack.enter_context(patch.object(setup.grp, "getgrall",
+                                                  return_value=[SimpleNamespace(gr_name=username)]))
+                setup._validate_transport_namespace({"alice"})
+
+        for root_mode in setup._ALLOWED_SSH_ROOT_MODES:
+            for ssh_mode in setup._ALLOWED_SSH_DIRECTORY_MODES:
+                with self.subTest(root_mode=oct(root_mode), ssh_mode=oct(ssh_mode)):
+                    validate_layout(root_mode, ssh_mode)
+        with self.assertRaisesRegex(ValueError, "unsupported mode or owner"):
+            validate_layout(0o751, setup.SSH_DIRECTORY_MODE)
+        with self.assertRaisesRegex(ValueError, ".ssh directory is unsafe"):
+            validate_layout(setup.SSH_ROOT_MODE, 0o775)
 
     def test_system_service_capability_skip_does_not_mutate(self) -> None:
         with patch("lib.machine_state.can_manage_system_services", return_value=False), \
@@ -296,6 +410,23 @@ class BuildHostSetupUnitTests(unittest.TestCase):
         publish.assert_called_once()
         self.assertEqual(publish.call_args.args[1], other)
 
+    def test_managed_key_mode_is_upgraded_when_content_is_already_current(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            key = public_key()
+            username = "bw-build-0123456789ab"
+            ssh_root = Path(temp) / "ssh"
+            ssh_dir = ssh_root / "0123456789ab" / ".ssh"
+            ssh_dir.mkdir(parents=True)
+            expected = setup._authorized_key_line("alice", key)
+            record = {"username": username, "key": key, "auth_managed": True}
+            with patch.object(setup, "SSH_ROOT", str(ssh_root)), \
+                 patch.object(setup, "_read_root_file", return_value=expected), \
+                 patch.object(setup, "_write_file") as publish, \
+                 patch.object(setup, "_write_marker"):
+                setup._reconcile_authorized_key("alice", record, key, setup._empty_marker())
+        publish.assert_called_once_with(
+            str(ssh_dir / "authorized_keys"), expected, mode=setup.AUTHORIZED_KEYS_MODE)
+
     def test_sudoers_revocation_requires_and_removes_the_marker_owned_file(self) -> None:
         username, principal = "bw-build-0123456789ab", "alice"
         content = setup._sudoers_content(username, principal)
@@ -318,7 +449,8 @@ class BuildHostSetupUnitTests(unittest.TestCase):
     def test_transport_account_requires_exclusive_ids_groups_and_locked_password(self) -> None:
         username = setup._transport_username("alice")
         account = SimpleNamespace(pw_name=username, pw_uid=1701, pw_gid=1702,
-                                  pw_dir="/var/lib/basaltwater/build-host-ssh/0123456789ab",
+                                  pw_dir="/var/lib/basaltwater/build-host-ssh/"
+                                         + username.removeprefix("bw-build-"),
                                   pw_shell="/bin/sh")
         group = SimpleNamespace(gr_name=username, gr_gid=1702, gr_mem=[])
         with patch.object(setup.pwd, "getpwnam", return_value=account), \
@@ -617,6 +749,48 @@ class BuildHostLifecycleTests(unittest.TestCase):
             self.assertFalse(store.state["draining"])
             prepare.assert_not_called()
             install_packages.assert_not_called()
+            replace_units.assert_not_called()
+
+    def test_retained_running_claim_stays_drained_without_enable_mutations(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = FakeStore(running=True)
+            with ExitStack() as stack:
+                stack.enter_context(patch("lib.machine_state.can_manage_system_services", return_value=True))
+                stack.enter_context(patch.object(setup, "is_dry_run", return_value=False))
+                stack.enter_context(patch.object(setup, "ETC_DIR", str(root / "etc")))
+                stack.enter_context(patch.object(setup, "MARKER_PATH", str(root / "etc" / ".managed.json")))
+                stack.enter_context(patch("common.service_tools.build_host.require_platform"))
+                stack.enter_context(patch.object(setup, "_trusted_source_tree"))
+                stack.enter_context(patch.object(setup, "_initial_install_conflicts"))
+                stack.enter_context(patch.object(setup, "_preflight_managed_state"))
+                stack.enter_context(patch.object(setup, "_verify_unit_source"))
+                stack.enter_context(patch.object(setup, "_trusted_path"))
+                stack.enter_context(patch.object(setup, "_read_file", return_value=None))
+                stack.enter_context(patch.object(setup, "_ensure_directory"))
+                stack.enter_context(patch.object(setup, "_write_marker"))
+                stack.enter_context(patch.object(setup, "_ensure_runtime_directories"))
+                prepare = stack.enter_context(patch.object(setup, "_prepare_enrollment"))
+                install_packages = stack.enter_context(patch.object(setup, "_install_packages"))
+                ensure_worker = stack.enter_context(patch.object(setup, "_ensure_worker_account"))
+                ensure_transport = stack.enter_context(patch.object(setup, "_ensure_transport_account"))
+                reconcile_sudo = stack.enter_context(patch.object(setup, "_reconcile_sudoers"))
+                reconcile_key = stack.enter_context(patch.object(setup, "_reconcile_authorized_key"))
+                write_file = stack.enter_context(patch.object(setup, "_write_file"))
+                stack.enter_context(patch("lib.build_jobs.BuildJobStore", return_value=store))
+                replace_units = stack.enter_context(patch("lib.unit_transaction.replace_units"))
+                with self.assertRaisesRegex(RuntimeError, "retained running claim"):
+                    setup.configure_build_host(setup_config())
+
+            self.assertEqual(store.drain_calls, [True])
+            self.assertTrue(store.state["draining"])
+            prepare.assert_not_called()
+            install_packages.assert_not_called()
+            ensure_worker.assert_not_called()
+            ensure_transport.assert_not_called()
+            reconcile_sudo.assert_not_called()
+            reconcile_key.assert_not_called()
+            write_file.assert_not_called()
             replace_units.assert_not_called()
 
 

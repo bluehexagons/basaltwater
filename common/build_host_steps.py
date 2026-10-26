@@ -34,6 +34,16 @@ MARKER_PATH = ETC_DIR + "/.managed.json"
 CONFIG_PATH = ETC_DIR + "/config.json"
 DATA_ROOT = "/var/lib/basaltwater/build-host"
 SSH_ROOT = "/var/lib/basaltwater/build-host-ssh"
+SSH_ROOT_MODE = 0o711
+SSH_HOME_MODE = 0o555
+SSH_DIRECTORY_MODE = 0o755
+AUTHORIZED_KEYS_MODE = 0o644
+_LEGACY_SSH_ROOT_MODE = 0o700
+_LEGACY_SSH_DIRECTORY_MODE = 0o700
+_LEGACY_AUTHORIZED_KEYS_MODE = 0o600
+_ALLOWED_SSH_ROOT_MODES = (_LEGACY_SSH_ROOT_MODE, SSH_ROOT_MODE)
+_ALLOWED_SSH_DIRECTORY_MODES = (_LEGACY_SSH_DIRECTORY_MODE, SSH_DIRECTORY_MODE)
+_ALLOWED_AUTHORIZED_KEYS_MODES = (_LEGACY_AUTHORIZED_KEYS_MODE, AUTHORIZED_KEYS_MODE)
 SOURCE_ROOT = "/opt/basaltwater"
 ENTRYPOINT_PATH = SOURCE_ROOT + "/common/service_tools/build_host.py"
 SUDOERS_DIR = "/etc/sudoers.d"
@@ -211,7 +221,12 @@ def _trusted_source_tree() -> None:
     entrypoint._trusted_libraries(resolved)
 
 
-def _read_file(path: str, *, mode: int, maximum: int) -> bytes | None:
+def _mode_is_allowed(actual_mode: int, expected: int | tuple[int, ...]) -> bool:
+    allowed = expected if isinstance(expected, tuple) else (expected,)
+    return stat.S_IMODE(actual_mode) in allowed
+
+
+def _read_file(path: str, *, mode: int | tuple[int, ...], maximum: int) -> bytes | None:
     """Read one root-owned regular file through a no-follow parent descriptor."""
     parent, name = os.path.dirname(path), os.path.basename(path)
     _trusted_path(parent, final_directory=True)
@@ -224,7 +239,7 @@ def _read_file(path: str, *, mode: int, maximum: int) -> bytes | None:
             before = os.fstat(descriptor)
             if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0
                     or before.st_nlink != 1
-                    or stat.S_IMODE(before.st_mode) != mode or before.st_size > maximum):
+                    or not _mode_is_allowed(before.st_mode, mode) or before.st_size > maximum):
                 raise ValueError(f"Managed build-host file is unsafe: {path}")
             with os.fdopen(os.dup(descriptor), "rb") as stream:
                 content = stream.read(maximum + 1)
@@ -285,7 +300,7 @@ def _write_file(path: str, content: bytes, *, mode: int, exclusive: bool = False
                 pass
 
 
-def _remove_file(path: str, *, mode: int, maximum: int) -> bytes | None:
+def _remove_file(path: str, *, mode: int | tuple[int, ...], maximum: int) -> bytes | None:
     """Durably unlink a verified root-owned regular file and return its bytes."""
     content = _read_file(path, mode=mode, maximum=maximum)
     if content is None:
@@ -573,7 +588,7 @@ def _validate_sudoers(content: bytes) -> None:
             os.fsync(parent_fd)
 
 
-def _read_root_file(path: str, *, mode: int, maximum: int) -> bytes | None:
+def _read_root_file(path: str, *, mode: int | tuple[int, ...], maximum: int) -> bytes | None:
     _trusted_path(os.path.dirname(path), final_directory=True)
     return _read_file(path, mode=mode, maximum=maximum)
 
@@ -586,7 +601,7 @@ def _reconcile_authorized_key(principal: str, record: dict[str, Any], desired: s
             return
         raise ValueError(f"Managed build-host SSH directory is missing: {os.path.dirname(path)}")
     old_key = record["key"]
-    existing = _read_root_file(path, mode=0o600, maximum=64 * 1024)
+    existing = _read_root_file(path, mode=_ALLOWED_AUTHORIZED_KEYS_MODES, maximum=64 * 1024)
     if existing is not None and not record["auth_managed"]:
         raise ValueError(f"Refusing an unmanaged build-host authorized_keys file: {path}")
     if existing is None:
@@ -600,13 +615,17 @@ def _reconcile_authorized_key(principal: str, record: dict[str, Any], desired: s
         kept.append(_authorized_key_line(principal, desired))
     updated = b"".join(kept)
     if updated == existing:
+        if desired is not None:
+            # Keep the public forced-command key readable to sshd after moving
+            # from the original private 0600 layout to the shared read-only path.
+            _write_file(path, updated, mode=AUTHORIZED_KEYS_MODE)
         return
     record["auth_managed"] = True
     _write_marker(marker)
     if updated:
-        _write_file(path, updated, mode=0o600)
+        _write_file(path, updated, mode=AUTHORIZED_KEYS_MODE)
     elif existing is not None:
-        _remove_file(path, mode=0o600, maximum=64 * 1024)
+        _remove_file(path, mode=_ALLOWED_AUTHORIZED_KEYS_MODES, maximum=64 * 1024)
 
 
 def _reconcile_sudoers(principal: str, record: dict[str, Any], desired: str | None,
@@ -645,7 +664,14 @@ def _ensure_runtime_directories() -> None:
     _ensure_directory(DATA_ROOT, mode=0o700, allow_existing=False)
     for root in ROOTS.values():
         _ensure_directory(root, mode=0o700, allow_existing=False)
-    _ensure_directory(SSH_ROOT, mode=0o700, allow_existing=False)
+    if not os.path.lexists(SSH_ROOT):
+        _ensure_directory(SSH_ROOT, mode=SSH_ROOT_MODE, allow_existing=False)
+    else:
+        _trusted_path(SSH_ROOT, final_directory=True)
+        info = Path(SSH_ROOT).lstat()
+        if (info.st_uid != 0 or info.st_gid != 0
+                or stat.S_IMODE(info.st_mode) not in _ALLOWED_SSH_ROOT_MODES):
+            raise ValueError("Managed build-host SSH root has an unsupported mode or owner")
     _trusted_path(SUDOERS_DIR, final_directory=True, allow_missing=True)
 
 
@@ -723,8 +749,8 @@ def _validate_transport_namespace(principals: set[str]) -> None:
     _trusted_path(SSH_ROOT, final_directory=True)
     root_info = Path(SSH_ROOT).lstat()
     if (root_info.st_uid != 0 or root_info.st_gid != 0
-            or stat.S_IMODE(root_info.st_mode) != 0o700):
-        raise ValueError("Build-host SSH root must be root-owned 0700")
+            or stat.S_IMODE(root_info.st_mode) not in _ALLOWED_SSH_ROOT_MODES):
+        raise ValueError("Build-host SSH root has an unsupported mode or owner")
     expected_homes = {username.removeprefix("bw-build-") for username in expected_users}
     with os.scandir(SSH_ROOT) as entries:
         for entry in entries:
@@ -732,14 +758,14 @@ def _validate_transport_namespace(principals: set[str]) -> None:
                 raise ValueError(f"Refusing an unmarked build-host SSH home: {entry.name}")
             home_info = entry.stat(follow_symlinks=False)
             if (not stat.S_ISDIR(home_info.st_mode) or home_info.st_uid != 0
-                    or home_info.st_gid != 0 or stat.S_IMODE(home_info.st_mode) != 0o555):
+                    or home_info.st_gid != 0 or stat.S_IMODE(home_info.st_mode) != SSH_HOME_MODE):
                 raise ValueError(f"Managed build-host SSH home is unsafe: {entry.name}")
             ssh_path = os.path.join(SSH_ROOT, entry.name, ".ssh")
             if not os.path.lexists(ssh_path):
                 continue
             ssh_info = _trusted_path(ssh_path, final_directory=True)
             if (ssh_info is None or ssh_info.st_uid != 0 or ssh_info.st_gid != 0
-                    or stat.S_IMODE(ssh_info.st_mode) != 0o700):
+                    or stat.S_IMODE(ssh_info.st_mode) not in _ALLOWED_SSH_DIRECTORY_MODES):
                 raise ValueError(f"Managed build-host .ssh directory is unsafe: {entry.name}")
             with os.scandir(ssh_path) as ssh_entries:
                 for child in ssh_entries:
@@ -835,7 +861,7 @@ def _preflight_managed_state(marker: dict[str, Any], enrollment: dict[str, Any],
                 raise ValueError(f"Refusing a modified managed build-host sudoers file: {username}")
         if os.path.lexists(key_path):
             _trusted_path(os.path.dirname(key_path), final_directory=True)
-            _read_file(key_path, mode=0o600, maximum=64 * 1024)
+            _read_file(key_path, mode=_ALLOWED_AUTHORIZED_KEYS_MODES, maximum=64 * 1024)
             if not record["auth_managed"]:
                 raise ValueError(f"Refusing an unmanaged build-host authorized_keys file: {username}")
 
@@ -871,6 +897,9 @@ def _prepare_enrollment(config: SetupConfig, enrollment: dict[str, Any], marker:
     _write_marker(marker)
 
     _install_packages(config)
+    # Existing enrolled hosts may have the original root-only lookup modes.
+    # Upgrade them only while the worker is drained and its unit is inactive.
+    _ensure_directory(SSH_ROOT, mode=SSH_ROOT_MODE, allow_existing=True)
 
     desired_principals = set(enrollment["keys"])
     for principal in sorted(desired_principals):
@@ -901,8 +930,8 @@ def _prepare_enrollment(config: SetupConfig, enrollment: dict[str, Any], marker:
                 )
         if record["managed"]:
             home = SSH_ROOT + "/" + record["username"].removeprefix("bw-build-")
-            _ensure_directory(home, mode=0o555, allow_existing=True)
-            _ensure_directory(home + "/.ssh", mode=0o700, allow_existing=True)
+            _ensure_directory(home, mode=SSH_HOME_MODE, allow_existing=True)
+            _ensure_directory(home + "/.ssh", mode=SSH_DIRECTORY_MODE, allow_existing=True)
 
     # Remove sudo authority before removing a revoked key. New identities gain
     # the fixed sudo command before their forced-command key is published.
@@ -960,6 +989,8 @@ def _quiesce_missing_managed_unit() -> None:
 
 def _preflight_disable(marker: dict[str, Any]) -> None:
     """Verify ownership records and persistent roots before draining the worker."""
+    pending = {} if marker["pending"] is None else marker["pending"]["keys"]
+    _validate_transport_namespace(set(marker["principals"]) | set(pending))
     _trusted_path(ETC_DIR, final_directory=True)
     info = Path(ETC_DIR).lstat()
     if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o700):
@@ -968,9 +999,10 @@ def _preflight_disable(marker: dict[str, Any]) -> None:
     for root in (DATA_ROOT, *ROOTS.values(), SSH_ROOT):
         _trusted_path(root, final_directory=True)
         root_info = Path(root).lstat()
+        allowed_modes = _ALLOWED_SSH_ROOT_MODES if root == SSH_ROOT else (0o700,)
         if (root_info.st_uid != 0 or root_info.st_gid != 0
-                or stat.S_IMODE(root_info.st_mode) != 0o700):
-            raise ValueError(f"Managed build-host directory must be root-owned 0700: {root}")
+                or stat.S_IMODE(root_info.st_mode) not in allowed_modes):
+            raise ValueError(f"Managed build-host directory has an unsupported owner or mode: {root}")
 
     worker = marker["worker"]
     account, group = _get_account(BUILD_ACCOUNT), _get_group(BUILD_ACCOUNT)
@@ -1021,7 +1053,7 @@ def _preflight_disable(marker: dict[str, Any]) -> None:
         key_path = home + "/.ssh/authorized_keys"
         if os.path.lexists(key_path):
             _trusted_path(os.path.dirname(key_path), final_directory=True)
-            _read_file(key_path, mode=0o600, maximum=64 * 1024)
+            _read_file(key_path, mode=_ALLOWED_AUTHORIZED_KEYS_MODES, maximum=64 * 1024)
             if not record["auth_managed"]:
                 raise ValueError(f"Refusing an unmanaged build-host authorized_keys file: {username}")
 
@@ -1239,6 +1271,7 @@ def configure_build_host(config: SetupConfig) -> None:
             raise RuntimeError("Build-host worker is active; setup left it running and made no changes") from exc
         _draining, running = _store_snapshot(store)
         if running:
+            changes_started = True
             raise RuntimeError("Build-host setup refuses a retained running claim; worker was not stopped")
 
         unit_text = _service_content()
