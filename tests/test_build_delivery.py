@@ -17,7 +17,7 @@ from lib.build_artifacts import MAGIC
 from lib.build_client import ArtifactPublicationUncertain, BuildHostClient, BuildSubmissionUnconfirmed
 from lib.build_delivery import BuildDeliveryController, DeliveryPlan, DeliveryRecoveryRequired, MAX_PLANS
 from lib.build_manifest import DEBIAN_PLATFORM
-from lib.build_protocol import DEFAULT_LIMITS, encode_document, request_digest
+from lib.build_protocol import DEFAULT_LIMITS, MAX_DESCRIPTOR_BYTES, encode_document, request_digest
 from lib.build_target_client import BuildTargetClient, TargetOperationUnconfirmed
 from lib.operation_state import OperationStateStore
 
@@ -63,6 +63,11 @@ class TestBuildDelivery(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        capacity = patch("lib.build_delivery.os.fstatvfs", return_value=SimpleNamespace(
+            f_frsize=4096, f_bsize=4096, f_bavail=256 * 1024**2,
+        ))
+        self.capacity = capacity.start()
+        self.addCleanup(capacity.stop)
 
     @staticmethod
     def publish_tree(parent: int, source: str, destination: str) -> None:
@@ -260,6 +265,71 @@ class TestBuildDelivery(unittest.TestCase):
         self.assert_no_activation()
         self.assertTrue(all("artifact_sha256" in item for item in self.entries()))
 
+    def test_capacity_budgets_extraction_and_all_plans_before_remote_work(self) -> None:
+        # Tiny fixture artifacts, but valid 2 GiB request ceilings. One export
+        # fits in 3 GiB; its retained bundle plus extracted tree cannot fit.
+        for plan in self.plans:
+            plan.request["limits"]["artifact_entries"] = 1
+        for plans, free_gib in ((self.plans[:1], 3), (self.plans, 7)):
+            with self.subTest(plans=len(plans), free_gib=free_gib):
+                self.capacity.return_value.f_bavail = free_gib * 1024**3 // 4096
+                with self.assertRaisesRegex(ValueError, "Insufficient delivery workspace capacity"):
+                    self.controller.deliver(plans)
+                self.assertFalse(Path(self.controller.journal_path).exists())
+                self.assertEqual([item.name for item in self.workspace.iterdir()], ["delivery.json.lock"])
+        self.builder.capabilities.assert_not_called()
+        self.target.preflight.assert_not_called()
+        self.target.reserve.assert_not_called()
+        self.builder.submit.assert_not_called()
+        self.builder.download_artifact.assert_not_called()
+        self.assert_no_activation()
+
+    def test_capacity_includes_metadata_allocation_and_headroom_at_boundary(self) -> None:
+        # Use one small real bundle and a 64 KiB allocation unit to make both
+        # per-entry allocation and metadata observable without large writes.
+        self.plans = self.plans[:1]
+        plan = self.plans[0]
+        plan.request["limits"].update(artifact_bytes=1024, artifact_entries=1)
+        self.artifacts[plan.request["request_id"]] = self.bundle(plan)
+        capacity = self.capacity.return_value
+        capacity.f_frsize, capacity.f_bsize = 1, 64 * 1024
+        # 4 MiB state + eight units; two 1 KiB payloads + descriptor/framing;
+        # one entry, bundle and root each have allocation + 4 KiB metadata.
+        retained = 4 * 1024**2 + 8 * 65536 + 2048 + MAX_DESCRIPTOR_BYTES + 1024 + 3 * (65536 + 4096)
+        required = retained + 256 * 1024**2
+        for available in (retained, required - 1):
+            capacity.f_bavail = available
+            with self.subTest(available=available), self.assertRaisesRegex(ValueError, f"need {required}"):
+                self.controller.deliver(self.plans)
+        self.target.reserve.assert_not_called()
+        self.builder.submit.assert_not_called()
+        capacity.f_bavail = required
+        receipt = self.controller.deliver(self.plans)
+        self.assertEqual(receipt.applications[0].request_id, plan.request["request_id"])
+
+    def test_capacity_keeps_percentage_headroom_for_large_deliveries(self) -> None:
+        # Both default 2 GiB ceilings plus metadata fit, but less than 10%
+        # headroom must fail. No artifacts are actually allocated here.
+        capacity = self.capacity.return_value
+        capacity.f_frsize = 1
+        retained = 4 * 1024**2 + 8 * 4096 + 2 * (
+            4 * 1024**3 + MAX_DESCRIPTOR_BYTES + 1024
+            + (DEFAULT_LIMITS["artifact_entries"] + 2) * 8192
+        )
+        capacity.f_bavail = retained + 256 * 1024**2
+        with self.assertRaisesRegex(ValueError, "Insufficient delivery workspace capacity"):
+            self.controller.deliver(self.plans)
+        self.target.reserve.assert_not_called()
+        self.builder.submit.assert_not_called()
+
+    def test_unavailable_capacity_fails_closed_before_remote_work(self) -> None:
+        self.capacity.side_effect = OSError("capacity unavailable")
+        with self.assertRaises(OSError):
+            self.controller.deliver(self.plans)
+        self.builder.capabilities.assert_not_called()
+        self.target.reserve.assert_not_called()
+        self.builder.submit.assert_not_called()
+
     def test_local_mismatch_and_duplicates_fail_before_preflight(self) -> None:
         second = self.plans[1]
         changed = deepcopy(second.deployment)
@@ -347,9 +417,11 @@ class TestBuildDelivery(unittest.TestCase):
                     if action != "reserve":
                         self.assertTrue(all("operation_id" in item for item in entries))
                     calls = len(self.builder.mock_calls) + len(self.target.mock_calls)
+                    capacity_calls = self.capacity.call_count
                     with self.assertRaises(DeliveryRecoveryRequired):
                         self.controller.deliver(self.plans)
                     self.assertEqual(len(self.builder.mock_calls) + len(self.target.mock_calls), calls)
+                    self.assertEqual(self.capacity.call_count, capacity_calls)
                     getattr(client, action).side_effect = original
         self.target.cancel.assert_not_called()
         self.builder.cancel.assert_not_called()

@@ -31,6 +31,7 @@ from lib.operation_state import OperationStateError, OperationStateStore
 MAX_PLANS = 16
 MAX_CONTEXT_BYTES = 64 * 1024
 MAX_DELIVERY_SECONDS = 24 * 3600
+MIN_WORKSPACE_HEADROOM_BYTES = 256 * 1024**2
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,37 @@ def _validated(plan: DeliveryPlan, tick: Callable[[], None]) -> DeliveryPlan:
     return DeliveryPlan(request, source_path, deployment, plan.idempotency_key, tools, plan.ttl_seconds)
 
 
+def _check_workspace_capacity(root: int, plans: Sequence[DeliveryPlan]) -> None:
+    """Budget all retained bundles/trees on the already validated filesystem.
+
+    This is admission headroom, not a filesystem reservation. Concurrent disk
+    consumers and filesystem-specific quotas can still cause later I/O errors.
+    """
+    capacity = os.fstatvfs(root)
+    if capacity.f_frsize <= 0 or capacity.f_bsize <= 0 or capacity.f_bavail < 0:
+        raise ValueError("Delivery workspace capacity is unavailable")
+    allocation = max(4096, capacity.f_frsize, capacity.f_bsize)
+    # Four maximum-sized state documents plus allocation for locks, receipts
+    # and atomic-write temporaries. Bundle/tree publication renames, not copies.
+    retained = 4 * 1024**2 + 8 * allocation
+    for plan in plans:
+        limits = plan.request["limits"]
+        retained += (
+            2 * limits["artifact_bytes"] + MAX_DESCRIPTOR_BYTES + 1024
+            # Every inventoried file/directory can need an allocation unit plus
+            # inode/directory metadata. Include the bundle and extraction root.
+            + (limits["artifact_entries"] + 2) * (allocation + 4096)
+        )
+    headroom = max(MIN_WORKSPACE_HEADROOM_BYTES, (retained + 9) // 10)
+    required = retained + headroom
+    available = capacity.f_bavail * capacity.f_frsize
+    if available < required:
+        raise ValueError(
+            f"Insufficient delivery workspace capacity: need {required} available bytes "
+            f"including headroom, have {available}; lower request ceilings or provision more space"
+        )
+
+
 class BuildDeliveryController:
     """Compose exclusively borrowed trusted clients; never close or replay them.
 
@@ -219,6 +251,7 @@ class BuildDeliveryController:
                 ):
                     if len(set(values)) != len(values):
                         raise ValueError("Applications, request IDs and keys must each be unique")
+                _check_workspace_capacity(root, selected)
                 receipt_name = "receipt-" + selected[0].idempotency_key + ".json"
                 # Every plan is fully locally validated before the first probe;
                 # every grant/tool check finishes before the first mutation.
