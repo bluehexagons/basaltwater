@@ -69,7 +69,7 @@ def execution_argv(request: object, *, uid: int, gid: int, scratch_path: str,
     properties = [
         "Type=exec", "ExitType=cgroup", "RemainAfterExit=yes", "Restart=no",
         "Group=root", "NoNewPrivileges=yes", "UMask=0077",
-        "CapabilityBoundingSet=CAP_SETUID CAP_SETGID", "AmbientCapabilities=",
+        "CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP", "AmbientCapabilities=",
         "KillMode=control-group", "TimeoutStopSec=15", "SendSIGKILL=yes",
         f"RuntimeMaxSec={limits['timeout_seconds']}", f"MemoryMax={limits['memory_bytes']}",
         "MemorySwapMax=0", f"CPUQuota={limits['cpu_percent']}%", "TasksMax=256",

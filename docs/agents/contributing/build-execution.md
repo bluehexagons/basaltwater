@@ -30,6 +30,9 @@ history stay root-owned and readable, outside those writable directories.
 The transient system service applies memory, swap, CPU, process-count and work
 time limits. A fixed `setpriv` command drops UID/GID, supplementary groups and
 all capabilities before launching isolated Python and literal shell commands.
+The fixed launcher retains `CAP_SETPCAP` only to let `setpriv` drop the
+[capability bounding set](https://man7.org/linux/man-pages/man7/capabilities.7.html);
+the build process receives no capabilities, including in its bounding set.
 The environment is replaced rather than inherited. The unit deliberately
 omits explicit `User=root`, following the existing broker capability boundary.
 The helper caps the combined output across component commands; reaching the

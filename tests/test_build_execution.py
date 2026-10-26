@@ -39,6 +39,7 @@ class BuildExecutionTests(unittest.TestCase):
         for required in ("--expand-environment=no", "--property=ExitType=cgroup",
                          "--property=RemainAfterExit=yes", "--property=KillMode=control-group",
                          "--property=NoNewPrivileges=yes", "--property=AmbientCapabilities=",
+                         "--property=CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP",
                          "--property=MemoryMax=2147483648", "--property=CPUQuota=100%",
                          "--property=MemorySwapMax=0", "--property=ProtectSystem=strict",
                          "--property=TemporaryFileSystem=/tmp:ro /var/tmp:ro",
