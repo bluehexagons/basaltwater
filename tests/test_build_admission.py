@@ -211,8 +211,8 @@ class BuildAdmissionTests(unittest.TestCase):
                 )
                 original = getattr(store, "_" + phase)
 
-                def advance(*args):
-                    result = original(*args)
+                def advance(*args, **kwargs):
+                    result = original(*args, **kwargs)
                     clock.value += 2
                     return result
 
@@ -335,6 +335,18 @@ class BuildAdmissionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             linked_state.status("f" * 32, owner="controller")
 
+    def test_missing_initialized_ledger_cannot_reset_generation_or_replay(self) -> None:
+        record = self.reserve()
+        original = self.path.read_bytes()
+        self.path.unlink()
+        with self.assertRaisesRegex(ValueError, "ledger is missing"):
+            self.reserve()
+        self.assertFalse(self.path.exists())
+        self.path.write_bytes(original)
+        self.path.chmod(0o600)
+        self.assertEqual(self.reserve()["operation_id"], record["operation_id"])
+        self.assertEqual(self.reserve(key="d" * 32)["generation"], 2)
+
     def test_lock_is_private_stable_and_competing_call_fails_busy(self) -> None:
         record = self.reserve()
         lock_path = self.path.with_name(self.path.name + ".lock")
@@ -399,7 +411,7 @@ class BuildAdmissionTests(unittest.TestCase):
         with patch.object(build_admission, "MAX_STORE_BYTES", 128):
             with self.assertRaisesRegex(ValueError, "byte limit"):
                 self.reserve()
-        self.assertFalse(self.path.exists())
+        self.assertEqual(json.loads(self.path.read_text())["operations"], {})
         record = self.reserve(key="d" * 32)
         self.assertEqual(record["generation"], 1)
 

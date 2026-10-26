@@ -137,7 +137,8 @@ class BuildJobStoreTests(unittest.TestCase):
 
         def save_then_lose_reply(parent_fd, state):
             real_save(parent_fd, state)
-            raise OSError("simulated reply loss after durable commit")
+            if state["jobs"]:
+                raise OSError("simulated reply loss after durable commit")
 
         with patch.object(self.store, "_save", side_effect=save_then_lose_reply):
             with self.assertRaisesRegex(OSError, "reply loss"):
@@ -213,7 +214,7 @@ class BuildJobStoreTests(unittest.TestCase):
         with patch.object(build_jobs, "MAX_STORE_BYTES", 128):
             with self.assertRaises(ValueError):
                 self.submit()
-        self.assertFalse(self.path.exists())
+        self.assertEqual(json.loads(self.path.read_text())["jobs"], {})
         self.assertEqual(self.submit()["sequence"], 1)
 
     def test_running_cancel_is_cooperative_and_finish_requires_verified_cleanup(self) -> None:
@@ -398,6 +399,26 @@ class BuildJobStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "state lookup failed"):
                 self.store.status(job["request_id"], owner="controller")
         self.assertEqual(self.path.read_bytes(), original)
+
+    def test_missing_initialized_ledger_cannot_reset_replay_or_running_claim(self) -> None:
+        request = build_request()
+        self.store.submit(request, owner="controller")
+        with self.store.worker() as lease:
+            lease.claim()
+        original = self.path.read_bytes()
+        self.path.unlink()
+        reopened = BuildJobStore(self.path, clock=self.clock)
+        with self.assertRaisesRegex(ValueError, "ledger is missing"):
+            reopened.submit(request, owner="controller")
+        with reopened.worker() as lease:
+            with self.assertRaisesRegex(ValueError, "ledger is missing"):
+                lease.claim()
+        self.assertFalse(self.path.exists())
+        self.path.write_bytes(original)
+        self.path.chmod(0o600)
+        with reopened.worker() as lease:
+            with self.assertRaisesRegex(RuntimeError, "recover_interrupted"):
+                lease.claim()
 
     def test_private_parent_rejects_public_and_symlink_directories(self) -> None:
         public = self.root / "public"

@@ -65,6 +65,10 @@ prunes an identity to make room. Corrupt, unreadable, unsupported, or unsafe
 state fails closed and remains available for inspection. A busy store reports
 an error instead of waiting; activation currently holds one target-wide lock,
 so long callbacks block all admission-store calls on that target.
+The stable lock contains an initialization witness. Once initialized, a missing
+ledger requires restoration and cannot allocate fresh generations or discard
+replay protection. Preserve state and the stable lock together; deleting both
+is not a supported reset.
 
 These records bind identity and ordering only. They do not roll back arbitrary
 application side effects, protect against a malicious process running as the

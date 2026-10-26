@@ -63,6 +63,7 @@ _ARTIFACT_IDENTITY_FIELDS = frozenset({
     "project", "source", "platform",
 })
 _ARTIFACT_SIZE_LIMIT = MAX_ARTIFACT_BYTES + MAX_DESCRIPTOR_BYTES + 1024
+_INITIALIZED = b"basaltwater-build-jobs-v1\n"
 
 
 def _identifier(value: object, label: str, pattern: re.Pattern[str] = _ID) -> str:
@@ -362,12 +363,23 @@ class BuildJobStore:
                 if current_lock is None or (current_lock.st_dev, current_lock.st_ino) != (
                         lock_info.st_dev, lock_info.st_ino):
                     raise ValueError("Build store state lock changed while opening")
-                state = self._load(parent_fd)
+                initialized = os.pread(lock_fd, len(_INITIALIZED) + 1, 0)
+                if initialized not in (b"", _INITIALIZED):
+                    raise ValueError("Build store initialization witness is invalid")
+                state = self._load(parent_fd, required=bool(initialized))
+                if not initialized:
+                    # Persist an initial ledger before marking the stable lock.
+                    # Once acknowledged, losing the ledger cannot reset replay
+                    # protection or remove an interrupted running claim.
+                    self._save(parent_fd, state)
+                    if os.pwrite(lock_fd, _INITIALIZED, 0) != len(_INITIALIZED):
+                        raise OSError("Build store initialization witness is incomplete")
+                    os.fsync(lock_fd)
                 yield state, parent_fd
             finally:
                 os.close(lock_fd)
 
-    def _load(self, parent_fd: int) -> dict[str, Any]:
+    def _load(self, parent_fd: int, *, required: bool = False) -> dict[str, Any]:
         try:
             descriptor = os.open(
                 self.name,
@@ -375,6 +387,8 @@ class BuildJobStore:
                 dir_fd=parent_fd,
             )
         except FileNotFoundError:
+            if required:
+                raise ValueError("Initialized build ledger is missing; restore it before continuing") from None
             return _empty_state()
         except OSError as exc:
             if exc.errno == errno.ELOOP:

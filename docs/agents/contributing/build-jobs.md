@@ -114,6 +114,10 @@ atomic replacement and filesystem sync before acknowledgement. Stable state
 and worker lock files are separate: status and admission hold the state lock
 briefly, while the worker flock remains held through claim, execution, and
 cleanup.
+The stable state lock also holds a durable initialization witness. After that
+witness is written, a missing ledger is an error requiring restoration, never
+a fresh queue. Preserve the ledger and its stable locks together; removing both
+destroys the local replay evidence and is not a supported reset operation.
 
 The monotonically increasing submission sequence defines FIFO order even when
 wall-clock timestamps repeat or move backward. Persisted timestamps are

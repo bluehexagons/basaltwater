@@ -35,6 +35,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}")
 _STATES = frozenset({"reserved", "cancelled", "activating", "uncertain", "completed"})
+_INITIALIZED = b"basaltwater-build-admission-v1\n"
 _RECORD_FIELDS = frozenset({
     "operation_id", "owner", "idempotency_key", "application", "generation",
     "created_at", "expires_at", "project", "request_id", "request_sha256",
@@ -170,15 +171,25 @@ class DeploymentAdmissionStore:
                 except BlockingIOError as exc:
                     raise RuntimeError("Deployment admission store is busy") from exc
                 self._check_file(parent_fd, self.name, "state")
-                state = self._load()
+                initialized = os.pread(lock_fd, len(_INITIALIZED) + 1, 0)
+                if initialized not in (b"", _INITIALIZED):
+                    raise ValueError("Admission initialization witness is invalid")
+                state = self._load(required=bool(initialized))
+                if not initialized:
+                    self._save(state)
+                    if os.pwrite(lock_fd, _INITIALIZED, 0) != len(_INITIALIZED):
+                        raise OSError("Admission initialization witness is incomplete")
+                    os.fsync(lock_fd)
                 yield state
             finally:
                 os.close(lock_fd)
 
-    def _load(self) -> dict[str, Any]:
+    def _load(self, *, required: bool = False) -> dict[str, Any]:
         try:
             document = read_json_file(self.path, max_bytes=MAX_STORE_BYTES)
         except FileNotFoundError:
+            if required:
+                raise ValueError("Initialized admission ledger is missing; restore it before continuing") from None
             return _empty_state()
         return self._validate_state(document)
 
