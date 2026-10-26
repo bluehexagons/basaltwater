@@ -157,8 +157,9 @@ def run_systemd_build(request: object, *, uid: int, gid: int, scratch_path: str,
                       pause: Callable[[float], None] = time.sleep) -> BuildExecutionResult:
     """Wait for the cgroup, including cleanup beyond the normal work deadline.
 
-    The caller holds durable capacity and supplies already-provisioned input,
-    workspace, home and a new empty private log. Start/probe/stop errors escape
+    The caller holds durable capacity and supplies a provisioned scratch
+    filesystem with the fixed input/workspace/home layout and a new empty
+    private log. Start/probe/stop errors escape
     with the job still running; callers must not finish it or start another job.
     """
     job = parse_build_request(request)
