@@ -1335,6 +1335,26 @@ def add_setup_arguments(
     parser.add_argument("--deploy", dest="deploy_specs",
                        action=DeploySpecAction, nargs="+", metavar="DEPLOY",
                        help="Deploy git repositories as DOMAIN_OR_PATH GIT_URL pairs (can be used multiple times)")
+
+    if not for_remote:
+        build_selection = parser.add_mutually_exclusive_group()
+        build_selection.add_argument(
+            "--build-on",
+            dest="build_on",
+            metavar="SAVED-BUILDER",
+            help="Select a saved builder reference for artifact deployments",
+        )
+        build_selection.add_argument(
+            "--no-build-on",
+            dest="clear_build_on",
+            action="store_true",
+            help="Clear the saved builder selection and return to target builds",
+        )
+    parser.add_argument(
+        "--artifact-deployments",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     
     deployment_mode_group = parser.add_mutually_exclusive_group()
     deployment_mode_group.add_argument("--deployment-lite", dest="deployment_mode", action="store_const", const="lite",

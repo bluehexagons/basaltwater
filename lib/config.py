@@ -639,6 +639,9 @@ class SetupConfig:
     deployment_mode: str = "default"  # "default" (smart cache), "lite" (cached only), "full" (always fresh)
     full_deploy: bool = False
     deploy_latest: bool = False
+    build_on: str | None = None
+    clear_build_on: bool = False
+    artifact_deployments: bool = False
     enable_ssl: bool = False
     ssl_email: Optional[str] = None
     enable_cloudflare: bool = False
@@ -737,6 +740,26 @@ class SetupConfig:
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        if type(self.clear_build_on) is not bool:
+            raise ValueError("clear_build_on must be a boolean")
+        if type(self.artifact_deployments) is not bool:
+            raise ValueError("artifact_deployments must be a boolean")
+        if self.build_on is not None:
+            if not isinstance(self.build_on, str):
+                raise ValueError("build_on must be a string or None")
+            if not self.build_on or len(self.build_on) > 128:
+                raise ValueError("build_on must contain 1 to 128 characters")
+            if self.build_on != self.build_on.strip():
+                raise ValueError("build_on must not have leading or trailing whitespace")
+            from lib.validation import validate_no_control_characters
+
+            validate_no_control_characters(self.build_on, "Build-on reference")
+        if self.build_on is not None and self.clear_build_on:
+            raise ValueError("Cannot select and clear build_on in one setup")
+        if self.clear_build_on:
+            self.artifact_deployments = False
+        elif self.build_on is not None:
+            self.artifact_deployments = True
         if type(self.disable_build_host) is not bool:
             raise ValueError("disable_build_host must be a boolean")
         if self.disable_build_host and self.is_build_server:
@@ -1603,6 +1626,9 @@ class SetupConfig:
             flag = "--deploy-latest" if self.deploy_latest else "--deploy"
             for deploy_spec, git_url in self.deploy_specs:
                 args.append(f"{flag} {shlex.quote(deploy_spec)} {shlex.quote(git_url)}")
+
+        if self.artifact_deployments:
+            args.append("--artifact-deployments")
         
         if self.enable_ssl:
             args.append("--ssl")
@@ -1636,7 +1662,6 @@ class SetupConfig:
         if self.build_target_enrollment is not None:
             policy_json = json.dumps(self.build_target_enrollment, separators=(",", ":"))
             args.append("--build-target-enrollment-json " + shlex.quote(policy_json))
-        
         if self.is_app_server:
             args.append("--app-server")
         
@@ -2238,6 +2263,12 @@ class SetupConfig:
         if self.build_target_enrollment is not None:
             policy_json = json.dumps(self.build_target_enrollment, separators=(",", ":"))
             cmd_parts.append("--build-target-enrollment-json " + shlex.quote(policy_json))
+        if self.build_on is not None:
+            cmd_parts.append(f"--build-on {shlex.quote(self.build_on)}")
+        elif self.clear_build_on:
+            cmd_parts.append("--no-build-on")
+        if self.artifact_deployments:
+            cmd_parts.append("--artifact-deployments")
         
         if self.is_app_server:
             cmd_parts.append("--app-server")
@@ -2727,6 +2758,16 @@ class SetupConfig:
             raise ValueError(
                 "Build target enrollment policy conflicts with de-enrollment"
             )
+        build_on = _optional_str_arg(args, "build_on")
+        clear_build_on = _optional_bool_arg(args, "clear_build_on") is True
+        artifact_deployments = (
+            _optional_bool_arg(args, "artifact_deployments") is True
+        )
+        if clear_build_on:
+            build_on = None
+            artifact_deployments = False
+        elif build_on is not None:
+            artifact_deployments = True
         is_app_server = bool(getattr(args, 'is_app_server', False))
         machine_type = _resolve_machine_type(
             args,
@@ -3189,6 +3230,9 @@ class SetupConfig:
             deployment_mode=getattr(args, 'deployment_mode', 'default'),
             full_deploy=getattr(args, 'full_deploy', False),
             deploy_latest=getattr(args, 'deploy_latest', False),
+            build_on=build_on,
+            clear_build_on=clear_build_on,
+            artifact_deployments=artifact_deployments,
             enable_ssl=enable_ssl,
             ssl_email=getattr(args, 'ssl_email', None),
             enable_cloudflare=getattr(args, 'enable_cloudflare', False),

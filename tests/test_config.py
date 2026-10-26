@@ -436,6 +436,121 @@ class TestBuildTargetEnrollmentConfig(unittest.TestCase):
         self.assertIsNone(disabled.build_target_enrollment)
 
 
+class TestBuildSelectionConfig(unittest.TestCase):
+    def _parser(self, *, remote=False):
+        from lib.arg_parser import create_setup_argument_parser
+
+        return create_setup_argument_parser("Build selection test", for_remote=remote)
+
+    def _config(self, **kwargs):
+        return SetupConfig(
+            host="target", username="agent", system_type="server_lite", **kwargs
+        )
+
+    def test_builder_reference_validation(self):
+        self.assertEqual(self._config(build_on="builder-prod").build_on, "builder-prod")
+        self.assertTrue(self._config(build_on="x" * 128).artifact_deployments)
+        for invalid in ("", " leading", "trailing ", "bad\nref", "x" * 129, 123):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self._config(build_on=invalid)
+        with self.assertRaisesRegex(ValueError, "clear_build_on must be a boolean"):
+            self._config(clear_build_on=1)
+        with self.assertRaisesRegex(ValueError, "artifact_deployments must be a boolean"):
+            self._config(artifact_deployments=1)
+        with self.assertRaisesRegex(ValueError, "select and clear"):
+            self._config(build_on="builder-prod", clear_build_on=True)
+
+    def test_controller_selection_parser_and_setup_command_round_trip(self):
+        args = self._parser().parse_args([
+            "target", "agent", "--build-on", "builder-prod",
+        ])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertEqual(config.build_on, "builder-prod")
+        self.assertTrue(config.artifact_deployments)
+        self.assertFalse(config.clear_build_on)
+        self.assertIn("--build-on builder-prod", config.to_setup_command())
+        self.assertIn("--artifact-deployments", config.to_setup_command())
+
+        replay_args = self._parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        replayed = SetupConfig.from_args(replay_args, "server_lite")
+        self.assertEqual(replayed.build_on, "builder-prod")
+        self.assertTrue(replayed.artifact_deployments)
+
+    def test_controller_selection_flags_are_mutually_exclusive(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                self._parser().parse_args([
+                    "target", "agent", "--build-on", "builder-prod", "--no-build-on",
+                ])
+
+    def test_controller_clear_round_trips_and_never_reaches_remote(self):
+        args = self._parser().parse_args(["target", "agent", "--no-build-on"])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertTrue(config.clear_build_on)
+        self.assertFalse(config.artifact_deployments)
+        replay_args = self._parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        replayed = SetupConfig.from_args(replay_args, "server_lite")
+        self.assertTrue(replayed.clear_build_on)
+        self.assertIsNone(replayed.build_on)
+        self.assertFalse(replayed.artifact_deployments)
+        remote_args = shlex.split(" ".join(config.to_remote_args()))
+        self.assertNotIn("--no-build-on", remote_args)
+        self.assertNotIn("--build-on", remote_args)
+
+    def test_target_artifact_mode_replays_without_controller_builder_reference(self):
+        args = self._parser().parse_args([
+            "target", "agent", "--artifact-deployments",
+        ])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertIsNone(config.build_on)
+        self.assertTrue(config.artifact_deployments)
+
+        restored = SetupConfig.from_dict("target", "server_lite", config.to_dict())
+        self.assertTrue(restored.artifact_deployments)
+        self.assertIsNone(restored.build_on)
+        command_args = self._parser().parse_args(
+            shlex.split(" ".join(restored.to_setup_command()))[3:]
+        )
+        command_config = SetupConfig.from_args(command_args, "server_lite")
+        self.assertTrue(command_config.artifact_deployments)
+        self.assertIsNone(command_config.build_on)
+
+    def test_remote_transport_contains_only_artifact_mode(self):
+        controller_args = self._parser().parse_args([
+            "target", "agent", "--build-on", "builder-prod",
+        ])
+        config = SetupConfig.from_args(controller_args, "server_lite")
+        remote_tokens = shlex.split(" ".join(config.to_remote_args()))
+        self.assertIn("--artifact-deployments", remote_tokens)
+        self.assertNotIn("--build-on", remote_tokens)
+        self.assertNotIn("builder-prod", remote_tokens)
+        self.assertNotIn("--no-build-on", remote_tokens)
+
+        remote_args = self._parser(remote=True).parse_args(remote_tokens)
+        remote_args.host = "target"
+        target_config = SetupConfig.from_args(remote_args, "server_lite")
+        self.assertIsNone(target_config.build_on)
+        self.assertFalse(target_config.clear_build_on)
+        self.assertTrue(target_config.artifact_deployments)
+        for controller_flag in ("--build-on", "--no-build-on"):
+            with self.subTest(flag=controller_flag), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    self._parser(remote=True).parse_args([controller_flag, "builder-prod"]
+                                                         if controller_flag == "--build-on"
+                                                         else [controller_flag])
+
+    def test_unselected_builder_preserves_existing_default_transport(self):
+        config = self._config()
+        self.assertFalse(config.artifact_deployments)
+        self.assertNotIn("--artifact-deployments", config.to_remote_args())
+        self.assertNotIn("--build-on", config.to_remote_args())
+        self.assertNotIn("--no-build-on", config.to_setup_command())
+
+
 class TestSetupConfigToDict(unittest.TestCase):
     def _make_config(self, **kwargs):
         defaults = dict(host='testhost', username='testuser', system_type='server_lite')

@@ -113,6 +113,50 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
         self.assertTrue(loaded_disabled.disable_build_target)
         self.assertIsNone(loaded_disabled.build_target_enrollment)
 
+    def test_save_and_load_preserves_build_selection_and_target_artifact_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("lib.cache.get_setup_cache_dir", return_value=tmpdir):
+                selected = self._make_config(
+                    build_on="builder-prod", artifact_deployments=True,
+                )
+                save_setup_command(selected)
+                loaded_selection = load_setup_command("testhost")
+                self.assertEqual(loaded_selection.build_on, "builder-prod")
+                self.assertTrue(loaded_selection.artifact_deployments)
+
+                target_only = self._make_config(artifact_deployments=True)
+                save_setup_command(target_only)
+                loaded_target = load_setup_command("testhost")
+
+        self.assertIsNone(loaded_target.build_on)
+        self.assertTrue(loaded_target.artifact_deployments)
+
+    def test_patch_merge_preserves_selection_clears_and_reenables(self):
+        saved = self._make_config(build_on="builder-old")
+        omitted = merge_setup_configs(saved, self._make_config())
+        self.assertEqual(omitted.build_on, "builder-old")
+        self.assertTrue(omitted.artifact_deployments)
+        self.assertFalse(omitted.clear_build_on)
+
+        cleared = merge_setup_configs(
+            omitted, self._make_config(clear_build_on=True)
+        )
+        self.assertIsNone(cleared.build_on)
+        self.assertFalse(cleared.artifact_deployments)
+        self.assertTrue(cleared.clear_build_on)
+        reloaded_clear = SetupConfig.from_dict(
+            "testhost", "server_lite", cleared.to_dict()
+        )
+        self.assertTrue(reloaded_clear.clear_build_on)
+        self.assertFalse(reloaded_clear.artifact_deployments)
+
+        selected = merge_setup_configs(
+            cleared, self._make_config(build_on="builder-new")
+        )
+        self.assertEqual(selected.build_on, "builder-new")
+        self.assertTrue(selected.artifact_deployments)
+        self.assertFalse(selected.clear_build_on)
+
     def test_load_retains_legacy_privilege_broker_origin_and_reports_upgrade_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir):
