@@ -9,6 +9,7 @@ Authentication and platform/runtime authorization belong to the caller.
 from __future__ import annotations
 
 import hashlib
+import ctypes
 import os
 import secrets
 import shutil
@@ -100,6 +101,8 @@ def _relative_parent(root: int, path: str, *, create: bool = False) -> Iterator[
                 except FileExistsError:
                     pass
             child = os.open(part, _DIRECTORY, dir_fd=descriptor)
+            if create:
+                os.fchmod(child, 0o755)
             os.close(descriptor)
             descriptor = child
         yield descriptor, parts[-1]
@@ -225,6 +228,23 @@ def _inventory(root: int, paths: list[str]) -> list[dict[str, Any]]:
     return entries
 
 
+def _publish_tree(parent: int, source: str, destination: str) -> None:
+    """Atomically refuse any existing destination, including a racing creator.
+
+    This is the Debian adapter. Platforms without renameat2 must provide their
+    own no-replace primitive; an unsafe replace fallback is never used.
+    """
+    library = ctypes.CDLL(None, use_errno=True)
+    rename = getattr(library, "renameat2", None)
+    if rename is None:
+        raise NotImplementedError("Artifact publication requires no-replace rename support")
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(parent, os.fsencode(source), parent, os.fsencode(destination), 1) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), destination)
+
+
 def create_artifact(workspace: str, request: object, destination: str, *,
                     toolchains: dict[str, str] | None = None) -> dict[str, Any]:
     """Publish a new bundle from stopped build output, without replacing a file.
@@ -306,7 +326,11 @@ def unpack_artifact(bundle: str, request: object, destination: str, *,
                         try:
                             os.mkdir(leaf, mode=0o755, dir_fd=directory)
                         except FileExistsError:
-                            child = os.open(leaf, _DIRECTORY, dir_fd=directory)
+                            pass
+                        child = os.open(leaf, _DIRECTORY, dir_fd=directory)
+                        try:
+                            os.fchmod(child, 0o755)
+                        finally:
                             os.close(child)
                         continue
                     output = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -337,6 +361,6 @@ def unpack_artifact(bundle: str, request: object, destination: str, *,
                     finally:
                         os.close(child)
         os.fsync(root)
-        os.rename(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+        _publish_tree(parent, temporary, name)
         os.fsync(parent)
         return descriptor

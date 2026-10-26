@@ -429,7 +429,8 @@ class TestArtifactPaths(unittest.TestCase):
             ["//server/share"], ["../outside"], ["dist/../secret"], ["./dist"],
             ["dist/."], ["dist//index.html"], ["dist/"], [r"dist\index.html"],
             [r"\\server\share"], ["C:/dist"], ["file:stream"],
-            ["dist/\x00index"], ["dist/\x85index"],
+            ["dist/\x00index"], ["dist/\x85index"], [".git/config"],
+            ["dist/.GIT/config"], [".git-credentials"],
             ["x" * 4097], ["dist/index.html", "dist/index.html"],
         )
         for value in invalid_values:
@@ -455,8 +456,8 @@ class TestArtifactPaths(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "artifact paths"):
             artifact_paths(invalid_artifact)
 
-        invalid_output = Component("site", "static", "example.com", output="./dist")
-        with self.assertRaisesRegex(ValueError, "segments"):
+        invalid_output = Component("site", "static", "example.com", output="../dist")
+        with self.assertRaisesRegex(ValueError, "escape"):
             artifact_paths(invalid_output)
 
         invalid_artifacts_type = Component(
@@ -464,6 +465,14 @@ class TestArtifactPaths(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "artifacts must be an array"):
             artifact_paths(invalid_artifacts_type)
+
+    def test_safe_legacy_defaults_are_canonicalized_for_build_requests(self):
+        for declaration, expected in ((_static(output="./dist"), ["dist"]),
+                                      (_static(output="public/../dist/"), ["dist"]),
+                                      (_service(binary="./server/app"), ["server/app"])):
+            with self.subTest(declaration=declaration):
+                component = parse_manifest(_manifest(declaration)).components[0]
+                self.assertEqual(artifact_paths(component), expected)
 
 
 class TestTemplating(unittest.TestCase):

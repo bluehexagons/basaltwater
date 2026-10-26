@@ -62,6 +62,8 @@ publishes a new private tree. Both APIs require a private parent owned by their
 effective UID, reject symlink path components, and refuse existing destination
 entries. A post-publication filesystem-sync error may leave a complete output;
 the operation owner must reconcile it rather than blindly replacing it.
+The initial filesystem adapter requires Linux no-replace rename support;
+Windows publication needs its own qualified adapter.
 
 These checks establish byte identity, not authorization or provenance. The
 transport and durable job/admission layers must bind authenticated ownership,

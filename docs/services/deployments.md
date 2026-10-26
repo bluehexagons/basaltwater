@@ -117,13 +117,16 @@ slash paths, each at most 4096 characters. Paths cannot be absolute, contain
 backslashes, colons, control characters, empty segments, `.` segments, or `..`
 segments. A static or Godot component may use `"."` by itself to select the
 repository root. For example, `"artifacts": ["dist/index.html",
-"dist/assets/app.js"]` selects those paths.
+"dist/assets/app.js"]` selects those paths. Git/control metadata paths, such as
+`.git/config` and `.git-credentials`, are rejected.
 
 `lib.project_manifest.artifact_paths()` uses `artifacts` when present; otherwise
 it selects `output` for static and Godot components or `binary` for a binary
 service. An exec-only service continues to parse without `artifacts`, but a
 caller selecting a prebuilt package must declare them because there is no single
-binary to infer.
+binary to infer. Safe redundant segments in legacy `output` and `binary`
+defaults are normalized for export selection; explicit `artifacts` entries
+must already be canonical.
 This is parser and selection support only: current manifest deployments continue
 to build on the target and use the existing `output`, `binary`, or `exec` settings.
 There is not yet a `--build-on` option or remote build worker flow.

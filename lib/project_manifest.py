@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import os
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
 from lib.types import StrDict, StrList
 from lib.atomic_io import read_json_file
+from lib.build_protocol import validate_artifact_path
 from lib.validation import (
     validate_environment_variable_name,
     validate_filesystem_path,
@@ -184,12 +184,19 @@ def artifact_paths(component: Component) -> StrList:
 
     where = f"component {component.name!r}"
     if component.type in {"static", "godot-web"}:
-        return _validate_artifact_paths([component.output], component.type, where)
-    if component.binary is not None:
-        return _validate_artifact_paths([component.binary], component.type, where)
-    raise ValueError(
-        f"{where}: exec services require explicit artifacts for prebuilt packaging"
-    )
+        default = component.output
+    elif component.binary is not None:
+        default = component.binary
+    else:
+        raise ValueError(
+            f"{where}: exec services require explicit artifacts for prebuilt packaging"
+        )
+    if not isinstance(default, str) or not default:
+        raise ValueError(f"{where}: artifact paths require a non-empty output or binary")
+    _require_repo_relative(default, "artifact paths", where)
+    # Existing local manifests permit ./dist and other safe redundant segments.
+    # Preserve their deployment behavior while selecting canonical exports.
+    return _validate_artifact_paths([os.path.normpath(default)], component.type, where)
 
 
 @dataclass
@@ -639,8 +646,6 @@ def _validate_artifact_paths(value: object, component_type: str, where: str) -> 
         # any path on disk: declarations are lexical packaging metadata.
         validate_filesystem_path(path, must_exist=False)
         validate_no_control_characters(path, f"{where} artifact path")
-        if any(unicodedata.category(char) == "Cc" for char in path):
-            raise ValueError(f"{where}: artifact paths must not contain control characters")
 
         if path == ".":
             if component_type not in {"static", "godot-web"}:
@@ -653,6 +658,8 @@ def _validate_artifact_paths(value: object, component_type: str, where: str) -> 
             segments = path.split("/")
             if any(segment in {"", ".", ".."} for segment in segments):
                 raise ValueError(f"{where}: artifact paths must not contain empty, '.' or '..' segments: {path}")
+
+        validate_artifact_path(path, allow_root=True)
 
         if path in seen:
             raise ValueError(f"{where}: duplicate artifact path: {path!r}")

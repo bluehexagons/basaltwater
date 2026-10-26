@@ -158,6 +158,31 @@ class BuildArtifactsTest(unittest.TestCase):
             self.unpack(info["sha256"])
         self.assertEqual((self.destination / "sentinel").read_text(), "keep")
 
+    def test_private_umask_does_not_restrict_nested_release_directories(self):
+        previous = os.umask(0o077)
+        try:
+            info = self.package()
+            self.unpack(info["sha256"])
+        finally:
+            os.umask(previous)
+        self.assertEqual(stat.S_IMODE((self.destination / "bin").stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(self.destination.stat().st_mode), 0o700)
+
+    def test_racing_destination_directory_is_not_replaced(self):
+        info = self.package()
+        original = build_artifacts._publish_tree
+        created_inode = None
+        def create_destination(parent, source, destination):
+            nonlocal created_inode
+            os.mkdir(destination, mode=0o700, dir_fd=parent)
+            created_inode = os.stat(destination, dir_fd=parent).st_ino
+            original(parent, source, destination)
+        with patch.object(build_artifacts, "_publish_tree", side_effect=create_destination):
+            with self.assertRaises(FileExistsError):
+                self.unpack(info["sha256"])
+        self.assertEqual(self.destination.stat().st_ino, created_inode)
+        self.assertEqual(list(self.destination.iterdir()), [])
+
     def test_public_parent_and_symlink_parent_cannot_receive_artifacts(self):
         public = self.root / "public"
         public.mkdir(mode=0o755)
