@@ -32,7 +32,16 @@ from lib.deploy_utils import (
     should_redeploy
 )
 from lib.systemd_service import cleanup_service, create_managed_service
-from lib.project_manifest import Component, Manifest, has_placeholder, load_manifest, render_template
+from lib.build_artifacts import unpack_artifact
+from lib.build_protocol import parse_build_request, request_digest
+from lib.project_manifest import (
+    Component,
+    Manifest,
+    artifact_paths,
+    has_placeholder,
+    load_manifest,
+    render_template,
+)
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 from lib.node_toolchain import is_supported_node
@@ -885,6 +894,103 @@ class DeploymentOrchestrator:
         full build; incremental skip (mirroring should_redeploy) is a future
         optimization, kept out for a small, auditable surface.
         """
+        return self._deploy_manifest_common(
+            manifest, source_path, domain, path, git_url, commit_hash,
+            keep_source=keep_source,
+        )
+
+    def deploy_prebuilt(
+        self,
+        manifest: Manifest,
+        artifact_path: str,
+        build_request: object,
+        artifact_sha256: str,
+        domain: Optional[str],
+        path: str,
+        git_url: str,
+        *,
+        staging_root: str,
+        target_platform: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """Verify and activate a prebuilt manifest artifact.
+
+        Admission, caller identity, generation ordering, and runtime policy are
+        the caller's responsibility. This method binds the artifact to the
+        parsed build inputs and caller-observed target platform before it
+        enters the shared deployment transaction.
+        """
+        job = parse_build_request(build_request)
+        if not isinstance(manifest, Manifest) or not manifest.components:
+            raise ValueError("Prebuilt deployment requires a manifest with components")
+        if not isinstance(target_platform, dict) or target_platform != job["platform"]:
+            raise ValueError("Build artifact platform does not match the observed target platform")
+        if (not isinstance(artifact_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", artifact_sha256) is None):
+            raise ValueError("An expected artifact digest is required")
+
+        manifest_inputs = [
+            {
+                "name": component.name,
+                "type": component.type,
+                "artifacts": artifact_paths(component),
+                "commands": list(component.build),
+                "env": dict(component.env),
+            }
+            for component in manifest.components
+        ]
+        if manifest_inputs != job["components"]:
+            raise ValueError("Build request inputs do not match the manifest")
+
+        verified_parent = self._validate_private_staging_root(staging_root)
+        request_sha256 = request_digest(job)
+        with tempfile.TemporaryDirectory(
+            prefix="basaltw-verified-artifact-", dir=verified_parent,
+        ) as verification_root:
+            extracted_source = os.path.join(verification_root, "release")
+            unpack_artifact(
+                artifact_path, job, extracted_source,
+                expected_sha256=artifact_sha256,
+            )
+            return self._deploy_manifest_common(
+                manifest, extracted_source, domain, path, git_url,
+                job["source"]["revision"], keep_source=True,
+                operation_context={
+                    "artifact_request_id": job["request_id"],
+                    "artifact_request_sha256": request_sha256,
+                    "artifact_sha256": artifact_sha256,
+                },
+                build_on_target=False,
+            )
+
+    @staticmethod
+    def _validate_private_staging_root(staging_root: str) -> str:
+        """Require an existing effective-UID-owned, mode-0700 staging parent."""
+        validate_filesystem_path(staging_root, must_exist=True)
+        root = os.path.abspath(staging_root)
+        if os.path.realpath(root) != root:
+            raise ValueError("Artifact staging root cannot contain symlinks")
+        info = os.stat(root, follow_symlinks=False)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o700):
+            raise ValueError(
+                "Artifact staging root must be a mode-0700 directory owned by the effective UID"
+            )
+        return root
+
+    def _deploy_manifest_common(
+        self,
+        manifest: Manifest,
+        source_path: str,
+        domain: Optional[str],
+        path: str,
+        git_url: str,
+        commit_hash: Optional[str],
+        *,
+        keep_source: bool = False,
+        operation_context: Optional[dict[str, Any]] = None,
+        build_on_target: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Stage/build as requested, then run the shared manifest activation transaction."""
         if not manifest.components:
             if manifest.ci and not manifest.publishing:
                 raise ValueError('This manifest contains CI workflows only; there are no deployment components')
@@ -917,7 +1023,7 @@ class DeploymentOrchestrator:
                 "manifest_deploy",
                 dest_path,
                 "preparing",
-                context={"commit": commit_hash or "unknown"},
+                context={"commit": commit_hash or "unknown", **(operation_context or {})},
             )
             self._assert_manifest_unit_ownership(manifest, dest_path)
             manifest = self._resolve_manifest_ports(manifest, dest_path)
@@ -925,8 +1031,9 @@ class DeploymentOrchestrator:
             self._validate_manifest_routes(manifest, domain)
             unit_snapshots = self._app_unit_snapshots(dest_path)
             print(f"Deploying manifest ({len(manifest.components)} component(s)) to {dest_path}...")
-            build_user = self._build_identity(dest_path)
-            self._ensure_build_user(build_user)
+            build_user = self._build_identity(dest_path) if build_on_target else None
+            if build_user is not None:
+                self._ensure_build_user(build_user)
             write_json_atomic(
                 os.path.join(os.path.dirname(operation_store.path), "manifest-units.previous.json"),
                 unit_snapshots, mode=0o600,
@@ -945,7 +1052,7 @@ class DeploymentOrchestrator:
             )
             operation = operation_store.transition(
                 operation.operation_id,
-                "building",
+                "building" if build_on_target else "staging",
                 context={
                     **operation.context,
                     "commit": commit_hash or "unknown",
@@ -957,21 +1064,22 @@ class DeploymentOrchestrator:
             self._copy_deployment_source(source_path, staging_path)
             print(f"  ✓ Copied source to staging path {staging_path}")
 
-            # Build as an application-specific non-root identity.
-            result = run(
-                f"chown -R {shlex.quote(build_user)}:{shlex.quote(build_user)} {shlex.quote(staging_path)}",
-                check=False,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"Could not assign staging tree to build user {build_user}")
+            if build_user is not None:
+                # Build as an application-specific non-root identity.
+                result = run(
+                    f"chown -R {shlex.quote(build_user)}:{shlex.quote(build_user)} {shlex.quote(staging_path)}",
+                    check=False,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"Could not assign staging tree to build user {build_user}")
 
-            self._prepare_build_toolchain(staging_path, build_user, manifest.build_runtimes)
+                self._prepare_build_toolchain(staging_path, build_user, manifest.build_runtimes)
 
-            # Build every component before touching the active release.
-            for component in manifest.components:
-                component_domain = self._component_domain(component, domain)
-                print(f"  Component '{component.name}' ({component.type}) → {component_domain}{component.path}")
-                self._run_component_build(component, staging_path, build_user, manifest.build_runtimes)
+                # Build every component before touching the active release.
+                for component in manifest.components:
+                    component_domain = self._component_domain(component, domain)
+                    print(f"  Component '{component.name}' ({component.type}) → {component_domain}{component.path}")
+                    self._run_component_build(component, staging_path, build_user, manifest.build_runtimes)
 
             self._validate_manifest_artifacts(manifest, staging_path)
 
@@ -1069,7 +1177,7 @@ class DeploymentOrchestrator:
             save_deployment_metadata(dest_path, git_url, commit_hash)
             operation_store.complete(operation.operation_id)
             operation = None
-            if not keep_source and os.path.exists(source_path):
+            if build_on_target and not keep_source and os.path.exists(source_path):
                 try:
                     shutil.rmtree(source_path)
                 except OSError as exc:
