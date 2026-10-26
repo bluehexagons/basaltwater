@@ -107,3 +107,16 @@ connection loss does not imply that the server rejected an operation.
 
 The focused tests use temporary files and a mocked SSH process boundary. They
 do not contact a build host or run SSH against a VM.
+
+## Internal transport reuse
+
+The [target client](build-target-client.md) composes a private specialization of
+this client. Its fixed `_remote_command`, `_header_limit` and `_parse_reply`
+extension points select the target protocol without duplicating credential,
+selector, framing or cleanup machinery. `_call()` has an internal `on_start`
+callback so target mutations can preserve uncertainty even for cleanup errors.
+Cleanup attempts every pipe and credential close even when an earlier cleanup
+step is interrupted; a post-start cleanup interrupt retains submit uncertainty.
+`_open_source()` also accepts an internal maximum and expected exact size for
+artifact uploads. Both source paths check EOF explicitly during prehash and
+transfer. These internal hooks do not change the public `BuildHostClient` API.

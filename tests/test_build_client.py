@@ -518,6 +518,41 @@ class BuildHostClientTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 os.stat(descriptor_path)
 
+    def test_submit_cleanup_interrupt_preserves_uncertainty_and_closes_credentials(self) -> None:
+        data = b"cleanup interruption source"
+        source = self.root / "source.snapshot"
+        source.write_bytes(data)
+        request = build_request(snapshot_sha256=hashlib.sha256(data).hexdigest())
+        selector = build_client.selectors.DefaultSelector()
+        close_selector = selector.close
+
+        def interrupt_close():
+            close_selector()
+            raise KeyboardInterrupt
+
+        def handler(_message, _payload, output, _error, _stop):
+            write_all(output, success(job_result(request["request_id"], request)))
+            return 0
+
+        with patch.object(selector, "close", side_effect=interrupt_close), \
+                patch.object(build_client.selectors, "DefaultSelector", return_value=selector):
+            fake = FakePopen(server(handler))
+            with patch.object(build_client.subprocess, "Popen", side_effect=fake):
+                with self.assertRaises(BuildSubmissionUnconfirmed) as caught:
+                    self.client.submit(request, source)
+
+        self.assertEqual(caught.exception.request_id, request["request_id"])
+        for stream in (fake.process.stdin, fake.process.stdout, fake.process.stderr):
+            self.assertTrue(stream.closed)
+        identity_path = fake.arguments[fake.arguments.index("-i") + 1]
+        known_hosts_path = next(
+            item.split("=", 1)[1] for item in fake.arguments
+            if item.startswith("UserKnownHostsFile=")
+        )
+        for descriptor_path in (identity_path, known_hosts_path):
+            with self.assertRaises(FileNotFoundError):
+                os.stat(descriptor_path)
+
     def test_status_rejects_wrong_id_and_extra_public_fields(self) -> None:
         request_id = "a" * 32
         receipt = job_result(request_id, build_request(request_id))
