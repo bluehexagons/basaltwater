@@ -591,6 +591,12 @@ class BuildHostClient:
     descriptor. Each method starts one transport; no operation is retried.
     """
 
+    # Internal extension points shared with the typed target transport. Public
+    # callers cannot select a remote command or a response parser per request.
+    _remote_command = REMOTE_COMMAND
+    _header_limit = MAX_HEADER_LINE_BYTES
+    _parse_reply = staticmethod(_validate_reply)
+
     def __init__(
         self,
         *,
@@ -795,13 +801,17 @@ class BuildHostClient:
             os.close(parent_fd)
 
     def _open_source(self, source_path: str | os.PathLike[str], expected_sha256: str,
-                     *, deadline: float) -> _SourceFile:
+                     *, deadline: float, maximum: int | None = None,
+                     expected_size: int | None = None) -> _SourceFile:
         path = _absolute_path(source_path, "Build source snapshot")
         descriptor = os.open(path, _READ)
         try:
             before = os.fstat(descriptor)
-            if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= MAX_SNAPSHOT_BYTES:
-                raise ValueError("Build source must be a non-empty regular snapshot within the 5 GiB limit")
+            limit = MAX_SNAPSHOT_BYTES if maximum is None else maximum
+            if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= limit:
+                raise ValueError("Transfer source must be a non-empty regular file within its size limit")
+            if expected_size is not None and before.st_size != expected_size:
+                raise ValueError("Transfer source size does not match the declared size")
             named_before = os.stat(path, follow_symlinks=False)
             identity = _file_identity(before)
             if _file_identity(named_before) != identity:
@@ -816,6 +826,10 @@ class BuildHostClient:
                     raise ValueError("Build source ended before its declared size")
                 calculated.update(block)
                 offset += len(block)
+            if os.read(descriptor, 1):
+                raise ValueError("Transfer source exceeds its declared size")
+            if time.monotonic() >= deadline:
+                raise BuildHostTransportError("Build source verification exceeded the SSH timeout")
             after = os.fstat(descriptor)
             named_after = os.stat(path, follow_symlinks=False)
             if (_file_identity(after) != identity or _file_identity(named_after) != identity
@@ -849,7 +863,7 @@ class BuildHostClient:
             "-o", "PermitLocalCommand=no", "-o", "ConnectionAttempts=1",
             "-o", f"ConnectTimeout={connect_timeout}",
             "-o", "LogLevel=ERROR", "-T", "-a", "--",
-            f"{self.username}@{self.host}", REMOTE_COMMAND,
+            f"{self.username}@{self.host}", self._remote_command,
         ]
 
     def _call(
@@ -862,13 +876,14 @@ class BuildHostClient:
         payload_sink: Callable[[bytes], None] | None = None,
         deadline: float | None = None,
         expected_artifact: tuple[str, int] | None = None,
+        on_start: Callable[[], None] | None = None,
     ) -> tuple[dict[str, Any], bytes]:
         if self._closed:
             raise ValueError("Build host client is closed")
         self._verify_credentials()
         document = {"schema": 1, "action": action, **fields}
-        header = encode_document(document, maximum=MAX_HEADER_LINE_BYTES - 1) + b"\n"
-        if len(header) > MAX_HEADER_LINE_BYTES:
+        header = encode_document(document, maximum=self._header_limit - 1) + b"\n"
+        if len(header) > self._header_limit:
             raise ValueError("Build request header exceeds the service limit")
 
         if deadline is None:
@@ -952,9 +967,9 @@ class BuildHostClient:
                 if not line.endswith(b"\n"):
                     raise BuildHostProtocolError("Build host returned a malformed response line",
                                                  transport_started=True)
-                reply = _validate_reply(line, action=action, fields=fields,
-                                        payload_limit=payload_limit,
-                                        expected_artifact=expected_artifact)
+                reply = self._parse_reply(line, action=action, fields=fields,
+                                         payload_limit=payload_limit,
+                                         expected_artifact=expected_artifact)
                 if reply.error is not None:
                     close_stdin()
                 rest = data[boundary + 1:]
@@ -979,6 +994,8 @@ class BuildHostClient:
                 source_digest.update(block)
                 source_bytes_read += len(block)
                 return block
+            if os.read(source.descriptor, 1):
+                raise OSError("Transfer source exceeds its declared size")
             check_source_identity()
             return None
 
@@ -1002,6 +1019,8 @@ class BuildHostClient:
                 env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C", "LC_ALL": "C"},
             )
             started = True
+            if on_start is not None:
+                on_start()
             if process.stdin is None or process.stdout is None or process.stderr is None:
                 raise OSError("SSH process did not provide bounded pipes")
             for stream in (process.stdin, process.stdout, process.stderr):
@@ -1096,26 +1115,37 @@ class BuildHostClient:
             raise BuildHostTransportError("SSH operation did not complete",
                                           transport_started=started) from exc
         finally:
-            if selector is not None:
+            cleanup_error: BaseException | None = None
+
+            def cleanup(callback: Callable[[], object], *, ignore_oserror: bool = False) -> None:
+                nonlocal cleanup_error
                 try:
-                    selector.close()
-                except OSError:
-                    pass
+                    callback()
+                except BaseException as exc:
+                    if not (ignore_oserror and isinstance(exc, OSError)) and cleanup_error is None:
+                        cleanup_error = exc
+
+            # An interrupt in one cleanup step must not skip the remaining
+            # pipes or the credential duplicates that SSH may still be using.
+            if selector is not None:
+                cleanup(selector.close, ignore_oserror=True)
             if process is not None:
-                if process.poll() is None:
-                    _stop_process(process)
+                def stop_running_process() -> None:
+                    if process.poll() is None:
+                        _stop_process(process)
+
+                cleanup(stop_running_process)
                 for stream in (process.stdin, process.stdout, process.stderr):
                     if stream is not None:
-                        try:
-                            stream.close()
-                        except OSError:
-                            pass
+                        cleanup(stream.close, ignore_oserror=True)
             for descriptor in (identity_fd, known_hosts_fd):
                 if descriptor >= 0:
-                    try:
-                        os.close(descriptor)
-                    except OSError:
-                        pass
+                    cleanup(lambda: os.close(descriptor), ignore_oserror=True)
+            if isinstance(cleanup_error, KeyboardInterrupt) and started:
+                raise BuildHostTransportError("SSH cleanup was interrupted",
+                                              transport_started=True) from cleanup_error
+            if cleanup_error is not None:
+                raise cleanup_error
 
     def _verify_credentials(self) -> None:
         _verify_credential(self._identity_fd, self._identity_identity, "SSH identity file")
