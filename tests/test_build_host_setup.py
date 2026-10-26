@@ -19,6 +19,7 @@ from common import build_host_steps as setup
 from lib.build_host_policy import parse_build_host_policy
 from lib.build_manifest import DEBIAN_PLATFORM
 from lib.build_protocol import DEFAULT_LIMITS, encode_document
+from tests.test_build_target_maintenance import root_view
 
 
 def public_key(seed: int = 1) -> str:
@@ -219,6 +220,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                 setup._trusted_path("/safe/file")
 
     def test_transport_path_modes_allow_lookup_without_transport_write_access(self) -> None:
+        self.assertEqual(setup.SSH_ROOT, "/var/lib/basaltwater-build-host-ssh")
         modes = (
             setup.SSH_ROOT_MODE,
             setup.SSH_HOME_MODE,
@@ -232,16 +234,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
             self.assertEqual(other_bits & required, required)
             self.assertEqual(mode & 0o022, 0)
 
-    def test_authorized_key_reader_accepts_only_exact_legacy_and_public_modes(self) -> None:
-        allowed = setup._ALLOWED_AUTHORIZED_KEYS_MODES
-        self.assertEqual(allowed, (0o600, 0o644))
-        for mode in allowed:
-            self.assertTrue(setup._mode_is_allowed(mode, allowed))
-        for mode in (0o400, 0o640, 0o660, 0o664, 0o666):
-            with self.subTest(mode=oct(mode)):
-                self.assertFalse(setup._mode_is_allowed(mode, allowed))
-
-    def test_authorized_key_file_reader_accepts_only_legacy_and_public_modes(self) -> None:
+    def test_authorized_key_file_reader_requires_exact_public_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "authorized_keys"
             content = b'restrict,command="fixed" ssh-ed25519 AAAA\n'
@@ -258,16 +251,15 @@ class BuildHostSetupUnitTests(unittest.TestCase):
 
             with patch.object(setup, "_trusted_path"), \
                  patch.object(setup.os, "fstat", side_effect=as_root_owned):
-                for mode in setup._ALLOWED_AUTHORIZED_KEYS_MODES:
+                os.chmod(path, 0o644)
+                self.assertEqual(setup._read_file(
+                    str(path), mode=setup.AUTHORIZED_KEYS_MODE, maximum=64 * 1024), content)
+                for mode in (0o400, 0o600, 0o640, 0o660, 0o664, 0o666):
                     with self.subTest(mode=oct(mode)):
                         os.chmod(path, mode)
-                        self.assertEqual(setup._read_file(
-                            str(path), mode=setup._ALLOWED_AUTHORIZED_KEYS_MODES,
-                            maximum=64 * 1024), content)
-                os.chmod(path, 0o664)
-                with self.assertRaisesRegex(ValueError, "file is unsafe"):
-                    setup._read_file(str(path), mode=setup._ALLOWED_AUTHORIZED_KEYS_MODES,
-                                     maximum=64 * 1024)
+                        with self.assertRaisesRegex(ValueError, "file is unsafe"):
+                            setup._read_file(str(path), mode=setup.AUTHORIZED_KEYS_MODE,
+                                             maximum=64 * 1024)
 
     def test_unmarked_transport_account_namespace_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -279,7 +271,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                  self.assertRaisesRegex(ValueError, "unmarked build-host transport"):
                 setup._validate_transport_namespace({"alice"})
 
-    def test_marker_namespace_accepts_only_legacy_or_public_lookup_directories(self) -> None:
+    def test_marker_namespace_requires_exact_public_lookup_directories(self) -> None:
         username = setup._transport_username("alice")
         home_name = username.removeprefix("bw-build-")
         ssh_root = "/trusted/build-host-ssh"
@@ -333,14 +325,13 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                                                   return_value=[SimpleNamespace(gr_name=username)]))
                 setup._validate_transport_namespace({"alice"})
 
-        for root_mode in setup._ALLOWED_SSH_ROOT_MODES:
-            for ssh_mode in setup._ALLOWED_SSH_DIRECTORY_MODES:
-                with self.subTest(root_mode=oct(root_mode), ssh_mode=oct(ssh_mode)):
-                    validate_layout(root_mode, ssh_mode)
-        with self.assertRaisesRegex(ValueError, "unsupported mode or owner"):
-            validate_layout(0o751, setup.SSH_DIRECTORY_MODE)
-        with self.assertRaisesRegex(ValueError, ".ssh directory is unsafe"):
-            validate_layout(setup.SSH_ROOT_MODE, 0o775)
+        validate_layout(setup.SSH_ROOT_MODE, setup.SSH_DIRECTORY_MODE)
+        for root_mode in (0o700, 0o751):
+            with self.subTest(root_mode=root_mode), self.assertRaisesRegex(ValueError, "unsupported mode or owner"):
+                validate_layout(root_mode, setup.SSH_DIRECTORY_MODE)
+        for ssh_mode in (0o700, 0o775):
+            with self.subTest(ssh_mode=ssh_mode), self.assertRaisesRegex(ValueError, ".ssh directory is unsafe"):
+                validate_layout(setup.SSH_ROOT_MODE, ssh_mode)
 
     def test_system_service_capability_skip_does_not_mutate(self) -> None:
         with patch("lib.machine_state.can_manage_system_services", return_value=False), \
@@ -410,7 +401,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
         publish.assert_called_once()
         self.assertEqual(publish.call_args.args[1], other)
 
-    def test_managed_key_mode_is_upgraded_when_content_is_already_current(self) -> None:
+    def test_current_public_key_is_not_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             key = public_key()
             username = "bw-build-0123456789ab"
@@ -424,8 +415,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                  patch.object(setup, "_write_file") as publish, \
                  patch.object(setup, "_write_marker"):
                 setup._reconcile_authorized_key("alice", record, key, setup._empty_marker())
-        publish.assert_called_once_with(
-            str(ssh_dir / "authorized_keys"), expected, mode=setup.AUTHORIZED_KEYS_MODE)
+        publish.assert_not_called()
 
     def test_sudoers_revocation_requires_and_removes_the_marker_owned_file(self) -> None:
         username, principal = "bw-build-0123456789ab", "alice"
@@ -449,7 +439,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
     def test_transport_account_requires_exclusive_ids_groups_and_locked_password(self) -> None:
         username = setup._transport_username("alice")
         account = SimpleNamespace(pw_name=username, pw_uid=1701, pw_gid=1702,
-                                  pw_dir="/var/lib/basaltwater/build-host-ssh/"
+                                  pw_dir=setup.SSH_ROOT + "/"
                                          + username.removeprefix("bw-build-"),
                                   pw_shell="/bin/sh")
         group = SimpleNamespace(gr_name=username, gr_gid=1702, gr_mem=[])
@@ -514,6 +504,7 @@ class BuildHostLifecycleTests(unittest.TestCase):
             SERVICE_UNIT=str(unit_file),
             DATA_ROOT=str(data_root),
             SSH_ROOT=str(ssh_root),
+            _LEGACY_SSH_ROOT=str(tmp_path / "legacy-ssh"),
             SUDOERS_DIR=str(sudoers_dir),
             ROOTS={"state": str(state_root), "inputs": str(data_root / "inputs"),
                    "scratch": str(data_root / "scratch"), "artifacts": str(data_root / "artifacts"),
@@ -691,7 +682,8 @@ class BuildHostLifecycleTests(unittest.TestCase):
             with patch("lib.machine_state.can_manage_system_services", return_value=True), \
                  patch.object(setup, "is_dry_run", return_value=False), \
                  patch.multiple(setup, ETC_DIR=str(Path(temp) / "missing"), SERVICE_UNIT=str(unit),
-                                DATA_ROOT=str(Path(temp) / "data"), SSH_ROOT=str(Path(temp) / "ssh")), \
+                                DATA_ROOT=str(Path(temp) / "data"), SSH_ROOT=str(Path(temp) / "ssh"),
+                                _LEGACY_SSH_ROOT=str(Path(temp) / "legacy-ssh")), \
                  patch.object(setup, "run") as run, \
                  self.assertRaisesRegex(ValueError, "without their ownership marker"):
                 setup.configure_build_host(setup_config(build_host_enrollment=None,
@@ -709,6 +701,7 @@ class BuildHostLifecycleTests(unittest.TestCase):
                  patch.multiple(setup, ETC_DIR=str(root / "missing"),
                                 SERVICE_UNIT=str(root / setup.SERVICE_NAME),
                                 DATA_ROOT=str(root / "data"), SSH_ROOT=str(root / "ssh"),
+                                _LEGACY_SSH_ROOT=str(root / "legacy-ssh"),
                                 SUDOERS_DIR=str(sudoers)), \
                  patch.object(setup.pwd, "getpwnam", side_effect=KeyError), \
                  patch.object(setup.grp, "getgrnam", side_effect=KeyError), \
@@ -728,6 +721,7 @@ class BuildHostLifecycleTests(unittest.TestCase):
                  patch.object(setup, "is_dry_run", return_value=False), \
                  patch.object(setup, "ETC_DIR", str(root / "etc")), \
                  patch.object(setup, "MARKER_PATH", str(root / "etc" / ".managed.json")), \
+                 patch.object(setup, "_LEGACY_SSH_ROOT", str(root / "legacy-ssh")), \
                  patch("common.service_tools.build_host.require_platform"), \
                  patch.object(setup, "_trusted_source_tree"), \
                  patch.object(setup, "_initial_install_conflicts"), \
@@ -760,6 +754,7 @@ class BuildHostLifecycleTests(unittest.TestCase):
                 stack.enter_context(patch.object(setup, "is_dry_run", return_value=False))
                 stack.enter_context(patch.object(setup, "ETC_DIR", str(root / "etc")))
                 stack.enter_context(patch.object(setup, "MARKER_PATH", str(root / "etc" / ".managed.json")))
+                stack.enter_context(patch.object(setup, "_LEGACY_SSH_ROOT", str(root / "legacy-ssh")))
                 stack.enter_context(patch("common.service_tools.build_host.require_platform"))
                 stack.enter_context(patch.object(setup, "_trusted_source_tree"))
                 stack.enter_context(patch.object(setup, "_initial_install_conflicts"))
@@ -792,6 +787,191 @@ class BuildHostLifecycleTests(unittest.TestCase):
             reconcile_key.assert_not_called()
             write_file.assert_not_called()
             replace_units.assert_not_called()
+
+
+class BuildHostTransportIntegrationTests(unittest.TestCase):
+    """Exercise installer files/modes with private state and mocked native calls."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
+        self.base.chmod(0o711)
+        self.users, self.groups = {}, {}
+        self.commands = []
+        self.store = FakeStore()
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(root_view())
+        real_scandir = os.scandir
+
+        class RootEntry:
+            def __init__(self, entry):
+                self.entry = entry
+
+            def __getattr__(self, name):
+                return getattr(self.entry, name)
+
+            def stat(self, *, follow_symlinks=True):
+                return os.stat(self.entry.path, follow_symlinks=follow_symlinks)
+
+        @contextmanager
+        def root_scandir(path):
+            with real_scandir(path) as entries:
+                yield iter(RootEntry(entry) for entry in entries)
+
+        stack.enter_context(patch.object(setup.os, "scandir", side_effect=root_scandir))
+        paths = {"ETC_DIR": self.base / "etc/build-host",
+                 "DATA_ROOT": self.base / "var/lib/basaltwater/build-host",
+                 "SSH_ROOT": self.base / "var/lib/basaltwater-build-host-ssh",
+                 "_LEGACY_SSH_ROOT": self.base / "var/lib/basaltwater/build-host-ssh",
+                 "SUDOERS_DIR": self.base / "etc/sudoers.d",
+                 "SERVICE_UNIT": self.base / "etc/systemd" / setup.SERVICE_NAME}
+        for name, path in paths.items():
+            stack.enter_context(patch.object(setup, name, str(path)))
+        stack.enter_context(patch.object(setup, "ROOTS", {
+            name: setup.DATA_ROOT + "/" + name for name in setup.ROOTS}))
+        stack.enter_context(patch.object(setup, "MARKER_PATH", setup.ETC_DIR + "/.managed.json"))
+        stack.enter_context(patch.object(setup, "CONFIG_PATH", setup.ETC_DIR + "/config.json"))
+        Path(setup.SERVICE_UNIT).parent.mkdir(parents=True, mode=0o755)
+        Path(setup.SUDOERS_DIR).mkdir(mode=0o755)
+        # The production helper refuses writable shared ancestors. Bound its
+        # recursive creation to this simulated root, outside sticky /tmp.
+        ensure_parents = setup._ensure_parent_chain
+        stack.enter_context(patch.object(setup, "_ensure_parent_chain", side_effect=lambda path:
+                            None if Path(path) == self.base else ensure_parents(path)))
+        stack.enter_context(patch("lib.machine_state.can_manage_system_services", return_value=True))
+        stack.enter_context(patch.object(setup, "is_dry_run", return_value=False))
+        stack.enter_context(patch.object(setup, "_trusted_source_tree"))
+        stack.enter_context(patch("common.service_tools.build_host.require_platform"))
+        stack.enter_context(patch("common.service_tools.build_host.require_build_account"))
+        stack.enter_context(patch.object(setup, "_verify_unit_source"))
+        stack.enter_context(patch.object(setup.pwd, "getpwnam", side_effect=lambda name: self.users[name]))
+        stack.enter_context(patch.object(setup.grp, "getgrnam", side_effect=lambda name: self.groups[name]))
+        stack.enter_context(patch.object(setup.pwd, "getpwall", side_effect=lambda: list(self.users.values())))
+        stack.enter_context(patch.object(setup.grp, "getgrall", side_effect=lambda: list(self.groups.values())))
+        stack.enter_context(patch.object(setup.os, "getgrouplist", side_effect=lambda _name, gid: [gid]))
+        stack.enter_context(patch.object(setup, "is_package_installed", return_value=True))
+        self.run = stack.enter_context(patch.object(setup, "run", side_effect=self.native))
+        stack.enter_context(patch("lib.build_jobs.BuildJobStore", return_value=self.store))
+
+        def replace(units, *, activate, deactivate, prepare):
+            prepare()
+            setup._write_file(setup.SERVICE_UNIT, units[setup.SERVICE_NAME].encode(), mode=0o644)
+
+        def remove(_units, *, prepare):
+            prepare()
+            setup._remove_file(setup.SERVICE_UNIT, mode=0o644, maximum=1024 * 1024)
+
+        stack.enter_context(patch("lib.unit_transaction.replace_units", side_effect=replace))
+        stack.enter_context(patch("lib.unit_transaction.remove_units", side_effect=remove))
+
+    def native(self, args, **_kwargs):
+        self.commands.append(args)
+        if args[0] == "groupadd":
+            name = args[-1]
+            self.groups[name] = SimpleNamespace(gr_name=name, gr_gid=2000 + len(self.groups), gr_mem=[])
+        elif args[0] == "useradd":
+            name = args[-1]
+            self.users[name] = SimpleNamespace(
+                pw_name=name, pw_uid=3000 + len(self.users), pw_gid=self.groups[name].gr_gid,
+                pw_dir=args[args.index("--home-dir") + 1], pw_shell=args[args.index("--shell") + 1])
+        return SimpleNamespace(returncode=0, stdout=args[-1] + " L today\n" if args[0] == "passwd" else "")
+
+    def snapshot(self):
+        return {str(path.relative_to(self.base)): (stat.S_IMODE(path.stat().st_mode),
+                                                   path.read_bytes() if path.is_file() else None)
+                for path in self.base.rglob("*")}
+
+    def test_private_state_enrollment_refresh_and_disable_preserve_data_and_identities(self) -> None:
+        private = Path(setup.DATA_ROOT).parent
+        private.mkdir(parents=True, mode=0o700)
+        evidence = private / "private-evidence"
+        evidence.write_bytes(b"retain")
+        setup.configure_build_host(setup_config())
+        username = setup._transport_username("alice")
+        home = Path(self.users[username].pw_dir)
+        auth = home / ".ssh/authorized_keys"
+        sudo = Path(setup.SUDOERS_DIR) / username
+        for path, mode in ((private, 0o700), (Path(setup.SSH_ROOT), 0o711), (home, 0o555),
+                           (auth.parent, 0o755), (auth, 0o644), (sudo, 0o440)):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
+            self.assertEqual((path.stat().st_uid, path.stat().st_gid), (0, 0))
+            self.assertFalse(path.stat().st_mode & 0o022)
+        self.assertEqual(auth.read_bytes(), setup._authorized_key_line("alice", public_key()))
+        before = self.snapshot()
+        identities = copy.deepcopy((self.users, self.groups))
+        jobs = copy.deepcopy(self.store.state["jobs"])
+        # Model the ordinary setup refresh reasserting the private parent mode.
+        private.chmod(0o700)
+        setup.configure_build_host(setup_config())
+        self.assertEqual(self.snapshot(), before)
+        setup.configure_build_host(setup_config(disable_build_host=True))
+        self.assertFalse(auth.exists())
+        self.assertFalse(sudo.exists())
+        self.assertEqual((self.users, self.groups), identities)
+        self.assertEqual(self.store.state["jobs"], jobs)
+        self.assertEqual(evidence.read_bytes(), b"retain")
+        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+        self.assertTrue(home.is_dir())
+
+    def test_unsafe_or_blocked_ancestors_refuse_before_any_mutation(self) -> None:
+        parent = Path(setup.SSH_ROOT).parent
+        parent.mkdir(parents=True, mode=0o755)
+        real_lstat = Path.lstat
+        for mode, uid, gid in ((stat.S_IFDIR | 0o700, 0, 0), (stat.S_IFDIR | 0o775, 0, 0),
+                               (stat.S_IFDIR | 0o755, 1234, 0), (stat.S_IFDIR | 0o701, 0, 2001),
+                               (stat.S_IFLNK | 0o755, 0, 0)):
+            def observe(path):
+                if path == parent:
+                    return SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
+                return real_lstat(path)
+
+            before = self.snapshot()
+            with self.subTest(mode=mode, uid=uid, gid=gid), \
+                 patch.object(Path, "lstat", autospec=True, side_effect=observe), \
+                 patch.object(setup, "_write_file") as publish, \
+                 patch.object(setup.os, "mkdir") as mkdir, \
+                 patch.object(setup.os, "fchmod") as chmod, self.assertRaises(ValueError):
+                setup.configure_build_host(setup_config())
+            publish.assert_not_called()
+            mkdir.assert_not_called()
+            chmod.assert_not_called()
+            self.run.assert_not_called()
+            self.assertEqual(self.snapshot(), before)
+
+    def test_new_shared_parents_are_traversable_with_restrictive_umask(self) -> None:
+        previous = os.umask(0o077)
+        try:
+            setup.configure_build_host(setup_config())
+        finally:
+            os.umask(previous)
+        self.assertEqual(stat.S_IMODE(Path(setup.SSH_ROOT).parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(Path(setup.SSH_ROOT).stat().st_mode), 0o711)
+
+    def test_legacy_root_or_marker_refuses_enable_and_disable_without_changes(self) -> None:
+        legacy = Path(setup._LEGACY_SSH_ROOT)
+        legacy.mkdir(parents=True, mode=0o711)
+        (legacy / "evidence").write_bytes(b"retain")
+        for disable in (False, True):
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "operator reconciliation or a clean reinstall"):
+                setup.configure_build_host(setup_config(disable_build_host=disable))
+            self.assertEqual(self.snapshot(), before)
+            self.run.assert_not_called()
+        (legacy / "evidence").unlink()
+        legacy.rmdir()
+        setup.configure_build_host(setup_config())
+        marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+        marker["schema"] = 1
+        setup._write_marker(marker)
+        before = self.snapshot()
+        self.run.reset_mock()
+        for disable in (False, True):
+            with self.assertRaisesRegex(ValueError, "operator reconciliation or a clean reinstall"):
+                setup.configure_build_host(setup_config(disable_build_host=disable))
+            self.assertEqual(self.snapshot(), before)
+            self.run.assert_not_called()
 
 
 if __name__ == "__main__":

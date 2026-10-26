@@ -51,18 +51,36 @@ directories:
 - `/etc/basaltwater/build-host`, with a mode-0600 runtime `config.json` and a
   mode-0600 ownership marker.
 - `/var/lib/basaltwater/build-host/{state,inputs,scratch,artifacts,logs}`.
-- `/var/lib/basaltwater/build-host-ssh` is root-owned mode 0711 so transport
+- `/var/lib/basaltwater-build-host-ssh` is root-owned mode 0711 so transport
   accounts can traverse the known path without listing other homes. Each
-  `/var/lib/basaltwater/build-host-ssh/<12-hex-id>` home is root-owned mode
+  `/var/lib/basaltwater-build-host-ssh/<12-hex-id>` home is root-owned mode
   0555; `.ssh` is root-owned mode 0755 and `authorized_keys` is root-owned
   mode 0644. The transport account can read the public key but cannot write
   any path component or key file.
 
-For marker-owned installations made with the initial private lookup modes,
-rerunning setup accepts only the exact old modes (`SSH_ROOT` 0700, `.ssh` 0700,
-and `authorized_keys` 0600) and upgrades them to the readable layout while the
-worker is drained and its unit is inactive. Other modes, ownership, symlinks,
-or unmarked files are refused; the installer does not adopt them.
+The public transport root is a fixed sibling of the private
+`/var/lib/basaltwater` tree. Ordinary setup keeps that private parent mode
+0700; enrollment and refresh neither widen it nor change unrelated ACLs or
+state permissions. Before any installation mutation, enrollment checks all
+existing SSH ancestors for root control, safe modes, no symlinks and transport
+search access. Other execute permission is required; a non-root group also
+requires group execute permission. Blocked or unsafe ancestors are refused
+before packages, identities, keys or sudo grants are changed. Newly created
+shared ancestors receive exact root:root mode 0755 regardless of umask.
+Existing transport directories and keys must have the exact public modes
+above. Explicit disable can revoke authority even if an ancestor loses search
+access, provided its ownership and safety checks still pass.
+
+Installer ownership markers now use schema 2; enrollment and runtime
+configuration remain schema 1. Schema-1 markers and any existing legacy
+`/var/lib/basaltwater/build-host-ssh` path (including a symlink) refuse both
+enrollment and disable before mutations, with operator guidance. There is no
+automatic migration, account-home rewrite or adoption of old files. An operator
+must reconcile the old installation or perform a clean reinstall: preserve the
+marker, accounts, queue, ledger and other evidence, drain/check active work and
+revoke old key/sudo/service authority under operator control before replacing
+the enrollment. Do not widen the private parent, move homes or edit/delete the
+marker to bypass the refusal. Native lab migration is separate operator work.
 
 The `basaltwater-build` worker account and group use `/nonexistent` and
 `nologin`. Each principal gets a separate locked transport account and

@@ -88,6 +88,7 @@ class BuildTargetEnrollmentTests(unittest.TestCase):
             setup.parse_build_target_enrollment(enrollment(("alice", "bob")))
 
     def test_policy_and_protected_roots_are_validated_before_host_calls(self) -> None:
+        self.assertEqual(setup.SSH_ROOT, "/var/lib/basaltwater-build-target-ssh")
         for root in ("relative", "/opt", setup.SOURCE_ROOT, setup.DATA_ROOT, setup.SSH_ROOT,
                      setup.ETC_DIR + "/app", setup.SUDOERS_DIR):
             item = enrollment()
@@ -114,8 +115,10 @@ class BuildTargetSetupTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(root_view())
-        paths = {"ETC_DIR": self.base / "etc/build-target", "DATA_ROOT": self.base / "data/build-target",
-                 "SSH_ROOT": self.base / "data/build-target-ssh", "SUDOERS_DIR": self.base / "etc/sudoers.d"}
+        paths = {"ETC_DIR": self.base / "etc/build-target", "DATA_ROOT": self.base / "data/basaltwater/build-target",
+                 "SSH_ROOT": self.base / "data/basaltwater-build-target-ssh",
+                 "_LEGACY_SSH_ROOT": self.base / "data/basaltwater/build-target-ssh",
+                 "SUDOERS_DIR": self.base / "etc/sudoers.d"}
         for name, path in paths.items():
             stack.enter_context(patch.object(setup, name, str(path)))
         stack.enter_context(patch.object(setup, "MARKER_PATH", setup.ETC_DIR + "/.managed.json"))
@@ -153,6 +156,10 @@ class BuildTargetSetupTests(unittest.TestCase):
                 for path in self.base.rglob("*") if path.is_file()}
 
     def test_install_permissions_exact_grants_rotation_retirement_disable_and_reenable(self) -> None:
+        private = Path(setup.DATA_ROOT).parent
+        private.mkdir(parents=True, mode=0o700)
+        private_evidence = private / "private-evidence"
+        private_evidence.write_bytes(b"retain")
         setup.configure_build_target(configuration(build_target_enrollment=enrollment(("alice", "bob"))))
         lock_inode = Path(maintenance.LOCK_PATH).stat().st_ino
         for principal in ("alice", "bob"):
@@ -162,6 +169,8 @@ class BuildTargetSetupTests(unittest.TestCase):
             for path, mode in ((Path(setup.SSH_ROOT), 0o711), (Path(setup._home(principal)), 0o555),
                                (auth.parent, 0o755), (auth, 0o644), (sudo, 0o440)):
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
+                self.assertEqual((path.stat().st_uid, path.stat().st_gid), (0, 0))
+                self.assertFalse(path.stat().st_mode & 0o022)
             command = ("/usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_target.py "
                        "--serve --principal " + principal)
             self.assertEqual(sudo.read_text(), f'Defaults:{setup._username(principal)} env_keep += "SSH_ORIGINAL_COMMAND"\n'
@@ -183,8 +192,10 @@ class BuildTargetSetupTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
         with maintenance.target_lease():
             pass
+        private.chmod(0o700)
         setup.configure_build_target(configuration(build_target_enrollment=enrollment(("alice", "bob"))))
         self.assertEqual(self.snapshot(), before)
+        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
         rotated = enrollment()
         rotated["keys"]["alice"] = public_key(7)
         setup.configure_build_target(configuration(build_target_enrollment=rotated))
@@ -195,11 +206,15 @@ class BuildTargetSetupTests(unittest.TestCase):
             path = Path(root) / "retained-evidence"
             path.write_bytes(b"retain")
             evidence.append(path)
+        identities = copy.deepcopy((self.users, self.groups))
         setup.configure_build_target(configuration(disable_build_target=True, build_target_enrollment="ignored"))
         self.assertTrue(all(path.read_bytes() == b"retain" for path in evidence))
         self.assertFalse(Path(setup.CONFIG_PATH).exists())
         self.assertTrue(all(not Path(path).exists() for path in setup._file_paths("alice")))
         self.assertEqual(len(self.users), 2)
+        self.assertEqual((self.users, self.groups), identities)
+        self.assertEqual(private_evidence.read_bytes(), b"retain")
+        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
         before = self.snapshot()
         setup.configure_build_target(configuration(build_target_enrollment=None))
         self.assertEqual(self.snapshot(), before)
@@ -261,6 +276,56 @@ class BuildTargetSetupTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(auth.parent.parent.stat().st_mode), 0o555)
         self.assertEqual(stat.S_IMODE(auth.parent.stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(auth.stat().st_mode), 0o644)
+
+    def test_unsafe_ancestors_refuse_before_bootstrap_or_grants(self) -> None:
+        parent = Path(setup.SSH_ROOT).parent
+        parent.mkdir(parents=True, mode=0o755)
+        real_lstat = Path.lstat
+        for mode, uid, gid in ((stat.S_IFDIR | 0o775, 0, 0), (stat.S_IFDIR | 0o755, 1234, 0),
+                               (stat.S_IFDIR | 0o701, 0, 2001), (stat.S_IFLNK | 0o755, 0, 0)):
+            def observe(path):
+                if path == parent:
+                    return SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
+                return real_lstat(path)
+
+            before = self.snapshot()
+            with self.subTest(mode=mode, uid=uid, gid=gid), \
+                 patch.object(Path, "lstat", autospec=True, side_effect=observe), \
+                 patch.object(setup, "_write") as publish, \
+                 patch.object(setup.os, "mkdir") as mkdir, \
+                 patch.object(setup.os, "fchmod") as chmod, self.assertRaises(ValueError):
+                setup.configure_build_target(configuration())
+            publish.assert_not_called()
+            mkdir.assert_not_called()
+            chmod.assert_not_called()
+            self.run.assert_not_called()
+            self.assertEqual(self.snapshot(), before)
+            self.assertFalse(Path(setup.ETC_DIR).exists())
+
+    def test_legacy_root_or_marker_refuses_enable_and_disable_without_changes(self) -> None:
+        legacy = Path(setup._LEGACY_SSH_ROOT)
+        legacy.mkdir(parents=True, mode=0o711)
+        evidence = legacy / "evidence"
+        evidence.write_bytes(b"retain")
+        for disable in (False, True):
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "operator reconciliation or a clean reinstall"):
+                setup.configure_build_target(configuration(disable_build_target=disable))
+            self.assertEqual(self.snapshot(), before)
+            self.run.assert_not_called()
+        evidence.unlink()
+        legacy.rmdir()
+        setup.configure_build_target(configuration())
+        marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+        marker["schema"] = 1
+        setup._save(marker)
+        before = self.snapshot()
+        self.run.reset_mock()
+        for disable in (False, True):
+            with self.assertRaisesRegex(ValueError, "operator reconciliation or a clean reinstall"):
+                setup.configure_build_target(configuration(disable_build_target=disable))
+            self.assertEqual(self.snapshot(), before)
+            self.run.assert_not_called()
 
     def test_inaccessible_shared_parent_refuses_update_without_preventing_disable(self) -> None:
         setup.configure_build_target(configuration())

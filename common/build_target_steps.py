@@ -28,13 +28,20 @@ ETC_DIR = "/etc/basaltwater/build-target"
 MARKER_PATH = ETC_DIR + "/.managed.json"
 CONFIG_PATH = ETC_DIR + "/config.json"
 DATA_ROOT = "/var/lib/basaltwater/build-target"
-SSH_ROOT = "/var/lib/basaltwater/build-target-ssh"
+SSH_ROOT = "/var/lib/basaltwater-build-target-ssh"
+_LEGACY_SSH_ROOT = "/var/lib/basaltwater/build-target-ssh"
 SOURCE_ROOT = "/opt/basaltwater"
 ENTRYPOINT_PATH = SOURCE_ROOT + "/common/service_tools/build_target.py"
 SUDOERS_DIR = "/etc/sudoers.d"
 ROOTS = {name: DATA_ROOT + "/" + name for name in ("admission", "artifacts", "releases", "verify")}
 MAX_ENROLLMENT_BYTES = MAX_POLICY_BYTES + 256 * 1024
 _MARKER_LIMIT = 1024 * 1024
+_MARKER_SCHEMA = 2
+_LEGACY_LAYOUT_GUIDANCE = (
+    "Legacy build-target transport layout requires operator reconciliation or a clean reinstall; "
+    "preserve accounts, markers, the stable lock and retained data, revoke old authority under "
+    "operator control, and do not widen /var/lib/basaltwater or move homes/edit markers to bypass this check"
+)
 _PREFIX = "bw-target-"
 _SLUG = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?")
 _HASH = re.compile(r"[0-9a-f]{64}")
@@ -196,7 +203,9 @@ def _file_mode(path: str) -> int:
 def _parse_marker(raw: bytes) -> dict:
     marker = _record(decode_document(raw, maximum=_MARKER_LIMIT),
                      {"schema", "state", "principals", "files", "pending"}, "Target ownership marker")
-    if type(marker["schema"]) is not int or marker["schema"] != 1:
+    if type(marker["schema"]) is int and marker["schema"] == 1:
+        raise ValueError(_LEGACY_LAYOUT_GUIDANCE)
+    if type(marker["schema"]) is not int or marker["schema"] != _MARKER_SCHEMA:
         raise ValueError("Unsupported target ownership marker")
     if marker["state"] not in {"enabled", "disabled", "updating"}:
         raise ValueError("Invalid target enrollment state")
@@ -400,6 +409,8 @@ def configure_build_target(config: object) -> None:
     entrypoint.require_platform()
     # Trust installed code before installing packages, accounts or authority.
     _trusted_source_tree()
+    if os.path.lexists(_LEGACY_SSH_ROOT):
+        raise ValueError(_LEGACY_LAYOUT_GUIDANCE + ": " + _LEGACY_SSH_ROOT)
     initial = not os.path.lexists(ETC_DIR)
     if initial:
         _preflight(None, set() if enrollment is None else set(enrollment["keys"]))
@@ -415,7 +426,7 @@ def configure_build_target(config: object) -> None:
             os.mkdir(name, 0o700, dir_fd=parent_fd)
             os.fsync(parent_fd)
         _directory(ETC_DIR, 0o700)
-        marker = {"schema": 1, "state": "updating", "principals": {}, "files": {}, "pending": None}
+        marker = {"schema": _MARKER_SCHEMA, "state": "updating", "principals": {}, "files": {}, "pending": None}
         _save(marker)
     with target_lease(installer=True, create=initial) as descriptor:
         if not initial:
