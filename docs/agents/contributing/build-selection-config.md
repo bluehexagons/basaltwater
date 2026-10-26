@@ -14,6 +14,26 @@ controller and remote parsers so a target-only setup replay retains its mode
 without receiving a builder reference. Remote arguments never include the
 builder reference or clear intent.
 
+Patch deployment merging follows the effective `build_on` reference after
+selection changes and preservation rules. With a selected builder, each
+explicitly patched destination replaces every saved source selection for that
+destination. Omitted destinations and the omitted builder selector survive.
+Comma-separated destinations are expanded individually; domain case and a final
+DNS dot are normalized, and omitted/root slashes and trailing path slashes
+identify the same destination. Path case remains significant. The existing
+deploy parser/validators and Nginx path validator reject invalid destinations
+before merging. Repeated identical destination/source selections collapse;
+different sources for one normalized destination within the same patch refuse
+before source preparation or transport.
+
+An explicit builder selection or switch uses these replacement rules, including
+when selecting a builder for an ordinary saved setup. `--no-build-on` restores
+ordinary full-pair merging for that invocation. Artifact mode or target
+enrollment alone never selects replacement semantics. Ordinary build-on-target
+merging retains its existing behavior. Delivery planning still validates the
+complete application/route map; destination replacement does not bypass those
+checks or change retained-attempt recovery.
+
 Saved artifact mode also selects [retained target reconciliation](build-target-activation.md#artifact-mode-setup-replay)
 during target setup replay. The controller transport skips deployment repository
 preparation/upload; the target skips inferred build runtimes and uses installed

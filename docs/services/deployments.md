@@ -139,6 +139,24 @@ a builder or invoking a compiler. Missing, unsafe or unavailable inputs refuse
 with controller deployment guidance. Patches preserve omitted builder selection;
 `--no-build-on` clears the controller's selection and artifact mode.
 
+To update a saved selected-builder deployment from v1 to v2:
+
+```bash
+basaltw patch web.example.com --deploy app.example.com 'https://github.com/example/app.git#tag=v2'
+basaltw deploy web.example.com --yes
+```
+
+The patch replaces the source for the named destination, preserving omitted
+sibling destinations and the saved builder. Subsequent saved deployments use v2.
+Comma-separated destinations are updated individually. Domain case, a final DNS
+dot, an omitted root slash and trailing path slashes are normalized for matching;
+path case remains significant. Identical repeated selections collapse, while
+different sources for the same normalized destination within one patch are
+rejected before source preparation or transport. These rules also apply when
+explicitly selecting or switching builders in the patch. Ordinary target builds,
+including a patch with `--no-build-on`, retain their existing full-pair merge
+behavior; artifact mode or enrollment alone does not enable replacement.
+
 Dry runs clone and pin sources in disposable local storage and perform read-only
 SSH capability/platform probes using existing trust. They never bootstrap,
 reserve, submit builds, stage, activate or save setup state. Non-dry attempts
