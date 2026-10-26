@@ -73,6 +73,19 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                 self.assertEqual(cache_data['script'], 'basaltw')
                 self.assertEqual(cache_data['command'], 'basaltw setup')
 
+    def test_save_and_load_preserves_build_host_de_enrollment_intent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir):
+                config = self._make_config(disable_build_host=True)
+                save_setup_command(config)
+
+                loaded = load_setup_command('testhost')
+
+        self.assertIsNotNone(loaded)
+        self.assertFalse(loaded.is_build_server)
+        self.assertTrue(loaded.disable_build_host)
+        self.assertIsNone(loaded.build_host_enrollment)
+
     def test_load_retains_legacy_privilege_broker_origin_and_reports_upgrade_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir):

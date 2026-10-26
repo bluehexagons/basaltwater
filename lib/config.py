@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
+import os
 import shlex
 import socket
+import stat
 from dataclasses import InitVar, dataclass, asdict, field
 from functools import lru_cache
 from typing import Optional, cast
@@ -43,6 +46,7 @@ GODOT_WEB_HTTPS_PORT = 8443
 WEB_PANEL_CA_HTTP_PORT = 8442
 WEB_PANEL_DEFAULT_PORT_SENTINEL = object()
 DEFAULT_AGENT_WEB_PORTS = (80, 443, 8080, 8081)
+BUILD_HOST_POLICY_MAX_BYTES = 4 * 1024 * 1024
 _LAN_IPV4_BLOCKS = (
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -54,6 +58,70 @@ _DEFAULT_LAN_PREFIX_LENGTHS = {4: 24, 6: 64}
 
 class RetiredSetupConfigError(ValueError):
     """Saved configuration requires the retired intermediate upgrade path."""
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Decode one JSON object while rejecting ambiguous duplicate keys."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_private_key_material(value: object) -> None:
+    """Reject private-key PEM blocks anywhere in transported JSON strings."""
+    if isinstance(value, str):
+        if "-----BEGIN " in value and "PRIVATE KEY-----" in value:
+            raise ValueError("Build host policy must not contain private SSH keys")
+    elif isinstance(value, dict):
+        for nested in value.values():
+            _reject_private_key_material(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _reject_private_key_material(nested)
+
+
+def _decode_build_host_enrollment_json(value: str) -> JSONDict:
+    """Parse a public build-host policy envelope without policy validation."""
+    try:
+        decoded = json.loads(value, object_pairs_hook=_strict_json_object)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"Invalid build host policy JSON: {exc}") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("Build host policy JSON must be an object")
+    _reject_private_key_material(decoded)
+    return cast(JSONDict, decoded)
+
+
+def _read_build_host_enrollment_file(path: str) -> JSONDict:
+    """Read a bounded regular policy file without following a final symlink."""
+    from lib.validation import validate_filesystem_path
+
+    validate_filesystem_path(path)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"Cannot safely open build host policy file: {path}") from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Build host policy file must be a regular file")
+        if info.st_size > BUILD_HOST_POLICY_MAX_BYTES:
+            raise ValueError("Build host policy file exceeds the 4 MiB limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as policy_file:
+            content = policy_file.read(BUILD_HOST_POLICY_MAX_BYTES + 1)
+        if len(content) > BUILD_HOST_POLICY_MAX_BYTES:
+            raise ValueError("Build host policy file exceeds the 4 MiB limit")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Build host policy file must be UTF-8 JSON") from exc
+        return _decode_build_host_enrollment_json(text)
+    finally:
+        os.close(descriptor)
 
 
 def validate_current_setup_fields(data: JSONDict) -> None:
@@ -618,11 +686,30 @@ class SetupConfig:
     include_web_server: bool = False
     include_web_firewall: bool = False
     target_host: MaybeStr = None  # Client-facing identity retained during target-local setup
+    disable_build_host: bool = False
+    build_host_enrollment: JSONDict | None = None
     # Construction-only: never persist or inherit a saved-root policy exception
     # when merge_setup_configs constructs the effective patch configuration.
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        if type(self.disable_build_host) is not bool:
+            raise ValueError("disable_build_host must be a boolean")
+        if self.disable_build_host and self.is_build_server:
+            raise ValueError("Cannot enable and disable the build host in one setup")
+        if self.disable_build_host and self.build_host_enrollment is not None:
+            raise ValueError("Build host enrollment policy conflicts with de-enrollment")
+        if self.build_host_enrollment is not None:
+            if not self.is_build_server:
+                raise ValueError("Build host enrollment policy requires --build-server")
+            if not isinstance(self.build_host_enrollment, dict):
+                raise ValueError("Build host enrollment policy must be a JSON object")
+            _reject_private_key_material(self.build_host_enrollment)
+            from common.build_host_steps import parse_build_host_enrollment
+
+            self.build_host_enrollment = parse_build_host_enrollment(
+                self.build_host_enrollment
+            )
         if self.target_host is not None:
             from lib.validators import validate_host
 
@@ -1478,8 +1565,15 @@ class SetupConfig:
         if self.ci_registration_payload:
             args.append("--ci-registration-payload")
         
-        if self.is_build_server:
+        if self.disable_build_host:
+            args.append("--disable-build-host")
+        elif self.is_build_server:
             args.append("--build-server")
+        if self.build_host_enrollment is not None:
+            policy_json = json.dumps(self.build_host_enrollment, separators=(",", ":"))
+            args.append(
+                "--build-host-enrollment-json " + shlex.quote(policy_json)
+            )
         
         if self.is_app_server:
             args.append("--app-server")
@@ -2068,8 +2162,15 @@ class SetupConfig:
         cmd_parts.extend(self._github_runner_args())
         
         # Build/App Server
-        if self.is_build_server:
+        if self.disable_build_host:
+            cmd_parts.append("--no-build-server")
+        elif self.is_build_server:
             cmd_parts.append("--build-server")
+        if self.build_host_enrollment is not None:
+            policy_json = json.dumps(self.build_host_enrollment, separators=(",", ":"))
+            cmd_parts.append(
+                "--build-host-enrollment-json " + shlex.quote(policy_json)
+            )
         
         if self.is_app_server:
             cmd_parts.append("--app-server")
@@ -2511,7 +2612,34 @@ class SetupConfig:
         syncthing_admin = _optional_str_arg(args, 'syncthing_admin')
         syncthing_root = _optional_str_arg(args, 'syncthing_root')
 
-        is_build_server = bool(getattr(args, 'is_build_server', False))
+        raw_is_build_server = getattr(args, 'is_build_server', None)
+        is_build_server = raw_is_build_server is True
+        disable_build_host = bool(getattr(args, 'disable_build_host', False)) or (
+            raw_is_build_server is False
+        )
+        policy_file = getattr(args, 'build_host_policy', None)
+        policy_json = getattr(args, 'build_host_enrollment_json', None)
+        if policy_file is not None and policy_json is not None:
+            raise ValueError(
+                "Choose --build-host-policy or --build-host-enrollment-json, not both"
+            )
+        build_host_enrollment = (
+            _read_build_host_enrollment_file(policy_file)
+            if policy_file is not None
+            else (
+                _decode_build_host_enrollment_json(policy_json)
+                if policy_json is not None
+                else None
+            )
+        )
+        if disable_build_host and is_build_server:
+            raise ValueError("Cannot enable and disable the build host in one setup")
+        if build_host_enrollment is not None and disable_build_host:
+            raise ValueError(
+                "Build host enrollment policy conflicts with de-enrollment"
+            )
+        if build_host_enrollment is not None and not is_build_server:
+            raise ValueError("Build host enrollment policy requires --build-server")
         is_app_server = bool(getattr(args, 'is_app_server', False))
         machine_type = _resolve_machine_type(
             args,
@@ -2991,6 +3119,8 @@ class SetupConfig:
             ci_register_with_gh=_optional_bool_arg(args, 'ci_register_with_gh') is True,
             ci_registration_payload=_optional_bool_arg(args, 'ci_registration_payload') is True,
             is_build_server=is_build_server,
+            disable_build_host=disable_build_host,
+            build_host_enrollment=build_host_enrollment,
             is_app_server=is_app_server,
             deploy_targets=getattr(args, 'deploy_targets', None),
             enable_samba=getattr(args, 'enable_samba', False),

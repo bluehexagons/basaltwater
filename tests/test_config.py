@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
 import os
 import shlex
 import sys
+import tempfile
+from types import ModuleType
 import unittest
 from argparse import Namespace
 from unittest.mock import patch
@@ -12,6 +17,250 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.config import SetupConfig
+
+
+_build_host_steps_stub = ModuleType("common.build_host_steps")
+_build_host_steps_stub.parse_build_host_enrollment = lambda value: value
+
+
+@patch.dict("sys.modules", {"common.build_host_steps": _build_host_steps_stub})
+class TestBuildHostEnrollmentConfig(unittest.TestCase):
+    POLICY = {
+        "schema": 1,
+        "policy": {"enabled": True},
+        "keys": {"builder": "ssh-ed25519 AAAATEST"},
+    }
+
+    def _setup_parser(self):
+        from lib.arg_parser import create_setup_argument_parser
+
+        return create_setup_argument_parser("Build host test")
+
+    def test_default_and_existing_setup_serialization_are_unchanged(self):
+        config = SetupConfig(host="target", username="agent", system_type="server_lite")
+
+        self.assertIsNone(config.build_host_enrollment)
+        restored = SetupConfig.from_dict("target", "server_lite", config.to_dict())
+        self.assertIsNone(restored.build_host_enrollment)
+        self.assertNotIn("--build-host-policy", config.to_setup_command())
+        self.assertNotIn("--build-host-enrollment-json", config.to_remote_args())
+
+    def test_public_policy_file_loads_decoded_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "policy.json")
+            with open(path, "w", encoding="utf-8") as policy_file:
+                json.dump(self.POLICY, policy_file)
+
+            args = self._setup_parser().parse_args(
+                ["target", "agent", "--build-server", "--build-host-policy", path]
+            )
+            config = SetupConfig.from_args(args, "server_lite")
+
+        self.assertEqual(config.build_host_enrollment, self.POLICY)
+
+    def test_internal_json_round_trip_never_forwards_local_filename(self):
+        from lib.arg_parser import create_setup_argument_parser
+
+        config = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            is_build_server=True, build_host_enrollment=self.POLICY,
+        )
+        remote_parser = create_setup_argument_parser("Remote", for_remote=True)
+        remote_args = remote_parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        remote_args.host = config.host
+        received = SetupConfig.from_args(remote_args, "server_lite")
+        reconstructed_args = self._setup_parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        reconstructed = SetupConfig.from_args(reconstructed_args, "server_lite")
+
+        self.assertEqual(received.build_host_enrollment, self.POLICY)
+        self.assertEqual(reconstructed.build_host_enrollment, self.POLICY)
+        self.assertTrue(any(
+            arg.startswith("--build-host-enrollment-json ")
+            for arg in config.to_remote_args()
+        ))
+        self.assertNotIn("--build-host-policy", config.to_remote_args())
+
+    def test_policy_persists_through_saved_configuration(self):
+        config = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            is_build_server=True, build_host_enrollment=self.POLICY,
+        )
+
+        restored = SetupConfig.from_dict("target", "server_lite", config.to_dict())
+
+        self.assertEqual(restored.build_host_enrollment, self.POLICY)
+
+    def test_omitted_policy_is_preserved_by_existing_patch_merge(self):
+        from lib.cache import merge_setup_configs
+
+        cached = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            is_build_server=True, build_host_enrollment=self.POLICY,
+        )
+        update = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+        )
+
+        merged = merge_setup_configs(
+            cached, update, preserve_keys={"is_build_server"}
+        )
+
+        self.assertEqual(merged.build_host_enrollment, self.POLICY)
+        self.assertTrue(merged.is_build_server)
+        self.assertFalse(merged.disable_build_host)
+
+    def test_explicit_no_build_server_marks_managed_de_enrollment(self):
+        omitted = SetupConfig.from_args(
+            self._setup_parser().parse_args(["target", "agent"]),
+            "server_lite",
+        )
+        disabled = SetupConfig.from_args(
+            self._setup_parser().parse_args(
+                ["target", "agent", "--no-build-server"]
+            ),
+            "server_lite",
+        )
+
+        self.assertFalse(omitted.disable_build_host)
+        self.assertTrue(disabled.disable_build_host)
+        self.assertFalse(disabled.is_build_server)
+        self.assertIn("--no-build-server", disabled.to_setup_command())
+        self.assertTrue(any(
+            arg == "--disable-build-host"
+            for arg in disabled.to_remote_args()
+        ))
+
+    def test_internal_remote_de_enrollment_flag_round_trips(self):
+        from lib.arg_parser import create_setup_argument_parser
+
+        config = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            disable_build_host=True,
+        )
+        parser = create_setup_argument_parser("Remote", for_remote=True)
+        args = parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        args.host = config.host
+
+        received = SetupConfig.from_args(args, "server_lite")
+
+        self.assertTrue(received.disable_build_host)
+        self.assertFalse(received.is_build_server)
+
+    def test_contradictory_enable_and_de_enrollment_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Cannot enable and disable"):
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                is_build_server=True, disable_build_host=True,
+            )
+        with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                disable_build_host=True, build_host_enrollment=self.POLICY,
+            )
+
+    def test_de_enrollment_clears_saved_role_and_policy_and_reenable_resets_intent(self):
+        from lib.cache import merge_setup_configs
+
+        cached = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            is_build_server=True, build_host_enrollment=self.POLICY,
+        )
+        disabled = merge_setup_configs(
+            cached,
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                disable_build_host=True,
+            ),
+        )
+        reenabled = merge_setup_configs(
+            disabled,
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                is_build_server=True,
+            ),
+            preserve_keys=set(),
+        )
+
+        self.assertFalse(disabled.is_build_server)
+        self.assertIsNone(disabled.build_host_enrollment)
+        self.assertTrue(disabled.disable_build_host)
+        self.assertTrue(reenabled.is_build_server)
+        self.assertFalse(reenabled.disable_build_host)
+        self.assertIsNone(reenabled.build_host_enrollment)
+
+    def test_de_enrollment_intent_persists_in_saved_configuration(self):
+        disabled = SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            disable_build_host=True,
+        )
+
+        restored = SetupConfig.from_dict("target", "server_lite", disabled.to_dict())
+
+        self.assertFalse(restored.is_build_server)
+        self.assertTrue(restored.disable_build_host)
+
+    def test_policy_requires_build_server_but_bare_role_remains_valid(self):
+        with self.assertRaisesRegex(ValueError, "requires --build-server"):
+            SetupConfig(
+                host="target", username="agent", system_type="server_lite",
+                build_host_enrollment=self.POLICY,
+            )
+        self.assertTrue(SetupConfig(
+            host="target", username="agent", system_type="server_lite",
+            is_build_server=True,
+        ).is_build_server)
+
+    def test_invalid_json_private_key_and_non_mapping_are_rejected(self):
+        for value in (
+            '{"schema":1,"schema":1}',
+            '[]',
+            '{"private":"-----BEGIN OPENSSH PRIVATE KEY-----"}',
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                from lib.config import _decode_build_host_enrollment_json
+
+                _decode_build_host_enrollment_json(value)
+
+    def test_invalid_policy_files_large_duplicate_and_symlink_are_rejected(self):
+        from lib.config import BUILD_HOST_POLICY_MAX_BYTES
+
+        with tempfile.TemporaryDirectory() as directory:
+            duplicate = os.path.join(directory, "duplicate.json")
+            with open(duplicate, "w", encoding="utf-8") as policy_file:
+                policy_file.write('{"schema":1,"schema":1}')
+            large = os.path.join(directory, "large.json")
+            with open(large, "wb") as policy_file:
+                policy_file.write(b" " * (BUILD_HOST_POLICY_MAX_BYTES + 1))
+            for path in (duplicate, large):
+                with self.subTest(path=os.path.basename(path)), self.assertRaises(
+                    ValueError
+                ):
+                    args = self._setup_parser().parse_args(
+                        ["target", "agent", "--build-server", "--build-host-policy", path]
+                    )
+                    SetupConfig.from_args(args, "server_lite")
+            target = os.path.join(directory, "target.json")
+            with open(target, "w", encoding="utf-8") as policy_file:
+                json.dump(self.POLICY, policy_file)
+            link = os.path.join(directory, "link.json")
+            os.symlink(target, link)
+            args = self._setup_parser().parse_args(
+                ["target", "agent", "--build-server", "--build-host-policy", link]
+            )
+            with self.assertRaisesRegex(ValueError, "safely open"):
+                SetupConfig.from_args(args, "server_lite")
+
+    def test_public_file_and_internal_json_are_mutually_exclusive(self):
+        parser = self._setup_parser()
+        with tempfile.NamedTemporaryFile() as policy_file:
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args([
+                        "target", "agent", "--build-host-policy", policy_file.name,
+                        "--build-host-enrollment-json", "{}",
+                    ])
 
 
 class TestSetupConfigToDict(unittest.TestCase):
@@ -605,7 +854,7 @@ class TestSetupConfigFromArgs(unittest.TestCase):
             ssl_email=None,
             enable_cloudflare=False,
             enable_cicd=False,
-            is_build_server=False,
+            is_build_server=None,
             is_app_server=False,
             deploy_targets=None,
             enable_samba=False,
