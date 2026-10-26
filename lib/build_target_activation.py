@@ -16,6 +16,7 @@ import stat
 from typing import Any
 
 from lib.atomic_io import read_json_file, write_bytes_atomic
+from lib.build_admission import DeploymentAdmissionStore
 from lib.build_manifest import DEBIAN_PLATFORM, validate_manifest_request
 from lib.build_protocol import encode_document, parse_build_request, request_digest
 from lib.build_target_policy import authorize_target_deployment
@@ -30,11 +31,38 @@ from lib.validators import validate_host
 
 MAX_REGISTRY_BYTES = 4 * 1024**2
 MAX_APPLICATIONS = 256
+MAX_EXPECTED_RELEASES = 16
 _INITIALIZED = b"basaltwater-target-releases-v1\n"
 _ID = re.compile(r"[0-9a-f]{32}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def parse_expected_releases(value: object) -> list[dict[str, Any]] | None:
+    """Detach a bounded, canonical controller completion identity list."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_EXPECTED_RELEASES:
+        raise ValueError("Expected releases must be a list of 1–16 controller release identities")
+    result = []
+    applications = set()
+    operations = set()
+    for item in value:
+        if (not isinstance(item, dict) or set(item) != {
+                "application", "operation_id", "generation", "artifact_sha256",
+            }
+                or not isinstance(item["application"], str) or _SLUG.fullmatch(item["application"]) is None
+                or not isinstance(item["operation_id"], str) or _ID.fullmatch(item["operation_id"]) is None
+                or type(item["generation"]) is not int or not 1 <= item["generation"] <= 2**63 - 1
+                or not isinstance(item["artifact_sha256"], str) or _DIGEST.fullmatch(item["artifact_sha256"]) is None):
+            raise ValueError("Invalid expected controller release identity")
+        if item["application"] in applications or item["operation_id"] in operations:
+            raise ValueError("Expected controller releases contain duplicate applications or operations")
+        applications.add(item["application"])
+        operations.add(item["operation_id"])
+        result.append(dict(item))
+    return result
 
 
 @contextmanager
@@ -177,7 +205,7 @@ class TargetReleaseActivator:
             raise ValueError("Unsafe target release state file")
         return True
 
-    def _load(self) -> dict[str, Any]:
+    def _load(self, *, initialize: bool = True) -> dict[str, Any]:
         initialized = self._private_file(self.witness)
         present = self._private_file(self.registry)
         if initialized:
@@ -223,8 +251,9 @@ class TargetReleaseActivator:
         if not initialized:
             if state["applications"]:
                 raise ValueError("Target release witness is missing with retained applications")
-            self._save(state)
-            write_bytes_atomic(self.witness, _INITIALIZED, mode=0o600)
+            if initialize:
+                self._save(state)
+                write_bytes_atomic(self.witness, _INITIALIZED, mode=0o600)
         return state
 
     def _save(self, state: dict) -> None:
@@ -243,20 +272,82 @@ class TargetReleaseActivator:
                 groups.setdefault(deployment["domain"], []).append(deployment)
         return groups
 
-    def reconcile_installed(self) -> list[dict[str, Any]]:
+    def _check_expected(self, expected: list[dict[str, Any]], state: dict,
+                        admissions: DeploymentAdmissionStore | None) -> None:
+        """Check all installed identities, then current intent, before replay."""
+        guidance = "Run deployment from the controller again before final setup"
+        for identity in expected:
+            record = state["applications"].get(identity["application"])
+            if record is None or any(record[key] != identity[key] for key in (
+                "operation_id", "generation", "artifact_sha256",
+            )):
+                raise ValueError(f"Expected release is missing or differs from the installed identity. {guidance}")
+        if not isinstance(admissions, DeploymentAdmissionStore):
+            raise ValueError(f"Expected release replay requires current admission evidence. {guidance}")
+        # Do not bootstrap missing admission evidence just to query status.
+        if not all(self._private_file(path) for path in (admissions.path, admissions.path + ".lock")):
+            raise ValueError(f"Expected release admission evidence is missing. {guidance}")
+        if os.stat(admissions.path + ".lock", follow_symlinks=False).st_size == 0:
+            raise ValueError(f"Expected release admission initialization witness is missing. {guidance}")
+        for identity in expected:
+            record = state["applications"][identity["application"]]
+            try:
+                status = admissions.status(record["operation_id"], owner=record["bindings"]["principal"])
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise ValueError(f"Expected release admission evidence is unavailable. {guidance}") from exc
+            if (any(status[key] != identity[key] for key in identity)
+                    or status["state"] != "completed" or status["superseded"] is not False
+                    or status["request_sha256"] != record["request_sha256"]
+                    or status["bindings_sha256"] != _bindings_manifest(
+                        record["bindings"], record["request"], record["bindings"]["principal"],
+                    )[0]["bindings_sha256"]):
+                raise ValueError(f"Expected release is not the current completed admission. {guidance}")
+            # Expiry bounds admission activation, not retention of a completed
+            # release. A completed, unsuperseded receipt remains replayable.
+
+    def check_expected_releases(self, *, expected_releases: object,
+                                admissions: DeploymentAdmissionStore) -> None:
+        """Check current controller completions without writes or artifact I/O.
+
+        The trusted caller must hold exclusive target maintenance throughout
+        this check and all subsequent setup mutations. Never call under the
+        activation lock: admission status takes the admission lock first.
+        """
+        expected = parse_expected_releases(expected_releases)
+        if expected is None:
+            raise ValueError("Expected controller releases are required for guarded setup")
+        with _trusted_directory(self.root, private=True), _trusted_directory(self.staging_root, private=True):
+            self._check_expected(expected, self._load(initialize=False), admissions)
+            if OperationStateStore(os.path.join(self.root, "activation.json")).load() is not None:
+                raise ValueError("Unfinished target activation requires operator reconciliation before controller setup")
+
+    def reconcile_installed(self, *, expected_releases: object = None,
+                            admissions: DeploymentAdmissionStore | None = None) -> list[dict[str, Any]]:
         """Reapply retained releases for a trusted local setup, without a build.
 
         This is not a transport action. The root setup caller must exclude
         typed requests and enrollment changes throughout the call. Retained
         bindings describe the installed release; revoking a transport grant
         does not replace that release with new project inputs.
+
+        Expected controller identities additionally require the installed
+        admission store. Check it before activation ownership to preserve the
+        admission -> activation lock order; the caller's exclusive maintenance
+        lease keeps these status reads current through replay and response.
         """
+        expected = parse_expected_releases(expected_releases)
         with _trusted_directory(self.root, private=True), _trusted_directory(self.staging_root, private=True):
+            if expected is not None:
+                # Refusals must not initialize the registry or create an
+                # activation lock/marker, open artifacts, or preflight releases.
+                state = self._load(initialize=False)
+                self._check_expected(expected, state, admissions)
             operation = OperationStateStore(os.path.join(self.root, "activation.json"))
             with operation.ownership():
                 if operation.load() is not None:
                     raise ValueError("Unfinished target activation requires operator reconciliation")
-                state = self._load()
+                if expected is None:
+                    state = self._load()
                 if not state["applications"]:
                     raise ValueError("No retained target releases; run deployment from the controller")
                 prepared = []

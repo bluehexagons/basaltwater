@@ -16,7 +16,7 @@ from lib.build_manifest import DEBIAN_PLATFORM, validate_manifest_request
 from lib.build_admission import DeploymentAdmissionStore
 from lib.build_artifacts import create_artifact
 from lib.build_protocol import DEFAULT_LIMITS, encode_document
-from lib.build_target_activation import TargetReleaseActivator
+from lib.build_target_activation import TargetReleaseActivator, parse_expected_releases
 from lib.build_target_artifacts import BuildTargetArtifactStore
 from lib.build_target_policy import authorize_target_deployment
 
@@ -93,6 +93,31 @@ class TargetReleaseActivationTests(unittest.TestCase):
     def activate(self, bindings, request, *, generation=1, operation_id=None):
         return self.activator(bindings=bindings, request=request, operation_id=operation_id or uuid.uuid4().hex,
                               generation=generation, artifact_sha256="d" * 64, principal="controller")
+
+    @staticmethod
+    def identity(receipt):
+        return {key: receipt[key] for key in ("application", "operation_id", "generation", "artifact_sha256")}
+
+    def admission_store(self, *, clock=None):
+        root = self.root / "admission"
+        root.mkdir(mode=0o700)
+        return DeploymentAdmissionStore(root / "admissions.json", clock=clock)
+
+    def admit_release(self, admissions, bindings, request):
+        digest = hashlib.sha256(encode_document(bindings)).hexdigest()
+        reservation = admissions.reserve(bindings["application"], request, owner="controller",
+                                         idempotency_key=uuid.uuid4().hex, bindings_sha256=digest)
+        receipt = admissions.activate(
+            reservation["operation_id"], reservation["generation"], request, "d" * 64,
+            owner="controller", bindings_sha256=digest,
+            action=lambda: self.activate(bindings, request, generation=reservation["generation"],
+                                         operation_id=reservation["operation_id"]),
+        )
+        return self.identity(receipt)
+
+    def evidence(self):
+        return {str(path.relative_to(self.root)): path.read_bytes()
+                for path in self.root.rglob("*") if path.is_file()}
 
     def test_static_uses_exact_admin_root_and_preserves_build_identity(self):
         bindings, request = self.inputs()
@@ -212,6 +237,221 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.deploy.assert_not_called()
         self.publish.assert_not_called()
 
+    def test_expected_refresh_checks_every_identity_before_preflight_or_writes(self):
+        bindings, request = self.inputs()
+        first = self.identity(self.activate(bindings, request))
+        other, second_request = self.inputs("other", domain="other.example")
+        second = self.identity(self.activate(other, second_request))
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        self.opened.clear()
+        before = self.evidence()
+        for field, changed in (("operation_id", "e" * 32), ("generation", 2),
+                               ("artifact_sha256", "e" * 64), ("application", "missing")):
+            with self.subTest(field=field), patch("lib.build_target_activation.OperationStateStore") as operation:
+                stale = dict(second, **{field: changed})
+                with self.assertRaisesRegex(ValueError, "controller"):
+                    self.activator.reconcile_installed(expected_releases=[first, stale])
+                operation.assert_not_called()
+                self.assertEqual(self.evidence(), before)
+        self.deploy.assert_not_called()
+        self.publish.assert_not_called()
+        self.assertEqual(self.opened, [])
+
+    def test_expected_refresh_rejects_noncanonical_or_duplicate_input_without_state_access(self):
+        valid = {"application": "shop", "operation_id": "a" * 32, "generation": 1,
+                 "artifact_sha256": "b" * 64}
+        invalid = [[], {}, (valid,), "[]", [None], [dict(valid, extra=True)],
+                   [{key: value for key, value in valid.items() if key != "application"}],
+                   [valid, valid], [valid, dict(valid, application="other")],
+                   [valid, dict(valid, operation_id="c" * 32)], [valid] * 17]
+        for field, values in {
+            "application": (None, 1, "Shop", "shop\n", "a" * 65, ""),
+            "operation_id": (None, 1, "A" * 32, "a" * 31, "a" * 32 + "\n"),
+            "generation": (None, True, False, 1.0, "1", 0, -1, 2**63),
+            "artifact_sha256": (None, 1, "B" * 64, "b" * 63, "b" * 64 + "\n"),
+        }.items():
+            invalid.extend([dict(valid, **{field: value})] for value in values)
+        with patch.object(self.activator, "_load") as load, patch(
+            "lib.build_target_activation.OperationStateStore",
+        ) as operation:
+            for value in invalid:
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "[Ee]xpected"):
+                    self.activator.reconcile_installed(expected_releases=value)
+            load.assert_not_called()
+            operation.assert_not_called()
+        self.assertEqual(self.evidence(), {})
+        self.assertEqual(self.opened, [])
+        self.deploy.assert_not_called()
+        self.publish.assert_not_called()
+
+    def test_expected_refresh_missing_registry_does_not_initialize_it(self):
+        expected = [{"application": "shop", "operation_id": "a" * 32, "generation": 1,
+                     "artifact_sha256": "b" * 64}]
+        with self.assertRaisesRegex(ValueError, "controller"):
+            self.activator.reconcile_installed(expected_releases=expected)
+        self.assertEqual(list(self.state.iterdir()), [])
+        self.assertEqual(self.opened, [])
+        self.deploy.assert_not_called()
+
+    def test_expected_identity_list_accepts_boundaries_and_detaches_input(self):
+        expected = [{"application": "app-" + str(index), "operation_id": f"{index:032x}",
+                     "generation": 2**63 - 1, "artifact_sha256": "a" * 64} for index in range(16)]
+        parsed = parse_expected_releases(expected)
+        self.assertEqual(parsed, expected)
+        expected[0]["generation"] = 1
+        expected.clear()
+        self.assertEqual(len(parsed), 16)
+        self.assertEqual(parsed[0]["generation"], 2**63 - 1)
+
+    def test_exact_expected_refresh_preserves_unrelated_apps_and_does_not_admit(self):
+        admissions = self.admission_store()
+        bindings, request = self.inputs()
+        expected = self.admit_release(admissions, bindings, request)
+        other, second_request = self.inputs("other", domain="other.example")
+        unrelated = self.activate(other, second_request)
+        retained = (self.state / "releases.json", Path(admissions.path))
+        before = {path: path.read_bytes() for path in retained}
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        with patch.object(admissions, "reserve") as reserve, patch.object(admissions, "activate") as activate:
+            receipts = self.activator.reconcile_installed(expected_releases=[expected], admissions=admissions)
+        reserve.assert_not_called()
+        activate.assert_not_called()
+        self.assertEqual(self.deploy.call_count, 2)
+        self.publish.assert_called_once()
+        self.assertEqual({path: path.read_bytes() for path in retained}, before)
+        self.assertEqual({item["operation_id"] for item in receipts},
+                         {expected["operation_id"], unrelated["operation_id"]})
+
+    def test_expected_guard_is_read_only_and_checks_admission_before_activation_ownership(self):
+        clock = [100.0]
+        admissions = self.admission_store(clock=lambda: clock[0])
+        bindings, request = self.inputs()
+        expected = self.admit_release(admissions, bindings, request)
+        clock[0] += 3601  # Completion is retained after the reservation TTL.
+        self.assertTrue(admissions.status(expected["operation_id"], owner="controller")["expired"])
+        before = self.evidence()
+        self.opened.clear()
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        self.activator.check_expected_releases(expected_releases=[expected], admissions=admissions)
+        self.assertEqual(self.evidence(), before)
+        self.assertEqual(self.opened, [])
+        self.deploy.assert_not_called()
+        self.publish.assert_not_called()
+
+        original_status = admissions.status
+
+        def status(*args, **kwargs):
+            # A status query must be outside activation ownership. If it were
+            # nested here, this second flock would fail instead of acquiring.
+            from lib.operation_state import OperationStateStore
+            with OperationStateStore(str(self.state / "activation.json")).ownership():
+                return original_status(*args, **kwargs)
+
+        with patch.object(admissions, "status", side_effect=status):
+            receipts = self.activator.reconcile_installed(expected_releases=[expected], admissions=admissions)
+        self.assertEqual(self.identity(receipts[0]), expected)
+
+    def test_pending_or_cancelled_or_expired_newer_intent_refuses_expected_old_release(self):
+        clock = [100.0]
+        admissions = self.admission_store(clock=lambda: clock[0])
+        bindings, request = self.inputs()
+        expected = self.admit_release(admissions, bindings, request)
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        self.opened.clear()
+        for state in ("reserved", "cancelled", "expired"):
+            with self.subTest(state=state):
+                newer = admissions.reserve("shop", request, owner="controller", idempotency_key=uuid.uuid4().hex,
+                                           bindings_sha256=hashlib.sha256(encode_document(bindings)).hexdigest())
+                if state == "cancelled":
+                    admissions.cancel(newer["operation_id"], owner="controller")
+                elif state == "expired":
+                    clock[0] += 3601
+                before = self.evidence()
+                with self.assertRaisesRegex(ValueError, "current completed admission.*controller"):
+                    self.activator.reconcile_installed(expected_releases=[expected], admissions=admissions)
+                self.assertEqual(self.evidence(), before)
+        self.assertEqual(self.opened, [])
+        self.deploy.assert_not_called()
+        self.publish.assert_not_called()
+
+    def test_expected_refresh_requires_existing_initialized_admission_evidence(self):
+        bindings, request = self.inputs()
+        expected = self.identity(self.activate(bindings, request))
+        admissions = self.admission_store()
+        self.opened.clear()
+        self.deploy.reset_mock()
+        self.publish.reset_mock()
+        for evidence in ("absent", "empty-witness", "unknown-operation"):
+            with self.subTest(evidence=evidence):
+                if evidence != "absent":
+                    admissions.reserve("shop", request, owner="controller", idempotency_key=uuid.uuid4().hex,
+                                       bindings_sha256=hashlib.sha256(encode_document(bindings)).hexdigest())
+                if evidence == "empty-witness":
+                    Path(admissions.path + ".lock").write_bytes(b"")
+                before = self.evidence()
+                with self.assertRaisesRegex(ValueError, "controller"):
+                    self.activator.reconcile_installed(expected_releases=[expected], admissions=admissions)
+                self.assertEqual(self.evidence(), before)
+        self.assertEqual(self.opened, [])
+        self.deploy.assert_not_called()
+        self.publish.assert_not_called()
+
+    def test_expected_guard_refuses_current_incomplete_admission_without_mutations(self):
+        admissions = self.admission_store()
+        for state in ("reserved", "cancelled", "uncertain"):
+            with self.subTest(state=state):
+                bindings, request = self.inputs(state, domain=state + ".example")
+                digest = hashlib.sha256(encode_document(bindings)).hexdigest()
+                reservation = admissions.reserve(state, request, owner="controller", idempotency_key=uuid.uuid4().hex,
+                                                 bindings_sha256=digest)
+
+                def install():
+                    return self.activate(bindings, request, operation_id=reservation["operation_id"])
+
+                if state == "uncertain":
+                    def interrupted():
+                        install()
+                        raise RuntimeError("completion not acknowledged")
+
+                    with self.assertRaisesRegex(RuntimeError, "not acknowledged"):
+                        admissions.activate(reservation["operation_id"], 1, request, "d" * 64,
+                                             owner="controller", bindings_sha256=digest, action=interrupted)
+                    expected = self.identity(self.activator._load()["applications"][state] | {"application": state})
+                else:
+                    expected = self.identity(install())
+                    if state == "cancelled":
+                        admissions.cancel(reservation["operation_id"], owner="controller")
+                before = self.evidence()
+                self.opened.clear()
+                self.deploy.reset_mock()
+                self.publish.reset_mock()
+                with self.assertRaisesRegex(ValueError, "controller"):
+                    self.activator.check_expected_releases(expected_releases=[expected], admissions=admissions)
+                self.assertEqual(self.evidence(), before)
+                self.assertEqual(self.opened, [])
+                self.deploy.assert_not_called()
+                self.publish.assert_not_called()
+
+    def test_expected_guard_refuses_unfinished_refresh_before_profile_mutations(self):
+        admissions = self.admission_store()
+        bindings, request = self.inputs()
+        expected = self.admit_release(admissions, bindings, request)
+        self.deploy.side_effect = RuntimeError("refresh failed")
+        with self.assertRaisesRegex(RuntimeError, "refresh failed"):
+            self.activator.reconcile_installed()
+        before = self.evidence()
+        self.opened.clear()
+        self.deploy.reset_mock()
+        with self.assertRaisesRegex(ValueError, "operator reconciliation.*controller"):
+            self.activator.check_expected_releases(expected_releases=[expected], admissions=admissions)
+        self.assertEqual(self.evidence(), before)
+        self.assertEqual(self.opened, [])
+        self.deploy.assert_not_called()
+
     def test_refresh_rejects_missing_or_changed_installed_descriptor(self):
         bindings, request = self.inputs()
         self.activate(bindings, request)
@@ -288,7 +528,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
                     bindings["deployment_root"] = str(self.apps / "shop" / "nested")
                 elif label == "identity":
                     nested = self.apps / "nested"
-                    nested.mkdir(exist_ok=True)
+                    nested.mkdir(mode=0o700, exist_ok=True)
                     bindings["deployment_root"] = str(nested / "shop")
                 else:
                     bindings["components"][0]["domain"] = "shop.example"
