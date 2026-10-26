@@ -25,6 +25,8 @@ no automatic garbage collection. `prepared.json` retains exact build requests,
 serving projections, pinned snapshot paths and idempotency keys. The durable
 `setup.json` guard precedes bootstrap and records phases through final profile
 application. Delivery uses its own separate empty directory and receipt.
+New directory entries are synced through their parents before bootstrap can
+start, so a crash cannot discard the hierarchy containing acknowledged intent.
 
 All reservations precede submission, all verified artifacts stage before the
 first activation, and activations remain sequential. Final setup receives

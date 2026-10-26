@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -173,6 +174,25 @@ class BuildSetupTests(unittest.TestCase):
             build_setup.run_build_setup(self.config, apply_setup=self.apply)
         self.apply.assert_not_called()
         self.source.assert_not_called()
+
+    def test_directory_publication_sync_failure_prevents_remote_mutations(self):
+        real_fsync = os.fsync
+        synced = []
+
+        def fsync(descriptor):
+            path = os.readlink(f"/proc/self/fd/{descriptor}")
+            synced.append(path)
+            if path == str(self.root):
+                raise OSError("directory publication uncertain")
+            return real_fsync(descriptor)
+
+        with patch.object(build_setup.os, "fsync", side_effect=fsync), \
+             self.assertRaisesRegex(OSError, "publication uncertain"):
+            build_setup.run_build_setup(self.config, apply_setup=self.apply)
+        self.assertEqual(synced, [str(self.root / "build-setups"), str(self.root)])
+        self.source.assert_not_called()
+        self.apply.assert_not_called()
+        self.deliver.assert_not_called()
 
     def test_unsupported_target_roles_and_explicit_toolchains_refuse_before_network(self):
         for changes in ({"enable_ssl": True}, {"is_build_server": True}, {"install_go": True},
