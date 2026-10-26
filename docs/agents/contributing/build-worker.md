@@ -96,12 +96,12 @@ replays, prunes artifacts, resets caches, or repairs host state automatically.
 
 ## Enablement boundary
 
-This worker remains disabled until its caller supplies authenticated source
-staging and retention admission, bounds inputs, logs, artifacts, and scratch
-backing storage, enrolls and authorizes projects, provides activation-time
-compatibility policy, and completes native qualification of the Debian
-systemd, cgroup, and mounted scratch adapters. Before native qualification,
-install the execution helper outside `/home`; the systemd adapter invokes its
+The internal [process entrypoint](build-host-entrypoint.md) supplies project
+authorization, bounded source admission and an independent worker. Selected
+native checks cover Debian systemd, cgroups, mounted scratch and manually
+enrolled SSH builds. Setup enrollment, controller selection and retention
+management remain pending; target activation still owns runtime compatibility.
+Install the execution helper outside `/home`; the systemd adapter invokes its
 own installed module path. The slice is not an isolation boundary for
 untrusted pull requests or mutually hostile jobs sharing one build identity.
 

@@ -95,6 +95,7 @@ that can outlive its call or supervise transport timeouts.
 
 This is local durability and byte-identity handling, not protection from a
 malicious process running as the same effective UID, proof of authorization,
-source provenance, or build isolation. The builder remains disabled until its
-caller wires this store to authenticated transport, project policy, durable
-jobs, and the qualified worker.
+source provenance, or build isolation. The internal
+[process entrypoint](build-host-entrypoint.md) connects this store to
+authenticated transport, project policy, durable jobs and the worker. Setup
+enrollment and controller selection remain pending.

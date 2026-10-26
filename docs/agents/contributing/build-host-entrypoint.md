@@ -46,6 +46,8 @@ jobs are durable and use an independent worker, so controller disconnects do
 not cancel them. Status queries and repeated request IDs reconcile lost replies.
 Runtime secret values and target credentials do not belong in build inputs.
 
-This entrypoint still requires setup-owned account/key enrollment, bounded
-source staging, typed transport integration and native qualification before
-enablement. Persistent jobs sharing an identity must be mutually trusted.
+The entrypoint connects [bounded source admission](build-inputs.md) and the
+[typed dispatcher](build-host-service.md) to the independent worker. Selected
+native Debian checks cover manually enrolled SSH builds and artifact retrieval;
+setup-owned account/key enrollment and controller selection remain pending.
+Persistent jobs sharing an identity must be mutually trusted.

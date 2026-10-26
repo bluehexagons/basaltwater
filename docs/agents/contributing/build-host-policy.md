@@ -1,7 +1,8 @@
 # Shared build-host policy
 
-Status: internal and disabled. These pure helpers are not connected to SSH,
-setup, a CLI, or the build worker. Standard deployments remain unchanged.
+Status: internal. The [process entrypoint](build-host-entrypoint.md) applies
+these pure helpers at SSH admission and worker launch. Setup enrollment and
+controller selection remain pending. Standard deployments remain unchanged.
 
 `lib.build_host_policy.parse_build_host_policy()` accepts a decoded mapping or
 raw JSON bytes and returns a normalized, detached version-1 policy:

@@ -8,8 +8,10 @@ existing activation transaction for verified bundles. The [durable job store](bu
 and [Debian worker](build-worker.md) compose source verification, bounded scratch,
 supervised execution and packaging. [Runtime validation](build-runtime.md) checks
 the initial static and self-contained service scope before target activation.
-These internal interfaces do not yet provide `--build-on`, an SSH dispatcher
-or a job service. Standard deployments continue to build on the destination.
+The internal [process entrypoint](build-host-entrypoint.md) connects a typed
+SSH dispatcher, project policy, bounded source admission and an independent
+worker. Setup enrollment and `--build-on` selection are not connected yet.
+Standard deployments continue to build on the destination.
 The [shared build-host
 plan](../../plans/cicd-manifest-reuse.md) describes the remaining work.
 

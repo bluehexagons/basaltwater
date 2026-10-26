@@ -18,6 +18,7 @@ managed coding VM or workstation, use the sibling
 | Debian build process and resource supervision | [Build execution](build-execution.md) |
 | Pinned build inputs and bounded workspace | [Source snapshots](build-source.md), [scratch storage](build-scratch.md) |
 | Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
+| Authenticated builder transport and admission | [Process entrypoint](build-host-entrypoint.md), [dispatcher](build-host-service.md), [project policy](build-host-policy.md), [source admission](build-inputs.md) |
 | Prebuilt service compatibility | [Runtime validation](build-runtime.md) |
 
 ## Core architecture
