@@ -1395,6 +1395,22 @@ def add_setup_arguments(
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
                        default=None if not for_remote else False,
                        help="Configure as a build server that deploys to app servers")
+    if for_remote:
+        parser.add_argument(
+            "--build-host-enrollment-json",
+            help=argparse.SUPPRESS,
+        )
+    else:
+        build_host_policy = parser.add_mutually_exclusive_group()
+        build_host_policy.add_argument(
+            "--build-host-policy",
+            metavar="FILE",
+            help="Load the public build host enrollment policy from FILE",
+        )
+        build_host_policy.add_argument(
+            "--build-host-enrollment-json",
+            help=argparse.SUPPRESS,
+        )
     
     parser.add_argument("--app-server", dest="is_app_server",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
