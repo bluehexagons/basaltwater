@@ -319,6 +319,32 @@ class TestBuildTargetEnrollmentConfig(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "safely open"):
                 _read_build_target_enrollment_file(link)
 
+    def test_policy_readers_open_fifos_nonblocking_before_rejecting_file_type(self):
+        if not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"):
+            self.skipTest("FIFO nonblocking flags are unavailable")
+        from lib.config import (
+            _read_build_host_enrollment_file,
+            _read_build_target_enrollment_file,
+        )
+
+        original_open = os.open
+        with tempfile.TemporaryDirectory() as directory:
+            fifo_path = os.path.join(directory, "policy.fifo")
+            os.mkfifo(fifo_path)
+
+            def checked_open(path, flags, *args, **kwargs):
+                self.assertTrue(flags & os.O_NONBLOCK)
+                return original_open(path, flags, *args, **kwargs)
+
+            for reader in (
+                _read_build_host_enrollment_file,
+                _read_build_target_enrollment_file,
+            ):
+                with self.subTest(reader=reader.__name__), patch(
+                    "lib.config.os.open", side_effect=checked_open
+                ), self.assertRaisesRegex(ValueError, "regular file"):
+                    reader(fifo_path)
+
     def test_file_is_read_and_parser_validates_when_policy_present(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "target.json")
@@ -468,7 +494,7 @@ class TestBuildSelectionConfig(unittest.TestCase):
         self.assertEqual(config.build_on, "builder-prod")
         self.assertTrue(config.artifact_deployments)
         self.assertFalse(config.clear_build_on)
-        self.assertIn("--build-on builder-prod", config.to_setup_command())
+        self.assertIn("--build-on=builder-prod", config.to_setup_command())
         self.assertIn("--artifact-deployments", config.to_setup_command())
 
         replay_args = self._parser().parse_args(
@@ -476,6 +502,18 @@ class TestBuildSelectionConfig(unittest.TestCase):
         )
         replayed = SetupConfig.from_args(replay_args, "server_lite")
         self.assertEqual(replayed.build_on, "builder-prod")
+        self.assertTrue(replayed.artifact_deployments)
+
+    def test_leading_dash_builder_reference_round_trips_as_an_option_value(self):
+        args = self._parser().parse_args([
+            "target", "agent", "--build-on=--builder-prod",
+        ])
+        config = SetupConfig.from_args(args, "server_lite")
+        command_args = shlex.split(" ".join(config.to_setup_command()))
+        self.assertIn("--build-on=--builder-prod", command_args)
+        replay_args = self._parser().parse_args(command_args[3:])
+        replayed = SetupConfig.from_args(replay_args, "server_lite")
+        self.assertEqual(replayed.build_on, "--builder-prod")
         self.assertTrue(replayed.artifact_deployments)
 
     def test_controller_selection_flags_are_mutually_exclusive(self):

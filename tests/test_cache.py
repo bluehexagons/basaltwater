@@ -150,8 +150,14 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
         self.assertTrue(reloaded_clear.clear_build_on)
         self.assertFalse(reloaded_clear.artifact_deployments)
 
+        artifact_mode = merge_setup_configs(
+            reloaded_clear, self._make_config(artifact_deployments=True)
+        )
+        self.assertFalse(artifact_mode.clear_build_on)
+        self.assertTrue(artifact_mode.artifact_deployments)
+
         selected = merge_setup_configs(
-            cleared, self._make_config(build_on="builder-new")
+            artifact_mode, self._make_config(build_on="builder-new")
         )
         self.assertEqual(selected.build_on, "builder-new")
         self.assertTrue(selected.artifact_deployments)

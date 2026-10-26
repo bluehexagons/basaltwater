@@ -113,7 +113,12 @@ def _read_build_host_enrollment_file(path: str) -> JSONDict:
     from lib.validation import validate_filesystem_path
 
     validate_filesystem_path(path)
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -142,7 +147,12 @@ def _read_build_target_enrollment_file(path: str) -> JSONDict:
     from lib.validation import validate_filesystem_path
 
     validate_filesystem_path(path)
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -2264,7 +2274,7 @@ class SetupConfig:
             policy_json = json.dumps(self.build_target_enrollment, separators=(",", ":"))
             cmd_parts.append("--build-target-enrollment-json " + shlex.quote(policy_json))
         if self.build_on is not None:
-            cmd_parts.append(f"--build-on {shlex.quote(self.build_on)}")
+            cmd_parts.append(f"--build-on={shlex.quote(self.build_on)}")
         elif self.clear_build_on:
             cmd_parts.append("--no-build-on")
         if self.artifact_deployments:
