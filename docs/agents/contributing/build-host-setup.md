@@ -51,8 +51,18 @@ directories:
 - `/etc/basaltwater/build-host`, with a mode-0600 runtime `config.json` and a
   mode-0600 ownership marker.
 - `/var/lib/basaltwater/build-host/{state,inputs,scratch,artifacts,logs}`.
-- `/var/lib/basaltwater/build-host-ssh/<12-hex-id>` for each transport
-  account, with a root-owned read-only home and root-controlled `.ssh` data.
+- `/var/lib/basaltwater/build-host-ssh` is root-owned mode 0711 so transport
+  accounts can traverse the known path without listing other homes. Each
+  `/var/lib/basaltwater/build-host-ssh/<12-hex-id>` home is root-owned mode
+  0555; `.ssh` is root-owned mode 0755 and `authorized_keys` is root-owned
+  mode 0644. The transport account can read the public key but cannot write
+  any path component or key file.
+
+For marker-owned installations made with the initial private lookup modes,
+rerunning setup accepts only the exact old modes (`SSH_ROOT` 0700, `.ssh` 0700,
+and `authorized_keys` 0600) and upgrades them to the readable layout while the
+worker is drained and its unit is inactive. Other modes, ownership, symlinks,
+or unmarked files are refused; the installer does not adopt them.
 
 The `basaltwater-build` worker account and group use `/nonexistent` and
 `nologin`. Each principal gets a separate locked transport account and
