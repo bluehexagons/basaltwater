@@ -1369,8 +1369,15 @@ def remove_replaced_setup_cache(previous_host: Optional[str], current_host: str)
 def run_remote_setup(config: SetupConfig) -> int:
     """Run one setup while preventing overlapping mutation of the same target."""
     validate_kiosk_settings(config)
-    if config.dry_run:
+    def execute() -> int:
+        if config.build_on is not None:
+            from lib.build_setup import run_build_setup
+
+            return run_build_setup(config, apply_setup=_run_remote_setup_locked)
         return _run_remote_setup_locked(config)
+
+    if config.dry_run:
+        return execute()
     lock_target = (
         "local"
         if config.host in {"localhost", "127.0.0.1", "::1"}
@@ -1378,7 +1385,7 @@ def run_remote_setup(config: SetupConfig) -> int:
     )
     try:
         with resource_lock("setup-target", lock_target):
-            return _run_remote_setup_locked(config)
+            return execute()
     except ResourceBusyError as exc:
         print(f"Error: {exc}")
         return 1
@@ -1400,7 +1407,14 @@ def _target_setup_lock():
             fcntl.flock(bootstrap.fileno(), fcntl.LOCK_UN)
 
 
-def _run_remote_setup_locked(config: SetupConfig) -> int:
+def _run_remote_setup_locked(config: SetupConfig, *, expected_releases: object = None) -> int:
+    expected_json = None
+    if expected_releases is not None:
+        from lib.build_protocol import encode_document
+
+        if not config.artifact_deployments or config.build_target_enrollment is not None or config.disable_build_target:
+            raise ValueError("Expected releases require artifact profile replay without enrollment changes")
+        expected_json = encode_document(expected_releases, maximum=16 * 1024).decode("utf-8")
     setup_timeout = validate_positive_integer(
         os.environ.get("BASALTWATER_SETUP_TIMEOUT", "14400"), "Setup timeout",
     )
@@ -1473,6 +1487,8 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             config.ci_registration_payload = False
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
+        if expected_json is not None:
+            remote_arg_tokens.extend(("--artifact-releases-json", expected_json))
         if config.agent_auth_source == "login" and config.install_codex:
             interactive = sys.stdin.isatty() and sys.stdout.isatty()
             remote_arg_tokens.extend(("--agent-auth-mode", "login" if interactive else "check"))

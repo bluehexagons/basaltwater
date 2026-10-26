@@ -453,8 +453,15 @@ def _run_main() -> int:
         for_remote=True,
         allow_steps=True
     )
+    parser.add_argument("--artifact-releases-json", help=argparse.SUPPRESS)
     
     args = parser.parse_args(_resolve_cli_args(sys.argv[1:]))
+    expected_json = getattr(args, "artifact_releases_json", None)
+    if expected_json is not None and (
+        not args.artifact_deployments or args.system_type not in {"server_lite", "server_web"}
+        or args.custom_steps
+    ):
+        raise ValueError("Expected releases require an artifact server profile")
 
     set_dry_run(bool(args.dry_run))
 
@@ -495,10 +502,27 @@ def _run_main() -> int:
     if config.custom_steps == "bootstrap_build_target":
         from common.build_target_bootstrap import bootstrap_build_target
 
+        if expected_json is not None:
+            raise ValueError("Target bootstrap cannot replay expected artifact releases")
         with machine_type_context(config.machine_type):
             bootstrap_build_target(config)
         return 0
 
+    if expected_json is not None:
+        from common.build_target_refresh import expected_artifact_setup
+        from lib.atomic_io import parse_json
+
+        if config.build_target_enrollment is not None or config.disable_build_target:
+            raise ValueError("Expected artifact setup cannot change target enrollment")
+        if len(expected_json.encode("utf-8")) > 16 * 1024:
+            raise ValueError("Expected artifact release input exceeds its bound")
+        with expected_artifact_setup(config, parse_json(expected_json)):
+            return _run_configured_setup(config, args)
+    return _run_configured_setup(config, args)
+
+
+def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
+    """Apply the ordinary plan, optionally inside caller-held artifact exclusion."""
     enable_detected_build_runtimes(config)
 
     if config.custom_steps == "reconcile_samba_shares":
