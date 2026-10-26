@@ -36,7 +36,8 @@ class TestRemovedRubyDeployment(unittest.TestCase):
                 stream.write("{}")
             clone.return_value = (directory, "commit")
             config = SimpleNamespace(
-                deploy_specs=[("example.com", "https://example.test/site.git")], dry_run=True
+                deploy_specs=[("example.com", "https://example.test/site.git")],
+                dry_run=True, artifact_deployments=False,
             )
             with self.assertRaisesRegex(RuntimeError, "no longer supported.*basaltwater.json"):
                 prepare_deployments(config, directory)
