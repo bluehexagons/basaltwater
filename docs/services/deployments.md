@@ -118,9 +118,10 @@ The selected-builder flow refuses Node builds, Godot/interpreter services,
 custom `exec`, `env_file`, `runtime_env`, custom working/data paths, SQLite
 backup settings, public UDP, fixed service ports, alternate proxy settings,
 nondefault backup retention and CI/publishing workflows. It also refuses target
-build-tool installation flags, build-host roles, custom setup steps, SSL and
-Cloudflare setup. The broader manifest examples below describe ordinary target
-builds; they do not expand this bounded scope.
+build-tool installation flags, build-host and legacy app-server roles, network
+activation, custom setup steps, SSL and Cloudflare setup. The broader manifest
+examples below describe ordinary target builds; they do not expand this bounded
+scope.
 
 The controller checks sources, grants, tools, limits and retained-artifact
 capacity before minimally enrolling the target. Enrollment preserves the saved

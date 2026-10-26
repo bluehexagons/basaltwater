@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 import hashlib
 import os
 import shlex
@@ -11,7 +15,44 @@ import sys
 import tempfile
 from typing import Sequence
 
+from lib.validation import validate_filesystem_path, validate_network_port
+from lib.validators import validate_host
 from lib.workspace import ensure_workspace_dir, get_known_hosts_path
+
+
+@dataclass(frozen=True)
+class _SSHTransport:
+    host: str
+    identity_file: str
+    known_hosts_path: str
+    port: int
+
+
+_STRICT_TRANSPORT: ContextVar[_SSHTransport | None] = ContextVar("strict_ssh_transport", default=None)
+
+
+@contextmanager
+def strict_ssh_transport(
+    host: str, *, identity_file: str, known_hosts_path: str, port: int = 22,
+) -> Iterator[None]:
+    """Bind build_ssh_command to a resolved endpoint for this execution context.
+
+    Callers must resolve and check the identity and trust files before entry.
+    Ignore ambient configuration, agents, forwarding and multiplexing, including
+    explicitly supplied reusable sockets. Other threads/tasks keep their policy.
+    """
+    if not validate_host(host):
+        raise ValueError("Invalid strict SSH host")
+    for path in (identity_file, known_hosts_path):
+        validate_filesystem_path(path)
+        if not os.path.isabs(path):
+            raise ValueError("Strict SSH transport requires resolved absolute paths")
+    validate_network_port(port, "SSH port")
+    token = _STRICT_TRANSPORT.set(_SSHTransport(host, identity_file, known_hosts_path, port))
+    try:
+        yield
+    finally:
+        _STRICT_TRANSPORT.reset(token)
 
 
 def ssh_batch_mode() -> bool:
@@ -21,10 +62,10 @@ def ssh_batch_mode() -> bool:
     when its stdout and stderr are captured.  Keep that behavior for commands
     started from a terminal.  Commands started with redirected stdin cannot
     answer a prompt reliably, so they must use an already-loaded SSH agent (or
-    fail clearly instead of hanging).
+    fail clearly instead of hanging). Strict transport always uses batch mode.
     """
 
-    return not sys.stdin.isatty()
+    return _STRICT_TRANSPORT.get() is not None or not sys.stdin.isatty()
 
 
 def ssh_process_timeout(
@@ -78,7 +119,10 @@ def get_ssh_control_path(
     prompting for the key passphrase repeatedly.  The short-lived socket is
     stable across adjacent CLI invocations so ``probe`` followed by ``audit``
     can reuse it while OpenSSH's ``ControlPersist`` window is active.
+    Strict transport returns OpenSSH's ``none`` sentinel without creating a path.
     """
+    if _STRICT_TRANSPORT.get() is not None:
+        return "none"
     trust_path = (
         os.path.abspath(os.path.expanduser(known_hosts_path))
         if known_hosts_path is not None else get_known_hosts_path()
@@ -121,7 +165,25 @@ def build_ssh_command(
 ) -> list[str]:
     """Build SSH options, allowing first-use confirmation only for live setup."""
 
+    policy = _STRICT_TRANSPORT.get()
     command = ["ssh"]
+    if policy is not None:
+        if host != policy.host:
+            raise ValueError("SSH host differs from the resolved strict endpoint")
+        ssh_key, known_hosts_path, port = policy.identity_file, policy.known_hosts_path, policy.port
+        batch_mode, allow_host_key_prompt, control_path = True, False, None
+        command = [
+            "/usr/bin/ssh", "-F", "/dev/null",
+            "-o", "IdentityFile=none", "-o", "IdentitiesOnly=yes",
+            "-o", "IdentityAgent=none", "-o", "CertificateFile=none",
+            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "UpdateHostKeys=no",
+            "-o", "VerifyHostKeyDNS=no", "-o", "CanonicalizeHostname=no",
+            "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
+            "-o", "PreferredAuthentications=publickey", "-o", "ForwardAgent=no",
+            "-o", "ClearAllForwardings=yes", "-o", "ProxyCommand=none", "-o", "ProxyJump=none",
+            "-o", "ControlMaster=no", "-o", "ControlPersist=no", "-o", "ControlPath=none",
+            "-o", "PermitLocalCommand=no", "-o", "RequestTTY=no", "-o", "ConnectionAttempts=1",
+        ]
     if ssh_key:
         command.extend(["-i", ssh_key])
     if port is not None:

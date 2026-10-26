@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from lib import build_setup
+from lib import build_setup, setup_common
 from lib.build_delivery import ApplicationDeliveryReceipt, DeliveryReceipt
 from lib.build_selection import BuilderSelection, SSHEndpoint
 from lib.config import SetupConfig
@@ -136,6 +136,41 @@ class BuildSetupTests(unittest.TestCase):
         self.deliver.assert_not_called()
         self.assertEqual(self.apply.call_count, 1)
 
+    def test_setup_primitive_uploads_use_resolved_transport_without_reusing_sockets(self):
+        # Selection can resolve the default identity even when config has no key.
+        self.config.ssh_key = None
+        streamed = []
+
+        def upload(command, **_kwargs):
+            streamed.append(command)
+            return 0
+
+        with patch.object(setup_common, "copy_project_files"), \
+             patch.object(setup_common, "prepare_registration_payload", return_value=False), \
+             patch.object(setup_common, "create_tar_from_dir", return_value=b"runtime"), \
+             patch.object(setup_common, "_create_payload_archive", return_value=b"payload"), \
+             patch.object(setup_common, "run_streamed", side_effect=upload), \
+             patch("lib.ssh_utils.get_workspace_known_hosts_path", side_effect=AssertionError("ambient trust")), \
+             patch("lib.ssh_utils.tempfile.gettempdir", return_value=str(self.root)), \
+             patch("lib.ssh_utils.sys.stdin.isatty", return_value=True):
+            self.assertEqual(build_setup.run_build_setup(
+                self.config, apply_setup=setup_common._run_remote_setup_locked,
+            ), 0)
+
+        self.assertEqual(len(streamed), 2)
+        for command in streamed:
+            self.assertEqual(command[:3], ["/usr/bin/ssh", "-F", "/dev/null"])
+            self.assertEqual(command[command.index("-i") + 1], self.endpoint.identity_file)
+            self.assertEqual(command[command.index("-p") + 1], str(self.endpoint.port))
+            self.assertEqual(command[-2], "root@target.example")
+            for option in ("IdentitiesOnly=yes", "IdentityAgent=none", "ForwardAgent=no",
+                           "ClearAllForwardings=yes", "ControlMaster=no", "ControlPath=none",
+                           "ControlPersist=no", "StrictHostKeyChecking=yes", "BatchMode=yes",
+                           "UserKnownHostsFile=/private/known_hosts"):
+                self.assertIn(option, command)
+            self.assertEqual([part for part in command if part.startswith("ControlPath=")], ["ControlPath=none"])
+        self.assertFalse(any(self.root.glob("basaltwater-ssh-*")))
+
     def test_dry_run_never_mutates_remote_or_creates_persistent_attempt(self):
         self.config.dry_run = True
         self.assertEqual(build_setup.run_build_setup(self.config, apply_setup=self.apply), 0)
@@ -221,6 +256,22 @@ class BuildSetupTests(unittest.TestCase):
                 build_setup.run_build_setup(config, apply_setup=self.apply)
         self.builder.capabilities.assert_not_called()
         self.apply.assert_not_called()
+
+    def test_legacy_app_server_and_network_activation_refuse_before_bootstrap(self):
+        for changes in ({"is_app_server": True},
+                        {"activate_network": True, "static_ipv4": "192.0.2.50/24"}):
+            config = copy.deepcopy(self.config)
+            for key, value in changes.items():
+                setattr(config, key, value)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                build_setup.run_build_setup(config, apply_setup=self.apply)
+            self.assertEqual(config.host, self.config.host)
+        self.builder.capabilities.assert_not_called()
+        self.probe.assert_not_called()
+        self.source.assert_not_called()
+        self.apply.assert_not_called()
+        self.deliver.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_real_probe_uses_pinned_identity_no_agent_and_rejects_bad_state(self):
         value = {"uid": 0, "os": "debian", "version": "13", "architecture": "x86_64",
