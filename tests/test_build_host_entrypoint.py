@@ -110,7 +110,9 @@ class BuildHostEntrypointTest(unittest.TestCase):
                   "pw_dir": "/nonexistent", "pw_shell": "/usr/sbin/nologin"}
         group_values = {"gr_name": build_host.BUILD_ACCOUNT, "gr_gid": 998, "gr_mem": []}
         with patch.object(build_host.pwd, "getpwnam", return_value=SimpleNamespace(**values)) as account, \
-             patch.object(build_host.grp, "getgrnam", return_value=SimpleNamespace(**group_values)) as group:
+             patch.object(build_host.grp, "getgrnam", return_value=SimpleNamespace(**group_values)) as group, \
+             patch.object(build_host.pwd, "getpwall", return_value=[SimpleNamespace(**values)]) as accounts, \
+             patch.object(build_host.grp, "getgrall", return_value=[SimpleNamespace(**group_values)]) as groups:
             build_host.require_build_account(config())
             account.assert_called_once_with(build_host.BUILD_ACCOUNT)
             group.assert_called_once_with(build_host.BUILD_ACCOUNT)
@@ -121,6 +123,17 @@ class BuildHostEntrypointTest(unittest.TestCase):
                     build_host.require_build_account(config())
             account.return_value = SimpleNamespace(**values)
             group.return_value = SimpleNamespace(**{**group_values, "gr_mem": ["operator"]})
+            with self.assertRaises(ValueError):
+                build_host.require_build_account(config())
+            group.return_value = SimpleNamespace(**group_values)
+            for uid, gid in ((999, 1000), (1000, 998)):
+                accounts.return_value = [SimpleNamespace(**values),
+                                         SimpleNamespace(pw_name="operator", pw_uid=uid, pw_gid=gid)]
+                with self.subTest(uid=uid, gid=gid), self.assertRaises(ValueError):
+                    build_host.require_build_account(config())
+            accounts.return_value = [SimpleNamespace(**values)]
+            groups.return_value = [SimpleNamespace(**group_values),
+                                   SimpleNamespace(gr_name="operators", gr_gid=998)]
             with self.assertRaises(ValueError):
                 build_host.require_build_account(config())
 

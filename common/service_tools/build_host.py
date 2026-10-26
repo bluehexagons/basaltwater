@@ -148,6 +148,13 @@ def require_build_account(config: dict) -> None:
             or account.pw_shell not in {"/usr/sbin/nologin", "/sbin/nologin"}
             or any(member != BUILD_ACCOUNT for member in group.gr_mem)):
         raise ValueError("Builder IDs must match the dedicated non-login build account")
+    if any(other.pw_name != BUILD_ACCOUNT
+           and (other.pw_uid == account.pw_uid or other.pw_gid == account.pw_gid)
+           for other in pwd.getpwall()):
+        raise ValueError("The build UID and primary GID cannot be shared with another account")
+    if any(other.gr_gid == group.gr_gid and other.gr_name != BUILD_ACCOUNT
+           for other in grp.getgrall()):
+        raise ValueError("The build GID cannot have another group alias")
 
 
 def require_platform() -> None:

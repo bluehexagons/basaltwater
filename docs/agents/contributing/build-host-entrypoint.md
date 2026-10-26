@@ -19,6 +19,8 @@ The no-follow, single-link file must be root-owned `0600`. It contains exactly:
 The numeric IDs must match the primary UID and GID of the dedicated
 `basaltwater-build` account and group. The account requires `/nonexistent` as
 its home and a `nologin` shell; its group cannot include unrelated accounts.
+Other passwd entries cannot share either numeric ID, and the GID cannot have
+another group alias.
 The helper refuses another service or operator identity before admission.
 
 The worker runs with `--worker`, independently of SSH. `--once` processes at
