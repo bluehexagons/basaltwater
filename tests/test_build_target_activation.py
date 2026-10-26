@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -12,8 +13,11 @@ from unittest.mock import patch
 import uuid
 
 from lib.build_manifest import DEBIAN_PLATFORM, validate_manifest_request
-from lib.build_protocol import DEFAULT_LIMITS
+from lib.build_admission import DeploymentAdmissionStore
+from lib.build_artifacts import create_artifact
+from lib.build_protocol import DEFAULT_LIMITS, encode_document
 from lib.build_target_activation import TargetReleaseActivator
+from lib.build_target_artifacts import BuildTargetArtifactStore
 from lib.build_target_policy import authorize_target_deployment
 
 
@@ -29,11 +33,12 @@ class TargetReleaseActivationTests(unittest.TestCase):
             directory.mkdir(mode=0o700)
         self.opened = []
         self.manifests = []
+        self.bundle_path = self.root / "verified.bundle"
 
         @contextmanager
         def open_artifact(*args, **kwargs):
             self.opened.append((args, kwargs))
-            yield str(self.root / "verified.bundle")
+            yield str(self.bundle_path)
 
         self.activator = TargetReleaseActivator(str(self.state), str(self.verify), open_artifact=open_artifact)
         self.deploy = self.enterContext(patch(
@@ -74,7 +79,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
         validate_manifest_request(manifest, request)
         self.assertEqual(kwargs["target_platform"], DEBIAN_PLATFORM)
         self.assertEqual(kwargs["staging_root"], str(self.verify))
-        self.assertEqual(bundle, str(self.root / "verified.bundle"))
+        self.assertEqual(bundle, str(self.bundle_path))
         self.assertIsNone(domain)
         destination = manager.get_deployment_path(domain, path, git_url)
         Path(destination).mkdir(mode=0o755, exist_ok=True)
@@ -114,6 +119,47 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.assertIsNone(component.env_file)
         self.assertIsNone(component.working_dir)
         self.assertEqual(component.health, "/health")
+
+    def test_real_staging_and_admission_compose_without_reentering_the_admission_lock(self):
+        bindings, request = self.inputs()
+        workspace = self.root / "workspace"
+        (workspace / "dist").mkdir(parents=True)
+        (workspace / "dist" / "index.html").write_text("<p>verified export</p>")
+        bundle = self.root / "export.bundle"
+        artifact = create_artifact(str(workspace), request, str(bundle))
+        admission_root = self.root / "admission"
+        admission_root.mkdir(mode=0o700)
+        admissions = DeploymentAdmissionStore(admission_root / "state.json")
+        binding_digest = hashlib.sha256(encode_document(bindings)).hexdigest()
+        reservation = admissions.reserve("shop", request, owner="controller",
+                                         idempotency_key=uuid.uuid4().hex,
+                                         bindings_sha256=binding_digest)
+        artifact_root = self.root / "artifacts"
+        artifact_root.mkdir(mode=0o700)
+        artifacts = BuildTargetArtifactStore(artifact_root)
+        with bundle.open("rb") as stream:
+            artifacts.stage(reservation["operation_id"], reservation["generation"], request,
+                            application="shop", owner="controller", bindings_sha256=binding_digest,
+                            artifact_sha256=artifact["sha256"], artifact_size=artifact["size"],
+                            source=stream, admissions=admissions)
+        self.bundle_path = artifact_root / (reservation["operation_id"] + ".bundle")
+        self.activator = TargetReleaseActivator(str(self.state), str(self.verify),
+                                               open_artifact=artifacts.open_verified_bundle)
+
+        def activate():
+            return self.activator(bindings=bindings, request=request,
+                                  operation_id=reservation["operation_id"], generation=1,
+                                  artifact_sha256=artifact["sha256"], principal="controller")
+
+        result = admissions.activate(reservation["operation_id"], 1, request, artifact["sha256"],
+                                     owner="controller", bindings_sha256=binding_digest, action=activate)
+        replay = admissions.activate(reservation["operation_id"], 1, request, artifact["sha256"],
+                                     owner="controller", bindings_sha256=binding_digest, action=activate)
+        self.assertEqual(result, replay)
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(self.deploy.call_count, 1)
+        self.assertEqual(self.publish.call_count, 1)
+        self.assertEqual(self.bundle_path.stat().st_mode & 0o777, 0o400)
 
     def test_second_application_preserves_shared_domain_route_group(self):
         first, request = self.inputs()
