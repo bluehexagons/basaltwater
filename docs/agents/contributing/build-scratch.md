@@ -28,6 +28,8 @@ the loop backing-file identity where applicable), mount ID, required mount
 options and observed filesystem capacity. Capacity must be positive and no
 larger than the image size. A `findmnt` error or any identity mismatch fails
 closed.
+An exact mount lookup with status `1` and no output or diagnostics means absence;
+empty output on a successful lookup remains unconfirmed.
 
 The coordinator owns the full lifecycle. It must supervise and stop every
 worker descendant, finish the artifact snapshot, and only then call

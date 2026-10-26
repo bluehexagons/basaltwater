@@ -59,7 +59,7 @@ class MockNative:
                     "maj:min": "7:7",
                 }]
             return _completed(command, 0 if records else 1,
-                              json.dumps({"filesystems": records}))
+                              json.dumps({"filesystems": records}) if records else "")
         if executable == "/usr/sbin/mkfs.ext4":
             marker = Path(command[-1]).parent / "identity.json"
             self.mount_before_marker = not marker.is_file()
@@ -179,6 +179,19 @@ class BuildScratchTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 self.require_root()
         self.assertEqual(self.native.calls, [])
+
+    def test_mount_absence_requires_findmnt_missing_status_and_no_diagnostics(self) -> None:
+        for status, output, error, absent in ((1, "", "", True), (0, "", "", False),
+                                             (1, "", "lookup failed", False),
+                                             (1, "not JSON", "", False)):
+            with self.subTest(status=status, output=output, error=error), \
+                    patch.object(scratch.subprocess, "run", return_value=subprocess.CompletedProcess(
+                        [], status, output, error)):
+                if absent:
+                    self.assertIsNone(scratch._find_mount("/managed/scratch/fs"))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        scratch._find_mount("/managed/scratch/fs")
 
     def test_symlink_mode_owner_and_existing_state_rejections_do_not_run_commands(self) -> None:
         alias = Path(self.temporary.name) / "root-alias"

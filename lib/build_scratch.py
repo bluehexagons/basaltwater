@@ -98,6 +98,10 @@ def _find_mount(target: str) -> dict[str, Any] | None:
     if result.returncode not in (0, 1):
         raise RuntimeError("findmnt failed; retain scratch evidence")
     if not result.stdout.strip():
+        if result.returncode == 1:
+            # util-linux emits no JSON when an exact mountpoint is absent.
+            # A successful command with no observation remains an error.
+            return None
         raise RuntimeError("findmnt returned no observation; retain scratch evidence")
     try:
         document = json.loads(result.stdout)
