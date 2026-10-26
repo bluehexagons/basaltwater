@@ -88,9 +88,23 @@ selection remains separate work. This entrypoint does not install its own
 authority. Internal `serve()` expects the caller to hold the request lease;
 the SSH boundary is `main()`.
 
-Only the binary protocol response stream is retained from stdout. Composition,
-deployment and Nginx text output is redirected to stderr so it cannot corrupt
-the SSH response. Failures at the process boundary emit one fixed generic
-message and never include paths, environment values or credentials. Admission
-and activation guards retain uncertain work for operator reconciliation; the
-entrypoint never retries it automatically.
+For the duration of `serve()`, the entrypoint retains a private, non-inheritable
+binary duplicate of OS stdout solely for the protocol response. It redirects
+both Python stdout and OS fd1 to stderr before importing and composing the
+service. Deployment/Nginx diagnostics, native `os.write(1, ...)` calls and child
+commands inheriting stdout therefore stay off the wire. Executed children do
+not inherit the private protocol descriptor. Cached Python stdout buffers are
+flushed while fd1 still points to stderr, including during failure cleanup.
+The entrypoint restores Python stdout, fd1 and its original inheritance flag,
+then closes the private duplicate on success, failure and interruption. Stdin
+is preserved; the connection deadline still surrounds composition, serving and
+descriptor cleanup, and `main()` retains the request lease throughout.
+
+This descriptor isolation belongs to the single-connection entrypoint.
+`BuildTargetService`'s Python-only redirection is insufficient for native or
+inherited child output: another transport caller must independently isolate
+its protocol channel. Ordinary local deployment output is unaffected.
+Failures at the process boundary emit one fixed generic message and never
+include paths, environment values or credentials. Admission and activation
+guards retain uncertain work for operator reconciliation; the entrypoint never
+retries it automatically.
