@@ -30,6 +30,27 @@ Deployment roots cannot overlap the protected source, private state,
 configuration, SSH or sudoers trees. This check does not provision application
 roots or permit a client to choose a different root.
 
+Enrollment does bootstrap missing **parent** directories of each administrator
+policy's `deployment_root` (for `/srv/apps/shop`, only `/srv` and `/srv/apps`
+if missing). Before any mutation, including the initial marker/lock bootstrap,
+it preflights every existing component of every parent chain: all must be
+directories owned by root, without symlinks or group/other write permission.
+Writable sticky ancestors are also refused for deployment parents. Safe
+existing directories keep their modes, ownership, contents and identities;
+setup never chmods or adopts unsafe parents.
+
+Under the exclusive lease, setup rechecks the plan, closes the durable serving
+gate and saves an `updating` marker whose
+`pending.deployment_parents_to_create` lists all missing directories in parent
+order. Only then does it create those directories through no-follow directory
+descriptors with root:root ownership and exact mode `0755`, independent of
+umask. The actual application root remains for activation. Setup does not
+create releases or change application services or Nginx publication. Failed
+creation retains the plan, any created parents and the serving hold for
+operator reconciliation; it does not replay or remove them automatically.
+Explicit disable never preflights or creates deployment parents and retains
+existing ones.
+
 `configure_build_target(config)` reads `config.build_target_enrollment` as an
 already-decoded mapping. `None` is a no-op. Only an explicitly boolean
 `config.disable_build_target=True` requests de-enrollment and takes precedence

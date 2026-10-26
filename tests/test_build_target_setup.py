@@ -115,6 +115,21 @@ class BuildTargetSetupTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(root_view())
+        # Simulate a protected filesystem ancestor above this temporary root.
+        # Deployment-parent preflight intentionally rejects even sticky writable
+        # ancestors; never alter the developer machine's /tmp permissions.
+        real_lstat = Path.lstat
+
+        def protected_test_ancestor(path):
+            info = real_lstat(path)
+            if path == self.base.parent:
+                return SimpleNamespace(**{**vars(info), "st_mode": info.st_mode & ~0o022})
+            return info
+
+        stack.enter_context(patch.object(Path, "lstat", new=protected_test_ancestor))
+        policy_factory = target_policy
+        stack.enter_context(patch(__name__ + ".target_policy", side_effect=lambda **kwargs:
+                            policy_factory(deployment_root=str(self.base / "deploy/apps/shop"), **kwargs)))
         paths = {"ETC_DIR": self.base / "etc/build-target", "DATA_ROOT": self.base / "data/basaltwater/build-target",
                  "SSH_ROOT": self.base / "data/basaltwater-build-target-ssh",
                  "_LEGACY_SSH_ROOT": self.base / "data/basaltwater/build-target-ssh",
@@ -276,6 +291,146 @@ class BuildTargetSetupTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(auth.parent.parent.stat().st_mode), 0o555)
         self.assertEqual(stat.S_IMODE(auth.parent.stat().st_mode), 0o755)
         self.assertEqual(stat.S_IMODE(auth.stat().st_mode), 0o644)
+
+    def test_safe_existing_deployment_parent_keeps_mode_inode_and_contents(self) -> None:
+        parent = self.base / "deploy/apps"
+        parent.mkdir(parents=True, mode=0o750)
+        evidence = parent / "operator-evidence"
+        evidence.write_bytes(b"retain")
+        before = parent.stat()
+        real_fchmod = os.fchmod
+
+        def chmod(descriptor, mode):
+            self.assertNotEqual(os.fstat(descriptor).st_ino, before.st_ino,
+                                "Existing deployment parent must never be chmodded")
+            return real_fchmod(descriptor, mode)
+
+        with patch.object(setup.os, "fchmod", side_effect=chmod):
+            setup.configure_build_target(configuration())
+            setup.configure_build_target(configuration())
+        self.assertEqual(parent.stat().st_ino, before.st_ino)
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o750)
+        self.assertEqual(evidence.read_bytes(), b"retain")
+        self.assertFalse((parent / "shop").exists())
+
+    def test_nested_deployment_parents_are_recorded_before_creation_with_exact_modes(self) -> None:
+        document = enrollment()
+        second = copy.deepcopy(document["policy"]["applications"]["shop"])
+        second.update(deployment_root=str(self.base / "deploy/blogs/public/blog"), project="blog-source")
+        second["components"]["web"]["domain"] = "blog.example"
+        document["policy"]["applications"]["blog"] = second
+        planned = [str(self.base / path) for path in
+                   ("deploy", "deploy/apps", "deploy/blogs", "deploy/blogs/public")]
+        create_parents = setup._create_deployment_parents
+
+        def create(paths):
+            marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+            self.assertEqual(marker["state"], "updating")
+            self.assertEqual(marker["pending"]["deployment_parents_to_create"], planned)
+            self.assertEqual(paths, planned)
+            self.assertEqual(Path(maintenance.LOCK_PATH).read_bytes(), b"held\n")
+            self.assertTrue(all(not Path(path).exists() for path in planned))
+            self.assertEqual(self.commands, [])
+            create_parents(paths)
+
+        previous = os.umask(0o077)
+        try:
+            with patch.object(setup, "_create_deployment_parents", side_effect=create) as create_call:
+                setup.configure_build_target(configuration(build_target_enrollment=document))
+        finally:
+            os.umask(previous)
+        create_call.assert_called_once()
+        for path in planned:
+            self.assertEqual(stat.S_IMODE(Path(path).stat().st_mode), 0o755)
+            self.assertEqual((Path(path).stat().st_uid, Path(path).stat().st_gid), (0, 0))
+        for app in document["policy"]["applications"].values():
+            self.assertFalse(Path(app["deployment_root"]).exists())
+
+    def test_unsafe_deployment_parent_ancestors_refuse_before_any_mutation(self) -> None:
+        ancestor = self.base / "deploy/apps"
+        ancestor.mkdir(parents=True, mode=0o755)
+        real_lstat = Path.lstat
+        for mode, uid in ((stat.S_IFDIR | 0o775, 0), (stat.S_IFDIR | 0o1777, 0),
+                          (stat.S_IFDIR | 0o755, 1234), (stat.S_IFLNK | 0o755, 0),
+                          (stat.S_IFREG | 0o644, 0)):
+            def observe(path):
+                if path == ancestor:
+                    return SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=0)
+                return real_lstat(path)
+
+            before = self.snapshot()
+            with self.subTest(mode=mode, uid=uid), \
+                 patch.object(Path, "lstat", autospec=True, side_effect=observe), \
+                 patch.object(setup, "_write") as publish, \
+                 patch.object(setup.os, "mkdir") as mkdir, \
+                 patch.object(setup.os, "fchmod") as chmod, \
+                 self.assertRaisesRegex(ValueError, "Unsafe target deployment parent ancestor"):
+                setup.configure_build_target(configuration())
+            publish.assert_not_called()
+            mkdir.assert_not_called()
+            chmod.assert_not_called()
+            self.run.assert_not_called()
+            self.assertEqual(self.snapshot(), before)
+            self.assertFalse(Path(setup.ETC_DIR).exists())
+
+    def test_all_policy_parent_chains_are_checked_before_bootstrap(self) -> None:
+        document = enrollment()
+        second = copy.deepcopy(document["policy"]["applications"]["shop"])
+        second.update(deployment_root=str(self.base / "unsafe/nested/blog"), project="blog-source")
+        second["components"]["web"]["domain"] = "blog.example"
+        document["policy"]["applications"]["blog"] = second
+        ancestor = self.base / "unsafe"
+        ancestor.mkdir(mode=0o755)
+        ancestor.chmod(0o775)
+        with patch.object(setup, "_write") as publish, \
+             patch.object(setup.os, "mkdir") as mkdir, \
+             patch.object(setup.os, "fchmod") as chmod, \
+             self.assertRaisesRegex(ValueError, "Unsafe target deployment parent ancestor"):
+            setup.configure_build_target(configuration(build_target_enrollment=document))
+        publish.assert_not_called()
+        mkdir.assert_not_called()
+        chmod.assert_not_called()
+        self.run.assert_not_called()
+        self.assertFalse((self.base / "deploy").exists())
+        self.assertFalse(Path(setup.ETC_DIR).exists())
+        self.assertEqual(stat.S_IMODE(ancestor.stat().st_mode), 0o775)
+
+    def test_parent_creation_failure_retains_plan_hold_and_refuses_retry(self) -> None:
+        real_mkdir = os.mkdir
+
+        def mkdir(path, mode=0o777, *, dir_fd=None):
+            if path == "apps":
+                raise OSError("deployment parent creation failed")
+            return real_mkdir(path, mode, dir_fd=dir_fd)
+
+        with patch.object(setup.os, "mkdir", side_effect=mkdir), \
+             self.assertRaisesRegex(OSError, "parent creation failed"):
+            setup.configure_build_target(configuration())
+        marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+        self.assertEqual(marker["state"], "updating")
+        self.assertEqual(marker["pending"]["deployment_parents_to_create"],
+                         [str(self.base / "deploy"), str(self.base / "deploy/apps")])
+        self.assertTrue((self.base / "deploy").is_dir())
+        self.assertFalse((self.base / "deploy/apps").exists())
+        self.assertEqual(Path(maintenance.LOCK_PATH).read_bytes(), b"held\n")
+        self.run.assert_not_called()
+        self.assertFalse(Path(setup.CONFIG_PATH).exists())
+        for disable in (False, True):
+            with self.assertRaisesRegex(RuntimeError, "operator reconciliation"):
+                setup.configure_build_target(configuration(disable_build_target=disable))
+
+    def test_disable_never_creates_or_requires_deployment_parents(self) -> None:
+        setup.configure_build_target(configuration(disable_build_target=True))
+        self.assertEqual(list(self.base.iterdir()), [])
+        setup.configure_build_target(configuration())
+        (self.base / "deploy/apps").rmdir()
+        (self.base / "deploy").rmdir()
+        self.run.reset_mock()
+        with patch.object(setup, "_create_deployment_parents") as create:
+            setup.configure_build_target(configuration(disable_build_target=True))
+        create.assert_not_called()
+        self.assertFalse((self.base / "deploy").exists())
+        self.assertTrue(all(not Path(path).exists() for path in setup._file_paths("alice")))
 
     def test_unsafe_ancestors_refuse_before_bootstrap_or_grants(self) -> None:
         parent = Path(setup.SSH_ROOT).parent
