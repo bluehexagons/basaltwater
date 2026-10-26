@@ -86,6 +86,33 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
         self.assertTrue(loaded.disable_build_host)
         self.assertIsNone(loaded.build_host_enrollment)
 
+    def test_save_and_load_preserves_build_target_policy_and_disable_intent(self):
+        policy = {
+            "schema": 1,
+            "policy": {"schema": 1},
+            "keys": {"alice": "ssh-ed25519 AAAATEST"},
+            "max_records": 2,
+            "max_bytes": 4096,
+        }
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(
+            "sys.modules",
+            {"common.build_target_steps": type("ParserModule", (), {
+                "parse_build_target_enrollment": staticmethod(lambda value: value),
+            })()},
+        ):
+            with patch("lib.cache.get_setup_cache_dir", return_value=tmpdir):
+                config = self._make_config(build_target_enrollment=policy)
+                save_setup_command(config)
+                loaded = load_setup_command("testhost")
+                self.assertEqual(loaded.build_target_enrollment, policy)
+
+                disabled = self._make_config(disable_build_target=True)
+                save_setup_command(disabled)
+                loaded_disabled = load_setup_command("testhost")
+
+        self.assertTrue(loaded_disabled.disable_build_target)
+        self.assertIsNone(loaded_disabled.build_target_enrollment)
+
     def test_load_retains_legacy_privilege_broker_origin_and_reports_upgrade_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir):

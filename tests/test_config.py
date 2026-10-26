@@ -21,14 +21,26 @@ from lib.config import SetupConfig
 
 _build_host_steps_stub = ModuleType("common.build_host_steps")
 _build_host_steps_stub.parse_build_host_enrollment = lambda value: value
+_build_target_steps_stub = ModuleType("common.build_target_steps")
+_build_target_steps_stub.parse_build_target_enrollment = lambda value: value
 
 
-@patch.dict("sys.modules", {"common.build_host_steps": _build_host_steps_stub})
+@patch.dict("sys.modules", {
+    "common.build_host_steps": _build_host_steps_stub,
+    "common.build_target_steps": _build_target_steps_stub,
+})
 class TestBuildHostEnrollmentConfig(unittest.TestCase):
     POLICY = {
         "schema": 1,
         "policy": {"enabled": True},
         "keys": {"builder": "ssh-ed25519 AAAATEST"},
+    }
+    TARGET_POLICY = {
+        "schema": 1,
+        "policy": {"schema": 1},
+        "keys": {"alice": "ssh-ed25519 AAAATEST"},
+        "max_records": 2,
+        "max_bytes": 4096,
     }
 
     def _setup_parser(self):
@@ -261,6 +273,95 @@ class TestBuildHostEnrollmentConfig(unittest.TestCase):
                         "target", "agent", "--build-host-policy", policy_file.name,
                         "--build-host-enrollment-json", "{}",
                     ])
+
+
+@patch.dict("sys.modules", {"common.build_target_steps": _build_target_steps_stub})
+class TestBuildTargetEnrollmentConfig(unittest.TestCase):
+    POLICY = TestBuildHostEnrollmentConfig.TARGET_POLICY
+
+    def _config_from_attrs(self, **attrs):
+        values = {"host": "target", "username": "agent", "system_type": "server_lite"}
+        values.update(attrs)
+        return SetupConfig(**values)
+
+    def test_policy_file_and_hidden_json_decode(self):
+        from lib.config import _decode_build_target_enrollment_json
+
+        self.assertEqual(_decode_build_target_enrollment_json(json.dumps(self.POLICY)), self.POLICY)
+        from lib.arg_parser import create_setup_argument_parser
+        args = create_setup_argument_parser("Target test").parse_args(["target", "agent"])
+        args.build_target_policy = None
+        args.build_target_enrollment_json = json.dumps(self.POLICY)
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertEqual(config.build_target_enrollment, self.POLICY)
+
+    def test_file_errors_duplicate_keys_and_private_pem_are_rejected(self):
+        from lib.config import BUILD_TARGET_POLICY_MAX_BYTES, _read_build_target_enrollment_file
+        with tempfile.TemporaryDirectory() as directory:
+            for filename, content in (
+                ("duplicate.json", b'{"schema":1,"schema":1}'),
+                ("pem.json", b'{"schema":1,"key":"-----BEGIN PRIVATE KEY-----"}'),
+                ("invalid.json", b"\xff"),
+                ("large.json", b" " * (BUILD_TARGET_POLICY_MAX_BYTES + 1)),
+            ):
+                path = os.path.join(directory, filename)
+                with open(path, "wb") as policy_file:
+                    policy_file.write(content)
+                with self.subTest(filename=filename), self.assertRaises(ValueError):
+                    _read_build_target_enrollment_file(path)
+            link = os.path.join(directory, "link.json")
+            os.symlink(os.path.join(directory, "duplicate.json"), link)
+            with self.assertRaisesRegex(ValueError, "safely open"):
+                _read_build_target_enrollment_file(link)
+
+    def test_file_is_read_and_parser_validates_when_policy_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "target.json")
+            with open(path, "w", encoding="utf-8") as policy_file:
+                json.dump(self.POLICY, policy_file)
+            from lib.arg_parser import create_setup_argument_parser
+            args = create_setup_argument_parser("Target test").parse_args(["target", "agent"])
+            args.build_target_policy = path
+            args.build_target_enrollment_json = None
+            config = SetupConfig.from_args(args, "server_lite")
+        self.assertEqual(config.build_target_enrollment, self.POLICY)
+
+    def test_policy_cache_round_trip_and_transport_contain_no_file_or_secrets(self):
+        config = self._config_from_attrs(build_target_enrollment=self.POLICY)
+        restored = SetupConfig.from_dict("target", "server_lite", config.to_dict())
+        self.assertEqual(restored.build_target_enrollment, self.POLICY)
+        self.assertTrue(any(arg.startswith("--build-target-enrollment-json ")
+                            for arg in config.to_remote_args()))
+        self.assertNotIn("--build-target-policy", config.to_remote_args())
+        self.assertTrue(any(arg.startswith("--build-target-enrollment-json ")
+                            for arg in config.to_setup_command()))
+        self.assertNotIn("--build-target-policy", config.to_setup_command())
+        self.assertNotIn("/controller/", " ".join(config.to_remote_args()))
+
+    def test_no_build_target_disables_and_is_forwarded(self):
+        config = self._config_from_attrs(disable_build_target=True)
+        self.assertIn("--no-build-target", config.to_setup_command())
+        self.assertIn("--disable-build-target", config.to_remote_args())
+        with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
+            self._config_from_attrs(disable_build_target=True,
+                                    build_target_enrollment=self.POLICY)
+
+    def test_target_policy_omission_preserves_disable_and_explicit_disable_clears(self):
+        from lib.cache import merge_setup_configs
+        saved = self._config_from_attrs(disable_build_target=True)
+        omitted = merge_setup_configs(saved, self._config_from_attrs())
+        self.assertTrue(omitted.disable_build_target)
+        enabled = merge_setup_configs(
+            saved, self._config_from_attrs(build_target_enrollment=self.POLICY)
+        )
+        self.assertFalse(enabled.disable_build_target)
+        self.assertEqual(enabled.build_target_enrollment, self.POLICY)
+        saved_policy = self._config_from_attrs(build_target_enrollment=self.POLICY)
+        disabled = merge_setup_configs(
+            saved_policy, self._config_from_attrs(disable_build_target=True)
+        )
+        self.assertTrue(disabled.disable_build_target)
+        self.assertIsNone(disabled.build_target_enrollment)
 
 
 class TestSetupConfigToDict(unittest.TestCase):

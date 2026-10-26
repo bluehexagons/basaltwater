@@ -511,6 +511,9 @@ def merge_setup_configs(
         if key in ('host', 'system_type'):
             continue
 
+        if key == "disable_build_target" and not new_config.disable_build_target and new_config.build_target_enrollment is None:
+            continue
+
         if key in preserve_keys:
             continue
 
@@ -584,6 +587,12 @@ def merge_setup_configs(
     elif new_config.is_build_server and "is_build_server" not in preserve_keys:
         merged_dict["is_build_server"] = True
         merged_dict["disable_build_host"] = False
+
+    if new_config.disable_build_target:
+        merged_dict["build_target_enrollment"] = None
+        merged_dict["disable_build_target"] = True
+    elif new_config.build_target_enrollment is not None:
+        merged_dict["disable_build_target"] = False
 
     # An explicit off clears a previously saved homepage and destination list.
     # Explicit nonempty homepage settings with off are rejected before merging.
