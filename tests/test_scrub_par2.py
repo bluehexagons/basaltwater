@@ -93,27 +93,33 @@ class TestSetupFailurePropagation(unittest.TestCase):
             self.assertIs(sync.call_args.kwargs['config'], config)
             self.assertTrue(sync.call_args.kwargs['initial_setup'])
 
-    def test_mount_failure_prevents_initial_work(self):
+    def test_scrub_preflight_failure_is_supervised_and_prevents_setup_success(self):
         from sync import scrub_steps
 
-        for module, function, spec in (
-            (scrub_steps, scrub_steps.create_scrub_service, ['/mnt/a', '/mnt/b', '10%', 'daily']),
+        config = SimpleNamespace(username='agent', storage_mounts=[], smb_mounts=[])
+        logger = Mock()
+        with (
+            patch.object(scrub_steps, 'create_operation_logger', return_value=logger),
+            patch.object(scrub_steps, 'validate_filesystem_path') as validate_path,
+            patch.object(scrub_steps, 'validate_database_path') as validate_database,
+            patch.object(scrub_steps, 'validate_redundancy_percentage', return_value=10),
+            patch('sync.service_tools.scrub_runner.run_scrub_supervised', return_value={
+                'ok': False, 'completed': False, 'error': 'scrub preflight timed out',
+            }) as runner,
         ):
-            for checks in ([False], [True, False]):
-                with (
-                    self.subTest(module=module.__name__, checks=checks),
-                    patch.object(module, 'create_operation_logger'),
-                    patch.object(module, 'validate_filesystem_path'),
-                    patch.object(module, 'validate_mount_for_sync', side_effect=checks),
-                    patch('sync.scrub_steps.ensure_directory') as mkdir,
-                    patch('sync.service_tools.sync_rsync.run_rsync_with_notifications') as sync,
-                    patch.object(scrub_par2, 'scrub_directory') as scrub,
-                ):
-                    with self.assertRaisesRegex(RuntimeError, 'mount is unavailable'):
-                        function(SimpleNamespace(username='agent'), spec)
-                    mkdir.assert_not_called()
-                    sync.assert_not_called()
-                    scrub.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, 'scrub preflight timed out'):
+                scrub_steps.create_scrub_service(
+                    config, ['/mnt/a', '/mnt/b', '10%', 'daily'],
+                )
+
+        validate_path.assert_called_once_with('/mnt/a')
+        validate_database.assert_called_once_with('/mnt/b')
+        self.assertIs(runner.call_args.kwargs['config'], config)
+        self.assertEqual(runner.call_args.args[:3], ('/mnt/a', '/mnt/b', 10))
+        self.assertFalse(runner.call_args.kwargs['verify'])
+        self.assertTrue(runner.call_args.kwargs['suppress_notifications'])
+        logger.complete.assert_called_once()
+        self.assertEqual(logger.complete.call_args.args[0], 'failed')
 
     def test_initial_sync_failure_is_logged_and_raised(self):
         from sync import sync_steps
@@ -448,8 +454,22 @@ class TestScrubResultFailures(unittest.TestCase):
             self.assertEqual(report.data['files']['data.bin']['category'], 'io_error')
 
     def test_cli_returns_failure_for_unsuccessful_result(self):
-        with patch.object(sys, 'argv', ['scrub', '/data', '/db', '10', '/log']), patch.object(scrub_par2, 'scrub_directory', return_value={'ok': False}):
+        from sync.service_tools import storage_ops
+
+        lock = MagicMock()
+        lock.acquire.return_value = True
+        lock.__enter__.return_value = lock
+        lock.__exit__.return_value = None
+        with (
+            patch.object(sys, 'argv', ['scrub', '/data', '/db', '10', '/log']),
+            patch('lib.machine_state.load_setup_config', return_value={}),
+            patch.object(storage_ops, 'OperationLock', return_value=lock),
+            patch('sync.service_tools.scrub_runner.run_scrub_supervised', return_value={
+                'ok': False, 'completed': True, 'error': None,
+            }) as runner,
+        ):
             self.assertEqual(scrub_par2.main(), 1)
+        runner.assert_called_once()
 
     def test_parity_creation_failure_makes_result_unsuccessful(self):
         operation_logger = Mock()
@@ -486,34 +506,27 @@ class TestScrubResultFailures(unittest.TestCase):
         logger = Mock()
         with (
             patch.object(scrub_steps, 'create_operation_logger', return_value=logger),
-            patch.object(scrub_steps, 'validate_filesystem_path'),
-            patch.object(scrub_steps, 'validate_database_path'),
-            patch.object(scrub_steps, 'validate_mount_for_sync'),
+            patch.object(scrub_steps, 'validate_filesystem_path') as validate_path,
+            patch.object(scrub_steps, 'validate_database_path') as validate_database,
             patch.object(scrub_steps, 'validate_redundancy_percentage', return_value=10),
-            patch.object(scrub_steps, 'ensure_directory'),
-            patch.object(scrub_steps, 'check_path_on_smb_mount', return_value=False),
-            patch.object(scrub_steps, 'get_disk_usage_details') as disk_usage,
-            patch.object(scrub_steps.os, 'makedirs'),
             patch(
-                'sync.service_tools.scrub_par2.scrub_directory',
-                return_value={'ok': False},
-            ) as run_scrub,
+                'sync.service_tools.scrub_runner.run_scrub_supervised',
+                return_value={'ok': False, 'completed': False, 'error': 'initial worker failed'},
+            ) as runner,
         ):
-            with self.assertRaisesRegex(RuntimeError, 'Initial par2 creation'):
+            with self.assertRaisesRegex(RuntimeError, 'initial worker failed'):
                 scrub_steps.create_scrub_service(
-                    SimpleNamespace(username='agent'),
+                    SimpleNamespace(username='agent', storage_mounts=[], smb_mounts=[]),
                     ['/data', '/database', '10%', 'daily'],
                 )
 
-        disk_usage.assert_not_called()
-        run_scrub.assert_called_once_with(
-            '/data',
-            '/database',
-            10,
-            '/var/log/scrub/scrub-22073bd1.log',
-            verify=False,
-            suppress_notifications=True,
-        )
+        validate_path.assert_called_once_with('/data')
+        validate_database.assert_called_once_with('/database')
+        self.assertEqual(runner.call_args.args[:3], ('/data', '/database', 10))
+        self.assertEqual(runner.call_args.kwargs['log_dir'], '/var/log/scrub')
+        self.assertEqual(runner.call_args.kwargs['log_file'], '/var/log/scrub/scrub-22073bd1.log')
+        self.assertFalse(runner.call_args.kwargs['verify'])
+        self.assertTrue(runner.call_args.kwargs['suppress_notifications'])
         logger.complete.assert_called_once()
         self.assertEqual(logger.complete.call_args.args[0], 'failed')
 

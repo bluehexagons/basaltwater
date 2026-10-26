@@ -46,6 +46,30 @@ mount validation before their write probe runs.
 is treated as an unavailable mount after its process exits. Uninterruptible
 kernel I/O can delay that exit too.
 
+Scheduled full scrubs, daily parity updates, inline initial scrub setup, and
+the standalone `scrub_par2.py` entry point run in a supervised worker process
+group. The caller checks scrub syntax and paths only lexically. The worker
+checks source and database mounts, every declared mount nested under either
+tree, SMB connectivity, and symlink/path safety; it prepares directories, runs
+PAR2, and collects disk usage metrics there. The worker receives mount paths
+and the setup username, not SMB credentials or the saved configuration.
+Preflight has a 120-second deadline, followed by a four-hour scrub-and-metrics
+deadline. A bounded report is accepted only after the worker process group has
+disappeared. A completed scan with unresolved findings advances scrub cadence
+while reporting failure. A timeout or other incomplete worker result leaves the
+completion time unchanged and uses the one-hour-to-24-hour retry backoff. Inline
+setup fails if its initial worker does not report a completed, clean result.
+The standalone `scrub_par2.py` command shares the storage-operations lock and
+uses saved mount declarations when they are available.
+
+On timeout or cancellation, the caller sends TERM and then KILL to the worker
+group and waits until both its leader and native children are gone before it
+releases operation ownership or records a retry. A deadline cannot stop a task
+stuck in uninterruptible kernel I/O; cleanup keeps waiting and may exceed the
+configured deadline indefinitely. Scrub workers validate the mount view in the
+worker but do not create a private mount namespace. A mount can change after
+preflight, so keep scrub paths and their mounts stable while a scan runs.
+
 ## Sync behavior
 
 Each due sync runs rsync with archive mode, delayed deletion, partial-transfer
@@ -127,7 +151,7 @@ escaped path fails instead of being treated as unmanaged.
 Operations require the exact configured SMB or VM mount before running;
 a mounted parent does not satisfy a missing child mount. If an expected SMB,
 VM, or other mounted filesystem is unavailable, only operations requiring it
-are skipped instead of writing to an underlying local directory. Mount checks
+fail closed instead of writing to an underlying local directory. Mount checks
 run separately for each operation, so an offline scrub database or another job's
 missing mount cannot stop independent backups. Rerun setup to replace older
 service units that checked every storage mount before starting the orchestrator.
@@ -139,6 +163,9 @@ timestamp does not advance, aggregate storage-operations health is failed, and
 the service exits nonzero. Independent healthy jobs still run. Once coverage
 returns, a later retry clears the history and advances the configured cadence.
 These nested mount protections also apply to custom inline sync setup steps.
+Scrub workers fail incomplete when a declared mount nested in the source or
+parity database is unavailable; they never scan through its underlying
+directory.
 The standalone `sync_rsync.py SOURCE DESTINATION` entry point applies the same
 endpoint and nested mount guards using the saved setup configuration. Missing,
 unreadable, or invalid configuration stops standalone sync; inline setup uses
@@ -277,8 +304,8 @@ remaining parity. Executed operations that fail retry
 after one hour, then two, four, eight, sixteen, and at most twenty-four hours
 between consecutive failures. Completion clears the retry history. Full scrubs
 waiting for a retry are not replaced by an unverified fast parity pass.
-Scrub mount preflight skips remain eligible for hourly rechecks. Sync worker
-preflight failures use the operational retry backoff.
+Scrub worker preflight failures and sync worker preflight failures use the
+operational retry backoff.
 
 Scrub rejects symlinks in source and database paths, including parent components.
 Both trees must be fully readable before parity changes begin; an incomplete

@@ -44,6 +44,7 @@ from lib.runtime_config import RuntimeConfig
 from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
 from sync.service_tools.sync_rsync import SyncPrecautions
+from sync.service_tools.scrub_runner import run_scrub_supervised
 
 # Constants
 LOCK_FILE = "/run/lock/storage-ops.lock"
@@ -413,33 +414,56 @@ def validate_sync_integrity(
                          mount_excluded_paths=unavailable)
 
 
-def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logger) -> tuple[bool, str, bool]:
+def run_scrub(
+    directory: str, database: str, redundancy: str, verify: bool, logger, *,
+    config: RuntimeConfig | None = None,
+) -> tuple[bool, str, bool]:
     """Return success, message, and completion independently of integrity findings."""
-    from sync.service_tools.scrub_par2 import scrub_directory
-    
     mode = "full verify+repair" if verify else "parity update only"
     log_event(logger, "Starting scrub", directory=directory, mode=mode)
-    
-    log_dir = LOG_DIR
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # Generate log file path for this scrub
-    from hashlib import md5
-    scrub_id = md5(f"{directory}:{database}".encode()).hexdigest()[:8]
-    log_file = f"{log_dir}/scrub-{scrub_id}.log"
-    
+
     try:
-        redundancy_int = int(redundancy.rstrip('%'))
-        scrub_result = scrub_directory(directory, database, redundancy_int, log_file, verify, suppress_notifications=True)
-        unrepairable = scrub_result.get("files_unrepairable", []) if isinstance(scrub_result, dict) else []
-        ok = isinstance(scrub_result, dict) and scrub_result.get("ok") is True
-        completed = isinstance(scrub_result, dict) and scrub_result.get("completed") is True
-        if unrepairable:
+        from lib.validation import validate_redundancy_percentage
+
+        validate_redundancy_percentage(redundancy)
+        scrub_result = run_scrub_supervised(
+            directory,
+            database,
+            redundancy,
+            verify,
+            config or RuntimeConfig.from_dict({}),
+            log_dir=LOG_DIR,
+            suppress_notifications=True,
+        )
+        if not isinstance(scrub_result, dict) or type(scrub_result.get("ok")) is not bool \
+                or type(scrub_result.get("completed")) is not bool:
+            return False, f"Scrub returned an invalid worker report for {directory}", False
+        completed = scrub_result["completed"]
+        unrepairable_count = scrub_result.get("files_unrepairable_count", 0)
+        unrepairable = scrub_result.get("files_unrepairable", [])
+        failed_count = scrub_result.get("files_failed_count", 0)
+        report_error = scrub_result.get("error")
+        if type(unrepairable_count) is not int or unrepairable_count < 0 \
+                or type(failed_count) is not int or failed_count < 0 \
+                or not isinstance(unrepairable, list) \
+                or len(unrepairable) > 5 \
+                or any(not isinstance(path, str) or not path for path in unrepairable) \
+                or unrepairable_count < len(unrepairable) \
+                or bool(unrepairable_count) != bool(unrepairable) \
+                or len(unrepairable) != min(unrepairable_count, 5) \
+                or (report_error is not None and not isinstance(report_error, str)) \
+                or (scrub_result["ok"] and report_error is not None) \
+                or (completed and failed_count) \
+                or (completed and not scrub_result["ok"] and not unrepairable_count) \
+                or (completed and report_error is not None) \
+                or (not completed and scrub_result["ok"]):
+            return False, f"Scrub returned invalid finding details for {directory}", False
+        if unrepairable_count:
             sample = ", ".join(unrepairable[:5])
-            extra = f" (and {len(unrepairable) - 5} more)" if len(unrepairable) > 5 else ""
-            return False, f"Scrub found {len(unrepairable)} unresolved integrity finding(s) in {directory}: {sample}{extra}. Inspect with basaltw scrub inspect HOST --file PATH", completed
-        if not ok:
-            return False, f"Scrub did not complete cleanly for {directory}", completed
+            extra = f" (and {unrepairable_count - len(unrepairable)} more)" if unrepairable_count > len(unrepairable) else ""
+            return False, f"Scrub found {unrepairable_count} unresolved integrity finding(s) in {directory}: {sample}{extra}. Inspect with basaltw scrub inspect HOST --file PATH", completed
+        if not scrub_result["ok"]:
+            return False, scrub_result.get("error") or f"Scrub did not complete cleanly for {directory}", completed
         return True, f"Scrub completed for {directory}", completed
     except ValueError as e:
         error_msg = f"Invalid redundancy value '{redundancy}': {e}"
@@ -627,9 +651,14 @@ def execute_storage_operations() -> dict:
                 logger.debug(f"Skipping scrub {directory} ({interval}): never run (deferred until scheduled)")
             continue
         
-        # Validate mounts
-        valid, error_msg = validate_mounts_for_operation([directory, resolved_database], config, "scrub")
-        if not valid:
+        # The controller checks only scrub syntax. Mount and filesystem calls
+        # run after launch in the deadline-supervised worker.
+        try:
+            from lib.validation import validate_scrub_specs
+
+            validate_scrub_specs([list(spec)])
+        except (OSError, ValueError, RuntimeError) as exc:
+            error_msg = str(exc)
             log_event(logger, "Skipping scrub", level=WARNING, directory=directory, error=error_msg)
             results["scrubs"].append({
                 "directory": directory,
@@ -641,13 +670,16 @@ def execute_storage_operations() -> dict:
             continue
         
         full_scrubs_attempted.add((directory, resolved_database))
-        success, message, completed = run_scrub(directory, resolved_database, redundancy, verify=True, logger=logger)
+        success, message, completed = run_scrub(
+            directory, resolved_database, redundancy, verify=True, logger=logger, config=config,
+        )
         results["scrubs"].append({
             "directory": directory,
             "database": resolved_database,
             "success": success,
             "message": message,
-            "full": True
+            "completed": completed,
+            "full": True,
         })
         
         # A completed scan with damage must observe the configured interval,
@@ -686,9 +718,12 @@ def execute_storage_operations() -> dict:
                 logger.debug(f"Skipping parity update {directory} (daily): never run (deferred until scheduled)")
             continue
         
-        # Validate mounts
-        valid, error_msg = validate_mounts_for_operation([directory, resolved_database], config, "parity update")
-        if not valid:
+        try:
+            from lib.validation import validate_scrub_specs
+
+            validate_scrub_specs([list(spec)])
+        except (OSError, ValueError, RuntimeError) as exc:
+            error_msg = str(exc)
             log_event(logger, "Skipping parity update", level=WARNING, directory=directory, error=error_msg)
             results["parity_updates"].append({
                 "directory": directory,
@@ -699,12 +734,15 @@ def execute_storage_operations() -> dict:
             results["success"] = False
             continue
         
-        success, message, completed = run_scrub(directory, resolved_database, redundancy, verify=False, logger=logger)
+        success, message, completed = run_scrub(
+            directory, resolved_database, redundancy, verify=False, logger=logger, config=config,
+        )
         results["parity_updates"].append({
             "directory": directory,
             "database": resolved_database,
             "success": success,
-            "message": message
+            "message": message,
+            "completed": completed,
         })
         
         if not success:

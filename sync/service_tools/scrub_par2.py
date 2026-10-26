@@ -785,15 +785,42 @@ def main():
     
     directory = sys.argv[1]
     database = sys.argv[2]
-    redundancy = int(sys.argv[3])
+    try:
+        redundancy = int(sys.argv[3])
+    except ValueError as exc:
+        print(f"Error: invalid redundancy: {exc}")
+        return 1
     log_file = sys.argv[4]
     verify = '--no-verify' not in sys.argv
     
     try:
-        result = scrub_directory(directory, database, redundancy, log_file, verify)
-        return 0 if result.get('ok', False) else 1
+        from lib.machine_state import load_setup_config
+        from lib.runtime_config import RuntimeConfig
+        from sync.service_tools.scrub_runner import run_scrub_supervised
+        from sync.service_tools.storage_ops import LOCK_FILE, OperationLock
+
+        config = RuntimeConfig.from_dict(load_setup_config() or {})
+        with OperationLock(LOCK_FILE) as lock:
+            if not lock.acquire(blocking=False):
+                print("Another storage operation is active; scrub was not started")
+                return 1
+            result = run_scrub_supervised(
+                directory,
+                database,
+                redundancy,
+                verify,
+                config,
+                log_dir=os.path.abspath(os.path.dirname(log_file) or "."),
+                log_file=log_file,
+                suppress_notifications=False,
+            )
+        if result.get("ok") is not True or result.get("completed") is not True:
+            if result.get("error"):
+                print(f"Scrub failed: {result['error']}")
+            return 1
+        return 0
     except Exception as e:
-        log(f"Error: {e}", log_file)
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
 

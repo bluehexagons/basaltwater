@@ -125,21 +125,32 @@ class TestRunScrub(unittest.TestCase):
         cases = [
             ({"ok": True, "completed": True}, True, True),
             ({"ok": False, "completed": True, "files_unrepairable": ["damaged.bin"]}, False, True),
+            ({"ok": False, "completed": True}, False, False),
             ({"ok": False, "completed": False, "files_unrepairable": ["damaged.bin"],
               "files_failed": ["unreadable.bin"]}, False, False),
             ({"ok": False, "completed": False}, False, False),
             (None, False, False),
         ]
         for result, expected_success, expected_completed in cases:
+            worker_result = None
+            if isinstance(result, dict):
+                worker_result = {
+                    "ok": result.get("ok") is True,
+                    "completed": result.get("completed") is True,
+                    "files_failed_count": len(result.get("files_failed", [])),
+                    "files_unrepairable_count": len(result.get("files_unrepairable", [])),
+                    "files_unrepairable": result.get("files_unrepairable", [])[:5],
+                    "error": None,
+                }
             with self.subTest(result=result), patch(
-                "sync.service_tools.scrub_par2.scrub_directory", return_value=result
+                "sync.service_tools.storage_ops.run_scrub_supervised", return_value=worker_result
             ):
                 success, message, completed = run_scrub("/data", "/db", "10%", True, MagicMock())
                 self.assertEqual((success, completed), (expected_success, expected_completed))
                 if isinstance(result, dict) and result.get("files_unrepairable"):
                     self.assertIn("damaged.bin", message)
 
-        with patch("sync.service_tools.scrub_par2.scrub_directory", side_effect=OSError("read failed")):
+        with patch("sync.service_tools.storage_ops.run_scrub_supervised", side_effect=OSError("read failed")):
             self.assertEqual(
                 run_scrub("/data", "/db", "10%", True, MagicMock()),
                 (False, "read failed", False),
@@ -522,10 +533,13 @@ class TestParityCadence(unittest.TestCase):
                 patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")),
                 patch.object(storage_ops, "send_notification_safe") as notify,
                 patch.object(storage_ops.time, "time", return_value=1_000_000.0) as clock,
-                patch("sync.service_tools.scrub_par2.scrub_directory", return_value={
-                    "ok": False, "completed": completed,
+                patch("sync.service_tools.storage_ops.run_scrub_supervised", return_value={
+                    "ok": False,
+                    "completed": completed,
+                    "files_failed_count": 0 if completed else 1,
+                    "files_unrepairable_count": 1,
                     "files_unrepairable": ["damaged.bin"],
-                    "files_failed": [] if completed else ["unreadable.bin"],
+                    "error": None if completed else "unreadable file",
                 }) as scrub,
             ):
                 storage_ops.save_last_run({"scrub:/data:.db": 1.0})
@@ -547,16 +561,20 @@ class TestParityCadence(unittest.TestCase):
                 if completed:
                     # Daily parity maintenance continues without full verification.
                     clock.return_value = 1_000_000.0 + FREQUENCY_SECONDS["daily"]
-                    scrub.return_value = {"ok": True, "completed": True}
+                    scrub.return_value = {
+                        "ok": True, "completed": True,
+                        "files_failed_count": 0, "files_unrepairable_count": 0,
+                        "files_unrepairable": [], "error": None,
+                    }
                     daily = storage_ops.execute_storage_operations()
                     self.assertEqual(daily["scrubs"], [])
-                    self.assertFalse(scrub.call_args.args[4])
+                    self.assertFalse(scrub.call_args.args[3])
                     self.assertEqual(storage_ops.load_last_run()["scrub:/data:.db"], 1_000_000.0)
 
                     clock.return_value = 1_000_000.0 + FREQUENCY_SECONDS["weekly"]
                     weekly = storage_ops.execute_storage_operations()
                     self.assertEqual(len(weekly["scrubs"]), 1)
-                    self.assertTrue(scrub.call_args.args[4])
+                    self.assertTrue(scrub.call_args.args[3])
                     self.assertEqual(weekly["parity_updates"], [])
 
     @patch("sync.service_tools.storage_ops.send_operation_notification")
@@ -791,14 +809,14 @@ class TestOperationLogging(unittest.TestCase):
         self.assertFalse(results["success"])
 
     @patch("sync.service_tools.storage_ops.send_operation_notification")
-    @patch("sync.service_tools.storage_ops.run_scrub")
+    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(False, "Required mount unavailable", False))
     @patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(False, "Mount /mnt/data not available"))
     @patch("sync.service_tools.storage_ops.save_last_run")
     @patch("sync.service_tools.storage_ops.load_last_run")
     @patch("sync.service_tools.storage_ops.parse_notification_args", return_value=[])
     @patch("sync.service_tools.storage_ops.load_setup_config")
     @patch("sync.service_tools.storage_ops.get_service_logger")
-    def test_logs_skipped_scrub_and_parity_with_context(
+    def test_incomplete_worker_preflight_retries_without_fast_parity_fallback(
         self, mock_logger, mock_load_config, _parse_notify, mock_load_last, _save, _validate, mock_run_scrub, _send_notif
     ):
         from sync.service_tools.storage_ops import execute_storage_operations
@@ -817,12 +835,13 @@ class TestOperationLogging(unittest.TestCase):
 
         results = execute_storage_operations()
 
-        mock_run_scrub.assert_not_called()
-        log_calls = [call.args[1] for call in logger_mock.log.call_args_list]
-        self.assertIn("Skipping scrub | directory='/data' error='Mount /mnt/data not available'", log_calls)
-        self.assertIn("Skipping parity update | directory='/data' error='Mount /mnt/data not available'", log_calls)
-        self.assertTrue(results["scrubs"][0]["skipped"])
-        self.assertTrue(results["parity_updates"][0]["skipped"])
+        mock_run_scrub.assert_called_once()
+        _validate.assert_not_called()
+        self.assertTrue(mock_run_scrub.call_args.kwargs["verify"])
+        self.assertEqual(mock_run_scrub.call_args.kwargs["config"].scrub_specs,
+                         [["/data", ".pardatabase", "5%", "weekly"]])
+        self.assertFalse(results["scrubs"][0]["completed"])
+        self.assertEqual(results["parity_updates"], [])
         self.assertFalse(results["success"])
 
 

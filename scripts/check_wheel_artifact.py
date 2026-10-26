@@ -57,6 +57,7 @@ REQUIRED_WHEEL_PATHS = (
     "security/security_steps.py",
     "smb/samba_steps.py",
     "sync/service_tools/scrub_par2.py",
+    "sync/service_tools/scrub_runner.py",
     "web/config/nginx.conf.template",
     "web/service_tools/webhook_manager.py",
 )
@@ -168,6 +169,7 @@ def _smoke_installed_wheel(
                 "import common, deploy, desktop, game, basaltwater, lib, plugins, "
                 "remote_setup, security, smb, sync, web; "
                 "import sync.service_tools.scrub_par2; "
+                "import sync.service_tools.storage_ops; "
                 "import web.service_tools.webhook_manager"
                 "; import common.service_tools.admin_job"
                 "; import common.service_tools.web_panel_admin"

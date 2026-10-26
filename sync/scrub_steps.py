@@ -8,8 +8,6 @@ from typing import Optional, Any
 
 from lib.config import SetupConfig
 from lib.remote_utils import run, is_package_installed
-from lib.mount_utils import validate_mount_for_sync, validate_smb_connectivity
-from lib.disk_utils import get_disk_usage_details
 from lib.validation import (
     validate_filesystem_path, 
     validate_database_path, 
@@ -18,10 +16,7 @@ from lib.validation import (
 from lib.operation_log import create_operation_logger
 from lib.task_utils import (
     validate_frequency,
-    check_path_on_smb_mount,
-    ensure_directory
 )
-from lib.task_utils import validate_configured_storage_mounts
 
 
 def install_par2(config: SetupConfig) -> None:
@@ -82,64 +77,47 @@ def create_scrub_service(config: SetupConfig, scrub_spec: Optional[list[str]] = 
 
     try:
         logger.log_step("validation", "started", "Validating scrub paths, mounts, and redundancy")
-        validate_filesystem_path(directory, must_exist=True, check_writable=False)
+        # Only lexical validation belongs in setup. Metadata operations, mount
+        # checks, directory preparation, and disk metrics run in the worker.
+        validate_filesystem_path(directory)
         validate_database_path(database_path)
-        for path in (directory, database_path):
-            validate_configured_storage_mounts(path, config)
-        if not validate_mount_for_sync(directory, "directory"):
-            raise RuntimeError(f"Required source mount is unavailable: {directory}")
-        if not validate_mount_for_sync(database_path, "database"):
-            raise RuntimeError(f"Required database mount is unavailable: {database_path}")
         redundancy_value = validate_redundancy_percentage(redundancy)
-        logger.log_step("validation", "completed", "Scrub inputs are valid")
-        logger.log_metric("validation_success", True)
-
-        ensure_directory(directory, config.username)
-
-        db_parent = os.path.dirname(database_path)
-        if db_parent:
-            ensure_directory(db_parent, config.username)
-
-        dir_on_smb = check_path_on_smb_mount(directory, config)
-        db_on_smb = check_path_on_smb_mount(database_path, config)
-
-        if dir_on_smb or db_on_smb:
-            logger.log_step("mount_validation_enhanced", "started", "Performing enhanced mount validation")
-            if dir_on_smb:
-                if not validate_smb_connectivity(directory):
-                    raise RuntimeError(f"Source SMB connectivity failed: {directory}")
-            if db_on_smb:
-                if not validate_smb_connectivity(database_path):
-                    raise RuntimeError(f"Database SMB connectivity failed: {database_path}")
-            logger.log_step("mount_validation_enhanced", "completed", "Enhanced mount validation completed")
-
-        print(f"  ✓ Scrub spec validated: {directory}")
-        print("  ℹ Performing initial par2 creation (fast mode)...")
-
-        from sync.service_tools.scrub_par2 import scrub_directory
         log_dir = "/var/log/scrub"
-        os.makedirs(log_dir, exist_ok=True)
         scrub_id = hashlib.md5(f"{directory}:{database_path}".encode()).hexdigest()[:8]
         log_file = f"{log_dir}/scrub-{scrub_id}.log"
         # Setup reports its own final success or failure. Avoid reading and
         # notifying with stale target state before this run saves its config.
-        result = scrub_directory(
+        from sync.service_tools.scrub_runner import run_scrub_supervised
+        result = run_scrub_supervised(
             directory,
             database_path,
             redundancy_value,
-            log_file,
             verify=False,
+            config=config,
+            log_dir=log_dir,
+            log_file=log_file,
             suppress_notifications=True,
         )
-        if not result.get("ok", False):
-            raise RuntimeError("Initial par2 creation did not complete successfully")
+        if result.get("ok") is not True or result.get("completed") is not True:
+            raise RuntimeError(result.get("error") or "Initial par2 creation did not complete successfully")
+        usage_metrics = (
+            result.get("directory_disk_usage_percent"),
+            result.get("database_disk_usage_percent"),
+        )
+        if any(type(value) is not int or not 0 <= value <= 100 for value in usage_metrics):
+            raise RuntimeError("Initial PAR2 worker returned invalid disk usage metrics")
 
+        logger.log_step("validation", "completed", "Scrub inputs and mounts are valid")
+        logger.log_metric("validation_success", True)
+        print(f"  ✓ Scrub spec validated: {directory}")
+        print("  ℹ Performing initial par2 creation (fast mode)...")
         logger.log_step("initial_par2", "completed", "Initial par2 successful")
-
-        dir_disk = get_disk_usage_details(directory)
-        db_disk = get_disk_usage_details(os.path.dirname(database_path))
-        logger.log_metric("directory_disk_usage_percent", dir_disk['usage_percent'], "percent")
-        logger.log_metric("database_disk_usage_percent", db_disk['usage_percent'], "percent")
+        logger.log_metric(
+            "directory_disk_usage_percent", usage_metrics[0], "percent",
+        )
+        logger.log_metric(
+            "database_disk_usage_percent", usage_metrics[1], "percent",
+        )
         logger.complete("completed", "Scrub configured")
 
     except Exception as e:

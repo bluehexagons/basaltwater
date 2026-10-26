@@ -740,7 +740,9 @@ class TestMountNamespace(unittest.TestCase):
             patch.object(storage_ops, 'parse_notification_args', return_value=[]),
             patch.object(storage_ops, 'get_service_logger'),
             patch('lib.task_utils.os.path.ismount', side_effect=lambda path: path in self.host_mounts),
-            patch.object(storage_ops, 'run_scrub') as scrub,
+            patch.object(storage_ops, 'run_scrub', return_value=(
+                False, 'Required parity mount unavailable', False,
+            )) as scrub,
         ):
             result = storage_ops.execute_storage_operations()
             state = storage_ops.load_last_run()
@@ -753,8 +755,11 @@ class TestMountNamespace(unittest.TestCase):
         failed_id = storage_ops.get_sync_op_id(str(self.source), str(offline))
         self.assertNotIn(failed_id, state)
         self.assertIn(failed_id, state['_attempts'])
-        self.assertTrue(result['parity_updates'][0]['skipped'])
-        scrub.assert_not_called()
+        self.assertFalse(result['parity_updates'][0]['completed'])
+        parity_id = storage_ops.get_parity_op_id(str(self.source), str(database))
+        self.assertNotIn(parity_id, state)
+        self.assertIn(parity_id, state['_attempts'])
+        scrub.assert_called_once()
 
     def test_service_exit_is_nonzero_for_incomplete_mount_coverage(self):
         from sync.service_tools import storage_ops
