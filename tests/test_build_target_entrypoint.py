@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from io import BytesIO, StringIO
 import json
 import os
@@ -256,18 +257,32 @@ class BuildTargetEntrypointTests(unittest.TestCase):
     def test_exact_invocation_checks_trust_before_platform_config_and_serve(self) -> None:
         configured = build_target.parse_config(config())
         stderr = StringIO()
+        events = []
+
+        @contextmanager
+        def lease():
+            events.append("lock")
+            yield
+            events.append("unlock")
+
+        def load(_path):
+            events.append("config")
+            return configured
+
         with patch.object(build_target.os, "geteuid", return_value=0), \
              patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1)), \
              patch.object(build_target, "_trusted_code") as trusted_code, \
              patch.object(build_target, "_trusted_libraries") as trusted_libraries, \
              patch.object(build_target, "require_platform") as require_platform, \
-             patch.object(build_target, "load_config", return_value=configured) as load_config, \
-             patch.object(build_target, "serve") as serve, \
+             patch("lib.build_target_maintenance.target_lease", side_effect=lease), \
+             patch.object(build_target, "load_config", side_effect=load) as load_config, \
+             patch.object(build_target, "serve", side_effect=lambda *_args, **_kwargs: events.append("response")) as serve, \
              patch.object(build_target.sys, "stderr", stderr), \
              patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": build_target.SSH_COMMAND}):
             result = build_target.main(["--serve", "--principal", "alice@example",
                                         "--config", "/etc/private/target.json"])
         self.assertEqual(result, 0)
+        self.assertEqual(events, ["lock", "config", "response", "unlock"])
         trusted_code.assert_called_once()
         trusted_libraries.assert_called_once_with(trusted_code.call_args.args[0].parents[2])
         require_platform.assert_called_once()
@@ -347,12 +362,28 @@ class BuildTargetEntrypointTests(unittest.TestCase):
              patch.object(build_target, "_trusted_code"), \
              patch.object(build_target, "_trusted_libraries"), \
              patch.object(build_target, "require_platform"), \
+             patch("lib.build_target_maintenance.target_lease", return_value=nullcontext()), \
              patch.object(build_target, "load_config", side_effect=RuntimeError("/private token=secret")), \
              patch.object(build_target.sys, "stderr", stderr), \
              patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": build_target.SSH_COMMAND}):
             self.assertEqual(build_target.main(["--serve", "--principal", "alice@example"]), 1)
         self.assertEqual(stderr.getvalue(),
                          "Target operation is unavailable; inspect protected host evidence\n")
+
+    def test_busy_or_held_enrollment_refuses_before_configuration_load(self) -> None:
+        with patch.object(build_target.os, "geteuid", return_value=0), \
+             patch.object(build_target.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_target, "_trusted_code"), \
+             patch.object(build_target, "_trusted_libraries"), \
+             patch.object(build_target, "require_platform"), \
+             patch("lib.build_target_maintenance.target_lease", side_effect=RuntimeError("busy")), \
+             patch.object(build_target, "load_config") as loader, \
+             patch.object(build_target, "serve") as serve, \
+             patch.object(build_target.sys, "stderr", StringIO()), \
+             patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": build_target.SSH_COMMAND}):
+            self.assertEqual(build_target.main(["--serve", "--principal", "alice"]), 1)
+        loader.assert_not_called()
+        serve.assert_not_called()
 
 
 if __name__ == "__main__":

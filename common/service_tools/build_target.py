@@ -308,8 +308,15 @@ def main(argv: list[str] | None = None) -> int:
         _trusted_libraries(root)
         sys.path.insert(0, str(root))
         require_platform()
-        config = load_config(args.config)
-        serve(config, principal=args.principal, config_path=args.config)
+        from lib.build_target_maintenance import target_lease
+
+        # The shared lease begins before the first configuration read and is
+        # retained through the complete typed operation and response. Requests
+        # arriving during enrollment refuse immediately instead of waiting
+        # with stale authorization. The durable gate also rejects failed setup.
+        with target_lease():
+            config = load_config(args.config)
+            serve(config, principal=args.principal, config_path=args.config)
         return 0
     except BaseException:
         print("Target operation is unavailable; inspect protected host evidence", file=sys.stderr)
