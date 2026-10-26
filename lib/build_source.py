@@ -36,11 +36,8 @@ _CHUNK = 64 * 1024
 _MAX_TAG_ARGUMENT_BYTES = 1024 * 1024
 _MAX_REVISION = re.compile(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _MAX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_LFS_POINTER = re.compile(
+_LFS_POINTER_SIGNATURE = re.compile(
     rb"\Aversion https://git-lfs\.github\.com/spec/v1\r?\n"
-    rb"(?:ext-[^\r\n]+\r?\n)*"
-    rb"oid sha256:[0-9a-f]{64}\r?\n"
-    rb"size [0-9]+(?:\r?\n|\Z)"
 )
 _FORBIDDEN_COMPONENTS = frozenset({
     ".git", ".gitconfig", ".git-credentials", ".git-credential-cache",
@@ -517,6 +514,73 @@ def _reject_grafts(
         raise ValueError("Local Git graft metadata is unsupported for shared builds")
 
 
+def _prepare_history_repository(
+    invoke: Callable[..., bytes], repository: str, history_directory: str,
+    revision: str, tags: Sequence[tuple[str, str]], limits: SourceLimits,
+) -> Callable[..., bytes]:
+    """Build a private bare Git view with a detached pinned HEAD and tags."""
+    raw = invoke(["rev-parse", "--git-path", "objects"], max_output_bytes=8192)
+    if not raw.endswith(b"\n") or raw.count(b"\n") != 1:
+        raise ValueError("Git returned invalid object directory metadata")
+    try:
+        object_directory = os.fsdecode(raw[:-1])
+    except UnicodeError as exc:
+        raise ValueError("Git returned invalid object directory metadata") from exc
+    if not os.path.isabs(object_directory):
+        object_directory = os.path.join(repository, object_directory)
+    object_directory = os.path.abspath(object_directory)
+    validate_filesystem_path(object_directory, must_exist=True)
+    if "\n" in object_directory or "\r" in object_directory:
+        raise ValueError("Git object directory path is unsupported")
+    with _directory(object_directory):
+        pass
+
+    private_git_directory = os.path.join(history_directory, "metadata.git")
+    template_directory = os.path.join(history_directory, "empty-template")
+    os.mkdir(template_directory, mode=0o700)
+    init_command = ["init", "--bare", f"--template={template_directory}"]
+    if len(revision) == 64:
+        init_command.append("--object-format=sha256")
+    init_command.append(private_git_directory)
+    invoke(init_command, max_output_bytes=8192)
+
+    with _directory(os.path.join(private_git_directory, "objects", "info")) as info:
+        descriptor = os.open(
+            "alternates", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600, dir_fd=info,
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(os.fsencode(object_directory) + b"\n")
+                output.flush()
+                os.fsync(output.fileno())
+        except BaseException:
+            try:
+                os.unlink("alternates", dir_fd=info)
+            except OSError:
+                pass
+            raise
+
+    def history_invoke(args: Sequence[str], **kwargs) -> bytes:
+        return invoke([f"--git-dir={private_git_directory}", *args], **kwargs)
+
+    update_records = ["start\n", "option no-deref\n", f"update HEAD {revision}\n"]
+    update_records.extend(f"create {ref} {object_id}\n" for ref, object_id in tags)
+    update_records.extend(("prepare\n", "commit\n"))
+    update_input = "".join(update_records).encode("utf-8")
+    if len(update_input) > limits.max_metadata_bytes:
+        raise ValueError("Git history reference metadata exceeds its byte limit")
+    history_invoke(
+        ["update-ref", "--stdin"], input_data=update_input, max_output_bytes=0,
+    )
+    pinned_head = history_invoke(
+        ["rev-parse", "--verify", "HEAD^{commit}"], max_output_bytes=80,
+    ).strip()
+    if pinned_head != revision.encode("ascii"):
+        raise ValueError("Private Git history view does not have the resolved HEAD")
+    return history_invoke
+
+
 def _reject_external_filters(
     invoke: Callable[..., bytes], files: Sequence[_TreeEntry], limits: SourceLimits,
 ) -> None:
@@ -581,13 +645,11 @@ def _check_clean_repository(
             raise ValueError("Git repository has hidden or sparse index entries")
     _reject_external_filters(invoke, files, limits)
     with _directory(repository) as root:
+        source_bytes = 0
         for entry in files:
-            with _relative_parent(root, entry.path) as (parent, leaf):
-                info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
-            if not stat.S_ISREG(info.st_mode):
-                raise ValueError("Git repository has a symlink or special tracked worktree file")
-            if bool(info.st_mode & 0o111) != entry.executable:
-                raise ValueError("Git repository is dirty")
+            source_bytes += _check_worktree_blob(
+                root, entry, limits, source_bytes,
+            )
     status = invoke(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
         max_output_bytes=limits.max_metadata_bytes,
@@ -626,8 +688,105 @@ def _metadata_record(writer: _SnapshotWriter, kind: bytes, flags: int, path: str
         writer.write(struct.pack("!Q", size))
 
 
+def _check_worktree_blob(
+    root: int, entry: _TreeEntry, limits: SourceLimits, source_bytes: int,
+) -> int:
+    """Hash one no-follow worktree file against its committed Git blob ID."""
+    with _relative_parent(root, entry.path) as (parent, leaf):
+        try:
+            path_info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+        except OSError as exc:
+            raise ValueError("Git repository is dirty") from exc
+        if not stat.S_ISREG(path_info.st_mode):
+            raise ValueError("Git repository has a symlink or special tracked worktree file")
+        if bool(path_info.st_mode & 0o111) != entry.executable:
+            raise ValueError("Git repository is dirty")
+        if path_info.st_size > limits.max_file_bytes:
+            raise ValueError("Git source file exceeds its byte limit")
+        if entry.path == MANIFEST_FILENAME and path_info.st_size > MAX_MANIFEST_BYTES:
+            raise ValueError("Git source manifest exceeds its byte limit")
+        if source_bytes + path_info.st_size > limits.max_source_bytes:
+            raise ValueError("Git source exceeds its total byte limit")
+        try:
+            descriptor = os.open(leaf, _READ, dir_fd=parent)
+        except OSError as exc:
+            raise ValueError("Git repository is dirty") from exc
+        try:
+            opened_info = os.fstat(descriptor)
+            def identity(info):
+                return (
+                    info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                    info.st_mtime_ns, info.st_ctime_ns,
+                )
+            if (not stat.S_ISREG(opened_info.st_mode)
+                    or identity(opened_info) != identity(path_info)):
+                raise ValueError("Git repository is dirty")
+            algorithm = "sha1" if len(entry.object_id) == 40 else "sha256"
+            digest = hashlib.new(algorithm, usedforsecurity=False)
+            digest.update(b"blob " + str(opened_info.st_size).encode("ascii") + b"\0")
+            read_bytes = 0
+            while True:
+                content = os.read(descriptor, _CHUNK)
+                if not content:
+                    break
+                read_bytes += len(content)
+                if (read_bytes > limits.max_file_bytes
+                        or source_bytes + read_bytes > limits.max_source_bytes):
+                    raise ValueError("Git source exceeds its byte limit")
+                digest.update(content)
+            final_info = os.fstat(descriptor)
+            try:
+                final_path_info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError("Git repository is dirty") from exc
+            if (read_bytes != opened_info.st_size
+                    or identity(final_info) != identity(opened_info)
+                    or identity(final_path_info) != identity(opened_info)
+                    or digest.hexdigest() != entry.object_id):
+                raise ValueError("Git repository is dirty")
+            return read_bytes
+        finally:
+            os.close(descriptor)
+
+
 def _is_lfs_pointer(content: bytes) -> bool:
-    return _LFS_POINTER.match(content[:512]) is not None
+    """Conservatively reject every file with the Git LFS pointer signature."""
+    return _LFS_POINTER_SIGNATURE.match(content) is not None
+
+
+def _verify_bundle_heads(
+    invoke: Callable[..., bytes], bundle_path: str, revision: str,
+    tags: Sequence[tuple[str, str]], limits: SourceLimits,
+) -> None:
+    """Require the bundle to advertise the pinned commit and selected tags."""
+    raw = invoke(
+        ["bundle", "list-heads", bundle_path],
+        max_output_bytes=limits.max_metadata_bytes,
+    )
+    if raw and not raw.endswith(b"\n"):
+        raise ValueError("Git returned incomplete history bundle head metadata")
+    recorded: dict[str, str] = {}
+    for line in raw[:-1].split(b"\n") if raw else ():
+        try:
+            object_id_raw, ref_raw = line.split(b" ", 1)
+            object_id = object_id_raw.decode("ascii")
+            ref = ref_raw.decode("utf-8", errors="strict")
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("Git returned malformed history bundle head metadata") from exc
+        if (len(object_id) != len(revision)
+                or _MAX_REVISION.fullmatch(object_id.encode("ascii")) is None
+                or not ref or ref in recorded):
+            raise ValueError("Git returned invalid history bundle head metadata")
+        recorded[ref] = object_id
+    if recorded.get("HEAD") != revision:
+        raise ValueError("Git history bundle HEAD does not match the resolved revision")
+    expected_tags = dict(tags)
+    recorded_tags = {
+        ref: object_id for ref, object_id in recorded.items()
+        if ref.startswith("refs/tags/")
+    }
+    if recorded_tags != expected_tags:
+        raise ValueError("Git history bundle tag references do not match the resolved revision")
 
 
 def _read_blob_batches(
@@ -759,19 +918,23 @@ def create_source_snapshot(
             raise ValueError("Git source snapshot metadata exceeds its byte limit")
 
         with parent_context as (output_parent, output_name), tempfile.TemporaryDirectory(
-            prefix="basaltw-source-history-"
+            prefix="basaltw-source-history-", dir=os.path.dirname(destination_path),
         ) as history_directory:
             if os.path.commonpath((os.path.realpath(root), os.path.realpath(destination_path))) == os.path.realpath(root):
                 raise ValueError("Source snapshot destination must be outside the repository")
+            history_invoke = _prepare_history_repository(
+                invoke, root, history_directory, revision, tags, limits,
+            )
             bundle_path = os.path.join(history_directory, "history.bundle")
             bundle_command = [
                 "bundle", "create", "--version=3", bundle_path, "--filter=blob:none",
                 "HEAD", *(ref for ref, _object_id in tags),
             ]
-            invoke(
+            history_invoke(
                 bundle_command, max_output_bytes=0,
                 file_size_limit=limits.max_history_bytes,
             )
+            _verify_bundle_heads(history_invoke, bundle_path, revision, tags, limits)
             if _git_tags(invoke, revision, limits) != tags:
                 raise ValueError("Git tag references changed during source snapshot creation")
             bundle_fd = os.open(bundle_path, _READ)
