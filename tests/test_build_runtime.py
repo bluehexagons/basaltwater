@@ -265,6 +265,36 @@ class BuildRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Interpreter and shell"):
             self.validate(self.manifest(binary="bin/python3"))
 
+    def test_execstart_executable_token_must_remain_literal(self):
+        self.executable()
+        commands = (
+            "{{release_dir}}/bin/%n",
+            "{{release_dir}}/bin/$SERVICE",
+            "'{{release_dir}}/bin/api'",
+            '"{{release_dir}}/bin/api"',
+            r"{{release_dir}}/bin/ser\ver",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                manifest = self.manifest(exec_command=command, artifacts=["bin/api"])
+                with self.assertRaises(ValueError):
+                    self.validate(manifest)
+
+    def test_binary_and_resolved_release_paths_cannot_transform_in_execstart(self):
+        for binary in (
+            "bin/%n", "bin/$SERVICE", "bin/'api'", 'bin/"api"',
+            "bin/server name", "{{release_dir}}/bin/api",
+        ):
+            with self.subTest(binary=binary):
+                manifest = self.manifest(binary=binary)
+                with self.assertRaisesRegex(ValueError, "literal|systemd specifiers"):
+                    self.validate(manifest)
+
+        manifest = self.manifest()
+        unusual_release = str(self.release.with_name("release%n"))
+        with self.assertRaisesRegex(ValueError, "systemd specifiers"):
+            validate_prebuilt_runtime(manifest, unusual_release, platform=DEBIAN_PLATFORM)
+
     def test_file_replacement_during_metadata_reads_is_detected(self):
         executable = self.executable()
         original_pread = os.pread

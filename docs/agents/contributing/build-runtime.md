@@ -11,8 +11,12 @@ components must identify a declared, executable regular file through
 `binary`, or through the first `exec` argument in the exact form
 `{{release_dir}}/relative/path`. Exec-only services still need explicit
 manifest `artifacts`; the executable must be covered by the selected exports.
-The helper does not rewrite `exec`, infer additional files from it, or run
-artifact commands.
+The executable path must stay literal through service-unit generation: no
+systemd `%` specifiers, `$` expansion, quotes, backslashes, or whitespace in
+the checked token or resolved release path. This matches the generator, which
+renders manifest placeholders and writes `ExecStart` directly. Ordinary
+arguments such as `-port {{port}}` remain valid. The helper does not rewrite
+`exec`, infer additional files from it, or run artifact commands.
 
 Service executables must be ELF64 little-endian x86-64 `ET_EXEC` or `ET_DYN`
 files with `EI_OSABI` 0 (System V) or 3 (Linux) and `EI_ABIVERSION` 0. They
