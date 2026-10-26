@@ -51,6 +51,7 @@ PLUGIN = PluginDefinition(
         "install_build_node",
         "install_build_python_tools",
         "install_build_dependencies",
+        "configure_build_host",
     ),
     custom_step_provider="plugins.web:get_custom_step_functions",
 )
@@ -90,9 +91,8 @@ def extend_cicd_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) ->
         update_cloudflare_tunnel_for_webhook,
     )
 
-    # The build-server extension already contains the complete receiver and
-    # executor setup.  Treat --cicd as redundant in that mode so the documented
-    # combination never runs the same service and directory steps twice.
+    # The build-server extension owns legacy receiver setup and managed
+    # on-demand enrollment, including rejection of unsupported combinations.
     if not config.enable_cicd or config.is_build_server:
         return
 
@@ -142,6 +142,24 @@ def extend_app_server_steps(config: SetupConfig, steps: list[tuple[str, StepFunc
 def extend_build_server_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:
     """Append build-server deployment steps when enabled."""
 
+    if config.disable_build_host:
+        from common.build_host_steps import configure_build_host
+
+        steps.append(("Removing managed on-demand build host access", configure_build_host))
+        return
+    if not config.is_build_server:
+        return
+    if config.build_host_enrollment is not None:
+        if config.enable_cicd:
+            raise ValueError(
+                "Managed on-demand build hosts cannot enable the legacy webhook "
+                "executor; its shared-capacity adapter is not available yet"
+            )
+        from common.build_host_steps import configure_build_host
+
+        steps.append(("Configuring managed on-demand build host", configure_build_host))
+        return
+
     from web.steps import (
         configure_deploy_known_hosts,
         configure_deploy_targets,
@@ -160,9 +178,6 @@ def extend_build_server_steps(config: SetupConfig, steps: list[tuple[str, StepFu
         install_webhook_manager_helper,
         update_cloudflare_tunnel_for_webhook,
     )
-
-    if not config.is_build_server:
-        return
 
     steps.extend(
         [
@@ -196,6 +211,8 @@ def extend_build_server_steps(config: SetupConfig, steps: list[tuple[str, StepFu
 
 def get_custom_step_functions() -> Mapping[str, StepFunc]:
     """Return plugin-owned custom step functions exported by the web capability."""
+
+    from common.build_host_steps import configure_build_host
 
     from web.steps import (
         configure_app_nginx,
@@ -269,4 +286,5 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "install_build_node": install_build_node,
         "install_build_python_tools": install_build_python_tools,
         "install_build_dependencies": install_build_dependencies,
+        "configure_build_host": configure_build_host,
     }

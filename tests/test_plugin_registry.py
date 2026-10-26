@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import sys
 import unittest
@@ -181,6 +182,52 @@ class TestPluginRegistry(unittest.TestCase):
         ):
             with self.subTest(step=shared_step):
                 self.assertEqual(step_names.count(shared_step), 1)
+
+    def test_managed_build_enrollment_selects_only_the_shared_worker(self):
+        from common.build_host_steps import configure_build_host
+        from lib.build_manifest import DEBIAN_PLATFORM
+        from lib.build_protocol import DEFAULT_LIMITS
+
+        wire_key = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20" + bytes(32)
+        enrollment = {
+            "schema": 1,
+            "policy": {"schema": 1, "principals": {"controller": {"projects": {
+                "site": {"platform": dict(DEBIAN_PLATFORM), "runtimes": [],
+                         "limits": dict(DEFAULT_LIMITS)},
+            }}}},
+            "keys": {"controller": "ssh-ed25519 " + base64.b64encode(wire_key).decode("ascii")},
+            "max_records": 16, "max_bytes": 4 * 1024**3,
+        }
+        for profile in ("server_lite", "server_web"):
+            with self.subTest(profile=profile):
+                config = SetupConfig(
+                    host="host", username="user", system_type=profile,
+                    machine_type="vm", is_build_server=True,
+                    build_host_enrollment=enrollment,
+                )
+                steps = get_steps_for_system_type(config)
+                self.assertEqual([function for _, function in steps].count(configure_build_host), 1)
+                names = [name for name, _ in steps]
+                self.assertNotIn("Creating CI/CD executor service", names)
+                self.assertNotIn("Generating deploy SSH key", names)
+                self.assertIs(resolve_custom_step("configure_build_host"), configure_build_host)
+
+                config.enable_cicd = True
+                with self.assertRaisesRegex(ValueError, "shared-capacity adapter"):
+                    get_steps_for_system_type(config)
+
+    def test_explicit_build_host_disable_selects_managed_teardown(self):
+        from common.build_host_steps import configure_build_host
+
+        config = SetupConfig(
+            host="host", username="user", system_type="server_lite",
+            machine_type="vm", disable_build_host=True,
+        )
+        steps = get_steps_for_system_type(config)
+        names = [name for name, _ in steps]
+        self.assertIn("Removing managed on-demand build host access", names)
+        self.assertEqual([function for _, function in steps].count(configure_build_host), 1)
+        self.assertNotIn("Creating CI/CD executor service", names)
 
     def test_server_dev_adds_agent_vm_steps(self):
         config = SetupConfig(

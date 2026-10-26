@@ -19,6 +19,7 @@ managed coding VM or workstation, use the sibling
 | Pinned build inputs and bounded workspace | [Source snapshots](build-source.md), [scratch storage](build-scratch.md) |
 | Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
 | Authenticated builder transport and admission | [Process entrypoint](build-host-entrypoint.md), [dispatcher](build-host-service.md), [project policy](build-host-policy.md), [source admission](build-inputs.md) |
+| Managed builder enrollment and controller transport | [Setup configuration](build-host-config.md), [installer](build-host-setup.md), [SSH client](build-client.md) |
 | Prebuilt service compatibility | [Runtime validation](build-runtime.md) |
 
 ## Core architecture
