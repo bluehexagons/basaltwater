@@ -156,6 +156,7 @@ class BuildWorkerTests(unittest.TestCase):
         execute=None,
         after_package=None,
         fail_release: bool = False,
+        logs_root: Path | None = None,
     ) -> dict | None:
         self.chowns: list[tuple[str, int, int]] = []
         callback_count = 0
@@ -228,7 +229,8 @@ class BuildWorkerTests(unittest.TestCase):
             result = build_worker.run_next(
                 self.store, uid=12345, gid=12345, inputs_root=self.inputs,
                 scratch_root=self.scratch, artifacts_root=self.artifacts,
-                logs_root=self.logs, authorize=authorize or authorize_default,
+                logs_root=self.logs if logs_root is None else logs_root,
+                authorize=authorize or authorize_default,
             )
         return result
 
@@ -371,6 +373,20 @@ class BuildWorkerTests(unittest.TestCase):
         self.assertEqual(self.handle.release_calls, 1)
         self.assertNotIn("run", self.events)
         self.assertLess(self.events.index("release"), self.events.index("finish:failed"))
+
+    def test_writable_logs_ancestor_is_rejected_before_scratch_or_execution(self) -> None:
+        unsafe_parent = self.root / "unsafe-logs-parent"
+        unsafe_parent.mkdir(mode=0o700)
+        unsafe_parent.chmod(0o770)
+        unsafe_logs = unsafe_parent / "logs"
+        unsafe_logs.mkdir(mode=0o700)
+
+        status = self._run(logs_root=unsafe_logs)
+
+        self.assertEqual(status["state"], "failed")
+        self.assertIsNone(self.handle)
+        self.assertNotIn("scratch", self.events)
+        self.assertNotIn("run", self.events)
 
     def test_cancellation_immediately_after_claim_skips_scratch_creation(self) -> None:
         def cancel_after_claim(_owner: str, request: dict) -> dict[str, str]:

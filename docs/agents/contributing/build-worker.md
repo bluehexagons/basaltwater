@@ -20,10 +20,14 @@ status = run_next(
 ```
 
 The four roots must already exist as root-owned `0700` directories, reached
-without following symlink components. The build UID and GID must both be
-nonzero. A worker with no eligible job, including while the store is draining,
-returns `None` without touching those roots. Otherwise it claims the job
-durably before reading inputs or creating scratch state.
+without following symlink components. Every ancestor must have a trusted owner
+and must not allow group or other users to rename entries. A sticky root-owned
+parent is accepted only when it protects a trusted-owned child. This matters
+for the log path, which systemd opens later by its absolute pathname. The build
+UID and GID must both be nonzero. A worker with no eligible job, including
+while the store is draining, returns `None` without touching those roots.
+Otherwise it claims the job durably before reading inputs or creating scratch
+state.
 
 ## Input and policy checks
 

@@ -56,21 +56,52 @@ class _KnownFailure(Exception):
 
 
 @contextmanager
-def _private_root(path: str | os.PathLike[str], label: str) -> Iterator[tuple[str, int]]:
-    """Open one canonical private root without following any path component."""
+def _private_root(path: str | os.PathLike[str]) -> Iterator[tuple[str, int]]:
+    """Open one private root after verifying every path ancestor is trusted."""
     raw = os.fspath(path)
     if not isinstance(raw, str):
-        raise ValueError(f"{label} must be a text path")
-    validate_filesystem_path(raw, must_exist=True)
+        raise _KnownFailure
+    try:
+        validate_filesystem_path(raw, must_exist=True)
+    except ValueError:
+        raise _KnownFailure from None
     if (not os.path.isabs(raw) or os.path.normpath(raw) != raw or raw == "/"
             or any(char.isspace() for char in raw) or any(char in raw for char in "%:")):
-        raise ValueError(f"{label} must be a canonical managed absolute path")
-    with directory_fd(raw) as descriptor:
+        raise _KnownFailure
+
+    trusted_owners = {0, os.geteuid()}
+    descriptor = os.open("/", _DIRECTORY)
+    try:
+        parent_info = os.fstat(descriptor)
+        if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid not in trusted_owners:
+            raise _KnownFailure
+        for part in raw.split("/")[1:]:
+            child = os.open(part, _DIRECTORY, dir_fd=descriptor)
+            try:
+                info = os.fstat(child)
+                if not stat.S_ISDIR(info.st_mode) or info.st_uid not in trusted_owners:
+                    raise _KnownFailure
+                if stat.S_IMODE(parent_info.st_mode) & 0o022:
+                    sticky_protection = (
+                        parent_info.st_mode & stat.S_ISVTX
+                        and parent_info.st_uid in trusted_owners
+                        and info.st_uid in trusted_owners
+                    )
+                    if not sticky_protection:
+                        raise _KnownFailure
+            except BaseException:
+                os.close(child)
+                raise
+            os.close(descriptor)
+            descriptor = child
+            parent_info = info
+
         info = os.fstat(descriptor)
-        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-                or stat.S_IMODE(info.st_mode) != 0o700):
-            raise ValueError(f"{label} must be a root-owned directory with mode 0700")
+        if (info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700):
+            raise _KnownFailure
         yield raw, descriptor
+    finally:
+        os.close(descriptor)
 
 
 def _require_root() -> None:
@@ -444,10 +475,10 @@ def run_next(
                 if _cancel_requested(store, request_id, owner):
                     raise _KnownFailure
 
-                with _private_root(inputs_root, "Build inputs root") as (input_path, input_fd), \
-                     _private_root(scratch_root, "Build scratch root") as (scratch_path, _scratch_fd), \
-                     _private_root(artifacts_root, "Build artifacts root") as (artifact_path, artifact_fd), \
-                     _private_root(logs_root, "Build logs root") as (log_root, log_fd):
+                with _private_root(inputs_root) as (input_path, input_fd), \
+                     _private_root(scratch_root) as (scratch_path, _scratch_fd), \
+                     _private_root(artifacts_root) as (artifact_path, artifact_fd), \
+                     _private_root(logs_root) as (log_root, log_fd):
                     expected_mount = os.path.join(scratch_path, request_id, "fs")
                     handle = create_scratch(scratch_path, request_id,
                                             size_bytes=job["limits"]["scratch_bytes"])
