@@ -58,7 +58,7 @@ _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}\Z")
 _STATUSES = {"running", "completed", "failed", "cancelled", "interrupted"}
 _TOKEN_USAGE_UNAVAILABLE = "Token usage unavailable; inspect the run before continuing"
 _FAILURE_LIMIT_REACHED = "Failure limit reached; resume to continue"
-_INTERRUPTED_REVIEW_REQUIRED = "Interrupted run has no final receipt; review its edits before continuing"
+_INTERRUPTED_REVIEW_REQUIRED = "Interrupted run requires review before continuing"
 _MAX_USAGE_REPAIRS = 100
 
 
@@ -1397,6 +1397,13 @@ class AgentTasks:
             return _FAILURE_LIMIT_REACHED
         return ""
 
+    def _pause_interrupted_task(self, task: dict[str, Any], current: float) -> None:
+        """Keep interrupted work paused while retaining any stricter stop reason."""
+        task["enabled"], task["queued"] = False, False
+        limit = self._limit_reason(task, current)
+        task["stop_reason"] = (limit if limit and limit != _FAILURE_LIMIT_REACHED
+                                else _INTERRUPTED_REVIEW_REQUIRED)
+
     def _cancel_for_task(self, identifier: str):
         manager = self
 
@@ -1581,6 +1588,8 @@ class AgentTasks:
                             if saved_task is not None:
                                 # Match normal completion: skip intervals elapsed during the run.
                                 _advance_schedule(saved_task, run["finished_at"])
+                                if run["status"] == "interrupted":
+                                    self._pause_interrupted_task(saved_task, run["finished_at"])
                             for name in ("checkpoint", "evidence"):
                                 run.pop(name, None)
                             continue
@@ -1598,11 +1607,7 @@ class AgentTasks:
                         saved_task = next((task for task in state["tasks"]
                                            if task["id"] == run["task"]["id"]), None)
                         if saved_task is not None:
-                            saved_task["enabled"], saved_task["queued"] = False, False
-                            limit = self._limit_reason(saved_task, finished)
-                            saved_task["stop_reason"] = (
-                                limit if limit and limit != _FAILURE_LIMIT_REACHED
-                                else _INTERRUPTED_REVIEW_REQUIRED)
+                            self._pause_interrupted_task(saved_task, finished)
                     except (OSError, RuntimeError, ValueError, KeyError, TypeError, RecursionError):
                         # A receipt read or context replay failure is local to
                         # this claim. Preserve the reserved attempt and keep

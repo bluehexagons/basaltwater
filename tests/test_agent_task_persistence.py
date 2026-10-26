@@ -418,6 +418,43 @@ class PersistentTaskTests(unittest.TestCase):
         self.assertEqual(provider.call_args.args[0]["id"], identifier)
         self.assertEqual(self.manager.snapshot()["tasks"][0]["attempts"], 2)
 
+    def test_interrupted_receipt_replay_keeps_review_pause_after_recovery_save_failure(self) -> None:
+        identifier = self.manager.create(self.values, run_now=True, now=0)
+        with patch.object(tasks, "execute_prompt", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.manager.tick(now=0)
+
+        failed_recovery = tasks.AgentTasks(self.home)
+        self.addCleanup(failed_recovery.close)
+        with patch.object(tasks, "write_text_atomic", side_effect=OSError("Simulated recovery state write failure")):
+            failed_recovery.start(once=True)
+        receipt = failed_recovery.contexts.history(identifier)[0]
+        self.assertEqual(receipt["status"], "interrupted")
+        self.assertIn("recovery state write failure", failed_recovery.error)
+        self.assertEqual(failed_recovery.snapshot()["runs"][0]["status"], "running")
+
+        recovered = tasks.AgentTasks(self.home)
+        self.addCleanup(recovered.close)
+        with patch.object(tasks, "execute_prompt") as provider:
+            recovered.start(once=True)
+            state = recovered.snapshot()
+            task = state["tasks"][0]
+            self.assertEqual(state["runs"][0]["status"], "interrupted")
+            self.assertEqual(task["attempts"], 1)
+            self.assertEqual(task["consecutive_failures"], 1)
+            self.assertTrue(task["usage_uncertain"])
+            self.assertFalse(task["enabled"])
+            self.assertFalse(task["queued"])
+            self.assertIn("review", task["stop_reason"].lower())
+            self.assertGreater(task["next_run"], receipt["finished_at"])
+            self.assertFalse(recovered.tick(now=task["next_run"]))
+            provider.assert_not_called()
+
+            recovered.action(identifier, "run")
+            provider.return_value = {"status": "completed", "message": "Done", "output": "", **report()}
+            self.assertTrue(recovered.tick(now=task["next_run"]))
+            provider.assert_called_once()
+
     def test_final_receipt_recovery_keeps_exact_recurring_schedule_semantics(self) -> None:
         identifier = self.manager.create(self.values, run_now=True, now=0)
         write = tasks.write_text_atomic

@@ -619,9 +619,11 @@ continue. If token usage is uncertain under a token budget, or evidence storage
 needs repair, those stricter stops remain in force. If a final receipt was
 saved before an interrupted hot-state write, recovery reconciles its result and
 usage without relaunching the provider and advances a recurring task past
-intervals elapsed during that run. A claimed cancellation still consumes its
-reserved lifetime and daily attempt, while preserving the consecutive-failure
-count.
+intervals elapsed during that run. If saving the recovered interruption also
+fails, replaying its receipt still leaves the task paused for review; it cannot
+launch at the next due time until **Run** or **Resume** is selected. A claimed
+cancellation still consumes its reserved lifetime and daily attempt, while
+preserving the consecutive-failure count.
 Deadlines also stop idle event tasks and work deferred by a daily limit.
 Active invocations recheck their absolute deadline as well as their monotonic
 runtime cap; moving the wall clock forward does not leave a late invocation running.
