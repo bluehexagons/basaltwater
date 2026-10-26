@@ -40,6 +40,7 @@ MAX_COMPONENTS_PER_APPLICATION = 100
 _APPLICATION_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _PROJECT_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _COMPONENT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+_STATIC_OUTPUT_PATH = re.compile(r"[A-Za-z0-9_./-]+")
 _PRINCIPAL_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}")
 _SUPPORTED_COMPONENT_TYPES = frozenset({"static", "service"})
 _SYSTEMD_PATH_META = frozenset("%$'\"\\{}")
@@ -325,7 +326,11 @@ def _component(value: object, where: str) -> dict[str, Any]:
         "artifacts": _exports(raw["artifacts"], component_type, where),
     }
     if component_type == "static":
-        output = validate_artifact_path(raw["output"], allow_root=True)
+        raw_output = raw["output"]
+        if (not isinstance(raw_output, str)
+                or _STATIC_OUTPUT_PATH.fullmatch(raw_output) is None):
+            raise ValueError(f"{where}: output must use safe Nginx path characters")
+        output = validate_artifact_path(raw_output, allow_root=True)
         if type(raw["spa"]) is not bool:
             raise ValueError(f"{where}: spa must be a boolean")
         if not _covered_by_export(output, normalized["artifacts"]):

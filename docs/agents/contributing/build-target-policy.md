@@ -39,6 +39,7 @@ use safe canonical absolute path characters, cannot overlap another
 application's root, and must have distinct target-generated service identity
 basenames. The reserved `.basaltwater_shared` state path is not a deployment
 root.
+
 Domains are normalized to lowercase without a terminal dot; URL paths are
 normalized by removing a trailing slash except for `/`. Conflicting normalized
 domain/path routes are rejected across the policy. These checks are lexical;
@@ -53,10 +54,12 @@ component names must match. Routes must then match the application's named
 policy routes exactly.
 
 Every component contains `name`, `type`, `domain`, `path` and `artifacts`.
-Static components also require a relative `output` covered by the exports and
-a boolean `spa`. Services require a literal relative `binary` covered by the
-exports and may include a safe `health` URL path. Service port and generated
-service identity use target defaults; client fields for `port`, `exec`,
+Static components also require a relative `output` covered by the exports,
+using the manifest and Nginx character set `[A-Za-z0-9_./-]+`, and a boolean
+`spa`. Nested output paths are allowed when an export covers them. Services
+require a literal relative `binary` covered by the exports and may include a
+safe `health` URL path. Service ports and generated service identities use
+target defaults; client fields for `port`, `exec`,
 `env_file`, `runtime_env`, environment values, commands, writable directories,
 SQLite, UDP, or identity overrides are rejected as unknown fields.
 

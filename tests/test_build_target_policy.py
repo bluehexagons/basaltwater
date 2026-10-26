@@ -281,6 +281,15 @@ class TargetPolicyTests(unittest.TestCase):
             target = deployment(component={"output": "dist"}, artifacts=["dist/site/index.html"])
             parse_target_deployment(target, request=request(artifacts=["dist/site/index.html"]))
 
+    def test_static_output_matches_manifest_nginx_character_contract(self):
+        invalid = deployment(artifacts=["dist@v1"], component={"output": "dist@v1"})
+        with self.assertRaisesRegex(ValueError, "safe Nginx path characters"):
+            parse_target_deployment(invalid, request=request(artifacts=["dist@v1"]))
+
+        nested = deployment(component={"output": "dist/site"})
+        parsed = parse_target_deployment(nested, request=request(artifacts=["dist"]))
+        self.assertEqual(parsed["components"][0]["output"], "dist/site")
+
     def test_deployment_rejects_commands_secrets_identity_and_runtime_overrides(self):
         forbidden = (
             {"exec": "{{release_dir}}/bin/app"},
