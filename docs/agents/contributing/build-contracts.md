@@ -25,8 +25,10 @@ excluded from this request. Build inputs are visible to build code; never insert
 runtime secrets. Commands are data until an authorized worker executes them
 under its unprivileged identity.
 
-Limits cover elapsed build time, memory, CPU percentage (100 is one CPU), export
-bytes and entry count, and log bytes. The parser imposes upper bounds; admitting
+Limits cover elapsed build time, memory, CPU percentage (100 is one CPU), scratch
+filesystem capacity, export bytes and entry count, and log bytes. Scratch capacity
+defaults to 8 GiB and must be a whole number of MiB between 256 MiB and 128 GiB.
+The parser imposes upper bounds; admitting
 policy can lower them. Parsing alone does not reserve or enforce resources.
 The request digest covers the normalized complete request, including attempt
 ID, source, commands, environment, exports, platform and limits.

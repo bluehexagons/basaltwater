@@ -38,6 +38,7 @@ DEFAULT_LIMITS = {
     "timeout_seconds": 3600,
     "memory_bytes": 2 * 1024**3,
     "cpu_percent": 100,
+    "scratch_bytes": 8 * 1024**3,
     "artifact_bytes": 2 * 1024**3,
     "artifact_entries": MAX_FILES,
     "log_bytes": 4 * 1024**2,
@@ -127,11 +128,15 @@ def _limits(value: object) -> dict[str, int]:
         "timeout_seconds": (1, 4 * 3600),
         "memory_bytes": (64 * 1024**2, 64 * 1024**3),
         "cpu_percent": (1, 6400),
+        "scratch_bytes": (256 * 1024**2, 128 * 1024**3),
         "artifact_bytes": (1, MAX_ARTIFACT_BYTES),
         "artifact_entries": (1, MAX_FILES),
         "log_bytes": (1, 16 * 1024**2),
     }
-    return {key: _integer(data[key], *bounds[key], "limits " + key) for key in sorted(data)}
+    result = {key: _integer(data[key], *bounds[key], "limits " + key) for key in sorted(data)}
+    if result["scratch_bytes"] % (1024**2):
+        raise ValueError("limits scratch_bytes: expected a whole number of MiB")
+    return result
 
 
 def _component(value: object, *, build: bool) -> dict[str, Any]:

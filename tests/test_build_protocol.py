@@ -94,6 +94,17 @@ class BuildProtocolTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     parse_build_request(request)
 
+    def test_scratch_capacity_is_bounded_aligned_and_bound_to_request(self):
+        request = build_request()
+        original = request_digest(request)
+        request["limits"]["scratch_bytes"] = 256 * 1024**2
+        self.assertNotEqual(request_digest(request), original)
+        for value in (True, 0, 255 * 1024**2, 256 * 1024**2 + 1, 129 * 1024**3):
+            with self.subTest(value=value):
+                request["limits"]["scratch_bytes"] = value
+                with self.assertRaises(ValueError):
+                    parse_build_request(request)
+
     def test_component_names_types_and_environment_are_validated(self):
         for field, value in (("name", "../api"), ("type", []), ("env", {"BAD=KEY": "x"}),
                              ("env", {"X": "bad\0value"}), ("commands", [" "]),
