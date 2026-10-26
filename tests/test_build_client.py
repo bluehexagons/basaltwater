@@ -552,6 +552,18 @@ class BuildHostClientTests(unittest.TestCase):
         self.assertIsNone(result["started_at"])
         self.assertGreaterEqual(result["finished_at"], result["expires_at"])
 
+    def test_status_rejects_expired_job_finished_before_expiry(self) -> None:
+        request_id = "a" * 32
+        receipt = job_result(request_id, build_request(request_id), state="expired")
+        receipt["finished_at"] = receipt["expires_at"] - 1
+
+        def handler(_message, _payload, output, _error, _stop):
+            write_all(output, success(receipt))
+            return 0
+
+        with self.assertRaises(BuildHostProtocolError):
+            self.invoke(handler, lambda: self.client.status(request_id))
+
     def test_cancel_returns_matching_durable_job_receipt(self) -> None:
         request_id = "a" * 32
         request = build_request(request_id)

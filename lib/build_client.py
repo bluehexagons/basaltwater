@@ -442,7 +442,9 @@ def _validate_job_record(value: object, request_id: str,
                 raise ValueError("Invalid successful build metadata")
         elif artifact_value is not None or reason != expected_reasons[state]:
             raise ValueError("Invalid terminal build metadata")
-        if state == "expired" and (started_at is not None or value["cancel_requested"]):
+        if state == "expired" and (
+                started_at is not None or value["cancel_requested"]
+                or finished_at < expires_at):
             raise ValueError("Invalid expired build metadata")
         if state == "cancelled" and not value["cancel_requested"]:
             raise ValueError("Invalid cancellation metadata")
