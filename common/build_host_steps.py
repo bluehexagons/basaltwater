@@ -364,12 +364,14 @@ def _hash(content: bytes) -> str:
 
 def _empty_marker() -> dict[str, Any]:
     return {"schema": _MARKER_SCHEMA, "worker": None, "disabled": False, "principals": {},
-            "files": {"config": [], "unit": [], "ssh": []}, "pending": None}
+            "files": {"config": [], "unit": [], "ssh": []}, "pending": None,
+            "ssh_pending": None}
 
 
 def _parse_marker(raw: bytes) -> dict[str, Any]:
-    value = decode_document(raw, maximum=_MARKER_LIMIT)
-    marker = _record(value, {"schema", "worker", "disabled", "principals", "files", "pending"},
+    value = _plain_mapping(decode_document(raw, maximum=_MARKER_LIMIT), "build-host ownership marker")
+    value.setdefault("ssh_pending", None)
+    marker = _record(value, {"schema", "worker", "disabled", "principals", "files", "pending", "ssh_pending"},
                      "build-host ownership marker")
     if type(marker["schema"]) is int and marker["schema"] == 1:
         raise ValueError(_LEGACY_LAYOUT_GUIDANCE)
@@ -431,9 +433,22 @@ def _parse_marker(raw: bytes) -> dict[str, Any]:
             if _SLUG.fullmatch(principal) is None:
                 raise ValueError("Invalid pending build-host principal")
             _public_ed25519_key(key)
+    ssh_pending = marker["ssh_pending"]
+    if ssh_pending is not None:
+        ssh_pending = _record(ssh_pending, {"action", "sha256"}, "pending build-host SSH admission")
+        digest = ssh_pending["sha256"]
+        if (not isinstance(digest, str) or _HASH.fullmatch(digest) is None
+                or files["ssh"] != [digest]):
+            raise ValueError("Invalid pending build-host SSH admission hash")
+        if ssh_pending["action"] == "create":
+            if pending is None or digest != _hash(admission_content(
+                    "build-host", [_transport_username(name) for name in pending["keys"]])):
+                raise ValueError("Invalid pending build-host SSH admission creation")
+        elif ssh_pending["action"] != "remove" or not marker["disabled"]:
+            raise ValueError("Invalid pending build-host SSH admission removal")
     return {"schema": _MARKER_SCHEMA, "worker": worker, "disabled": marker["disabled"],
             "principals": principals,
-            "files": files, "pending": pending}
+            "files": files, "pending": pending, "ssh_pending": ssh_pending}
 
 
 def _write_marker(marker: dict[str, Any], *, exclusive: bool = False) -> None:
@@ -808,6 +823,8 @@ def _preflight_managed_state(marker: dict[str, Any], enrollment: dict[str, Any],
     """Reject foreign accounts and files before unit, package, or policy changes."""
     _require_ssh_traversal()
     _preflight_ssh_admission(marker)
+    if marker["ssh_pending"] is not None and marker["ssh_pending"]["action"] == "remove":
+        raise RuntimeError("Build-host SSH admission removal is incomplete; retry disable first")
     _validate_transport_namespace(set(marker["principals"]) | set(enrollment["keys"]))
     pending = marker["pending"]
     if pending is not None and pending["enrollment_sha256"] != enrollment_digest:
@@ -876,6 +893,7 @@ def _preflight_managed_state(marker: dict[str, Any], enrollment: dict[str, Any],
 
 def _prepare_enrollment(config: SetupConfig, enrollment: dict[str, Any], marker: dict[str, Any],
                         enrollment_digest: str, unit_content: bytes) -> bytes:
+    _preflight_ssh_admission(marker)
     if (marker["pending"] is not None
             and marker["pending"]["enrollment_sha256"] != enrollment_digest):
         raise RuntimeError("A previous build-host reconciliation is incomplete; retry its enrollment first")
@@ -953,11 +971,16 @@ def _prepare_enrollment(config: SetupConfig, enrollment: dict[str, Any], marker:
 
     users = [_transport_username(principal) for principal in enrollment["keys"]]
     content = admission_content("build-host", users)
+    # Creation can fail before publication (or after rename but before fsync).
+    # Record that specific absent/present transition before publishing its hash.
+    if not marker["files"]["ssh"] or marker["ssh_pending"] is not None:
+        marker["ssh_pending"] = {"action": "create", "sha256": _hash(content)}
     marker["files"]["ssh"] = sorted(set(marker["files"]["ssh"] + [_hash(content)]))[-2:]
     _write_marker(marker)
     _write_file(SSH_ADMISSION_PATH, content, mode=0o600)
     refresh_transport_ssh_admission("build-host", users)
     marker["files"]["ssh"] = [_hash(content)]
+    marker["ssh_pending"] = None
     _write_marker(marker)
     return config_content
 
@@ -1079,7 +1102,8 @@ def _preflight_ssh_admission(marker: dict[str, Any]) -> None:
     content = (_read_file(SSH_ADMISSION_PATH, mode=0o600, maximum=_MARKER_LIMIT)
                if os.path.lexists(ETC_DIR) else None)
     hashes = marker["files"]["ssh"]
-    if ((content is None) != (not hashes)
+    missing_in_transition = content is None and marker["ssh_pending"] is not None
+    if ((content is None) != (not hashes) and not missing_in_transition
             or content is not None and _hash(content) not in hashes):
         raise ValueError("Unowned, missing or modified build-host SSH admission")
 
@@ -1087,10 +1111,19 @@ def _preflight_ssh_admission(marker: dict[str, Any]) -> None:
 def _revoke_managed_access(marker: dict[str, Any]) -> None:
     from security.security_steps import refresh_transport_ssh_admission
 
+    _preflight_ssh_admission(marker)
     refresh_transport_ssh_admission("build-host", [])
     if marker["files"]["ssh"]:
+        content = _read_file(SSH_ADMISSION_PATH, mode=0o600, maximum=_MARKER_LIMIT)
+        digest = _hash(content) if content is not None else marker["ssh_pending"]["sha256"]
+        if digest not in marker["files"]["ssh"]:
+            raise ValueError("Refusing to remove modified build-host SSH admission")
+        marker["files"]["ssh"] = [digest]
+        marker["ssh_pending"] = {"action": "remove", "sha256": digest}
+        _write_marker(marker)
         _remove_file(SSH_ADMISSION_PATH, mode=0o600, maximum=_MARKER_LIMIT)
         marker["files"]["ssh"] = []
+        marker["ssh_pending"] = None
         _write_marker(marker)
     pending_keys = {} if marker["pending"] is None else marker["pending"]["keys"]
     for principal, record in sorted(marker["principals"].items()):

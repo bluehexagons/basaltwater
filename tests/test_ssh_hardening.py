@@ -42,8 +42,11 @@ def transport_ssh_fixture(base: Path, role: str):
 
     def command(command, **_kwargs):
         if " -T " in command:
-            output = "\n".join(line.lower() for line in path.read_text().splitlines()
-                               if not line.startswith("#"))
+            # Debian 13 renders each AllowGroups entry on its own line.
+            output = "\n".join(
+                "\n".join("allowgroups " + name for name in line.split()[1:])
+                if line.startswith("AllowGroups ") else line.lower()
+                for line in path.read_text().splitlines() if not line.startswith("#"))
         elif command.startswith("id -nG "):
             name = command.split()[-1]
             output = "root remoteusers" if name == "root" else name
@@ -197,6 +200,43 @@ class TestEffectiveSSHPolicy(unittest.TestCase):
         with patch.object(ssh, "run", side_effect=command) as run:
             ssh._verify_ssh_policy("/usr/sbin/sshd", self.config)
         self.assertEqual(sum(" -T " in call.args[0] for call in run.call_args_list), 3)
+
+    def test_allowgroups_uses_exact_union_across_single_or_repeated_lines(self):
+        names = ["bw-build-0123456789ab", "bw-target-0123456789ab"]
+        expected = ["remoteusers", *names]
+        cases = [
+            ([" ".join(expected)], True),
+            (expected, True),
+            ([names[1], "remoteusers " + names[0], names[1]], True),
+            (["remoteusers", names[0]], False),
+            ([names[0], names[1]], False),
+            (["intruder", *expected], False),
+            ([*expected, "intruder"], False),
+            (["bw-*", *expected], False),
+            (["remoteusers", names[0], "bw-target-*"], False),
+            ([*expected, "!root"], False),
+            ([" ".join([*expected, "intruder"])], False),
+            ([], False),
+        ]
+        for entries, accepted in cases:
+            output = EFFECTIVE.replace("allowgroups remoteusers\n", "".join(
+                "allowgroups " + entry + "\n" for entry in entries))
+
+            def command(command, **_kwargs):
+                name = command.split()[-1]
+                return SimpleNamespace(returncode=0, stdout=output if " -T " in command else
+                                       "remoteusers" if name == "root" else name)
+
+            with self.subTest(entries=entries), patch.object(ssh, "run", side_effect=command) as run:
+                if accepted:
+                    # Enrollment refresh uses config=None; hardening uses config.
+                    for config in (None, self.config):
+                        ssh._verify_ssh_policy("/usr/sbin/sshd", config, names)
+                    self.assertEqual(sum(" -T " in call.args[0] for call in run.call_args_list), 6)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "allowgroups"):
+                        ssh._verify_ssh_policy("/usr/sbin/sshd", None, names)
+                    self.assertFalse(any(call.args[0].startswith("id -nG ") for call in run.call_args_list))
 
     def test_effective_conflict_rolls_back_and_never_reloads(self):
         with tempfile.TemporaryDirectory() as root:

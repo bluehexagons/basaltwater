@@ -1017,6 +1017,201 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
             self.assertTrue(Path(setup.SSH_ADMISSION_PATH).exists())
             self.assertTrue(Path(setup.SSH_ROOT).is_dir())
 
+    def assert_recovery_guards(self, *, disable: bool) -> None:
+        """No pending transition bypasses the worker or inactive-unit guards."""
+        config = setup_config(disable_build_host=disable)
+        before = self.snapshot()
+        self.store.busy = True
+        with self.assertRaisesRegex(RuntimeError, "worker is active"):
+            setup.configure_build_host(config)
+        self.store.busy = False
+        self.store.state["jobs"]["q" * 32]["state"] = "running"
+        with self.assertRaisesRegex(RuntimeError, "retained running claim"):
+            setup.configure_build_host(config)
+        self.store.state["jobs"]["q" * 32]["state"] = "queued"
+        self.assertEqual(self.snapshot(), before)
+        operation = "remove_units" if disable else "replace_units"
+        with patch("lib.unit_transaction." + operation, side_effect=RuntimeError("unit still active")), \
+             patch.object(setup, "_quiesce_missing_managed_unit", side_effect=RuntimeError("unit still active")), \
+             self.assertRaisesRegex(RuntimeError, "unit still active"):
+            setup.configure_build_host(config)
+        # Disable may persist its disabled intent, but no prepare effects run.
+        after = self.snapshot()
+        marker = str(Path(setup.MARKER_PATH).relative_to(self.base))
+        self.assertEqual({k: v for k, v in after.items() if k != marker},
+                         {k: v for k, v in before.items() if k != marker})
+        self.assertTrue(self.store.state["draining"])
+        self.assertFalse(self.store.leased)
+
+    def exercise_creation_recovery(self, *, migrate: bool, disable: bool, published: bool) -> None:
+        from common.build_ssh_admission import managed_transport_groups
+
+        if migrate:
+            setup.configure_build_host(setup_config())
+            Path(setup.SSH_ADMISSION_PATH).unlink()
+            marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+            del marker["files"]["ssh"]
+            del marker["ssh_pending"]
+            setup._write_marker(marker)
+        write = setup._write_file
+
+        def fail_publication(path, content, **kwargs):
+            if path == setup.SSH_ADMISSION_PATH:
+                self.assertTrue(self.store.leased)
+                self.assertTrue(self.store.state["draining"])
+                if published:
+                    write(path, content, **kwargs)
+                raise OSError("admission publication interrupted")
+            return write(path, content, **kwargs)
+
+        with transport_ssh_fixture(self.base, "build-host") as (policy, _run, _activate):
+            before_policy = policy.read_bytes()
+            with patch.object(setup, "_write_file", side_effect=fail_publication), \
+                 self.assertRaisesRegex(OSError, "admission publication interrupted"):
+                setup.configure_build_host(setup_config())
+            marker = setup._parse_marker(Path(setup.MARKER_PATH).read_bytes())
+            digest = setup._hash(setup.admission_content("build-host", [setup._transport_username("alice")]))
+            self.assertEqual(marker["ssh_pending"], {"action": "create", "sha256": digest})
+            self.assertEqual(marker["files"]["ssh"], [digest])
+            self.assertEqual(Path(setup.SSH_ADMISSION_PATH).exists(), published)
+            self.assertEqual(policy.read_bytes(), before_policy)
+            with self.assertRaisesRegex(RuntimeError, "Incomplete build-host"):
+                managed_transport_groups()
+            identities = copy.deepcopy((self.users, self.groups))
+            jobs = copy.deepcopy(self.store.state["jobs"])
+            name = setup._transport_username("alice")
+            auth = Path(self.users[name].pw_dir) / ".ssh/authorized_keys"
+            sudo = Path(setup.SUDOERS_DIR) / name
+            authority = (auth.read_bytes(), sudo.read_bytes())
+            self.assert_recovery_guards(disable=disable)
+            self.assertEqual((auth.read_bytes(), sudo.read_bytes()), authority)
+
+            def quiesce():
+                self.assertTrue(self.store.leased)
+                self.assertTrue(self.store.state["draining"])
+
+            with patch.object(setup, "_quiesce_missing_managed_unit", side_effect=quiesce):
+                setup.configure_build_host(setup_config(disable_build_host=disable))
+            final = setup._parse_marker(Path(setup.MARKER_PATH).read_bytes())
+            self.assertIsNone(final["ssh_pending"])
+            self.assertIsNone(final["pending"])
+            self.assertEqual(final["disabled"], disable)
+            self.assertEqual((self.users, self.groups), identities)
+            self.assertEqual(self.store.state["jobs"], jobs)
+            if disable:
+                self.assertFalse(auth.exists())
+                self.assertFalse(sudo.exists())
+                self.assertFalse(Path(setup.SSH_ADMISSION_PATH).exists())
+                self.assertNotIn(name, policy.read_text())
+            else:
+                self.assertEqual((auth.read_bytes(), sudo.read_bytes()), authority)
+                self.assertEqual(final["files"]["ssh"], [digest])
+                self.assertIn("AllowGroups remoteusers " + name + "\n", policy.read_text())
+
+    def test_initial_admission_publication_failure_resumes_guarded_enrollment(self) -> None:
+        self.exercise_creation_recovery(migrate=False, disable=False, published=False)
+
+    def test_migration_publication_failure_can_be_guardedly_disabled(self) -> None:
+        self.exercise_creation_recovery(migrate=True, disable=True, published=False)
+
+    def test_initial_admission_postrename_failure_can_be_guardedly_disabled(self) -> None:
+        self.exercise_creation_recovery(migrate=False, disable=True, published=True)
+
+    def test_migration_postrename_failure_resumes_guarded_enrollment(self) -> None:
+        self.exercise_creation_recovery(migrate=True, disable=False, published=True)
+
+    def test_unrecorded_missing_inventory_and_invalid_transition_intent_fail_closed(self) -> None:
+        setup.configure_build_host(setup_config())
+        marker = json.loads(Path(setup.MARKER_PATH).read_bytes())
+        digest = marker["files"]["ssh"][0]
+        # A generic interrupted enrollment is insufficient to authorize absence.
+        marker["pending"] = {"enrollment_sha256": "a" * 64, "keys": {"alice": public_key()},
+                             "config_sha256": marker["files"]["config"][0],
+                             "unit_sha256": marker["files"]["unit"][0]}
+        setup._write_marker(marker)
+        Path(setup.SSH_ADMISSION_PATH).unlink()
+        before = self.snapshot()
+        for disable in (False, True):
+            with self.assertRaisesRegex(ValueError, "missing or modified"):
+                setup.configure_build_host(setup_config(disable_build_host=disable))
+            self.assertEqual(self.snapshot(), before)
+        for intent, pending, disabled in (
+            ({"action": "create", "sha256": digest}, None, False),
+            ({"action": "create", "sha256": digest}, dict(marker["pending"], keys={}), False),
+            ({"action": "create", "sha256": "a" * 64}, marker["pending"], False),
+            ({"action": "remove", "sha256": digest}, None, False),
+            ({"action": "adopt", "sha256": digest}, marker["pending"], True),
+            ({"action": "remove", "sha256": digest, "extra": True}, None, True),
+        ):
+            invalid = copy.deepcopy(marker)
+            invalid.update(ssh_pending=intent, pending=pending, disabled=disabled)
+            with self.subTest(intent=intent), self.assertRaises(ValueError):
+                setup._parse_marker(encode_document(invalid))
+
+    def exercise_removal_recovery(self, *, fail_unlink: bool, before_unlink: bool = False) -> None:
+        from common.build_ssh_admission import managed_transport_groups
+
+        with transport_ssh_fixture(self.base, "build-host") as (policy, _run, _activate):
+            setup.configure_build_host(setup_config())
+            name = setup._transport_username("alice")
+            auth = Path(self.users[name].pw_dir) / ".ssh/authorized_keys"
+            sudo = Path(setup.SUDOERS_DIR) / name
+            authority = (auth.read_bytes(), sudo.read_bytes())
+            identities = copy.deepcopy((self.users, self.groups))
+            jobs = copy.deepcopy(self.store.state["jobs"])
+            write_marker, remove_file = setup._write_marker, setup._remove_file
+
+            def fail_marker(marker, **kwargs):
+                if not fail_unlink and not marker["files"]["ssh"]:
+                    self.assertFalse(Path(setup.SSH_ADMISSION_PATH).exists())
+                    raise OSError("admission removal interrupted")
+                return write_marker(marker, **kwargs)
+
+            def fail_remove(path, **kwargs):
+                if before_unlink and path == setup.SSH_ADMISSION_PATH:
+                    raise OSError("admission removal interrupted")
+                result = remove_file(path, **kwargs)
+                if fail_unlink and path == setup.SSH_ADMISSION_PATH:
+                    raise OSError("admission removal interrupted")
+                return result
+
+            with patch.object(setup, "_write_marker", side_effect=fail_marker), \
+                 patch.object(setup, "_remove_file", side_effect=fail_remove), \
+                 self.assertRaisesRegex(OSError, "admission removal interrupted"):
+                setup.configure_build_host(setup_config(disable_build_host=True))
+            marker = setup._parse_marker(Path(setup.MARKER_PATH).read_bytes())
+            self.assertEqual(marker["ssh_pending"], {"action": "remove", "sha256": marker["files"]["ssh"][0]})
+            self.assertTrue(marker["disabled"])
+            self.assertEqual(Path(setup.SSH_ADMISSION_PATH).exists(), before_unlink)
+            self.assertNotIn(name, policy.read_text())
+            self.assertEqual((auth.read_bytes(), sudo.read_bytes()), authority)
+            with self.assertRaisesRegex(ValueError, "missing or modified"):
+                managed_transport_groups()
+            before = self.snapshot()
+            with self.assertRaisesRegex(RuntimeError, "retry disable first"):
+                setup.configure_build_host(setup_config())
+            self.assertEqual(self.snapshot(), before)
+            self.assert_recovery_guards(disable=True)
+            self.assertEqual((auth.read_bytes(), sudo.read_bytes()), authority)
+            setup.configure_build_host(setup_config(disable_build_host=True))
+            final = setup._parse_marker(Path(setup.MARKER_PATH).read_bytes())
+            self.assertIsNone(final["ssh_pending"])
+            self.assertEqual(final["files"], {"config": [], "unit": [], "ssh": []})
+            self.assertFalse(auth.exists())
+            self.assertFalse(sudo.exists())
+            self.assertEqual((self.users, self.groups), identities)
+            self.assertEqual(self.store.state["jobs"], jobs)
+            self.assertTrue(self.store.state["draining"])
+
+    def test_postunlink_marker_failure_allows_only_guarded_disable_completion(self) -> None:
+        self.exercise_removal_recovery(fail_unlink=False)
+
+    def test_postunlink_fsync_failure_allows_only_guarded_disable_completion(self) -> None:
+        self.exercise_removal_recovery(fail_unlink=True)
+
+    def test_preunlink_failure_allows_only_guarded_disable_completion(self) -> None:
+        self.exercise_removal_recovery(fail_unlink=True, before_unlink=True)
+
     def test_private_state_enrollment_refresh_and_disable_preserve_data_and_identities(self) -> None:
         private = Path(setup.DATA_ROOT).parent
         private.mkdir(parents=True, mode=0o700)
