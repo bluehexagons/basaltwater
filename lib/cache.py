@@ -610,6 +610,7 @@ def merge_setup_configs(
             merged_dict["artifact_deployments"] = True
         elif new_config.artifact_deployments:
             merged_dict["artifact_deployments"] = True
+            merged_dict["clear_build_on"] = False
 
     # An explicit off clears a previously saved homepage and destination list.
     # Explicit nonempty homepage settings with off are rejected before merging.
