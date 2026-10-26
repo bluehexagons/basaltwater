@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import grp
 import os
 from pathlib import Path
 import platform
+import pwd
 import shutil
 import signal
 import stat
@@ -22,6 +24,7 @@ from typing import Iterator
 
 
 DEFAULT_CONFIG = "/etc/basaltwater/build-host/config.json"
+BUILD_ACCOUNT = "basaltwater-build"
 SSH_COMMAND = "basaltwater-build-v1"
 CONNECTION_SECONDS = 900
 TOOL_PATH = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
@@ -127,10 +130,24 @@ def load_config(path: str = DEFAULT_CONFIG) -> dict:
         finally:
             os.close(descriptor)
     config = parse_config(decode_document(raw, maximum=maximum))
+    require_build_account(config)
     for root in config["roots"].values():
         with _private_root(root):
             pass
     return config
+
+
+def require_build_account(config: dict) -> None:
+    """Bind numeric execution IDs to the dedicated non-login build identity."""
+    account = pwd.getpwnam(BUILD_ACCOUNT)
+    group = grp.getgrnam(BUILD_ACCOUNT)
+    if (account.pw_name != BUILD_ACCOUNT or group.gr_name != BUILD_ACCOUNT
+            or account.pw_uid != config["uid"] or account.pw_gid != config["gid"]
+            or group.gr_gid != config["gid"] or account.pw_uid <= 0 or account.pw_gid <= 0
+            or account.pw_dir != "/nonexistent"
+            or account.pw_shell not in {"/usr/sbin/nologin", "/sbin/nologin"}
+            or any(member != BUILD_ACCOUNT for member in group.gr_mem)):
+        raise ValueError("Builder IDs must match the dedicated non-login build account")
 
 
 def require_platform() -> None:
@@ -231,7 +248,8 @@ def serve(config: dict, *, principal: str, config_path: str) -> None:
                                logs_root=config["roots"]["logs"],
                                artifacts_root=config["roots"]["artifacts"])
     with connection_deadline():
-        service.serve_once(sys.stdin.buffer, sys.stdout.buffer, principal=principal)
+        service.serve_once(input_stream=sys.stdin.buffer, output_stream=sys.stdout.buffer,
+                           principal=principal)
 
 
 def main(argv: list[str] | None = None) -> int:

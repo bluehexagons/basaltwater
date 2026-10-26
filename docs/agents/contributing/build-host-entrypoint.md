@@ -16,6 +16,11 @@ The no-follow, single-link file must be root-owned `0600`. It contains exactly:
 - `max_records` and `max_bytes`: input admission's retained-record and reserved
   storage ceilings. Full capacity refuses new work and requires reconciliation.
 
+The numeric IDs must match the primary UID and GID of the dedicated
+`basaltwater-build` account and group. The account requires `/nonexistent` as
+its home and a `nologin` shell; its group cannot include unrelated accounts.
+The helper refuses another service or operator identity before admission.
+
 The worker runs with `--worker`, independently of SSH. `--once` processes at
 most one claim. It re-reads current policy at both authorization boundaries;
 changes to identity, roots or storage settings require a drained restart.

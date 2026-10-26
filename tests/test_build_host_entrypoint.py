@@ -90,6 +90,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 })
 
             with patch("lib.build_worker._private_root", side_effect=private_root), \
+                 patch.object(build_host, "require_build_account"), \
                  patch.object(build_host.os, "fstat", side_effect=trusted_owner):
                 self.assertEqual(build_host.load_config(str(path))["uid"], 999)
                 path.chmod(0o644)
@@ -103,6 +104,25 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 (parent / "link").symlink_to(path)
                 with self.assertRaises(OSError):
                     build_host.load_config(str(parent / "link"))
+
+    def test_execution_ids_must_match_the_dedicated_nonlogin_identity(self):
+        values = {"pw_name": build_host.BUILD_ACCOUNT, "pw_uid": 999, "pw_gid": 998,
+                  "pw_dir": "/nonexistent", "pw_shell": "/usr/sbin/nologin"}
+        group_values = {"gr_name": build_host.BUILD_ACCOUNT, "gr_gid": 998, "gr_mem": []}
+        with patch.object(build_host.pwd, "getpwnam", return_value=SimpleNamespace(**values)) as account, \
+             patch.object(build_host.grp, "getgrnam", return_value=SimpleNamespace(**group_values)) as group:
+            build_host.require_build_account(config())
+            account.assert_called_once_with(build_host.BUILD_ACCOUNT)
+            group.assert_called_once_with(build_host.BUILD_ACCOUNT)
+            for key, value in (("pw_uid", 1000), ("pw_gid", 1000),
+                               ("pw_dir", "/home/operator"), ("pw_shell", "/bin/bash")):
+                account.return_value = SimpleNamespace(**{**values, key: value})
+                with self.subTest(field=key), self.assertRaises(ValueError):
+                    build_host.require_build_account(config())
+            account.return_value = SimpleNamespace(**values)
+            group.return_value = SimpleNamespace(**{**group_values, "gr_mem": ["operator"]})
+            with self.assertRaises(ValueError):
+                build_host.require_build_account(config())
 
     def test_policy_is_reloaded_and_only_allowed_tool_versions_reach_worker(self):
         original = config()
