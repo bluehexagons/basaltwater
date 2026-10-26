@@ -34,6 +34,9 @@ _U64_LIMIT = 1 << 64
 _ET_EXEC = 2
 _ET_DYN = 3
 _EM_X86_64 = 62
+_ELF_OSABI_SYSV = 0
+_ELF_OSABI_LINUX = 3
+_ELF_ABI_VERSION = 0
 _PT_LOAD = 1
 _PT_DYNAMIC = 2
 _PT_INTERP = 3
@@ -241,6 +244,10 @@ def _validate_elf64_static_x86_64(descriptor: int, file_size: int) -> None:
         raise ValueError("Service executable is not ELF")
     if ident[4] != 2 or ident[5] != 1 or ident[6] != 1:
         raise ValueError("Service executable must use ELF64 little-endian version 1")
+    if ident[7] not in {_ELF_OSABI_SYSV, _ELF_OSABI_LINUX}:
+        raise ValueError("Service executable has an unsupported ELF OS ABI")
+    if ident[8] != _ELF_ABI_VERSION:
+        raise ValueError("Service executable has an unsupported ELF ABI version")
 
     header = _ELF_HEADER.unpack(_pread_exact(descriptor, _ELF_HEADER.size, 16))
     (elf_type, machine, version, entry, program_offset, _section_offset, flags,

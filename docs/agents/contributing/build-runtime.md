@@ -15,7 +15,8 @@ The helper does not rewrite `exec`, infer additional files from it, or run
 artifact commands.
 
 Service executables must be ELF64 little-endian x86-64 `ET_EXEC` or `ET_DYN`
-files with bounded, valid program headers, an executable load segment covering
+files with `EI_OSABI` 0 (System V) or 3 (Linux) and `EI_ABIVERSION` 0. They
+must have bounded, valid program headers, an executable load segment covering
 the entry point, no `PT_INTERP`, and no `DT_NEEDED` entries in a valid bounded
 `PT_DYNAMIC` segment. Access uses no-follow directory descriptors and checks
 file identity before and after metadata reads. It does not execute the file or

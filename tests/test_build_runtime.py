@@ -24,6 +24,7 @@ _PT_INTERP = 3
 
 
 def _elf64(*, elf_type: int = 2, machine: int = 62, version: int = 1,
+           osabi: int = 0, abi_version: int = 0,
            dynamic: str | None = None, interpreter: bool = False,
            program_count: int | None = None, truncated_table: bool = False) -> bytes:
     """Build a tiny ELF fixture without invoking a host compiler."""
@@ -58,7 +59,7 @@ def _elf64(*, elf_type: int = 2, machine: int = 62, version: int = 1,
                          0x400000 + interpreter_offset, len(interpreter_bytes),
                          len(interpreter_bytes), 1))
 
-    ident = b"\x7fELF" + bytes((2, 1, 1, 0, 0)) + bytes(7)
+    ident = b"\x7fELF" + bytes((2, 1, 1, osabi, abi_version)) + bytes(7)
     count = len(programs) if program_count is None else program_count
     header = _ELF_HEADER.pack(
         ident, elf_type, machine, version, 0x400080, 64, 0, 0, 64, 56,
@@ -151,6 +152,22 @@ class BuildRuntimeTests(unittest.TestCase):
         ):
             with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, "only linux/x86_64/debian-13"):
                 self.validate(platform=platform)
+
+    def test_linux_compatible_osabi_values_are_accepted(self):
+        for osabi in (0, 3):
+            with self.subTest(osabi=osabi):
+                self.executable(_elf64(osabi=osabi))
+                self.validate()
+
+    def test_other_osabi_and_nonzero_abi_version_are_rejected(self):
+        for content, message in (
+            (_elf64(osabi=9), "unsupported ELF OS ABI"),
+            (_elf64(abi_version=1), "unsupported ELF ABI version"),
+        ):
+            with self.subTest(message=message):
+                self.executable(content)
+                with self.assertRaisesRegex(ValueError, message):
+                    self.validate()
 
     def test_godot_runtime_is_explicitly_deferred(self):
         manifest = self.manifest(component_type="godot-web")
