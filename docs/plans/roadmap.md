@@ -50,13 +50,17 @@ Use [transaction recovery](../operations/transaction-recovery.md) when an
 operation marker blocks retry. Keep database migration and automatic
 cross-phase recovery as separately scoped follow-up work.
 
-## P1: Manifest deployment and secret references
+## P1: Shared build hosts, manifest deployment and secrets
 
 Keep the Basaltwater controller lightweight and independent of Docker or an
-external application-management API. Deploy-secret references and manifest
-reuse are queued after the transaction foundation. The intended result is one
-declaration for manual setup, redeploy, secrets, health checks, routing, and
-webhook CI/CD.
+external application-management API. The [build-host plan](cicd-manifest-reuse.md)
+composes on-demand remote builds, signed webhooks and GitHub Runner with shared
+capacity, retained artifacts and an optional scoped panel. Manual and automated
+deployments should use one manifest and target activation engine. Preserve the
+standard build-on-target workflow; unused build-server, runner and webhook
+interfaces may be redesigned without compatibility shims. Start with remote
+build/artifact contracts and integrate [secret references](deploy-secrets.md)
+incrementally, retaining target-local runtime secrets.
 
 ## P1: Read-only planning and drift
 
@@ -100,13 +104,14 @@ provider contracts, retain packaging smoke checks, and consider focused lint,
 type, and coverage gates. New operating systems need explicit CI and live-test
 expectations.
 
-The [Windows plan](windows-support.md) targets only a current Windows 11 GitHub
-runner, qualified with Antistatic build/tests, and a small panel for current
-status, allowed-user rules, and outgoing webhooks. Target one native
-implementation with owner-login startup; the unused Windows runner code needs
-no backwards compatibility. Minimal tools and optional T3 Code remain
-independently installable packages. Desktop workflows, spoke roles, notification
-ingest, and VM provisioning are excluded. Windows remains outside the current
+The [Windows plan](windows-support.md) targets native builds/packages for
+software, games and self-hostable game servers, beginning with Antistatic.
+Share build/artifact and optional panel contracts through native execution and
+permissions adapters; WSL is not required. Owner-login startup is sufficient
+for the first proof; unattended headless service/task startup needs separate
+qualification. Tools-only installation remains independent. Persistent server
+hosting, desktop automation, spoke roles, notification ingest, signing/publishing
+and VM provisioning remain separate. Windows stays outside the current
 v2.0.0 stable-release gate.
 
 Game publishing is available through the VM-local panel and CLI, but provider

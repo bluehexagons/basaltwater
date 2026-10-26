@@ -1,131 +1,90 @@
-# GitHub self-hosted runner support
+# GitHub Runner on shared build hosts
 
-Status: Debian phase 1 implementation is available, with offline identity,
-credential and worker-denial checks. Clean Debian VM, reboot, GitHub-connected
-trigger qualification and upgrade/re-registration evidence remain open; do not
-claim production readiness yet. See [Debian runner operations](../services/github-runner-operations.md).
-Deferred registration, organization scope and the panel's one-time HTTPS
-registration handoff are implemented; see the
-[improvement delivery plan](../services/github-runner-improvements.md).
-Native Windows runners with WSL access are implemented; live Windows 11/WSL
-qualification remains open. See the [Windows runner guide](../workstations/windows-github-runner.md).
+Status: the current Debian implementation includes repository/organization
+registration, a local identity gate, a shared runner slot and deferred CLI/panel
+registration. Live Debian/GitHub/reboot qualification remains open; see
+[current operations](../services/github-runner-operations.md). Windows currently
+uses an unqualified WSL-backed gate. The composition below is planned, not a
+claim that either platform is production-qualified.
 
-## Decisions
+## Direction and compatibility
 
-- Use GitHub's official `actions/runner` application, with a persistent service
-  on Debian and owner-login startup on Windows.
-- Support up to 20 repository registrations with a shared job slot, or one organization. GitHub
-  runner groups control organization repository access; ephemeral runners remain deferred.
-- Do not require or install Docker as part of runner setup. The current CI
-  wrapper invokes Docker to run Debian Trixie checks on Ubuntu-hosted workers.
-  If that workflow runs unchanged on a self-hosted runner, it still needs
-  Docker; adapting CI to run natively on Debian is a separate change.
-- Defer a web-panel approval workflow. Initially accept repeatable
-  `--ci-allowed-user <login>` options. Allowlisted authors may run jobs;
-  non-allowlisted, missing, or unrecognized identities must fail closed before
-  workflow steps execute when no approval mechanism is configured. This is a
-  runner-side execution gate, not GitHub-side queue control or PR approval.
-- Treat jobs from allowed authors as trusted code on the persistent VM. Keep
-  production runners dedicated to CI and do not put unrelated production
-  credentials on them.
+GitHub Runner becomes an optional capability of the
+[shared build host](cicd-manifest-reuse.md), alongside webhook and on-demand
+builds. Replace the dedicated-profile restrictions, unused setup interfaces and
+state directly where simpler; no migration or backwards compatibility is
+required for runner/build-server/webhook systems. Preserve standard
+build-on-target deployment and useful identity, credential and cleanup guards.
 
-## Initial test environment
+Keep GitHub's official `actions/runner`. GitHub schedules workflows, selects
+jobs using labels/groups and owns dispatch, rerun, cancellation, workflow logs
+and its artifacts. Basaltwater installs the selected tools, validates local
+policy, coordinates host capacity and can export declared outputs through the
+common artifact interface. Do not translate Actions YAML into a new workflow
+engine or implicitly grant workflows deployment privileges.
 
-- Use one manually provisioned, current stable Windows 11 x64 VM on Proxmox
-  for Windows runner qualification, with Antistatic build/tests as the first
-  workload. Follow the [runner-only Windows plan](windows-support.md); WSL
-  and a managed desktop are not requirements. Basaltwater does not provision
-  the Windows VM.
-- Run the CI instance as a dedicated non-administrator account without unrelated
-  desktop/T3 credentials. Owner-login startup is sufficient initially. Treat
-  allowlisted workflow code as trusted code with access to that account's
-  credentials. Optional T3 Code/package installation is independent of CI setup.
-- Windows qualification does not replace phase 1's native Debian qualification.
+Support repository or organization registration, including several trusted
+repositories on one host. Preserve scope validation, short-lived registration
+tokens, pending registration and one-time authenticated HTTPS handoff from the
+[implemented registration work](../services/github-runner-improvements.md).
+Long-lived GitHub management credentials stay on the controller. Runner reconnect
+credentials stay private to their identity; unrelated build jobs cannot read them.
 
-## Phase 1 start gates
+## Trust, capacity and lifecycle
 
-- The lightweight allowlist candidate is GitHub's `ACTIONS_RUNNER_HOOK_JOB_STARTED`
-  hook. It runs after GitHub assigns a job but before workflow steps; a nonzero
-  exit fails the job rather than holding it for approval. The runner project's
-  [hook ADR](https://github.com/actions/runner/blob/main/docs/adrs/1751-runner-job-hooks.md)
-  describes hooks as setup, cleanup, and telemetry tools, not a security policy
-  mechanism. Qualify the hook as a local fail-closed guard, keep its script and
-  configuration outside job-writable paths, and do not describe it as
-  GitHub-side authorization. If the gate cannot be trusted to run for every job
-  before user code, do not send untrusted jobs to the persistent runner. See
-  [GitHub's hook behavior](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts).
-- Decide which repository visibility and triggers are supported. GitHub warns
-  that code from pull requests can compromise persistent self-hosted runners
-  and [recommends private repositories](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners).
-  Define identity by trigger (for example, PR author for pull requests and
-  triggering actor for push or manual dispatch); never use commit author text
-  as authorization, and deny events whose identity cannot be established
-  reliably.
-- Use one authoritative allowlist. If the panel can change it, define its
-  authorization and audit path; otherwise show the CLI-configured value
-  read-only in phase 1. Record only bounded gate outcomes, not full event
-  payloads.
-- Supply a short-lived registration token for the configured repository or
-  organization securely; GitHub
-  expires it after one hour ([runner setup](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners)).
-  The configured runner retains local credentials to reconnect, so run it as a
-  dedicated unprivileged account with no sudo or Docker access and protect its
-  credential files. Workflow code from an allowlisted author runs as this
-  account and must be treated as trusted.
+Treat persistent colocated workflows as trusted code. Use separate identities
+and writable state for runner and other build services. Job identities have no
+sudo, deployment keys, privileged container socket or unrelated operator
+credentials. Selected read-only toolchains can be shared. Docker is optional;
+a workflow requesting it still requires separately provisioned support.
+Disposable untrusted jobs need a separately qualified isolation boundary.
 
-## Initial phases
+Keep one authoritative policy across setup, panel and local gate. Match
+repository/organization and reliable event identity, not commit author text.
+Retain the current private-repository, human allowlist, same-repository PR and
+supported-trigger restrictions until a replacement is explicitly qualified;
+unknown identities/events fail closed before workflow steps. GitHub's
+[job hooks](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts)
+and [hook ADR](https://github.com/actions/runner/blob/main/docs/adrs/1751-runner-job-hooks.md)
+do not establish hostile-code isolation or GitHub-side authorization.
 
-### 1. Debian runner
+Replace independent CI/runner locks with the common host capacity coordinator.
+Acquire before supported workflow execution, account for waiting in GitHub's
+job timeout and hold capacity through owned cleanup. Action downloads/setup may
+precede the hook; do not claim a global FIFO queue or zero resource use while
+waiting. Nested Basaltwater builds must not deadlock on a second slot. Test
+worker/guardian failure and surviving children before reporting slot release.
 
-Choose the initial Debian release and architecture before implementation
-(Debian Trixie x86-64 is the current project CI baseline). Add a Debian runner
-setup type/profile for a single repository. Install and configure the official
-runner service, accept registration credentials without persisting a long-lived
-GitHub API credential, and apply the fail-closed author allowlist. Confirm that
-supported workflow triggers expose reliable author identity to the runner-side
-gate; deny any trigger that cannot be identified safely. Document service
-health, runner updates, deregistration, and recovery.
+Drain all installed entry points before setup, policy/toolchain replacement or
+reboot. Report assigned GitHub jobs waiting locally, active jobs and remaining
+admission honestly. Coordinate listener changes with GitHub assignment rather
+than describing a local drain as control of GitHub's remote queue. Keep job and
+runner execution independent of panel or notification availability.
 
-The Debian-only web panel should show runner health, repository and labels,
-configured allowlist, and recent gate outcomes. Allowlist editing can be added
-only after its authorization and audit path is defined; otherwise show the
-value read-only. Pending registration through HTTPS is implemented;
-panel policy editing and lifecycle controls remain deferred. Setup replacement
-and a host-wide queue are implemented.
-This is separate from the existing **Review GitHub Actions failures** template,
-which inspects workflow failures but does not report local runner health or
-policy.
+## Panel and platform scope
 
-**Phase 1 is ready when** a clean Debian VM can be set up for one repository,
-the service survives reboot, runner upgrade and re-registration are documented,
-and a Docker-free smoke workflow succeeds. For every supported trigger, test an
-allowlisted identity, a denied identity, and missing or malformed identity;
-verify denied jobs execute no workflow steps. The panel exposes the configured
-state. Docker must not be a setup prerequisite.
+Use the shared panel design for registration, scope/labels/version, local health,
+bounded gate outcomes, capacity state and links to GitHub. Registration uses the
+existing one-time secret channel; allowed-user edits and drain-aware lifecycle
+actions use typed authorized operations. GitHub workflow mutations remain
+upstream initially. Do not store a broad GitHub token to imitate its UI.
 
-### 2. Windows runner
+Debian uses native services. The [Windows plan](windows-support.md) supplies
+native workers for software, game and dedicated-server builds without WSL.
+Both platforms share policy, artifact and capacity contracts, with separate
+permissions/process adapters. Windows owner-login proof is acceptable first;
+unattended headless startup needs additional qualification.
 
-Native Windows installation, repository/organization registration, shared identity
-evaluation and serial workflow steps are implemented. Limited login tasks run as
-the WSL owner because distributions are account-scoped; job code shares that
-owner's credentials and is trusted. There is no Windows panel or pre-login service.
-The current WSL-backed path lacks live Windows 11 registration, denied-job,
-queue, restart and build evidence; see the Windows guide. Replacement
-qualification follows the runner-only plan below. Multi-repository source builds
-use workflow checkouts or locked dependencies, independently of runner registrations.
+## Acceptance
 
-The [runner-only Windows plan](windows-support.md) targets current Windows 11
-and Antistatic build/tests, with a small panel for current system/runner status,
-allowed-user editing, and outgoing webhooks. Target one native gate/panel
-implementation; the current unused Windows code can be replaced without
-migration or backwards compatibility. Preserve shared policy safeguards.
-Owner-login startup is sufficient; pre-login service mode, desktop workflows,
-spoke roles, and notification ingest are excluded. Current panel and
-policy-editing limitations remain until changes are delivered and qualified.
-
-### Registration extensions
-
-Organization scope and deferred registration now extend the initial implementation
-through the [runner improvements](../services/github-runner-improvements.md).
-Disposable job environments remain deferred. Decide the isolation boundary and
-container runtime separately; Docker is not a default requirement.
+- Fresh and repeated setup, pending/valid/expired registration, scope changes,
+  credential isolation, restart/re-registration and explicitly supported events.
+- Allowed jobs run; denied, malformed and missing identities run no workflow
+  steps, including `if: always()` canaries. Hook checks do not imply sandboxing.
+- Runner and webhook/on-demand roles coexist under bounded capacity; nested
+  builds, cancellation, drain, teardown and interrupted-state recovery work.
+- Panel inspection and authorized policy/registration actions preserve working
+  state on error and show unavailable facts without assuming readiness.
+- Real GitHub-connected jobs and reboot evidence on Debian, plus native
+  Windows project builds and session/process checks on Windows. Offline tests
+  alone do not satisfy these platform gates.

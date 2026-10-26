@@ -5,6 +5,14 @@ relationships remain unimplemented. Manifest components currently support
 literal build environment values and an `env_file` path. This work is queued
 P1 after the transactional execution foundation.
 
+Coordinate with the [shared build-host plan](cicd-manifest-reuse.md). Remote
+builds can initially use existing target-local `env_file` bindings; the complete
+secret store and optional-component workflow need not precede artifact builds.
+Runtime values stay off builders. Build-time secrets require explicit grants to
+trusted code, with version references in build identity and no values in artifacts
+or durable metadata. Redaction cannot prevent authorized build code leaking a
+secret; use credential scope and trust boundaries rather than claiming otherwise.
+
 The intended shape is simple:
 
 - provision `.env` content from the workspace instead of hand-copying it onto
