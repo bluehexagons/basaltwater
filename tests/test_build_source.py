@@ -124,7 +124,9 @@ class FakeGit:
         elif subcommand == "for-each-ref":
             result = self.tags
         elif subcommand == "bundle":
-            bundle_index = command.index("--filter=blob:none") + 1
+            bundle_index = command.index("--version=3") + 1
+            if command[bundle_index].startswith("--"):
+                raise AssertionError("Git bundle revision options must follow its destination")
             bundle_path = Path(command[bundle_index])
             bundle_path.write_bytes(self.bundle)
             if self.move_tag_during_bundle:
@@ -221,6 +223,8 @@ class BuildSourceTest(unittest.TestCase):
         bundle_command = next(command for command, _ in self.git.calls if "bundle" in command)
         self.assertIn("--version=3", bundle_command)
         self.assertIn("--filter=blob:none", bundle_command)
+        self.assertLess(bundle_command.index("--version=3") + 1,
+                        bundle_command.index("--filter=blob:none"))
         self.assertIn("HEAD", bundle_command)
         self.assertIn("refs/tags/v1.2.3", bundle_command)
         self.assertNotIn("--all", bundle_command)

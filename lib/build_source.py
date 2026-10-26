@@ -765,7 +765,7 @@ def create_source_snapshot(
                 raise ValueError("Source snapshot destination must be outside the repository")
             bundle_path = os.path.join(history_directory, "history.bundle")
             bundle_command = [
-                "bundle", "create", "--version=3", "--filter=blob:none", bundle_path,
+                "bundle", "create", "--version=3", bundle_path, "--filter=blob:none",
                 "HEAD", *(ref for ref, _object_id in tags),
             ]
             invoke(
