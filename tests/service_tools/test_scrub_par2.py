@@ -296,26 +296,27 @@ class TestScrubRunner(unittest.TestCase):
         self.assertFalse(scrub_runner._process_group_exists(worker_pid))
 
     def test_clean_leader_exit_with_surviving_child_rejects_report(self):
-        worker_pid_file = str(self.root / "worker.pid")
-        child_pid_file = str(self.root / "child.pid")
-        report_payload = self._success_report_source()
-        marker_literal = repr(scrub_runner.WORKER_STARTED_MARKER)
-        script = self._worker_script("survivor_worker.py", [
-            "import os, subprocess, sys",
-            "report_fd, started_fd = int(sys.argv[2]), int(sys.argv[3])",
-            f"open({worker_pid_file!r}, 'w', encoding='ascii').write(str(os.getpid()))",
-            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])",
-            f"open({child_pid_file!r}, 'w', encoding='ascii').write(str(child.pid))",
-            f"os.write(started_fd, {marker_literal})",
-            f"os.write(report_fd, {report_payload!r}.encode('utf-8'))",
-        ])
-        with patch.object(scrub_runner, "WORKER_SCRIPT", script):
-            result = self._run_injected_worker()
-
-        self.assertFalse(result["completed"])
-        self.assertIn("descendants remained", result["error"])
-        worker_pid = int(Path(worker_pid_file).read_text(encoding="ascii"))
-        self.assertFalse(scrub_runner._process_group_exists(worker_pid))
+        # Containers need not have an init process that reaps orphaned native
+        # children. Model the surviving group here; disposable process probes
+        # can own a subreaper when exercising actual orphan cleanup.
+        process = SimpleNamespace(pid=12345, poll=lambda: 0, wait=lambda: 0)
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, scrub_runner.WORKER_STARTED_MARKER)
+            os.close(write_fd)
+            write_fd = -1
+            with patch.object(scrub_runner, "_process_group_exists", return_value=True), \
+                    patch.object(scrub_runner, "_terminate_process_group") as terminate:
+                started, error = scrub_runner._supervise_worker(
+                    process, read_fd, preflight_timeout=1, operation_timeout=1,
+                )
+        finally:
+            os.close(read_fd)
+            if write_fd >= 0:
+                os.close(write_fd)
+        self.assertTrue(started)
+        self.assertIn("descendants remained", error)
+        terminate.assert_called_once_with(process)
 
     def test_par2_style_native_child_stays_in_supervised_worker_group(self):
         worker_pid_file = str(self.root / "worker.pid")
