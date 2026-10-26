@@ -81,12 +81,31 @@ or filesystem sync failures remain for operator reconciliation. The store does
 not clean evidence or automatically replay work after an exception.
 
 Every retained intent, including one with failed or partial input, counts
-toward `max_records` and its full worst-case reservation counts toward
-`max_bytes`. Encoded intents are individually limited to 1024 bytes, and the
-total encoded metadata has a fixed upper bound. Each intent uses at most one
-fixed `.part` path, whose bytes are covered by that intent's source-size
-reservation. There is no garbage collection in this slice; full capacity
-rejects new input and never discards replay evidence.
+toward `max_records`. New and existing version-1 intents retain their full
+worst-case reservation as the charge toward `max_bytes`. Only explicit
+root-local [terminal settlement](build-retention.md) can replace that charge
+with a verified conservative retained-byte charge; admission never invokes
+settlement. Version-2 intents retain all original identity fields and immutable
+`reservation_bytes`, adding only `charge_bytes` and `settlement_revision`.
+Replay compares the original inputs and still submits the same ID to the job
+store, including after reopening a settled intent.
+
+Encoded intents remain individually limited to 1024 bytes, including settlement
+metadata, and the aggregate encoded metadata cap remains
+`min(MAX_RETAINED_METADATA_BYTES, max_records * 1024)`. Each intent uses at most
+one fixed `.part` path, covered by its source-size reservation. Default input
+capacity remains 128 retained intents; the independently bounded job store
+retains at most 4096 jobs. Neither ceiling is relaxed by settlement. There is
+no garbage collection: full capacity rejects new input and never discards
+source, logs, bundles, descriptors, or replay evidence.
+
+Settlement atomically replaces the bounded intent under the stable input lock.
+A failed replacement leaves the previous charge intact. If replacement succeeds
+but directory sync or acknowledgement fails, subsequent reads sync the settled
+intent and directory before using its charge; explicit retry reconciles the
+same verified revision without applying another credit. A leftover settlement
+temporary file after a crash is ambiguous evidence and fails closed for root
+reconciliation. Payload files are never removed or changed by settlement.
 
 The transport owns stream deadline supervision and must ensure each read is
 bounded by its deadline. It can use its deadline-aware stream wrapper before

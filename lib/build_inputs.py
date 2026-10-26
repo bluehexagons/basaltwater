@@ -48,6 +48,7 @@ _INTENT_FIELDS = frozenset({
     "schema", "request_id", "owner", "request_sha256", "source_size",
     "source_sha256", "reservation_bytes",
 })
+_SETTLED_FIELDS = _INTENT_FIELDS | {"charge_bytes", "settlement_revision"}
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
 
@@ -180,9 +181,9 @@ class BuildInputStore:
     """Bounded durable source admission for the worker's fixed input root.
 
     ``root`` must already be the effective UID's private ``0700`` worker input
-    directory. Every accepted request keeps its intent and reservation forever
-    in this first slice; an operator must reconcile failures before any future
-    retention policy removes evidence.
+    directory. Every accepted request keeps its immutable intent and original
+    reservation. Only explicit trusted terminal settlement can lower its charge;
+    admission never settles or removes evidence.
     """
 
     def __init__(
@@ -279,10 +280,13 @@ class BuildInputStore:
 
     @staticmethod
     def _validate_intent(value: object, *, request_id: str) -> dict[str, Any]:
-        if not isinstance(value, dict) or set(value) != _INTENT_FIELDS:
+        if not isinstance(value, dict):
             raise ValueError("Build input store contains an invalid retained intent")
-        if type(value["schema"]) is not int or value["schema"] != 1:
+        schema = value.get("schema")
+        if type(schema) is not int or schema not in {1, 2}:
             raise ValueError("Build input intent has an unsupported schema")
+        if set(value) != (_INTENT_FIELDS if schema == 1 else _SETTLED_FIELDS):
+            raise ValueError("Build input store contains an invalid retained intent")
         actual_id = _identifier(value["request_id"], "Request ID")
         if actual_id != request_id:
             raise ValueError("Build input intent filename does not match its request ID")
@@ -295,8 +299,8 @@ class BuildInputStore:
         reservation = _positive_integer(value["reservation_bytes"], "Input reservation", 2**63 - 1)
         if reservation < source_size + MAX_DESCRIPTOR_BYTES + 1024 + 256 * 1024**2 + 2:
             raise ValueError("Build input intent has an incomplete retention reservation")
-        return {
-            "schema": 1,
+        result = {
+            "schema": schema,
             "request_id": actual_id,
             "owner": principal,
             "request_sha256": request_sha256,
@@ -304,6 +308,15 @@ class BuildInputStore:
             "source_sha256": source_sha256,
             "reservation_bytes": reservation,
         }
+        if schema == 2:
+            charge = _positive_integer(value["charge_bytes"], "Retained charge", reservation)
+            if charge < source_size + MAX_INTENT_BYTES:
+                raise ValueError("Build input retained charge omits source or metadata")
+            result["charge_bytes"] = charge
+            result["settlement_revision"] = _identifier(
+                value["settlement_revision"], "Settlement revision", _SHA256,
+            )
+        return result
 
     def _read_intent(self, root_fd: int, request_id: str) -> tuple[dict[str, Any], int]:
         name = request_id + ".upload.json"
@@ -328,6 +341,11 @@ class BuildInputStore:
             record = self._validate_intent(decode_document(raw, maximum=MAX_INTENT_BYTES), request_id=request_id)
             if encode_document(record, maximum=MAX_INTENT_BYTES) != raw:
                 raise ValueError("Build input intent is not canonically encoded")
+            # Reconcile a replacement whose directory sync/reply was lost before
+            # admission can use its lower charge. Failure still refuses admission.
+            if record["schema"] == 2:
+                os.fsync(descriptor)
+                os.fsync(root_fd)
             return record, len(raw)
         finally:
             os.close(descriptor)
@@ -394,7 +412,7 @@ class BuildInputStore:
             if source_info is not None and part_info is not None:
                 raise ValueError("Build input has both published and partial source evidence")
             intents[request_id] = record, encoded_size, source_info, part_info
-            reserved += record["reservation_bytes"]
+            reserved += record.get("charge_bytes", record["reservation_bytes"])
             metadata_bytes += encoded_size
         if reserved > self.max_bytes:
             raise ValueError("Build input store exceeds its retained byte reservation")
@@ -439,6 +457,36 @@ class BuildInputStore:
         os.fsync(descriptor)
         os.fchmod(descriptor, 0o400)
         os.fsync(descriptor)
+
+    def _save_settlement(self, root_fd: int, record: dict[str, Any]) -> None:
+        """Atomically replace only bounded intent metadata under the input lock.
+
+        A pre-replace failure leaves the prior charge intact. A post-replace
+        sync failure is ambiguous; reopening syncs the retained revision before
+        using it, and the same settlement revision can be retried safely.
+        """
+        request_id = record["request_id"]
+        self._validate_intent(record, request_id=request_id)
+        encoded = encode_document(record, maximum=MAX_INTENT_BYTES)
+        name = request_id + ".upload.json"
+        temporary = request_id + ".settlement.tmp"
+        descriptor = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=root_fd,
+        )
+        try:
+            os.fchmod(descriptor, 0o600)
+            _write_all(descriptor, encoded)
+            os.fsync(descriptor)
+            _check_regular(_stat_named(root_fd, name, "intent"), "intent", modes=frozenset({0o600}))
+            os.replace(temporary, name, src_dir_fd=root_fd, dst_dir_fd=root_fd)
+            os.fsync(root_fd)
+        finally:
+            os.close(descriptor)
+            try:
+                os.unlink(temporary, dir_fd=root_fd)
+            except FileNotFoundError:
+                pass
 
     def _sync_after_rename(self, root_fd: int) -> None:
         """Persist the published directory entry after no-replace rename."""
@@ -607,7 +655,7 @@ class BuildInputStore:
                     record, _encoded_size, source_info, part_info = existing
                     if record["owner"] != principal:
                         raise PermissionError("Build input request ID belongs to another principal")
-                    if record != expected_intent:
+                    if any(record[key] != value for key, value in expected_intent.items() if key != "schema"):
                         raise ValueError("Build input request ID is already bound to different inputs")
                     if part_info is not None:
                         raise ValueError("Incomplete build input intent is retained for operator reconciliation")

@@ -550,6 +550,17 @@ class BuildJobStore:
                 self._save(parent_fd, state)
             return self._public(record)
 
+    def read_for_retention(self, request_id: str, *, lease: WorkerLease) -> dict[str, Any]:
+        """Return private evidence to trusted maintenance holding this worker lease.
+
+        Copy under the short state lock; callers must hash files after returning.
+        This never expires jobs, changes drain state, or supplies a public API.
+        """
+        request_id = _identifier(request_id, "Request ID")
+        with self._lease_guard(lease):
+            with self._locked() as (state, _parent_fd):
+                return copy.deepcopy(self._record(state, request_id))
+
     def cancel(self, request_id: str, *, owner: str) -> dict[str, Any]:
         """Cancel queued work or set a cooperative flag on running work."""
         request_id = _identifier(request_id, "Request ID")
