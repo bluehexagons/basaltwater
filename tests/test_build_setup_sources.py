@@ -328,6 +328,29 @@ class BuildSetupSourcesTests(unittest.TestCase):
                 with storage.monitor():
                     pass
 
+    def test_zero_output_limit_discards_stdout_without_spooling_or_reading(self):
+        storage = sources._Storage(str(self.destination), SourceLimits())
+        process = Mock(pid=123, returncode=0)
+        process.communicate.side_effect = [subprocess.TimeoutExpired("git", 0.1), (None, None)]
+        with patch.object(sources.subprocess, "Popen", return_value=process) as popen, \
+                patch.object(sources.tempfile, "NamedTemporaryFile") as spool, \
+                patch.object(storage, "check") as check:
+            spool.return_value.__enter__.return_value.tell.side_effect = AssertionError(
+                "Discarded stdout must not be inspected"
+            )
+            result = sources._run(
+                ["git", "update-ref", "--stdin"], cwd=str(self.destination), env={},
+                input_data=b"start\nprepare\ncommit\n", timeout=1, max_output_bytes=0,
+                file_size_limit=100, storage=storage,
+            )
+        self.assertEqual(result, b"")
+        self.assertEqual(popen.call_args.kwargs["stdout"], subprocess.DEVNULL)
+        spool.assert_not_called()
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual(process.communicate.call_count, 2)
+        launch = popen.call_args.args[0]
+        self.assertEqual(launch[launch.index(sources._LIMIT_EXEC) + 1], "100")
+
     def test_native_runner_kills_process_group_on_periodic_storage_failure(self):
         storage = sources._Storage(str(self.destination), SourceLimits())
         process = Mock(pid=123, returncode=0)

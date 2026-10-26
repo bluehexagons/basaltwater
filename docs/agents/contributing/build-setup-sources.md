@@ -85,8 +85,10 @@ configuration cannot arrive from the caller's Git configuration or templates.
 Source filter attributes are subsequently refused by the snapshot backend.
 
 Commands run in isolated process groups with null stdin unless the source backend
-supplies bounded input. Diagnostics are discarded, stdout is privately spooled
-and bounded, individual output files have an `RLIMIT_FSIZE`, and process-group
+supplies bounded input. Diagnostics are discarded. Positive stdout bounds use a
+private bounded spool; `max_output_bytes=0` discards stdout through `DEVNULL`
+and returns `b""`, including Git transaction acknowledgments. Individual output
+files retain their `RLIMIT_FSIZE`, and process-group
 termination follows timeout, interruption or an observed storage failure.
 A fresh isolated Python interpreter applies the file limit before executing
 Git; no Python `preexec_fn` runs alongside the storage monitor thread.

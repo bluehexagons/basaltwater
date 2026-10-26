@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
@@ -187,11 +187,15 @@ def _run(
     # would be unsafe while the storage monitor thread is running.
     launch = [sys.executable, "-I", "-S", "-c", _LIMIT_EXEC, str(selected), *command]
     # Keep the spool named so aggregate scans account for its allocated blocks.
-    with tempfile.NamedTemporaryFile(prefix=".git-output-", dir=storage.root) as output:
+    # A zero output bound follows CommandRunner's discard-stdout contract.
+    output_context = (tempfile.NamedTemporaryFile(prefix=".git-output-", dir=storage.root)
+                      if max_output_bytes > 0 else nullcontext(None))
+    with output_context as output:
         process = subprocess.Popen(
             launch, cwd=cwd, env=dict(env),
             stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
-            stdout=output, stderr=subprocess.DEVNULL,
+            stdout=output if output is not None else subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True, umask=0o077,
         )
         deadline = time.monotonic() + timeout
@@ -199,7 +203,7 @@ def _run(
             first = True
             while True:
                 storage.check()
-                if output.tell() > max_output_bytes:
+                if output is not None and output.tell() > max_output_bytes:
                     raise ValueError("Git setup source output exceeds its limit")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -212,6 +216,8 @@ def _run(
                     first = False
             if process.returncode != 0:
                 raise ValueError("Git setup source command failed or exceeded its file limit")
+            if output is None:
+                return b""
             output.seek(0)
             result = output.read(max_output_bytes + 1)
             if len(result) > max_output_bytes:
