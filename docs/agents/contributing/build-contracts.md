@@ -24,6 +24,11 @@ runtime environment values, secret bindings and deployment credentials are
 excluded from this request. Build inputs are visible to build code; never insert
 runtime secrets. Commands are data until an authorized worker executes them
 under its unprivileged identity.
+`lib.build_manifest` selects and revalidates those inputs against the pinned
+manifest. Command-bearing remote builds require explicit `build_runtimes` so
+the controller can check installed tools before admission. Ready-to-serve
+outputs without commands need no declared compiler. This requirement applies
+to remote builds; ordinary build-on-target inference is unchanged.
 
 Limits cover elapsed build time, memory, CPU percentage (100 is one CPU), scratch
 filesystem capacity, export bytes and entry count, and log bytes. Scratch capacity
