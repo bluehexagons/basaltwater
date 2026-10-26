@@ -52,6 +52,8 @@ and `./bin/api` defaults normalize using the existing artifact/runtime helpers.
 Static outputs, including SPA fallback, and literal binary Go services are
 supported. Services require an explicit `go` runtime, automatic ports, default
 working directory and reverse proxy, and may declare a typed health path.
+Health paths must survive target parsing unchanged; noncanonical endpoints such
+as `/ready/` are refused rather than probing a different URL.
 Target runtime validation still must prove a self-contained x86-64 ELF binary;
 a Go declaration does not prove what arbitrary build commands produced.
 
@@ -66,7 +68,8 @@ own policy; no new gzip/expires override is invented or silently discarded.
 Ready static outputs need no tool declaration. Command-bearing manifests require
 explicit `build_runtimes`; Python static build commands and Go builds are
 supported when their runtimes are granted and their installed versions are
-present. Node-declared builds are refused even with a Node version: the current
+present. An empty runtime list is insufficient when build commands are present.
+Node-declared builds are refused even with a Node version: the current
 capability contract does not qualify package-manager readiness.
 
 Every request limit is the minimum of its protocol default and the builder's

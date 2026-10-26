@@ -220,6 +220,9 @@ class BuildSetupPlanTests(unittest.TestCase):
         data = self.static_data(build="python3 build.py")
         with self.assertRaisesRegex(ValueError, "explicit build_runtimes"):
             self.plan(data)
+        data["build_runtimes"] = []
+        with self.assertRaisesRegex(ValueError, "nonempty explicit build_runtimes"):
+            self.plan(data)
         data.update(build_runtimes=["node"])
         data["components"][0]["build"] = "npm run build"
         cap = capabilities()
@@ -227,6 +230,18 @@ class BuildSetupPlanTests(unittest.TestCase):
         cap["tool_versions"]["node"] = "v26.0.0"
         with self.assertRaisesRegex(ValueError, "package-manager readiness"):
             self.plan(data, builder_capabilities=cap)
+
+    def test_health_endpoint_is_preserved_or_refused_before_delivery(self):
+        for health in (None, "/", "/ready"):
+            data = manifest_data()
+            data["components"][1]["health"] = health
+            with self.subTest(health=health):
+                service = next(item for item in self.plan(data).deployment["components"]
+                               if item["name"] == "api")
+                self.assertEqual(service["health"], health)
+        data["components"][1]["health"] = "/ready/"
+        with self.assertRaisesRegex(ValueError, "health paths must be canonical"):
+            self.plan(data)
 
     def test_unsupported_execution_and_routing_fields_are_never_dropped(self):
         changes = (

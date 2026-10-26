@@ -103,6 +103,8 @@ def prepare_delivery_plan(
     snapshot = _absolute_path(source_path, "Source snapshot")
     components = [_projection(component, domain) for component in manifest.components]
     tools = required_tools(manifest)
+    if any(component.build for component in manifest.components) and not tools:
+        raise ValueError("Remote builds with commands require nonempty explicit build_runtimes")
     if "node" in tools:
         raise ValueError("Node package-manager readiness is outside the first public build slice")
     if any(item["type"] == "service" for item in components) and "go" not in tools:
@@ -142,6 +144,11 @@ def prepare_delivery_plan(
         enrollment["policy"], principal=target_principal, application=application,
         request=request, deployment=deployment,
     )
+    health_paths = {item["name"]: item["health"] for item in components
+                    if item["type"] == "service"}
+    if any(item["type"] == "service" and item["health"] != health_paths[item["name"]]
+           for item in authorized["bindings"]["components"]):
+        raise ValueError("Service health paths must be canonical without changing their endpoint")
     # The authorization result includes private target bindings. Copy only the
     # small serving projection; deployment_root never becomes controller input.
     deployment = {key: authorized["bindings"][key]
