@@ -75,7 +75,9 @@ available. Set it to `False` to allow new claims and admissions again.
 `worker()` yields a `WorkerLease` while holding the single host worker flock.
 `lease.claim()` selects the lowest persisted submission sequence, rechecks its
 expiry after loading state, records `running` durably, and only then returns
-`{"request_id", "sequence", "request"}` to the trusted caller. It returns
+`{"request_id", "owner", "sequence", "request"}` to the trusted caller. The
+saved authenticated owner enables policy rechecks and cancellation observation;
+it is never taken from repository input or added to public status. It returns
 `None` when there is no eligible work or the host is draining. A second claim
 cannot bypass a running claim.
 

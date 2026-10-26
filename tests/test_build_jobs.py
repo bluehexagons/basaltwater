@@ -223,6 +223,8 @@ class BuildJobStoreTests(unittest.TestCase):
         with self.store.worker() as lease:
             claim = lease.claim()
             self.assertEqual(claim["request"], request)
+            self.assertEqual(claim["owner"], "controller")
+            self.assertNotIn("owner", self.store.status(queued["request_id"], owner="controller"))
             cancelled = self.store.cancel(queued["request_id"], owner="controller")
             self.assertEqual(cancelled["state"], "running")
             self.assertTrue(cancelled["cancel_requested"])

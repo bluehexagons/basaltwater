@@ -705,6 +705,7 @@ class BuildJobStore:
                 self._save(parent_fd, state)
                 return {
                     "request_id": record["request_id"],
+                    "owner": record["owner"],
                     "sequence": record["sequence"],
                     "request": copy.deepcopy(record["request"]),
                 }
