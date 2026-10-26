@@ -96,8 +96,9 @@ remotes, local config, hooks, credentials, or unrelated refs. The source
 checkout itself has no `.git` directory. Tracked `.gitignore`, `.gitattributes`,
 and `.gitmodules` remain ordinary source files; their contents are never
 executed by snapshot preparation or extraction. Git filter attributes are
-refused before Git status, so configured clean/smudge commands cannot run during
-privileged snapshot preparation.
+refused before Git status. The ambiguous `unset` and `unspecified` values are
+also refused when a matching filter driver is configured, so original local
+configuration cannot cause a clean, smudge, or process helper to run.
 
 The first slice rejects tracked symlinks, gitlinks/submodules, special Git
 modes, files beginning with the Git LFS pointer signature (including extended

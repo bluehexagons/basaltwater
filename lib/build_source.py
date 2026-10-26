@@ -39,6 +39,8 @@ _MAX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _LFS_POINTER_SIGNATURE = re.compile(
     rb"\Aversion https://git-lfs\.github\.com/spec/v1\r?\n"
 )
+_FILTER_ATTRIBUTE_SENTINELS = frozenset({b"unspecified", b"unset"})
+_FILTER_DRIVER_ACTIONS = ("clean", "smudge", "process")
 _FORBIDDEN_COMPONENTS = frozenset({
     ".git", ".gitconfig", ".git-credentials", ".git-credential-cache",
     ".git-credential-store", ".netrc", ".npmrc", ".pypirc", ".dockercfg",
@@ -711,7 +713,7 @@ def _normalized_blob_id(
 def _reject_external_filters(
     invoke: Callable[..., bytes], files: Sequence[_TreeEntry], limits: SourceLimits,
 ) -> None:
-    """Inspect attributes before status so a configured clean filter cannot run."""
+    """Reject external filters, including ambiguous sentinel-named drivers."""
     raw = invoke(
         ["check-attr", "-z", "--stdin", "filter"],
         input_data=b"".join(entry.path.encode("utf-8") + b"\x00" for entry in files),
@@ -722,12 +724,30 @@ def _reject_external_filters(
     fields = raw[:-1].split(b"\x00")
     if len(fields) != len(files) * 3:
         raise ValueError("Git returned malformed filter attribute metadata")
+    ambiguous_sentinels: set[bytes] = set()
     for index, entry in enumerate(files):
         path, attribute, value = fields[index * 3:index * 3 + 3]
         if path != entry.path.encode("utf-8") or attribute != b"filter":
             raise ValueError("Git returned mismatched filter attribute metadata")
         if value not in (b"unspecified", b"unset"):
             raise ValueError("Git clean/smudge filters are unsupported for source preparation")
+        ambiguous_sentinels.add(value)
+
+    if not ambiguous_sentinels:
+        return
+    marker = "__basaltwater_missing_filter_config_" + os.urandom(16).hex() + "__"
+    expected = marker.encode("ascii") + b"\n"
+    for sentinel in sorted(ambiguous_sentinels):
+        driver = sentinel.decode("ascii")
+        for action in _FILTER_DRIVER_ACTIONS:
+            configured = invoke(
+                ["config", "--default", marker, "--get", f"filter.{driver}.{action}"],
+                max_output_bytes=min(256, limits.max_metadata_bytes),
+            )
+            if configured != expected:
+                raise ValueError(
+                    "Ambiguous Git filter driver configuration is unsupported"
+                )
 
 
 def _check_clean_repository(
