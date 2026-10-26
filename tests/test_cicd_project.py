@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from lib.cicd_deploy_policy import validate_nginx_deployment
 from lib.cicd_project import prepare_project, run_stage
 from lib.project_manifest import WorkflowStep
 from lib.cicd_project import run_step
-from web.service_tools import cicd_executor
+from web.service_tools import cicd_executor, deploy_admin
 
 
 class CicdProjectTests(unittest.TestCase):
@@ -124,6 +127,119 @@ class CicdProjectTests(unittest.TestCase):
                 str(self.root), 'app', None, 'https://example.com/repo.git', 'a' * 40, str(log), {}
             ))
             push.assert_not_called()
+
+    def test_remote_static_manifest_spa_survives_json_handoff_and_target_render(self):
+        output = self.root / 'dist'
+        output.mkdir()
+        (output / 'index.html').write_text('<html>site</html>')
+
+        available = self.root / 'available'
+        enabled = self.root / 'enabled'
+        staged_dir = self.root / 'remote-staging'
+        staged_dir.mkdir()
+        staged_prefix = str(staged_dir / 'basaltwater-nginx-')
+        transferred_requests = []
+
+        def build_scp(_host, _user, source, destination, *_args, **_kwargs):
+            return ['scp', source, destination]
+
+        def run_remote_command(command, **_kwargs):
+            if command[0] == 'scp':
+                source, destination = command[-2:]
+                transferred_requests.append(json.loads(Path(source).read_text()))
+                staged_name = Path(destination).name.removeprefix('basaltwater-nginx-')
+                Path(staged_prefix + staged_name).write_bytes(Path(source).read_bytes())
+            else:
+                helper_args = shlex.split(command[-1])
+                self.assertEqual(helper_args[-3], 'install-site')
+                deploy_admin.install_nginx_config(helper_args[-2], helper_args[-1])
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        target = {'base_dir': '/var/www', 'host': 'app.example'}
+        with (
+            patch('lib.remote_deploy.get_deploy_target', return_value=target),
+            patch('lib.remote_deploy.push_artifact', return_value=True),
+            patch('lib.remote_deploy.reload_nginx', return_value=True),
+            patch('lib.remote_deploy.build_scp_command', side_effect=build_scp),
+            patch('lib.remote_deploy._build_ssh_cmd', side_effect=lambda _target, remote: ['ssh', remote]),
+            patch('lib.remote_deploy.run_command', side_effect=run_remote_command),
+            patch.object(deploy_admin, 'NGINX_AVAILABLE_DIR', str(available)),
+            patch.object(deploy_admin, 'NGINX_ENABLED_DIR', str(enabled)),
+            patch.object(deploy_admin, 'STAGED_CONFIG_PREFIX', staged_prefix),
+            patch.object(deploy_admin, '_allowed_site_roots', return_value=['/var/www']),
+            patch.object(deploy_admin, '_run_checked'),
+            patch('lib.nginx_config.get_ssl_cert_path', return_value=('/etc/ssl/site.crt', '/etc/ssl/site.key')),
+            patch.dict(os.environ, {'SUDO_UID': str(os.getuid())}),
+        ):
+            for manifest_spa, expected_spa in ((True, True), (False, False), (None, False)):
+                component = {
+                    'name': 'site',
+                    'type': 'static',
+                    'domain': '{{domain}}',
+                    'output': 'dist',
+                }
+                if manifest_spa is not None:
+                    component['spa'] = manifest_spa
+                (self.root / 'basaltwater.json').write_text(json.dumps({
+                    'version': 1,
+                    'components': [component],
+                }))
+
+                with self.subTest(manifest_spa=manifest_spa):
+                    self.assertTrue(cicd_executor.perform_remote_deployment(
+                        str(self.root), 'app', 'example.com',
+                        'https://example.com/repo.git', 'a' * 40,
+                        str(self.root / 'job.log'), {},
+                    ))
+                    request = transferred_requests[-1]
+                    self.assertIs(request['spa'], expected_spa)
+                    nginx = (available / 'example_com').read_text()
+                    if expected_spa:
+                        self.assertIn('try_files $uri $uri.html $uri/ /index.html;', nginx)
+                    else:
+                        self.assertIn('try_files $uri $uri.html $uri.htm $uri/ =404;', nginx)
+
+    def test_remote_static_manifest_rejects_malformed_spa_before_transfer(self):
+        output = self.root / 'dist'
+        output.mkdir()
+        log = self.root / 'job.log'
+        for invalid_spa in ('true', 1, None):
+            (self.root / 'basaltwater.json').write_text(json.dumps({
+                'version': 1,
+                'components': [{
+                    'name': 'site',
+                    'type': 'static',
+                    'domain': '{{domain}}',
+                    'output': 'dist',
+                    'spa': invalid_spa,
+                }],
+            }))
+            with self.subTest(invalid_spa=invalid_spa), patch(
+                'lib.remote_deploy.get_deploy_target', return_value={'base_dir': '/var/www'}
+            ), patch('lib.remote_deploy.push_artifact') as push, patch(
+                'lib.remote_deploy.push_nginx_config'
+            ) as push_nginx:
+                self.assertFalse(cicd_executor.perform_remote_deployment(
+                    str(self.root), 'app', 'example.com',
+                    'https://example.com/repo.git', 'a' * 40, str(log), {},
+                ))
+            push.assert_not_called()
+            push_nginx.assert_not_called()
+
+        descriptor = {
+            'domain': 'example.com',
+            'path': '/',
+            'serve_path': '/var/www/example_com',
+            'project_type': 'static',
+        }
+        for invalid_spa in ('true', 1, None):
+            with self.subTest(descriptor_spa=invalid_spa), self.assertRaises(ValueError):
+                validate_nginx_deployment({**descriptor, 'spa': invalid_spa})
+        for project_type in ('node', 'unknown', 'godot-web'):
+            with self.subTest(project_type=project_type), self.assertRaises(ValueError):
+                validate_nginx_deployment({
+                    **descriptor, 'project_type': project_type, 'spa': False,
+                })
 
 
 if __name__ == '__main__':

@@ -513,6 +513,7 @@ def perform_remote_deployment(
     log_event(logger, "Detected project type", deploy_target=deploy_target, project_type=project_type)
     
     from lib.project_manifest import load_manifest
+    spa: bool | None = None
     try:
         manifest = load_manifest(workspace)
         if manifest is None:
@@ -528,6 +529,8 @@ def perform_remote_deployment(
             if component.type == 'godot-web':
                 from lib.godot_deploy import validate_godot_export
                 validate_godot_export(serve_path, workspace)
+            elif component.type == 'static':
+                spa = component.spa
     except (OSError, ValueError) as exc:
         log_event(logger, 'Manifest deployment preflight failed', level=40, error=str(exc))
         with open(log_file, 'a') as log:
@@ -546,10 +549,13 @@ def perform_remote_deployment(
     deployment = None
     if domain:
         try:
-            deployment = validate_nginx_deployment({
+            deployment_request: dict[str, str | bool] = {
                 'path': path, 'serve_path': remote_path,
                 'project_type': project_type, 'domain': domain,
-            })
+            }
+            if spa is not None:
+                deployment_request['spa'] = spa
+            deployment = validate_nginx_deployment(deployment_request)
         except ValueError as exc:
             log_event(logger, "Invalid nginx deployment", level=40, error=str(exc))
             return False

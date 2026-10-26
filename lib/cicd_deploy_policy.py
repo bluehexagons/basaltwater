@@ -24,11 +24,12 @@ def validate_nginx_path(value: object) -> str:
     return value
 
 
-def validate_nginx_deployment(value: object) -> dict[str, str]:
-    """Accept only static-site parameters; never accept arbitrary directives."""
+def validate_nginx_deployment(value: object) -> dict[str, str | bool]:
+    """Accept known site parameters and a static-only SPA option."""
     fields = {'domain', 'path', 'serve_path', 'project_type'}
-    if not isinstance(value, dict) or set(value) != fields:
-        raise ValueError("nginx deployment requires only domain, path, serve_path, and project_type")
+    allowed_fields = fields | {'spa'}
+    if not isinstance(value, dict) or not fields <= set(value) or not set(value) <= allowed_fields:
+        raise ValueError("nginx deployment requires domain, path, serve_path, and project_type, with optional spa")
     domain = value['domain']
     if not isinstance(domain, str):
         raise ValueError("deployment domain must be a hostname")
@@ -40,4 +41,16 @@ def validate_nginx_deployment(value: object) -> dict[str, str]:
     project_type = value['project_type']
     if not isinstance(project_type, str) or project_type not in {'static', 'node', 'unknown', 'godot-web'}:
         raise ValueError("unsupported remote deployment project type")
-    return {'domain': domain, 'path': path, 'serve_path': serve_path, 'project_type': project_type}
+    deployment: dict[str, str | bool] = {
+        'domain': domain,
+        'path': path,
+        'serve_path': serve_path,
+        'project_type': project_type,
+    }
+    if 'spa' in value:
+        if project_type != 'static':
+            raise ValueError("spa is only supported for static deployments")
+        if type(value['spa']) is not bool:
+            raise ValueError("spa must be a boolean")
+        deployment['spa'] = value['spa']
+    return deployment
