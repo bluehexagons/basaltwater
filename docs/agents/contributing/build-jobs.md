@@ -62,6 +62,14 @@ identical request replay the same record, including after a lost reply or a
 terminal result. Another owner or different input using that ID is rejected;
 it never starts a second build.
 
+After explicit source/log pruning, input admission instead uses
+`replay_terminal(request, owner=..., expected_job_sha256=...)`. This requires an
+existing certain-terminal job with exact owner, full request digest and private
+job-record digest under the short state lock. It returns the existing public
+receipt without creating work, expiring queued records or changing job results.
+Missing, changed, active or uncertain records refuse before replay stream reads.
+See [terminal retention](build-retention.md) for bounded tombstones and recovery.
+
 `status(request_id, *, owner)` and `cancel(request_id, *, owner)` are
 owner-scoped. Cancelling a queued job durably makes it terminal. Cancelling a
 running job sets `cancel_requested`; the trusted worker decides how to stop and

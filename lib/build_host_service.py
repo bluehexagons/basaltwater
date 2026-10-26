@@ -9,6 +9,7 @@ and writes with its own deadline.
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
 import hashlib
 import os
 import re
@@ -21,6 +22,7 @@ from lib.build_host_policy import (
     capabilities_for_principal,
 )
 from lib.build_jobs import BuildJobStore
+from lib.build_payloads import payload_lease
 from lib.build_protocol import (
     MAX_ARTIFACT_BYTES,
     MAX_DESCRIPTOR_BYTES,
@@ -99,8 +101,8 @@ def _private_root(path: str) -> int:
 
     trusted_owners = {0, os.geteuid()}
     descriptor = os.open("/", _DIRECTORY)
-    parent_info = os.fstat(descriptor)
     try:
+        parent_info = os.fstat(descriptor)
         if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid not in trusted_owners:
             raise ValueError("Build storage ancestry is not trusted")
         for part in path.split("/")[1:]:
@@ -117,7 +119,7 @@ def _private_root(path: str) -> int:
                     )
                     if not sticky_protection:
                         raise ValueError("Build storage ancestry is writable by other users")
-            except Exception:
+            except BaseException:
                 os.close(child)
                 raise
             os.close(descriptor)
@@ -128,7 +130,7 @@ def _private_root(path: str) -> int:
         if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError("Build storage root must be private and owned by this process")
         return descriptor
-    except Exception:
+    except BaseException:
         os.close(descriptor)
         raise
 
@@ -160,7 +162,7 @@ def _open_private_file(root_fd: int, name: str, *, maximum_size: int,
         if not same_inode or (not stable and (not allow_growth or opened.st_size < named.st_size)):
             raise ValueError("Build storage file changed while being opened")
         return descriptor, opened
-    except Exception:
+    except BaseException:
         os.close(descriptor)
         raise
 
@@ -277,39 +279,37 @@ class BuildHostService:
         Submit framing, exact source byte count, and EOF are owned by the
         injected ``admit_source`` callback. Callers must enforce I/O deadlines.
         """
-        payload: _ArtifactPayload | None = None
-        try:
-            action, fields = self._parse_header(header)
-            if action != "submit":
-                _require_eof(input_stream)
-            result, raw_payload, payload = self._dispatch(
-                action, fields, principal=principal, input_stream=input_stream,
-            )
-            if payload is not None:
-                payload.verify_identity()
-                payload_bytes = payload.size
-            else:
-                payload_bytes = len(raw_payload) if raw_payload is not None else 0
-            response = _fixed_response(
-                result=result, payload_bytes=payload_bytes,
-            )
-        except (ValueError, RuntimeError, OSError) as error:
-            if payload is not None:
-                payload.close()
-            _write_all(output_stream, _fixed_response(error=_error_code(error)))
-            output_stream.flush()
-            return
-
-        try:
+        with ExitStack() as cleanup:
+            try:
+                action, fields = self._parse_header(header)
+                if action != "submit":
+                    _require_eof(input_stream)
+                if action in {"log", "artifact"}:
+                    status = self.jobs.status(fields["request_id"], owner=principal)
+                    self._authorize_project(principal, status)
+                    cleanup.enter_context(payload_lease(self.jobs, fields["request_id"], exclusive=False))
+                    # _dispatch snapshots and reauthorizes under protection:
+                    # a stale queued observation must not hide a pruned log.
+                result, raw_payload, payload = self._dispatch(
+                    action, fields, principal=principal, input_stream=input_stream,
+                )
+                if payload is not None:
+                    cleanup.callback(payload.close)
+                    payload.verify_identity()
+                    payload_bytes = payload.size
+                else:
+                    payload_bytes = len(raw_payload) if raw_payload is not None else 0
+                response = _fixed_response(result=result, payload_bytes=payload_bytes)
+            except (ValueError, RuntimeError, OSError) as error:
+                _write_all(output_stream, _fixed_response(error=_error_code(error)))
+                output_stream.flush()
+                return
             _write_all(output_stream, response)
             if payload is not None:
                 payload.stream(output_stream)
             elif raw_payload is not None:
                 _write_all(output_stream, raw_payload)
             output_stream.flush()
-        finally:
-            if payload is not None:
-                payload.close()
 
     @staticmethod
     def _parse_header(header: bytes) -> tuple[str, dict[str, Any]]:

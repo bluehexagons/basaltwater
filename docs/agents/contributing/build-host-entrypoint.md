@@ -56,3 +56,10 @@ Persistent jobs sharing an identity must be mutually trusted.
 Explicit root-local [terminal settlement](build-retention.md) can lower unused
 reservation charges after verifying certain terminal jobs and retained payloads.
 It preserves payloads and replay IDs and is unavailable through SSH.
+After settlement, `--prune-terminal ID --expected-revision DIGEST` explicitly
+deletes source and log payloads by default. Repeat `--prune-kind source` or
+`--prune-kind log` to choose kinds explicitly. Inspect reports availability and
+pending/completed pruning; interrupted pruning requires its original revision
+and kind set. This is also root-local only, rejected before imports/configuration
+when any SSH environment marker is present. Bundles, job results and replay
+identities remain retained; no automatic pruning policy or SSH action is added.
