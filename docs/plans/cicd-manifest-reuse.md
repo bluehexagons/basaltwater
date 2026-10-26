@@ -262,8 +262,9 @@ retained reconciliation and compiler absence have selected native coverage.
 1. **Common release contract and on-demand Debian builds:** the bounded static/Go
    slice supplies build/activation separation, saved builder selection, typed SSH
    operations, retained bundles and explicit terminal quota settlement. Qualify
-   settlement natively and expand
-   interruption/repeat qualification while preserving default build-on-target
+   additional interruption and saved-flow boundaries; selected native checks
+   cover repeat activation with clean protocol output and terminal settlement
+   preserving payloads and replay. Preserve default build-on-target
    setup/redeploy behavior and saved settings.
 2. **Multi-component deployment and webhook adapter:** use the same activation
    path; prove a static SPA, Go service and stateful frontend/API application on

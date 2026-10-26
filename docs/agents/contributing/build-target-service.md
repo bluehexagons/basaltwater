@@ -55,9 +55,10 @@ The entrypoint must supervise body reads with its deadline.
 Every response is one JSON line no larger than 64 KiB. This service never
 returns a binary response payload. Dispatch runs in a single-connection process;
 Python console output from existing deployment helpers is redirected to stderr.
-Inherited native child stdout also needs descriptor isolation in the transport;
-Python redirection alone does not protect the wire. Repeat typed service
-activation remains unqualified until that boundary is verified. Treat stderr as private operational
+The SSH entrypoint also isolates native child stdout with a private protocol
+descriptor; Python redirection alone does not protect the wire. Selected native
+repeat static/Go activation passes through that entrypoint. Other transports
+must supply their own descriptor isolation. Treat stderr as private operational
 diagnostics, not as a response or a public log. Errors contain only `rejected` or
 `unavailable`; an OS `PermissionError` with an errno is unavailable, while an
 authorization `PermissionError` without an errno is rejected. Unexpected
