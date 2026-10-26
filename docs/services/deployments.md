@@ -133,7 +133,7 @@ numbers, and hyphens and must be unique within the file.
 It must not be absolute, escape the repository, or contain characters that can
 change an Nginx directive. Component URL paths have the same Nginx-safe syntax.
 Set the optional `spa` field to the boolean `true` when client-side routes need
-to load directly. It defaults to `false`; root sites then fall back to
+to load directly. It defaults to `false`. When enabled, root sites fall back to
 `/index.html`, and a static component mounted at `/dashboard` falls back to
 `/dashboard/index.html`. This option is accepted only on `type: "static"`;
 ordinary static sites keep returning 404 for missing paths, and Godot exports
@@ -157,7 +157,7 @@ may still need a browser reload and Cloudflare cache purge at cutover.
 
 Declare `type: "godot-web"` explicitly; legacy static detection does not add
 the headers required by a threaded Godot export. This is an additive version-1
-manifest component with the same fields as `static`:
+manifest component with the static fields except `spa`:
 
 ```json
 {
