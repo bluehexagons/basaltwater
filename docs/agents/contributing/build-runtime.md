@@ -1,9 +1,12 @@
 # Prebuilt runtime validation
 
-`lib.build_runtime.validate_prebuilt_runtime()` is an internal prerequisite for
-the first shared-builder slice. It is not wired to a command, deployment path,
-or general runtime installer yet. A future caller must invoke it on a private,
-verified extracted release tree before activation.
+`DeploymentOrchestrator.deploy_prebuilt()` calls
+`lib.build_runtime.validate_prebuilt_runtime()` after verifying and extracting
+the artifact into its private staging directory, before entering the shared
+activation transaction. A refusal therefore occurs before the deployment lock,
+durable activation marker, service changes, or release replacement. This guard
+is part of the prebuilt deployment boundary; it is not a general runtime
+installer or a replacement for caller-owned admission and authorization.
 
 The helper currently accepts only the `linux` / `x86_64` / `debian-13`
 platform. Static components have no executable runtime requirement. Service
@@ -13,10 +16,12 @@ components must identify a declared, executable regular file through
 manifest `artifacts`; the executable must be covered by the selected exports.
 The executable path must stay literal through service-unit generation: no
 systemd `%` specifiers, `$` expansion, quotes, backslashes, or whitespace in
-the checked token or resolved release path. This matches the generator, which
-renders manifest placeholders and writes `ExecStart` directly. Ordinary
-arguments such as `-port {{port}}` remain valid. The helper does not rewrite
-`exec`, infer additional files from it, or run artifact commands.
+the checked token or resolved release path. The deployment boundary checks both
+the private extracted path and the final release path used by generated service
+commands. This matches the generator, which renders manifest placeholders and
+writes `ExecStart` directly. Ordinary arguments such as `-port {{port}}` remain
+valid. The helper does not rewrite `exec`, infer additional files from it, or
+run artifact commands.
 
 Service executables must be ELF64 little-endian x86-64 `ET_EXEC` or `ET_DYN`
 files with `EI_OSABI` 0 (System V) or 3 (Linux) and `EI_ABIVERSION` 0. They
@@ -31,6 +36,8 @@ and runtime-package installation are deferred; Node/Python runtime packaging
 has not been qualified. ELF validation is deliberately conservative and may
 reject valid but unusual ELF layouts; it does not identify Go provenance or
 claim compatibility with every static ELF variant. A caller still must
-authenticate the request, apply target admission and authorization, verify the
-artifact descriptor and payload, and provide the private extracted tree. This
-helper establishes only the narrow runtime compatibility check.
+authenticate the request, apply target admission and authorization, and verify
+the artifact descriptor and payload. The prebuilt deployment method supplies
+the verified private extracted tree to this helper. The helper establishes only
+the narrow runtime compatibility check. Standard `deploy_manifest()` continues
+to build on the target and does not use this prebuilt runtime guard.

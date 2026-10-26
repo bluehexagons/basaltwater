@@ -34,6 +34,7 @@ from lib.deploy_utils import (
 from lib.systemd_service import cleanup_service, create_managed_service
 from lib.build_artifacts import unpack_artifact
 from lib.build_protocol import parse_build_request, request_digest
+from lib.build_runtime import validate_prebuilt_runtime
 from lib.project_manifest import (
     Component,
     Manifest,
@@ -951,6 +952,12 @@ class DeploymentOrchestrator:
                 artifact_path, job, extracted_source,
                 expected_sha256=artifact_sha256,
             )
+            validate_prebuilt_runtime(
+                manifest, extracted_source, platform=job["platform"],
+            )
+            self._validate_prebuilt_runtime_destination(
+                self.get_deployment_path(domain, path, git_url),
+            )
             return self._deploy_manifest_common(
                 manifest, extracted_source, domain, path, git_url,
                 job["source"]["revision"], keep_source=True,
@@ -960,6 +967,18 @@ class DeploymentOrchestrator:
                     "artifact_sha256": artifact_sha256,
                 },
                 build_on_target=False,
+            )
+
+    @staticmethod
+    def _validate_prebuilt_runtime_destination(dest_path: str) -> None:
+        """Ensure the final release prefix stays literal in generated ExecStart."""
+        literal_paths = (dest_path, os.path.normpath(dest_path))
+        if any(
+            any(character in "%$'\"\\" or character.isspace() for character in value)
+            for value in literal_paths
+        ):
+            raise ValueError(
+                "Prebuilt runtime release path must remain literal in service commands"
             )
 
     @staticmethod
