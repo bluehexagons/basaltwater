@@ -189,10 +189,26 @@ class BuildSetupTests(unittest.TestCase):
         with patch.object(build_setup.os, "fsync", side_effect=fsync), \
              self.assertRaisesRegex(OSError, "publication uncertain"):
             build_setup.run_build_setup(self.config, apply_setup=self.apply)
-        self.assertEqual(synced, [str(self.root / "build-setups"), str(self.root)])
+        self.assertEqual(synced, [str(self.root)])
         self.source.assert_not_called()
         self.apply.assert_not_called()
         self.deliver.assert_not_called()
+
+    def test_retry_syncs_existing_directory_after_prior_parent_sync_failure(self):
+        path = self.root / "retry"
+        synced = []
+
+        def fsync(descriptor):
+            synced.append(os.readlink(f"/proc/self/fd/{descriptor}"))
+            if len(synced) == 2:
+                raise OSError("parent sync failed")
+
+        with patch.object(build_setup.os, "fsync", side_effect=fsync):
+            with self.assertRaises(OSError):
+                build_setup._private_directory(str(path))
+            self.assertTrue(path.is_dir())
+            build_setup._private_directory(str(path))
+        self.assertEqual(synced, [str(path), str(self.root)] * 2)
 
     def test_unsupported_target_roles_and_explicit_toolchains_refuse_before_network(self):
         for changes in ({"enable_ssl": True}, {"is_build_server": True}, {"install_go": True},

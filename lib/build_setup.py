@@ -54,21 +54,19 @@ def _prepare_sources(specs: list[list[str]], destination: str) -> list[Any]:
 
 def _private_directory(path: str) -> None:
     """Create one controller-owned directory and validate its entire ancestry."""
-    created = False
     try:
         os.mkdir(path, 0o700)
-        created = True
     except FileExistsError:
         pass
     descriptor = _open_private_directory(path)
     try:
-        if created:
-            os.fsync(descriptor)
-            parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            try:
-                os.fsync(parent)
-            finally:
-                os.close(parent)
+        # Also repair a prior failed publication sync before reusing a path.
+        os.fsync(descriptor)
+        parent = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
     finally:
         os.close(descriptor)
 
