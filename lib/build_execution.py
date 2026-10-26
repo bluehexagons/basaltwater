@@ -29,6 +29,11 @@ from lib.validation import validate_filesystem_path
 _ID = re.compile(r"[0-9a-f]{32}")
 _FIELDS = {"LoadState", "ActiveState", "SubState", "Result", "ExecMainCode", "ExecMainStatus"}
 _ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/"}
+WORK_ROOT = "/run/basaltwater-build-work"
+WORKSPACE = WORK_ROOT + "/source/checkout"
+BUILD_HOME = WORK_ROOT + "/home"
+INPUT_PATH = WORK_ROOT + "/request.json"
+HISTORY_PATH = WORK_ROOT + "/source/history.bundle"
 
 
 @dataclass(frozen=True)
@@ -52,14 +57,13 @@ def _path(value: str) -> str:
     return value
 
 
-def execution_argv(request: object, *, uid: int, gid: int, workspace: str,
-                   home: str, input_path: str, log_path: str, history_path: str) -> list[str]:
+def execution_argv(request: object, *, uid: int, gid: int, scratch_path: str,
+                   log_path: str) -> list[str]:
     """Use fixed executables; literal commands travel only in a checked file."""
     job = parse_build_request(request)
     if any(type(value) is not int or value <= 0 for value in (uid, gid)):
         raise ValueError("Build identity must have an unprivileged UID and GID")
-    workspace, home, input_path, log_path, history_path = map(
-        _path, (workspace, home, input_path, log_path, history_path))
+    scratch_path, log_path = map(_path, (scratch_path, log_path))
     helper = _path(os.path.abspath(__file__))
     limits = job["limits"]
     properties = [
@@ -74,7 +78,8 @@ def execution_argv(request: object, *, uid: int, gid: int, workspace: str,
         "PrivateDevices=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
         "ProtectKernelLogs=yes", "ProtectControlGroups=yes", "RestrictSUIDSGID=yes",
         "LockPersonality=yes", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
-        f"ReadWritePaths={workspace} {home}", "StandardInput=null",
+        f"BindPaths={scratch_path}:{WORK_ROOT}",
+        f"ReadWritePaths={WORKSPACE} {BUILD_HOME}", "StandardInput=null",
         f"StandardOutput=append:{log_path}", "StandardError=inherit",
     ]
     # Omit explicit User=root: systemd's explicit-user seccomp setup can drop
@@ -82,12 +87,12 @@ def execution_argv(request: object, *, uid: int, gid: int, workspace: str,
     return [
         "/usr/bin/systemd-run", "--no-ask-password", "--quiet", "--expand-environment=no",
         "--unit=" + unit_name(job["request_id"]),
-        *("--property=" + item for item in properties), "--working-directory=" + workspace,
+        *("--property=" + item for item in properties), "--working-directory=" + WORKSPACE,
         "--", "/usr/bin/setpriv", f"--reuid={uid}", f"--regid={gid}", "--clear-groups",
         "--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all", "--no-new-privs",
         "--", "/usr/bin/env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin",
-        "LANG=C.UTF-8", "HOME=" + home, "/usr/bin/python3", "-I", helper,
-        "--execute", input_path, request_digest(job), workspace, home, history_path,
+        "LANG=C.UTF-8", "HOME=" + BUILD_HOME, "/usr/bin/python3", "-I", helper,
+        "--execute", INPUT_PATH, request_digest(job), WORKSPACE, BUILD_HOME, HISTORY_PATH,
     ]
 
 
@@ -146,8 +151,7 @@ def _stop(unit: str) -> None:
         raise RuntimeError("Build service stop is unconfirmed; retain worker ownership")
 
 
-def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, home: str,
-                      input_path: str, log_path: str, history_path: str,
+def run_systemd_build(request: object, *, uid: int, gid: int, scratch_path: str, log_path: str,
                       cancelled: Callable[[], bool],
                       clock: Callable[[], float] = time.monotonic,
                       pause: Callable[[float], None] = time.sleep) -> BuildExecutionResult:
@@ -158,8 +162,7 @@ def run_systemd_build(request: object, *, uid: int, gid: int, workspace: str, ho
     with the job still running; callers must not finish it or start another job.
     """
     job = parse_build_request(request)
-    argv = execution_argv(job, uid=uid, gid=gid, workspace=workspace, home=home,
-                          input_path=input_path, log_path=log_path, history_path=history_path)
+    argv = execution_argv(job, uid=uid, gid=gid, scratch_path=scratch_path, log_path=log_path)
     unit = unit_name(job["request_id"])
     if _observation(unit)["LoadState"] != "not-found" or not _empty_cgroup(unit):
         raise RuntimeError("Build service already exists; do not replay this attempt")

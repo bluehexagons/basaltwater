@@ -20,9 +20,8 @@ def observation(*, load="loaded", active="active", sub="running", code="0", stat
 
 class BuildExecutionTests(unittest.TestCase):
     def arguments(self):
-        return {"uid": 1234, "gid": 1234, "workspace": "/var/lib/build-work/checkout",
-                "home": "/var/lib/build-work/home", "input_path": "/var/lib/build-work/request.json",
-                "log_path": "/var/lib/build-private/log", "history_path": "/var/lib/build-work/history.bundle",
+        return {"uid": 1234, "gid": 1234, "scratch_path": "/var/lib/build-scratch/owned/fs",
+                "log_path": "/var/lib/build-private/log",
                 "cancelled": lambda: False,
                 "pause": Mock(), "clock": lambda: 1000.0}
 
@@ -43,15 +42,17 @@ class BuildExecutionTests(unittest.TestCase):
                          "--property=MemoryMax=2147483648", "--property=CPUQuota=100%",
                          "--property=MemorySwapMax=0", "--property=ProtectSystem=strict",
                          "--property=TemporaryFileSystem=/tmp:ro /var/tmp:ro",
+                         "--property=BindPaths=/var/lib/build-scratch/owned/fs:/run/basaltwater-build-work",
+                         "--property=ReadWritePaths=/run/basaltwater-build-work/source/checkout /run/basaltwater-build-work/home",
                          "--property=TasksMax=256", "--clear-groups", "--bounding-set=-all",
                          "--reuid=1234", "--regid=1234", "/usr/bin/env", "-i"):
             self.assertIn(required, argv)
-        self.assertEqual(argv[-6:], ["--execute", args["input_path"], request_digest(job),
-                                    args["workspace"], args["home"], args["history_path"]])
+        self.assertEqual(argv[-6:], ["--execute", execution.INPUT_PATH, request_digest(job),
+                                    execution.WORKSPACE, execution.BUILD_HOME, execution.HISTORY_PATH])
         self.assertNotIn("kept-in-private-input", " ".join(argv))
         self.assertNotIn("PRIVATE_BUILD_INPUT", " ".join(argv))
-        for changed in ({"uid": 0}, {"gid": True}, {"workspace": "/var/lib/../etc"},
-                        {"log_path": "/var/log/%n"}, {"home": "/var/lib/with space"}):
+        for changed in ({"uid": 0}, {"gid": True}, {"scratch_path": "/var/lib/../etc"},
+                        {"log_path": "/var/log/%n"}, {"scratch_path": "/var/lib/with space"}):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 execution.execution_argv(job, **{**args, **changed})
 

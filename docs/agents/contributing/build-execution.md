@@ -19,6 +19,13 @@ imports local history and checks the restored source before project commands.
 so ordinary temporary files cannot bypass the scratch capacity limit.
 The managed `HOME` and `TMPDIR` values take precedence over component environment
 entries; project-specific build inputs cannot redirect these managed paths.
+The service bind-mounts only the scratch filesystem at the fixed private unit
+path `/run/basaltwater-build-work`. Its layout is `source/checkout`,
+`source/history.bundle`, `home/tmp`, and `request.json`. This gives the build
+identity access without granting traversal through broker-owned state parents.
+The filesystem root and `source` parent remain root-owned and traversable;
+only the checkout and home are handed to the build identity. The request and
+history stay root-owned and readable, outside those writable directories.
 
 The transient system service applies memory, swap, CPU, process-count and work
 time limits. A fixed `setpriv` command drops UID/GID, supplementary groups and
