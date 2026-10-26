@@ -27,6 +27,10 @@ def _make_setup_args() -> MagicMock:
     args.install_ssh = None
     args.ssh_password_auth = False
     args.ssh_password_window = None
+    args.build_host_enrollment = None
+    args.disable_build_host = False
+    args.build_host_policy = None
+    args.build_host_enrollment_json = None
     return args
 
 

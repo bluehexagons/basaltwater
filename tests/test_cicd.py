@@ -524,7 +524,9 @@ class TestCicdStateAccess(unittest.TestCase):
         for build in (False, True):
             with self.subTest(build=build):
                 config = MagicMock(enable_cicd=True, is_build_server=build,
-                                   install_node=True, install_python=True)
+                                   install_node=True, install_python=True,
+                                   disable_build_host=False,
+                                   build_host_enrollment=None)
                 plan = []
                 extend_cicd_steps(config, plan)
                 extend_build_server_steps(config, plan)
