@@ -30,6 +30,7 @@ class SetupGit:
         self.repositories = {}
         self.refs = {"HEAD": "a" * 40, "refs/heads/release/v1": "b" * 40,
                      "refs/tags/v1": "b" * 40, "refs/heads/HEAD": "c" * 40}
+        self.peeled = {}
         self.manifest = MANIFEST
         self.filter_value = b"unspecified"
 
@@ -43,6 +44,11 @@ class SetupGit:
             return b""
         if "config" in command and "--local" in command:
             return b""
+        if "show-ref" in command:
+            selected = command[-1]
+            if selected not in self.refs:
+                raise ValueError("Requested ref does not exist")
+            return (self.refs[selected] + "\n").encode("ascii")
         if "checkout" in command:
             revision = command[command.index("--force") + 1]
             entries = [("public/index.html", "100644", "blob", b"hello\n")]
@@ -62,9 +68,16 @@ class SetupGit:
                 and not any(arg.startswith("--git-dir=") for arg in command)):
             selected = command[-1].removesuffix("^{commit}")
             if self.repositories.get(str(repository)) is None:
-                if selected not in self.refs:
+                object_id = self.refs.get(selected)
+                if object_id is None:
+                    # Model rev-parse's namespace fallback even for refs/... inputs.
+                    object_id = self.refs.get("refs/tags/" + selected,
+                                              self.refs.get("refs/heads/" + selected))
+                if object_id is None and selected in self.refs.values():
+                    object_id = selected
+                if object_id is None:
                     raise ValueError("Requested ref does not exist")
-                return (self.refs[selected] + "\n").encode("ascii")
+                return (self.peeled.get(object_id, object_id) + "\n").encode("ascii")
         return self.repositories[str(repository)](command, **kwargs)
 
 
@@ -131,6 +144,41 @@ class BuildSetupSourcesTests(unittest.TestCase):
         result = self.prepare([["a.example", URL], ["b.example", "https://other.example/project.git"]])
         self.assertEqual(sum("clone" in command for command, _ in self.git.calls), 2)
         self.assertNotEqual(result[0].source_path, result[1].source_path)
+
+    def test_missing_explicit_ref_refuses_namespace_fallback_before_checkout_or_snapshot(self):
+        for kind, exact, shadow in (
+            ("branch", "refs/heads/release", "refs/tags/refs/heads/release"),
+            ("tag", "refs/tags/release", "refs/heads/refs/tags/release"),
+        ):
+            with self.subTest(kind=kind):
+                self.destination = self.root / kind
+                self.destination.mkdir(mode=0o700)
+                self.git = SetupGit()
+                self.git.refs[shadow] = "e" * 40
+                with patch.object(sources, "create_source_snapshot",
+                                  wraps=sources.create_source_snapshot) as snapshot:
+                    with self.assertRaises(ValueError):
+                        self.prepare([["example.com", URL + f"#{kind}=release"]])
+                    snapshot.assert_not_called()
+                self.assertFalse(any("checkout" in command for command, _ in self.git.calls))
+                self.assertFalse(any("rev-parse" in command for command, _ in self.git.calls))
+                lookup = self.git.calls[-1][0]
+                self.assertEqual(lookup[lookup.index("show-ref"):],
+                                 ["show-ref", "--verify", "--hash", exact])
+
+    def test_annotated_tag_is_peeled_from_its_exact_object_id(self):
+        tag_object = "d" * 40
+        commit = "b" * 40
+        self.git.refs["refs/tags/annotated"] = tag_object
+        self.git.peeled[tag_object] = commit
+        result = self.prepare([["example.com", URL + "#tag=annotated"]])
+        self.assertEqual(result[0].source["revision"], commit)
+        lookups = [command[command.index("show-ref"):] for command, _ in self.git.calls
+                   if "show-ref" in command]
+        self.assertEqual(lookups, [["show-ref", "--verify", "--hash", "refs/tags/annotated"]])
+        peels = [command[-1] for command, _ in self.git.calls if "rev-parse" in command]
+        self.assertIn(tag_object + "^{commit}", peels)
+        self.assertNotIn("refs/tags/annotated^{commit}", peels)
 
     def test_all_commands_isolate_ambient_git_configuration_and_credentials(self):
         hostile = {"HOME": "/hostile", "SSH_AUTH_SOCK": "/agent.sock", "GIT_CONFIG_COUNT": "1",
