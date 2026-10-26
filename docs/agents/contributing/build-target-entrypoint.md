@@ -69,12 +69,10 @@ The process composes `DeploymentAdmissionStore` at
 root, `BuildTargetService`, and `TargetReleaseActivator` with the releases and
 verification roots. The admission, [dispatcher](build-target-service.md),
 [policy](build-target-policy.md), and [activation callback](build-target-activation.md)
-contracts are implemented. The artifact-store implementation is delivered as
-a separate change and is not present in this branch base. This entrypoint
-targets its final `stage()` and `open_verified_bundle()` APIs, which pin and
-verify artifacts without reentering the admission store. End-to-end dependency
-integration and the artifact module's native filesystem qualification remain
-pending.
+contracts are implemented together. The artifact store's `stage()` and
+`open_verified_bundle()` APIs pin and verify artifacts without reentering the
+admission store. Managed target enrollment and controller setup selection
+remain separate work; this entrypoint does not install its own authority.
 
 Only the binary protocol response stream is retained from stdout. Composition,
 deployment and Nginx text output is redirected to stderr so it cannot corrupt
