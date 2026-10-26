@@ -79,6 +79,10 @@ state before explicit operator reconciliation. A completed delivery followed by
 a failed profile still requires reconciliation. Controller capacity checks do
 not reserve blocks against concurrent consumers, quotas or inode exhaustion.
 
-Mocked controller checks and read-only dry runs do not qualify the live public
-setup flow. Native public-source and end-to-end deployment qualification remain
-separate requirements.
+Selected native qualification covers public HTTPS source preparation, a saved
+builder and fresh Debian target, static and Go artifact delivery, guarded final
+profile setup, verified HTTPS routes, retained target-only reconciliation and
+idle reboot without target compilers. Controlled enrollment also waits through
+an APT lock. This does not qualify all crash/restart boundaries, packaging
+variants or profiles; see the [coverage map](../../plans/testing-coverage.md).
+Mocked checks and read-only dry runs remain separate evidence.

@@ -1,10 +1,14 @@
 # Shared build hosts and artifact deployment
 
-Status: proposed design, revised 2026-10-26. Preserve standard build-on-target
+Status: bounded Debian on-demand slice implemented; remaining design revised
+2026-10-26. Preserve standard build-on-target
 setup and deployment. The unused webhook, build-server and runner interfaces,
 profiles and state may be replaced without migration or compatibility shims;
-retain their useful security and recovery contracts. This plan does not claim
-the proposed commands, panel controls or platform adapters are implemented.
+retain their useful security and recovery contracts. The
+[controller setup guide](../agents/contributing/build-setup.md) describes the
+available static/Go slice, and the [coverage map](testing-coverage.md) records
+selected native checks. Webhook reuse, shared runners, panel controls and native
+Windows adapters remain planned.
 
 ## Current boundary and intended composition
 
@@ -37,7 +41,7 @@ webhook jobs. Consolidate duplicated CI/component build declarations; GitHub
 workflows can call the same project-owned commands without being translated
 into a new workflow language. Keep scripts explicit and unprivileged.
 
-A proposed `setup ... --build-on BUILDER` selects a saved builder reference.
+`setup ... --build-on BUILDER` selects a saved builder reference.
 The controller pins source, validates project inputs and builder capabilities,
 reserves deployment intent on the target, submits the build, retrieves the
 verified artifact, then stages it on the target. The controller needs access
@@ -120,6 +124,11 @@ must come from supported runtime policy, not arbitrary privileged install hooks.
 Retain successful artifacts independently of temporary workspaces and caches.
 Bound retention by age/count/bytes, pin active/retained rollback releases and
 pending transfers, and refuse admission when protected evidence fills storage.
+The next bounded maintenance slice settles unused terminal-job reservations
+against verified retained bytes. Keep explicit inspection and revision checks,
+retain replay identities and successful bundles, and leave uncertain work fully
+charged. Payload pruning and automatic retention policies need separate durable
+deletion and transfer-protection contracts; admission must never delete evidence.
 Deleting a cache must affect performance only. Checksum/metadata changes,
 including build commands and non-secret environment inputs, affect reuse keys;
 a commit alone is insufficient. Track secret version references without values.
@@ -191,7 +200,9 @@ workers before workflow steps so they cannot start against changed tools or
 policy. Bound local queue length and wait time. After capacity acquisition,
 revalidate the current authorization policy immediately before execution.
 
-Existing target `env_file` bindings can support the first release. Integrate
+The initial typed target slice rejects `env_file` and runtime environment inputs.
+Later target-owned binding IDs can resolve administrator-approved environment
+files without allowing project-selected paths. Integrate
 [secret references](deploy-secrets.md) incrementally; full secret-store and
 optional-component work need not block artifact-only builds. Never transport
 runtime secret values through the builder or artifact. Build-time secrets are
@@ -230,26 +241,28 @@ rights. Record actor, action, IDs and result without secret values.
 
 ## First implementation boundary
 
-Begin with manifest-driven Debian Trixie x86-64 builds relayed by the controller,
-one supervised build slot and no automatic cache reuse. Qualify a static site
-and self-contained Go service on a separate target without build toolchains.
-Use the shared artifact and activation interfaces from the outset; leave Node/
+The implemented first slice uses manifest-driven Debian Trixie x86-64 builds
+relayed by the controller, one supervised build slot and no automatic cache
+reuse. Selected native checks cover a static site and self-contained Go service
+on a separate target without build toolchains. Shared artifact and activation
+interfaces serve both build modes; leave Node/
 Python services, additional platforms and package-only build targets for their
 own runtime/packaging cases. Standard local deployment, including inferred Go
 and ready-to-serve static projects, must retain its existing behavior.
 
-The first implementation should lock the versioned request/artifact schemas
-with contract tests before wiring SSH or target setup. Require payload identity,
-explicit exports, platform/runtime compatibility, durable admission and recovery
-tests, plus controller-to-target replay tests. Round-trip saved settings through
-setup, patch, redeploy and target-only refresh; prove artifact mode installs no
-build tools and never falls back to compiling on the destination.
+Contract and integration tests cover versioned request/artifact schemas, payload
+identity, explicit exports, platform/runtime compatibility, durable admission,
+selected recovery boundaries and controller-to-target replay. Continue expanding
+native crash/restart and saved setup/patch/redeploy qualification; target-only
+retained reconciliation and compiler absence have selected native coverage.
 
 ## Delivery order and acceptance
 
-1. **Common release contract and on-demand Debian builds:** split build from
-   activation, add builder selection, typed SSH operations and retained bundles.
-   Preserve default build-on-target setup/redeploy behavior and saved settings.
+1. **Common release contract and on-demand Debian builds:** the bounded static/Go
+   slice supplies build/activation separation, saved builder selection, typed SSH
+   operations and retained bundles. Finish terminal quota settlement and expand
+   interruption/repeat qualification while preserving default build-on-target
+   setup/redeploy behavior and saved settings.
 2. **Multi-component deployment and webhook adapter:** use the same activation
    path; prove a static SPA, Go service and stateful frontend/API application on
    targets without build tools. Test transfer failure, disk exhaustion, health

@@ -13,8 +13,10 @@ SSH dispatcher, project policy, bounded source admission and an independent
 worker. The public [controller setup flow](build-setup.md) connects explicit
 `--build-on` selection, managed enrollment, pinned sources, artifact delivery and
 guarded final profile application within its bounded static/Go scope. Ordinary
-deployments without a selected builder retain build-on-target behavior. Live
-public-flow qualification remains separate from these contracts and dry runs.
+deployments without a selected builder retain build-on-target behavior. The
+[coverage map](../../plans/testing-coverage.md) records selected native static/Go
+public-flow checks and remaining qualification gaps separately from these
+contracts and dry runs.
 The [shared build-host
 plan](../../plans/cicd-manifest-reuse.md) describes the remaining work.
 

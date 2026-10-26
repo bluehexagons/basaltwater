@@ -1,10 +1,11 @@
 # Typed target deployment dispatcher
 
 `lib.build_target_service.BuildTargetService` is one internal request
-dispatcher for target deployments using externally built artifacts. It is not
-connected to a listener, SSH, setup, a CLI, VM management, or an available
-server. A future authenticated entrypoint must provide the principal and
-supervise the connection deadline.
+dispatcher for target deployments using externally built artifacts. The protected
+[SSH entrypoint](build-target-entrypoint.md) supplies the authenticated principal,
+maintenance ownership and connection deadline. Managed enrollment and the
+[controller setup flow](build-setup.md) compose that transport; the dispatcher
+itself does not listen or provision authority.
 
 ## Construction and trust boundary
 
@@ -53,8 +54,10 @@ The entrypoint must supervise body reads with its deadline.
 
 Every response is one JSON line no larger than 64 KiB. This service never
 returns a binary response payload. Dispatch runs in a single-connection process;
-console output from existing deployment helpers is redirected to stderr so it
-cannot precede the JSON response on stdout. Treat stderr as private operational
+Python console output from existing deployment helpers is redirected to stderr.
+Inherited native child stdout also needs descriptor isolation in the transport;
+Python redirection alone does not protect the wire. Repeat typed service
+activation remains unqualified until that boundary is verified. Treat stderr as private operational
 diagnostics, not as a response or a public log. Errors contain only `rejected` or
 `unavailable`; an OS `PermissionError` with an errno is unavailable, while an
 authorization `PermissionError` without an errno is rejected. Unexpected
@@ -159,7 +162,7 @@ same identity; never create a fresh idempotency key or operation ID to retry
 uncertain work. A successful reservation is durable intent even if the
 connection closes before a response. An activation callback failure leaves
 admission uncertain for operator reconciliation. Whether activation effects
-continue after disconnect depends on the future entrypoint and callback.
+continue after disconnect depends on the supervising entrypoint and callback.
 
 This dispatcher adds no automatic build, fallback, background work, or
 listener. Existing local deployment and setup paths remain independent.

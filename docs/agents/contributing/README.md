@@ -46,7 +46,10 @@ mode and installed releases for local reconciliation without source fetches or
 build commands. Preserve guards, retained inputs and exact IDs on uncertain
 responses; do not add retries or replacement identities. See
 [controller setup](build-setup.md) for the bounded scope and recovery contract.
-Live public-flow qualification remains separate from mocked checks and dry runs.
+Selected native public-flow coverage includes a fresh Debian target with static
+and Go releases, guarded final setup, retained reconciliation and idle reboot
+without target compilers. See the [coverage map](../../plans/testing-coverage.md)
+for remaining boundaries; mocked checks and dry runs do not establish live coverage.
 
 ## Standard checks
 
