@@ -76,6 +76,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
 
     def deploy_prebuilt(self, manager, manifest, bundle, request, digest, domain, path, git_url, **kwargs):
         self.manifests.append(manifest)
+        self.assertEqual((manager.deploy_user, manager.deploy_group), ("root", "root"))
         validate_manifest_request(manifest, request)
         self.assertEqual(kwargs["target_platform"], DEBIAN_PLATFORM)
         self.assertEqual(kwargs["staging_root"], str(self.verify))

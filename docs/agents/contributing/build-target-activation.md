@@ -24,6 +24,10 @@ remain owned by `DeploymentOrchestrator.deploy_prebuilt()`. Root changes for an
 existing active application require operator reconciliation. Overlapping roots,
 generated identity collisions and route conflicts with other retained active
 applications are rejected before deployment.
+Artifact activation and reconciliation publish root-owned releases with read
+and traversal access for Nginx and generated service accounts. They do not
+require the legacy `web-deploy` account; service-writable state remains in the
+generated persistent directories outside the release.
 
 A private, bounded registry retains the current route descriptors and installed
 request/bindings for up to 256 applications within 4 MiB. These private inputs

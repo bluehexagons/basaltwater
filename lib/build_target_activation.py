@@ -375,7 +375,7 @@ class TargetReleaseActivator:
                 try:
                     old_groups = self._groups(state["applications"])
                     for app, record, manifest, parent, basename, arguments in prepared:
-                        manager = DeploymentOrchestrator(base_dir=parent)
+                        manager = DeploymentOrchestrator(base_dir=parent, deploy_user="root", deploy_group="root")
                         with self.open_artifact(record["operation_id"], record["generation"],
                                                 record["request"], **arguments) as bundle:
                             deployments = manager.deploy_prebuilt(
@@ -457,7 +457,7 @@ class TargetReleaseActivator:
                     "artifact_sha256": artifact_sha256, "application": binding["application"],
                 })
                 try:
-                    manager = DeploymentOrchestrator(base_dir=parent)
+                    manager = DeploymentOrchestrator(base_dir=parent, deploy_user="root", deploy_group="root")
                     # A literal local path spec preserves the administrator's
                     # root exactly; component routes already contain domains.
                     if manager.get_deployment_path(None, "/" + basename, "https://basaltwater.invalid/source.git") != root:
