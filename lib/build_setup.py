@@ -24,7 +24,7 @@ from lib.build_setup_plan import prepare_delivery_plan
 from lib.build_target_client import BuildTargetClient
 from lib.config import SetupConfig
 from lib.operation_state import OperationStateStore
-from lib.ssh_utils import build_ssh_command
+from lib.ssh_utils import build_ssh_command, strict_ssh_transport
 from lib.validation import validate_deploy_specs
 from lib.workspace import get_workspace_dir
 
@@ -83,6 +83,10 @@ def _validate_selection(config: SetupConfig) -> None:
         raise ValueError("Build-on setup requires a remote Debian VM or physical target")
     if config.system_type not in {"server_lite", "server_web"}:
         raise ValueError("First-slice build-on targets require server_lite or server_web")
+    if config.is_app_server:
+        raise ValueError("Build-on target setup cannot request legacy app-server directory permissions")
+    if config.activate_network:
+        raise ValueError("First-slice build-on target setup cannot activate network address changes")
     if (config.custom_steps or config.is_build_server or config.install_go or config.install_node
             or config.install_node_versions or config.install_godot):
         raise ValueError("Build-on target setup cannot request builder roles, custom steps or build toolchains")
@@ -100,13 +104,13 @@ def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
         "'/var/lib/basaltwater/build-target-ssh'),'enrollment_schema':"
         "json.load(open(m)).get('schema') if os.path.lexists(m) else None}))"
     )
-    command = build_ssh_command(
-        config.host, "root", endpoint.identity_file, port=endpoint.port,
-        remote_command=shlex.join(["python3", "-I", "-c", script]), batch_mode=True,
-        known_hosts_path=endpoint.known_hosts_file, allow_host_key_prompt=False,
-    )
-    command[1:1] = ["-F", "/dev/null", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
-                    "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
+    with strict_ssh_transport(
+        endpoint.host, identity_file=endpoint.identity_file,
+        known_hosts_path=endpoint.known_hosts_file, port=endpoint.port,
+    ):
+        command = build_ssh_command(
+            config.host, "root", remote_command=shlex.join(["python3", "-I", "-c", script]),
+        )
     result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=60, check=True)
     if len(result.stdout) > 4096:
         raise ValueError("Target platform response is oversized")
@@ -220,7 +224,12 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
             }
             operation = store.begin("build_setup", config.host, "bootstrapping", context=context)
             try:
-                if apply_setup(_bootstrap_config(config)) != 0:
+                with strict_ssh_transport(
+                    endpoint.host, identity_file=endpoint.identity_file,
+                    known_hosts_path=endpoint.known_hosts_file, port=endpoint.port,
+                ):
+                    bootstrap_result = apply_setup(_bootstrap_config(config))
+                if bootstrap_result != 0:
                     raise RuntimeError("Target enrollment bootstrap did not finish")
                 store.transition(operation.operation_id, "delivering")
                 delivery_root = os.path.join(attempt, "delivery")
@@ -231,7 +240,12 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 )} for item in delivery.applications]
                 context.update(delivery_receipt=delivery.receipt_path, expected_releases=expected)
                 store.transition(operation.operation_id, "profile_applying", context=context)
-                if apply_setup(_profile_config(config), expected_releases=expected) != 0:
+                with strict_ssh_transport(
+                    endpoint.host, identity_file=endpoint.identity_file,
+                    known_hosts_path=endpoint.known_hosts_file, port=endpoint.port,
+                ):
+                    profile_result = apply_setup(_profile_config(config), expected_releases=expected)
+                if profile_result != 0:
                     raise RuntimeError("Final artifact profile setup did not finish")
                 store.complete(operation.operation_id)
                 print(f"  Remote-build setup complete; retained evidence: {attempt}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from lib.ssh_utils import (
     shell_join,
     ssh_batch_mode,
     ssh_process_timeout,
+    strict_ssh_transport,
 )
 
 
@@ -155,6 +157,58 @@ class TestSshUtils(unittest.TestCase):
         self.assertIn("ControlMaster=auto", command)
         self.assertIn("ControlPersist=60s", command)
         self.assertIn("ControlPath=/tmp/basaltwater.sock", command)
+
+    @patch("lib.ssh_utils.sys.stdin.isatty", return_value=True)
+    def test_strict_transport_pins_sudo_and_ignores_preexisting_control_path(self, _isatty):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("lib.ssh_utils.tempfile.gettempdir", return_value=directory), \
+             patch("lib.ssh_utils.get_known_hosts_path", return_value="/ordinary/known_hosts"), \
+             patch("lib.ssh_utils.subprocess.run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            old_path = get_ssh_control_path("server", "agent", "/ordinary/key")
+            with strict_ssh_transport("server", identity_file="/selected/key",
+                                      known_hosts_path="/selected/pins", port=2222):
+                self.assertEqual(get_ssh_control_path("server", "agent"), "none")
+                self.assertTrue(ensure_remote_sudo("server", "agent", "/ordinary/key", control_path=old_path))
+                command = build_ssh_command(
+                    "server", "root", "/ordinary/key", port=22, batch_mode=False,
+                    control_path=old_path, known_hosts_path="/ordinary/pins", allow_host_key_prompt=True,
+                )
+            sudo_command = run.call_args.args[0]
+            for argv in (command, sudo_command):
+                self.assertEqual(argv[:3], ["/usr/bin/ssh", "-F", "/dev/null"])
+                self.assertEqual(argv[argv.index("-i") + 1], "/selected/key")
+                self.assertEqual(argv[argv.index("-p") + 1], "2222")
+                self.assertNotIn(old_path, " ".join(argv))
+                for option in ("IdentityAgent=none", "IdentitiesOnly=yes", "ForwardAgent=no",
+                               "ClearAllForwardings=yes", "ControlMaster=no", "ControlPersist=no",
+                               "ControlPath=none", "BatchMode=yes", "StrictHostKeyChecking=yes",
+                               "UserKnownHostsFile=/selected/pins", "GlobalKnownHostsFile=/dev/null",
+                               "CertificateFile=none", "PasswordAuthentication=no"):
+                    self.assertIn(option, argv)
+                self.assertEqual([part for part in argv if part.startswith("ControlPath=")], ["ControlPath=none"])
+            self.assertEqual(run.call_args.kwargs["timeout"], 60)
+            self.assertEqual(sudo_command[-1], "sudo -n true")
+
+    def test_strict_transport_restores_after_exception_and_does_not_leak_to_other_threads(self):
+        def ordinary_command():
+            return build_ssh_command("ordinary", "root", "/ordinary/key", batch_mode=False,
+                                     control_path="/ordinary/socket", known_hosts_path="/ordinary/pins")
+
+        before = ordinary_command()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with self.assertRaisesRegex(RuntimeError, "setup failed"):
+                with strict_ssh_transport("server", identity_file="/selected/key", known_hosts_path="/selected/pins"):
+                    self.assertEqual(executor.submit(ordinary_command).result(), before)
+                    with self.assertRaisesRegex(ValueError, "differs"):
+                        ordinary_command()
+                    with strict_ssh_transport("nested", identity_file="/nested/key", known_hosts_path="/nested/pins"):
+                        self.assertIn("root@nested", build_ssh_command("nested", "root"))
+                    self.assertIn("root@server", build_ssh_command("server", "root"))
+                    raise RuntimeError("setup failed")
+        self.assertEqual(ordinary_command(), before)
+        self.assertIn("ControlPath=/ordinary/socket", before)
+        self.assertIn("BatchMode=no", before)
+        self.assertNotIn("-F", before)
 
     def test_build_ssh_command_accepts_explicit_known_hosts_path(self):
         command = build_ssh_command(

@@ -15,11 +15,23 @@ target key must authorize both root setup and typed target enrollment; builder
 keys stay on the controller. Read-only
 platform checks require Debian 13 x86-64 and refuse unfinished setup or legacy
 enrollment before bootstrap. Selected-builder failures never fall back to a
-target build. Custom steps, build-host roles, explicit build toolchains and
-Cloudflare/SSL profile setup are outside this first slice.
+target build. Custom steps, build-host roles, legacy app-server roles, explicit
+build toolchains, network activation and Cloudflare/SSL profile setup are outside
+this first slice. App-server steps weaken the trusted deployment parent permissions;
+network activation cannot yet carry the verified address back to saved selection.
 Targets must be remote, explicitly `vm` or `hardware`, with profiles restricted
 to `server_lite` and `server_web`. See [saved selection](build-selection.md) and
 [selection configuration](build-selection-config.md) for identity and replay rules.
+
+Root preflight, enrollment bootstrap and final profile uploads use the resolved
+target endpoint's explicit identity, port and workspace host-key pins. The shared
+SSH builder runs inside `strict_ssh_transport`, scoped with a `ContextVar`, for
+each setup primitive call. It ignores ambient SSH configuration, agents,
+certificates, forwarding and reusable ControlMaster sockets, enforces pinned
+host keys and public-key batch authentication, and rejects another host within
+that scope. No shared control socket is created or reused. Exceptions restore
+the prior context; ordinary setup keeps its existing SSH behavior. Typed builder
+and target clients retain their independent strict transport.
 
 [Source preparation](build-setup-sources.md) accepts public HTTPS committed
 source with an explicit tracked `basaltwater.json`, pins complete revisions and
