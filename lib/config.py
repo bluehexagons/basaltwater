@@ -47,6 +47,7 @@ WEB_PANEL_CA_HTTP_PORT = 8442
 WEB_PANEL_DEFAULT_PORT_SENTINEL = object()
 DEFAULT_AGENT_WEB_PORTS = (80, 443, 8080, 8081)
 BUILD_HOST_POLICY_MAX_BYTES = 4 * 1024 * 1024
+BUILD_TARGET_POLICY_MAX_BYTES = 4 * 1024 * 1024
 _LAN_IPV4_BLOCKS = (
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -74,7 +75,7 @@ def _reject_private_key_material(value: object) -> None:
     """Reject private-key PEM blocks anywhere in transported JSON strings."""
     if isinstance(value, str):
         if "-----BEGIN " in value and "PRIVATE KEY-----" in value:
-            raise ValueError("Build host policy must not contain private SSH keys")
+            raise ValueError("Enrollment policy must not contain private key material")
     elif isinstance(value, dict):
         for nested in value.values():
             _reject_private_key_material(nested)
@@ -91,6 +92,18 @@ def _decode_build_host_enrollment_json(value: str) -> JSONDict:
         raise ValueError(f"Invalid build host policy JSON: {exc}") from exc
     if not isinstance(decoded, dict):
         raise ValueError("Build host policy JSON must be an object")
+    _reject_private_key_material(decoded)
+    return cast(JSONDict, decoded)
+
+
+def _decode_build_target_enrollment_json(value: str) -> JSONDict:
+    """Parse a public build-target enrollment envelope without policy validation."""
+    try:
+        decoded = json.loads(value, object_pairs_hook=_strict_json_object)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(f"Invalid build target policy JSON: {exc}") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError("Build target policy JSON must be an object")
     _reject_private_key_material(decoded)
     return cast(JSONDict, decoded)
 
@@ -120,6 +133,35 @@ def _read_build_host_enrollment_file(path: str) -> JSONDict:
         except UnicodeDecodeError as exc:
             raise ValueError("Build host policy file must be UTF-8 JSON") from exc
         return _decode_build_host_enrollment_json(text)
+    finally:
+        os.close(descriptor)
+
+
+def _read_build_target_enrollment_file(path: str) -> JSONDict:
+    """Read a bounded regular policy file without following a final symlink."""
+    from lib.validation import validate_filesystem_path
+
+    validate_filesystem_path(path)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError(f"Cannot safely open build target policy file: {path}") from exc
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Build target policy file must be a regular file")
+        if info.st_size > BUILD_TARGET_POLICY_MAX_BYTES:
+            raise ValueError("Build target policy file exceeds the 4 MiB limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as policy_file:
+            content = policy_file.read(BUILD_TARGET_POLICY_MAX_BYTES + 1)
+        if len(content) > BUILD_TARGET_POLICY_MAX_BYTES:
+            raise ValueError("Build target policy file exceeds the 4 MiB limit")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Build target policy file must be UTF-8 JSON") from exc
+        return _decode_build_target_enrollment_json(text)
     finally:
         os.close(descriptor)
 
@@ -597,6 +639,9 @@ class SetupConfig:
     deployment_mode: str = "default"  # "default" (smart cache), "lite" (cached only), "full" (always fresh)
     full_deploy: bool = False
     deploy_latest: bool = False
+    build_on: str | None = None
+    clear_build_on: bool = False
+    artifact_deployments: bool = False
     enable_ssl: bool = False
     ssl_email: Optional[str] = None
     enable_cloudflare: bool = False
@@ -688,11 +733,33 @@ class SetupConfig:
     target_host: MaybeStr = None  # Client-facing identity retained during target-local setup
     disable_build_host: bool = False
     build_host_enrollment: JSONDict | None = None
+    disable_build_target: bool = False
+    build_target_enrollment: dict | None = None
     # Construction-only: never persist or inherit a saved-root policy exception
     # when merge_setup_configs constructs the effective patch configuration.
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        if type(self.clear_build_on) is not bool:
+            raise ValueError("clear_build_on must be a boolean")
+        if type(self.artifact_deployments) is not bool:
+            raise ValueError("artifact_deployments must be a boolean")
+        if self.build_on is not None:
+            if not isinstance(self.build_on, str):
+                raise ValueError("build_on must be a string or None")
+            if not self.build_on or len(self.build_on) > 128:
+                raise ValueError("build_on must contain 1 to 128 characters")
+            if self.build_on != self.build_on.strip():
+                raise ValueError("build_on must not have leading or trailing whitespace")
+            from lib.validation import validate_no_control_characters
+
+            validate_no_control_characters(self.build_on, "Build-on reference")
+        if self.build_on is not None and self.clear_build_on:
+            raise ValueError("Cannot select and clear build_on in one setup")
+        if self.clear_build_on:
+            self.artifact_deployments = False
+        elif self.build_on is not None:
+            self.artifact_deployments = True
         if type(self.disable_build_host) is not bool:
             raise ValueError("disable_build_host must be a boolean")
         if self.disable_build_host and self.is_build_server:
@@ -709,6 +776,19 @@ class SetupConfig:
 
             self.build_host_enrollment = parse_build_host_enrollment(
                 self.build_host_enrollment
+            )
+        if type(self.disable_build_target) is not bool:
+            raise ValueError("disable_build_target must be a boolean")
+        if self.disable_build_target and self.build_target_enrollment is not None:
+            raise ValueError("Build target enrollment policy conflicts with de-enrollment")
+        if self.build_target_enrollment is not None:
+            if not isinstance(self.build_target_enrollment, dict):
+                raise ValueError("Build target enrollment policy must be a JSON object")
+            _reject_private_key_material(self.build_target_enrollment)
+            from common.build_target_steps import parse_build_target_enrollment
+
+            self.build_target_enrollment = parse_build_target_enrollment(
+                self.build_target_enrollment
             )
         if self.target_host is not None:
             from lib.validators import validate_host
@@ -1546,6 +1626,9 @@ class SetupConfig:
             flag = "--deploy-latest" if self.deploy_latest else "--deploy"
             for deploy_spec, git_url in self.deploy_specs:
                 args.append(f"{flag} {shlex.quote(deploy_spec)} {shlex.quote(git_url)}")
+
+        if self.artifact_deployments:
+            args.append("--artifact-deployments")
         
         if self.enable_ssl:
             args.append("--ssl")
@@ -1574,7 +1657,11 @@ class SetupConfig:
             args.append(
                 "--build-host-enrollment-json " + shlex.quote(policy_json)
             )
-        
+        if self.disable_build_target:
+            args.append("--disable-build-target")
+        if self.build_target_enrollment is not None:
+            policy_json = json.dumps(self.build_target_enrollment, separators=(",", ":"))
+            args.append("--build-target-enrollment-json " + shlex.quote(policy_json))
         if self.is_app_server:
             args.append("--app-server")
         
@@ -2171,6 +2258,17 @@ class SetupConfig:
             cmd_parts.append(
                 "--build-host-enrollment-json " + shlex.quote(policy_json)
             )
+        if self.disable_build_target:
+            cmd_parts.append("--no-build-target")
+        if self.build_target_enrollment is not None:
+            policy_json = json.dumps(self.build_target_enrollment, separators=(",", ":"))
+            cmd_parts.append("--build-target-enrollment-json " + shlex.quote(policy_json))
+        if self.build_on is not None:
+            cmd_parts.append(f"--build-on {shlex.quote(self.build_on)}")
+        elif self.clear_build_on:
+            cmd_parts.append("--no-build-on")
+        if self.artifact_deployments:
+            cmd_parts.append("--artifact-deployments")
         
         if self.is_app_server:
             cmd_parts.append("--app-server")
@@ -2640,6 +2738,36 @@ class SetupConfig:
             )
         if build_host_enrollment is not None and not is_build_server:
             raise ValueError("Build host enrollment policy requires --build-server")
+        disable_build_target = bool(getattr(args, 'disable_build_target', False))
+        target_policy_file = getattr(args, 'build_target_policy', None)
+        target_policy_json = getattr(args, 'build_target_enrollment_json', None)
+        if target_policy_file is not None and target_policy_json is not None:
+            raise ValueError(
+                "Choose --build-target-policy or --build-target-enrollment-json, not both"
+            )
+        build_target_enrollment = (
+            _read_build_target_enrollment_file(target_policy_file)
+            if target_policy_file is not None
+            else (
+                _decode_build_target_enrollment_json(target_policy_json)
+                if target_policy_json is not None
+                else None
+            )
+        )
+        if disable_build_target and build_target_enrollment is not None:
+            raise ValueError(
+                "Build target enrollment policy conflicts with de-enrollment"
+            )
+        build_on = _optional_str_arg(args, "build_on")
+        clear_build_on = _optional_bool_arg(args, "clear_build_on") is True
+        artifact_deployments = (
+            _optional_bool_arg(args, "artifact_deployments") is True
+        )
+        if clear_build_on:
+            build_on = None
+            artifact_deployments = False
+        elif build_on is not None:
+            artifact_deployments = True
         is_app_server = bool(getattr(args, 'is_app_server', False))
         machine_type = _resolve_machine_type(
             args,
@@ -3102,6 +3230,9 @@ class SetupConfig:
             deployment_mode=getattr(args, 'deployment_mode', 'default'),
             full_deploy=getattr(args, 'full_deploy', False),
             deploy_latest=getattr(args, 'deploy_latest', False),
+            build_on=build_on,
+            clear_build_on=clear_build_on,
+            artifact_deployments=artifact_deployments,
             enable_ssl=enable_ssl,
             ssl_email=getattr(args, 'ssl_email', None),
             enable_cloudflare=getattr(args, 'enable_cloudflare', False),
@@ -3121,6 +3252,8 @@ class SetupConfig:
             is_build_server=is_build_server,
             disable_build_host=disable_build_host,
             build_host_enrollment=build_host_enrollment,
+            disable_build_target=disable_build_target,
+            build_target_enrollment=build_target_enrollment,
             is_app_server=is_app_server,
             deploy_targets=getattr(args, 'deploy_targets', None),
             enable_samba=getattr(args, 'enable_samba', False),

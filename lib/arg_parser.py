@@ -1335,6 +1335,26 @@ def add_setup_arguments(
     parser.add_argument("--deploy", dest="deploy_specs",
                        action=DeploySpecAction, nargs="+", metavar="DEPLOY",
                        help="Deploy git repositories as DOMAIN_OR_PATH GIT_URL pairs (can be used multiple times)")
+
+    if not for_remote:
+        build_selection = parser.add_mutually_exclusive_group()
+        build_selection.add_argument(
+            "--build-on",
+            dest="build_on",
+            metavar="SAVED-BUILDER",
+            help="Select a saved builder reference for artifact deployments",
+        )
+        build_selection.add_argument(
+            "--no-build-on",
+            dest="clear_build_on",
+            action="store_true",
+            help="Clear the saved builder selection and return to target builds",
+        )
+    parser.add_argument(
+        "--artifact-deployments",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     
     deployment_mode_group = parser.add_mutually_exclusive_group()
     deployment_mode_group.add_argument("--deployment-lite", dest="deployment_mode", action="store_const", const="lite",
@@ -1402,6 +1422,11 @@ def add_setup_arguments(
             help=argparse.SUPPRESS,
         )
         parser.add_argument(
+            "--disable-build-target",
+            action="store_true",
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
             "--build-host-enrollment-json",
             help=argparse.SUPPRESS,
         )
@@ -1415,6 +1440,28 @@ def add_setup_arguments(
         build_host_policy.add_argument(
             "--build-host-enrollment-json",
             help=argparse.SUPPRESS,
+        )
+    if for_remote:
+        parser.add_argument(
+            "--build-target-enrollment-json",
+            help=argparse.SUPPRESS,
+        )
+    else:
+        build_target_policy = parser.add_mutually_exclusive_group()
+        build_target_policy.add_argument(
+            "--build-target-policy",
+            metavar="FILE",
+            help="Load the public typed target enrollment policy from FILE",
+        )
+        build_target_policy.add_argument(
+            "--build-target-enrollment-json",
+            help=argparse.SUPPRESS,
+        )
+        parser.add_argument(
+            "--no-build-target",
+            dest="disable_build_target",
+            action="store_true",
+            help="Remove managed typed target authority while preserving applications and their data",
         )
     
     parser.add_argument("--app-server", dest="is_app_server",

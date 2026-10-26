@@ -21,14 +21,26 @@ from lib.config import SetupConfig
 
 _build_host_steps_stub = ModuleType("common.build_host_steps")
 _build_host_steps_stub.parse_build_host_enrollment = lambda value: value
+_build_target_steps_stub = ModuleType("common.build_target_steps")
+_build_target_steps_stub.parse_build_target_enrollment = lambda value: value
 
 
-@patch.dict("sys.modules", {"common.build_host_steps": _build_host_steps_stub})
+@patch.dict("sys.modules", {
+    "common.build_host_steps": _build_host_steps_stub,
+    "common.build_target_steps": _build_target_steps_stub,
+})
 class TestBuildHostEnrollmentConfig(unittest.TestCase):
     POLICY = {
         "schema": 1,
         "policy": {"enabled": True},
         "keys": {"builder": "ssh-ed25519 AAAATEST"},
+    }
+    TARGET_POLICY = {
+        "schema": 1,
+        "policy": {"schema": 1},
+        "keys": {"alice": "ssh-ed25519 AAAATEST"},
+        "max_records": 2,
+        "max_bytes": 4096,
     }
 
     def _setup_parser(self):
@@ -261,6 +273,282 @@ class TestBuildHostEnrollmentConfig(unittest.TestCase):
                         "target", "agent", "--build-host-policy", policy_file.name,
                         "--build-host-enrollment-json", "{}",
                     ])
+
+
+@patch.dict("sys.modules", {"common.build_target_steps": _build_target_steps_stub})
+class TestBuildTargetEnrollmentConfig(unittest.TestCase):
+    POLICY = TestBuildHostEnrollmentConfig.TARGET_POLICY
+
+    def _setup_parser(self, *, remote=False):
+        from lib.arg_parser import create_setup_argument_parser
+
+        return create_setup_argument_parser("Target test", for_remote=remote)
+
+    def _config_from_attrs(self, **attrs):
+        values = {"host": "target", "username": "agent", "system_type": "server_lite"}
+        values.update(attrs)
+        return SetupConfig(**values)
+
+    def test_policy_file_and_hidden_json_decode(self):
+        from lib.config import _decode_build_target_enrollment_json
+
+        self.assertEqual(_decode_build_target_enrollment_json(json.dumps(self.POLICY)), self.POLICY)
+        args = self._setup_parser().parse_args([
+            "target", "agent", "--build-target-enrollment-json",
+            json.dumps(self.POLICY),
+        ])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertEqual(config.build_target_enrollment, self.POLICY)
+
+    def test_file_errors_duplicate_keys_and_private_pem_are_rejected(self):
+        from lib.config import BUILD_TARGET_POLICY_MAX_BYTES, _read_build_target_enrollment_file
+        with tempfile.TemporaryDirectory() as directory:
+            for filename, content in (
+                ("duplicate.json", b'{"schema":1,"schema":1}'),
+                ("pem.json", b'{"schema":1,"key":"-----BEGIN PRIVATE KEY-----"}'),
+                ("invalid.json", b"\xff"),
+                ("large.json", b" " * (BUILD_TARGET_POLICY_MAX_BYTES + 1)),
+            ):
+                path = os.path.join(directory, filename)
+                with open(path, "wb") as policy_file:
+                    policy_file.write(content)
+                with self.subTest(filename=filename), self.assertRaises(ValueError):
+                    _read_build_target_enrollment_file(path)
+            link = os.path.join(directory, "link.json")
+            os.symlink(os.path.join(directory, "duplicate.json"), link)
+            with self.assertRaisesRegex(ValueError, "safely open"):
+                _read_build_target_enrollment_file(link)
+
+    def test_file_is_read_and_parser_validates_when_policy_present(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "target.json")
+            with open(path, "w", encoding="utf-8") as policy_file:
+                json.dump(self.POLICY, policy_file)
+            args = self._setup_parser().parse_args(
+                ["target", "agent", "--build-target-policy", path]
+            )
+            config = SetupConfig.from_args(args, "server_lite")
+        self.assertEqual(config.build_target_enrollment, self.POLICY)
+
+    def test_policy_file_and_hidden_json_are_mutually_exclusive(self):
+        parser = self._setup_parser()
+        with tempfile.NamedTemporaryFile() as policy_file:
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args([
+                        "target", "agent", "--build-target-policy", policy_file.name,
+                        "--build-target-enrollment-json", "{}",
+                    ])
+
+    def test_policy_cache_round_trip_and_transport_contain_no_file_or_secrets(self):
+        config = self._config_from_attrs(build_target_enrollment=self.POLICY)
+        restored = SetupConfig.from_dict("target", "server_lite", config.to_dict())
+        self.assertEqual(restored.build_target_enrollment, self.POLICY)
+        self.assertTrue(any(arg.startswith("--build-target-enrollment-json ")
+                            for arg in config.to_remote_args()))
+        self.assertNotIn("--build-target-policy", config.to_remote_args())
+        self.assertTrue(any(arg.startswith("--build-target-enrollment-json ")
+                            for arg in config.to_setup_command()))
+        self.assertNotIn("--build-target-policy", config.to_setup_command())
+        self.assertNotIn("/controller/", " ".join(config.to_remote_args()))
+
+        setup_args = self._setup_parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        self.assertEqual(
+            SetupConfig.from_args(setup_args, "server_lite").build_target_enrollment,
+            self.POLICY,
+        )
+        remote_args = self._setup_parser(remote=True).parse_args(
+            shlex.split(" ".join(config.to_remote_args()))
+        )
+        remote_args.host = config.host
+        self.assertEqual(
+            SetupConfig.from_args(remote_args, "server_lite").build_target_enrollment,
+            self.POLICY,
+        )
+
+    def test_no_build_target_disables_and_is_forwarded(self):
+        args = self._setup_parser().parse_args(
+            ["target", "agent", "--no-build-target"]
+        )
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertIn("--no-build-target", config.to_setup_command())
+        self.assertIn("--disable-build-target", config.to_remote_args())
+        remote_args = self._setup_parser(remote=True).parse_args(
+            shlex.split(" ".join(config.to_remote_args()))
+        )
+        remote_args.host = config.host
+        self.assertTrue(
+            SetupConfig.from_args(remote_args, "server_lite").disable_build_target
+        )
+        with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
+            self._config_from_attrs(disable_build_target=True,
+                                    build_target_enrollment=self.POLICY)
+
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as policy_file:
+            json.dump(self.POLICY, policy_file)
+            policy_file.flush()
+            policy_args = self._setup_parser().parse_args([
+                "target", "agent", "--build-target-policy", policy_file.name,
+                "--no-build-target",
+            ])
+            with self.assertRaisesRegex(ValueError, "conflicts with de-enrollment"):
+                SetupConfig.from_args(policy_args, "server_lite")
+
+    def test_remote_parser_accepts_json_but_not_controller_policy_file(self):
+        remote_parser = self._setup_parser(remote=True)
+        parsed = remote_parser.parse_args([
+            "--build-target-enrollment-json", json.dumps(self.POLICY),
+        ])
+        self.assertEqual(parsed.build_target_enrollment_json, json.dumps(self.POLICY))
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                remote_parser.parse_args(["--build-target-policy", "/tmp/policy.json"])
+
+    def test_omitted_target_flags_keep_defaults_and_do_not_forward_transport(self):
+        args = self._setup_parser().parse_args(["target", "agent"])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertIsNone(config.build_target_enrollment)
+        self.assertFalse(config.disable_build_target)
+        remote_args = self._setup_parser(remote=True).parse_args(
+            shlex.split(" ".join(config.to_remote_args()))
+        )
+        remote_args.host = config.host
+        self.assertIsNone(remote_args.build_target_enrollment_json)
+        self.assertFalse(remote_args.disable_build_target)
+
+    def test_target_policy_omission_preserves_disable_and_explicit_disable_clears(self):
+        from lib.cache import merge_setup_configs
+        saved = self._config_from_attrs(disable_build_target=True)
+        omitted = merge_setup_configs(saved, self._config_from_attrs())
+        self.assertTrue(omitted.disable_build_target)
+        enabled = merge_setup_configs(
+            saved, self._config_from_attrs(build_target_enrollment=self.POLICY)
+        )
+        self.assertFalse(enabled.disable_build_target)
+        self.assertEqual(enabled.build_target_enrollment, self.POLICY)
+        saved_policy = self._config_from_attrs(build_target_enrollment=self.POLICY)
+        disabled = merge_setup_configs(
+            saved_policy, self._config_from_attrs(disable_build_target=True)
+        )
+        self.assertTrue(disabled.disable_build_target)
+        self.assertIsNone(disabled.build_target_enrollment)
+
+
+class TestBuildSelectionConfig(unittest.TestCase):
+    def _parser(self, *, remote=False):
+        from lib.arg_parser import create_setup_argument_parser
+
+        return create_setup_argument_parser("Build selection test", for_remote=remote)
+
+    def _config(self, **kwargs):
+        return SetupConfig(
+            host="target", username="agent", system_type="server_lite", **kwargs
+        )
+
+    def test_builder_reference_validation(self):
+        self.assertEqual(self._config(build_on="builder-prod").build_on, "builder-prod")
+        self.assertTrue(self._config(build_on="x" * 128).artifact_deployments)
+        for invalid in ("", " leading", "trailing ", "bad\nref", "x" * 129, 123):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self._config(build_on=invalid)
+        with self.assertRaisesRegex(ValueError, "clear_build_on must be a boolean"):
+            self._config(clear_build_on=1)
+        with self.assertRaisesRegex(ValueError, "artifact_deployments must be a boolean"):
+            self._config(artifact_deployments=1)
+        with self.assertRaisesRegex(ValueError, "select and clear"):
+            self._config(build_on="builder-prod", clear_build_on=True)
+
+    def test_controller_selection_parser_and_setup_command_round_trip(self):
+        args = self._parser().parse_args([
+            "target", "agent", "--build-on", "builder-prod",
+        ])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertEqual(config.build_on, "builder-prod")
+        self.assertTrue(config.artifact_deployments)
+        self.assertFalse(config.clear_build_on)
+        self.assertIn("--build-on builder-prod", config.to_setup_command())
+        self.assertIn("--artifact-deployments", config.to_setup_command())
+
+        replay_args = self._parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        replayed = SetupConfig.from_args(replay_args, "server_lite")
+        self.assertEqual(replayed.build_on, "builder-prod")
+        self.assertTrue(replayed.artifact_deployments)
+
+    def test_controller_selection_flags_are_mutually_exclusive(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                self._parser().parse_args([
+                    "target", "agent", "--build-on", "builder-prod", "--no-build-on",
+                ])
+
+    def test_controller_clear_round_trips_and_never_reaches_remote(self):
+        args = self._parser().parse_args(["target", "agent", "--no-build-on"])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertTrue(config.clear_build_on)
+        self.assertFalse(config.artifact_deployments)
+        replay_args = self._parser().parse_args(
+            shlex.split(" ".join(config.to_setup_command()))[3:]
+        )
+        replayed = SetupConfig.from_args(replay_args, "server_lite")
+        self.assertTrue(replayed.clear_build_on)
+        self.assertIsNone(replayed.build_on)
+        self.assertFalse(replayed.artifact_deployments)
+        remote_args = shlex.split(" ".join(config.to_remote_args()))
+        self.assertNotIn("--no-build-on", remote_args)
+        self.assertNotIn("--build-on", remote_args)
+
+    def test_target_artifact_mode_replays_without_controller_builder_reference(self):
+        args = self._parser().parse_args([
+            "target", "agent", "--artifact-deployments",
+        ])
+        config = SetupConfig.from_args(args, "server_lite")
+        self.assertIsNone(config.build_on)
+        self.assertTrue(config.artifact_deployments)
+
+        restored = SetupConfig.from_dict("target", "server_lite", config.to_dict())
+        self.assertTrue(restored.artifact_deployments)
+        self.assertIsNone(restored.build_on)
+        command_args = self._parser().parse_args(
+            shlex.split(" ".join(restored.to_setup_command()))[3:]
+        )
+        command_config = SetupConfig.from_args(command_args, "server_lite")
+        self.assertTrue(command_config.artifact_deployments)
+        self.assertIsNone(command_config.build_on)
+
+    def test_remote_transport_contains_only_artifact_mode(self):
+        controller_args = self._parser().parse_args([
+            "target", "agent", "--build-on", "builder-prod",
+        ])
+        config = SetupConfig.from_args(controller_args, "server_lite")
+        remote_tokens = shlex.split(" ".join(config.to_remote_args()))
+        self.assertIn("--artifact-deployments", remote_tokens)
+        self.assertNotIn("--build-on", remote_tokens)
+        self.assertNotIn("builder-prod", remote_tokens)
+        self.assertNotIn("--no-build-on", remote_tokens)
+
+        remote_args = self._parser(remote=True).parse_args(remote_tokens)
+        remote_args.host = "target"
+        target_config = SetupConfig.from_args(remote_args, "server_lite")
+        self.assertIsNone(target_config.build_on)
+        self.assertFalse(target_config.clear_build_on)
+        self.assertTrue(target_config.artifact_deployments)
+        for controller_flag in ("--build-on", "--no-build-on"):
+            with self.subTest(flag=controller_flag), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    self._parser(remote=True).parse_args([controller_flag, "builder-prod"]
+                                                         if controller_flag == "--build-on"
+                                                         else [controller_flag])
+
+    def test_unselected_builder_preserves_existing_default_transport(self):
+        config = self._config()
+        self.assertFalse(config.artifact_deployments)
+        self.assertNotIn("--artifact-deployments", config.to_remote_args())
+        self.assertNotIn("--build-on", config.to_remote_args())
+        self.assertNotIn("--no-build-on", config.to_setup_command())
 
 
 class TestSetupConfigToDict(unittest.TestCase):

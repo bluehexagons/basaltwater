@@ -1786,6 +1786,10 @@ deployment workflows.
 | `--build-server` | Configure a build server that deploys to app servers |
 | `--build-host-policy FILE` | Load up to 4 MiB of public JSON enrollment policy from a controller-local file for a build server |
 | `--no-build-server` | Remove only the managed enrollment and its key authority; retain build records and evidence |
+| `--build-target-policy FILE` | Load up to 4 MiB of public typed-target enrollment policy from a controller-local file |
+| `--no-build-target` | Remove managed typed-target authority while preserving applications and their data |
+| `--build-on SAVED-BUILDER` | Select a saved builder reference for artifact deployments |
+| `--no-build-on` | Clear the saved builder selection and artifact deployment mode |
 | `--app-server` | Configure an app server to receive deployments |
 | `--deploy-target HOST` | Target app server for deployments |
 | `--cicd` | Install the signed GitHub webhook receiver and isolated executor |
@@ -1808,6 +1812,20 @@ Use `--no-build-server` to remove only the managed enrollment and its key
 authority; build records and enrollment evidence remain. De-enrollment is
 blocked while builds are active. Re-enabling with `--build-server` clears the
 saved de-enrollment intent.
+`--build-target-policy FILE` saves typed-target enrollment configuration and
+transports its decoded JSON during setup. Omitting the policy preserves saved
+policy and saved `--no-build-target` intent. `--no-build-target` clears the
+saved policy and forwards explicit de-enrollment intent; supplying a policy
+again resets that intent. This is configuration transport only: there is no
+builder resolution or execution flow yet. Disabling typed-target authority does
+not delete applications or their data.
+`--build-on SAVED-BUILDER` stores an opaque saved builder reference in the
+controller setup and enables artifact deployment mode. Omitting both builder
+selection flags during a patch preserves the saved selection and mode.
+`--no-build-on` clears both. The hidden `--artifact-deployments` flag carries
+target-only artifact mode through setup replay; remote setup receives that mode
+without a builder reference or clear intent. This slice stores and transports
+intent only: builder resolution and controller execution are not available yet.
 Runner host patches preserve omitted repositories, allowed users and labels.
 An explicit repository list replaces the saved list; an organization scope
 replaces repository scopes.
