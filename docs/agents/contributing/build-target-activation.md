@@ -58,9 +58,47 @@ retain the same recovery guard and prevent automatic replay. Reconciliation
 across several applications is not atomic. Artifact retention remains separate
 work; replay requires the installed bundles to remain available.
 
+For controller final-profile replay, `reconcile_installed(*,
+expected_releases=None, admissions=None)` optionally requires exact installed
+identities. `parse_expected_releases()` accepts `None` for ordinary Admin
+refresh, or a list of 1–16 objects containing exactly `application`,
+`operation_id`, `generation`, and `artifact_sha256`. Applications are canonical
+lowercase slugs (1–64 characters); operation IDs are 32 lowercase hexadecimal
+characters, artifact digests are 64, and generations are integers from 1 through
+`2**63 - 1` (booleans are rejected). Duplicate applications or operation IDs,
+extra/missing fields, and noncanonical types fail closed. The parsed list is
+detached from caller input and remains transient: neither `SetupConfig` nor
+the release registry persists these expectations.
+
+Every specified installed identity must match before artifact preflight,
+activation ownership/markers, or release changes. Registry equality alone is
+insufficient: a newer reservation leaves the older installed release in place.
+Expected replay therefore also requires the installed `DeploymentAdmissionStore`
+and checks `status()` for each stored operation under the caller's exclusive
+maintenance lease. Application, operation, generation, artifact, request and
+bindings must match a completed, unsuperseded admission. The `superseded` flag is
+checked independently of `effective_status`, which remains `completed` for old
+completed operations. Expiry of a completed receipt does not expire the
+installed release; a newer reservation refuses replay even if that newer intent
+is later cancelled or expires. Missing or uncertain admission evidence refuses
+with controller guidance. Status checks never initialize missing ledger/lock
+evidence and precede activation ownership, preserving admission-before-activation
+lock order. No reserve, activate or build operation is performed. Retained apps
+outside the expectation list still participate in ordinary reconciliation and
+keep their identities and routes.
+
+`check_expected_releases(*, expected_releases, admissions)` exposes just the
+read-only identity/current-admission and recovery-marker checks for trusted
+local setup composition. It requires nonempty expectations and exclusive
+maintenance across the check and subsequent mutations. It does not acquire
+activation ownership, initialize registry/admission state, open retained bundles,
+preflight deployment parents, or publish routes. This method and reconciliation
+are internal APIs; callers must not bypass the maintenance contract.
+
 ## Artifact-mode setup replay
 
-`common.build_target_refresh.reconcile_artifact_deployments(config)` is the
+`common.build_target_refresh.reconcile_artifact_deployments(config, *,
+expected_releases=None)` is the
 trusted root-local setup wrapper. `plugins.post_setup` selects it whenever
 `config.artifact_deployments` is true, including when `deploy_specs` is absent.
 It requires Debian 13 x86-64 VM/physical system services. It acquires
@@ -68,9 +106,42 @@ It requires Debian 13 x86-64 VM/physical system services. It acquires
 `common.service_tools.build_target.load_config()` read, retaining it through
 the complete `reconcile_installed()` call and local success response. It
 constructs `BuildTargetArtifactStore` from the installed quotas and roots and
-passes `open_verified_bundle` to `TargetReleaseActivator`. No admission store
-is constructed and no build/request identity or deployment generation is
-created. The result is the reconciler's list of identity-only receipts.
+passes `open_verified_bundle` to `TargetReleaseActivator`. With no expectations,
+no admission store is constructed and existing Admin refresh behavior is
+unchanged. Explicit expectations are validated under the lease and forwarded
+with the installed `admission/admissions.json` store. No build/request identity
+or deployment generation is created. The result is the reconciler's list of
+identity-only receipts.
+
+The parent composing the final target profile must enter
+`expected_artifact_setup(config, expected_releases)` **before** beginning the
+setup operation or executing any profile step:
+
+```python
+with expected_artifact_setup(config, expected_releases):
+    # Begin the setup operation and run the final target profile here.
+    # The normal post-setup callback uses the same config object:
+    receipts = reconcile_artifact_deployments(config)
+```
+
+This context acquires maintenance before loading installed configuration,
+validates the bounded expected identities and current admissions without writes
+or bundle verification, then retains the lease across the caller's steps and
+local response. A private context-local token lets reconciliation reuse that
+exact active composition and detached expectation list without reacquiring the
+nonreentrant maintenance lock or reloading configuration. Reconciliation still
+rechecks identities/admissions and verifies all retained artifacts before its
+first release change. Explicit wrapper expectations inside the scope must match
+the scoped list; another config object, nested scope, or expired copied context
+is refused. The token is invalidated and reset on normal exit and exceptions;
+exceptions from profile steps propagate unchanged.
+
+Enrollment must be omitted from the guarded final profile: an installer needs
+its own exclusive lease and cannot run inside this scope. The parent owns this
+composition and transient argument transport; this wrapper does not change
+controller, parser, configuration, or remote setup wiring. The lease serializes
+the supported typed request/enrollment paths; direct internal store callers must
+also honor it. It cannot protect against an uncoordinated privileged writer.
 
 Missing, unsafe, held/disabled or busy enrollment refuses before configuration
 is read. Missing configuration, installed descriptors or retained artifacts
@@ -91,5 +162,6 @@ UDP or Node packaging support.
 
 A dry run reports retained artifact reconciliation without entering maintenance,
 loading target state, opening artifacts, contacting a builder or changing target
-files. It does not establish that installed inputs are available. Ordinary
+files. The guarded context similarly yields without consulting target evidence
+in a dry run. Neither establishes that installed inputs are available. Ordinary
 setup without artifact mode continues to stage source and build on the target.
