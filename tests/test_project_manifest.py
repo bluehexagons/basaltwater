@@ -96,6 +96,7 @@ class TestValidParse(unittest.TestCase):
         site, api = manifest.components
         self.assertTrue(site.is_static)
         self.assertEqual(site.output, "dist")
+        self.assertFalse(site.spa)
         self.assertEqual(site.path, "/")  # default
         self.assertEqual(site.build, ["npm ci && npm run build"])
 
@@ -107,6 +108,12 @@ class TestValidParse(unittest.TestCase):
     def test_build_as_array(self):
         comp = parse_manifest(_manifest(_static(build=["a", "b"]))).components[0]
         self.assertEqual(comp.build, ["a", "b"])
+
+    def test_spa_fallback_is_opt_in_for_static_components(self):
+        for value in (False, True):
+            with self.subTest(spa=value):
+                comp = parse_manifest(_manifest(_static(spa=value))).components[0]
+                self.assertIs(comp.spa, value)
 
     def test_build_omitted(self):
         comp = parse_manifest(_manifest(_static(build=None))).components[0]
@@ -229,6 +236,18 @@ class TestRejects(unittest.TestCase):
 
     def test_unknown_field(self):
         self._assert_rejected(_manifest(_static(extra="x")), "unknown field")
+
+    def test_spa_rejects_non_boolean_values(self):
+        for value in (None, 0, 1, "true", [], {}):
+            with self.subTest(spa=value):
+                self._assert_rejected(_manifest(_static(spa=value)), "spa must be a boolean")
+
+    def test_spa_is_rejected_for_godot_and_service_components(self):
+        godot = _static(type="godot-web", spa=True)
+        service = _service(spa=True)
+        for component in (godot, service):
+            with self.subTest(component_type=component["type"]):
+                self._assert_rejected(_manifest(component), "unknown field")
 
     def test_top_level_unknown_field(self):
         data = _manifest(_static())

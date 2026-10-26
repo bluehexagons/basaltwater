@@ -250,6 +250,37 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
         self.assertIn('listen 443 ssl', config)
         self.assertIn(SSL_PROTOCOLS, config)
 
+    def test_manifest_static_spa_fallback_is_opt_in_and_preserves_node_behavior(self):
+        ordinary = generate_merged_nginx_config('example.com', [{
+            'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site',
+            'project_type': 'static', 'spa': False,
+        }])
+        explicit_spa = generate_merged_nginx_config('example.com', [{
+            'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site',
+            'project_type': 'static', 'spa': True,
+        }])
+        node = generate_merged_nginx_config('example.com', [{
+            'path': '/app', 'needs_proxy': False, 'serve_path': '/var/www/app',
+            'project_type': 'node',
+        }])
+
+        self.assertIn('try_files $uri $uri.html $uri.htm $uri/ =404;', ordinary)
+        self.assertIn('try_files $uri $uri.html $uri/ /index.html;', explicit_spa)
+        self.assertIn(
+            'try_files $uri $uri.html $uri/ /app/index.html;', node,
+        )
+
+    def test_godot_static_route_keeps_missing_file_404_behavior(self):
+        config = generate_merged_nginx_config('example.com', [{
+            'path': '/game', 'needs_proxy': False, 'serve_path': '/var/www/game',
+            'project_type': 'godot-web',
+        }])
+
+        game_location = config.split('location /game/ {', 1)[1].split('}', 1)[0]
+        self.assertIn('index index.html;', game_location)
+        self.assertNotIn('try_files', game_location)
+        self.assertNotIn('/game/index.html', config)
+
     def test_no_domain(self):
         deployments = [{
             'path': '/',

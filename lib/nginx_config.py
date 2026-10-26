@@ -520,7 +520,9 @@ def generate_merged_nginx_config(
             project_type = dep.get('project_type', 'static')
             
             try_files = "$uri $uri.html $uri.htm $uri/ =404"
-            if project_type == 'node':
+            if project_type == 'node' or (
+                project_type == 'static' and dep.get('spa') is True
+            ):
                  # Assume SPA
                  if location_path == '/':
                      try_files = "$uri $uri.html $uri/ /index.html"

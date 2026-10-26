@@ -1406,6 +1406,8 @@ class DeploymentOrchestrator:
                 serve_path=serve_path,
                 backend_port=None,
             )
+            if component.type == "static":
+                dep["spa"] = component.spa
             return dep
         # service: nginx reverse-proxies the component's domain to its loopback port
         dep.update(

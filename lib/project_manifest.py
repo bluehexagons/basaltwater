@@ -92,6 +92,7 @@ def _validate_placeholders(text: str, field: str, where: str) -> None:
 
 _COMMON_FIELDS = {"name", "type", "domain", "path", "build", "env"}
 _STATIC_FIELDS = {"output"}
+_SPA_FIELDS = {"spa"}
 _SERVICE_FIELDS = {
     "binary",
     "exec",
@@ -139,6 +140,8 @@ class Component:
     sqlite_backup: Optional[str] = None
     backup_retention: int = 10
     public_udp: list[PublicUDP] = field(default_factory=list)
+    # static SPA fallback
+    spa: bool = False
 
     @property
     def is_static(self) -> bool:
@@ -346,7 +349,9 @@ def _parse_component(entry: object, index: int) -> Component:
         raise ValueError(f"{where} must be an object")
 
     comp_type = entry.get("type")
-    if comp_type in ("static", "godot-web"):
+    if comp_type == "static":
+        allowed = _COMMON_FIELDS | _STATIC_FIELDS | _SPA_FIELDS
+    elif comp_type == "godot-web":
         allowed = _COMMON_FIELDS | _STATIC_FIELDS
     elif comp_type == "service":
         allowed = _COMMON_FIELDS | _SERVICE_FIELDS
@@ -390,7 +395,10 @@ def _parse_component(entry: object, index: int) -> Component:
         _require_repo_relative(output, "output", where)
         if not re.fullmatch(r"[A-Za-z0-9_./-]+", output):
             raise ValueError(f"{where}: output must use safe Nginx path characters")
-        return Component(output=output, **common)
+        spa = entry.get("spa", False)
+        if type(spa) is not bool:
+            raise ValueError(f"{where}: spa must be a boolean")
+        return Component(output=output, spa=spa, **common)
 
     return _parse_service(entry, where, common)
 

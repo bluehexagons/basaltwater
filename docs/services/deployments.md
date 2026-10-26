@@ -132,6 +132,13 @@ numbers, and hyphens and must be unique within the file.
 `output` is relative to the repository and is served by Nginx after the build.
 It must not be absolute, escape the repository, or contain characters that can
 change an Nginx directive. Component URL paths have the same Nginx-safe syntax.
+Set the optional `spa` field to the boolean `true` when client-side routes need
+to load directly. It defaults to `false`; root sites then fall back to
+`/index.html`, and a static component mounted at `/dashboard` falls back to
+`/dashboard/index.html`. This option is accepted only on `type: "static"`;
+ordinary static sites keep returning 404 for missing paths, and Godot exports
+always keep their missing-file 404 behavior. Longer sibling routes, such as a
+service mounted at `/v1`, continue to use their own proxy location.
 `build` may be one command,
 an array of commands, or omitted when the checked-in output is ready to serve.
 Build commands run from the repository root, and `env` values are available to

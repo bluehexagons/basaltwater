@@ -153,10 +153,23 @@ class TestComponentDescriptor(unittest.TestCase):
     def test_static_descriptor(self):
         dep = self.orch._component_dep(_static_component(), "/var/www/site")
         self.assertEqual(dep['project_type'], 'static')
+        self.assertFalse(dep['spa'])
         self.assertFalse(dep['needs_proxy'])
         self.assertEqual(dep['serve_path'], "/var/www/site/dist")
         self.assertEqual(dep['domain'], "example.com")
         self.assertIsNone(dep['backend_port'])
+
+    def test_static_descriptor_carries_spa_opt_in(self):
+        dep = self.orch._component_dep(
+            _static_component(spa=True), "/var/www/site"
+        )
+        self.assertIs(dep['spa'], True)
+
+    def test_godot_descriptor_does_not_expose_spa(self):
+        dep = self.orch._component_dep(
+            _static_component(type="godot-web"), "/var/www/site"
+        )
+        self.assertNotIn("spa", dep)
 
     def test_service_descriptor(self):
         dep = self.orch._component_dep(_service_component(), "/var/www/site")
@@ -486,6 +499,37 @@ class TestNginxIntegration(unittest.TestCase):
         cfg = generate_merged_nginx_config("example.com", [dep], enable_https_redirect=False)
         self.assertIn("/var/www/site/dist", cfg)
         self.assertIn("server_name example.com;", cfg)
+
+    def test_manifest_spa_root_nested_routes_and_api_prefix_render_together(self):
+        manifest = parse_manifest({
+            "version": 1,
+            "components": [
+                {"name": "site", "type": "static", "domain": "example.com",
+                 "output": "dist", "spa": True},
+                {"name": "dashboard", "type": "static", "domain": "example.com",
+                 "path": "/dashboard", "output": "dashboard-dist", "spa": True},
+                {"name": "api", "type": "service", "domain": "example.com",
+                 "path": "/v1", "binary": "server/api", "port": 8090},
+            ],
+        })
+        deps = [
+            self.orch._component_dep(component, "/var/www/release")
+            for component in manifest.components
+        ]
+        cfg = generate_merged_nginx_config(
+            "example.com", deps, enable_https_redirect=False,
+        )
+
+        self.assertIn("try_files $uri $uri.html $uri/ /index.html;", cfg)
+        self.assertIn(
+            "try_files $uri $uri.html $uri/ /dashboard/index.html;", cfg,
+        )
+        self.assertIn("location /v1/ {", cfg)
+        self.assertIn("proxy_pass http://127.0.0.1:8090;", cfg)
+        self.assertLess(
+            cfg.index("location /dashboard/ {"), cfg.index("location /v1/ {")
+        )
+        self.assertLess(cfg.index("location /v1/ {"), cfg.index("location / {"))
 
     def test_service_reverse_proxied_to_loopback_port(self):
         dep = self.orch._component_dep(_service_component(), "/var/www/site")
