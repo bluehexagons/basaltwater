@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -7,7 +8,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from io import BytesIO
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from lib.build_host_service import (
     BuildHostService,
@@ -114,7 +115,7 @@ class BuildHostServiceTests(unittest.TestCase):
             jobs=self.jobs,
             load_policy=lambda: self.policy,
             admit_source=admit_source,
-            tool_versions=lambda: {"go": "go1.24.0", "node": "v22.1.0",
+            tool_versions=lambda: {"go": "go version go1.24.4 linux/amd64", "node": "v22.1.0",
                                    "python": "/private/bin/python", "other": "hidden"},
             logs_root=str(self.logs_root),
             artifacts_root=str(self.artifacts_root),
@@ -149,7 +150,7 @@ class BuildHostServiceTests(unittest.TestCase):
         self.assertEqual(response["payload_bytes"], 0)
         self.assertEqual(set(response["result"]["projects"]), {"site"})
         self.assertEqual(response["result"]["tool_versions"], {
-            "go": "go1.24.0", "node": "v22.1.0",
+            "go": "go version go1.24.4 linux/amd64", "node": "v22.1.0",
         })
         self.assertNotIn("bob@example", json.dumps(response))
         self.assertNotIn("/private/bin/python", json.dumps(response))
@@ -378,6 +379,86 @@ class BuildHostServiceTests(unittest.TestCase):
         })
         self.assertEqual(payload, b"")
         self.assertNotIn(b"private", line)
+
+    def test_serve_once_os_permission_error_is_unavailable(self) -> None:
+        input_stream = Mock()
+        input_stream.readline.side_effect = PermissionError(errno.EACCES, "private input")
+        output_stream = BytesIO()
+
+        self.service.serve_once(principal="alice@example", input_stream=input_stream,
+                                 output_stream=output_stream)
+
+        response = json.loads(output_stream.getvalue().split(b"\n", 1)[0])
+        self.assertEqual(response, {
+            "schema": 1, "ok": False, "error": "unavailable", "payload_bytes": 0,
+        })
+
+    def test_filesystem_and_source_admission_permission_errors_are_unavailable(self) -> None:
+        request = build_request()
+        self.jobs.submit(request, owner="alice@example")
+        with patch("lib.build_host_service._open_private_file",
+                   side_effect=PermissionError(errno.EACCES, "private log")):
+            log_response, _payload, _line = self.exchange(header(
+                "log", request_id=request["request_id"], offset=0, max_bytes=64,
+            ))
+        self.assertEqual(log_response["error"], "unavailable")
+        self.jobs.cancel(request["request_id"], owner="alice@example")
+
+        artifact_request = build_request(request_id="b" * 32)
+        artifact = b"artifact"
+        self._complete_job(
+            artifact_request, digest=hashlib.sha256(artifact).hexdigest(), size=len(artifact),
+        )
+        with patch("lib.build_host_service._open_private_file",
+                   side_effect=PermissionError(errno.EPERM, "private artifact")):
+            artifact_response, _payload, _line = self.exchange(header(
+                "artifact", request_id=artifact_request["request_id"],
+            ))
+        self.assertEqual(artifact_response["error"], "unavailable")
+
+        self.service.admit_source = Mock(
+            side_effect=PermissionError(errno.EACCES, "source staging denied by filesystem"),
+        )
+        submit_request = build_request(request_id="c" * 32)
+        source_response, _payload, _line = self.exchange(header(
+            "submit", request=submit_request, source_size=1,
+        ), payload=b"x")
+        self.assertEqual(source_response["error"], "unavailable")
+
+    def test_submit_io_error_after_durable_acceptance_replays_same_job(self) -> None:
+        request = build_request()
+        source = b"exact-snapshot"
+        attempts = 0
+
+        def admit_after_durable_submit(job, *, owner, source: BytesIO,
+                                       source_size: int, jobs: BuildJobStore) -> dict:
+            nonlocal attempts
+            raw = source.read(source_size)
+            if len(raw) != source_size or source.read(1):
+                raise ValueError("invalid fake source framing")
+            receipt = jobs.submit(job, owner=owner)
+            attempts += 1
+            if attempts == 1:
+                raise OSError(errno.EIO, "reply failed after durable submission")
+            return receipt
+
+        self.service.admit_source = admit_after_durable_submit
+        message = header("submit", request=request, source_size=len(source))
+
+        failed, _payload, _line = self.exchange(message, payload=source)
+        self.assertEqual(failed["error"], "unavailable")
+        first = self.jobs.status(request["request_id"], owner="alice@example")
+        self.assertEqual(first["sequence"], 1)
+        self.assertEqual(first["state"], "queued")
+
+        replay, _payload, _line = self.exchange(message, payload=source)
+        self.assertTrue(replay["ok"])
+        self.assertEqual(replay["result"]["request_id"], request["request_id"])
+        self.assertEqual(replay["result"]["sequence"], 1)
+        next_request = build_request(request_id="d" * 32)
+        next_receipt = self.jobs.submit(next_request, owner="alice@example")
+        self.assertEqual(next_receipt["sequence"], 2)
+        self.assertEqual(attempts, 2)
 
     def test_serve_once_reads_one_header_line(self) -> None:
         input_stream = BytesIO(header("capabilities"))

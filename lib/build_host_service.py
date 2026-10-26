@@ -42,6 +42,10 @@ _HEADER_OVERHEAD_BYTES = MAX_HEADER_LINE_BYTES - MAX_REQUEST_BYTES
 _REQUEST_ID = re.compile(r"[0-9a-f]{32}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _SAFE_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._+()\-]{0,255}")
+_SAFE_GO_VERSION = re.compile(
+    r"go version (?:devel )?go[0-9][A-Za-z0-9._+\-]* "
+    r"[A-Za-z0-9][A-Za-z0-9._+\-]*/[A-Za-z0-9][A-Za-z0-9._+\-]*"
+)
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
 _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
 _ARTIFACT_IDENTITY_FIELDS = frozenset({
@@ -60,6 +64,15 @@ def _fixed_response(*, error: str | None = None, result: object = None,
     if len(encoded) > MAX_RESPONSE_LINE_BYTES:
         raise ValueError("Build host response exceeds its byte limit")
     return encoded
+
+
+def _error_code(error: Exception) -> str:
+    """Keep authorization denials distinct from OS permission failures."""
+    if isinstance(error, PermissionError):
+        return "unavailable" if error.errno is not None else "rejected"
+    if isinstance(error, OSError):
+        return "unavailable"
+    return "rejected"
 
 
 def _write_all(stream: BinaryIO, value: bytes | memoryview) -> None:
@@ -249,16 +262,8 @@ class BuildHostService:
             header = input_stream.readline(MAX_HEADER_LINE_BYTES + 1)
             if not isinstance(header, bytes):
                 raise ValueError("Build protocol input must be binary")
-        except ValueError:
-            _write_all(output_stream, _fixed_response(error="rejected"))
-            output_stream.flush()
-            return
-        except PermissionError:
-            _write_all(output_stream, _fixed_response(error="rejected"))
-            output_stream.flush()
-            return
-        except OSError:
-            _write_all(output_stream, _fixed_response(error="unavailable"))
+        except (ValueError, OSError) as error:
+            _write_all(output_stream, _fixed_response(error=_error_code(error)))
             output_stream.flush()
             return
         self.handle(header, principal=principal, input_stream=input_stream,
@@ -288,22 +293,10 @@ class BuildHostService:
             response = _fixed_response(
                 result=result, payload_bytes=payload_bytes,
             )
-        except PermissionError:
+        except (ValueError, RuntimeError, OSError) as error:
             if payload is not None:
                 payload.close()
-            _write_all(output_stream, _fixed_response(error="rejected"))
-            output_stream.flush()
-            return
-        except (ValueError, RuntimeError):
-            if payload is not None:
-                payload.close()
-            _write_all(output_stream, _fixed_response(error="rejected"))
-            output_stream.flush()
-            return
-        except OSError:
-            if payload is not None:
-                payload.close()
-            _write_all(output_stream, _fixed_response(error="unavailable"))
+            _write_all(output_stream, _fixed_response(error=_error_code(error)))
             output_stream.flush()
             return
 
@@ -411,8 +404,12 @@ class BuildHostService:
         result: dict[str, str] = {}
         for name in sorted(SUPPORTED_BUILD_RUNTIMES):
             version = value.get(name)
-            if not isinstance(version, str) or len(version) > 256 \
-                    or _SAFE_VERSION.fullmatch(version) is None:
+            if not isinstance(version, str) or len(version) > 256:
+                continue
+            safe = _SAFE_VERSION.fullmatch(version) is not None
+            if name == "go":
+                safe = safe or _SAFE_GO_VERSION.fullmatch(version) is not None
+            if not safe:
                 continue
             try:
                 version.encode("utf-8", errors="strict")

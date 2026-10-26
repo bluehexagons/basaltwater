@@ -86,17 +86,24 @@ The encoded line is capped at 64 KiB. For logs and artifacts, exactly
 formatted as text. Errors use only the fixed `rejected` or `unavailable` code,
 with no exception text, command, environment, or path. Expected validation,
 authorization, and queue errors map to `rejected`; filesystem/read errors map
-to `unavailable`. Unexpected exceptions propagate to the outer transport
-supervisor rather than being reported as completed work.
+to `unavailable`. An authorization `PermissionError` without an OS errno maps
+to `rejected`; an OS permission error carrying an errno maps to `unavailable`.
+Unexpected exceptions propagate to the outer transport supervisor rather than
+being reported as completed work.
 
 - `capabilities` returns only `capabilities_for_principal()` for the trusted
   principal plus validated observations for the fixed `go`, `node`, and
   `python` runtime names. Version strings with unsafe characters or excessive
-  length are omitted. Other principals and unrecognized tool names are never
-  projected.
+  length are omitted. Go's standard `go version ... linux/amd64` shape is
+  accepted with a constrained OS/architecture token. Other principals and
+  unrecognized tool names are never projected.
 - `submit` authorizes the parsed request against the current policy before
   invoking source admission. The admitted receipt is bounded as a public JSON
-  response.
+  response. Any submit error, including `rejected`, may follow durable queue
+  acceptance if admission committed before the error occurred. After an error,
+  query status or retry with the same request ID, identical request, and exact
+  same source bytes. Never assume a new request ID is safe just because the
+  prior reply reported an error.
 - `status`, `cancel`, `log`, and `artifact` first ask the job store for the
   requested ID with `owner=principal`. They then require that principal's
   current policy to still contain the job's project grant. A missing grant
