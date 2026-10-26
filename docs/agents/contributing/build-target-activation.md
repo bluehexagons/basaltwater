@@ -4,7 +4,7 @@
 for `DeploymentAdmissionStore.activate()`. It is not an exposed server or a
 replacement for authentication, current target policy, generation and expiry
 checks. Its caller must already hold admission ownership. The artifact accessor
-must pin the same operation, generation, request, bindings and artifact digest
+must pin the same application, operation, generation, request, bindings and artifact digest
 without reentering the admission store.
 
 The callback reconstructs a manifest from the authorized static/service

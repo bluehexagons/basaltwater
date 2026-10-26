@@ -347,6 +347,7 @@ class BuildTargetService:
                 raise ValueError("Only the current reserved operation can stage an artifact")
             self.stage_artifact(
                 fields["operation_id"], fields["generation"], fields["request"],
+                application=record["application"],
                 owner=owner,
                 bindings_sha256=authorized["bindings_sha256"],
                 artifact_sha256=fields["artifact_sha256"],

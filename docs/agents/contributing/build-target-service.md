@@ -108,6 +108,7 @@ stage_artifact(
     generation,
     request,
     *,
+    application,
     owner,
     bindings_sha256,
     artifact_sha256,

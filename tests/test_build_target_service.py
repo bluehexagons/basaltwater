@@ -117,7 +117,7 @@ class BuildTargetServiceTests(unittest.TestCase):
             "environment": {"TOKEN": "private"},
         })
 
-        def stage_artifact(operation_id, generation, request, *, owner, bindings_sha256,
+        def stage_artifact(operation_id, generation, request, *, application, owner, bindings_sha256,
                            artifact_sha256, artifact_size, source, admissions):
             raw = source.read(artifact_size)
             if not isinstance(raw, bytes) or len(raw) != artifact_size or source.read(1):
@@ -125,7 +125,7 @@ class BuildTargetServiceTests(unittest.TestCase):
             if hashlib.sha256(raw).hexdigest() != artifact_sha256:
                 raise ValueError("invalid artifact digest")
             record = admissions.status(operation_id, owner=owner)
-            if (record["generation"] != generation
+            if (record["application"] != application or record["generation"] != generation
                     or record["request_sha256"] != request_digest(request)
                     or record["bindings_sha256"] != bindings_sha256):
                 raise ValueError("admission changed during artifact staging")
@@ -345,6 +345,7 @@ class BuildTargetServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(response["ok"])
+        self.assertEqual(self.stage_artifact.call_args.kwargs["application"], "shop")
         self.assertEqual(response["result"], {
             "operation_id": record["operation_id"],
             "generation": 1,

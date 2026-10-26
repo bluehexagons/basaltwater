@@ -99,6 +99,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.assertEqual(self.publish.call_args.args[0]["shop.example"][0]["dest_path"], str(self.apps / "shop"))
         self.assertEqual(self.publish.call_args.kwargs["managed_domains"], {"shop.example"})
         self.assertEqual(self.opened[0][1]["owner"], "controller")
+        self.assertEqual(self.opened[0][1]["application"], "shop")
         self.assertNotIn(str(self.root), json.dumps(result))
         self.assertNotIn("BUILD", json.dumps(result))
         self.assertEqual(result["state"], "completed")

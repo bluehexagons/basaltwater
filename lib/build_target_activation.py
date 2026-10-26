@@ -285,6 +285,7 @@ class TargetReleaseActivator:
                     if manager.get_deployment_path(None, "/" + basename, "https://basaltwater.invalid/source.git") != root:
                         raise ValueError("Deployment path does not match the authorized target root")
                     with self.open_artifact(operation_id, generation, job, owner=principal,
+                                            application=binding["application"],
                                             bindings_sha256=checked["bindings_sha256"],
                                             artifact_sha256=artifact_sha256) as bundle:
                         deployments = manager.deploy_prebuilt(
