@@ -47,6 +47,9 @@ lock used for the durable activation marker. It saves the artifact digest and
 `activating` state before calling the action. A successful bounded JSON result
 is saved as `completed`; a later call with the same identity and digest returns
 that cached result. A different digest is rejected.
+Expiry is checked again after syncing the activation marker, immediately before
+the callback. If the reservation expires during that sync, the callback does not
+run and the retained marker/digest become uncertain for inspection.
 
 If the action raises, the record becomes `uncertain` when that update can be
 saved. A process interruption or save error can leave it `activating`. Both

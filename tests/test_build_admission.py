@@ -200,6 +200,56 @@ class BuildAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be represented as undone"):
             reopened.cancel(record["operation_id"], owner="controller")
 
+    def test_expiry_during_load_or_marker_sync_never_invokes_action(self) -> None:
+        for phase in ("load", "save"):
+            with self.subTest(phase=phase):
+                clock = MutableClock()
+                store = DeploymentAdmissionStore(self.root / f"expiry-{phase}.json", clock=clock)
+                record = store.reserve(
+                    "web", build_request(), owner="controller", idempotency_key="b" * 32,
+                    bindings_sha256="c" * 64, ttl_seconds=1,
+                )
+                original = getattr(store, "_" + phase)
+
+                def advance(*args):
+                    result = original(*args)
+                    clock.value += 2
+                    return result
+
+                action = Mock(return_value={"release": "must-not-activate"})
+                with patch.object(store, "_" + phase, side_effect=advance):
+                    with self.assertRaisesRegex(ValueError, "expired"):
+                        store.activate(
+                            record["operation_id"], record["generation"], build_request(), "d" * 64,
+                            owner="controller", bindings_sha256="c" * 64, action=action,
+                        )
+                action.assert_not_called()
+                reopened = DeploymentAdmissionStore(store.path, clock=clock)
+                observed = reopened.status(record["operation_id"], owner="controller")
+                self.assertEqual(observed["state"], "reserved" if phase == "load" else "uncertain")
+                self.assertTrue(observed["expired"])
+                if phase == "save":
+                    self.assertEqual(observed["artifact_sha256"], "d" * 64)
+                    with self.assertRaisesRegex(RuntimeError, "uncertain"):
+                        reopened.activate(
+                            record["operation_id"], record["generation"], build_request(), "d" * 64,
+                            owner="controller", bindings_sha256="c" * 64, action=action,
+                        )
+
+    def test_duplicate_persisted_application_generation_fails_closed(self) -> None:
+        record = self.reserve()
+        second = self.reserve(key="d" * 32)
+        state = json.loads(self.path.read_text())
+        state["desired_generations"]["web"] = 1
+        state["operations"][second["operation_id"]]["generation"] = 1
+        self.path.write_text(json.dumps(state))
+        corrupted = self.path.read_bytes()
+        action = Mock()
+        with self.assertRaisesRegex(ValueError, "duplicate application generation"):
+            self.activate(record, action=action)
+        action.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), corrupted)
+
     def test_action_exception_and_final_save_failure_block_replay(self) -> None:
         crashed = self.reserve(key="1" * 32)
         callback = Mock(side_effect=RuntimeError("action crashed"))

@@ -249,7 +249,10 @@ class DeploymentAdmissionStore:
             app = record["application"]
             if app not in clean_desired or record["generation"] > clean_desired[app]:
                 raise ValueError("Admission operation is ahead of its desired generation")
-            generations.setdefault(app, set()).add(record["generation"])
+            app_generations = generations.setdefault(app, set())
+            if record["generation"] in app_generations:
+                raise ValueError("Admission store contains a duplicate application generation")
+            app_generations.add(record["generation"])
             replay_id = _replay_identity(record["owner"], record["idempotency_key"])
             if replay_id in expected_replays:
                 raise ValueError("Admission store contains a duplicate replay identity")
@@ -327,12 +330,12 @@ class DeploymentAdmissionStore:
             raise ValueError("Admission TTL is outside supported limits")
         job = parse_build_request(request)
         digest = request_digest(job)
-        now = self._now()
-        expiry = now + ttl_seconds
-        if not math.isfinite(expiry):
-            raise ValueError("Admission expiry is outside supported limits")
         replay_id = _replay_identity(principal, key)
         with self._locked() as state:
+            now = self._now()
+            expiry = now + ttl_seconds
+            if not math.isfinite(expiry):
+                raise ValueError("Admission expiry is outside supported limits")
             existing_id = state["replays"].get(replay_id)
             if existing_id is not None:
                 record = state["operations"][existing_id]
@@ -378,17 +381,16 @@ class DeploymentAdmissionStore:
         """Return detached owner-scoped admission metadata."""
         operation_id = _hex(operation_id, _ID, "Operation ID")
         principal = _owner(owner)
-        now = self._now()
         with self._locked() as state:
             record = self._owned_record(state, operation_id, principal)
-            return self._metadata(record, state, now)
+            return self._metadata(record, state, self._now())
 
     def cancel(self, operation_id: str, *, owner: str) -> dict[str, Any]:
         """Durably cancel an admission that has not started activation."""
         operation_id = _hex(operation_id, _ID, "Operation ID")
         principal = _owner(owner)
-        now = self._now()
         with self._locked() as state:
+            now = self._now()
             record = self._owned_record(state, operation_id, principal)
             if record["state"] == "cancelled":
                 return self._metadata(record, state, now)
@@ -424,7 +426,6 @@ class DeploymentAdmissionStore:
             raise ValueError("Activation action must be callable")
         job = parse_build_request(request)
         digest = request_digest(job)
-        now = self._now()
         with self._locked() as state:
             record = self._owned_record(state, operation_id, principal)
             if record["generation"] != generation:
@@ -445,13 +446,18 @@ class DeploymentAdmissionStore:
                 raise ValueError("Admission is cancelled and cannot activate")
             if state["desired_generations"].get(record["application"]) != generation:
                 raise ValueError("Admission has been superseded by a newer desired generation")
-            if now >= record["expires_at"]:
+            if self._now() >= record["expires_at"]:
                 raise ValueError("Admission has expired")
 
             record["artifact_sha256"] = artifact
             record["state"] = "activating"
             self._save(state)
             try:
+                # Loading and syncing the marker can consume the remaining TTL.
+                # Once that marker is durable, any failed check retains the
+                # bound digest and recovery guard, even if no action ran.
+                if self._now() >= record["expires_at"]:
+                    raise ValueError("Admission expired before activation could start")
                 result = action()
                 encoded_result = encode_document(result, maximum=MAX_RESULT_BYTES)
                 # Decode through the strict parser so the stored result is detached JSON.

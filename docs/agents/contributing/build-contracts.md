@@ -2,8 +2,10 @@
 
 The shared build-host implementation starts with two internal interfaces:
 `lib.build_protocol` validates version-1 documents and `lib.build_artifacts`
-packages and verifies selected outputs. These interfaces do not yet provide
-`--build-on`, an SSH dispatcher, a job service or target admission. Standard
+packages and verifies selected outputs. The [target admission store](build-admission.md)
+records deployment intent, and `DeploymentManager.deploy_prebuilt()` uses the
+existing activation transaction for verified bundles. These internal interfaces
+do not yet provide `--build-on`, an SSH dispatcher or a job service. Standard
 deployments continue to build on the destination. The [shared build-host
 plan](../../plans/cicd-manifest-reuse.md) describes the remaining work.
 

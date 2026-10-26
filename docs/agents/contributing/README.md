@@ -14,6 +14,7 @@ managed coding VM or workstation, use the sibling
 | Types, validators, capability helpers, setup composition, and command contracts | [Quick reference](quick-reference.md) |
 | Common failures and debugging | [Troubleshooting](troubleshooting.md) |
 | Shared build request and artifact interfaces | [Build contracts](build-contracts.md) |
+| Target deployment reservations and replay safety | [Build admission](build-admission.md) |
 
 ## Core architecture
 
