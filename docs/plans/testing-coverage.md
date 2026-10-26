@@ -14,7 +14,7 @@ self-tests and hardware stress/endurance tests are excluded.
 ## Surface
 
 The declared surface has **15 setup profiles, 50 top-level commands, 307 command
-paths and 527 distinct long-option spellings**, with aliases collapsed. These
+paths and 529 distinct long-option spellings**, with aliases collapsed. These
 counts describe breadth, not a percentage tested. Regenerate the inventory with:
 
 ```bash
@@ -41,15 +41,15 @@ installations; optional combinations need their own checks.
 | Samba and Syncthing | SMB3 encryption/access control, automount repair/reconnect and selected soft-mounted Linux CIFS stopped-server/blackhole cases; two-peer exchange, conflicts, version restoration, credential rotation, rerun/reboot and removal/re-enable | Hard-mounted CIFS, other network filesystems, Windows/macOS SMB clients, Syncthing browser GUI and relays/discovery |
 | Gogs and Git mirrors | HTTPS/SSH Git, LFS hashes, access control, rerun/reboot and same-host recovery; mirror routing/configuration guards and transfers against Gogs plus a local primary | Actual GitHub transport/permissions, off-host recovery, database migration rollback, restored SSH transfers and attachments |
 | Deployment | Signed loopback webhooks, separate build/app hosts, SSH publication and queue recovery; real Go services, Node-built root/subpath sites and a same-origin React/Go/SQLite app. Manifest SPA reloads, populated reruns/reboots, selected Chromium flows, private SQLite backups and unhealthy-candidate rollback. Separate-guest restore on the same physical host preserves login, data and new writes over verified private HTTPS | Native SPA webhook publication, off-host recovery, public sender/Tunnel/ACME, Godot publishing, database migration recovery and power loss |
-| Shared-builder internals | Manually enrolled, restricted SSH submits static and self-contained Go builds to an independent Debian worker; same-ID replay, bounded logs and verified artifact retrieval. Target intent is reserved before building through a protected local adapter; relayed artifacts activate over verified private HTTPS without target build tools. Controlled scratch exhaustion, cancellation, log overflow and held-output descendants preserve cleanup; commands run without supplementary groups or capabilities | Setup enrollment/selection, typed target transport, retention and restart qualification remain. No untrusted-job isolation claim |
+| Shared-builder internals | Managed setup-step enrollment, rerun, key rotation, removal/re-enable and idle VM reboot; restricted SSH runs static and self-contained Go jobs on an independent Debian worker. Same-ID replay, bounded logs, verified artifacts, active-work setup refusal and selected scratch/cancellation/output failure cleanup. Protected local target admission precedes builds; relayed artifacts activate over verified private HTTPS without target build tools | Controller builder selection, typed target transport, retention and further crash/restart qualification. No untrusted-job isolation claim |
 | Panels | Setup/auth/TLS, journals/timers, Chromium agent forms, synthetic Chromium/Firefox Guacamole checks and native cached Proxmox inventory export | Native PVE console, Firefox ESR, inventory timer/full HTTP lifecycle, additional application browser flows and collaborative preview CA trust |
 | User rename | Identity/groups, moved or retained home, selected interruption recovery, rerun/reboot and initialized-container-store guards | More interruption points, software-specific state and native SMB mount migration; home moves are not general application migration |
 | Other surfaces | Selected loopback notifications and external Codex enrollment | Native desktop/kiosk/CachyOS/WSL/Windows, GitHub runner jobs, game publishing, external alerts/public DNS and exact-candidate installer qualification |
 
 ## Next useful checks
 
-1. **Shared build hosts:** connect setup enrollment, controller selection and
-   target transport; preserve saved setup and default on-target builds.
+1. **Shared build hosts:** connect controller selection and typed target
+   transport; preserve saved setup and default on-target builds.
 2. **Longer agent runs:** exercise longer provider-backed goals and remaining
    worker crash/restart boundaries while preserving usage limits and recovery.
 3. **Agent administration:** test package-changing upgrades on a disposable target;
