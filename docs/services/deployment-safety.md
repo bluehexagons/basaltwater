@@ -98,6 +98,13 @@ know.
   reload or finalization restores, validates and reloads the previous
   configuration. Incomplete recovery blocks retry and preserves the snapshot.
   Nginx must already be active; this path does not start an inactive daemon.
+  Ordinary deployment reconciliation uses the complete desired domain set and
+  removes stale Basaltwater deployment sites outside that set. A targeted
+  activation can pass an explicit managed-domain scope: only sites named in
+  that scope can be retired, snapshotted or restored, and every requested
+  domain must be within it. Include a previous target domain in the scope when
+  it should be retired. `None` names the default site and maps to the `default`
+  config name; it must not be combined with the literal `default` domain.
 - Services that declare `sqlite_backup` receive a consistent SQLite API backup
   while the old unit is verified inactive or failed, with no automatic restart
   pending, and before replacement. Backups have an integrity check and
