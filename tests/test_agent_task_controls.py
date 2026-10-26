@@ -85,6 +85,47 @@ class TaskControlsTests(unittest.TestCase):
         self.assertTrue(saved["enabled"])
         self.assertEqual(saved["next_run"], 400)
 
+    def test_lowering_failure_limit_to_saved_streak_pauses_before_next_schedule(self) -> None:
+        identifier = self.manager.create({**self.values, "interval": "hourly", "start_at": 0,
+                                          "failure_limit": 5}, run_now=True, now=0)
+        blocked = {"status": "completed", "message": "Blocked", "output": "", **report("blocked")}
+        with patch.object(tasks, "execute_prompt", return_value=blocked):
+            self.assertTrue(self.manager.tick(now=1))
+            self.manager.action(identifier, "run")
+            self.assertTrue(self.manager.tick(now=2))
+        self.assertEqual(self.manager.snapshot()["tasks"][0]["consecutive_failures"], 2)
+
+        self.manager.update(identifier, {"failure_limit": 2}, partial=True)
+        task = self.manager.snapshot()["tasks"][0]
+        self.assertFalse(task["enabled"])
+        self.assertFalse(task["queued"])
+        self.assertTrue(task["auto_paused"])
+        with patch.object(tasks, "execute_prompt") as provider:
+            self.assertFalse(self.manager.tick(now=3600))
+        provider.assert_not_called()
+
+    def test_preclaim_enforces_failure_limit_in_stale_saved_configuration(self) -> None:
+        self.manager.create({**self.values, "interval": "hourly", "start_at": 0,
+                             "failure_limit": 5}, run_now=True, now=0)
+        blocked = {"status": "completed", "message": "Blocked", "output": "", **report("blocked")}
+        with patch.object(tasks, "execute_prompt", return_value=blocked):
+            self.assertTrue(self.manager.tick(now=1))
+            task_id = self.manager.snapshot()["tasks"][0]["id"]
+            self.manager.action(task_id, "run")
+            self.assertTrue(self.manager.tick(now=2))
+
+        state = self.manager.snapshot()
+        state["tasks"][0]["failure_limit"] = 2
+        self.manager.path.write_text(json.dumps(state))
+        completed = {"status": "completed", "message": "Done", "output": "", **report()}
+        with patch.object(tasks, "execute_prompt", return_value=completed) as provider:
+            self.assertTrue(self.manager.tick(now=3600))
+        provider.assert_not_called()
+        task = self.manager.snapshot()["tasks"][0]
+        self.assertFalse(task["enabled"])
+        self.assertTrue(task["auto_paused"])
+        self.assertEqual(task["stop_reason"], "Failure limit reached; resume to continue")
+
     def test_start_time_validation_and_timezone_conversion(self) -> None:
         settings = tasks.validate_task({**self.values, "start_at": "2026-11-01T09:00:00-06:00"}, self.home)
         utc = tasks.validate_task({**self.values, "start_at": "2026-11-01T15:00:00Z"}, self.home)

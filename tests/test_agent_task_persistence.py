@@ -388,6 +388,63 @@ class PersistentTaskTests(unittest.TestCase):
     def test_legacy_migration_recovers_interrupted_claim_without_reexecuting_it(self) -> None:
         self._assert_interrupted_recovery(version=1)
 
+    def test_recovered_interruption_pauses_overdue_schedule_until_manual_run(self) -> None:
+        identifier = self.manager.create({**self.values, "start_at": 0}, run_now=True, now=0)
+        with patch.object(tasks, "execute_prompt", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.manager.tick(now=0)
+        unrelated = self.manager.create({**self.values, "title": "Unrelated", "start_at": 0},
+                                        run_now=False, now=0)
+
+        completed = {"status": "completed", "message": "Done", "output": "", **report()}
+        with patch.object(tasks, "execute_prompt", return_value=completed) as provider:
+            self.manager.start(once=True)
+            self.assertTrue(self.manager.tick(now=3600))
+        provider.assert_called_once()
+        self.assertEqual(provider.call_args.args[0]["id"], unrelated)
+        task = self.manager.snapshot()["tasks"][0]
+        run = self.manager.snapshot()["runs"][0]
+        self.assertEqual(run["status"], "interrupted")
+        self.assertEqual(task["attempts"], 1)
+        self.assertTrue(task["usage_uncertain"])
+        self.assertFalse(task["enabled"])
+        self.assertFalse(task["queued"])
+        self.assertIn("review", task["stop_reason"].lower())
+
+        self.manager.action(identifier, "run")
+        with patch.object(tasks, "execute_prompt", return_value=completed) as provider:
+            self.assertTrue(self.manager.tick(now=3600))
+        provider.assert_called_once()
+        self.assertEqual(provider.call_args.args[0]["id"], identifier)
+        self.assertEqual(self.manager.snapshot()["tasks"][0]["attempts"], 2)
+
+    def test_final_receipt_recovery_keeps_exact_recurring_schedule_semantics(self) -> None:
+        identifier = self.manager.create(self.values, run_now=True, now=0)
+        write = tasks.write_text_atomic
+        count = 0
+
+        def interrupted_write(*args: object, **kwargs: object) -> None:
+            nonlocal count
+            count += 1
+            if count == 2:
+                raise OSError("Simulated final state write failure")
+            write(*args, **kwargs)
+
+        with patch.object(tasks, "write_text_atomic", side_effect=interrupted_write), self.assertRaises(OSError):
+            self.run_task({**report(), "usage": {"input_tokens": 15, "output_tokens": 5}}, now=1)
+        saved_receipt = self.manager.contexts.receipt(identifier, self.manager.snapshot()["runs"][0]["id"])
+        restored = tasks.AgentTasks(self.home)
+        self.addCleanup(restored.close)
+        with patch.object(tasks, "execute_prompt") as execute:
+            restored.start(once=True)
+            self.assertFalse(restored.tick(now=saved_receipt["finished_at"]))
+        execute.assert_not_called()
+        task = restored.snapshot()["tasks"][0]
+        self.assertTrue(task["enabled"])
+        self.assertGreater(task["next_run"], saved_receipt["finished_at"])
+        self.assertEqual(task["tokens_used"], 20)
+        self.assertEqual(restored.snapshot()["runs"][0]["id"], saved_receipt["id"])
+
     def test_recovery_reconciles_final_receipt_after_hot_state_write_failed(self) -> None:
         identifier = self.manager.create({**self.values, "continue_until_done": True,
                                           "completion_criteria": "Checks pass"}, run_now=True, now=0)

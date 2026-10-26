@@ -495,6 +495,13 @@ the runner never treats a partial total as the complete budget charge.
 Workspace preparation has its own bounded managed Git operations before the
 provider invocation starts.
 
+Lowering `failure_limit` to or below the saved consecutive failure count
+immediately pauses an active schedule. The worker checks the saved threshold
+again before each claim, including after loading older state. **Resume** clears
+the failure streak and restores the schedule; **Run** queues one explicit
+attempt without reactivating that schedule. A zero failure limit disables this
+pause.
+
 Waiting reports for timed goals may request a bounded retry delay; ordinary
 tasks keep their configured cadence. Event-only goals wait for the next
 notification even when an agent reports a retry delay. Cancellation stops local
@@ -606,12 +613,15 @@ child process; arbitrary descendants may not inherit it, so the managed
 service's cgroup remains necessary to terminate them after supervisor failure.
 
 After the lease is available, a still-running claim without a final receipt is
-recorded as interrupted; inspect its edits before another invocation. If a
-final receipt was saved before an interrupted hot-state write, recovery
-reconciles its result and usage without relaunching the provider and advances a
-recurring task past intervals elapsed during that run. A claimed cancellation
-still consumes its reserved lifetime and daily attempt, while preserving the
-consecutive-failure count.
+recorded as interrupted and its task is paused with a review stop reason; queued
+wakes are cleared. Inspect its edits before using **Run** or **Resume** to
+continue. If token usage is uncertain under a token budget, or evidence storage
+needs repair, those stricter stops remain in force. If a final receipt was
+saved before an interrupted hot-state write, recovery reconciles its result and
+usage without relaunching the provider and advances a recurring task past
+intervals elapsed during that run. A claimed cancellation still consumes its
+reserved lifetime and daily attempt, while preserving the consecutive-failure
+count.
 Deadlines also stop idle event tasks and work deferred by a daily limit.
 Active invocations recheck their absolute deadline as well as their monotonic
 runtime cap; moving the wall clock forward does not leave a late invocation running.

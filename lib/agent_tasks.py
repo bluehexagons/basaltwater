@@ -57,6 +57,8 @@ _ID = re.compile(r"[a-f0-9]{32}\Z")
 _MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}\Z")
 _STATUSES = {"running", "completed", "failed", "cancelled", "interrupted"}
 _TOKEN_USAGE_UNAVAILABLE = "Token usage unavailable; inspect the run before continuing"
+_FAILURE_LIMIT_REACHED = "Failure limit reached; resume to continue"
+_INTERRUPTED_REVIEW_REQUIRED = "Interrupted run has no final receipt; review its edits before continuing"
 _MAX_USAGE_REPAIRS = 100
 
 
@@ -1124,6 +1126,10 @@ class AgentTasks:
             if task["context_recovery"] is not None and task["context_recovery"]["status"] == "pending":
                 task["enabled"], task["queued"] = False, False
                 task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
+            if (task["enabled"] and task["failure_limit"]
+                    and task["consecutive_failures"] >= task["failure_limit"]):
+                task["enabled"], task["queued"], task["auto_paused"] = False, False, True
+                task["stop_reason"] = _FAILURE_LIMIT_REACHED
             if task_values["interval"] == "event":
                 task["next_run"] = None
             elif not interval:
@@ -1352,8 +1358,10 @@ class AgentTasks:
             task["consecutive_failures"], task["auto_paused"] = 0, False
         elif run["status"] in {"failed", "interrupted"} or outcome in {"blocked", "failed"}:
             task["consecutive_failures"] = min(1000000, task["consecutive_failures"] + 1)
-            if task["enabled"] and task["failure_limit"] and task["consecutive_failures"] >= task["failure_limit"]:
+            if (task["failure_limit"] and task["consecutive_failures"] >= task["failure_limit"]
+                    and (task["enabled"] or task["auto_paused"])):
                 task["enabled"], task["queued"], task["auto_paused"] = False, False, True
+                task["stop_reason"] = _FAILURE_LIMIT_REACHED
             if task["enabled"] and task["backoff_minutes"]:
                 task["not_before"] = run["finished_at"] + task["backoff_minutes"] * 60
                 if task["next_run"] is not None:
@@ -1385,6 +1393,8 @@ class AgentTasks:
             return _TOKEN_USAGE_UNAVAILABLE
         if task["token_budget"] and task["tokens_used"] >= task["token_budget"]:
             return "Token budget reached"
+        if task["failure_limit"] and task["consecutive_failures"] >= task["failure_limit"]:
+            return _FAILURE_LIMIT_REACHED
         return ""
 
     def _cancel_for_task(self, identifier: str):
@@ -1414,7 +1424,14 @@ class AgentTasks:
             for saved_task in state["tasks"]:
                 limit = self._limit_reason(saved_task, current)
                 if limit and (saved_task["enabled"] or saved_task["queued"]):
+                    if limit == _FAILURE_LIMIT_REACHED and saved_task["queued"] and saved_task["auto_paused"]:
+                        # An explicit Run is the existing one-attempt recovery
+                        # control for an auto-paused task; Resume still resets
+                        # the streak before restoring its schedule.
+                        continue
                     saved_task["enabled"], saved_task["queued"], saved_task["stop_reason"] = False, False, limit
+                    if limit == _FAILURE_LIMIT_REACHED:
+                        saved_task["auto_paused"] = True
                     expired = True
             if expired:
                 self._save()
@@ -1578,6 +1595,14 @@ class AgentTasks:
                         accounting_pending = False
                         self._record_outcome(state, run)
                         outcome_accounted = True
+                        saved_task = next((task for task in state["tasks"]
+                                           if task["id"] == run["task"]["id"]), None)
+                        if saved_task is not None:
+                            saved_task["enabled"], saved_task["queued"] = False, False
+                            limit = self._limit_reason(saved_task, finished)
+                            saved_task["stop_reason"] = (
+                                limit if limit and limit != _FAILURE_LIMIT_REACHED
+                                else _INTERRUPTED_REVIEW_REQUIRED)
                     except (OSError, RuntimeError, ValueError, KeyError, TypeError, RecursionError):
                         # A receipt read or context replay failure is local to
                         # this claim. Preserve the reserved attempt and keep
