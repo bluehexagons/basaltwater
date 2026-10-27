@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "build_runtimes": ["go"],
+  "components": [
+    {
+      "name": "site",
+      "type": "static",
+      "domain": "{{domain}}",
+      "path": "/",
+      "output": "public",
+      "artifacts": ["public"],
+      "spa": true
+    },
+    {
+      "name": "api",
+      "type": "service",
+      "domain": "{{domain}}",
+      "path": "/api",
+      "port": "auto",
+      "health": "/health",
+      "build": "mkdir -p bin && CGO_ENABLED=0 go build -trimpath -o bin/api .",
+      "binary": "bin/api",
+      "artifacts": ["bin/api"]
+    }
+  ]
+}

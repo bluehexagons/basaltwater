@@ -2,9 +2,10 @@
 
 `lib.build_delivery` composes the existing trusted [builder client](build-client.md)
 and [target client](build-target-client.md). It accepts prepared pinned inputs;
-it does not prepare Git repositories, select credentials, bootstrap machines,
-install packages or integrate setup/configuration/CLI selection. The proposed
-`--build-on` setup flag is not available through this library.
+the [public `--build-on` controller](build-setup.md) supplies them after source
+preparation, credential selection and target bootstrap. This library owns
+delivery; setup/configuration selection and package installation remain in
+the controller and setup layers.
 
 The first slice supports the existing Debian 13 x86-64 platform, static outputs
 and self-contained Go services. The target retains authority over application

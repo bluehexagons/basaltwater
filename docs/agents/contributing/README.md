@@ -18,10 +18,11 @@ managed coding VM or workstation, use the sibling
 | Debian build process and resource supervision | [Build execution](build-execution.md) |
 | Pinned build inputs and bounded workspace | [Source snapshots](build-source.md), [scratch storage](build-scratch.md) |
 | Durable builder jobs and composition | [Job store](build-jobs.md), [worker](build-worker.md) |
-| Explicit terminal builder quota maintenance | [Reservation settlement](build-retention.md) |
+| Explicit terminal builder quota maintenance | [Settlement, source/log pruning and bundle release](build-retention.md), [capacity inspection](build-host-entrypoint.md#read-only-local-capacity-inspection) |
 | Authenticated builder transport and admission | [Process entrypoint](build-host-entrypoint.md), [dispatcher](build-host-service.md), [project policy](build-host-policy.md), [source admission](build-inputs.md) |
 | Managed builder enrollment and controller transport | [Setup configuration](build-host-config.md), [installer](build-host-setup.md), [SSH client](build-client.md) |
 | Public selected-builder setup and recovery | [Controller setup](build-setup.md), [saved selection](build-selection.md), [selection configuration](build-selection-config.md), [pinned sources](build-setup-sources.md), [delivery planning](build-setup-plan.md) |
+| Operator build walkthrough and sample projects | [Build systems](../../services/build-systems.md), [examples and enrollment templates](../../examples/builds/README.md) |
 | Prebuilt service compatibility | [Runtime validation](build-runtime.md) |
 | Authenticated prebuilt target deployment | [Target policy](build-target-policy.md), [staging](build-target-artifacts.md), [dispatcher](build-target-service.md), [activation](build-target-activation.md), [process entrypoint](build-target-entrypoint.md), [SSH client](build-target-client.md) |
 

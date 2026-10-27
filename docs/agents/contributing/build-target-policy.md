@@ -1,9 +1,10 @@
 # Target deployment policy
 
-`lib.build_target_policy` is a pure, internal authorization and projection
-slice for the next typed target transport. It is not wired to SSH, admission,
-artifact verification, runtime validation, or activation. Ordinary local
-deployments keep their existing build-on-target behavior.
+`lib.build_target_policy` supplies pure authorization and projection helpers to
+the [typed target service](build-target-service.md). The installed SSH
+entrypoint composes that service with admission, artifact verification, runtime
+validation and activation. These helpers perform no I/O themselves. Ordinary
+local deployments keep their existing build-on-target behavior.
 
 ## Administrator policy
 
@@ -20,7 +21,7 @@ explicit; there are no wildcard or ambient grants.
   "applications": {
     "shop": {
       "project": "shop-source",
-      "principals": ["alice@example"],
+      "principals": ["deploy"],
       "deployment_root": "/srv/basaltwater/apps/shop",
       "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
       "limits": {"artifact_bytes": 2147483648, "artifact_entries": 100000},
@@ -43,7 +44,13 @@ root.
 Domains are normalized to lowercase without a terminal dot; URL paths are
 normalized by removing a trailing slash except for `/`. Conflicting normalized
 domain/path routes are rejected across the policy. These checks are lexical;
-the future target caller remains responsible for provisioning the root safely.
+the [managed installer](build-target-setup.md) provisions safe deployment
+parents, and activation owns creation and verification of the application root.
+
+This is a policy document, not an enrollment envelope. Managed enrollment also
+requires public keys and record/byte limits, with lowercase principal slugs of
+at most 32 characters. See the [complete target template](../../examples/builds/build-target.example.json)
+and [operator instructions](../../examples/builds/README.md#enrollment-templates).
 
 ## Typed deployment projection
 

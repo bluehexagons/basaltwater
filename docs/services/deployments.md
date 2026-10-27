@@ -6,6 +6,11 @@ root to describe one or more static sites and services explicitly. The manifest
 is validated before deployment; an invalid file stops deployment instead of
 falling back to automatic detection.
 
+See [build systems](build-systems.md) to choose between target builds, selected
+builders, webhooks and Actions runners. [Complete example projects](../examples/builds/README.md)
+include ready static, Python static and combined SPA/Go applications with
+matching enrollment templates.
+
 Use `basaltw manifest init --dry-run` to propose a manifest from Node, Go,
 full-stack, or static project structure, then `basaltw manifest init` to create
 it. Existing files are preserved. Review the generated commands, output, and
@@ -52,6 +57,10 @@ does not establish that a particular deployment will succeed.
 
 For an already enrolled builder named `builds`, an existing remote target, and a
 controller-local typed target policy matching the manifest's routes:
+
+Provision root setup access for the selected target key separately before this
+command. Typed enrollment grants forced-command transport access and installs
+no root key; preflight and setup use root with the same selected identity file.
 
 ```bash
 basaltw setup server_web web.example.com deploy --machine vm \
@@ -148,8 +157,10 @@ The selected-builder flow refuses Node builds, Godot/interpreter services,
 custom `exec`, `env_file`, `runtime_env`, custom working/data paths, SQLite
 backup settings, public UDP, fixed service ports, alternate proxy settings,
 nondefault backup retention and CI/publishing workflows. It also refuses target
-build-tool installation flags, build-host and legacy app-server roles, network
-activation, custom setup steps, SSL and Cloudflare setup. The broader manifest
+Go, Node and Godot installation flags, build-host and legacy app-server roles,
+network activation, custom setup steps, SSL and Cloudflare setup. `--python`
+remains a profile option that installs Python tooling and uv; a Python static
+build needs Python on the builder, not that target flag. The broader manifest
 examples below describe ordinary target builds; they do not expand this bounded
 scope.
 
@@ -199,6 +210,13 @@ replacement IDs, fallback or cancellation, including when delivery completed but
 the final profile failed. See [controller setup](../agents/contributing/build-setup.md),
 [source preparation](../agents/contributing/build-setup-sources.md) and
 [planning](../agents/contributing/build-setup-plan.md) for detailed contracts.
+
+Builder retention is separate from these controller workspaces and target
+releases. See [builder capacity and maintenance](build-systems.md#inspect-capacity-and-retain-evidence)
+for local-root capacity inspection, exact-revision settlement, source/log
+pruning and successful bundle release. Those actions reject SSH invocation
+contexts and never reclaim input/history slots. Downloading a bundle does not
+release its retention.
 
 For a bounded offline view of an unfinished controller build setup, use its
 original absolute journal path:

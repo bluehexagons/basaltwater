@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "name": "site",
+      "type": "static",
+      "domain": "{{domain}}",
+      "path": "/",
+      "output": "public",
+      "artifacts": ["public"]
+    }
+  ]
+}

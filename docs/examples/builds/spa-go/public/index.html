@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPA and Go API example</title>
+<main>
+  <h1>SPA and Go API: v1</h1>
+  <p>Reload <a href="/example/deep-link">a deep link</a> to check the deployed SPA fallback.</p>
+  <p id="route"></p>
+  <button id="load" type="button">Call the API</button>
+  <pre id="result">The API response will appear here.</pre>
+</main>
+<script>
+  document.querySelector('#route').textContent = `Frontend path: ${location.pathname}`;
+  document.querySelector('#load').addEventListener('click', async () => {
+    const result = document.querySelector('#result');
+    try {
+      const response = await fetch('/api/echo?message=hello');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      result.textContent = JSON.stringify(await response.json(), null, 2);
+    } catch (error) {
+      result.textContent = `API request failed: ${error.message}`;
+    }
+  });
+</script>
+</html>

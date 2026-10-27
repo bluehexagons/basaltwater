@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "build_runtimes": ["python"],
+  "components": [
+    {
+      "name": "site",
+      "type": "static",
+      "domain": "{{domain}}",
+      "path": "/",
+      "build": "python3 build.py",
+      "output": "dist",
+      "artifacts": ["dist"]
+    }
+  ]
+}

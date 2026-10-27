@@ -12,11 +12,11 @@ raw JSON bytes and returns a normalized, detached version-1 policy:
 {
   "schema": 1,
   "principals": {
-    "alice@example": {
+    "deploy": {
       "projects": {
         "site": {
           "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
-          "runtimes": ["node"],
+          "runtimes": ["go"],
           "limits": {"timeout_seconds": 3600, "memory_bytes": 2147483648, "cpu_percent": 100, "scratch_bytes": 8589934592, "artifact_bytes": 2147483648, "artifact_entries": 100000, "log_bytes": 4194304}
         }
       }
@@ -41,3 +41,9 @@ returns only the named principal's projects and grants; unknown principals get
 an empty map. Neither function returns commands, build environments, or
 credentials. Transport authentication, policy loading, tool probes, queue
 admission, and worker rechecks remain caller responsibilities.
+
+This example is the policy alone. Managed enrollment wraps it with `keys`,
+record and byte limits, and requires lowercase principal slugs of at most 32
+characters. See the [complete enrollment templates](../../examples/builds/README.md#enrollment-templates).
+The policy parser models Node grants, but the public selected-builder flow
+currently refuses Node builds because package-manager readiness is unqualified.

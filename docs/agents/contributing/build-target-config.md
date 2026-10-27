@@ -5,8 +5,8 @@ enrollment envelope. The controller-facing `--build-target-policy FILE`
 contract accepts a regular, non-symlink UTF-8 JSON file no larger than 4 MiB,
 rejects duplicate JSON keys and private-key PEM blocks, then validates the
 mapping with `common.build_target_steps.parse_build_target_enrollment()`.
-That parser is loaded only when a policy is present, so ordinary setup remains
-usable when the typed-target setup module is not installed in this revision.
+That parser is loaded only when a policy is present; ordinary setup does not
+load typed enrollment validation.
 
 The envelope shape is `{schema: 1, policy: <lib.build_target_policy>, keys:
 {principal: canonical_ed25519_public_key}, max_records, max_bytes}`. The parsed
@@ -19,5 +19,7 @@ policy and disable intent preserve saved state.
 The [managed installer](build-target-setup.md) consumes this configuration.
 The [minimal bootstrap phase](build-target-bootstrap.md) preserves an existing
 saved application profile during initial controller preparation. There is no
-`--build-on` controller flow yet. Removing managed typed-target authority
+automatic application activation during that phase. The public
+[`--build-on` controller flow](build-setup.md) then delivers artifacts and applies
+the full profile against exact expected releases. Removing managed typed-target authority
 preserves applications and their data; the installer owns those effects.

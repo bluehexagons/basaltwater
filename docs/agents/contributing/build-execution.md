@@ -1,9 +1,11 @@
 # Debian build execution adapter
 
-`lib.build_execution` is an internal systemd adapter, separate from request
-admission, durable job state, source preparation and artifact publication. It
-does not yet expose a setup flag or runnable build service. Existing deployment
-commands continue to build on the destination.
+`lib.build_execution` is the internal systemd adapter used by the
+[on-demand build worker](build-worker.md), separate from request admission,
+durable job state, source preparation and artifact publication. Managed
+[enrollment](build-host-setup.md) and the [`--build-on` controller](build-setup.md)
+compose it into remote builds; ordinary deployments without builder selection
+continue to build on the destination.
 
 The trusted worker provisions a fresh workspace, private home, validated request
 file and empty broker-owned log beneath safe managed parents. It validates the
@@ -66,8 +68,9 @@ the request. A host restart also requires this reconciliation. The unit name
 contains the admitted request ID and cannot be reused for a new attempt.
 
 This adapter does not provision bounded scratch storage, enrollment, toolchains,
-credentials or retention. Those remain prerequisites for enabling the first
-end-to-end build-host slice. Its tests mock systemd and process boundaries;
-native capability, cgroup, cancellation and resource-limit qualification is
-still required. Persistent jobs under one build identity are mutually trusted;
-this is not an untrusted pull-request isolation boundary.
+credentials or retention. The worker and setup layers own those contracts.
+Its unit tests mock systemd and process boundaries; selected Debian execution
+also has bounded native coverage. See the [coverage map](../../plans/testing-coverage.md)
+for tested boundaries and remaining qualification. Persistent jobs under one
+build identity are mutually trusted; this is not an untrusted pull-request
+isolation boundary.

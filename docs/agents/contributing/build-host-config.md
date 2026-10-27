@@ -32,5 +32,8 @@ It refuses removal while work is active. Omission of the policy and role never
 requests removal.
 
 The [pinned SSH client](build-client.md) can submit and inspect jobs on an
-enrolled host. Saved builder selection and `--build-on` controller composition
-are not available yet; ordinary deployments still build on the target.
+enrolled host. [Saved builder selection](build-selection.md) and the public
+[`--build-on` controller flow](build-setup.md) compose enrollment, delivery and
+guarded profile setup. With no selected builder, ordinary deployments retain
+their build-on-target behavior. See the [operator walkthrough](../../services/build-systems.md)
+for complete examples.

@@ -98,9 +98,11 @@ replays, prunes artifacts, resets caches, or repairs host state automatically.
 
 The internal [process entrypoint](build-host-entrypoint.md) supplies project
 authorization, bounded source admission and an independent worker. Selected
-native checks cover Debian systemd, cgroups, mounted scratch and manually
-enrolled SSH builds. Setup enrollment, controller selection and retention
-management remain pending; target activation still owns runtime compatibility.
+native checks cover Debian systemd, cgroups, mounted scratch and enrolled SSH
+builds. [Managed enrollment](build-host-setup.md), [controller selection](build-setup.md)
+and explicit [retention maintenance](build-retention.md) compose the public
+flow; target activation still owns runtime compatibility. Consult the
+[coverage map](../../plans/testing-coverage.md) for qualification limits.
 Install the execution helper outside `/home`; the systemd adapter invokes its
 own installed module path. The slice is not an isolation boundary for
 untrusted pull requests or mutually hostile jobs sharing one build identity.

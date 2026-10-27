@@ -152,8 +152,10 @@ installation. Incoming requests during setup also refuse immediately. Setup
 does not stop, cancel or wait for active requests.
 
 The public `lib.build_target_maintenance.target_maintenance()` context manager
-gives a future local administrative refresh wrapper the same nonblocking
-exclusive ownership. Enter it **before** loading target configuration and keep
+gives the local administrative refresh wrapper in `common.build_target_refresh`
+the same nonblocking exclusive ownership. It enters **before** loading target
+configuration and retains ownership through reconciliation and its response.
+Other callers must enter it before loading configuration and keep
 it around the complete `TargetReleaseActivator.reconcile_installed()` call and
 response. It accepts no arguments and yields no value. Missing, unsafe, held or
 disabled enrollment refuses; an active typed request or another maintenance
@@ -211,6 +213,8 @@ local deploy commands, root edits or external
 replacement of installed code. Existing admission and activation uncertainty
 guards still apply after a killed connection. There is no automatic garbage
 collection of retired identities and no migration/adoption of manual target
-installations. Controller builder selection and native Debian VM/SSH qualification
-remain separate work. Mocked commands and temporary-directory/flock tests do not
-establish native qualification.
+installations. [Controller builder selection](build-setup.md) uses this installer
+during minimal bootstrap. Selected Debian VM/SSH public flows have bounded
+native coverage; see the [coverage map](../../plans/testing-coverage.md) for
+qualified paths and remaining limits. Mocked commands and temporary-directory/flock
+tests alone do not establish native qualification.

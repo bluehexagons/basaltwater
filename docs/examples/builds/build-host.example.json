@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "policy": {
+    "schema": 1,
+    "principals": {
+      "deploy": {
+        "projects": {
+          "static-site": {
+            "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+            "runtimes": [],
+            "limits": {"timeout_seconds": 300, "memory_bytes": 1073741824, "cpu_percent": 100, "scratch_bytes": 1073741824, "artifact_bytes": 67108864, "artifact_entries": 4096, "log_bytes": 1048576}
+          },
+          "python-site": {
+            "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+            "runtimes": ["python"],
+            "limits": {"timeout_seconds": 300, "memory_bytes": 1073741824, "cpu_percent": 100, "scratch_bytes": 1073741824, "artifact_bytes": 67108864, "artifact_entries": 4096, "log_bytes": 1048576}
+          },
+          "spa-api": {
+            "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+            "runtimes": ["go"],
+            "limits": {"timeout_seconds": 300, "memory_bytes": 1073741824, "cpu_percent": 100, "scratch_bytes": 1073741824, "artifact_bytes": 67108864, "artifact_entries": 4096, "log_bytes": 1048576}
+          }
+        }
+      }
+    }
+  },
+  "keys": {"deploy": "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY_BASE64"},
+  "max_records": 32,
+  "max_bytes": 8589934592
+}

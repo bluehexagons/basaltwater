@@ -1,5 +1,13 @@
 # CI/CD Webhook System
 
+This guide describes the webhook receiver/executor and its build/app-server
+topology. For controller-selected builds with managed enrollment, typed target
+policy and verified artifact delivery, use [build on a saved builder](deployments.md#build-on-a-saved-builder).
+That flow does not use `cicd connect`. Bare `--build-server` selects the webhook
+role; `--build-server --build-host-policy FILE` selects the managed on-demand
+worker instead. Managed enrollment cannot be combined with `--cicd`. See
+[build systems](build-systems.md) for the available paths and examples.
+
 For Ubuntu WSL build machines and locally submitted native PowerShell jobs,
 use the [Windows and WSL guide](../workstations/windows-wsl.md). The webhook receiver and
 `--build-server` flow in this guide are for Debian hosts; `server_wsl` uses a

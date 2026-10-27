@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "policy": {
+    "schema": 1,
+    "applications": {
+      "static-site": {
+        "project": "static-site",
+        "principals": ["deploy"],
+        "deployment_root": "/srv/basaltwater/apps/static-site",
+        "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+        "limits": {"artifact_bytes": 67108864, "artifact_entries": 4096},
+        "components": {"site": {"type": "static", "domain": "static.example.com", "path": "/"}}
+      },
+      "python-site": {
+        "project": "python-site",
+        "principals": ["deploy"],
+        "deployment_root": "/srv/basaltwater/apps/python-site",
+        "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+        "limits": {"artifact_bytes": 67108864, "artifact_entries": 4096},
+        "components": {"site": {"type": "static", "domain": "python.example.com", "path": "/"}}
+      },
+      "spa-api": {
+        "project": "spa-api",
+        "principals": ["deploy"],
+        "deployment_root": "/srv/basaltwater/apps/spa-api",
+        "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+        "limits": {"artifact_bytes": 67108864, "artifact_entries": 4096},
+        "components": {
+          "site": {"type": "static", "domain": "app.example.com", "path": "/"},
+          "api": {"type": "service", "domain": "app.example.com", "path": "/api"}
+        }
+      }
+    }
+  },
+  "keys": {"deploy": "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY_BASE64"},
+  "max_records": 32,
+  "max_bytes": 1073741824
+}

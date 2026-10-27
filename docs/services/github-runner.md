@@ -7,6 +7,11 @@ code. Live VM, reboot and GitHub qualification remain open; see the
 For native Windows jobs with WSL access, use the
 [Windows runner guide](../workstations/windows-github-runner.md).
 
+This is a general Actions job host. [Webhook CI/CD](cicd.md) and
+[selected-builder deployment](deployments.md#build-on-a-saved-builder) have
+separate setup and delivery contracts; an Actions runner is not required for
+either. Compare the paths in [build systems](build-systems.md).
+
 ## Set up
 
 ```bash

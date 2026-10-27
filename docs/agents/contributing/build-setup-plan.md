@@ -2,8 +2,8 @@
 
 `lib.build_setup_plan.prepare_delivery_plan()` converts one caller-pinned
 `Manifest` and source identity into a `lib.build_delivery.DeliveryPlan`. It is
-an integration boundary for public `--build-on` work, not a connected CLI flow.
-The parent controller still owns source preparation, saved selection,
+called by the [public `--build-on` controller](build-setup.md).
+The controller owns source preparation, saved selection,
 authenticated clients, durable delivery and recovery.
 
 The keyword arguments are `destination`, `source`, `source_path`, `request_id`,

@@ -7,18 +7,16 @@ plugin selection are owned by the setup configuration and plugin layers.
 ## Python API
 
 `parse_build_host_enrollment(value)` accepts either a decoded mapping or
-bounded UTF-8 JSON bytes. It returns a detached mapping with exactly these
-fields:
-
-```json
-{
-  "schema": 1,
-  "policy": {"schema": 1, "principals": {}},
-  "keys": {"alice": "ssh-ed25519 BASE64"},
-  "max_records": 128,
-  "max_bytes": 2147483648
-}
-```
+bounded UTF-8 JSON bytes. It returns a detached mapping with exactly
+`schema`, `policy`, `keys`, `max_records` and `max_bytes`; schema is integer `1`.
+Use the [complete enrollment template](../../examples/builds/build-host.example.json)
+and its [replacement instructions](../../examples/builds/README.md#enrollment-templates).
+The template requires your canonical public key before validation or use and
+provides explicit project grants, all seven resource ceilings and a matching
+principal/key set. Size the total quota for complete reservations, including
+scratch, artifacts, source, descriptor and metadata allowances. Default requests
+alone permit 8 GiB scratch and 2 GiB artifact payloads; a 2 GiB total quota
+cannot admit them.
 
 The shared build-host policy parser validates `policy`. `keys` must have the
 same principal set as that policy. Initial principal labels are lowercase

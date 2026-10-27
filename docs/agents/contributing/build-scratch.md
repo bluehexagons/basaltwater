@@ -1,8 +1,7 @@
 # Debian build scratch backend
 
-`lib.build_scratch` is an internal prerequisite for the on-demand build host.
-It does not enable a build command, service, or production caller. It provides
-one root-worker-only API:
+`lib.build_scratch` supplies bounded mounted scratch to the on-demand
+[build worker](build-worker.md). It provides one root-worker-only API:
 
 ```python
 handle = create_scratch(scratch_root, request_id, size_bytes=2 * 1024**3)
@@ -65,10 +64,10 @@ There is no automatic cleanup, retry, or loop-device detach. Keep capacity
 blocked until an operator reconciles retained state. Do not release while any
 build process may still be running.
 
-Tests mock all native commands and capacity observations and use temporary
-directories. This code has not been qualified against a real Debian mount,
-loop device, power loss, or concurrent privileged host mutation. File and
-directory syncs preserve useful evidence during ordinary failures, but there
-is no power-loss atomicity guarantee. The backend is not an untrusted
-pull-request isolation boundary and remains disabled until the parent build
-worker wires the lifecycle, storage policy and host qualification.
+Tests mock native commands and capacity observations and use temporary
+directories. Selected native Debian worker checks cover mounted scratch and
+cleanup; see the [coverage map](../../plans/testing-coverage.md) for precise
+boundaries. Power loss and concurrent privileged host mutation remain outside
+that qualification. File and directory syncs preserve useful evidence during
+ordinary failures, without a power-loss atomicity guarantee. The backend is
+not an untrusted pull-request isolation boundary.
