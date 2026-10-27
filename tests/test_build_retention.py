@@ -340,13 +340,15 @@ class BuildRetentionTests(unittest.TestCase):
             with patch.object(build_jobs.fcntl, "flock", side_effect=observed_flock):
                 thread = threading.Thread(target=inspect)
                 thread.start()
-                self.assertTrue(attempted.wait(5), "maintenance did not attempt the job-state lock")
-                prompt_refusal = finished.wait(0.5)
-                # Release even on a regression that waits on flock so the test
-                # thread cannot be stranded after the bounded assertion.
-                os.close(holder)
-                holder = -1
-                thread.join(5)
+                try:
+                    self.assertTrue(attempted.wait(5), "maintenance did not attempt the job-state lock")
+                    prompt_refusal = finished.wait(5)
+                finally:
+                    # Release and join even if synchronization fails or a
+                    # regression waits on flock instead of refusing it.
+                    os.close(holder)
+                    holder = -1
+                    thread.join(5)
                 self.assertFalse(thread.is_alive(), "maintenance remained stuck after lock release")
             self.assertTrue(prompt_refusal, "busy job-state lock must be refused without waiting")
             self.assertEqual(len(errors), 1)
