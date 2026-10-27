@@ -382,6 +382,18 @@ try {
         Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus -Scope Global -ErrorAction SilentlyContinue
     }
 
+    $python = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $python -or $python.Source -like '*\Microsoft\WindowsApps\python.exe') {
+        throw 'Install Python 3.11+ and reopen the terminal before running the native suite'
+    }
+    & $python.Source -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'
+    if ($LASTEXITCODE -ne 0) { throw 'The native suite requires Python 3.11 or newer' }
+    Push-Location -LiteralPath $repo
+    try {
+        & $python.Source -B -m unittest tests.test_agent_output -v
+        if ($LASTEXITCODE -ne 0) { throw 'Native agent output-capture checks failed' }
+    } finally { Pop-Location }
+
     & (Join-Path $PSScriptRoot 'Run-AgentWorkstationTests.ps1')
     if (-not $?) { throw 'Native agent workstation tests failed' }
     & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')

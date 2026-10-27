@@ -11,7 +11,7 @@ import signal
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 SCRIPT = (Path(__file__).resolve().parents[1]
@@ -66,9 +66,10 @@ class AgentOutputTests(unittest.TestCase):
         self.assertNotIn("unsafe", output.getvalue())
         self.assertEqual(captured["command"], ["program", "a; echo unsafe"])
         self.assertIs(captured["kwargs"]["shell"], False)
-        self.assertEqual(Path(summary["stdout_path"]).parent.stat().st_mode & 0o777, 0o700)
-        self.assertEqual(Path(summary["stdout_path"]).stat().st_mode & 0o777, 0o600)
-        self.assertEqual(Path(summary["stderr_path"]).stat().st_mode & 0o777, 0o600)
+        if os.name == "posix":
+            self.assertEqual(Path(summary["stdout_path"]).parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(Path(summary["stdout_path"]).stat().st_mode & 0o777, 0o600)
+            self.assertEqual(Path(summary["stderr_path"]).stat().st_mode & 0o777, 0o600)
 
     def test_preserves_child_failure_code(self) -> None:
         with (patch.object(capture_output.subprocess, "Popen") as popen,
@@ -119,6 +120,42 @@ class AgentOutputTests(unittest.TestCase):
         self.assertTrue(Path(summary["stdout_path"]).is_file())
         self.assertTrue(Path(summary["stderr_path"]).is_file())
         self.assertNotIn("missing-secret-command", output.getvalue())
+
+    def test_windows_cleanup_kills_the_tree_before_reaping_the_parent(self) -> None:
+        process = Mock(pid=321)
+        with (patch.object(capture_output.os, "name", "nt"),
+              patch.object(capture_output.subprocess, "run", return_value=Mock(returncode=0)) as run):
+            result = capture_output._terminate_group(process)
+        self.assertIsNone(result)
+        self.assertEqual(run.call_args.args[0][1:], ["/PID", "321", "/T", "/F"])
+        self.assertFalse(run.call_args.kwargs["check"])
+        self.assertEqual(run.call_args.kwargs["timeout"], capture_output._CLEANUP_SECONDS)
+        process.kill.assert_not_called()
+        process.terminate.assert_not_called()
+        process.wait.assert_called_once_with(timeout=capture_output._CLEANUP_SECONDS)
+
+    def test_windows_cleanup_reports_failure_and_bounds_the_parent_fallback(self) -> None:
+        for failure in (Mock(returncode=5), OSError("private failure"), subprocess.TimeoutExpired("secret argv", 2)):
+            process = Mock(pid=321)
+            options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+            with (self.subTest(failure=type(failure).__name__),
+                  patch.object(capture_output.os, "name", "nt"),
+                  patch.object(capture_output.subprocess, "run", **options)):
+                result = capture_output._terminate_group(process)
+            self.assertIn("Windows process-tree cleanup failed", result)
+            self.assertNotIn("private", result)
+            self.assertNotIn("secret", result)
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=capture_output._CLEANUP_SECONDS)
+
+    def test_timeout_summary_exposes_uncertain_cleanup(self) -> None:
+        with (patch.object(capture_output.subprocess, "Popen") as popen,
+              patch.object(capture_output, "_terminate_group", return_value="Windows cleanup unconfirmed"),
+              patch("sys.stdout", new_callable=io.StringIO) as output):
+            popen.return_value.wait.side_effect = subprocess.TimeoutExpired("redacted", 1)
+            result = capture_output.main(["--timeout", "1", "--", "program"])
+        self.assertEqual(result, 124)
+        self.assertEqual(self.summary(output.getvalue())["cleanup_error"], "Windows cleanup unconfirmed")
 
     @unittest.skipUnless(os.name == "posix", "process groups are POSIX-specific")
     def test_interruption_cleans_up_and_reports_status(self) -> None:

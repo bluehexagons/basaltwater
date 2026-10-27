@@ -193,9 +193,13 @@ function Invoke-NativeAgentSetup {
     New-Item -ItemType Directory -Path (Join-Path $source 'references') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'SKILL.md') -Value "metadata:`n  managed-by: basaltwater"
     Set-Content -LiteralPath (Join-Path $source 'references\guide.md') -Value 'first version'
+    New-Item -ItemType Directory -Path (Join-Path $source 'scripts\__pycache__') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $source 'scripts\__pycache__\helper.cpython-315.pyc') -Value 'generated cache'
+    Set-Content -LiteralPath (Join-Path $source 'scripts\legacy.pyc') -Value 'generated cache'
     Install-NativeSkill $source $destination -Plan
     Assert-True (-not (Test-Path -LiteralPath $destination)) 'Plan wrote a skill catalog'
     Install-NativeSkill $source $destination
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $destination 'scripts'))) 'Generated Python caches were installed as skill resources'
     Set-Content -LiteralPath (Join-Path $destination 'personal.txt') -Value 'keep'
     Set-Content -LiteralPath (Join-Path $source 'references\guide.md') -Value 'second version'
     Install-NativeSkill $source $destination

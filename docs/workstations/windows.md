@@ -142,11 +142,17 @@ Use the project's uv environment, or disable that alias in Windows App execution
 aliases if it shadows the managed interpreter in a fresh terminal. Do not
 consider `Get-Command python` alone proof of a usable interpreter.
 
+Python packages that fall back to a native build require the project's Windows
+build prerequisites. The basic profile supplies Python/uv; MSVC and the Windows
+SDK remain project-specific requirements. Honor the project's Python version
+pin and dependency choices when qualifying Windows builds.
+
 Codex/OpenCode receive skills under `%USERPROFILE%\.agents\skills`; Claude
 uses `%USERPROFILE%\.claude\skills`. Setup installs Windows workspace, project
 development, frontend design, subagent, and T3 preview guidance, including their
 supporting files. It records file hashes, refreshes unchanged managed files,
-and stops before overwriting personal edits. Junctions/symlinks in a skill path
+and stops before overwriting personal edits. Generated Python caches are excluded
+when applying a checkout. Junctions/symlinks in a skill path
 are refused. No browser payload is installed, and skills do not grant tools
 to sessions that do not expose them.
 
@@ -160,14 +166,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-Agen
 
 These tests use mocked package/provider commands and temporary catalogs.
 The [manual Windows workflow](../../.github/workflows/windows-manual.yml) also
-runs them with the existing native/WSL bootstrap tests. A real plan on an
-existing Windows 11 machine verifies discovery, not installation on a fresh PC.
+runs them with the existing native/WSL bootstrap tests and Python output-capture
+checks. A real plan on an existing Windows 11 machine verifies discovery, not
+installation on a fresh PC.
 Fresh WinGet repair, UAC, package downloads, reboot recovery, provider login,
 and a new T3 coding session still require live qualification before declaring
 this experimental profile production ready.
 
-The complete native offline suite also runs directly on a workstation; it uses
-the local temporary directory when GitHub Actions' `RUNNER_TEMP` is absent:
+The complete native offline suite requires Python 3.11+ on PATH and also runs
+directly on a workstation. It uses the local temporary directory when GitHub
+Actions' `RUNNER_TEMP` is absent:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-NativeTests.ps1

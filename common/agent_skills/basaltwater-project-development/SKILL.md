@@ -41,9 +41,11 @@ For a verbose local command, use
 It runs argv without a shell, closes stdin, and keeps stdout/stderr in private
 temporary logs; its JSON summary reports log paths, byte counts, status, return
 code, and duration. It returns the child status, `124` on timeout, or `130` on
-interrupt. Keep the summary and only bounded failure excerpts in context; logs
-are retained for follow-up. A timeout does not establish whether a desktop
-mutation completed, so inspect its status/state before any further action and
+interrupt. Windows cleanup targets the owned process tree before its parent;
+a `cleanup_error` field means cleanup could not be confirmed, so inspect owned
+processes before retrying. Keep the summary and only bounded failure excerpts in
+context; logs are retained for follow-up. A timeout does not establish whether a
+desktop mutation completed, so inspect its status/state before any further action and
 never blindly relaunch it.
 
 Before a handoff or context limit, save a short task note outside source files:

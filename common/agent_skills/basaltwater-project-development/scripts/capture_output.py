@@ -29,8 +29,33 @@ def _positive_finite(value: str) -> float:
     return result
 
 
-def _terminate_group(process: subprocess.Popen[bytes]) -> None:
-    """Stop the child process group with bounded TERM then KILL waits."""
+def _terminate_group(process: subprocess.Popen[bytes]) -> str | None:
+    """Stop the owned process group/tree and report uncertain Windows cleanup."""
+    if os.name == "nt":
+        # Killing the parent first loses the ancestry taskkill needs for /T.
+        taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe")
+        cleanup_error = None
+        try:
+            result = subprocess.run(
+                [taskkill, "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=_CLEANUP_SECONDS, check=False,
+            )
+            if result.returncode:
+                cleanup_error = f"Windows process-tree cleanup failed (exit code {result.returncode})"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            cleanup_error = f"Windows process-tree cleanup failed ({type(exc).__name__})"
+        if cleanup_error is not None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=_CLEANUP_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            cleanup_error = "Windows process did not exit within the cleanup deadline"
+        return cleanup_error
+
     if os.name == "posix":
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -65,7 +90,8 @@ def _terminate_group(process: subprocess.Popen[bytes]) -> None:
 
 def _private_file(path: Path):
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    os.fchmod(descriptor, 0o600)
+    if os.name == "posix":
+        os.fchmod(descriptor, 0o600)
     return os.fdopen(descriptor, "wb")
 
 
@@ -93,6 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     status = "completed"
     return_code = 127
     launch_error: str | None = None
+    cleanup_error: str | None = None
 
     with _private_file(stdout_path) as stdout_file, _private_file(stderr_path) as stderr_file:
         try:
@@ -116,11 +143,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             except subprocess.TimeoutExpired:
                 status = "timeout"
                 return_code = 124
-                _terminate_group(process)
+                cleanup_error = _terminate_group(process)
             except KeyboardInterrupt:
                 status = "interrupted"
                 return_code = 130
-                _terminate_group(process)
+                cleanup_error = _terminate_group(process)
 
     result: dict[str, object] = {
         "status": status,
@@ -133,6 +160,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     if launch_error is not None:
         result["error"] = launch_error
+    if cleanup_error is not None:
+        result["cleanup_error"] = cleanup_error
     _emit(result)
     return return_code
 
