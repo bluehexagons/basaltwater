@@ -6,6 +6,13 @@ the unused WSL-backed runner paths without migration or compatibility shims.
 Preserve standard build-on-target behavior elsewhere. Windows remains outside
 the current [v2.0.0 stable-release gate](../release-qualification.md).
 
+Windows agentic workstations are a lower development priority than CachyOS.
+They follow the same existing-account approach, primarily for compatibility
+testing, CI, and native packaging. CachyOS remains the main workstation for
+new feature development. The experimental
+[native workstation bootstrap](../workstations/windows.md) prepares tools and
+agent skills independently of the managed build-host backend proposed here.
+
 ## Workloads and composition
 
 Use the [shared build-host design](cicd-manifest-reuse.md): select on-demand

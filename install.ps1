@@ -1,7 +1,7 @@
-<# Fresh Windows 11 bootstrap. Run as the intended WSL/desktop account. #>
+<# Windows 11 bootstrap. Run as the intended coding/desktop account. #>
 [CmdletBinding()]
 param(
-    [ValidateSet("server_wsl")][string]$Profile = "server_wsl",
+    [ValidateSet("server_wsl", "agent_windows")][string]$Profile = "server_wsl",
     [switch]$BuildServer,
     [switch]$T3CodeDesktop,
     [switch]$Node,
@@ -29,11 +29,14 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $stateDirectory = Join-Path $env:LOCALAPPDATA "Basaltwater"
-$statePath = Join-Path $stateDirectory "wsl-setup.json"
+$statePath = Join-Path $stateDirectory $(if ($Profile -eq 'agent_windows') { 'windows-setup.json' } else { 'wsl-setup.json' })
+$sourceMarker = if ($Profile -eq 'agent_windows') { 'windows\AgentWorkstation.Common.ps1' } else { 'windows\wsl_prepare.py' }
 $owner = [Security.Principal.WindowsIdentity]::GetCurrent()
 $setupLock = $null
 $runnerHelpers = Join-Path $PSScriptRoot 'windows\GitHubRunner.Common.ps1'
 if (Test-Path -LiteralPath $runnerHelpers) { . $runnerHelpers }
+$bootstrapHelpers = Join-Path $PSScriptRoot 'windows\Bootstrap.Common.ps1'
+if (Test-Path -LiteralPath $bootstrapHelpers) { . $bootstrapHelpers }
 
 function Save-State($value) {
     if (-not (Test-Path -LiteralPath $stateDirectory)) {
@@ -42,6 +45,21 @@ function Save-State($value) {
     $temporary = Join-Path $stateDirectory ("state-" + [guid]::NewGuid() + ".json")
     $value | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $temporary -Encoding UTF8
     Move-Item -LiteralPath $temporary -Destination $statePath -Force
+}
+
+function Test-SourceFile([string]$path) {
+    return [IO.File]::Exists('\\?\' + $path)
+}
+
+function Read-State {
+    $saved = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    if ($saved.Version -ne 1 -or $saved.OwnerSid -ne $owner.User.Value -or
+        $saved.Revision -notmatch '\A[0-9a-f]{40}\z' -or
+        -not (Test-SourceFile (Join-Path $saved.Source $sourceMarker)) -or
+        ($saved.PSObject.Properties['Profile'] -and $saved.Profile -ne $Profile)) {
+        throw 'Saved setup state does not match this account, profile or source'
+    }
+    return $saved
 }
 
 function Invoke-Checked([string]$label, [scriptblock]$command) {
@@ -58,39 +76,82 @@ function Check-Host {
         throw "A fully updated x86-64 Windows 11 desktop installation is required"
     }
     $drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($stateDirectory).Substring(0, 1))
-    if ($drive.Free -lt 15GB) {
-        throw "At least 15 GiB of free space is required for WSL and build tools"
+    $requiredSpace = if ($Profile -eq 'agent_windows') { 5GB } else { 15GB }
+    if ($drive.Free -lt $requiredSpace) {
+        throw "At least $($requiredSpace / 1GB) GiB of free space is required for the selected Windows setup"
     }
 }
 
+function Expand-SourceArchive([string]$archive, [string]$destination) {
+    # PowerShell 5.1's Expand-Archive fails on long staging paths. Extended
+    # Win32 paths let .NET copy entries without changing machine-wide policy.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $destination = [IO.Path]::GetFullPath($destination).TrimEnd('\')
+    $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $relative = $entry.FullName.Replace('/', '\').TrimEnd('\')
+            $parts = @($relative -split '\\')
+            if (-not $relative -or $relative -match '[<>:"|?*\x00-\x1f]' -or
+                @($parts | Where-Object { $_ -in @('', '.', '..') -or $_ -match '[. ]\z' -or
+                    $_ -match '\A(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|\z)' }).Count -or
+                (($entry.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000) {
+                throw "Unsafe source archive entry: $($entry.FullName)"
+            }
+            $target = '\\?\' + $destination + '\' + $relative
+            if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
+                [IO.Directory]::CreateDirectory($target) | Out-Null
+                continue
+            }
+            [IO.Directory]::CreateDirectory($target.Substring(0, $target.LastIndexOf('\'))) | Out-Null
+            $inputStream = $entry.Open()
+            try {
+                $outputStream = [IO.File]::Open($target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+                try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+            } finally { $inputStream.Dispose() }
+        }
+    } finally { $zip.Dispose() }
+}
+
 function Resolve-Source([string]$reference) {
-    if ($reference -notmatch '^[A-Za-z0-9._-]+$') {
+    if ($reference -notmatch '\A[A-Za-z0-9._-]+\z') {
         throw "Invalid release reference"
     }
     $commit = Invoke-RestMethod -UseBasicParsing -Uri ("https://api.github.com/repos/bluehexagons/basaltwater/commits/" + $reference)
     $sha = [string]$commit.sha
-    if ($sha -notmatch '^[0-9a-f]{40}$') {
+    if ($sha -notmatch '\A[0-9a-f]{40}\z') {
         throw "Could not resolve a full source commit SHA"
     }
     New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
     $root = Join-Path $stateDirectory ("source\" + $sha)
-    if (-not (Test-Path -LiteralPath (Join-Path $root "windows\wsl_prepare.py")) -or
-        -not (Test-Path -LiteralPath (Join-Path $root "install.ps1"))) {
+    if (-not (Test-SourceFile (Join-Path $root $sourceMarker)) -or
+        -not (Test-SourceFile (Join-Path $root "install.ps1"))) {
         if (Test-Path -LiteralPath $root) { throw "Pinned source directory is incomplete: $root" }
         $archive = Join-Path $stateDirectory ("source-" + $sha + ".zip")
         $unpack = Join-Path $stateDirectory ("unpack-" + [guid]::NewGuid())
         New-Item -ItemType Directory -Path $unpack | Out-Null
         try {
             Invoke-WebRequest -UseBasicParsing -Uri ("https://github.com/bluehexagons/basaltwater/archive/" + $sha + ".zip") -OutFile $archive
-            Expand-Archive -LiteralPath $archive -DestinationPath $unpack
+            Expand-SourceArchive $archive $unpack
             $children = @(Get-ChildItem -LiteralPath $unpack -Directory)
-            if ($children.Count -ne 1 -or -not (Test-Path -LiteralPath (Join-Path $children[0].FullName "windows\wsl_prepare.py"))) {
+            if ($children.Count -ne 1 -or -not (Test-SourceFile (Join-Path $children[0].FullName $sourceMarker))) {
                 throw "Downloaded source archive is incomplete"
             }
             New-Item -ItemType Directory -Path (Split-Path -Parent $root) -Force | Out-Null
-            Move-Item -LiteralPath $children[0].FullName -Destination $root
+            $unpackRoot = [IO.Path]::GetFullPath($unpack).TrimEnd('\') + '\'
+            $sourceRoot = [IO.Path]::GetFullPath($stateDirectory).TrimEnd('\') + '\source\'
+            if (-not $children[0].FullName.StartsWith($unpackRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $root.StartsWith($sourceRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Refusing to move source outside the staging/setup directories'
+            }
+            [IO.Directory]::Move('\\?\' + $children[0].FullName, '\\?\' + $root)
         } finally {
-            Remove-Item -LiteralPath $unpack -Recurse -Force -ErrorAction SilentlyContinue
+            $unpackFull = [IO.Path]::GetFullPath($unpack)
+            $stateRoot = [IO.Path]::GetFullPath($stateDirectory).TrimEnd('\') + '\'
+            if (-not $unpackFull.StartsWith($stateRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Refusing source cleanup outside the setup directory'
+            }
+            if ([IO.Directory]::Exists('\\?\' + $unpackFull)) { [IO.Directory]::Delete('\\?\' + $unpackFull, $true) }
             Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
         }
     }
@@ -106,36 +167,6 @@ function Ensure-Wsl {
         throw "WSL installation failed (exit code $($process.ExitCode))"
     }
     return $false
-}
-
-function Ensure-Winget {
-    if (Get-Command winget.exe -ErrorAction SilentlyContinue) { return }
-    try {
-        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
-    } catch {
-        Write-Host "App Installer registration did not make WinGet available; trying repair."
-    }
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        Install-PackageProvider -Name NuGet -Force | Out-Null
-        Install-Module -Name Microsoft.WinGet.Client -Scope CurrentUser -Force -Repository PSGallery
-        Import-Module Microsoft.WinGet.Client
-        Repair-WinGetPackageManager -Force -Latest
-    }
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        throw "WinGet is unavailable after App Installer registration/repair"
-    }
-}
-
-function Ensure-WingetPackage([string]$packageId, [string]$label) {
-    & winget.exe install --id $packageId --exact --source winget --accept-source-agreements --accept-package-agreements
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -eq 0) { return }
-    # WinGet reports "no applicable update" as a failure when a package is already current.
-    if ($exitCode -eq -1978335189) {
-        & winget.exe list --id $packageId --exact --source winget | Out-Null
-        if ($LASTEXITCODE -eq 0) { return }
-    }
-    throw "$label failed (exit code $exitCode)"
 }
 
 function Ensure-UbuntuPython {
@@ -252,6 +283,14 @@ function Ensure-WorkerTask {
 try {
     Check-Host
     if ($UpdateSource -and -not $Resume) { throw 'UpdateSource requires Resume' }
+    if ($Profile -eq 'agent_windows') {
+        foreach ($option in @('BuildServer', 'LinuxUser', 'DistroName', 'DistroLocation',
+                              'CIRepository', 'CIOrganization', 'CIAllowedUser', 'CILabel',
+                              'CIRunnerGroup', 'CIRegisterWithGh', 'CIRegistrationTokenFile', 'CIPromptToken')) {
+            if ($PSBoundParameters.ContainsKey($option)) { throw "$option is not available with agent_windows" }
+        }
+        if (-not $PSBoundParameters.ContainsKey('T3CodeDesktop')) { $T3CodeDesktop = $true }
+    }
     if ($LinuxUser -and ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root")) {
         throw "Invalid Ubuntu username"
     }
@@ -261,7 +300,7 @@ try {
     if ($DistroLocation -and $DistroLocation -notmatch '^[A-Za-z]:[\\/]') {
         throw "Distribution location must be an absolute Windows drive path"
     }
-    if ($Version -and $Version -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid release reference" }
+    if ($Version -and $Version -notmatch '\A[A-Za-z0-9._-]+\z') { throw "Invalid release reference" }
     $runnerConfig = $null
     if ($CIRepository.Count -or $CIOrganization) {
         # The download-only entry point has no companion files. The pinned
@@ -279,12 +318,32 @@ try {
     foreach ($selection in $AgentTool) {
         foreach ($tool in $selection.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() }) {
             if ($tool -notin @('gh', 'codex', 'claude', 'opencode')) {
-                throw "Unsupported Ubuntu agent tool: $tool"
+                throw "Unsupported agent tool: $tool"
             }
             $agentTools += $tool
         }
     }
+    if ($Profile -eq 'agent_windows') { $agentTools = @(@('gh', 'codex') + $agentTools | Select-Object -Unique) }
     if ($Plan) {
+        if ($Profile -eq 'agent_windows') {
+            $planSource = $PSScriptRoot
+            if ($Resume) {
+                $preview = Read-State
+                $planSource = $preview.Source
+                $agentTools = @($preview.AgentTool)
+                $Node = $preview.Node; $Python = $preview.Python; $Go = $preview.Go
+                $T3CodeDesktop = $preview.T3CodeDesktop
+            }
+            $nativeHelpers = Join-Path $planSource 'windows\AgentWorkstation.Common.ps1'
+            if (Test-Path -LiteralPath $nativeHelpers) {
+                . $nativeHelpers
+                Invoke-NativeAgentSetup -Source $planSource -AgentTool $agentTools -Node:$Node `
+                    -Python:$Python -Go:$Go -T3CodeDesktop:$T3CodeDesktop -Plan
+            } else {
+                Write-Host "Plan: native Windows Git, agents $($agentTools -join ', '), shared skills; Node: $Node; Python: $Python; Go: $Go; T3 desktop: $T3CodeDesktop."
+            }
+            return
+        }
         Write-Host "Plan: install WinGet/WSL and stable Ubuntu, configure $Profile, selected runtimes/agents, and optional T3 desktop/worker."
         Write-Host "A reboot and interactive Ubuntu/provider login may be required."
         if ($runnerConfig) { Write-Host 'GitHub Actions: native Windows login tasks with WSL access; registration may be completed later.' }
@@ -294,24 +353,23 @@ try {
         if (-not $Resume) { throw "An installation already exists. Rerun the saved installer with -Resume." }
         $setupLock = [IO.File]::Open((Join-Path $stateDirectory 'setup.lock'),
             [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-        if ($state.OwnerSid -ne $owner.User.Value -or $state.Revision -notmatch '^[0-9a-f]{40}$' -or
-            -not (Test-Path -LiteralPath (Join-Path $state.Source "windows\wsl_prepare.py"))) {
-            throw "Saved setup state does not match this account or source"
-        }
+        $state = Read-State
     } elseif ($Resume) {
-        throw "No saved WSL setup is available to resume"
+        throw "No saved $Profile setup is available to resume"
     } else {
-        if (-not $LinuxUser) { $LinuxUser = $env:USERNAME.ToLowerInvariant() }
-        if ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root") {
-            $LinuxUser = Read-Host "Choose a lowercase Ubuntu username"
-        }
-        if ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root") {
-            throw "Invalid Ubuntu username"
+        if ($Profile -eq 'server_wsl') {
+            if (-not $LinuxUser) { $LinuxUser = $env:USERNAME.ToLowerInvariant() }
+            if ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root") {
+                $LinuxUser = Read-Host "Choose a lowercase Ubuntu username"
+            }
+            if ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root") {
+                throw "Invalid Ubuntu username"
+            }
         }
         $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
         $state = [pscustomobject]@{
             Version = 1
+            Profile = $Profile
             OwnerSid = $owner.User.Value
             Revision = $resolved.Revision
             Source = $resolved.Source
@@ -332,13 +390,18 @@ try {
         }
         Save-State $state
         $stagedInstaller = Join-Path $state.Source "install.ps1"
-        & $stagedInstaller -Resume -CIRegisterWithGh:$CIRegisterWithGh `
-            -CIRegistrationTokenFile $CIRegistrationTokenFile -CIPromptToken:$CIPromptToken
-        if (-not $?) { throw "Staged WSL setup failed; rerun the saved installer with -Resume" }
+        $resumeOptions = @{ Profile = $Profile; Resume = $true }
+        if ($Profile -eq 'server_wsl') {
+            $resumeOptions.CIRegisterWithGh = $CIRegisterWithGh
+            $resumeOptions.CIRegistrationTokenFile = $CIRegistrationTokenFile
+            $resumeOptions.CIPromptToken = $CIPromptToken
+        }
+        & $stagedInstaller @resumeOptions
+        if (-not $?) { throw "Staged setup failed; rerun the saved installer with -Profile $Profile -Resume" }
         return
     }
 
-    Initialize-DistroSelection
+    if ($Profile -eq 'server_wsl') { Initialize-DistroSelection }
     if (-not $state.PSObject.Properties['GitHubRunner']) {
         $state | Add-Member -NotePropertyName GitHubRunner -NotePropertyValue $null
     }
@@ -350,9 +413,25 @@ try {
         Save-State $state
         $setupLock.Dispose()
         $setupLock = $null
-        & (Join-Path $state.Source 'install.ps1') -Resume -CIRegisterWithGh:$CIRegisterWithGh `
-            -CIRegistrationTokenFile $CIRegistrationTokenFile -CIPromptToken:$CIPromptToken
+        $resumeOptions = @{ Profile = $Profile; Resume = $true }
+        if ($Profile -eq 'server_wsl') {
+            $resumeOptions.CIRegisterWithGh = $CIRegisterWithGh
+            $resumeOptions.CIRegistrationTokenFile = $CIRegistrationTokenFile
+            $resumeOptions.CIPromptToken = $CIPromptToken
+        }
+        & (Join-Path $state.Source 'install.ps1') @resumeOptions
         if (-not $?) { throw 'Updated source setup failed; rerun the saved installer with -Resume' }
+        return
+    }
+    if ($Profile -eq 'agent_windows') {
+        . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
+        $state.Phase = 'applying'
+        Save-State $state
+        Invoke-NativeAgentSetup -Source $state.Source -AgentTool @($state.AgentTool) -Node:$state.Node `
+            -Python:$state.Python -Go:$state.Go -T3CodeDesktop:$state.T3CodeDesktop
+        $state.Phase = 'complete'
+        Save-State $state
+        Write-Host 'Basaltwater native Windows coding setup complete. Restart T3 Code to load the updated PATH and skills.'
         return
     }
     if ($state.GitHubRunner) {

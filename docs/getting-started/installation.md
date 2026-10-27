@@ -16,6 +16,12 @@ latest final release and does not select release candidates.
 Debian is the only officially supported distribution. Ubuntu and Linux Mint are
 recognized as best-effort Debian-compatible hosts.
 
+For an existing Windows 11 coding account, use the experimental
+[native Windows setup](../workstations/windows.md). Its PowerShell installer
+prepares Git, provider CLIs, optional runtimes, shared skills, and T3 Code desktop.
+It does not install the Linux controller. The separate
+[Ubuntu WSL setup](../workstations/windows-wsl.md) installs Linux tools in Ubuntu.
+
 For an existing CachyOS KDE workstation, use the experimental
 [`agent_cachyos` local setup](../workstations/cachyos.md). It uses the current desktop account,
 installs missing tools through pacman/upstream installers, and leaves OS
@@ -63,6 +69,35 @@ install packages, download the repository, or change the launcher. A setup
 Run these commands in a terminal as the local account that should own the
 installation. Replace `$USER` only when installing for a different existing
 account.
+
+### Set up a native Windows coding workstation
+
+Windows is a lower-priority companion to CachyOS for compatibility testing,
+CI, and native packaging. This experimental setup prepares the current
+Windows 11 x64 account with Git, GitHub CLI, Codex, T3 Code desktop, Node.js LTS,
+Python/uv, and shared agent skills. It does not register a CI runner.
+
+Once the native profile is published to `main`, open PowerShell as the
+intended account and copy the entire block:
+
+```powershell
+& {
+    $installer = Join-Path $env:TEMP ("basaltwater-" + [guid]::NewGuid() + ".ps1")
+    try {
+        Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $installer -TimeoutSec 120 -ErrorAction Stop
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -Node -Python
+        if ($LASTEXITCODE -ne 0) { throw "Windows workstation setup failed (exit code $LASTEXITCODE)." }
+    } finally {
+        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+    }
+}
+```
+
+Add `-Plan` after `-Python` to preview selections. The block downloads before
+executing, reports installer failure, and removes the temporary download even
+on failure. It uses process-scoped execution-policy bypass. Follow the
+[Windows workstation guide](../workstations/windows.md) for the current-checkout
+command, optional tools, authentication, and recovery.
 
 ### Install the launcher only
 

@@ -1,6 +1,6 @@
 ---
 name: basaltwater-subagents
-description: Plan bounded subagent tasks, choose cost-aware models, and coordinate T3 Code workflows on Debian, CachyOS, or Ubuntu WSL.
+description: Plan bounded subagent tasks, choose cost-aware models, and coordinate T3 Code workflows on Debian, CachyOS, native Windows, or Ubuntu WSL.
 metadata:
   managed-by: basaltwater
 ---

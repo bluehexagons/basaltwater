@@ -38,7 +38,7 @@ New to Linux or Basaltwater? Follow [Try Basaltwater on a Debian
 VM](docs/getting-started/getting-started.md) for a guided first setup, small feature experiments,
 and checks that show whether each step worked.
 
-Install the launcher on the machine that will manage your hosts:
+On Linux, install the launcher on the machine that will manage your hosts:
 
 ```sh
 sh -c '
@@ -66,6 +66,34 @@ organizes detailed feature and operations guides.
 Contributors should also read the
 [contributor and coding-agent guide](docs/agents/contributing/README.md)
 before changing the project.
+
+### Windows coding workstation
+
+Windows workstations are a lower-priority companion to CachyOS, primarily for
+compatibility testing, CI, and native packaging. The experimental setup prepares
+the current Windows 11 x64 account with Git, GitHub CLI, Codex, T3 Code desktop,
+Node.js LTS, Python/uv, and shared agent skills.
+
+Once the native profile is published to `main`, open PowerShell as the account
+that will use these tools and paste the complete block:
+
+```powershell
+& {
+    $installer = Join-Path $env:TEMP ("basaltwater-" + [guid]::NewGuid() + ".ps1")
+    try {
+        Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $installer -TimeoutSec 120 -ErrorAction Stop
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -Node -Python
+        if ($LASTEXITCODE -ne 0) { throw "Windows workstation setup failed (exit code $LASTEXITCODE)." }
+    } finally {
+        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+    }
+}
+```
+
+Add `-Plan` after `-Python` to preview selections. See the
+[Windows workstation guide](docs/workstations/windows.md) for the current-checkout
+command, provider login, verification, and recovery. CI runner registration is
+a separate operation.
 
 ## Supported targets
 

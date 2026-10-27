@@ -226,7 +226,7 @@ try {
         } 'official stable Ubuntu WSL name'
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -AgentTool unsupported
-        } 'Unsupported Ubuntu agent tool'
+        } 'Unsupported agent tool'
         Assert-Throws {
             & (Join-Path $repo 'install.ps1') -Plan -DistroLocation 'C:relative'
         } 'absolute Windows drive path'
@@ -381,6 +381,8 @@ try {
         Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus -Scope Global -ErrorAction SilentlyContinue
     }
 
+    & (Join-Path $PSScriptRoot 'Run-AgentWorkstationTests.ps1')
+    if (-not $?) { throw 'Native agent workstation tests failed' }
     & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')
     if (-not $?) { throw 'GitHub runner offline qualification failed' }
     Write-Host 'Native Windows qualification passed.'
