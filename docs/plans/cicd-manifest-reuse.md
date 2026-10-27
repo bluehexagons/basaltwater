@@ -259,8 +259,16 @@ identity, explicit exports, platform/runtime compatibility, durable admission,
 selected recovery boundaries and controller-to-target replay. Selected native
 saved patch/redeploy checks preserve the chosen revision, builder and sibling
 deployment; target-only reconciliation preserves installed identities without
-target compilers. Continue expanding crash/restart and combined-application
-qualification.
+target compilers. Native checks also cover one ready SPA and Go API release
+alongside a retained same-domain neighbor, including revision replacement,
+retained reconciliation and idle reboot. Controlled truncated upload refuses
+activation; an unhealthy API candidate restores both previous exports and its
+unit while the neighbor remains available. Recovery guards retain exact IDs and
+block implicit remote mutations. An offline SIGKILL synchronized through pipes
+after durable target activation, before controller acknowledgement, preserves
+exact identities and guards; reentry refuses new work and identical target
+replay returns the cached result. Transport and activation effects are mocked
+in that crash check. Continue expanding crash/restart qualification.
 
 ## Delivery order and acceptance
 
@@ -272,13 +280,16 @@ qualification.
    payloads, and interrupted pruning with same-revision resumption and same-ID
    replay. Preserve default build-on-target
    setup/redeploy behavior and saved settings.
-2. **Multi-component deployment and webhook adapter:** first qualify one ready
-   static SPA and Go API application alongside a retained same-domain neighbor,
-   using the same activation path without target build tools. Automated checks
-   cover combined activation, retained reconciliation and health rollback;
-   combined native qualification remains pending. Then extend webhook reuse and
-   stateful runtime bindings. Test transfer failure, disk exhaustion, health
-   rollback, lost replies, stale publication and restart recovery.
+2. **Multi-component deployment and webhook adapter:** native SPA and Go API
+   checks cover shared-domain routing, saved revision replacement, retained
+   reconciliation and idle reboot with a neighboring application and no target
+   compilers. Controlled native transfer and health failures preserve the live
+   application or restore both exports while retaining recovery evidence.
+   Browser rendering remains unqualified because the preview could not resolve
+   the lab hostname; npm-built frontends and stateful bindings are outside this
+   slice. Extend
+   capacity, lost-reply and restart checks before webhook reuse and stateful
+   runtime bindings.
 3. **Composable runner and shared capacity:** replace dedicated-profile
    restrictions; qualify simultaneous installed roles, authorization, waiting,
    cancellation, drain/reboot and nested submissions. Keep GitHub workflow

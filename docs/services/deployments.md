@@ -45,8 +45,10 @@ with a placeholder that must be filled in before replay.
 Add `--build-on SAVED-BUILDER` to build supported manifest deployments on an
 enrolled saved builder and deliver verified artifacts to the target. Omitting
 the selection keeps the existing build-on-target flow for ordinary deployments.
-This bounded public setup flow still requires live qualification; a successful
-dry run does not establish that a public build and deployment will succeed.
+Selected Debian static/Go public flows have native coverage, including saved
+revision updates and retained refresh. Consult the
+[coverage map](../plans/testing-coverage.md) for the tested boundaries; a dry run
+does not establish that a particular deployment will succeed.
 
 For an already enrolled builder named `builds`, an existing remote target, and a
 controller-local typed target policy matching the manifest's routes:
@@ -113,6 +115,34 @@ automatic ports and default working directory/reverse proxy settings. Declare
 `"port": "auto"` to select automatic allocation. The verified binary must be a
 self-contained x86-64 ELF executable and honor generated `HOST=127.0.0.1` and
 `PORT` values. A canonical health path is supported.
+
+A ready SPA and Go API can share one application and release bundle:
+
+```json
+{
+  "version": 1,
+  "build_runtimes": ["go"],
+  "components": [
+    {
+      "name": "site", "type": "static", "domain": "{{domain}}",
+      "path": "/", "output": "public", "artifacts": ["public"], "spa": true
+    },
+    {
+      "name": "api", "type": "service", "domain": "{{domain}}",
+      "path": "/api", "port": "auto", "health": "/health",
+      "build": "mkdir -p bin && CGO_ENABLED=0 go build -trimpath -o bin/api .",
+      "binary": "bin/api", "artifacts": ["bin/api"]
+    }
+  ]
+}
+```
+
+This example assumes a Go module at the repository root and committed frontend
+assets in `public`. SPA deep links use the frontend fallback; `/api` requests
+retain their prefix and query when proxied, and API errors remain API responses.
+The target policy must authorize both components as one complete application.
+A separately authorized application can retain a neighboring route such as
+`/neighbor` on the same domain. This example does not build an npm frontend.
 
 The selected-builder flow refuses Node builds, Godot/interpreter services,
 custom `exec`, `env_file`, `runtime_env`, custom working/data paths, SQLite
