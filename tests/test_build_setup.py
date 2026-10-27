@@ -25,6 +25,7 @@ from lib.build_delivery import (
 )
 from lib.build_protocol import encode_document, request_digest
 from lib.build_selection import BuilderSelection, SSHEndpoint
+from lib.build_setup_recovery import inspect_build_setup_recovery
 from lib.config import SetupConfig
 from lib.operation_state import OperationStateStore
 from lib.project_manifest import parse_manifest
@@ -395,6 +396,7 @@ class BuildSetupControllerCrashTests(BuildDeliveryFixture, unittest.TestCase):
         def snapshot(root=self.root):
             return {str(path.relative_to(root)): (
                 path.stat().st_ino, path.stat().st_mode,
+                path.stat().st_mtime_ns, path.stat().st_ctime_ns,
                 path.read_bytes() if path.is_file() else None,
             ) for path in root.rglob("*")}
 
@@ -476,6 +478,23 @@ class BuildSetupControllerCrashTests(BuildDeliveryFixture, unittest.TestCase):
             # refuse from the retained guards before any mutation or new IDs.
             self.builder.reset_mock()
             self.target.reset_mock()
+            # Offline inspection preserves the lost acknowledgement window:
+            # target completion above is independent evidence, never inferred
+            # from the controller's locally saved activating intent.
+            inspected = inspect_build_setup_recovery(setup_journal)
+            self.assertEqual(inspect_build_setup_recovery(setup_journal), inspected)
+            self.assertEqual(inspected["remote_state"], "unobserved")
+            self.assertEqual(inspected["payload_contents"], "unverified")
+            saved_first, unresolved_last = inspected["applications"]
+            self.assertEqual(saved_first["local_status"], "completed")
+            self.assertEqual(saved_first["activation_acknowledgement"], first["activation_receipt"])
+            self.assertEqual(unresolved_last["local_status"], "activating")
+            self.assertEqual(unresolved_last["unresolved_intent"], "activate")
+            self.assertIsNone(unresolved_last["activation_acknowledgement"])
+            for key in ("request_id", "request_sha256", "source", "idempotency_key",
+                        "operation_id", "generation", "artifact_sha256", "artifact_size", "bindings_sha256"):
+                self.assertEqual(unresolved_last[key], last[key])
+            self.assertEqual(snapshot(), retained)
             with self.assertRaises(build_setup.BuildSetupRecoveryRequired) as caught:
                 build_setup.run_build_setup(config, apply_setup=apply)
             self.assertEqual(caught.exception.journal_path, str(setup_journal))
