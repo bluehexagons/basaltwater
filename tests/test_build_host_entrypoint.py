@@ -313,6 +313,51 @@ class BuildHostEntrypointTest(unittest.TestCase):
             serve.assert_not_called()
             worker.assert_not_called()
 
+    def test_capacity_suppresses_import_caches_and_restores_flag_on_every_exit(self):
+        configured = config()
+        for previous in (False, True):
+            for failure in (None, "config", "inspect", "interrupted"):
+                observed = []
+
+                def load(_path):
+                    observed.append("config")
+                    self.assertTrue(build_host.sys.dont_write_bytecode)
+                    if failure == "config":
+                        raise ValueError("configuration unavailable")
+                    return configured
+
+                def inspect(config_value):
+                    observed.append("inspect")
+                    self.assertTrue(build_host.sys.dont_write_bytecode)
+                    self.assertIs(config_value, configured)
+                    if failure == "inspect":
+                        raise ValueError("inspection unavailable")
+                    if failure == "interrupted":
+                        raise KeyboardInterrupt
+                    return {"schema": 1}
+
+                with self.subTest(previous=previous, failure=failure), \
+                     patch.object(build_host.sys, "dont_write_bytecode", previous), \
+                     patch.object(build_host.os, "geteuid", return_value=0), \
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+                     patch.object(build_host, "_trusted_code"), \
+                     patch.object(build_host, "_trusted_libraries"), \
+                     patch.object(build_host, "require_platform"), \
+                     patch.object(build_host, "load_config", side_effect=load), \
+                     patch("lib.build_capacity.inspect_build_capacity", side_effect=inspect), \
+                     patch.object(build_host.sys, "stdout"), \
+                     patch.object(build_host.sys, "stderr"), \
+                     patch.dict(os.environ, {}, clear=True):
+                    if failure == "interrupted":
+                        with self.assertRaises(KeyboardInterrupt):
+                            build_host.main(["--inspect-capacity"])
+                    else:
+                        self.assertEqual(build_host.main(["--inspect-capacity"]),
+                                         0 if failure is None else 1)
+                    self.assertIs(build_host.sys.dont_write_bytecode, previous)
+                    self.assertEqual(observed, ["config"] if failure == "config"
+                                     else ["config", "inspect"])
+
     def test_local_retention_passes_only_configured_roots_and_exact_id_revision(self):
         configured = config()
         with patch.object(build_host.os, "geteuid", return_value=0), \

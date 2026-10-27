@@ -78,6 +78,13 @@ Any SSH original-command, connection or client environment marker rejects it
 before project imports or file access. It accepts no principal, `--once`,
 revision or prune kinds. It adds no SSH action.
 
+Capacity inspection disables Python bytecode cache writes before the first
+project import, including the dependencies imported by `load_config()`. The
+documented `python3 -I` invocation needs no additional `-B` to avoid creating or
+updating project caches on a cold installation. Callable `main()` restores the
+previous `sys.dont_write_bytecode` value on success, failure or interruption;
+worker, serve and retention modes keep their existing bytecode behavior.
+
 The trusted Python API is
 `lib.build_capacity.inspect_build_capacity(config: Mapping[str, Any]) -> dict[str, Any]`.
 Pass the configuration returned by `load_config()`; only `roots`, `max_records`

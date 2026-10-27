@@ -296,7 +296,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     args = parser.parse_args(argv)
+    previous_bytecode = sys.dont_write_bytecode
     try:
+        if args.inspect_capacity:
+            # Isolated Python still writes caches by default. Suppress them
+            # before load_config's first project import, even on a cold install.
+            sys.dont_write_bytecode = True
         if os.geteuid() != 0 or not sys.flags.isolated:
             raise ValueError("Use the root-controlled isolated Python launcher")
         maintenance = args.inspect_capacity or any(value is not None for value in
@@ -337,6 +342,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError):
         print("Builder operation is unavailable; inspect protected host evidence", file=sys.stderr)
         return 1
+    finally:
+        if args.inspect_capacity:
+            sys.dont_write_bytecode = previous_bytecode
 
 
 if __name__ == "__main__":
