@@ -1,4 +1,4 @@
-"""Explicit root-local terminal settlement and source/log payload pruning."""
+"""Explicit root-local terminal settlement, pruning and successful bundle release."""
 
 from __future__ import annotations
 
@@ -36,7 +36,8 @@ MAX_PLAN_BYTES = 16 * 1024
 FILE_CHARGE_FLOOR = 4096
 _CHUNK = 64 * 1024
 _TERMINAL = frozenset({"succeeded", "failed", "cancelled", "expired"})
-_PATHS = {"source": ("inputs", ".source"), "log": ("logs", ".log")}
+_PATHS = {"source": ("inputs", ".source"), "log": ("logs", ".log"),
+          "bundle": ("artifacts", ".bundle")}
 
 
 def _require_root() -> None:
@@ -134,7 +135,7 @@ class BuildRetentionStore:
     Inspect and apply take worker (nonblocking), input, payload (nonblocking),
     then short job-state locks. No payload I/O runs under the job-state lock.
     Roots are never created or recursively traversed. Only selected fixed
-    source/log entries may be unlinked. Plans contain no commands or log bytes.
+    payload entries may be unlinked. Plans contain no commands or log bytes.
     """
 
     def __init__(self, *, inputs: BuildInputStore, jobs: BuildJobStore,
@@ -168,17 +169,27 @@ class BuildRetentionStore:
 
         Settlement must have completed first. Pending operations require this
         exact expected revision and kind set; admission never resumes them.
-        Bundles and all replay/job identities are retained indefinitely within
-        the existing finite history limits.
+        Bundle release is a separate explicit action. All replay/job identities
+        remain retained within the existing finite history limits.
         """
         _require_root()
         revision = _identifier(expected_revision, "Expected revision", _SHA256)
         if (not isinstance(kinds, (tuple, list)) or not kinds
-                or any(not isinstance(kind, str) or kind not in _PATHS for kind in kinds)
+                or any(not isinstance(kind, str) or kind not in {"source", "log"} for kind in kinds)
                 or len(set(kinds)) != len(kinds)):
             raise ValueError("Pruning kinds must select source and/or log exactly once")
         selected = [kind for kind in _PATHS if kind in kinds]
         return self._operate(request_id, expected_revision=revision, prune_kinds=selected)
+
+    def release_bundle(self, request_id: str, *, expected_revision: str) -> dict[str, Any]:
+        """Relinquish builder retrieval of one exact settled successful bundle.
+
+        Only this root-local action can start or resume bundle deletion. Reads
+        never release a hold; job results and replay identities remain intact.
+        """
+        _require_root()
+        revision = _identifier(expected_revision, "Expected revision", _SHA256)
+        return self._operate(request_id, expected_revision=revision, prune_kinds=["bundle"])
 
     def _plan(self, request_id: str, record: dict[str, Any], job: dict[str, Any],
               directories: dict[str, int], known_ids: set[str]) -> dict[str, Any]:
@@ -208,13 +219,13 @@ class BuildRetentionStore:
         log = _payload(directories["logs"], request_id + ".log",
                        maximum=limits["log_bytes"], mode=0o600)
         observed = {"source": source, "bundle": bundle, "log": log}
-        payloads = observed
-        if record["schema"] == 3:
+        original_payloads = observed
+        if record["schema"] in {3, 4}:
             pruning = record["pruning"]
             if hashlib.sha256(encode_document(job, maximum=MAX_STORE_BYTES)).hexdigest() != pruning["job_sha256"]:
                 raise ValueError("Build retention terminal job identity changed")
-            payloads = pruning["payloads"]
-            for kind, original in payloads.items():
+            original_payloads = pruning["payloads"]
+            for kind, original in original_payloads.items():
                 operations = [op for op in pruning["operations"] if kind in op["kinds"]]
                 current = observed[kind]
                 if operations and operations[0]["state"] == "completed":
@@ -222,10 +233,14 @@ class BuildRetentionStore:
                         raise ValueError("Build retention pruned payload reappeared")
                 elif current != original and not (current is None and operations):
                     raise ValueError("Build retention pruning payload evidence changed")
-            source, log = payloads["source"], payloads["log"]
+        # Validate immutable success and settlement against the original bytes,
+        # while unlink/recheck and availability always use observed payloads.
+        source, bundle, log = (original_payloads[kind] for kind in ("source", "bundle", "log"))
         if (source is None or source["size"] != record["source_size"]
                 or source["sha256"] != record["source_sha256"]):
             raise ValueError("Build retention source does not match immutable input identity")
+        if record["schema"] == 4 and job["state"] != "succeeded":
+            raise ValueError("Build retention bundle release requires a succeeded job")
         if job["state"] == "succeeded":
             artifact = job["artifact"]
             if (bundle is None or log is None or bundle["sha256"] != artifact["sha256"]
@@ -239,7 +254,7 @@ class BuildRetentionStore:
             FILE_CHARGE_FLOOR, len(encode_document(job, maximum=MAX_STORE_BYTES)) + 1024,
         )
         charge = metadata_charge + sum(max(FILE_CHARGE_FLOOR, item["size"])
-                                       for item in payloads.values() if item is not None)
+                                       for item in original_payloads.values() if item is not None)
         if charge > record["reservation_bytes"]:
             raise ValueError("Build retention charge exceeds the original reservation")
         evidence = {
@@ -250,20 +265,20 @@ class BuildRetentionStore:
             "roots": {key: {"path": self.roots[key],
                             "identity": [os.fstat(fd).st_dev, os.fstat(fd).st_ino]}
                       for key, fd in directories.items()},
-            "payloads": payloads, "metadata_charge_bytes": metadata_charge,
+            "payloads": original_payloads, "metadata_charge_bytes": metadata_charge,
             "charge_bytes": charge,
         }
         revision = hashlib.sha256(encode_document(evidence, maximum=MAX_PLAN_BYTES)).hexdigest()
         original_charge = (record["pruning"]["operations"][0]["previous_charge_bytes"]
-                           if record["schema"] == 3 else record.get("charge_bytes"))
-        if record["schema"] in {2, 3} and (record["settlement_revision"] != revision
+                           if record["schema"] in {3, 4} else record.get("charge_bytes"))
+        if record["schema"] in {2, 3, 4} and (record["settlement_revision"] != revision
                                           or original_charge != charge):
             raise ValueError("Build retention settled evidence changed; root reconciliation required")
         plan = {"schema": 1, "request_id": request_id, "state": job["state"],
                 "revision": revision, "reservation_bytes": record["reservation_bytes"],
                 "current_charge_bytes": record.get("charge_bytes", record["reservation_bytes"]),
                 "charge_bytes": charge, "metadata_charge_bytes": metadata_charge,
-                "payloads": observed, "settled": record["schema"] in {2, 3},
+                "payloads": observed, "settled": record["schema"] in {2, 3, 4},
                 "pruning": [], "availability": {
                     kind: "present" if item is not None else "absent" for kind, item in observed.items()}}
         encode_document(plan, maximum=MAX_PLAN_BYTES)
@@ -272,7 +287,7 @@ class BuildRetentionStore:
     @staticmethod
     def _view(plan: dict[str, Any], record: dict[str, Any], *, count: int | None = None) -> dict[str, Any]:
         """Project current intent or reconstruct an exact completed retry receipt."""
-        if record["schema"] != 3:
+        if record["schema"] not in {3, 4}:
             return plan
         result = copy.deepcopy(plan)
         pruning = record["pruning"]
@@ -302,7 +317,7 @@ class BuildRetentionStore:
 
     def _check_save(self, record: dict[str, Any], *, metadata_bytes: int, encoded_size: int) -> None:
         self.inputs._validate_intent(record, request_id=record["request_id"])
-        maximum = MAX_PRUNING_INTENT_BYTES if record["schema"] == 3 else MAX_INTENT_BYTES
+        maximum = MAX_PRUNING_INTENT_BYTES if record["schema"] in {3, 4} else MAX_INTENT_BYTES
         encoded = encode_document(record, maximum=maximum)
         if metadata_bytes - encoded_size + len(encoded) > min(
             MAX_RETAINED_METADATA_BYTES, self.inputs.max_records * MAX_PRUNING_INTENT_BYTES,
@@ -329,7 +344,7 @@ class BuildRetentionStore:
                 if request_id not in intents:
                     raise ValueError("Build retention input was not found")
                 record, encoded_size, source, partial = intents[request_id]
-                if (source is None and record["schema"] != 3) or partial is not None:
+                if (source is None and record["schema"] not in {3, 4}) or partial is not None:
                     raise ValueError("Build retention requires a complete published input")
                 stack.enter_context(payload_lease(self.jobs, request_id, exclusive=True))
                 job = self.jobs.read_for_retention(request_id, lease=lease)
@@ -364,12 +379,17 @@ class BuildRetentionStore:
                metadata_bytes: int, encoded_size: int) -> dict[str, Any]:
         if not plan["settled"]:
             raise ValueError("Build retention requires settlement before pruning")
+        release = kinds == ["bundle"]
+        if release and job["state"] != "succeeded":
+            raise ValueError("Build retention bundle release requires a succeeded job")
         updated = copy.deepcopy(record)
         if record["schema"] == 2:
             updated.update(schema=3, pruning={
                 "payloads": plan["payloads"], "operations": [],
                 "job_sha256": hashlib.sha256(encode_document(job, maximum=MAX_STORE_BYTES)).hexdigest(),
             })
+        if release:
+            updated["schema"] = 4
         operations = updated["pruning"]["operations"]
         existing = next((index for index, op in enumerate(operations)
                          if op["expected_revision"] == expected_revision), None)
@@ -401,6 +421,8 @@ class BuildRetentionStore:
         completed["charge_bytes"] = operation["charge_bytes"]
         self._check_save(updated, metadata_bytes=metadata_bytes, encoded_size=encoded_size)
         self._check_save(completed, metadata_bytes=metadata_bytes, encoded_size=encoded_size)
+        self._view(plan, updated)
+        self._view(plan, completed)
         self._discard_staged(directories["inputs"], updated)
         if existing is None:
             # Bounded intent and prior charge are durable BEFORE the first unlink.
@@ -446,7 +468,7 @@ class BuildRetentionStore:
                 decode_document(raw, maximum=maximum), request_id=pending["request_id"],
             )
             candidates = [pending]
-            if pending["schema"] == 3:
+            if pending["schema"] in {3, 4}:
                 completed = copy.deepcopy(pending)
                 operation = completed["pruning"]["operations"][-1]
                 operation["state"] = "completed"

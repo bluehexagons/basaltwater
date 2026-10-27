@@ -112,11 +112,11 @@ def _inspect(config: Mapping[str, Any]) -> dict[str, Any]:
                 original += record["reservation_bytes"]
                 schema = record["schema"]
                 category = "unsettled" if schema == 1 else "settled"
-                if schema == 3:
+                if schema in {3, 4}:
                     category = ("pending_pruning" if any(op["state"] == "pending"
                                 for op in record["pruning"]["operations"]) else "pruned")
                 counts[category] += 1
-                if schema != 3 and (source is None or partial is not None):
+                if schema not in {3, 4} and (source is None or partial is not None):
                     counts["incomplete_inputs"] += 1
                 job = records.get(identifier)
                 if job is None:
@@ -130,11 +130,13 @@ def _inspect(config: Mapping[str, Any]) -> dict[str, Any]:
                         or request["source"]["snapshot_sha256"] != record["source_sha256"]
                         or inputs._reservation(record["source_size"], request) != record["reservation_bytes"]):
                     raise ValueError("Build input and job identities differ")
-                if schema != 3 and (source is None or partial is not None):
+                if schema not in {3, 4} and (source is None or partial is not None):
                     raise ValueError("Submitted input lacks established source evidence")
                 if schema != 1 and job["state"] not in _CERTAIN_TERMINAL:
                     raise ValueError("Settled input has inconsistent job evidence")
-                if schema == 3:
+                if schema == 4 and job["state"] != "succeeded":
+                    raise ValueError("Bundle release lacks successful job evidence")
+                if schema in {3, 4}:
                     digest = hashlib.sha256(encode_document(job, maximum=MAX_STORE_BYTES)).hexdigest()
                     if digest != record["pruning"]["job_sha256"]:
                         raise ValueError("Pruning job identity differs")

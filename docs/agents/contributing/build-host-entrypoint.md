@@ -61,8 +61,14 @@ deletes source and log payloads by default. Repeat `--prune-kind source` or
 `--prune-kind log` to choose kinds explicitly. Inspect reports availability and
 pending/completed pruning; interrupted pruning requires its original revision
 and kind set. This is also root-local only, rejected before imports/configuration
-when any SSH environment marker is present. Bundles, job results and replay
-identities remain retained; no automatic pruning policy or SSH action is added.
+when any SSH environment marker is present. The separate root-local
+`--release-bundle ID --expected-revision DIGEST` action relinquishes builder
+retrieval and deletes only an exact settled successful bundle. It accepts no
+principal, `--once` or `--prune-kind`, and uses the same launcher, code, platform,
+account, configuration and root checks. SSH markers reject it before project
+imports or configuration reads. Downloads never release holds. Failed,
+cancelled, expired and uncertain orphan bundles remain charged. Job results and
+replay identities remain retained; no automatic policy or SSH action is added.
 
 ## Read-only local capacity inspection
 
@@ -108,9 +114,11 @@ An input without a job can be an interrupted upload or publication before
 submission: it remains fully charged and is counted under `inputs_without_jobs`
 and, when applicable, `incomplete_inputs`. Existing jobs must match retained
 input identities and reservations. Settled/pruned inputs require existing
-certain-terminal jobs; version-3 pruning also requires the exact retained job
-digest. Pending pruning keeps its previous charge, completed pruning keeps its
-persisted charge, and uncertain jobs keep their full unsettled reservation.
+certain-terminal jobs; version-3/4 pruning also requires the exact retained job
+digest, and version-4 release requires success. Release uses the existing pruned
+and pending-pruning categories. Pending pruning/release keeps its previous
+charge, completed operations keep their persisted charge, and uncertain jobs
+keep their full unsettled reservation.
 Inspection never proposes or applies a lower charge.
 
 `filesystems` groups the five configured root labels by their opened device ID.

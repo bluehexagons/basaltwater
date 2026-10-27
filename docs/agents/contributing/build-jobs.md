@@ -62,7 +62,8 @@ identical request replay the same record, including after a lost reply or a
 terminal result. Another owner or different input using that ID is rejected;
 it never starts a second build.
 
-After explicit source/log pruning, input admission instead uses
+After explicit source/log pruning or successful bundle release, input admission
+instead uses
 `replay_terminal(request, owner=..., expected_job_sha256=...)`. This requires an
 existing certain-terminal job with exact owner, full request digest and private
 job-record digest under the short state lock. Replay requires the established
@@ -71,6 +72,11 @@ without initializing, reconciling or expiring anything. It refuses lock
 contention without waiting. It returns the existing public receipt without
 creating work or changing job results. Missing, changed, active or uncertain
 records refuse before replay stream reads.
+Version-4 release tombstones use this path even when the original source is
+still present. Pending release refuses replay. Bundle release changes no job
+record: historical success, artifact identity, owner and receipt remain exact,
+and input slots and job-history capacity are retained. Missing released payloads
+are reported unavailable by the service without changing the job schema.
 See [terminal retention](build-retention.md) for bounded tombstones and recovery.
 
 `status(request_id, *, owner)` and `cancel(request_id, *, owner)` are

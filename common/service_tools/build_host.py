@@ -261,7 +261,8 @@ def serve(config: dict, *, principal: str, config_path: str) -> None:
 
 
 def retain_terminal(config: dict, *, request_id: str, expected_revision: str | None,
-                    prune_kinds: tuple[str, ...] | None = None) -> dict:
+                    prune_kinds: tuple[str, ...] | None = None,
+                    release_bundle: bool = False) -> dict:
     """Run explicit local maintenance using only administrator-configured roots."""
     from lib.build_inputs import BuildInputStore
     from lib.build_jobs import BuildJobStore
@@ -274,6 +275,8 @@ def retain_terminal(config: dict, *, request_id: str, expected_revision: str | N
         jobs=BuildJobStore(os.path.join(roots["state"], "jobs.json")),
         scratch_root=roots["scratch"], artifacts_root=roots["artifacts"], logs_root=roots["logs"],
     )
+    if release_bundle:
+        return retention.release_bundle(request_id, expected_revision=expected_revision)
     if prune_kinds is not None:
         return retention.prune_terminal(request_id, expected_revision=expected_revision, kinds=prune_kinds)
     if expected_revision is None:
@@ -290,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     modes.add_argument("--inspect-capacity", action="store_true")
     modes.add_argument("--settle-terminal", metavar="ID")
     modes.add_argument("--prune-terminal", metavar="ID")
+    modes.add_argument("--release-bundle", metavar="ID")
     parser.add_argument("--expected-revision", metavar="DIGEST")
     parser.add_argument("--prune-kind", action="append", choices=("source", "log"))
     parser.add_argument("--principal")
@@ -305,12 +309,14 @@ def main(argv: list[str] | None = None) -> int:
         if os.geteuid() != 0 or not sys.flags.isolated:
             raise ValueError("Use the root-controlled isolated Python launcher")
         maintenance = args.inspect_capacity or any(value is not None for value in
-                          (args.inspect_retention, args.settle_terminal, args.prune_terminal))
+                          (args.inspect_retention, args.settle_terminal, args.prune_terminal,
+                           args.release_bundle))
         if (args.serve and (not args.principal or args.once
                             or os.environ.get("SSH_ORIGINAL_COMMAND") != SSH_COMMAND)
                 or args.worker and args.principal is not None
                 or (args.expected_revision is not None) != (args.settle_terminal is not None
-                                                           or args.prune_terminal is not None)
+                                                           or args.prune_terminal is not None
+                                                           or args.release_bundle is not None)
                 or args.prune_kind is not None and args.prune_terminal is None
                 or maintenance and (args.principal is not None or args.once
                                     or any(name in os.environ for name in
@@ -332,8 +338,11 @@ def main(argv: list[str] | None = None) -> int:
         elif maintenance:
             options = ({"prune_kinds": tuple(args.prune_kind or ("source", "log"))}
                        if args.prune_terminal is not None else {})
+            if args.release_bundle is not None:
+                options["release_bundle"] = True
             result = retain_terminal(config, request_id=args.inspect_retention or args.settle_terminal
-                                     or args.prune_terminal, expected_revision=args.expected_revision,
+                                     or args.prune_terminal or args.release_bundle,
+                                     expected_revision=args.expected_revision,
                                      **options)
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         else:

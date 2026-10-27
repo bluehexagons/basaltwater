@@ -261,11 +261,12 @@ class BuildHostEntrypointTest(unittest.TestCase):
         inspect = ["--inspect-retention", "a" * 32]
         settle = ["--settle-terminal", "a" * 32, "--expected-revision", "b" * 64]
         prune = ["--prune-terminal", "a" * 32, "--expected-revision", "b" * 64]
+        release = ["--release-bundle", "a" * 32, "--expected-revision", "b" * 64]
         with patch.object(build_host, "_trusted_code") as trusted, \
              patch.object(build_host, "load_config") as loader, \
              patch.object(build_host.sys, "stderr"), \
              patch.dict(os.environ, {}, clear=True):
-            for arguments in (inspect, settle, prune, ["--inspect-capacity"]):
+            for arguments in (inspect, settle, prune, release, ["--inspect-capacity"]):
                 with patch.object(build_host.os, "geteuid", return_value=1000), \
                      patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
                     self.assertEqual(build_host.main(arguments), 1)
@@ -377,6 +378,11 @@ class BuildHostEntrypointTest(unittest.TestCase):
                                                "--expected-revision", "b" * 64]), 0)
             retain.assert_called_once_with(configured, request_id="a" * 32, expected_revision="b" * 64)
             retain.reset_mock()
+            self.assertEqual(build_host.main(["--release-bundle", "a" * 32,
+                                               "--expected-revision", "b" * 64]), 0)
+            retain.assert_called_once_with(configured, request_id="a" * 32,
+                                           expected_revision="b" * 64, release_bundle=True)
+            retain.reset_mock()
             for kinds, arguments in ((('source', 'log'), []), (('log',), ["--prune-kind", "log"]),
                                      (('source',), ["--prune-kind", "source"])):
                 self.assertEqual(build_host.main(["--prune-terminal", "a" * 32,
@@ -386,6 +392,12 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 retain.reset_mock()
             for arguments in (["--settle-terminal", "a" * 32],
                               ["--prune-terminal", "a" * 32],
+                              ["--release-bundle", "a" * 32],
+                              ["--release-bundle", "a" * 32, "--expected-revision", "b" * 64,
+                               "--prune-kind", "source"],
+                              ["--release-bundle", "a" * 32, "--expected-revision", "b" * 64, "--once"],
+                              ["--release-bundle", "a" * 32, "--expected-revision", "b" * 64,
+                               "--principal", "controller"],
                               ["--inspect-retention", "a" * 32, "--prune-kind", "source"],
                               ["--inspect-retention", "a" * 32, "--expected-revision", "b" * 64],
                               ["--inspect-retention", "a" * 32, "--once"],
@@ -413,6 +425,10 @@ class BuildHostEntrypointTest(unittest.TestCase):
                                        prune_kinds=("source",))
             retention.return_value.prune_terminal.assert_called_once_with(
                 "a" * 32, expected_revision="b" * 64, kinds=("source",))
+            build_host.retain_terminal(configured, request_id="a" * 32, expected_revision="b" * 64,
+                                       release_bundle=True)
+            retention.return_value.release_bundle.assert_called_once_with(
+                "a" * 32, expected_revision="b" * 64)
 
 
 if __name__ == "__main__":

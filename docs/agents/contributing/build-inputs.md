@@ -91,14 +91,19 @@ Version-2 replay compares original inputs and submits the same ID to the job
 store, including after reopening. Explicit source/log pruning writes version 3
 with bounded tombstones and at most two disjoint pruning operations. Pending
 pruning refuses replay before reading bytes and never resumes during admission.
-Completed version-3 replay requires an existing exact certain-terminal job under
-the short job lock, including its retained private job digest. It never calls
+Successful bundle release writes version 4 in the same pruning envelope, with
+nonnull original bundle evidence and exactly one standalone bundle operation.
+It permits at most three disjoint operations; later source/log pruning preserves
+version 4. Completed version-3/4 replay requires an existing exact certain-terminal
+job under the short job lock, including its retained private job digest. It never calls
 `submit()`, recreates payloads or queues work if a job record is absent. Owner,
 request and source identity/size mismatches fail before stream reads. A supplied
 stream must still pass bounded exact length, EOF and SHA-256 checks; an exact
 replay may omit the stream after durable source pruning.
+Version-4 replay uses this noninitializing exact job snapshot even while source
+is still present. Pending bundle release refuses before reading a replay stream.
 
-Version-1/2 intents remain limited to 1024 bytes. Version 3 is capped at 4096
+Version-1/2 intents remain limited to 1024 bytes. Versions 3/4 are capped at 4096
 bytes, covered by settlement's existing 4096-byte intent allowance; the original
 reservation formula retains its immutable 1024-byte overhead. Aggregate metadata
 is capped at `min(4 MiB, max_records * 4096)`. Each intent uses at most
@@ -106,8 +111,10 @@ one fixed `.part` path, covered by its source-size reservation. Default input
 capacity remains 128 retained intents; the independently bounded job store
 retains at most 4096 jobs. Neither ceiling is relaxed by settlement or pruning.
 Full capacity rejects new input; only explicit root-local pruning can delete
-selected terminal source/log files. Bundles, descriptors and replay evidence
-remain retained, with no automatic garbage collection.
+selected terminal source/log files. A separate root-local exact-revision release
+can delete a settled successful bundle and its embedded descriptor. Unsuccessful
+orphan bundles and all replay evidence remain retained, with no automatic
+garbage collection. Downloads never release a hold; no slots/history are freed.
 
 Settlement atomically replaces the bounded intent under the stable input lock.
 A failed replacement leaves the previous charge intact. If replacement succeeds
@@ -122,6 +129,11 @@ matching canonical pending/completed transition. Neither adopts a temporary's
 charge; partial or unrelated evidence remains for root reconciliation. See
 [terminal retention](build-retention.md). Payload files are never removed or
 changed by settlement.
+Exact explicit bundle-release retry also reconciles its canonical version-4
+pending/completed temporary, including the first transition from version 2 or
+completed version 3. It revalidates evidence and limits, syncs the discard and
+repeats the ordinary transition. Admission never resumes release or adopts a
+temporary's lower charge.
 
 The transport owns stream deadline supervision and must ensure each read is
 bounded by its deadline. It can use its deadline-aware stream wrapper before

@@ -118,13 +118,15 @@ being reported as completed work.
   the job store before the response header is written. Bytes are streamed in
   64 KiB blocks. File and directory-entry identity are checked again after
   transfer; a transfer-time mutation terminates the stream. Reads do not
-  mutate job state or release retention pins. Bundles are always retained.
+  mutate job state or release retention pins. A bundle explicitly released by
+  root-local exact-revision maintenance returns fixed `unavailable` with zero
+  payload bytes. Status still reports historical success and artifact identity.
 
 Log and artifact reads hold shared nonblocking per-job protection from
 `lib.build_payloads` before opening bytes through response streaming, flush and
 cleanup. Owner and current project checks precede protection and are repeated
-with a fresh job snapshot after acquisition. Exclusive root-local pruning and
-shared reads report busy safely; the service projects this as fixed
+with a fresh job snapshot after acquisition. Exclusive root-local pruning/release
+and shared reads report busy safely; the service projects this as fixed
 `unavailable`. Cleanup closes descriptors and releases protection on all paths,
 including `BaseException`. Linux OFD byte-range locks reuse the stable worker
 lock inode independently of the worker flock; no additional files or byte

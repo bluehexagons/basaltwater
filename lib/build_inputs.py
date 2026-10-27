@@ -80,7 +80,7 @@ def _prune_revision(revision: str, kinds: list[str]) -> str:
 
 
 def _validate_pruning(value: object, record: dict[str, Any]) -> dict[str, Any]:
-    """Validate a bounded two-operation tombstone, without reading payloads."""
+    """Validate bounded disjoint payload operations, without reading payloads."""
     if not isinstance(value, dict) or set(value) != {"payloads", "operations", "job_sha256"}:
         raise ValueError("Build input pruning evidence is invalid")
     _identifier(value["job_sha256"], "Pruning job identity", _SHA256)
@@ -91,6 +91,8 @@ def _validate_pruning(value: object, record: dict[str, Any]) -> dict[str, Any]:
         if item is None:
             if kind == "source":
                 raise ValueError("Build input pruning requires original source evidence")
+            if kind == "bundle" and record["schema"] == 4:
+                raise ValueError("Build input release requires original bundle evidence")
             continue
         fields = {"identity", "size", "sha256"}
         if kind == "bundle":
@@ -117,7 +119,8 @@ def _validate_pruning(value: object, record: dict[str, Any]) -> dict[str, Any]:
                                  or item["sha256"] != record["source_sha256"]):
             raise ValueError("Build input pruning source identity changed")
     operations = value["operations"]
-    if not isinstance(operations, list) or not 1 <= len(operations) <= 2:
+    maximum_operations = 3 if record["schema"] == 4 else 2
+    if not isinstance(operations, list) or not 1 <= len(operations) <= maximum_operations:
         raise ValueError("Build input pruning operation bound exceeded")
     seen: set[str] = set()
     revision = record["settlement_revision"]
@@ -128,9 +131,11 @@ def _validate_pruning(value: object, record: dict[str, Any]) -> dict[str, Any]:
         }:
             raise ValueError("Build input pruning operation is invalid")
         kinds = operation["kinds"]
+        bundle_release = record["schema"] == 4 and kinds == ["bundle"]
         if (not isinstance(kinds, list) or not kinds
-                or any(not isinstance(kind, str) or kind not in {"source", "log"} for kind in kinds)
-                or kinds != [kind for kind in ("source", "log") if kind in kinds]
+                or (not bundle_release and (
+                    any(not isinstance(kind, str) or kind not in {"source", "log"} for kind in kinds)
+                    or kinds != [kind for kind in ("source", "log") if kind in kinds]))
                 or seen.intersection(kinds) or operation["expected_revision"] != revision
                 or not isinstance(operation["state"], str) or operation["state"] not in {"pending", "completed"}
                 or operation["state"] == "pending" and index != len(operations) - 1):
@@ -147,6 +152,8 @@ def _validate_pruning(value: object, record: dict[str, Any]) -> dict[str, Any]:
         seen.update(kinds)
         previous = new
         revision = _prune_revision(revision, kinds)
+    if record["schema"] == 4 and "bundle" not in seen:
+        raise ValueError("Build input release requires exactly one bundle operation")
     last = operations[-1]
     if record["charge_bytes"] != last["charge_bytes" if last["state"] == "completed"
                                       else "previous_charge_bytes"]:
@@ -365,9 +372,10 @@ class BuildInputStore:
         if not isinstance(value, dict):
             raise ValueError("Build input store contains an invalid retained intent")
         schema = value.get("schema")
-        if type(schema) is not int or schema not in {1, 2, 3}:
+        if type(schema) is not int or schema not in {1, 2, 3, 4}:
             raise ValueError("Build input intent has an unsupported schema")
-        if set(value) != {1: _INTENT_FIELDS, 2: _SETTLED_FIELDS, 3: _PRUNING_FIELDS}[schema]:
+        if set(value) != {1: _INTENT_FIELDS, 2: _SETTLED_FIELDS,
+                          3: _PRUNING_FIELDS, 4: _PRUNING_FIELDS}[schema]:
             raise ValueError("Build input store contains an invalid retained intent")
         actual_id = _identifier(value["request_id"], "Request ID")
         if actual_id != request_id:
@@ -390,7 +398,7 @@ class BuildInputStore:
             "source_sha256": source_sha256,
             "reservation_bytes": reservation,
         }
-        if schema in {2, 3}:
+        if schema in {2, 3, 4}:
             charge = _positive_integer(value["charge_bytes"], "Retained charge", reservation)
             if schema == 2 and charge < source_size + MAX_INTENT_BYTES:
                 raise ValueError("Build input retained charge omits source or metadata")
@@ -398,7 +406,7 @@ class BuildInputStore:
             result["settlement_revision"] = _identifier(
                 value["settlement_revision"], "Settlement revision", _SHA256,
             )
-        if schema == 3:
+        if schema in {3, 4}:
             result["pruning"] = _validate_pruning(value["pruning"], result)
         return result
 
@@ -424,7 +432,7 @@ class BuildInputStore:
             if len(raw) > MAX_PRUNING_INTENT_BYTES:
                 raise ValueError("Build input intent exceeds its encoded-size limit")
             record = self._validate_intent(decode_document(raw, maximum=MAX_PRUNING_INTENT_BYTES), request_id=request_id)
-            maximum = MAX_PRUNING_INTENT_BYTES if record["schema"] == 3 else MAX_INTENT_BYTES
+            maximum = MAX_PRUNING_INTENT_BYTES if record["schema"] in {3, 4} else MAX_INTENT_BYTES
             if encode_document(record, maximum=maximum) != raw:
                 raise ValueError("Build input intent is not canonically encoded")
             if not reconcile:
@@ -435,7 +443,7 @@ class BuildInputStore:
                     raise ValueError("Build input intent changed during capacity inspection")
             # Reconcile a replacement whose directory sync/reply was lost before
             # admission can use its lower charge. Failure still refuses admission.
-            if reconcile and record["schema"] in {2, 3}:
+            if reconcile and record["schema"] in {2, 3, 4}:
                 os.fsync(descriptor)
                 os.fsync(root_fd)
             return record, len(raw)
@@ -515,7 +523,7 @@ class BuildInputStore:
             part_info = self._payload_info(root_fd, request_id, record, published=False)
             if source_info is not None and part_info is not None:
                 raise ValueError("Build input has both published and partial source evidence")
-            if record["schema"] == 3:
+            if record["schema"] in {3, 4}:
                 operations = record["pruning"]["operations"]
                 selected = [op for op in operations if "source" in op["kinds"]]
                 if (part_info is not None or source_info is None and not selected
@@ -615,7 +623,7 @@ class BuildInputStore:
         request_id = record["request_id"]
         self._validate_intent(record, request_id=request_id)
         encoded = encode_document(record, maximum=(MAX_PRUNING_INTENT_BYTES
-                                  if record["schema"] == 3 else MAX_INTENT_BYTES))
+                                  if record["schema"] in {3, 4} else MAX_INTENT_BYTES))
         name = request_id + ".upload.json"
         temporary = request_id + ".settlement.tmp"
         descriptor = os.open(
@@ -809,7 +817,7 @@ class BuildInputStore:
                         raise ValueError("Build input request ID is already bound to different inputs")
                     if part_info is not None:
                         raise ValueError("Incomplete build input intent is retained for operator reconciliation")
-                    if record["schema"] == 3:
+                    if record["schema"] in {3, 4}:
                         if any(op["state"] == "pending" for op in record["pruning"]["operations"]):
                             raise ValueError("Build input pruning is pending explicit completion")
                         # Never call submit after pruning: a missing job must

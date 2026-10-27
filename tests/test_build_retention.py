@@ -58,6 +58,16 @@ class BuildRetentionTests(unittest.TestCase):
                                    artifacts_root=str(self.roots["artifacts"]),
                                    logs_root=str(self.roots["logs"]))
 
+    def service(self):
+        policy = {"schema": 1, "principals": {"controller": {"projects": {
+            self.request["project"]: {"platform": self.request["platform"],
+                                      "limits": self.request["limits"], "runtimes": []},
+        }}}}
+        return BuildHostService(jobs=self.jobs, load_policy=lambda: policy,
+                                admit_source=self.inputs.admit, tool_versions=lambda: {},
+                                logs_root=str(self.roots["logs"]),
+                                artifacts_root=str(self.roots["artifacts"]))
+
     def admit(self, request=None):
         return self.inputs.admit(request or self.request, owner="controller", source=BytesIO(self.payload),
                                  source_size=len(self.payload), jobs=self.jobs)
@@ -92,13 +102,13 @@ class BuildRetentionTests(unittest.TestCase):
         return {"sha256": hashlib.sha256(content).hexdigest(), "size": len(content),
                 "descriptor": descriptor}
 
-    def terminal(self, outcome="cancelled", *, orphan=False):
+    def terminal(self, outcome="cancelled", *, orphan=False, bundle_payload=b"output"):
         self.admit()
         if outcome == "cancelled" and not orphan:
             return self.jobs.cancel(self.request["request_id"], owner="controller")
         with self.jobs.worker() as lease:
             lease.claim()
-            artifact = self.bundle() if outcome == "succeeded" or orphan else None
+            artifact = self.bundle(bundle_payload) if outcome == "succeeded" or orphan else None
             self.write("logs", ".log", b"private build log")
             if outcome == "cancelled":
                 self.jobs.cancel(self.request["request_id"], owner="controller")
@@ -115,6 +125,10 @@ class BuildRetentionTests(unittest.TestCase):
     def prune(self, plan, kinds=("source", "log")):
         return self.retention.prune_terminal(self.request["request_id"],
                                              expected_revision=plan["revision"], kinds=kinds)
+
+    def release(self, plan):
+        return self.retention.release_bundle(self.request["request_id"],
+                                             expected_revision=plan["revision"])
 
     def stage_settlement(self, plan):
         """Retain the real synced pre-replace output, as an uncatchable kill does.
@@ -133,6 +147,27 @@ class BuildRetentionTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "pre-replace crash"):
                 self.settle(plan)
         self.assertEqual(self.intent()["schema"], 1)
+        return self.path("inputs", ".settlement.tmp")
+
+    def stage_release(self, plan, state="pending"):
+        """Leave the ordinary release save's complete pre-replace temporary."""
+        real_save, real_unlink = self.inputs._save_settlement, os.unlink
+
+        def preserve(name, *args, **kwargs):
+            if not name.endswith(".settlement.tmp"):
+                return real_unlink(name, *args, **kwargs)
+
+        def crash(directory, record):
+            if record["pruning"]["operations"][-1]["state"] == state:
+                with patch.object(build_inputs.os, "replace", side_effect=KeyboardInterrupt), \
+                     patch.object(build_inputs.os, "unlink", side_effect=preserve):
+                    real_save(directory, record)
+            else:
+                real_save(directory, record)
+
+        with patch.object(self.inputs, "_save_settlement", side_effect=crash):
+            with self.assertRaises(KeyboardInterrupt):
+                self.release(plan)
         return self.path("inputs", ".settlement.tmp")
 
     def test_staged_initial_settlement_exact_retry_preserves_payloads_jobs_and_sibling(self):
@@ -530,12 +565,12 @@ class BuildRetentionTests(unittest.TestCase):
         witness = self.roots["state"] / "jobs.json.lock"
 
         self.inputs.max_bytes = 4 * self.reservation + 65536
-        for index, operation in enumerate(("inspect", "settle", "prune"), 1):
+        for index, operation in enumerate(("inspect", "settle", "prune", "release"), 1):
             with self.subTest(operation=operation):
                 self.request = {**self.request, "request_id": f"{index:032x}"}
                 self.terminal("succeeded")
                 plan = self.inspect()
-                if operation == "prune":
+                if operation in {"prune", "release"}:
                     plan = self.settle(plan)
                 witness_bytes = witness.read_bytes()
                 input_path = self.path("inputs", ".upload.json")
@@ -552,8 +587,10 @@ class BuildRetentionTests(unittest.TestCase):
                         self.inspect()
                     elif operation == "settle":
                         self.settle(plan)
-                    else:
+                    elif operation == "prune":
                         self.prune(plan)
+                    else:
+                        self.release(plan)
 
                 self.assertFalse(witness.exists())
                 self.assertEqual(ledger.read_bytes(), ledger_before)
@@ -569,7 +606,14 @@ class BuildRetentionTests(unittest.TestCase):
                 witness.chmod(0o600)
 
     def test_busy_job_state_lock_refuses_promptly_and_releases_maintenance_locks(self):
+        self.check_busy_job_state_lock(release=False)
+
+    def test_release_busy_job_state_lock_refuses_promptly_and_releases_maintenance_locks(self):
+        self.check_busy_job_state_lock(release=True)
+
+    def check_busy_job_state_lock(self, *, release):
         self.terminal("succeeded")
+        plan = self.settle() if release else None
         lock_path = self.roots["state"] / "jobs.json.lock"
         holder = os.open(lock_path, os.O_RDWR)
         fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -587,7 +631,7 @@ class BuildRetentionTests(unittest.TestCase):
 
         def inspect():
             try:
-                self.inspect()
+                self.release(plan) if release else self.inspect()
             except BaseException as error:
                 errors.append(error)
             finally:
@@ -625,6 +669,8 @@ class BuildRetentionTests(unittest.TestCase):
         with self.jobs.worker() as lease:
             with self.assertRaisesRegex(RuntimeError, "already leased"):
                 self.inspect()
+            with self.assertRaisesRegex(RuntimeError, "already leased"):
+                self.release({"revision": "f" * 64})
             lease.claim()
         with self.assertRaisesRegex(ValueError, "certain terminal"):
             self.inspect()
@@ -792,6 +838,8 @@ class BuildRetentionTests(unittest.TestCase):
         for revision in (None, "x" * 64, "a" * 64 + "\n"):
             with self.subTest(revision=revision), self.assertRaises(ValueError):
                 self.retention.settle_terminal(self.request["request_id"], expected_revision=revision)
+            with self.subTest(release_revision=revision), self.assertRaises(ValueError):
+                self.retention.release_bundle(self.request["request_id"], expected_revision=revision)
 
     def test_failed_save_does_not_release_or_double_credit_and_ambiguous_reply_reconciles(self):
         self.terminal()
@@ -950,6 +998,8 @@ class BuildRetentionTests(unittest.TestCase):
                 self.reopen()
             with self.assertRaises(PermissionError):
                 self.inspect()
+            with self.assertRaises(PermissionError):
+                self.release({"revision": "f" * 64})
             opened.assert_not_called()
         self.root_guard.start()
         with self.assertRaisesRegex(ValueError, "distinct"):
@@ -1152,8 +1202,14 @@ class BuildRetentionTests(unittest.TestCase):
             self.inspect()
 
     def test_pruned_replay_checks_owner_input_exact_stream_and_existing_terminal_before_read(self):
+        self.check_deleted_replay(release=False)
+
+    def test_released_replay_checks_owner_input_exact_stream_and_existing_terminal_before_read(self):
+        self.check_deleted_replay(release=True)
+
+    def check_deleted_replay(self, *, release):
         terminal = self.terminal("succeeded")
-        self.prune(self.settle())
+        (self.release if release else self.prune)(self.settle())
         self.jobs = BuildJobStore(self.roots["state"] / "jobs.json", clock=lambda: 1000.0)
         self.assertEqual(self.admit(), terminal)
         for owner, request, size in (("other", self.request, len(self.payload)),
@@ -1192,8 +1248,14 @@ class BuildRetentionTests(unittest.TestCase):
         self.assertEqual(stream.read_calls, 0)
 
     def test_pruned_replay_does_not_initialize_or_rewrite_missing_job_evidence(self):
+        self.check_deleted_replay_missing_evidence(release=False)
+
+    def test_released_replay_does_not_initialize_or_rewrite_missing_job_evidence(self):
+        self.check_deleted_replay_missing_evidence(release=True)
+
+    def check_deleted_replay_missing_evidence(self, *, release):
         self.terminal("succeeded")
-        self.prune(self.settle())
+        (self.release if release else self.prune)(self.settle())
         ledger = self.roots["state"] / "jobs.json"
         witness = self.roots["state"] / "jobs.json.lock"
         ledger_bytes = ledger.read_bytes()
@@ -1242,6 +1304,8 @@ class BuildRetentionTests(unittest.TestCase):
         with payload_lease(self.jobs, self.request["request_id"], exclusive=False):
             with self.assertRaisesRegex(BlockingIOError, "busy"):
                 self.prune(plan)
+            with self.assertRaisesRegex(BlockingIOError, "busy"):
+                self.release(plan)
         self.assertEqual(self.intent(), before)
         self.prune(plan)
 
@@ -1308,8 +1372,15 @@ class BuildRetentionTests(unittest.TestCase):
             self.assertFalse(temporary.exists())
 
     def test_completed_replace_sync_failure_reconciles_on_reopen_before_lower_charge(self):
+        self.check_completed_replace_sync_failure(release=False)
+
+    def test_release_completed_replace_sync_failure_reconciles_before_lower_charge(self):
+        self.check_completed_replace_sync_failure(release=True)
+
+    def check_completed_replace_sync_failure(self, *, release):
         self.terminal("succeeded")
         plan = self.settle()
+        operation = self.release if release else self.prune
         real_save = self.inputs._save_settlement
         real_sync = os.fsync
 
@@ -1327,19 +1398,21 @@ class BuildRetentionTests(unittest.TestCase):
 
         with patch.object(self.inputs, "_save_settlement", side_effect=save):
             with self.assertRaisesRegex(OSError, "completed directory sync failed"):
-                self.prune(plan)
+                operation(plan)
         self.assertEqual(self.intent()["pruning"]["operations"][-1]["state"], "completed")
         self.retention = self.reopen()
         with patch.object(build_inputs.os, "fsync", side_effect=OSError("still unavailable")):
             with self.assertRaises(OSError):
                 self.admit({**self.request, "request_id": "b" * 32})
-        self.assertEqual(self.prune(plan), self.inspect())
+        self.assertEqual(operation(plan), self.inspect())
 
     def test_prune_refuses_active_uncertain_and_scratch_partial_evidence(self):
         self.admit()
         for outcome in ("queued", "running", "uncertain"):
             with self.subTest(outcome=outcome), self.assertRaisesRegex(ValueError, "certain terminal"):
                 self.prune({"revision": "f" * 64})
+            with self.subTest(release_outcome=outcome), self.assertRaisesRegex(ValueError, "certain terminal"):
+                self.release({"revision": "f" * 64})
             if outcome == "queued":
                 with self.jobs.worker() as lease:
                     lease.claim()
@@ -1365,14 +1438,7 @@ class BuildRetentionTests(unittest.TestCase):
         self.request["platform"] = dict(DEBIAN_PLATFORM)
         terminal = self.terminal("succeeded")
         plan = self.settle()
-        policy = {"schema": 1, "principals": {"controller": {"projects": {
-            self.request["project"]: {"platform": self.request["platform"],
-                                      "limits": self.request["limits"], "runtimes": []},
-        }}}}
-        service = BuildHostService(jobs=self.jobs, load_policy=lambda: policy,
-                                   admit_source=self.inputs.admit, tool_versions=lambda: {},
-                                   logs_root=str(self.roots["logs"]),
-                                   artifacts_root=str(self.roots["artifacts"]))
+        service = self.service()
         for action in ("artifact", "log"):
             entered = threading.Event()
             resume = threading.Event()
@@ -1402,6 +1468,8 @@ class BuildRetentionTests(unittest.TestCase):
                 self.assertTrue(entered.wait(5))
                 with self.assertRaisesRegex(BlockingIOError, "busy"):
                     self.prune(plan)
+                with self.assertRaisesRegex(BlockingIOError, "busy"):
+                    self.release(plan)
                 self.assertEqual(self.jobs.status(self.request["request_id"], owner="controller"), terminal)
                 self.assertTrue(self.jobs.set_draining(True))
             finally:
@@ -1454,6 +1522,375 @@ class BuildRetentionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.admit()
         self.assertEqual(self.inspect()["current_charge_bytes"], original["charge_bytes"])
+
+    def test_release_orders_preserve_exact_historical_receipts_and_all_job_evidence(self):
+        orders = (("bundle", "source", "log"), ("source", "bundle", "log"),
+                  ("source", "log", "bundle"), (("source", "log"), "bundle"),
+                  ("bundle", ("source", "log")))
+        self.inputs.max_bytes = 6 * self.reservation
+        for number, order in enumerate(orders, 1):
+            with self.subTest(order=order):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                terminal = self.terminal("succeeded")
+                ledger = (self.roots["state"] / "jobs.json").read_bytes()
+                original = self.intent()
+                plan = self.settle()
+                retries = []
+                for selection in order:
+                    previous = plan
+                    if selection == "bundle":
+                        plan = self.release(previous)
+                        kinds = ("bundle",)
+                    else:
+                        kinds = (selection,) if isinstance(selection, str) else selection
+                        plan = self.prune(previous, kinds)
+                    retries.append((previous, kinds, plan))
+                    self.assertEqual(plan["current_charge_bytes"], previous["current_charge_bytes"]
+                                     - len(kinds) * FILE_CHARGE_FLOOR)
+                self.assertEqual(self.intent()["schema"], 4)
+                self.assertLessEqual(len(encode_document(self.intent())), build_inputs.MAX_PRUNING_INTENT_BYTES)
+                self.assertEqual(plan["current_charge_bytes"], plan["metadata_charge_bytes"])
+                for key, value in original.items():
+                    if key != "schema":
+                        self.assertEqual(self.intent()[key], value)
+                self.retention = self.reopen()
+                self.assertEqual(self.inspect(), plan)
+                for previous, kinds, receipt in retries:
+                    result = self.release(previous) if kinds == ("bundle",) else self.prune(previous, kinds)
+                    self.assertEqual(result, receipt)
+                with patch.object(self.jobs, "submit", side_effect=AssertionError("must not submit")):
+                    self.assertEqual(self.admit(), terminal)
+                    self.assertEqual(self.inputs.admit(self.request, owner="controller", source=None,
+                                                      source_size=len(self.payload), jobs=self.jobs), terminal)
+                self.assertEqual((self.roots["state"] / "jobs.json").read_bytes(), ledger)
+
+    def test_release_requires_settlement_success_and_exact_revision_keeps_orphans_charged(self):
+        self.inputs.max_bytes = 6 * self.reservation
+        for number, outcome in enumerate(("failed", "cancelled", "expired", "uncertain", "succeeded"), 1):
+            with self.subTest(outcome=outcome):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                if outcome == "expired":
+                    self.admit()
+                    self.jobs._clock = lambda: 2000.0
+                    self.jobs.status(self.request["request_id"], owner="controller")
+                    self.jobs._clock = lambda: 1000.0
+                    self.bundle()
+                    self.write("logs", ".log", b"orphan log")
+                else:
+                    self.terminal(outcome, orphan=True)
+                if outcome == "uncertain":
+                    with self.assertRaisesRegex(ValueError, "certain terminal"):
+                        self.release({"revision": "f" * 64})
+                    self.assertEqual(self.intent()["schema"], 1)
+                    continue
+                plan = self.inspect()
+                with self.assertRaisesRegex(ValueError, "settlement before"):
+                    self.release(plan)
+                plan = self.settle(plan)
+                original = self.intent()
+                if outcome != "succeeded":
+                    with self.assertRaisesRegex(ValueError, "succeeded job"):
+                        self.release(plan)
+                else:
+                    with self.assertRaisesRegex(ValueError, "stale"):
+                        self.release({"revision": "f" * 64})
+                self.assertEqual(self.intent(), original)
+                self.assertTrue(self.path("artifacts", ".bundle").exists())
+
+    def test_release_keeps_shared_service_protection_through_flush_and_baseexception_cleanup(self):
+        self.request["platform"] = dict(DEBIAN_PLATFORM)
+        self.terminal("succeeded")
+        plan = self.settle()
+        service = self.service()
+        original = self.intent()
+        for interrupted in (False, True):
+            entered, resume = threading.Event(), threading.Event()
+            errors = []
+
+            class Output(BytesIO):
+                def flush(self):
+                    entered.set()
+                    if not resume.wait(5):
+                        raise RuntimeError("test synchronization timed out")
+                    if interrupted:
+                        raise KeyboardInterrupt
+                    super().flush()
+
+            def stream():
+                try:
+                    service.handle(encode_document({"schema": 1, "action": "artifact",
+                                                    "request_id": self.request["request_id"]}) + b"\n",
+                                   principal="controller", input_stream=BytesIO(), output_stream=Output())
+                except BaseException as error:
+                    errors.append(error)
+
+            thread = threading.Thread(target=stream)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                with self.assertRaisesRegex(BlockingIOError, "busy"):
+                    self.release(plan)
+                self.assertEqual(self.intent(), original)
+            finally:
+                resume.set()
+                thread.join(5)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual([type(error) for error in errors], [KeyboardInterrupt] if interrupted else [])
+            self.assertEqual(self.inspect()["revision"], plan["revision"])
+        self.release(plan)
+
+    def test_release_preserves_service_status_download_does_not_release_and_missing_is_unavailable(self):
+        self.request["platform"] = dict(DEBIAN_PLATFORM)
+        terminal = self.terminal("succeeded", bundle_payload=b"x" * 5000)
+        plan = self.settle()
+        service = self.service()
+
+        def call(action):
+            output = BytesIO()
+            service.handle(encode_document({"schema": 1, "action": action,
+                                            "request_id": self.request["request_id"]}) + b"\n",
+                           principal="controller", input_stream=BytesIO(), output_stream=output)
+            header, payload = output.getvalue().split(b"\n", 1)
+            return json.loads(header), payload
+
+        before = self.intent()
+        response, payload = call("artifact")
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["payload_bytes"], terminal["artifact"]["size"])
+        self.assertEqual(payload, self.path("artifacts", ".bundle").read_bytes())
+        self.assertEqual(self.intent(), before)
+        ledger = (self.roots["state"] / "jobs.json").read_bytes()
+        released = self.release(plan)
+        self.assertEqual(released["charge_bytes"], plan["charge_bytes"] - terminal["artifact"]["size"])
+        self.assertEqual(call("status"), ({"ok": True, "schema": 1, "payload_bytes": 0,
+                                           "result": terminal}, b""))
+        self.assertEqual(call("artifact"), ({"ok": False, "schema": 1, "payload_bytes": 0,
+                                             "error": "unavailable"}, b""))
+        self.assertEqual((self.roots["state"] / "jobs.json").read_bytes(), ledger)
+
+    def test_release_unlink_sync_save_and_reply_faults_retry_exactly_once(self):
+        self.inputs.max_bytes = 6 * self.reservation
+        for number, failure in enumerate(("pending save", "unlink", "directory sync", "completion save", "reply"), 1):
+            with self.subTest(failure=failure):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                self.terminal("succeeded")
+                plan = self.settle()
+                real_save, real_unlink = self.inputs._save_settlement, os.unlink
+                real_sync = self.retention._sync_deleted
+                synced = []
+
+                def save(directory, record):
+                    completed = record["pruning"]["operations"][-1]["state"] == "completed"
+                    if failure == "pending save" or failure == "completion save" and completed:
+                        raise OSError("injected save failure")
+                    if completed:
+                        self.assertTrue(synced)
+                    real_save(directory, record)
+                    if failure == "reply" and completed:
+                        raise OSError("injected reply failure")
+
+                def unlink(name, *args, **kwargs):
+                    if name.endswith(".bundle") and failure == "unlink":
+                        self.assertEqual(self.intent()["pruning"]["operations"][-1]["state"], "pending")
+                        raise OSError("injected unlink failure")
+                    return real_unlink(name, *args, **kwargs)
+
+                def sync(directories, kinds):
+                    self.assertEqual(kinds, ["bundle"])
+                    if failure == "directory sync":
+                        raise OSError("injected sync failure")
+                    real_sync(directories, kinds)
+                    synced.append(True)
+
+                with patch.object(self.inputs, "_save_settlement", side_effect=save), \
+                     patch.object(build_retention.os, "unlink", side_effect=unlink), \
+                     patch.object(self.retention, "_sync_deleted", side_effect=sync):
+                    with self.assertRaisesRegex(OSError, "injected"):
+                        self.release(plan)
+                self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"]
+                                 - (FILE_CHARGE_FLOOR if failure == "reply" else 0))
+                if failure not in {"pending save", "reply"}:
+                    stream = CountingStream(self.payload)
+                    with self.assertRaisesRegex(ValueError, "pending explicit"):
+                        self.inputs.admit(self.request, owner="controller", source=stream,
+                                          source_size=len(self.payload), jobs=self.jobs)
+                    self.assertEqual(stream.read_calls, 0)
+                    with self.assertRaises(ValueError):
+                        self.prune(plan)
+                    with self.assertRaises(ValueError):
+                        self.settle(plan)
+                    self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"])
+                self.retention = self.reopen()
+                with patch.object(self.retention, "_sync_deleted", wraps=self.retention._sync_deleted) as sync_again:
+                    receipt = self.release(plan)
+                    sync_again.assert_called_once()
+                self.assertEqual(receipt, self.release(plan))
+                self.assertEqual(receipt["current_charge_bytes"], plan["charge_bytes"] - FILE_CHARGE_FLOOR)
+
+    def test_release_recovers_staged_first_pending_from_schema2_and3_and_staged_completion(self):
+        self.inputs.max_bytes = 4 * self.reservation
+        for number, (prior_prune, stage) in enumerate(((False, "pending"), (True, "pending"),
+                                                      (False, "completed")), 1):
+            with self.subTest(prior_prune=prior_prune, stage=stage):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                self.terminal("succeeded")
+                plan = self.settle()
+                if prior_prune:
+                    plan = self.prune(plan, ("source",))
+                previous = self.intent()
+                temporary = self.stage_release(plan, stage)
+                self.assertEqual(self.intent()["charge_bytes"], previous["charge_bytes"])
+                if stage == "pending":
+                    self.assertEqual(self.intent(), previous)
+                raw = temporary.read_bytes()
+                staged = json.loads(raw)
+                self.assertEqual(staged["schema"], 4)
+                # No other operation adopts or resumes even a fully synced
+                # completed temporary with the tempting lower charge.
+                for operation in (self.admit, self.inspect, self.inputs.capacity_snapshot):
+                    with self.assertRaises(ValueError):
+                        if operation == self.inputs.capacity_snapshot:
+                            with operation():
+                                self.fail("temporary was accepted")
+                        else:
+                            operation()
+                    self.assertEqual(temporary.read_bytes(), raw)
+                self.retention = self.reopen()
+                with self.assertRaises(ValueError):
+                    self.release({"revision": "f" * 64})
+                self.assertEqual(temporary.read_bytes(), raw)
+                temporary.write_bytes(raw[:-1])
+                with self.assertRaises(ValueError):
+                    self.release(plan)
+                temporary.write_bytes(raw)
+                with patch.object(self.inputs, "_save_settlement", side_effect=OSError("redo save")):
+                    with self.assertRaisesRegex(OSError, "redo save"):
+                        self.release(plan)
+                self.assertFalse(temporary.exists())
+                self.assertEqual(self.intent()["charge_bytes"], previous["charge_bytes"])
+                receipt = self.release(plan)
+                self.assertEqual(receipt, self.release(plan))
+                self.assertEqual(receipt["charge_bytes"], previous["charge_bytes"] - FILE_CHARGE_FLOOR)
+
+    def test_release_staged_unsafe_unrelated_and_out_of_bounds_metadata_is_preserved(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        original = self.path("inputs", ".upload.json").read_bytes()
+        temporary = self.stage_release(plan)
+        raw = temporary.read_bytes()
+        record = json.loads(raw)
+        alias = self.root / "staged-alias"
+        for change in ("partial", "malformed", "noncanonical", "wrong revision", "old schema",
+                       "wrong operation", "oversized", "mode", "symlink", "hardlink"):
+            with self.subTest(change=change):
+                temporary.unlink()
+                temporary.write_bytes(raw)
+                temporary.chmod(0o600)
+                if change == "partial":
+                    temporary.write_bytes(raw[:-1])
+                elif change == "malformed":
+                    temporary.write_bytes(b"not json")
+                elif change == "noncanonical":
+                    temporary.write_bytes(raw + b"\n")
+                elif change == "wrong revision":
+                    temporary.write_bytes(encode_document({**record, "settlement_revision": "f" * 64}))
+                elif change == "old schema":
+                    temporary.write_bytes(encode_document({**record, "schema": 3}))
+                elif change == "wrong operation":
+                    changed = copy.deepcopy(record)
+                    changed["pruning"]["operations"][0]["kinds"] = ["log"]
+                    temporary.write_bytes(encode_document(changed))
+                elif change == "oversized":
+                    temporary.write_bytes(b"x" * (build_inputs.MAX_PRUNING_INTENT_BYTES + 1))
+                elif change == "mode":
+                    temporary.chmod(0o644)
+                elif change == "symlink":
+                    temporary.unlink()
+                    temporary.symlink_to(self.path("artifacts", ".bundle"))
+                elif change == "hardlink":
+                    os.link(temporary, alias)
+                before = build_retention._identity(temporary.lstat())
+                with self.assertRaises((ValueError, OSError)):
+                    self.release(plan)
+                self.assertEqual(build_retention._identity(temporary.lstat()), before)
+                self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), original)
+                if alias.exists():
+                    alias.unlink()
+        temporary.unlink()
+        temporary.write_bytes(raw)
+        temporary.chmod(0o600)
+        for name in ("MAX_PRUNING_INTENT_BYTES", "MAX_RETAINED_METADATA_BYTES"):
+            # Pending fits exactly, but completed's longer state does not.
+            # Both transitions must fit before even discarding the temporary.
+            with patch.object(build_retention, name, len(raw)):
+                with self.assertRaises(ValueError):
+                    self.release(plan)
+            self.assertEqual(temporary.read_bytes(), raw)
+        # Valid staged metadata cannot authorize changed payload evidence.
+        self.path("logs", ".log").write_bytes(b"changed log evidence")
+        with self.assertRaisesRegex(ValueError, "settled evidence changed"):
+            self.release(plan)
+        self.assertEqual(temporary.read_bytes(), raw)
+        self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), original)
+
+    def test_release_bounds_and_replaced_payload_fail_before_credit(self):
+        self.terminal("succeeded")
+        plan = self.settle()
+        before = self.intent()
+        for module, name, bound in ((build_retention, "MAX_PRUNING_INTENT_BYTES", 1024),
+                                    (build_retention, "MAX_PLAN_BYTES", 128),
+                                    (build_retention, "MAX_RETAINED_METADATA_BYTES", 1024)):
+            with self.subTest(name=name), patch.object(module, name, bound):
+                with self.assertRaises(ValueError):
+                    self.release(plan)
+            self.assertEqual(self.intent(), before)
+            self.assertTrue(self.path("artifacts", ".bundle").exists())
+        replacement = self.root / "replacement-bundle"
+        replacement.write_bytes(self.path("artifacts", ".bundle").read_bytes())
+        replacement.chmod(0o600)
+        real_save = self.inputs._save_settlement
+
+        def replace_after_save(directory, record):
+            real_save(directory, record)
+            replacement.replace(self.path("artifacts", ".bundle"))
+
+        with patch.object(self.inputs, "_save_settlement", side_effect=replace_after_save):
+            with self.assertRaisesRegex(ValueError, "replaced before unlink"):
+                self.release(plan)
+        with self.assertRaisesRegex(ValueError, "payload evidence changed"):
+            self.release(plan)
+        self.assertEqual(self.intent()["charge_bytes"], plan["charge_bytes"])
+
+    def test_schema4_rejects_missing_bundle_mixed_repeated_and_missing_release_operations(self):
+        self.terminal("succeeded")
+        self.release(self.settle())
+        original = self.intent()
+        for mutation in ("missing original", "mixed kinds", "duplicate bundle", "missing operation",
+                         "pending earlier", "schema3"):
+            changed = copy.deepcopy(original)
+            if mutation == "missing original":
+                changed["pruning"]["payloads"]["bundle"] = None
+            elif mutation == "mixed kinds":
+                changed["pruning"]["operations"][0]["kinds"] = ["bundle", "source"]
+            elif mutation == "duplicate bundle":
+                changed["pruning"]["operations"] *= 2
+            elif mutation == "missing operation":
+                changed["pruning"]["operations"][0]["kinds"] = ["source"]
+            elif mutation == "pending earlier":
+                changed["pruning"]["operations"] *= 2
+                changed["pruning"]["operations"][0]["state"] = "pending"
+            else:
+                changed["schema"] = 3
+            self.path("inputs", ".upload.json").write_bytes(encode_document(changed))
+            stream = CountingStream(self.payload)
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.inputs.admit(self.request, owner="controller", source=stream,
+                                  source_size=len(self.payload), jobs=self.jobs)
+            self.assertEqual(stream.read_calls, 0)
+        self.path("inputs", ".upload.json").write_bytes(encode_document(original))
+        self.inputs.max_records = 1
+        with self.assertRaisesRegex(ValueError, "cannot be pruned"):
+            self.admit({**self.request, "request_id": "b" * 32})
 
 
 if __name__ == "__main__":

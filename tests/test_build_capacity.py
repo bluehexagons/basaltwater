@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import fcntl
+import hashlib
 from io import BytesIO
 import json
 import os
@@ -14,11 +15,13 @@ import unittest
 from unittest.mock import patch
 
 from lib import build_capacity
+from lib.build_artifacts import MAGIC
 from lib.build_inputs import BuildInputStore
 from lib.build_jobs import MAX_OPERATIONS, MAX_STORE_BYTES, BuildJobStore
 from lib.build_protocol import encode_document
 from lib.build_retention import BuildRetentionStore
 from tests.test_build_inputs import build_request
+from tests.test_build_host_service import build_artifact
 
 
 class BuildCapacityTests(unittest.TestCase):
@@ -176,6 +179,51 @@ class BuildCapacityTests(unittest.TestCase):
         report = self.inspect()
         self.assertEqual(report["jobs"]["states"]["uncertain"], 1)
         self.assertEqual(report["inputs"]["current_charge_bytes"], self.reservation)
+
+    def test_schema4_release_pending_completed_and_exact_job_checks_without_repair(self):
+        self.admit()
+        identifier = self.request["request_id"]
+        artifact = build_artifact(self.request, digest="0" * 64, size=1)
+        descriptor = encode_document(artifact["descriptor"])
+        bundle = MAGIC + len(descriptor).to_bytes(8, "big") + descriptor
+        artifact.update(sha256=hashlib.sha256(bundle).hexdigest(), size=len(bundle))
+        for root, suffix, content in (("artifacts", ".bundle", bundle), ("logs", ".log", b"log")):
+            path = self.roots[root] / (identifier + suffix)
+            path.write_bytes(content)
+            path.chmod(0o600)
+        with self.jobs.worker() as lease:
+            lease.claim()
+            lease.finish(identifier, outcome="succeeded", artifact=artifact, work_stopped=True)
+        retention = self.retention()
+        plan = retention.inspect_retention(identifier)
+        retention.settle_terminal(identifier, expected_revision=plan["revision"])
+        with patch.object(retention, "_sync_deleted", side_effect=OSError("interrupted sync")):
+            with self.assertRaises(OSError):
+                retention.release_bundle(identifier, expected_revision=plan["revision"])
+        before = self.snapshot()
+        with patch.object(os, "fsync", side_effect=AssertionError("no pending repair")):
+            report = self.inspect()
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(report["inputs"]["pending_pruning"], 1)
+        self.assertEqual(report["inputs"]["current_charge_bytes"], plan["charge_bytes"])
+        completed = retention.release_bundle(identifier, expected_revision=plan["revision"])
+        before = self.snapshot()
+        with patch.object(os, "fsync", side_effect=AssertionError("no completed repair")):
+            report = self.inspect()
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual(report["inputs"]["pruned"], 1)
+        self.assertEqual(report["inputs"]["current_charge_bytes"], plan["charge_bytes"] - 4096)
+        self.assertEqual(report["inputs"]["original_reservation_bytes"], self.reservation)
+        self.assertEqual(report["inputs"]["retained_slots"], 1)
+        self.assertEqual(report["jobs"]["replay_records"], 1)
+        self.assertEqual(report["jobs"]["states"]["succeeded"], 1)
+        retention.prune_terminal(identifier, expected_revision=completed["revision"])
+        self.assertEqual(self.inspect()["inputs"]["current_charge_bytes"], plan["metadata_charge_bytes"])
+        with self.jobs._locked() as (state, directory):
+            state["jobs"][identifier]["finished_at"] += 1
+            state["last_time"] += 1
+            self.jobs._save(directory, state)
+        self.assert_unavailable_unchanged()
 
     def test_partial_input_without_job_is_counted_without_repair(self):
         self.admit()
