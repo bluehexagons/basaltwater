@@ -133,6 +133,11 @@ pruning retains its old charge until explicit resumption
 completes durably; uncertain work stays fully charged. Automatic retention,
 bundle deletion and replay-history expiry remain separate policy work; admission
 must never delete evidence.
+Root-local [capacity inspection](../agents/contributing/build-host-entrypoint.md#read-only-local-capacity-inspection)
+reports persisted quota charges, retained input slots, replay-history and metadata
+headroom separately from filesystem availability. It requires existing accounting
+evidence and never initializes stores, settles charges or prunes payloads. These
+observations neither reserve space nor establish readiness for another build.
 Deleting a cache must affect performance only. Checksum/metadata changes,
 including build commands and non-secret environment inputs, affect reuse keys;
 a commit alone is insufficient. Track secret version references without values.

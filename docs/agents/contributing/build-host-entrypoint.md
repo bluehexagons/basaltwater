@@ -136,3 +136,10 @@ contents, packaging temporary trees and physical allocation remain unverified.
 The result observes persisted metadata, not durable acknowledgement after a
 lost sync/reply, a payload consistency audit, or a reservation/readiness decision.
 Native crash/power-loss qualification remains outside the temporary-file tests.
+
+A selected Debian check runs this CLI from a cold protected code copy against
+retained pruned and unsettled inputs. Repeated reports match independently read
+accounting totals and separate logical headroom from filesystem space. Installed
+code, caches and retained evidence stay unchanged; the copied CLI creates no
+bytecode, refuses an SSH connection marker and leaves separate empty fixture roots
+uninitialized. This does not qualify power loss or reserve physical capacity.
