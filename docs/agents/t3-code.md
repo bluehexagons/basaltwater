@@ -39,8 +39,11 @@ Generate a one-time URL from the control system:
 basaltw agent web pair vm.example agent
 ```
 
-T3 Code sessions can expose collaborative preview tools backed by a server or
-desktop browser.
+T3 Code sessions can expose collaborative preview tools. Stable 0.1.3's server
+tools automate tabs marked `runtime: "server"`; listed tabs with desktop or
+missing runtime belong to the user's local app. Report that those tabs
+are inaccessible to server automation and open a server tab without passing
+their IDs. Desktop automation requires tools that explicitly support it.
 In those sessions, use preview first: status, then open if no capable tab is
 attached. Fallback is allowed for absent preview tools, an explicit user request
 for another browser, or an explicit unsupported/unavailable response from open.
@@ -73,6 +76,9 @@ owned gateway URL for `preview_navigate`, or an exact forward creation command
 with actionable failure fields. See [Internal HTTPS previews](../services/internal-web.md#forward-an-existing-loopback-service).
 The browser guide also covers navigation/component attribution, uncertain
 input acknowledgments, and [offline-cache freshness](browser-automation.md#offline-cache-freshness).
+For T3's own Chrome download, missing libraries/fonts, or AppArmor errors, use
+[T3 browser host preparation](browser-automation.md#t3-browser-host-preparation).
+The ordinary T3 doctor checks service readiness, not a browser launch.
 
 Agent-enabled T3 setups install T3-only preview guidance, or the combined
 Playwright/T3 skill when both capabilities are selected, plus focused T3 Code
@@ -115,11 +121,11 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-10-23**, GitHub's latest stable release and npm's `t3@latest`
-are **0.1.2**, released October 22. It retains the stable Orchestrator V2
+As checked on **2026-10-27**, GitHub's latest stable release and npm's `t3@latest`
+are **0.1.3**, released October 27. It retains the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.2)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.3)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's minimum provider versions are Codex **0.159+**, Claude Code
@@ -129,14 +135,28 @@ binary, version, and readiness. Setup manages only selected Basaltwater
 providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
 do not imply that Basaltwater installed, authenticated, or qualified them.
 
-The 0.1.2 integration review verified the unchanged protocol/runtime layout and
-exercised the published Linux x64 archive in an isolated home: managed wrapper
-selection, embedded native-module loading, fresh HTTP startup, and issuance of
-all 16 administrative pairing scopes. A separate isolated 0.1.1-to-0.1.2 smoke
+The 0.1.3 integration review corrected managed browser skills that could send
+desktop tab IDs to server-only preview tools and misdiagnose the rejection as
+a presentation or network failure. It also verified the unchanged protocol and
+runtime layout and exercised the checksum-verified Linux x64 archive in isolated
+homes: setup and doctor runtime selection, managed wrapper execution, embedded native-module
+loading, fresh HTTP startup, and issuance of all 16 administrative pairing
+scopes with bootstrap-session revocation. An isolated 0.1.2-to-0.1.3 smoke
 retained seeded project metadata and passed database integrity, post-upgrade
-pairing, and host-side thread listing; both versions applied 67 SQL migrations.
+pairing, host-side thread listing, and Basaltwater's activity queries. The
+database advanced from 67 to 69 SQL migrations. No runtime compatibility fix
+was required for these contracts.
 These checks do not qualify provider turns, desktop/mobile clients, Connect,
 or the complete live matrix below.
+
+Stable 0.1.3 defaults a background service without an explicit host to a
+private-network listener. Basaltwater supplies `T3CODE_HOST` in its Debian
+service drop-in and an explicit `--host` for CachyOS web, preserving the
+configured bind and source allowlist. The new RPC/media WebSocket-ticket
+distinction keeps the older ticket endpoint compatible; the managed HTTPS
+gateway forwards paths, queries, and WebSocket upgrades without rewriting
+those tickets. Connect's pinned relay client advances to cloudflared
+2026.10.4; T3 owns that download and verification.
 
 OpenCode 2 uses the separate `@opencode/cli` package and converts OpenCode's
 shared database on first run. Do not install/run 1.x and 2.x side by side or
@@ -152,12 +172,14 @@ The shared installed skills now route T3 agents to its native orchestration:
 
 | Work | Integration |
 | --- | --- |
-| Delegated children | Discover provider/model IDs through `orchestrator_capabilities`; use native same-provider workers when they support the chosen model, otherwise `delegate_task`. Retain task IDs, pass explicit context, and collect asynchronous results. Each independent review round is a fresh task. |
+| Delegated children | Discover provider/model IDs through `orchestrator_capabilities`; use native same-provider workers only when they support the chosen model and no options are requested/inherited, otherwise `delegate_task`. Retain task IDs, pass explicit context, and collect asynchronous results. Each independent review round is a fresh task. Read current questions/approvals through their appropriate flow; cancelling an old task also stops later work in its child thread. |
 | Editing isolation | Select `delegate_task` worktree isolation or an explicit top-level thread workspace before starting work. T3 owns its worktree binding and cleanup; Basaltwater commands manage their own ownership records. A shell `cd` does not rebind a thread. |
-| Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches omit reasoning, tool results, and attachments; prefer delegation for help from another harness. Read omitted history in bounded pages. |
+| Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches can carry command output, filenames, and plans as budgeted historical text; native tool state, reasoning, and attachments are not replayed. Read omitted history in bounded pages. |
 | Queues and recovery | Choose queue versus steering explicitly and inspect pending messages before retrying. Persistent queues wait for user resume after restart; interrupted-turn auto-continuation and usage-reset resume have separate controls. |
-| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. Inspect timezone, model/options, target binding, and stop controls. Bound runs follow the thread's current provider settings; stored task settings seed fresh threads only. Use one scheduler per job. |
-| Pull requests | Register PRs through `link_pull_request`. For requested monitoring, use `watch_pull_request`, yield for wakeups, then unwatch before user handoff. Review guides supplement diff review and checks. |
+| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. In 0.1.3, `schedule_task` updates by ID. Bound runs follow current thread settings; fresh-thread MCP tasks use remote `main` worktrees. Inspect stored model/workspace settings in the task UI. Filter/deduplicate webhooks before provider work. Use one scheduler per job. |
+| Pull requests | Register PRs through `link_pull_request`. For requested monitoring, watch once, yield for wakeups, then unwatch before handoff. Watches persist across wakes. Read existing guides without starting a model run; generation is optional and uses project guide settings. Check head SHA/staleness alongside diff review and checks. |
+| Project actions | Reuse canonical project commands through imported `t3.json` actions. Set worktree setup `async: false` when it must finish before the agent starts. Preserve project/environment overrides and inspect settle actions before cleanup. |
+| Visual results | Use `html_preview` then `html_render` for useful interactive charts, diagrams, comparisons, or mockups. T3 embeds local images and publishes a sandboxed thread artifact; it does not deploy the project or verify its behavior. |
 
 The shipped [T3 orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
 and [T3 scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
@@ -168,6 +190,14 @@ Basaltwater orchestration service. Tool availability still depends on the active
 provider session. Managed setup reloads these resources by refreshing T3.
 For changes outside setup, finish the current turn and use **Restart agent
 session** to reload one thread.
+
+The project-development skill's [T3 workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md)
+provides the project-action and visual-reply routes. For deliberate outside-agent
+access, use T3's OAuth `/mcp` integration described in the
+[operations reference](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents).
+It does not automatically connect independent Basaltwater tasks or give them a
+thread's tools. Optional device-local completion/input/approval alerts live in
+**Settings → General → Notifications** and require an open client.
 
 Inspect project overrides and environment settings before relying on tracked
 `t3.json`: repository defaults have lower precedence than both. Preserve setup
@@ -186,13 +216,14 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.2 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.3 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
-| Workspace/context | Child worktree starts from committed local base, project setup completes, uncommitted edits stay in parent, explicit launch/handoff binding works, context fork/merge-back leaves Git integration explicit, and cleanup preserves unrelated work. |
+| Workspace/context | Child worktree starts from committed local base; blocking setup completes before the first turn, while async setup is checked before dependent work. Uncommitted edits stay in parent. Explicit launch/handoff binding works, historical context stays distinguishable from native tool state, and cleanup/settle actions preserve unrelated work. |
 | Queues and limits | Queue order and attachments survive restart, queue awaits user resume, steering reaches the intended turn, auto-continuation is controlled, and usage-limit/reset recovery does not duplicate edits. |
-| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, pause/resume/delete, run-now result, and restart recovery. Change a bound thread's model/options and confirm the next run follows them; verify fresh threads use stored task settings. For webhooks, signature rejection, private secret entry, selected placeholders, stale/duplicate delivery, and absent Connect URL handling. |
+| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, unified update/pause/resume/delete, UI run-now result, and restart recovery. Confirm bound runs follow current thread settings and MCP-created fresh runs use remote `main` plus stored task settings. For webhooks, signature rejection, private secret entry, filters, replay/coalescing and missing keys, stale deliveries, and caller/Connect URL eligibility. |
 | PR workflow | Link all stack layers, receive checks/comment/conflict wakeups without polling, unwatch on handoff, and read review-guide results/staleness. Do not merge as a side effect of monitoring. |
 | Client and gateway | Update/reboot readiness, direct/private and Connect access, gateway TLS, preview attachment and recording transfer, and optional offline webhook storage only when deliberately selected. |
+| Visual and outside-agent workflows | T3 Chrome cold-start/host diagnostics, narrow/light/dark HTML preview and local image embedding, readable text, private file secret delivery/expiry, deliberate OAuth grant/revocation, and opt-in device alerts. Record any browser validation gap separately from successful HTML publication. |
 
 Retain the overall status in [release qualification](../release-qualification.md).
 Native mobile/device SDK provisioning remains a [deferred plan](../plans/mobile-agent-support.md).
@@ -278,8 +309,9 @@ service. A preview wait that intentionally times out can also appear as an
 application error in the log and is not, by itself, a readiness failure.
 
 Service readiness does not exercise the connected desktop client's preview
-presentation. One recognizable stale state returns successful background
-navigation or DOM results while `preview_open` produces no visible sidebar or
+presentation. With tools that explicitly support desktop automation, one
+recognizable stale state returns successful background navigation or DOM results
+while `preview_open` produces no visible sidebar or
 floating surface, status remains `visible: false`, and snapshots fail. Do not
 open replacement tabs or diagnose the application and network from that state.
 Restarting only the desktop client may retain the VM-side tab registry. If the

@@ -20,7 +20,15 @@ another T3 provider, or a supported webhook. The shipped
 [T3 scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
 covers structured schedules, server timezone, current-thread versus fresh-thread
 binding, inherited model/options, controls, signing secrets, and Connect URLs.
+In 0.1.3, `schedule_task` updates by `scheduledTaskId`. MCP-created fresh-thread
+tasks use remote `main` worktrees; they do not continue the caller's feature
+branch. Inspect custom workspace/model settings in T3's task settings because
+the MCP task summary omits them. Webhook filters and replay/coalescing keys can
+discard irrelevant or duplicate events before launching a provider turn; the
+reference includes a scoped recipe and delivery troubleshooting.
 Use T3's PR watcher for requested PR monitoring instead of creating a timer.
+Optional device-local [attention alerts](../../common/agent_skills/basaltwater-t3code/references/operations.md#attention-alerts)
+can notify an owner while T3 is open; they do not wake tasks or replace receipts.
 
 Use Basaltwater tasks for independent Codex execution, one-shot follow-ups, and
 goals needing its attempt/deadline/token limits, checkpoints, and receipts.

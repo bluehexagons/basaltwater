@@ -45,7 +45,8 @@ Read only the route needed:
   Holds are shared: do not release another task's hold. Unattended inspection
   must not create or release holds.
 - **Browser:** the installed `basaltwater-browser-testing` or
-  `basaltwater-t3-preview-testing` skill. Explicit
+  `basaltwater-t3-preview-testing` skill covers T3's own Chrome download and
+  host-library/font/sandbox diagnostics. Explicit
   `net::ERR_CERT_AUTHORITY_INVALID` identifies the browser host's trust;
   distinguish server and desktop runtimes before offering optional client CA
   enrollment. Keep TLS intact and use the browser skill's recovery procedure.
@@ -55,5 +56,7 @@ Use a real project/worktree for repository changes; do not move T3's data or
 relax Codex policy to enable projectless work.
 
 When exposed, register every PR created or worked on with `link_pull_request`
-using its full URL, including each stack layer. Reconcile
-`list_thread_pull_requests` before finishing; CLI Git alone does not link PRs.
+using its full URL, including each stack layer. Follow session instructions for
+`list_thread_pull_requests`; otherwise list only when needed. CLI Git alone
+does not link PRs. The subagent skill covers native watches and review guides;
+project-development covers T3 actions and inline visual replies.

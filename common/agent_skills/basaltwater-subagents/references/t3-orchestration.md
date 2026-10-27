@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.2. Terminal agents do not
+only the section needed. The baseline is stable 0.1.3. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -30,9 +30,23 @@ review to the backing thread.
 
 Async completion wakes the parent. Read the result with `task_status` and
 inspect commits/checks; one provider turn ending may leave descendants active.
-A wait timeout does not cancel work. Use `task_cancel` for abandoned tasks;
-cancellation does not undo filesystem/external changes. After interruption,
-inspect state and edits before retrying. A child question is not permission.
+A published task result stays stable even if later turns run in its backing
+thread; inspect `hasPendingChildRuns` and the latest terminal fields when relevant.
+A wait timeout does not cancel work. Follow an exposed response's `next`
+instruction, including ending the turn for asynchronous delivery.
+
+For `hasPendingQuestion`, use the exposed `t3_pending_request` interface (or
+its separate list/read/respond tools) with `threadId: childThreadId`. Read the
+question before answering within the delegated scope. `pendingApproval` grants
+no approval authority: read the current request and route it through its existing
+authorized approval flow. Question-response tools cannot approve permissions.
+
+Use `task_cancel` for abandoned work only after checking its current state.
+It stops the backing child thread, including later work after the original
+result, and recursively stops delegated descendants and their watches. Stop
+holds queued messages for user resume; an agent message does not resume them.
+Cancellation does not undo filesystem/external changes. Inspect state and edits
+before retrying after an interruption.
 
 ## Workspace ownership and retention
 
@@ -61,32 +75,53 @@ such as `.env` or build output. Preserve needed artifacts before removal.
 
 ## Context, queues, and recurring work
 
-Switching providers transfers a budgeted message selection without prior
-reasoning, tool results, or attachments. Prefer delegation for another
-harness's help. Within-provider model changes usually retain the native
-session; inspect actual settings/state.
+Switching providers transfers budgeted historical text, which can include
+recorded command input/output and exit status, changed filenames, and plans.
+Native tool/session state, reasoning, and attachments are not replayed. Inspect
+what arrived and read omitted history when needed; prefer delegation for another
+harness's help. Within-provider model changes usually retain the native session.
 
 Read bounded `t3_thread_read` pages/cursors; retrieve long text only as needed.
 Select fields before emitting tool results. Inspect pending queues before
-sending work twice and choose queue versus steer explicitly. Queues survive
-restarts but wait for user resume; interrupted-turn continuation is a separate
-setting. Inspect live state rather than assuming delivery. Respect usage
+sending work twice and choose queue versus steer explicitly. With `t3_queue`,
+use `action: "list"` and its cursor, then `action: "read"` with the selected
+`queuedRunId`; check truncation before interpreting the text. Edit/cancel/reorder
+or promote a queued message to steering only within the intended workflow.
+Edits retain attachments; writes fail once the message leaves the queue.
+Queues survive restarts but wait for user resume; interrupted-turn continuation
+is a separate setting. Inspect live state rather than assuming delivery. Respect usage
 limits; do not bypass them with duplicate threads, schedules, or provider switches.
 
 For recurring work, read [scheduling](t3-scheduling.md) and use one owner with
 verified provider settings and thread/workspace binding.
 
+When the workflow calls for settlement, `t3_thread_organize` can defer settling
+this thread until its turn ends. Running work, pending user messages, or blocking
+requests can keep it active. Settlement differs from Stop, archive, and Git
+integration; inspect configured settle actions and cleanup before using it.
+
 ## Pull requests and guides
 
-Register each task PR and stack layer with `link_pull_request`; reconcile
-`list_thread_pull_requests`. Report linking failures. For requested monitoring,
-the parent uses `watch_pull_request` then ends its turn; children cannot own a
-watch. Handle existing comments first, since only new ones wake it. Call
+Register each task PR and stack layer with `link_pull_request`. Report linking
+failures. Use `list_thread_pull_requests` when the list is needed or the session
+requires reconciliation; the 0.1.3 tool discourages routine end-of-work list calls.
+For requested monitoring, the parent uses `watch_pull_request` then ends its
+turn; children cannot own a watch. Handle existing comments first, since only
+new ones wake it. Watches
+persist across wakeups; do not register the same watch again after each wake. Call
 `unwatch_pull_request` before handing back. Watching grants no merge authority.
 
-When exposed, PR guide tools supply an asynchronous reading aid. Read the
-finished guide and its staleness before citing it; retain actual diff/check
-evidence and unresolved findings.
+Use `read_pull_request_guide` to inspect an existing guide and its run state
+without starting model work. `write_pull_request_guides` starts asynchronous
+model runs in temporary checkouts; it is an optional generation step when useful
+and within the task's cost scope. Its model/settings come from the project's
+guide configuration, not necessarily the caller. A running same-head guide is
+joined; inspect that run before retrying. Check the completed guide against
+`currentHeadSha` and `stale` before citing it. Guides supplement actual diff,
+checks, and unresolved findings.
 
-Upstream: [0.1.2 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.2)
-and [tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.2/docs/orchestration-v2/orchestrator-mcp-server.md).
+Upstream: [0.1.3 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.3),
+[tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/orchestration-v2/orchestrator-mcp-server.md),
+[handoff history](https://github.com/pingdotgg/t3code/blob/v0.1.3/packages/provider-core/src/server/handoffBudget.ts),
+[thread controls](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/toolkits/thread/tools.ts),
+and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/toolkits/pullRequests/tools.ts).

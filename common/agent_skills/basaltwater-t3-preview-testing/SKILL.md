@@ -19,9 +19,13 @@ on the same step when specified, and quote the raw error when switching.
 
 Read [preview interaction, networking, and evidence](references/collaborative-preview.md)
 before T3 navigation or input. Retain the tab ID and verify resulting state.
-T3 v0.1.2 prefers a server browser that reaches server loopback directly and can
-continue after client disconnection. Diagnose routes and trust on the selected
-browser host before requesting a gateway forward or client CA enrollment.
+T3 v0.1.3's server tools automate tabs marked `runtime: "server"`. A listed tab
+with desktop or missing runtime is outside those tools' reach: report that
+limit and open a server tab without passing that tab ID. Desktop automation
+requires tools that explicitly support it. The server browser reaches server
+loopback directly and can continue after client disconnection. Diagnose routes
+and trust on the selected browser host before requesting a gateway forward or
+client CA enrollment.
 
 Once policy permits fallback, choose a ready configured desktop browser or
 existing project Playwright tests automatically. Read the installed desktop skill

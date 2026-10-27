@@ -1,15 +1,45 @@
 # T3 collaborative preview testing
 
 This setup supplies T3 Code preview guidance but no managed Playwright fallback. T3
-v0.1.2 prefers its server browser, which uses the server's routes and certificate
-trust and can automate without a viewing client. A desktop-hosted preview uses
-the desktop client's routes and trust instead. Identify the selected runtime
+v0.1.3 uses its server browser for automation, with the server's routes and
+certificate trust, and works without a viewing client. A desktop-hosted preview
+uses the desktop client's routes and trust instead. Identify the selected runtime
 before diagnosing connectivity or requesting client changes.
+
+Check each listed tab's `runtime` before reusing its ID. Only `runtime: "server"`
+entries can be passed to this environment's `preview_*` tools. Entries with
+desktop or missing runtime belong to the user's local app; report that the
+server cannot access that tab and call `preview_open` without its ID to open a
+server tab. This is a runtime boundary, not a route, certificate, or capture
+failure. Desktop automation and recovery guidance below applies only when the
+active tools explicitly support that runtime. See the
+[upstream tab-list contract](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/toolkits/previewControls/tools.ts).
 
 This workflow requires preview tools exposed to the active agent session.
 Unattended panel prompts run outside the connected T3 thread and cannot borrow
 its tools. If preview tools are absent, inspect configured alternatives below;
 an installed T3 service does not establish browser access.
+
+## T3 browser host preparation
+
+T3 downloads its own headless Chrome on first server-tab or `html_preview` use;
+these features share that download. Managed Playwright's browser cache is
+separate. Allow the returned installation/retry interval before declaring the
+host unavailable. HTTP service readiness does not verify Chrome launch.
+
+For explicit missing-library, font, or AppArmor sandbox diagnostics, inspect
+`t3 browser setup` as the service account without sudo; it reports needed host
+changes. Use the server's data directory through `T3CODE_HOME` or `--base-dir`,
+especially for CachyOS web's isolated home. The elevated form can install
+Debian/Ubuntu packages/fonts or an AppArmor profile. Use the exact setup command printed by the active T3
+runtime and the platform's authorized privileged workflow for those changes.
+Do not automatically run it as root or disable Chrome's sandbox. On CachyOS,
+use its package workflow for missing libraries/fonts; the upstream apt route
+is not an Arch installer. Preserve the selected T3 mode and data directory.
+
+Retry the failed operation after repair and verify a screenshot with readable
+text. A pre-download setup check cannot inspect libraries for an absent Chrome
+executable. For T3 0.1.3, see [browser host setup](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/user/remote-access.md#browser-host-setup).
 
 ## Preview availability
 
@@ -55,8 +85,9 @@ trust or routes. If no usable browser remains, complete build, unit, service,
 loopback HTTP, and gateway checks and report only the missing browser coverage.
 
 A server-browser tab can navigate, accept input, and capture snapshots without a
-visible preview surface. A hidden desktop-hosted tab may lack raster capture;
-attempt a snapshot and apply the session's bounded retry rules on failure.
+visible preview surface. When tools explicitly support desktop automation, a
+hidden desktop-hosted tab may lack raster capture; attempt a snapshot and apply
+the session's bounded retry rules on failure.
 Opening a tab or seeing a URL in status does not prove the page rendered;
 confirm visible content or a snapshot.
 
@@ -116,10 +147,10 @@ data. The current snapshot can appear as `running` in its own action timeline
 while the response is assembled; that self-entry is not a hung action after the
 snapshot has returned.
 
-For a desktop-hosted preview, if `preview_open` reports success but the user sees
-no preview surface, status stays `visible: false`, and snapshot capture fails,
-reuse the same tab for at
-most one confirmation. A read-only page check may show that a background
+With tools that explicitly support desktop automation, if `preview_open`
+reports success but the user sees no preview surface, status stays
+`visible: false`, and snapshot capture fails, reuse the same tab for at most
+one confirmation. A read-only page check may show that a background
 renderer works even though T3 did not mount its UI. Treat that combination as
 stale preview-presentation state rather than an application, route, or TLS
 failure, and do not create replacement tabs.
@@ -142,9 +173,9 @@ With the preferred server browser, `environment-port` resolves directly to
 `path` or `protocol` as needed. No gateway forward is needed for VM-loopback
 automation in this runtime.
 
-With a desktop-hosted preview, the same target rewrites the requested port onto
-the environment connection host; it does not tunnel to VM loopback. A local
-environment on the desktop client's machine is reachable directly. Remote
+When desktop automation is supported, the same target rewrites the requested
+port onto the environment connection host; it does not tunnel to VM loopback.
+A local environment on the desktop client's machine is reachable directly. Remote
 private hosts require an already reachable service, and public relay hosts
 reject this target until T3's authenticated preview gateway exists. When the
 desktop browser needs a remote VM's loopback development port, resolve it first:

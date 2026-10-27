@@ -27,8 +27,10 @@ Select T3 worktree isolation before starting a T3-owned editor. T3 owns that
 checkout's binding and cleanup; the Basaltwater commands below apply to
 Basaltwater-owned worktrees. A shell directory change does not rebind a T3
 thread. Fork/merge-back transfers conversation context separately from Git
-changes. Provider switching loses tool results and other context; delegation
-keeps the original harness's working session available.
+changes. Provider switching can carry recorded command output, filenames, and
+plans as budgeted historical text, while native tool state, reasoning, and
+attachments are not replayed. Inspect the transferred history; delegation keeps
+the original harness's working session available.
 
 Fresh workers need the relevant project instructions and absolute skill paths
 in their assignment. Their enabled skills and tools depend on the provider,

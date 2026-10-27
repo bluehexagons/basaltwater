@@ -23,9 +23,13 @@ disconnection. Use alternatives when tools are absent, the user requests them,
 or open explicitly reports an unsupported/unavailable host. Inspect actionable
 errors and follow the active session's additional fallback rules, including two
 failures on the same step when specified; quote the raw error when switching.
-T3 v0.1.2 prefers a server browser that reaches server loopback directly and can
-continue after client disconnection. Diagnose routes and trust on the selected
-browser host before requesting a gateway forward or client CA enrollment.
+T3 v0.1.3's server tools automate tabs marked `runtime: "server"`. A listed tab
+with desktop or missing runtime is outside those tools' reach: report that
+limit and open a server tab without passing that tab ID. Desktop automation
+requires tools that explicitly support it. The server browser reaches server
+loopback directly and can continue after client disconnection. Diagnose routes
+and trust on the selected browser host before requesting a gateway forward or
+client CA enrollment.
 
 Once policy permits fallback, continue automatically with a ready configured
 alternative. Do not wait for the user to reopen T3 or restart its service.

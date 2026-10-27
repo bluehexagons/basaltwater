@@ -158,7 +158,7 @@ option below is available to that agent session.
 
 | Option | Useful for | Origin and limits |
 | --- | --- | --- |
-| T3 collaborative preview | Live participation, shared evidence, and environment-local automation | Server browser preferred in 0.1.2; desktop-hosted tabs use the desktop's routes and trust |
+| T3 collaborative preview | Live participation, shared evidence, and environment-local automation | Stable 0.1.3 automates server tabs; listed desktop tabs require separate desktop-capable tools |
 | Managed Playwright | Repeatable DOM, console, network, fixture, canvas/WebGL, and VM loopback checks | VM; isolated profile and session-exposed MCP tools |
 | Existing project Playwright tests | Project-specific browser assertions with its documented test command | Selected project runtime; existing dependencies and engine payload required |
 | Configured desktop browser | Native dialogs, desktop integration, visual interaction, or available fallback | VM desktop; separate profile, scoped input, and active control permission |
@@ -326,14 +326,48 @@ loss, and persistent blank frames separately; do not suppress all GPU warnings
 or change Chromium flags to hide them. Measure gameplay performance without
 continuous screenshots before attributing capture overhead to the game.
 
+## T3 browser host preparation
+
+T3 0.1.3 uses its own headless Chrome for server tabs and `html_preview`. The
+first use downloads it into T3's data directory; managed Playwright uses a
+separate payload/cache. Follow the tool's installation/retry message before
+declaring the host unavailable. A healthy T3 HTTP endpoint or Playwright doctor
+does not establish that this Chrome can launch or render text.
+
+For missing libraries, fonts, or AppArmor sandbox diagnostics, run
+`t3 browser setup` as the service account without sudo to inspect what is needed.
+Use the server's `T3CODE_HOME` or `--base-dir` for a nondefault data directory,
+including CachyOS web's isolated home.
+Before Chrome is downloaded it cannot inspect that executable's libraries, so
+repeat inspection if the first launch reports missing dependencies. The elevated
+command can install Debian/Ubuntu packages/fonts and an AppArmor profile; use
+the exact command printed by the active runtime through the platform's authorized
+privileged workflow. CachyOS uses its native package workflow for missing
+libraries/fonts. Keep the server under its existing nonroot account and Chrome's
+sandbox enabled. Verify the failed operation after repair; a readable screenshot
+is needed to catch missing fonts. See the [upstream setup procedure](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/user/remote-access.md#browser-host-setup).
+
+T3's inline HTML pages are thread artifacts, distinct from product browser tests
+or gateway publication. The project-development skill covers
+[project actions and visual replies](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md).
+
 ## Collaborative preview and private networks
 
-T3 Code 0.1.2 prefers a server-hosted browser. Its requests use the environment
+T3 Code 0.1.3's server tools automate server-hosted tabs. Requests use the environment
 host's network and certificate trust; clients view the streamed tab. A
 desktop-hosted tab instead uses that desktop's routes and trust. Managed
 Playwright uses the agent VM. Identify the runtime from the active tool/host
 metadata or a controlled loopback check before attributing a failure to the
 client. A disconnected viewer does not establish that the server browser failed.
+
+Before reusing a tab ID from status or `t3_preview_list`, check its `runtime`.
+Only `runtime: "server"` entries can be passed to this environment's
+`preview_*` tools. An entry with desktop or missing runtime belongs to the user's
+local app: report that the server cannot access it, then call `preview_open`
+without that ID to open a server tab. Do not retry the desktop ID or diagnose
+networking, TLS, or stale presentation from that rejection. Desktop automation
+instructions below apply only when the active tools explicitly support it.
+See the [upstream tab-list contract](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/toolkits/previewControls/tools.ts).
 
 For a development server in the current environment, prefer the native target
 with the retained tab ID:
@@ -345,11 +379,11 @@ with the retained tab ID:
 Pass exactly one of `url` or `target`. The target defaults to HTTP and accepts
 `protocol: "https"` for TLS. The server browser resolves `environment-port`
 directly to `localhost:PORT`, so VM loopback needs no gateway forward. See the
-[server resolver and preferred-host registration](https://github.com/pingdotgg/t3code/blob/v0.1.2/apps/server/src/preview/ServerBrowser.ts).
+[server resolver and preferred-host registration](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/preview/ServerBrowser.ts).
 Desktop-hosted tabs use the client resolver, which rewrites the environment's
 connection host and may reject public relay targets; it does not tunnel to VM
 loopback. See the
-[desktop resolver](https://github.com/pingdotgg/t3code/blob/v0.1.2/apps/web/src/browser/browserTargetResolver.ts).
+[desktop resolver](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/web/src/browser/browserTargetResolver.ts).
 
 When a desktop browser needs a reachable URL for a VM loopback service, resolve
 the existing HTTPS route:
@@ -358,8 +392,9 @@ the existing HTTPS route:
 basaltwater-web preview resolve --port 8080 --json
 ```
 
-Use the returned `navigation.url` with `preview_navigate` and the retained tab
-ID. If `issue` is `forward_missing`, run the exact returned `command` when
+Open the returned `navigation.url` in the desktop browser, using
+`preview_navigate` only when its tools support that runtime. If `issue` is
+`forward_missing`, run the exact returned `command` when
 client-visible preview is in scope, then resolve again. The read-only resolver
 checks owned HTTPS forwards without changing bindings or access policy.
 Failures identify the upstream or gateway, distinguish refused connections,
@@ -376,9 +411,10 @@ and preserve the saved access policy.
 When the task selects collaborative preview, agents should call preview status
 first and open a preview once when no automation-capable tab is attached. A tab
 with `visible: false` has no active viewer; server-browser navigation, input,
-and capture can still work. Desktop-hosted capture can depend on the client
-window. Attempt one snapshot after navigation. If capture fails or
-times out while the tab remains available and invisible, do not repeatedly
+and capture can still work. With tools that support desktop automation,
+desktop-hosted capture can depend on the client window. Attempt one snapshot
+after navigation. If capture fails or times out while the tab remains available
+and invisible, do not repeatedly
 retry or diagnose the application, WebGL, TLS, or network from that result.
 Use the healthy VM-local fallback when session policy permits it and its network origin is
 appropriate, or finish with non-browser checks and report the coverage gap.
@@ -393,8 +429,9 @@ tab ID, and use it explicitly after an agent-session boundary. Do not describe
 that state as a detached or unavailable preview.
 
 Once a tab is attached, use a snapshot-first workflow. Server hosts list every
-tab in the thread, including tabs opened by the user. Read the requested tab
-by `tabId`; act on your own or an unclaimed tab only while no human controls it.
+tab in the thread, including tabs opened by the user. After verifying a supported
+runtime, read the requested tab by `tabId`; act on your own or an unclaimed tab
+only while no human controls it.
 Snapshot output provides visible text, accessibility data, semantic locators, console and
 network diagnostics, a screenshot, and recent action history. Prefer role/name
 locators from that output. Treat a successful type, press, click, or scroll
@@ -444,10 +481,10 @@ constructed as `running`.
 When the response itself has returned, that self-entry is expected; use prior
 completed actions and the returned page state to assess success.
 
-A narrower desktop-hosted failure is possible when `preview_open` returns a
-usable background tab but the desktop application never mounts a sidebar or
-floating preview:
-status remains `visible: false`, lightweight DOM operations can succeed, and
+With tools that support desktop automation, a narrower failure is possible
+when `preview_open` returns a usable background tab but the desktop application
+never mounts a sidebar or floating preview: status remains `visible: false`,
+lightweight DOM operations can succeed, and
 snapshot capture fails or times out. This is stale T3 preview-presentation
 state, not proof of an application, route, certificate, or VM browser failure.
 Do not create more tabs. Restarting the desktop client may preserve the stale
@@ -461,9 +498,10 @@ systemctl --user restart t3code.service
 ```
 
 Reconnect the desktop client and retry status/open once. Do not use a full VM
-reboot as the first recovery step. Normal setup reruns deliberately do not
-restart an otherwise healthy T3 service because setup may itself be running
-through an active T3 session.
+reboot as the first recovery step. Explicit setup refreshes restart a healthy
+managed service unless the updater already started a fresh invocation; finish
+active work before a setup refresh. Internal non-refresh checks reuse a healthy
+service.
 
 For WebAssembly and WebGL applications, successful browser navigation can
 precede runtime initialization. A snapshot containing only a splash screen or
@@ -477,6 +515,7 @@ snapshot and network error. Use the observed failure to choose the next step:
 
 | Observation | Next step |
 | --- | --- |
+| Listed tab has desktop or unspecified runtime | Report that server tools cannot access it and open a server tab without its ID; desktop automation needs explicit tool support. |
 | No selected automation tab | Call open once and retain its tab ID; status alone does not prove host unavailability. |
 | Open explicitly reports a disconnected/unavailable host, or preview tools are absent | Automatically select a ready configured alternative within session policy; report the missing coverage for that browser host. |
 | Unavailable capture with an attached tab | Follow bounded capture diagnostics; use an alternative when session policy permits it. |
