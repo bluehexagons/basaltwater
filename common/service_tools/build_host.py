@@ -287,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     modes.add_argument("--serve", action="store_true")
     modes.add_argument("--worker", action="store_true")
     modes.add_argument("--inspect-retention", metavar="ID")
+    modes.add_argument("--inspect-capacity", action="store_true")
     modes.add_argument("--settle-terminal", metavar="ID")
     modes.add_argument("--prune-terminal", metavar="ID")
     parser.add_argument("--expected-revision", metavar="DIGEST")
@@ -298,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if os.geteuid() != 0 or not sys.flags.isolated:
             raise ValueError("Use the root-controlled isolated Python launcher")
-        maintenance = any(value is not None for value in
+        maintenance = args.inspect_capacity or any(value is not None for value in
                           (args.inspect_retention, args.settle_terminal, args.prune_terminal))
         if (args.serve and (not args.principal or args.once
                             or os.environ.get("SSH_ORIGINAL_COMMAND") != SSH_COMMAND)
@@ -318,6 +319,11 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         if args.serve:
             serve(config, principal=args.principal, config_path=args.config)
+        elif args.inspect_capacity:
+            from lib.build_capacity import inspect_build_capacity
+
+            result = inspect_build_capacity(config)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif maintenance:
             options = ({"prune_kinds": tuple(args.prune_kind or ("source", "log"))}
                        if args.prune_terminal is not None else {})

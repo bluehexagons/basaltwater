@@ -63,3 +63,69 @@ pending/completed pruning; interrupted pruning requires its original revision
 and kind set. This is also root-local only, rejected before imports/configuration
 when any SSH environment marker is present. Bundles, job results and replay
 identities remain retained; no automatic pruning policy or SSH action is added.
+
+## Read-only local capacity inspection
+
+```bash
+/usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
+  --inspect-capacity
+```
+
+Use the trusted installation path and optionally the local administrator's
+`--config`. This mode has the same root, isolated Python, trusted code,
+platform, account, configuration and root restrictions as `--inspect-retention`.
+Any SSH original-command, connection or client environment marker rejects it
+before project imports or file access. It accepts no principal, `--once`,
+revision or prune kinds. It adds no SSH action.
+
+The trusted Python API is
+`lib.build_capacity.inspect_build_capacity(config: Mapping[str, Any]) -> dict[str, Any]`.
+Pass the configuration returned by `load_config()`; only `roots`, `max_records`
+and `max_bytes` are consumed and the mapping is unchanged. It returns detached
+JSON-compatible aggregates, capped at 64 KiB, without paths, owners, request
+commands, environment values or payload contents. Errors are fixed and contain
+no retained evidence. Missing, malformed, unsafe or ambiguous accounting
+evidence fails closed; it is never interpreted as an empty store.
+
+`inputs` reports immutable original reservations, persisted current charges,
+byte ceiling/headroom, retained slots and their ceiling/headroom, encoded intent
+metadata bytes and their ceiling/headroom. It counts unsettled, settled, pruned
+and pending-pruning intents separately. Every intent, including a tombstone or
+incomplete upload, still occupies one of the heavyweight input admission slots.
+`jobs` reports all replay records, the independent 4096-record ceiling and
+headroom, actual encoded ledger bytes against its 16 MiB ceiling, draining and
+persisted state counts. Neither settlement nor pruning frees a retained slot or
+job replay record. Headroom in one dimension does not bypass another ceiling.
+
+An input without a job can be an interrupted upload or publication before
+submission: it remains fully charged and is counted under `inputs_without_jobs`
+and, when applicable, `incomplete_inputs`. Existing jobs must match retained
+input identities and reservations. Settled/pruned inputs require existing
+certain-terminal jobs; version-3 pruning also requires the exact retained job
+digest. Pending pruning keeps its previous charge, completed pruning keeps its
+persisted charge, and uncertain jobs keep their full unsettled reservation.
+Inspection never proposes or applies a lower charge.
+
+`filesystems` groups the five configured root labels by their opened device ID.
+Each group reports `f_bavail * f_frsize` as `available_bytes`, separately from
+logical admission headroom. Shared roots do not multiply that value. Different
+observations on one device use the minimum with an explicit observation; a
+failed observation produces null and a fixed unavailable observation. These
+values can change immediately and do not reserve storage. Packaging peak usage
+includes both the private export snapshot and the bundle, alongside scratch,
+source, logs and metadata. Logical quota is not a measurement or guarantee of
+physical blocks; free disk establishes neither readiness nor admission capacity.
+
+The store snapshot methods are private-evidence APIs for trusted maintenance:
+`BuildInputStore.capacity_snapshot()` holds the existing stable input lock and
+`BuildJobStore.capacity_snapshot()` copies validated state under the short job
+lock. They acquire input then job state in the existing admission order and
+refuse contention immediately. Exact existing witnesses are required; absent
+locks, witnesses or ledgers are never initialized. The worker lock is optional
+until a worker has used it; scratch, artifacts and logs need no invented locks.
+Inspection does not take a worker/payload lease, expire jobs, invoke status,
+sync, repair durability, submit, settle, prune or traverse payload trees. Payload
+contents, packaging temporary trees and physical allocation remain unverified.
+The result observes persisted metadata, not durable acknowledgement after a
+lost sync/reply, a payload consistency audit, or a reservation/readiness decision.
+Native crash/power-loss qualification remains outside the temporary-file tests.
