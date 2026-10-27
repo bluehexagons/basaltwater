@@ -200,6 +200,26 @@ the final profile failed. See [controller setup](../agents/contributing/build-se
 [source preparation](../agents/contributing/build-setup-sources.md) and
 [planning](../agents/contributing/build-setup-plan.md) for detailed contracts.
 
+For a bounded offline view of an unfinished controller build setup, use its
+original absolute journal path:
+
+```bash
+python3 -B -m lib.build_setup_recovery --journal /absolute/workspace/build-setups/HOST-HASH/setup.json
+```
+
+Keep `-B` (or set `PYTHONDONTWRITEBYTECODE=1` at startup): ordinary Python package
+imports can create bytecode caches before this module starts. The inspector
+requires existing protected evidence and idle locks, reads only fixed associated
+metadata, and emits at most 64 KiB for at most 16 applications. It reports original
+replay identities, known admission IDs and locally saved acknowledgements or
+unresolved intents, with unknown IDs left `null`. It always reports remote state
+as `unobserved` and payload contents as `unverified`; a saved completion does not
+clear an unfinished guard or prove current target state. Unsafe, malformed,
+conflicting or missing required evidence refuses without repair. This command
+does not contact hosts, inspect payloads, resume, reset, retry or delete anything.
+See the [offline inspection contract](../agents/contributing/build-setup.md#offline-unfinished-setup-inspection)
+for permissions, read limits, output and refusal semantics.
+
 ## Basic deployment
 
 ```bash

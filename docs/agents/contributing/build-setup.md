@@ -79,6 +79,79 @@ state before explicit operator reconciliation. A completed delivery followed by
 a failed profile still requires reconciliation. Controller capacity checks do
 not reserve blocks against concurrent consumers, quotas or inode exhaustion.
 
+## Offline unfinished-setup inspection
+
+`lib.build_setup_recovery.inspect_build_setup_recovery(journal_path) -> dict`
+projects only local metadata for an existing unfinished controller setup. Use a
+canonical absolute `setup.json` path in its original protected host directory:
+
+```bash
+python3 -B -m lib.build_setup_recovery --journal /absolute/workspace/build-setups/HOST-HASH/setup.json
+```
+
+The `-B` startup flag (or startup `PYTHONDONTWRITEBYTECODE=1`) is required for a
+read-only CLI invocation. Python imports `lib/__init__.py` before the module can
+run; ordinary module imports and plain `python3 -m` retain normal bytecode-cache
+behavior. The CLI refuses with `bytecode_enabled_use_python_B` when bytecode is
+enabled, but that refusal cannot undo earlier package import cache writes. The
+API promises unchanged evidence, not a globally write-free Python interpreter.
+
+The inspector opens only the unfinished setup marker, the associated attempt's
+`prepared.json`, and, when applicable, `delivery/delivery.json`, its `.last.json`
+and `receipt-FIRST-IDEMPOTENCY-KEY.json`. It does not read the setup's rotating
+last result, sibling attempts, source trees, snapshots, artifact bundles, logs,
+credentials or remote files. Prepared requests are parsed to validate their
+canonical digest and exact request/source/deployment/replay identities; command
+and environment values are never projected. Payload contents remain unverified.
+It never initializes an accessor or creates, repairs, syncs or removes a file,
+directory, lock, journal or witness. It supplies no resume/reset, replay, retry,
+cancellation, retention or deletion operation.
+
+Directory traversal uses no-follow descriptor-relative opens from `/`, trusted
+root/effective-UID ancestors (including trusted sticky parents), and owned
+`0700` host/attempt/delivery directories. Evidence and stable lock files must be
+effective-UID-owned, single-link regular `0600` files. Stable operation locks
+must already exist and be empty. They are opened **read only** and locked
+exclusively without waiting, setup first and then delivery, until validation and
+projection finish. No `OperationStateStore` instance or ownership method is used.
+Descriptor and directory-entry identities, modes, owners, links, sizes and
+mtime/ctime are rechecked before returning, including absent optional entries.
+Read access may update atime. This does not defend against a malicious process
+with the same UID or establish an atomic snapshot against uncooperative writers.
+
+Reads are bounded to 32 MiB for prepared metadata, 1 MiB per operation document,
+and 64 KiB for the deterministic receipt; each read chunk is at most 64 KiB.
+Only schema-1 producer records, at most 16 distinct application/request/key
+identities, and supported fixed fields/phases are accepted. Duplicate JSON keys,
+invalid encodings, oversized records, unsafe paths/files, changed identities,
+conflicting acknowledgements/receipts and missing required evidence refuse.
+During bootstrap (including its handled failure), absent delivery is legitimate
+and reported as unknown. Once setup has recorded `delivering`, missing delivery
+intent/evidence refuses, including an interruption during delivery initialization.
+This deliberately conservative inspector does not reconstruct missing evidence.
+
+The schema-versioned JSON projection is at most 64 KiB including its newline.
+It contains `setup`, `delivery` and ordered `applications`: local phases/status,
+internal controller operation IDs, prepared/profile digests, application/project,
+exact request/source/deployment digests, original request IDs/idempotency keys,
+known admission operation/generation/bindings, artifact identities, locally saved
+stage/activation acknowledgements and unresolved intents. Unknown IDs are JSON
+`null`, including a lost reserve reply; there are no generated replacement IDs.
+No arbitrary paths, raw contexts, commands, environment values, credentials or
+executable recovery instructions enter the report. `remote_state` is always
+`unobserved` and `payload_contents` is always `unverified`. A completed local
+acknowledgement or successful last result does not establish current remote state
+or clear an unfinished guard. Markers retain precedence over last results.
+
+The API raises `BuildSetupInspectionError` with a fixed `code`: `busy`,
+`unavailable`, or `invalid_evidence`. The CLI exits 0 with the report on stdout,
+or 2 with a bounded schema-versioned JSON error on stderr; argument errors use
+`invalid_arguments`. Errors expose no evidence contents or supplied paths.
+Focused temporary-fixture tests include the real controller SIGKILL window,
+lost acknowledgements, final-profile failure, unchanged evidence metadata,
+forbidden effect calls and a cold package-copy CLI/no-bytecode subprocess proof.
+They do not observe a live target or establish remote recovery coverage.
+
 Selected native qualification covers public HTTPS source preparation, a saved
 builder and fresh Debian target, static and Go artifact delivery, guarded final
 profile setup, verified HTTPS routes, retained target-only reconciliation and
