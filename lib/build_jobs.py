@@ -406,6 +406,48 @@ class BuildJobStore:
             raise ValueError("Build store exceeds its 16 MiB byte limit")
         return _validate_state(decode_document(raw, maximum=MAX_STORE_BYTES))
 
+    def capacity_snapshot(self) -> tuple[dict[str, Any], int]:
+        """Copy private validated state and encoded byte count without mutation.
+
+        Trusted maintenance only. Requires an established exact state-lock
+        witness and ledger; refuses contention without initializing, expiring,
+        syncing or acquiring the worker lease. Call under the input lock when
+        combining input and job accounting. The worker lock may not exist yet.
+        """
+        # Import at use time: input admission itself depends on this job store.
+        from lib.build_inputs import _private_root
+
+        with _private_root(self.parent) as parent_fd:
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+            descriptor = os.open(self.lock_name, flags, dir_fd=parent_fd)
+            try:
+                opened = self._check_private_file(descriptor, "state lock")
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise RuntimeError("Build job accounting is busy") from None
+                current = self._check_named_file(parent_fd, self.lock_name, "state lock", required=True)
+                if (current is None or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+                        or opened.st_size != len(_INITIALIZED)
+                        or os.pread(descriptor, len(_INITIALIZED) + 1, 0) != _INITIALIZED):
+                    raise ValueError("Build store initialization witness is invalid")
+                # Only the ledger and its two documented locks belong here.
+                with os.scandir(parent_fd) as entries:
+                    for index, entry in enumerate(entries):
+                        if index >= 3 or entry.name not in {self.name, self.lock_name, self.worker_lock_name}:
+                            raise ValueError("Build store contains ambiguous accounting evidence")
+                self._check_named_file(parent_fd, self.worker_lock_name, "worker lock", required=False)
+                before = self._check_named_file(parent_fd, self.name, "state", required=True)
+                state = self._load(parent_fd, required=True)
+                after = self._check_named_file(parent_fd, self.name, "state", required=True)
+                identity = lambda info: (info.st_dev, info.st_ino, info.st_size,
+                                         info.st_mtime_ns, info.st_ctime_ns)
+                if before is None or after is None or identity(before) != identity(after):
+                    raise ValueError("Build store changed during capacity inspection")
+                return state, before.st_size
+            finally:
+                os.close(descriptor)
+
     def _save(self, parent_fd: int, state: dict[str, Any]) -> None:
         _validate_state(state)
         encoded = encode_document(state, maximum=MAX_STORE_BYTES - 1) + b"\n"

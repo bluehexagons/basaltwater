@@ -402,7 +402,8 @@ class BuildInputStore:
             result["pruning"] = _validate_pruning(value["pruning"], result)
         return result
 
-    def _read_intent(self, root_fd: int, request_id: str) -> tuple[dict[str, Any], int]:
+    def _read_intent(self, root_fd: int, request_id: str, *,
+                     reconcile: bool = True) -> tuple[dict[str, Any], int]:
         name = request_id + ".upload.json"
         named = _stat_named(root_fd, name, "intent")
         descriptor = os.open(name, _READ, dir_fd=root_fd)
@@ -426,9 +427,15 @@ class BuildInputStore:
             maximum = MAX_PRUNING_INTENT_BYTES if record["schema"] == 3 else MAX_INTENT_BYTES
             if encode_document(record, maximum=maximum) != raw:
                 raise ValueError("Build input intent is not canonically encoded")
+            if not reconcile:
+                identity = lambda info: (info.st_dev, info.st_ino, info.st_uid, info.st_nlink,
+                                         info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                if (len(raw) != opened.st_size or identity(os.fstat(descriptor)) != identity(opened)
+                        or identity(_stat_named(root_fd, name, "intent")) != identity(opened)):
+                    raise ValueError("Build input intent changed during capacity inspection")
             # Reconcile a replacement whose directory sync/reply was lost before
             # admission can use its lower charge. Failure still refuses admission.
-            if record["schema"] in {2, 3}:
+            if reconcile and record["schema"] in {2, 3}:
                 os.fsync(descriptor)
                 os.fsync(root_fd)
             return record, len(raw)
@@ -459,9 +466,17 @@ class BuildInputStore:
         return named
 
     def _scan_intents(
-        self, root_fd: int, *, pruning_temporary: str | None = None,
+        self, root_fd: int, *, pruning_temporary: str | None = None, reconcile: bool = True,
     ) -> tuple[dict[str, tuple[dict[str, Any], int, os.stat_result | None, os.stat_result | None]], int, int]:
-        names = set(os.listdir(root_fd))
+        if reconcile:
+            names = set(os.listdir(root_fd))
+        else:
+            names = set()
+            with os.scandir(root_fd) as entries:
+                for entry in entries:
+                    names.add(entry.name)
+                    if len(names) > 3 * self.max_records + 2:
+                        raise ValueError("Build input root exceeds its entry bound")
         allowed = {_LOCK_NAME, _INITIALIZED_NAME}
         intent_ids: set[str] = set()
         source_ids: set[str] = set()
@@ -495,7 +510,7 @@ class BuildInputStore:
         reserved = 0
         metadata_bytes = 0
         for request_id in sorted(intent_ids):
-            record, encoded_size = self._read_intent(root_fd, request_id)
+            record, encoded_size = self._read_intent(root_fd, request_id, reconcile=reconcile)
             source_info = self._payload_info(root_fd, request_id, record, published=True)
             part_info = self._payload_info(root_fd, request_id, record, published=False)
             if source_info is not None and part_info is not None:
@@ -514,6 +529,43 @@ class BuildInputStore:
         if metadata_bytes > min(MAX_RETAINED_METADATA_BYTES, self.max_records * MAX_PRUNING_INTENT_BYTES):
             raise ValueError("Build input store exceeds its retained metadata bound")
         return intents, reserved, metadata_bytes
+
+    @contextmanager
+    def capacity_snapshot(self) -> Iterator[tuple[
+        dict[str, tuple[dict[str, Any], int, os.stat_result | None, os.stat_result | None]], int, int,
+    ]]:
+        """Yield trusted private accounting evidence under an existing input lock.
+
+        Nonblocking and strictly noninitializing: require both exact witnesses,
+        never sync settled metadata or open payloads. Hold this context while
+        taking a short job capacity snapshot, in the admission lock order.
+        """
+        with _private_root(self.root) as root_fd:
+            lock_fd = os.open(_LOCK_NAME, _READ, dir_fd=root_fd)
+            try:
+                opened = os.fstat(lock_fd)
+                _check_regular(opened, "store lock", modes=frozenset({0o600}), exact_size=len(_WITNESS))
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise RuntimeError("Build input accounting is busy") from None
+                named = _stat_named(root_fd, _LOCK_NAME, "store lock")
+                _check_regular(named, "store lock", modes=frozenset({0o600}), exact_size=len(_WITNESS))
+                if not _same_file(opened, named) or os.pread(lock_fd, len(_WITNESS) + 1, 0) != _WITNESS:
+                    raise ValueError("Build input initialization witness is invalid")
+                marker_fd = os.open(_INITIALIZED_NAME, _READ, dir_fd=root_fd)
+                try:
+                    marker = os.fstat(marker_fd)
+                    _check_regular(marker, "initialization witness", modes=frozenset({0o600}),
+                                   exact_size=len(_WITNESS))
+                    if (not _same_file(marker, _stat_named(root_fd, _INITIALIZED_NAME, "witness"))
+                            or os.read(marker_fd, len(_WITNESS) + 1) != _WITNESS):
+                        raise ValueError("Build input initialization witness is invalid")
+                finally:
+                    os.close(marker_fd)
+                yield self._scan_intents(root_fd, reconcile=False)
+            finally:
+                os.close(lock_fd)
 
     @staticmethod
     def _reservation(source_size: int, request: dict[str, Any]) -> int:

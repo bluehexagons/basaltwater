@@ -265,7 +265,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
              patch.object(build_host, "load_config") as loader, \
              patch.object(build_host.sys, "stderr"), \
              patch.dict(os.environ, {}, clear=True):
-            for arguments in (inspect, settle, prune):
+            for arguments in (inspect, settle, prune, ["--inspect-capacity"]):
                 with patch.object(build_host.os, "geteuid", return_value=1000), \
                      patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
                     self.assertEqual(build_host.main(arguments), 1)
@@ -279,6 +279,84 @@ class BuildHostEntrypointTest(unittest.TestCase):
                         self.assertEqual(build_host.main(arguments), 1)
             trusted.assert_not_called()
             loader.assert_not_called()
+
+    def test_capacity_mode_is_local_and_passes_only_loaded_configuration(self):
+        configured = config()
+        with patch.object(build_host.os, "geteuid", return_value=0), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host, "_trusted_code"), \
+             patch.object(build_host, "_trusted_libraries"), \
+             patch.object(build_host, "require_platform"), \
+             patch.object(build_host, "load_config", return_value=configured) as loader, \
+             patch("lib.build_capacity.inspect_build_capacity", return_value={"schema": 1}) as inspect, \
+             patch.object(build_host, "retain_terminal") as retention, \
+             patch.object(build_host, "serve") as serve, \
+             patch.object(build_host, "run_worker") as worker, \
+             patch.object(build_host.sys, "stdout") as output, \
+             patch.object(build_host.sys, "stderr") as error, \
+             patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(build_host.main(["--inspect-capacity", "--config", "/private/config"]), 0)
+            inspect.assert_called_once_with(configured)
+            loader.assert_called_once_with("/private/config")
+            self.assertEqual("".join(call.args[0] for call in output.write.call_args_list), '{"schema":1}\n')
+            for arguments in (["--once"], ["--principal", "controller"],
+                              ["--expected-revision", "b" * 64], ["--prune-kind", "source"]):
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(build_host.main(["--inspect-capacity", *arguments]), 1)
+            self.assertEqual(inspect.call_count, 1)
+            inspect.side_effect = ValueError("private evidence")
+            output.reset_mock()
+            self.assertEqual(build_host.main(["--inspect-capacity"]), 1)
+            output.write.assert_not_called()
+            self.assertNotIn("private evidence", str(error.write.call_args_list))
+            retention.assert_not_called()
+            serve.assert_not_called()
+            worker.assert_not_called()
+
+    def test_capacity_suppresses_import_caches_and_restores_flag_on_every_exit(self):
+        configured = config()
+        for previous in (False, True):
+            for failure in (None, "config", "inspect", "interrupted"):
+                observed = []
+
+                def load(_path):
+                    observed.append("config")
+                    self.assertTrue(build_host.sys.dont_write_bytecode)
+                    if failure == "config":
+                        raise ValueError("configuration unavailable")
+                    return configured
+
+                def inspect(config_value):
+                    observed.append("inspect")
+                    self.assertTrue(build_host.sys.dont_write_bytecode)
+                    self.assertIs(config_value, configured)
+                    if failure == "inspect":
+                        raise ValueError("inspection unavailable")
+                    if failure == "interrupted":
+                        raise KeyboardInterrupt
+                    return {"schema": 1}
+
+                with self.subTest(previous=previous, failure=failure), \
+                     patch.object(build_host.sys, "dont_write_bytecode", previous), \
+                     patch.object(build_host.os, "geteuid", return_value=0), \
+                     patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+                     patch.object(build_host, "_trusted_code"), \
+                     patch.object(build_host, "_trusted_libraries"), \
+                     patch.object(build_host, "require_platform"), \
+                     patch.object(build_host, "load_config", side_effect=load), \
+                     patch("lib.build_capacity.inspect_build_capacity", side_effect=inspect), \
+                     patch.object(build_host.sys, "stdout"), \
+                     patch.object(build_host.sys, "stderr"), \
+                     patch.dict(os.environ, {}, clear=True):
+                    if failure == "interrupted":
+                        with self.assertRaises(KeyboardInterrupt):
+                            build_host.main(["--inspect-capacity"])
+                    else:
+                        self.assertEqual(build_host.main(["--inspect-capacity"]),
+                                         0 if failure is None else 1)
+                    self.assertIs(build_host.sys.dont_write_bytecode, previous)
+                    self.assertEqual(observed, ["config"] if failure == "config"
+                                     else ["config", "inspect"])
 
     def test_local_retention_passes_only_configured_roots_and_exact_id_revision(self):
         configured = config()

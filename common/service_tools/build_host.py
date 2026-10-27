@@ -287,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     modes.add_argument("--serve", action="store_true")
     modes.add_argument("--worker", action="store_true")
     modes.add_argument("--inspect-retention", metavar="ID")
+    modes.add_argument("--inspect-capacity", action="store_true")
     modes.add_argument("--settle-terminal", metavar="ID")
     modes.add_argument("--prune-terminal", metavar="ID")
     parser.add_argument("--expected-revision", metavar="DIGEST")
@@ -295,10 +296,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     args = parser.parse_args(argv)
+    previous_bytecode = sys.dont_write_bytecode
     try:
+        if args.inspect_capacity:
+            # Isolated Python still writes caches by default. Suppress them
+            # before load_config's first project import, even on a cold install.
+            sys.dont_write_bytecode = True
         if os.geteuid() != 0 or not sys.flags.isolated:
             raise ValueError("Use the root-controlled isolated Python launcher")
-        maintenance = any(value is not None for value in
+        maintenance = args.inspect_capacity or any(value is not None for value in
                           (args.inspect_retention, args.settle_terminal, args.prune_terminal))
         if (args.serve and (not args.principal or args.once
                             or os.environ.get("SSH_ORIGINAL_COMMAND") != SSH_COMMAND)
@@ -318,6 +324,11 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         if args.serve:
             serve(config, principal=args.principal, config_path=args.config)
+        elif args.inspect_capacity:
+            from lib.build_capacity import inspect_build_capacity
+
+            result = inspect_build_capacity(config)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif maintenance:
             options = ({"prune_kinds": tuple(args.prune_kind or ("source", "log"))}
                        if args.prune_terminal is not None else {})
@@ -331,6 +342,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError):
         print("Builder operation is unavailable; inspect protected host evidence", file=sys.stderr)
         return 1
+    finally:
+        if args.inspect_capacity:
+            sys.dont_write_bytecode = previous_bytecode
 
 
 if __name__ == "__main__":
