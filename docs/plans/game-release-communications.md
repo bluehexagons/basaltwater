@@ -1,381 +1,136 @@
-# Game releases, posts, and translations
+# Game releases, posts and translations
 
 Status: VM-local release records, optional Steam beta promotion, reviewed
-writing/translations, and provider-editor handoffs are available. Live provider
-account behavior and editor rendering remain unqualified; Steam's default
-release remains a human Steamworks action.
+drafts/translations and provider-editor handoffs are available. Live provider
+account behavior and rendering remain unqualified. Automatic post adapters,
+rich assets and broader destinations are follow-up work, after the current
+[shared build/CI host](cicd-manifest-reuse.md).
 
-The [operator guide](../workstations/game-publishing.md) defines tool setup,
-authentication, artifact retention, uploads, and scheduled jobs. This plan owns
-release coordination, writing, translation, human review, and publication
-boundaries inside the same panel.
+Use the [publishing operator guide](../workstations/game-publishing.md) for
+tools, authentication, language configuration, uploads, retention and schedules.
+The [publishing status](game-publishing.md) summarizes current support; this plan
+defines remaining delivery and acceptance.
 
-The remaining design below includes rich assets, rendered provider previews,
-terminology/placeholder validation, Steam CSV locale mapping, qualified automatic
-post adapters, remote schedules, external edit detection, campaigns and broader
-destinations. These are explicit follow-on work. The current beta parser fails
-closed on unknown API response schemas; its local lease cannot prevent a
-concurrent external Steamworks branch update. Default/public API paths are
-excluded regardless of qualification.
+## Boundaries to preserve
 
-## Product contract
+- **Every public-facing text requires human review**, including translations,
+  edited posts, build descriptions and supplied release notes. Upload authority
+  does not authorize new writing. Agents create drafts, not approvals.
+- **Steam default/public release and rollback remain human Steamworks actions.**
+  API adapters, scheduled jobs and browser automation must not perform the final
+  step. Automatic promotion rejects implicit/default aliases and repository
+  `SetLive` values; beta promotion requires a separate explicit grant.
+- Builds, promotion, content approval and publication have separate outcomes.
+  An upload, draft export or opened editor link does not prove a release is live.
+  Unknown submissions require inspection, not blind replay.
+- Provider credentials and browser sessions remain private on the VM.
+  Upload login does not establish post-writing capability. A beta channel is
+  not assumed private; show its audience or report it unknown.
+- Keep exact artifact/source/build/content identities and per-destination
+  receipts. Missing artifacts require the matching digest, never a silent
+  rebuild. A compensating upload is not transactional rollback.
+- The managed workflow is not isolation from root or arbitrary same-user code.
+  Protect authoritative review state from draft jobs and disclose that boundary.
 
-Support preparing and promoting game builds, drafting release notes and posts,
-translating them, reviewing them, and publishing them. Agents can prepare work
-and run authorized automation. **All public-facing writing requires human
-review before publication**, including translations and edits to existing
-published material. Standing permission to upload builds is not permission to
-publish new writing.
+## Human review contract
 
-**Steam default-branch release remains a human action on the Steamworks site.**
-The panel prepares a handoff and records the result. Agents, scheduled jobs,
-browser automation, and API adapters must not perform that final step.
+Bind approval to the final content revision, destination/project, locale,
+author, assets, links, formatting, visibility, publication time/window and release
+dependency. Convert destination formatting before review; escape active content.
+Resolve templates and final public URLs before approval.
 
-Confirmed delivery order: Steam announcements/events and itch.io posts first;
-website/blog and social publication are also planned, with later adapters.
-Start itch.io qualification with project devlogs; distinguish account-level
-posts from project posts before extending that adapter. Project languages
-default to English only. English and Spanish are the initial tested editorial
-languages; other languages can be configured without being claimed as tested.
-Store-page copy and other public text must follow the same review model when
-supported, but arbitrary store administration is not part of the first adapters.
+Each translation needs its own human review. A source change makes translations
+stale; any relevant payload, asset, destination or timing change invalidates the
+affected approval and pending submission. Publishing an explicitly approved
+subset is allowed; unreviewed fallback translations are not.
 
-## Provider capabilities and boundaries
+Only the authenticated, CSRF-protected human panel action records approval.
+Imported files, CLI/scheduler APIs and agents cannot set approval state; agents
+must not click the review action through browser tools. A shared panel login
+identifies that account, not a uniquely proven person. Recheck approval under
+dispatch/cancellation ownership.
 
-Check the linked provider contracts when qualifying an adapter; documentation
-describes capability inputs, not live qualification.
+Externally edited text requires review and reconciliation as a new revision.
+Do not autosave unreviewed corrections to live posts. Project language
+declarations stay in `basaltwater.json`; credentials, approvals and schedules
+stay operational state. The default is English only. English/Spanish editorial
+checks do not qualify every accepted language or imply game-content localization.
 
-| Operation | Current support | Boundary |
-| --- | --- | --- |
-| Steam non-default branch promotion | Optional explicit beta-branch promotion is available. | Live account/API behavior still needs qualification; never resolve an implicit or default branch. |
-| Steam default/public branch | A human Steamworks handoff is available. | Automation must not perform or simulate the final release action. |
-| Steam announcements | Reviewed text, assets, and localized imports can be handed to the provider editor. | Automated submission needs a separately qualified adapter. |
-| itch.io devlogs | Reviewed text/assets can be handed to the provider editor. | Butler authentication does not establish a devlog editor session or a post-writing API. |
+## Delivery order
 
-Valve documents build/branch inspection and `SetAppBuildLive` with a server-side
-publisher key. Its default/public path includes confirmation behavior; this
-project intentionally excludes that path and retains the requested manual
-Steamworks release. See [ISteamApps](https://partner.steamgames.com/doc/webapi/ISteamApps).
+### 1. Qualify existing handoffs and promotion
 
-A publisher API key, when needed for beta promotion or observation, is entered
-once through the protected panel and stored privately on the VM. Scope it to
-the relevant applications where the provider permits, show presence/last check
-only, and support replacement/removal without revealing it. It is a separate
-optional credential capability; never copy it through the controller, embed it
-in a project manifest, or require it for ordinary SteamCMD uploads. Provider
-website sessions for posts are separately authenticated as well.
+Use authorized test apps/projects to verify upload identity, explicit beta
+promotion, stale-target refusal and provider readback. Keep Steam default
+release as a handoff with exact BuildID, evidence and human completion.
+A local lock cannot exclude an external Steamworks change.
 
-Steam's event editor supports drafts, scheduled visibility, localization, and
-CSV imports. Changes saved to a published event can become visible immediately.
-Use its exported localization template when preparing imports. See
-[Events and Announcements](https://partner.steamgames.com/doc/marketing/event_tools).
+Qualify Steam announcement and itch.io project-devlog editor handoffs with
+reviewed English/Spanish text, localization and edits. Record operator-reported
+completion separately from provider-verified state.
 
-The reviewed [ISteamNews reference](https://partner.steamgames.com/doc/webapi/ISteamNews)
-describes retrieval, and the reviewed
-[itch.io server API](https://itch.io/docs/api/serverside) does not document a
-devlog-writing endpoint. We have not established a supported public post-write
-API for either destination. Do not invent one or rely on undocumented private
-endpoints. The provider editor is a supported handoff until an automation
-adapter is qualified.
+**Acceptance:** selected builds and final rendered text match reviewed inputs;
+unknown or changed targets stop dependent work. No public/default automation
+runs. Use a qualified Spanish reviewer; other languages initially receive
+structural checks only.
 
-## One release record, separate outcomes
+### 2. Add assets, previews and translation validation
 
-Add **Releases**, **Posts**, **Translations**, and **Review queue** within the
-panel's Publishing section. A release record links immutable artifact digests,
-source revision, provider build IDs, test evidence, selected branches/channels,
-content revisions, human reviews, and per-destination outcomes. It is a small
-coordination record, not a second build system or cross-provider transaction.
+Bind images, captions and alt text by digest. Preview the final destination
+format without executing imported scripts. Validate terminology, placeholders,
+links, length, Unicode and provider locale mappings; use actual Steam export
+templates for CSV round trips.
 
-| Item | States and evidence |
-| --- | --- |
-| Build | Prepared → uploaded → verified, with artifact digest and provider BuildID. |
-| Promotion | Prepared → queued or awaiting human action → dispatched → observed complete; failed/unknown remain explicit. |
-| Content revision | Draft → needs review → approved or changes requested; edits produce a new revision. |
-| Publication | Approved → scheduled or awaiting provider-editor action → submitted → published/verified; failed/unknown are separate. |
+**Acceptance:** conversion/truncation and stale translations are visible before
+review. Changed assets or mappings invalidate approval. Unsupported mappings
+remain unavailable with a human-editor handoff.
 
-The view should answer what is uploaded, what players can access, which text
-is approved, and what still needs a person. Opening a provider link or exporting
-a draft never marks an operation complete. An operator-reported result is
-labelled as such until a supported provider observation verifies it.
+### 3. Add one qualified publication adapter
 
-Example: upload build 123, validate it on a beta branch, draft an announcement
-and translations, have a human approve the final versions, then show
-**Awaiting Steamworks default release**. Once a human releases build 123 and
-its state is recorded, the exact approved announcement can be published through
-an available adapter or its provider-editor handoff. Upload completion alone
-must not trigger a post saying that the update is live.
+Start with Steam announcements and itch.io project devlogs. Verify supported
+authentication, write/inspect operations, limits and idempotency against current
+official provider documentation before selecting an API or browser adapter.
+Do not invent an undocumented write endpoint. Keep a reviewed editor export
+when reliable automation is unavailable.
 
-## Promotion workflow
+An adapter must submit the exact approved revision, distinguish draft from
+live save, bind account/project and retain its remote identity. Browser
+challenges or unexpected UI changes pause work; upload tokens are not website
+cookies. Detect external edits before changing published text.
 
-1. Select the exact existing build/artifact and target branch/channel. Display
-   the currently observed target build, its observation time, and the proposed
-   change. Never choose "latest" again during execution.
-2. Validate app/depot ownership, artifact identity, applicable test evidence,
-   and the configured promotion policy. Record the expected previous target
-   build to detect another release occurring between preparation and dispatch.
-3. A manual panel action or authorized job may promote to an explicitly allowed
-   non-default Steam branch. Keep promotion authorization separate from upload
-   authorization. Fail on stale target state and require a new preparation;
-   do not overwrite a newer release silently.
-4. For Steam default, create a handoff with the app Builds link, exact BuildID,
-   evidence, previous build, and any release blockers. A person acts on the
-   Steamworks site, then records completion; optional read-only API inspection
-   verifies the selected default build. An API confirmation response, browser
-   navigation, or checkbox alone is not provider verification.
-5. Read back the destination after a supported automated promotion. An ambiguous
-   result blocks dependent jobs and requires reconciliation. Rolling back is
-   a new promotion to a known previous build, with the same branch policy;
-   Steam default rollback is also manual on Steamworks.
+**Acceptance:** changed approvals, missing credentials, ambiguous results and
+partial destination success cannot publish unreviewed or duplicate content.
+Opening a handoff never marks publication complete.
 
-Reject `public`, `default`, empty/implicit branch targets, and any provider alias
-resolving to the default branch in automatic promotion adapters. Validate this
-in the shared backend, not only the panel. Upload VDFs remain upload-only;
-repository `SetLive` values cannot smuggle promotion into an upload job.
-Serialize promotion per app/branch and share provider/session locks where
-needed. Beta branch names do not prove restricted access; surface the observed
-audience or mark it unknown.
+### 4. Extend publication scheduling and destinations
 
-For itch.io, promotion reuses the exact retained artifact and reviewed public
-metadata for a destination-channel push. Retention of release artifacts is
-explicitly selected before the upload worker removes its temporary staging.
-If the artifact is missing, require recovery of the matching digest, not a
-silent rebuild. Keep the prior artifact for a deliberate compensating upload
-where supported; do not claim a transactional reversal of a public release.
+Use one scheduler owner per post: local dispatch or provider scheduling. Pin an
+explicit UTC instant, displayed timezone, allowed lateness window and release
+gate. Ambiguous/nonexistent local times refuse. Runs outside the approved window
+require human rescheduling.
 
-## Project language configuration
+Provider schedules are remote commitments: pausing locally does not cancel
+them. Cancel/replace through a supported adapter or human handoff; report when
+it is too late. Release-dependent posts require verified release state or a
+labelled exact-BuildID operator attestation.
 
-Use `basaltwater.json` for non-secret project language declarations. The supported
-optional top-level `publishing` section, with a `languages` object:
+Website/static-blog adapters reuse reviewed content and authorized deployment;
+verify the public page after build. CMS adapters retain draft IDs and detect
+drift. Social variants review every segment, audience, media and final URL;
+reconcile partial threads before sending unsent segments.
 
-```json
-{
-  "publishing": {
-    "languages": {
-      "source": "en",
-      "supported": ["en", "es"]
-    }
-  }
-}
-```
+**Acceptance:** restart, revocation, remote schedule cancellation, release gates
+and partial success retain independent outcomes and never repost completed
+destinations. No silent deletion of live posts as rollback.
 
-This fragment merges into a complete manifest. The version-1 parser now accepts
-it as an additive extension across
-`lib/project_manifest.py`, initialization/serialization, validation, and all
-consumers; older Basaltwater versions will reject it and must be upgraded.
-Existing manifests without the section remain unchanged. Allow a manifest with
-`components: []` and valid publishing metadata even without CI so a game does
-not need a fictitious web deployment. Deployment commands still reject such a
-metadata-only project as having no deployable components.
+## Verification and exclusions
 
-| Setting | Contract |
-| --- | --- |
-| Missing `publishing.languages` | Effective `source: en`, `supported: [en]`; no automatic Spanish opt-in. |
-| `source` omitted | English; it must belong to the effective supported list. |
-| `supported` | Defaults to `[en]` when omitted; otherwise a nonempty list of validated, normalized language tags. Reject duplicates, malformed values, and a source absent from the list. |
-| Spanish | `es` is the initial translation target under test. Regional choices remain explicit; do not silently equate every Spanish provider locale. |
-| Other languages | Accept well-formed language tags beyond English/Spanish; label unqualified translation/rendering coverage and block unsupported provider mappings with guidance. |
+Use temporary directories and mocked providers for schema, approval, stale-state,
+duplicate, interruption and timing tests. Live provider/rendering claims require
+authorized destinations and exact reviewed test posts. Preserve approvals and
+receipts separately from worker logs; record coverage in place rather than
+appending run histories.
 
-The panel reads the selected project's manifest and displays its path/revision
-and effective language settings. UI edits prepare an explicit manifest change
-for the operator to save/review; never silently rewrite a repository from a
-scheduled job. For projects without a manifest, keep the same English-only
-default and offer to create one. Do not maintain a competing hidden language
-list in VM configuration. Per-post language selection is a subset of the
-project list, not another project default.
-
-Source-language changes mark dependent translations stale. Removing a language
-holds its pending publications and preserves drafts/history; adding one creates
-no translation, approval, or publishing authority automatically. A job pins the
-manifest/configuration revision and revalidates changes before dispatch.
-Credentials, approvals, remote receipts, schedules, and permission to publish
-remain VM-local operational state and never enter the manifest. The declaration
-describes communication languages; it must not claim the game itself has been
-localized into those languages.
-
-## Writing and translation workflow
-
-Drafts can come from an operator, repository release notes, an agent task, or
-imported text. Generation is separate from the deterministic publisher and
-creates drafts only. Use selected commits/issues/test evidence as inputs; do
-not turn private issue details, raw logs, or unsupported claims into public
-copy automatically. Record source references and unresolved claims for review.
-
-Maintain one source revision plus destination-specific and language-specific
-variants. Each variant includes the final title, summary, body, links, captions,
-alt text, and text in attached images. Store asset digests with the revision.
-Steam/itch.io formatting conversion happens before review so the reviewer sees
-the final destination rendering and any truncation or conversion differences.
-Escape unsafe markup and validate links; the preview must not execute imported
-scripts or active embeds.
-
-Use the manifest's source and supported languages. Additional project editorial
-settings cover provider language mappings, terminology/glossary, style, and
-text that must remain unchanged. Preserve placeholders and links; validate
-missing strings, unexpected substitutions, length constraints, Unicode,
-and directionality.
-Use the current Steam CSV export schema for locale mapping and round-trip
-checks, not a guessed table of language codes.
-
-Show source and translation side by side, with changed passages, terminology
-warnings, and an optional back-translation to assist review. Each translation
-requires its own human review; source approval and machine quality checks do
-not approve translations. A source revision change marks dependent translations
-stale and cancels their pending publication until refreshed and reviewed.
-An operator may publish an explicitly selected approved subset of languages;
-show missing locales and provider fallback behavior. Never silently substitute
-an unreviewed machine translation.
-
-## Human review and publication authority
-
-Review is an explicit human action in the existing authenticated panel. The
-reviewer can approve a displayed group of destination/locale variants together,
-but the approval records each exact rendered payload and asset digest. Record
-the authenticated panel principal and time; a shared panel login identifies
-that account, not a uniquely proven person. Unique reviewer accounts can be
-added later without assuming the current panel has individual-user auditing.
-
-An approval binds content revision, destination/project, language, author
-identity, attachments, links, visibility/category, timing or allowed publication
-window, and any release dependency. **Approve for publication** can also
-authorize delivery at the specified time or after the specified release gate.
-No second per-run review is necessary when those approved inputs are unchanged.
-
-Any edit, new translation, changed destination/asset/link, formatting change,
-or substantive timing/context change invalidates the affected approval and
-queued submission. Resolve template variables before review. Approving a
-template, an English source, or an automation job does not approve future text.
-Corrections to live posts follow the same draft/review/publication sequence;
-never autosave an unreviewed correction directly to a provider's live editor.
-
-Draft-generating agents and scheduler APIs cannot create approval records or
-set an `approved` flag in imported files. Human approval is a distinct panel
-action using its authenticated, anti-CSRF-protected route; automation accepts
-only a recorded approved revision. Check the approval at dispatch, under the
-same lock as cancellation/revocation, rather than trusting queue-time checks.
-Agent instructions prohibit using browser tools to click the human approval
-action. Do not expose approval operations as agent tools.
-
-This is an enforced contract of the managed workflow, not a claim of isolation
-from root or arbitrary same-user code. The parent plan's shared-account
-credential boundary still applies. Agent-editable JSON cannot be authoritative
-review evidence; store authoritative reviews with the panel's trusted control
-state and restrict draft jobs' writes to their own inputs. If deployment grants
-an agent unrestricted access to that control state or provider sessions, report
-that trust boundary explicitly rather than claiming tamper-proof human review.
-
-The requirement covers all public writing produced by this feature: posts,
-patch notes, public build descriptions/version labels, translated titles,
-captions, and release documents included with uploaded builds. Upload recipes
-must reference reviewed revisions for supplied public text, including bundled
-release notes; internal build IDs and private operational logs are not editorial
-content. Content hashes and declared text manifests connect those reviews to
-the artifact. This is not an automatic proof that arbitrary game assets contain
-no unreviewed text; the project owns review of its other player-facing content.
-
-## Publishing, scheduling, and manual handoff
-
-Each destination adapter reports independent capabilities: prepare, export,
-create draft, publish, schedule, inspect, edit, and withdraw. Distinguish native
-API, qualified browser integration, and human-editor handoff. Missing capability
-must be visible before scheduling; a working upload login does not prove post
-publication is available.
-
-The baseline Steam workflow exports the approved localized payload and assets,
-provides the relevant editor link, and records a human's published URL/event ID.
-The itch.io workflow provides the approved devlog payload/assets and analogous
-handoff. If a human edits text in the provider editor, it must be reviewed there
-before publishing and reconciled as a new local revision; earlier approval does
-not cover the changed text. Mark externally edited posts as drifted until that
-reconciliation. Final rendering changes from a provider import require review.
-
-Automatic delivery is enabled only for a qualified API or explicitly configured
-browser adapter that can submit the exact approved version and identify the
-result. Browser support must validate account/project identity, distinguish
-draft from live save, handle login challenges by pausing, and stop on unexpected
-UI changes. Keep its dedicated VM-local browser session out of agent transcripts
-and exports. Do not reuse SteamCMD tokens as website cookies. Human handoff
-remains available if automation cannot reliably verify these properties.
-
-Use the existing scheduling owner for publication jobs. Build polling remains
-interval-based; posts add a one-off absolute publication time with a displayed
-timezone and an explicit UTC instant. Reject ambiguous/nonexistent local times
-and define an allowed lateness window. A delayed run outside that window needs
-human rescheduling, not an unexpected announcement after a restart.
-
-Choose one scheduler owner per post: Basaltwater dispatch or provider-native
-scheduling. Track a provider schedule as a remote commitment; pausing the local
-job does not cancel it. Revocation or editing must also cancel/replace the remote
-schedule through a supported adapter or an explicit human handoff. Once content
-is submitted, cancellation may be too late; show that fact immediately.
-
-At dispatch, require the exact approved payload, valid destination credentials,
-publication window, and any release gate. A "now available" post linked to a
-Steam default release waits for the human completion record and fresh readback
-when supported. Where automated verification is unavailable, require an explicit
-operator attestation with the BuildID and mark it operator-confirmed. Do not
-schedule such a post independently on the provider if that bypasses the gate.
-Advance announcements may have no release dependency when reviewed as such.
-
-Retain content approvals, payload hashes, destination receipt/URL, and unresolved
-publication outcomes separately from short-lived worker logs. Give each
-destination/revision a durable dispatch identity. On ambiguous submission,
-inspect by receipt where possible and otherwise request reconciliation rather
-than repost. Destinations complete independently; show partial success without
-republishing successful posts. Never silently delete a published post as rollback.
-
-## Remaining delivery and acceptance
-
-Release records, explicit beta promotion, the human Steam default-branch
-handoff, reviewed drafts/translations, and provider-editor exports are
-available. Live provider account behavior and rendered editor output remain
-unqualified. Automated publication adapters and scheduling are follow-on work.
-
-Before enabling an adapter, verify it submits only the exact approved payload,
-respects release gates and publication windows, and can inspect or reconcile an
-ambiguous result without duplicating a post. Track provider-native schedules as
-remote commitments and distinguish their cancellation from pausing a local job.
-Keep destination outcomes independent so a partial success does not republish
-completed destinations. Default-branch release remains a human action.
-
-Qualification should cover schema and locale variation, stale or changed
-content and approvals, interruption during submission, partial provider
-success, release-gate and lateness handling, and rejection of default-branch
-automation. Use mocked APIs and temporary directories before authorized live
-qualification with clearly reviewed test posts. Live language checks cover
-English and Spanish in both directions, edits, punctuation, and destination
-rendering; a qualified reviewer must assess Spanish. Other languages initially
-receive structural checks only. Unsupported automation remains a human handoff,
-not a passing automated test. Default-branch release is never automated.
-
-## Website/blog and social delivery plan
-
-These channels are planned follow-on work after Steam/itch.io; they reuse the
-same content revisions and release records rather than generating a separate
-unreviewed announcement per channel. Choose the actual site/CMS and social
-providers during adapter qualification, not by assuming every service has the
-same API or scheduling support.
-
-| Channel | Planned workflow | Acceptance boundary |
-| --- | --- | --- |
-| Game website/static blog | Render approved localized posts into the project's content format, prepare a repository change/preview, then invoke its existing authorized deployment workflow. | Bind the review to final output/assets, slug and locale routing; a Git commit or successful build is not proof that the public page is live. Read back the deployed page. |
-| Hosted blog/CMS | A provider adapter creates a draft, maps reviewed locales/assets, then publishes or schedules the immutable approved revision. | Authenticate separately, preserve remote draft IDs, detect external edits, and distinguish local cancellation from a provider schedule. Fall back to export/editor handoff for missing API support. |
-| Social posts | Prepare a platform-specific short variant or thread, translated variants, media, alt text, canonical links, and ordered submissions. | Human review includes truncation, each thread segment, media text, account and audience. Enforce provider limits before review; record each remote ID and resume only unsent segments after reconciliation. |
-
-For each adapter, first record its supported authentication, scopes,
-draft/schedule/edit/delete/inspect operations, rate limits, and idempotency
-behavior from current official documentation. Then add format conversion and
-previews, human approval binding, deterministic submission, and readback tests.
-Finally qualify on an operator-selected test destination. No adapter may claim
-unattended publishing while it still requires an untracked human editor action.
-
-Public links and summaries cannot be regenerated after approval. If a destination
-URL is only known after publication, reserve a stable reviewed URL beforehand or
-hold dependent social variants for review once the real URL is available.
-Separate language posts, localized URLs, and threads are explicit destinations;
-do not broadcast every configured language to every feed by default.
-
-Community replies, store-page changes, release-calendar campaigns, and richer
-editorial collaboration need further destination capabilities and acceptance
-criteria. They do not create exceptions to human review or justify an unbounded
-"publish anything" action. Pricing, sales administration, DRM, and a full
-game-content localization system remain outside this feature.
+Community replies, campaigns, store-page editing and broader editorial
+collaboration need separate acceptance. Pricing, sales, DRM and full game-content
+localization are outside this feature.

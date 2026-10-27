@@ -1,7 +1,7 @@
 # Native Windows build hosts
 
-Status: proposed scope, revised 2026-10-26. Windows primarily supplies native
-builds and packages for software, games and self-hostable game servers. Replace
+Status: proposed scope, after the shared Debian build/CI host. Windows supplies
+native builds and packages for software, games and self-hostable game servers. Replace
 the unused WSL-backed runner paths without migration or compatibility shims.
 Preserve standard build-on-target behavior elsewhere. Windows remains outside
 the current [v2.0.0 stable-release gate](../release-qualification.md).

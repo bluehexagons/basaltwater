@@ -16,6 +16,12 @@ runner. Bare `--build-server` selects the webhook role; adding
 `--build-host-policy FILE` selects the managed on-demand builder. Combining
 managed enrollment with `--cicd` is refused.
 
+A single host combining all three build/CI services is not available yet.
+The runner still has a dedicated profile and separate capacity control;
+[role composition and existing-runner conversion](../plans/cicd-manifest-reuse.md)
+are the next deliverable. `--build-on` selects a saved builder for another
+deployment; it does not enable build services on that builder.
+
 ## Start with a selected builder
 
 The bounded path supports ready static sites, Python static builds and

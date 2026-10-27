@@ -1,82 +1,50 @@
-# Deploy Secrets & Optional Components
+# Deployment secret references
 
-Status: deploy-secret references, optional-component gates and rotation
-relationships remain unimplemented. Manifest components currently support
-literal build environment values and an `env_file` path. This work is queued
-P1 after the transactional execution foundation.
+Status: versioned deployment-secret references, optional-component gates and
+rotation tracking are not implemented. Ordinary manifests accept literal build
+environment values and target-local `env_file` paths. The selected-builder path
+rejects runtime environment values and `env_file`; it cannot use those bindings
+yet. See [current deployment limits](../services/deployments.md#build-on-a-saved-builder).
 
-Coordinate with the [shared build-host plan](cicd-manifest-reuse.md). Remote
-builds can initially use existing target-local `env_file` bindings; the complete
-secret store and optional-component workflow need not precede artifact builds.
-Runtime values stay off builders. Build-time secrets require explicit grants to
-trusted code, with version references in build identity and no values in artifacts
-or durable metadata. Redaction cannot prevent authorized build code leaking a
-secret; use credential scope and trust boundaries rather than claiming otherwise.
+This work follows the [shared Debian build/CI host](cicd-manifest-reuse.md).
+Secret-free artifact builds do not need a new secret store.
 
-The intended shape is simple:
+## First deliverable: target-owned runtime bindings
 
-- provision `.env` content from the workspace instead of hand-copying it onto
-  servers
-- gate optional service components on secret presence
-- keep secret transport off the command line and out of world-readable staging
-- let build env vary based on whether a component was enabled
+Let target policy map named binding IDs to administrator-owned environment
+files. Projects request IDs, never arbitrary target paths or secret values.
+Authorize and bind the IDs during admission; resolve and revalidate them on the
+target before activation. Keep runtime values out of builders, bundles,
+controller command reconstruction and durable request metadata.
 
-This remains a design note only. When implementation starts, the work should be
-built on top of the current deployment and manifest code paths:
+**Acceptance:** authorized bindings reach only their intended service;
+missing/revoked bindings fail before activation; interrupted changes preserve
+the previous working file and service. Ordinary and prebuilt activation share
+the same binding semantics without broadening project authority.
 
-- `docs/services/deployments.md`
-- `docs/services/deployment-safety.md`
-- `lib/credentials.py`
-- `lib/deployment.py`
-- `lib/project_manifest.py`
+## Subsequent work
 
-## Recommended design
+- **Workspace-backed values:** use a separate versioned schema and provider
+  interface, reusing private atomic-write techniques from `lib/credentials.py`.
+  Do not overload named login credentials. No external secret manager is required.
+- **Rotation and removal:** inventory names/consumers without values, report
+  affected deployments, restart only affected components, and remove a managed
+  file only after its last consumer is removed.
+- **Optional components:** explicitly declare required references and whether
+  absence skips the component or rejects the plan. Decide before mutation.
+- **Build-time grants:** require explicit authorization to trusted build code.
+  Include version references in build identity, never values. Authorized code
+  can leak a secret; redaction is not an isolation boundary.
 
-Manifests should name secret references, never contain secret values. Resolve
-those references on the orchestration host through a provider interface, then
-transport the resulting content over stdin or a permission-restricted temporary
-file. Secrets must not appear in argv, reconstructed commands, operation logs,
-build output, or world-readable deployment staging.
+## Implementation and verification
 
-Start with the existing workspace credential store, but keep resolution behind
-an interface that can later support SOPS/age or a remote secret manager. Do not
-make an external service mandatory for the first implementation.
+Own changes in manifest validation, target policy/admission, deployment and
+credential transport; follow [deployment safety](../services/deployment-safety.md).
+Use private stdin or restricted files, atomic publication and appropriate
+root/service ownership with mode `0600`.
 
-The existing credential store is currently shaped around named login
-credentials. Do not overload that schema with arbitrary deploy secrets; reuse
-its atomic file/permission techniques behind a separate versioned secret-store
-schema and provider interface.
-
-The deployment engine should write a root-owned or service-owned environment
-file atomically, set mode `0600`, and pass only its path to systemd. Build-time
-secrets should be opt-in and should not be copied into the release or artifact.
-
-Optional components should declare required secret names. A missing required
-secret should either skip a component explicitly marked optional or fail
-validation before any deployment mutation. It must never fail halfway through
-activation because a secret was discovered late.
-
-## Required operations
-
-- list secret names and consumers without displaying values;
-- set, replace, and remove workspace-backed values;
-- report which deployments need rotation after a value changes;
-- rotate a secret and restart only affected components; and
-- remove remote secret files when their last managed consumer is removed.
-
-## Acceptance criteria
-
-- Secret values are absent from CLI arguments, saved setup commands, logs,
-  process listings, and deployment artifacts.
-- Missing secrets are reported during planning and preflight validation.
-- Remote files are atomic, mode `0600`, and owned by the intended service.
-- Optional-component selection is deterministic and visible in plan output.
-- Direct and webhook deployments resolve the same manifest declarations.
-- Tests cover redaction, interrupted writes, removal, rotation, and a failed
-  deployment that leaves the previous secret file and service intact.
-
-## Non-goals
-
-- Inventing a new encryption format.
-- Storing secret values in `basaltwater.json`.
-- Supporting every secret manager in the initial release.
+Test missing/revoked references, deterministic component selection, rotation,
+removal and interrupted writes. Check that values never enter argv, saved
+commands, logs, process listings, artifacts or world-readable staging. Keep
+secret values out of `basaltwater.json`; encryption formats and additional
+providers are separate work.

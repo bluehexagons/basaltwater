@@ -1,132 +1,72 @@
 # Project roadmap
 
-Status: active planning guidance for the v2.0.0 preview and stable release.
-
-Basaltwater should complete the safety and recovery loops around its existing
-operations before expanding platform, desktop, or service-specific support.
-The [planning index](README.md) owns the portfolio and compact issue
-dispositions; GitHub issues own discussion and detailed acceptance.
-
-## Current state
-
-The package version is 2.0.0rc1. No v2.0.0-rc.1 tag or public release has been
-published. The [release checklist](../release-qualification.md) defines the
-preview gate and the live matrix for stable qualification.
-
-Managed execution has bounded transaction markers, state validation, unit
-replacement recovery, Nginx reconciliation, and deployment activation
-rollback. The shared mechanism does not reverse package installation,
-arbitrary scripts, application data, or database migrations. Host behavior
-still requires live qualification.
-
-The security monitor handles bounded event backlogs. Issue #108 remains open
-for detecting when audit or journal retention has passed an old cursor.
-
-## Product direction
-
 Basaltwater is a small infrastructure reconciler for Debian and Proxmox.
-Operations should validate requested state, apply changes, verify results, and
-retain a documented recovery path. Priorities:
+Validate requested state, apply bounded changes, verify the result and preserve
+a recovery path. The [plan index](README.md) maps related work; the
+[release matrix](../release-qualification.md) gates publication.
 
-1. Failed operations stop and preserve or restore the working state.
-2. Manual setup, redeploys, and webhook delivery share declarations.
-3. Destructive and connectivity-sensitive actions have a preview and rollback
-   boundary.
-4. Saved configuration can support fleet audit and drift checks.
-5. New providers reuse existing execution and recovery contracts.
+## Current baseline
 
-Prefer safeguards that reduce operator effort. Defer controls whose recurring
-administration is not justified by usage or incidents.
+- The package is `2.0.0rc1`; the preview tag is not published.
+- Managed operations have durable guards, state validation, unit/Nginx recovery
+  and deployment rollback. They do not reverse arbitrary scripts, packages,
+  database migrations or application data.
+- Selected-builder setup, saved revision updates, verified artifact delivery
+  and retained target reconciliation are implemented for the bounded Debian
+  static/Go path. Explicit builder retention and offline recovery inspection
+  are available. See [current usage](../services/build-systems.md).
+- Webhook CI/CD and GitHub Actions runners exist separately. A host combining
+  both with managed on-demand builds is not implemented or qualified.
 
-## P0: Transaction and state reliability
+Selected live and controlled checks are summarized in the
+[coverage map](testing-coverage.md). Passing CI is not full-host qualification.
 
-The bounded transaction system is implemented. Keep required commands
-fail-fast, stage and verify managed files before activation, retain markers
-when recovery is incomplete, and reject corrupt or incompatible persistent
-state. Full setup records partial progress but does not promise reversal of
-packages, user changes, arbitrary scripts, or application data.
+## Immediate priority: one shared Debian build/CI host
 
-Use [transaction recovery](../operations/transaction-recovery.md) when an
-operation marker blocks retry. Keep database migration and automatic
-cross-phase recovery as separately scoped follow-up work.
+Deliver a VM that can host on-demand builds, signed webhooks and GitHub Actions
+runners together. Other deployments select this VM with `--build-on`; that flag
+does not enable build services on the VM itself.
 
-## P1: Shared build hosts, manifest deployment and secrets
+Follow the [shared build-host plan](cicd-manifest-reuse.md):
 
-Keep the Basaltwater controller lightweight and independent of Docker or an
-external application-management API. The [build-host plan](cicd-manifest-reuse.md)
-composes on-demand remote builds, signed webhooks and GitHub Runner with shared
-capacity, retained artifacts and an optional scoped panel. Manual and automated
-deployments should use one manifest and target activation engine. Preserve the
-standard build-on-target workflow; unused build-server, runner and webhook
-interfaces may be redesigned without compatibility shims. Start with remote
-build/artifact contracts and integrate [secret references](deploy-secrets.md)
-incrementally, retaining target-local runtime secrets.
+1. Compose the three roles in setup and saved configuration. Convert an
+   existing runner without silently dropping repository scope, allowed users,
+   labels or valid registration.
+2. Share capacity and draining across entry points. Begin with one heavy-job
+   slot; qualify waiting, nested builds, cancellation and child cleanup.
+3. Adapt webhooks to the common manifest/artifact path while preserving
+   signature, repository/branch and deployment authorization.
+4. Qualify fresh setup, existing-runner conversion, mixed-role execution,
+   reruns and reboot. Keep credentials and unfinished recovery evidence intact.
 
-## P1: Read-only planning and drift
+A combined setup command is documented only after its parser, composition and
+backend behavior exist. Optional panel controls follow the common backend;
+they are not required to finish the initial three-role host.
 
-There is no general desired-versus-observed plan command. A future planning
-layer should report proposed changes and unavailable facts using stable
-categories and exit codes; applying a plan must verify against the same
-observations.
+## Other priorities
 
-Start with services, managed files, packages, and deployments. Do not promise
-a universal package diff until setup steps expose structured state. The
-Proxmox operator guide owns current node and guest observations. The
-maintenance guides own current agent-host status. Issue #108 tracks missing
-source-retention detection in security monitoring.
+| Work | Next bounded result |
+| --- | --- |
+| Stable-release quality | Run the remaining exact-candidate release cases; preserve installer, wheel, metadata and affected CI checks. |
+| Read-only planning and drift | Define stable categories and unavailable-fact handling for services, managed files, packages and deployments. Verify observations again before apply. |
+| Security monitoring | Detect when journal/audit retention passes an old cursor; see [#108](https://github.com/bluehexagons/basaltwater/issues/108). |
+| Recovery | Extend tested same-host backup/restore to off-host recovery; cover remaining worker, storage and interrupted-operation boundaries without automatic replay of uncertain work. |
+| Network changes | Extend verified address handoff to reviewed Proxmox firewall changes, with saved artifacts, timed rollback and connectivity confirmation. |
+| Deployment secrets | Add target-owned runtime bindings under the [secret-reference plan](deploy-secrets.md); retain secret-free artifact builds as the current default. |
 
-## P2: Recovery workflows
+Retention currently reclaims bytes through explicit local actions while keeping
+input slots and replay history. Automatic bundle collection or history retirement
+must define changed availability/replay guarantees before implementation. These
+policies do not block the shared-host work.
 
-Backups are incomplete without a tested restore. Prioritize verified restore
-and retention for managed assets, application/database backup and restore, a
-recovery inventory, and clear destructive confirmations.
+## Later scope
 
-Proxmox backup and restore require the shared transaction and recovery
-contracts. HomeBox has native backup/restore commands; the release matrix
-still requires a disposable-VM restore check. Gogs recovery must include its
-database, repositories, attachments, LFS objects, secrets, and backing storage
-identity. Storage follow-up proposals are limited to interrupted-manifest
-reconciliation, resumable scans, persistent incident notifications, and
-reviewed recovery retention; no implementation is scheduled.
-
-## P2: Safe network apply and rollback
-
-Extend the existing verified host/guest address handoff to reviewed Proxmox
-firewall artifacts. Validate management sources, save exact artifacts, install
-a timed rollback before apply, verify connectivity, and require explicit
-confirmation before cancelling rollback. Add other network providers only
-after this contract is proven.
-
-## P3: Extensibility and release quality
-
-After reliability work, isolate optional plugin failures, document stable
-provider contracts, retain packaging smoke checks, and consider focused lint,
-type, and coverage gates. New operating systems need explicit CI and live-test
-expectations.
-
-The [Windows plan](windows-support.md) targets native builds/packages for
-software, games and self-hostable game servers, beginning with Antistatic.
-Share build/artifact and optional panel contracts through native execution and
-permissions adapters; WSL is not required. Owner-login startup is sufficient
-for the first proof; unattended headless service/task startup needs separate
-qualification. Tools-only installation remains independent. Persistent server
-hosting, desktop automation, spoke roles, notification ingest, signing/publishing
-and VM provisioning remain separate. Windows stays outside the current
-v2.0.0 stable-release gate.
-
-Game publishing is available through the VM-local panel and CLI, but provider
-account behavior and rendering remain unqualified. Steam default release stays
-manual. Automatic public posts, rich assets, and additional destinations
-remain qualification-gated in the [communications plan](game-release-communications.md).
-
-Godot bundle additions need compatibility, architecture, installation,
-headless verification, and update contracts before becoming supported CLI
-choices.
-
-## Deferred
-
-Until reliability and recovery work is substantially complete, defer broad
-non-Debian support, Android setup, additional network providers, general
-plugin APIs, and recurring trust administration without an operational need.
-The [mobile proposal](mobile-agent-support.md) is not an implementation
-commitment.
+- [Native Windows builds](windows-support.md), broader non-Debian support and
+  the [mobile proposal](mobile-agent-support.md) follow the Debian host.
+- [Game publishing](game-publishing.md) needs live provider/rendering checks;
+  Steam default release stays manual. Public-post automation follows the
+  [communications plan](game-release-communications.md).
+- New Godot bundles, provider/plugin APIs and application services need their
+  own ownership, update, recovery and qualification contracts.
+- A general fleet scheduler, mandatory container platform and automatic
+  resolution of uncertain operations are outside the current scope.

@@ -1,76 +1,37 @@
-# GitHub runner improvements
+# GitHub runner registration status
 
-## Goal
+Debian pending registration, repository/organization scope and private CLI/panel
+enrollment are implemented. Real GitHub delivery, runner-group selection and
+reboot qualification remain open. Use the [quick start](github-runner.md) and
+[operations reference](github-runner-operations.md) for commands and recovery.
 
-Make a persistent GitHub Actions runner installable before GitHub registration,
-allow registration later from setup or the web panel, and support one or
-several personal repositories or an organization. This targets a VM used
-by one GitHub user or organization; it does not add multi-tenant administration.
+## Available behavior
 
-## Implemented behavior
+- Tokenless setup leaves an unregistered runner pending with its service
+  disabled. Later setup or the panel can register it; invalid/expired tokens
+  leave a retryable state.
+- Routine setup preserves valid registration without a token. Scope, group and
+  label changes use the managed replacement path and retain retired credentials
+  privately for recovery.
+- Repository scope supports up to 20 independently registered repositories;
+  organization scope supports an optional runner group. Runners share one
+  runner-only host slot, not capacity with webhook or on-demand builds.
+- `--ci-register-with-gh` obtains a short-lived registration token on the
+  controller; the action is not replayed from saved setup. Reconnect credentials
+  remain on the runner.
+- The authenticated HTTPS panel uses a one-time volatile handoff to a narrow
+  privileged operation. Tokens are absent from durable requests, setup state,
+  logs, URLs and responses.
 
-- Setup without a registration token installs the runner files and policy in a
-  **Pending registration** state. It leaves the runner service disabled and
-  does not report the runner as ready. A later setup with
-  `--ci-registration-token-file` or `--ci-register-with-gh` registers and
-  activates it. Failed attempts remain retryable. Routine setup of an already
-  registered runner does not require a token. Credential errors warn and let
-  updates, checks and requested restarts complete. Setup applies scope/group/
-  label replacements automatically, preserving retired credentials privately.
-- Repeat `--ci-repository OWNER/REPO` for up to 20 repositories. Each has its
-  own registration, service, workspace and policy. All share one host job slot:
-  approved jobs wait in the hook until the previous worker exits. Queued time
-  counts toward GitHub job timeouts; cross-repository order is not guaranteed.
-  Omitted repositories are disabled; re-adding them reuses registration.
-- Runner scope is either repositories or an organization. Organization scope
-  records the organization and optional GitHub runner group. GitHub runner group
-  access controls which repositories can assign work; the local gate continues
-  to enforce the configured organization and human-actor policy.
-- The panel shows registration state and scope-specific instructions. A
-  password field submits a one-time token over an authenticated HTTPS POST. The
-  unprivileged panel must hand the token to a narrowly scoped privileged
-  registration operation through a volatile channel. Do not send it through
-  the durable action broker or retain it in panel state, setup configuration,
-  logs, URLs, or responses.
-- The guide explains where to create a repository or organization runner token,
-  how to submit it through setup or the panel, and how to retry an expired or
-  rejected token.
+## Remaining checks and work
 
-Registration tokens expire after one hour; normal reconnect needs no token.
-`--ci-register-with-gh` uses the controller's authenticated GitHub CLI to request
-one for the configured scope. It transfers only the registration token and is
-never replayed from saved setup. Website and manual `gh api` instructions are
-in the [quick start](github-runner.md#get-a-registration-token).
+1. Qualify both scopes with disposable private GitHub repositories: pending and
+   failed enrollment, permitted/denied events, runner-group selection, rerun and
+   reboot.
+2. Compose runners with webhook and managed build-host roles, then replace
+   independent capacity/drain paths under the
+   [shared-host plan](../plans/github-runner-support.md).
+3. Add broader panel controls only after their typed backend operations exist.
 
-## Delivery and acceptance
-
-1. Add pending-registration state and the later CLI registration path. Verify
-   tokenless setup succeeds with the service disabled, valid registration
-   activates it, invalid or expired tokens leave it retryable, and tokenless
-   updates preserve an existing registration.
-2. Add repository/organization scope to setup configuration, policy, runner
-   gate, and documentation. Verify a runner can receive work from allowed
-   repositories in its organization and rejects events from another
-   organization.
-3. Add the panel form and privileged one-time handoff. Test authentication,
-   CSRF, TLS, body limits, error handling, and that the token appears in no
-   durable request, response, URL, or log.
-4. Qualify both scopes on disposable GitHub repositories, including reboot,
-   pending-state recovery, and GitHub's runner-group repository selection.
-
-Steps 1–3 are implemented with offline lifecycle, organization gate, registration
-protocol, authenticated HTTP handler and generated-unit checks. The panel uses
-a root-owned Unix socket with per-connection activation and kernel peer-UID
-verification, rather than a durable request queue. Rejected tokens are
-retryable; another setup run retires partial credentials for recovery, and a
-completed registration with failed service activation can be repaired by
-tokenless setup. Existing registered policies migrate without re-registration.
-See the [quick start](github-runner.md) and
-[operations reference](github-runner-operations.md) for usage and recovery.
-
-Step 4 remains open: no disposable Debian VM or GitHub test organization was
-available during implementation. Offline checks do not establish reboot,
-GitHub delivery or runner-group repository-selection behavior. Record that live
-evidence before claiming production qualification.
-
-GitHub App-based token minting remains an optional later enhancement.
+Offline lifecycle, policy, registration-channel and unit tests do not establish
+live GitHub behavior. GitHub App-based token minting is a later enhancement.

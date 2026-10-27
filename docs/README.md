@@ -21,7 +21,7 @@ each section index routes to its detailed pages.
 | Shares, synchronization, backups, and storage recovery | [Storage](storage/README.md) |
 | Deployments, web services, and applications | [Services](services/README.md) |
 | Repository changes and coding-agent workflow | [Contributor guide](agents/contributing/README.md) |
-| Active plans, open issues, and release qualification | [Plans and issue index](plans/README.md) |
+| Current priorities, follow-up work, and release qualification | [Project plans](plans/README.md) |
 
 ## Project records
 
@@ -42,3 +42,8 @@ Guides lead with the task, use short procedures and lookup tables, and link to
 a detailed reference instead of duplicating it. The category indexes own the
 document maps, so add a new guide to its topic index and this page when the
 topic itself is new.
+
+Plans state current scope, next actions and acceptance. Update them in place;
+keep progress/change logs and raw test evidence outside public planning pages.
+The [coverage map](plans/testing-coverage.md) summarizes qualification limits,
+and the release matrix remains the exact-candidate publication gate.

@@ -26,6 +26,12 @@ GitHub prereleases. Until a preview tag is published, the installer’s `dev`
 channel tracks `main`. Preview tags are opt-in; `stable` continues to select the
 latest final release until `v2.0.0` passes qualification and is published.
 
+Selected-builder deployment is available for the bounded Debian static/Go
+flow. Webhook CI/CD and GitHub Actions runners are separate systems; combining
+all three on one host is the next build-system deliverable. See
+[current build options](docs/services/build-systems.md) and the
+[project roadmap](docs/plans/roadmap.md).
+
 ## Start here
 
 New to Linux or Basaltwater? Follow [Try Basaltwater on a Debian
@@ -148,6 +154,7 @@ try features and keep a small VM usable.
 | CachyOS coding | Codex on an existing KDE workstation; T3 desktop or a local/LAN web service, plus setup-time cache cleanup | [CachyOS](docs/workstations/cachyos.md) |
 | Storage | Authenticated Samba shares, private Syncthing exchange, SMB mounts, rsync sync, par2 verification, and recurring operations | [Samba shares](docs/storage/samba-shares.md), [Managed Syncthing](docs/storage/syncthing.md), [Storage operations](docs/storage/storage-operations.md) |
 | Deployments | Single-service deployments and `basaltwater.json` multi-component manifests | [Deployments](docs/services/deployments.md), [Deployment safety](docs/services/deployment-safety.md), [CI/CD](docs/services/cicd.md) |
+| Build systems | Managed on-demand builders, verified artifact delivery, and separate webhook/Actions runner paths | [Build systems and examples](docs/services/build-systems.md) |
 | Proxmox | Host discovery, VM/LXC provisioning, lifecycle, resource stats, boot ordering, snapshots, and rolling updates | [Proxmox workflows](docs/operations/proxmox.md) |
 | Networking | Static addressing, internal HTTPS site/preview hosting, inventory, and read-only Proxmox firewall planning | [Internal web](docs/services/internal-web.md), [Networking](docs/operations/networking.md) |
 | Sysadmin | SSH, transfers, health, services, logs, upgrades, and reachability | [Sysadmin shortcuts](docs/operations/sysadmin.md) |
