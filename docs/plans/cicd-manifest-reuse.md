@@ -256,23 +256,28 @@ and ready-to-serve static projects, must retain its existing behavior.
 
 Contract and integration tests cover versioned request/artifact schemas, payload
 identity, explicit exports, platform/runtime compatibility, durable admission,
-selected recovery boundaries and controller-to-target replay. Continue expanding
-native crash/restart and saved setup/patch/redeploy qualification; target-only
-retained reconciliation and compiler absence have selected native coverage.
+selected recovery boundaries and controller-to-target replay. Selected native
+saved patch/redeploy checks preserve the chosen revision, builder and sibling
+deployment; target-only reconciliation preserves installed identities without
+target compilers. Continue expanding crash/restart and combined-application
+qualification.
 
 ## Delivery order and acceptance
 
 1. **Common release contract and on-demand Debian builds:** the bounded static/Go
    slice supplies build/activation separation, saved builder selection, typed SSH
    operations, retained bundles, terminal quota settlement and explicit source/log
-   pruning. Qualify additional interruption and saved-flow boundaries; native checks
+   pruning. Qualify additional interruption and capacity boundaries; native checks
    cover repeat activation with clean protocol output, settlement preserving
    payloads, and interrupted pruning with same-revision resumption and same-ID
    replay. Preserve default build-on-target
    setup/redeploy behavior and saved settings.
-2. **Multi-component deployment and webhook adapter:** use the same activation
-   path; prove a static SPA, Go service and stateful frontend/API application on
-   targets without build tools. Test transfer failure, disk exhaustion, health
+2. **Multi-component deployment and webhook adapter:** first qualify one ready
+   static SPA and Go API application alongside a retained same-domain neighbor,
+   using the same activation path without target build tools. Automated checks
+   cover combined activation, retained reconciliation and health rollback;
+   combined native qualification remains pending. Then extend webhook reuse and
+   stateful runtime bindings. Test transfer failure, disk exhaustion, health
    rollback, lost replies, stale publication and restart recovery.
 3. **Composable runner and shared capacity:** replace dedicated-profile
    restrictions; qualify simultaneous installed roles, authorization, waiting,
