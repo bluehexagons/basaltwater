@@ -1,7 +1,7 @@
 # Shared build hosts and artifact deployment
 
 Status: bounded Debian on-demand slice implemented; remaining design revised
-2026-10-26. Preserve standard build-on-target
+2026-10-27. Preserve standard build-on-target
 setup and deployment. The unused webhook, build-server and runner interfaces,
 profiles and state may be replaced without migration or compatibility shims;
 retain their useful security and recovery contracts. The
@@ -130,9 +130,12 @@ bytes. Explicit root-local source/log pruning uses durable deletion intent,
 revision checks and per-job payload locks spanning service reads and streams
 while preserving bundles, terminal results and replay identities. Interrupted
 pruning retains its old charge until explicit resumption
-completes durably; uncertain work stays fully charged. Automatic retention,
-bundle deletion and replay-history expiry remain separate policy work; admission
-must never delete evidence.
+completes durably; uncertain work stays fully charged. An administrator can
+explicitly release one settled successful bundle by exact revision. Release
+ends builder retrieval, preserves terminal results and replay identities, and
+reduces its charge only after durable deletion. Downloading never authorizes
+release. Orphan bundles remain protected. Automatic retention and replay-history
+expiry remain separate policy work; admission must never delete evidence.
 Root-local [capacity inspection](../agents/contributing/build-host-entrypoint.md#read-only-local-capacity-inspection)
 reports persisted quota charges, retained input slots, replay-history and metadata
 headroom separately from filesystem availability. It requires existing accounting
@@ -279,8 +282,12 @@ in that crash check. Continue expanding crash/restart qualification.
 
 1. **Common release contract and on-demand Debian builds:** the bounded static/Go
    slice supplies build/activation separation, saved builder selection, typed SSH
-   operations, retained bundles, terminal quota settlement and explicit source/log
-   pruning. Qualify additional interruption and capacity boundaries; native checks
+   operations, retained bundles, terminal quota settlement, explicit source/log
+   pruning and root-local successful bundle release. Disposable process checks
+   cover same-revision release resumption across selected SIGKILL boundaries,
+   preserving job evidence and crediting bytes once. Release reclaims bytes,
+   never input slots or replay records. Qualify additional interruption and
+   capacity boundaries; native checks
    cover repeat activation with clean protocol output, settlement preserving
    payloads, and interrupted pruning with same-revision resumption and same-ID
    replay. Preserve default build-on-target
