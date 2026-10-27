@@ -94,6 +94,18 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         Assert-Throws { Assert-NativeGameSpace 'F:\development' } 'at least 15 GiB'
     }
     & {
+        $script:Missing = ''; $script:ReadySdk = $true
+        function Get-NativeVisualStudio { return 'F:\VS' }
+        function Test-NativeWindowsSdk { return $script:ReadySdk }
+        function Get-NativeCommand($name) { if ($name -ne $script:Missing) { return "mock-$name.exe" } }
+        Assert-True (Test-NativeGameToolsPresent -GameDev -ShaderTools) 'Complete installed tooling was not recognized for reconciliation'
+        $script:Missing = 'clang-tidy'
+        Assert-True (-not (Test-NativeGameToolsPresent -GameDev)) 'Missing selected analyzer bypassed installation space checks'
+        Assert-True (Test-NativeGameToolsPresent -ShaderTools) 'Unselected game tooling blocked shader-only reconciliation'
+        $script:ReadySdk = $false
+        Assert-True (-not (Test-NativeGameToolsPresent -GameDev)) 'Missing SDK bypassed installation space checks'
+    }
+    & {
         $script:Command = $null; $script:Installs = 0; $script:Paths = @(); $script:VersionExit = 0
         $bin = Join-Path $temporary 'vendor with spaces'
         New-Item -ItemType Directory -Path $bin | Out-Null

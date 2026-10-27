@@ -98,6 +98,17 @@ function Get-NativeShaderDirectories {
     }
 }
 
+function Test-NativeGameToolsPresent([switch]$GameDev, [switch]$ShaderTools) {
+    if ($GameDev) {
+        if (-not (Get-NativeVisualStudio) -or -not (Test-NativeWindowsSdk)) { return $false }
+        foreach ($name in @('cmake', 'ctest', 'ninja', 'clang', 'clang-format', 'clang-tidy', 'llvm-symbolizer', '7z')) {
+            if (-not (Get-NativeCommand $name)) { return $false }
+        }
+    }
+    if ($ShaderTools -and -not (Get-NativeCommand glslangValidator) -and -not (Get-NativeCommand glslang)) { return $false }
+    return $true
+}
+
 function Assert-NativeGameSpace([string]$StorageRoot = '') {
     # This is a bootstrap floor, not an estimate of a project's build/cache size.
     $roots = @{}

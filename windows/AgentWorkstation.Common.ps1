@@ -208,7 +208,12 @@ function Invoke-NativeAgentSetup {
     }
     if ($GameDev -or $ShaderTools) {
         . (Join-Path $Source 'windows\GameDevelopment.Common.ps1')
-        if (-not $Plan) { Assert-NativeGameSpace $StorageRoot }
+        if (-not $Plan) {
+            Update-NativePath
+            if (-not (Test-NativeGameToolsPresent -GameDev:$GameDev -ShaderTools:$ShaderTools)) {
+                Assert-NativeGameSpace $StorageRoot
+            }
+        }
     }
     if ($StorageRoot) { Set-NativeDevelopmentStorage $StorageRoot -Plan:$Plan }
     if ($GameDev) { $Python = $true; $Go = $true; $NodeVersions = $true }

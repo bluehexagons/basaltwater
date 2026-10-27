@@ -74,7 +74,9 @@ Use a directory owned by this coding account; do not share writable tool/cache
 paths with untrusted accounts.
 
 The game bundle requires at least 15 GiB free on the system/account drives and
-25 GiB on the selected storage drive before application. Without separate
+25 GiB on the selected storage drive before installing missing tooling. A
+complete existing bundle still receives version checks on reconciliation,
+without requiring the fresh-install allowance again. Without separate
 storage, the larger floor applies to the account drive. These are conservative
 bootstrap floors; vcpkg sources, intermediate builds, packages, captures and
 multiple checkouts need additional space. Shared Windows SDK components,
