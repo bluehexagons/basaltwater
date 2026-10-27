@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import hashlib
 from io import BytesIO
 import json
@@ -14,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 import lib.build_inputs as build_inputs
+import lib.build_jobs as build_jobs
 import lib.build_retention as build_retention
 from lib.build_artifacts import MAGIC
 from lib.build_inputs import BuildInputStore
@@ -226,6 +228,137 @@ class BuildRetentionTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.jobs.read_for_retention(self.request["request_id"], lease=lease)
 
+    def test_private_job_reader_refuses_unestablished_evidence_without_repair(self):
+        self.terminal()
+        ledger = self.roots["state"] / "jobs.json"
+        witness = self.roots["state"] / "jobs.json.lock"
+        ledger_bytes = ledger.read_bytes()
+        witness_bytes = witness.read_bytes()
+
+        def evidence(path):
+            if not path.exists():
+                return None
+            info = path.stat()
+            return (path.read_bytes(), info.st_ino, info.st_mode, info.st_mtime_ns, info.st_ctime_ns)
+
+        with self.jobs.worker() as lease:
+            for case in ("missing lock", "empty witness", "invalid witness", "missing ledger", "both missing"):
+                with self.subTest(case=case):
+                    if ledger.exists():
+                        ledger.unlink()
+                    if witness.exists():
+                        witness.unlink()
+                    if case != "both missing":
+                        ledger.write_bytes(ledger_bytes)
+                        ledger.chmod(0o600)
+                    if case not in {"missing lock", "both missing"}:
+                        witness.write_bytes(witness_bytes)
+                        witness.chmod(0o600)
+                    if case == "empty witness":
+                        witness.write_bytes(b"")
+                    elif case == "invalid witness":
+                        witness.write_bytes(b"invalid\n")
+                    elif case == "missing ledger":
+                        ledger.unlink()
+                    before = (evidence(ledger), evidence(witness))
+                    with patch.object(self.jobs, "_save", side_effect=AssertionError("must not save job state")), \
+                         patch.object(build_jobs.os, "pwrite", side_effect=AssertionError("must not write witness")), \
+                         patch.object(build_jobs.os, "fsync", side_effect=AssertionError("must not sync job state")):
+                        with self.assertRaises((OSError, ValueError)):
+                            self.jobs.read_for_retention(self.request["request_id"], lease=lease)
+                    self.assertEqual((evidence(ledger), evidence(witness)), before)
+
+    def test_inspect_settle_and_prune_refuse_missing_job_lock_before_input_changes(self):
+        ledger = self.roots["state"] / "jobs.json"
+        witness = self.roots["state"] / "jobs.json.lock"
+
+        self.inputs.max_bytes = 4 * self.reservation + 65536
+        for index, operation in enumerate(("inspect", "settle", "prune"), 1):
+            with self.subTest(operation=operation):
+                self.request = {**self.request, "request_id": f"{index:032x}"}
+                self.terminal("succeeded")
+                plan = self.inspect()
+                if operation == "prune":
+                    plan = self.settle(plan)
+                witness_bytes = witness.read_bytes()
+                input_path = self.path("inputs", ".upload.json")
+                intent_before = input_path.read_bytes()
+                ledger_before = ledger.read_bytes()
+                ledger_info = ledger.stat()
+                source = self.path("inputs", ".source")
+                log = self.path("logs", ".log")
+                source_info, log_info = source.stat(), log.stat()
+                witness.unlink()
+
+                with self.assertRaises((OSError, ValueError)):
+                    if operation == "inspect":
+                        self.inspect()
+                    elif operation == "settle":
+                        self.settle(plan)
+                    else:
+                        self.prune(plan)
+
+                self.assertFalse(witness.exists())
+                self.assertEqual(ledger.read_bytes(), ledger_before)
+                self.assertEqual((ledger.stat().st_ino, ledger.stat().st_mtime_ns, ledger.stat().st_ctime_ns),
+                                 (ledger_info.st_ino, ledger_info.st_mtime_ns, ledger_info.st_ctime_ns))
+                self.assertEqual(input_path.read_bytes(), intent_before)
+                self.assertFalse(self.path("inputs", ".settlement.tmp").exists())
+                self.assertEqual(source.stat().st_ino, source_info.st_ino)
+                self.assertEqual(log.stat().st_ino, log_info.st_ino)
+                self.assertTrue(source.exists())
+                self.assertTrue(log.exists())
+                witness.write_bytes(witness_bytes)
+                witness.chmod(0o600)
+
+    def test_busy_job_state_lock_refuses_promptly_and_releases_maintenance_locks(self):
+        self.terminal("succeeded")
+        lock_path = self.roots["state"] / "jobs.json.lock"
+        holder = os.open(lock_path, os.O_RDWR)
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held_identity = os.fstat(holder).st_dev, os.fstat(holder).st_ino
+        attempted = threading.Event()
+        finished = threading.Event()
+        errors = []
+        real_flock = fcntl.flock
+
+        def observed_flock(descriptor, operation):
+            info = os.fstat(descriptor)
+            if (info.st_dev, info.st_ino) == held_identity:
+                attempted.set()
+            return real_flock(descriptor, operation)
+
+        def inspect():
+            try:
+                self.inspect()
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        try:
+            with patch.object(build_jobs.fcntl, "flock", side_effect=observed_flock):
+                thread = threading.Thread(target=inspect)
+                thread.start()
+                self.assertTrue(attempted.wait(5), "maintenance did not attempt the job-state lock")
+                prompt_refusal = finished.wait(0.5)
+                # Release even on a regression that waits on flock so the test
+                # thread cannot be stranded after the bounded assertion.
+                os.close(holder)
+                holder = -1
+                thread.join(5)
+                self.assertFalse(thread.is_alive(), "maintenance remained stuck after lock release")
+            self.assertTrue(prompt_refusal, "busy job-state lock must be refused without waiting")
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], RuntimeError)
+            self.assertIn("busy", str(errors[0]))
+            # A fresh operation proves worker, input and payload protection
+            # unwound when the job-state snapshot refused.
+            self.assertEqual(self.inspect()["request_id"], self.request["request_id"])
+        finally:
+            if holder >= 0:
+                os.close(holder)
+
     def test_queued_running_uncertain_are_refused_and_worker_slot_is_nonblocking(self):
         self.admit()
         with self.assertRaisesRegex(ValueError, "certain terminal"):
@@ -246,7 +379,7 @@ class BuildRetentionTests(unittest.TestCase):
         with patch.object(self.jobs, "submit", side_effect=OSError("lost submit")):
             with self.assertRaises(OSError):
                 self.admit()
-        with self.assertRaisesRegex(ValueError, "not found"):
+        with self.assertRaisesRegex(ValueError, "state lock is missing|not found"):
             self.inspect()
         self.admit()
         self.jobs.cancel(self.request["request_id"], owner="controller")

@@ -636,12 +636,13 @@ class BuildJobStore:
     def read_for_retention(self, request_id: str, *, lease: WorkerLease) -> dict[str, Any]:
         """Return private evidence to trusted maintenance holding this worker lease.
 
-        Copy under the short state lock; callers must hash files after returning.
-        This never expires jobs, changes drain state, or supplies a public API.
+        Copy established state under the short nonblocking state lock; callers
+        must hash files after returning. This never initializes or repairs job
+        evidence, expires jobs, changes drain state, or supplies a public API.
         """
         request_id = _identifier(request_id, "Request ID")
         with self._lease_guard(lease):
-            with self._locked() as (state, _parent_fd):
+            with self._readonly_state() as state:
                 return copy.deepcopy(self._record(state, request_id))
 
     def replay_terminal(self, request: object, *, owner: str, expected_job_sha256: str) -> dict[str, Any]:
