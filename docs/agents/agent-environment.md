@@ -106,14 +106,20 @@ text approval and confirmation belong to a human. Steam default/public releases
 stay manual on Steamworks. Reviewed post exports remain human editor handoffs.
 Storefront uploads and VM HTTPS game previews are separate workflows.
 
-`browser` prefers capabilities exposed by the active agent session. T3 Code
-agents should check `preview_status`, then `preview_open` when needed. The
+`browser` follows the active agent session's browser policy. When browser work
+is requested and that policy permits it, T3 Code agents should check
+`preview_status`, then `preview_open` when needed. The
 manifest cannot verify session tools from a standalone CLI. Its managed
 Playwright entry reports only wrapper presence on PATH, without launching it.
 `browser.contexts` separates managed Chromium/optional Firefox, project-pinned
 Playwright engines, interactive Firefox/Firefox ESR, and collaborative preview.
 It records existing runtime versions and leaves startup/rendering unverified;
 use the returned engine-specific doctor command when that coverage is requested.
+Collaborative preview's `network_origin` remains `null` until the active session's
+tab runtime is known: server-hosted tabs use the server's network, while
+desktop-hosted tabs use the connected client's network. Confirm automation
+support before reusing a listed tab; T3 Code 0.1.3 server tools accept only
+`runtime: "server"` targets.
 See [engine and context checks](browser-automation.md#engine-and-context-coverage).
 `workspace.legacy_browser_artifacts` identifies the older artifact directory
 convention; even an existing directory does not establish a browser capability.

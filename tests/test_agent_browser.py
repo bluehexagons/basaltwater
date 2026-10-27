@@ -58,7 +58,7 @@ class TestAgentBrowser(unittest.TestCase):
         self.assertEqual(contexts[("managed", "chromium")]["readiness"], "runtime-version-mismatch")
         self.assertEqual(contexts[("project", "firefox")]["playwright_version"], "1.57.2")
         self.assertEqual(contexts[("interactive-desktop", "firefox")]["readiness"], "unverified")
-        self.assertEqual(contexts[("collaborative-preview", "unknown")]["network_origin"], "connected-client")
+        self.assertIsNone(contexts[("collaborative-preview", "unknown")]["network_origin"])
         self.assertEqual(contexts[("interactive-desktop", "firefox")]["browser_version"], "Mozilla Firefox 140.0esr")
         self.assertIsNone(contexts[("managed", "firefox")]["launchable"])
         self.assertFalse(contexts[("managed", "firefox")]["mcp_registered"])

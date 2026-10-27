@@ -87,7 +87,8 @@ def browser_context_inventory(project: str) -> list[dict[str, object]]:
     mcp = _runtime("managed-mcp", None)
     local = _runtime("project", project)
     contexts = [{"engine": "unknown", "context": "collaborative-preview", "browser_version": None,
-                 "network_origin": "connected-client", "readiness": "session-dependent",
+                 "network_origin": None, "readiness": "session-dependent",
+                 "instructions": "Inspect the active session's tab runtime: server-hosted tabs use the server's network; desktop-hosted tabs use the connected client's network. Follow session policy and verify automation support before reusing a tab.",
                  "discovered": None, "launchable": None, "mcp_registered": None, "application_tested": False}]
     for context, runtime, engines in (("managed", managed, ("chromium", "firefox")),
                                       ("managed-mcp", mcp, ("chromium", "firefox")),
