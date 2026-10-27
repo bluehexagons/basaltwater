@@ -420,6 +420,67 @@ class LifecycleTests(unittest.TestCase):
         self.replace.assert_not_called()
         self.assertFalse(any("stop" in call.args or "restart" in call.args for call in self.command.call_args_list))
 
+    def test_managed_retry_wait_can_be_repaired_or_disabled(self):
+        main = self.main_state() | dict(ActiveState="activating", SubState="auto-restart", MainPID="0")
+        self.show.side_effect = lambda unit: main.copy() if unit == ssh.SERVICE else self.absent()
+        for mode in ("key", "off"):
+            with self.subTest(mode=mode), patch.object(ssh, "_validate_config"):
+                ssh.inspect_setup("alice", mode, 0, metadata_only=True)
+                ssh._reconcile("alice", mode, 0)
+        self.replace.assert_called_once_with({ssh.SERVICE: ssh._unit(ssh._config_path("alice", "key"))},
+                                             activate=(ssh.SERVICE,), unit_dir=str(self.unit_dir))
+        self.remove.assert_called_once_with((ssh.SERVICE,), unit_dir=str(self.unit_dir))
+
+    def test_retry_exception_does_not_adopt_transitions_or_foreign_units(self):
+        main = self.main_state() | dict(ActiveState="activating", MainPID="0")
+        for substate in ("", "start", "start-pre", "unknown"):
+            self.show.side_effect = lambda unit: (main | {"SubState": substate}) if unit == ssh.SERVICE else self.absent()
+            with self.subTest(substate=substate), self.assertRaisesRegex(ValueError, "transitioning"):
+                ssh._reconcile("alice", "off", 0)
+        main["SubState"] = "auto-restart"
+        main["Description"] = "foreign service"
+        self.show.side_effect = lambda unit: main.copy() if unit == ssh.SERVICE else self.absent()
+        with self.assertRaisesRegex(ValueError, "foreign main"):
+            ssh._reconcile("alice", "off", 0)
+        (self.unit_dir / ssh.SERVICE).unlink()
+        self.native_fixture(ActiveState="activating", SubState="auto-restart")
+        with self.assertRaisesRegex(ValueError, "transitioning"):
+            ssh._reconcile("alice", "off", 0)
+        self.replace.assert_not_called()
+        self.remove.assert_not_called()
+
+    def test_password_lockdown_preserves_session_safe_unit_before_restart(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                main = self.main_state("password")
+                old_path = ssh._config_path("alice", "password")
+                if legacy:
+                    (self.unit_dir / ssh.SERVICE).write_text(ssh._unit(old_path, legacy=True))
+                    main["KillMode"] = "control-group"
+                self.show.side_effect = lambda unit: main.copy() if unit == ssh.SERVICE else self.absent()
+                self.key.return_value = False  # Lockdown is intentional even before enrollment.
+                events = []
+
+                def replace(units, *, activate, unit_dir):
+                    content = units[ssh.SERVICE]
+                    if activate:
+                        self.assertEqual(main["KillMode"], "process")
+                        self.assertEqual((self.unit_dir / ssh.SERVICE).read_text(), ssh._unit(old_path))
+                        self.assertEqual(content, ssh._unit(ssh._config_path("alice", "key")))
+                        events.append("lockdown")
+                    else:
+                        self.assertEqual(content, ssh._unit(old_path))
+                        main["KillMode"] = "process"
+                        events.append("safety")
+                    (self.unit_dir / ssh.SERVICE).write_text(content)
+
+                self.replace.side_effect = replace
+                with patch.object(ssh, "_validate_config"):
+                    ssh._reconcile("alice", "key", 0)
+                self.assertEqual(events, ["safety", "lockdown"] if legacy else ["lockdown"])
+                self.key.assert_not_called()
+                self.remove.assert_not_called()
+
     def test_legacy_main_migrates_safety_without_restart_before_removal(self):
         main = self.main_state() | {"KillMode": "control-group"}
         path = ssh._config_path("alice", "key")

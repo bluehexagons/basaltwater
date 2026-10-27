@@ -71,6 +71,30 @@ Installer updates also carry forward managed `state`, `deployments`, and
 If that path also contains other unmanaged files, move or resolve them before
 rerunning the installer.
 
+When the install directory contains `cachyos-t3/data`, stop the managed web
+service before reinstalling source. Copying its live SQLite files can leave
+the running service writing to the old source backup while the replacement
+has an older database. Finish active work and use an independent KDE terminal,
+outside T3's web terminal:
+
+```fish
+systemctl --user stop basaltwater-cachyos-t3.service
+```
+
+Then repeat your chosen installer command. The installer requires a confirmed
+stopped service and an accessible systemd user session before replacing source;
+it refuses running, restarting, or uncertain states. Keep it stopped during
+source replacement. A requested web setup starts it afterward; otherwise, if
+keeping web mode, start it after the installer finishes:
+
+```fish
+systemctl --user start basaltwater-cachyos-t3.service
+```
+
+The desktop's `~/.t3` data is outside the source directory and does not require
+this service stop. If installation fails, resolve the reported error before
+restarting the service against the restored source.
+
 ## Mirror refresh failures
 
 If `health.mirrors` reports failure, inspect the distro service and the hosts
@@ -508,6 +532,13 @@ recovery before installing. If recovery is incomplete, retain that directory
 and both runtimes while resolving the reported service error. Changes or
 removals made to the unit or CLI link outside setup stop recovery and preserve
 the snapshots for manual inspection.
+
+A failed first-install rollback can remove its new unit before a systemd
+reload fails. Preflight recognizes the cached, inactive unit only with an
+owned, valid recovery record proving there was no previous service. Rerun
+setup after resolving the reload error; recovery finishes before installing
+or switching to desktop mode. Keep `.activation` intact, and do not recreate
+the removed unit manually.
 
 Rollback covers runtime and service configuration, **not T3 database migrations**.
 Back up application data before updates that may change its schema. Successful

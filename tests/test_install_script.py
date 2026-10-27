@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -215,6 +216,16 @@ class TestInstallScript(unittest.TestCase):
             )
         os.chmod(sed_path, 0o755)
 
+        systemctl_path = os.path.join(fake_bin, "systemctl")
+        with open(systemctl_path, "w", encoding="utf-8") as file_obj:
+            file_obj.write(
+                "#!/bin/sh\n"
+                'if [ "$1" != --user ] || [ "$2" != show ] || [ "$3" != basaltwater-cachyos-t3.service ]; then exit 99; fi\n'
+                'printf "%s\\n" "${BASALTWATER_TEST_T3_STATE:-LoadState=not-found\nActiveState=inactive\nMainPID=0}"\n'
+                'exit "${BASALTWATER_TEST_T3_STATUS:-0}"\n'
+            )
+        os.chmod(systemctl_path, 0o755)
+
         command_bin = os.path.join(directory, "command-bin")
         os.makedirs(command_bin)
         for command_name in ("ssh", "rsync", "curl"):
@@ -384,6 +395,72 @@ class TestInstallScript(unittest.TestCase):
             self.assertEqual(rerun.returncode, 0, rerun.stderr)
             with open(t3_data, encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), "preserve me")
+
+    def test_cachyos_reinstall_refuses_live_web_database_then_preserves_stopped_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_home, log_path, environment = self._create_fixture(directory)
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
+            install_dir = Path(fake_home) / ".local/share/basaltwater"
+            data = install_dir / "cachyos-t3/data"
+            data.mkdir(parents=True)
+            database = data / "state.sqlite"
+            inode = install_dir.stat().st_ino
+            with sqlite3.connect(database) as connection:
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("CREATE TABLE events (id INTEGER)")
+                connection.execute("INSERT INTO events VALUES (1)")
+                connection.commit()
+                environment["BASALTWATER_TEST_T3_STATE"] = "LoadState=loaded\nActiveState=active\nMainPID=123"
+                result = subprocess.run(
+                    ["sh", INSTALL_SCRIPT, "--install-dir", str(install_dir)],
+                    env=environment, text=True, capture_output=True, timeout=20,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("cannot safely copy T3 web data", result.stderr)
+                self.assertIn("systemctl --user stop", result.stderr)
+                self.assertEqual(install_dir.stat().st_ino, inode)
+                self.assertFalse(glob.glob(str(install_dir) + ".backup.*"))
+                self.assertFalse(os.path.exists(log_path))
+                connection.execute("INSERT INTO events VALUES (2)")
+                connection.commit()
+            connection.close()
+            environment["BASALTWATER_TEST_T3_STATE"] = "LoadState=loaded\nActiveState=inactive\nMainPID=0"
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", str(install_dir)],
+                env=environment, text=True, capture_output=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with sqlite3.connect(database) as copied:
+                self.assertEqual(copied.execute("SELECT id FROM events ORDER BY id").fetchall(), [(1,), (2,)])
+            copied.close()
+
+    def test_cachyos_reinstall_requires_confirmed_stopped_web_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_home, log_path, environment = self._create_fixture(directory)
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
+            install_dir = Path(fake_home) / ".local/share/basaltwater"
+            data = install_dir / "cachyos-t3/data"
+            data.mkdir(parents=True)
+            (data / "personal").write_text("keep")
+            for state, status in (
+                ("LoadState=loaded\nActiveState=activating\nMainPID=0", "0"),
+                ("LoadState=loaded\nActiveState=deactivating\nMainPID=123", "0"),
+                ("LoadState=loaded\nActiveState=inactive\nMainPID=123", "0"),
+                ("LoadState=loaded\nActiveState=unknown\nMainPID=0", "0"),
+                ("LoadState=loaded\nActiveState=inactive", "0"),
+                ("", "1"),
+            ):
+                environment.update(BASALTWATER_TEST_T3_STATE=state, BASALTWATER_TEST_T3_STATUS=status)
+                with self.subTest(state=state, status=status):
+                    result = subprocess.run(
+                        ["sh", INSTALL_SCRIPT, "--install-dir", str(install_dir)],
+                        env=environment, text=True, capture_output=True, timeout=20,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("cannot safely copy T3 web data", result.stderr)
+                    self.assertEqual((data / "personal").read_text(), "keep")
+                    self.assertFalse(glob.glob(str(install_dir) + ".backup.*"))
+                    self.assertFalse(os.path.exists(log_path))
 
     def test_cachyos_installer_rejects_other_unmanaged_data_beside_t3(self):
         with tempfile.TemporaryDirectory() as directory:

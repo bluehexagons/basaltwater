@@ -487,6 +487,97 @@ class T3InstallTests(unittest.TestCase):
         self.assertEqual(self.unit.read_text(), content)
         self.assertFalse((self.prefix / ".activation").exists())
 
+    def interrupt_first_rollback_reload(self):
+        self.failure = "rollback-reload"
+        self.ui.side_effect = RuntimeError("UI fixture failure")
+        cached = False
+
+        def command(argv, **kwargs):
+            nonlocal cached
+            if argv[:4] == ["systemctl", "--user", "show", t3.T3_SERVICE] and cached and not self.unit.exists():
+                self.events.append(("system", argv))
+                return subprocess.CompletedProcess(argv, 0,
+                    f"LoadState=loaded\nFragmentPath={self.unit}\nDropInPaths=\nActiveState=inactive\n", "")
+            if argv == ["systemctl", "--user", "daemon-reload"]:
+                if not self.unit.exists() and self.failure == "rollback-reload":
+                    raise RuntimeError("rollback reload fixture failure")
+                cached = self.unit.exists()
+            return self.system_command(argv, **kwargs)
+
+        self.system_run.side_effect = command
+        with self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
+            t3.install(self.config)
+        self.assertFalse(self.unit.exists())
+        self.assertFalse(self.binary.is_symlink())
+        self.assertTrue((self.prefix / ".activation/state.json").exists())
+        self.failure = None
+        self.ui.side_effect = None
+        self.events.clear()
+
+    def test_initial_rollback_reload_failure_allows_readonly_preflight_and_retry(self):
+        self.interrupt_first_rollback_reload()
+        transaction = self.prefix / ".activation"
+        # Reading may update atime; file identity, permissions and writes must
+        # remain unchanged during preflight.
+        def snapshots():
+            return {path.name: (info.st_ino, info.st_mode, info.st_mtime_ns, info.st_ctime_ns)
+                    for path in transaction.iterdir() for info in (path.lstat(),)}
+        before = snapshots()
+        t3.preflight(self.config)
+        self.assertEqual(before, snapshots())
+        self.assertTrue(all(cmd[:3] == ["systemctl", "--user", "show"] for _, cmd in self.events))
+        t3.install(self.config)
+        self.assertFalse(transaction.exists())
+        self.assertTrue(self.binary.resolve().is_file())
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+
+    def test_desktop_can_finish_initial_web_rollback_with_cached_unit(self):
+        self.interrupt_first_rollback_reload()
+        self.config.t3code_desktop = True
+        self.config.web_interfaces = []
+        t3.preflight(self.config)
+        t3.install_desktop(self.config)
+        self.assertFalse((self.prefix / ".activation").exists())
+        self.assertFalse(self.unit.exists())
+        self.assertFalse(self.active)
+        self.assertFalse(self.enabled)
+        self.assertTrue(desktop.autostart_path(self.home).is_file())
+
+    def test_cached_missing_unit_requires_owned_fresh_inactive_recovery(self):
+        self.interrupt_first_rollback_reload()
+        command = self.system_run.side_effect
+        fields = dict(LoadState="loaded", FragmentPath=str(self.unit), DropInPaths="", ActiveState="inactive")
+        for overrides in ({"FragmentPath": "/etc/systemd/user/foreign.service"},
+                          {"DropInPaths": "/etc/systemd/user/service.d/custom.conf"},
+                          {"ActiveState": "active"}, {"ActiveState": "activating"}):
+            def show(argv, **kwargs):
+                if argv[:4] == ["systemctl", "--user", "show", t3.T3_SERVICE]:
+                    output = "".join(f"{key}={value}\n" for key, value in (fields | overrides).items())
+                    return subprocess.CompletedProcess(argv, 0, output, "")
+                return command(argv, **kwargs)
+            self.system_run.side_effect = show
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(RuntimeError, "Unmanaged"):
+                t3.preflight(self.config)
+        self.system_run.side_effect = command
+        record = self.prefix / ".activation/state.json"
+        original = record.read_text()
+        for key in ("had_unit", "was_active", "was_enabled"):
+            record.write_text(json.dumps(json.loads(original) | {key: True}))
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, "Unmanaged"):
+                t3.preflight(self.config)
+        record.write_text("{}")
+        with self.assertRaisesRegex(ValueError, "Invalid T3 recovery record"):
+            t3.preflight(self.config)
+        record.write_text(original)
+        (record.parent / "owner").write_text("foreign")
+        with self.assertRaisesRegex(ValueError, "Unmanaged T3 .activation"):
+            t3.preflight(self.config)
+        shutil.rmtree(record.parent)
+        with self.assertRaisesRegex(RuntimeError, "Unmanaged"):
+            t3.preflight(self.config)
+        self.assertFalse(any("stop" in cmd or "start" in cmd for _, cmd in self.events))
+
     def test_outside_binary_link_and_unmanaged_unit_are_preserved(self):
         self.binary.parent.mkdir(parents=True)
         outside = self.home / "personal-t3"

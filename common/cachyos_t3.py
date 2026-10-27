@@ -118,7 +118,7 @@ def _check_managed_paths(home: Path) -> tuple[Path, Path]:
     return prefix, unit
 
 
-def _check_service_ownership(unit: Path) -> None:
+def _check_service_ownership(prefix: Path, unit: Path) -> None:
     """Inspect effective units, including global/runtime user-unit directories."""
     for name in ("t3code.service", T3_SERVICE):
         result = run([
@@ -135,15 +135,23 @@ def _check_service_ownership(unit: Path) -> None:
         if name == "t3code.service":
             raise RuntimeError("An existing T3 user service is present; manage it with its original installer")
         if (values["LoadState"] != "loaded" or values["FragmentPath"] != str(unit)
-                or values["DropInPaths"] or not unit.is_file()):
+                or values["DropInPaths"]):
             raise RuntimeError("Unmanaged or overridden Basaltwater T3 service; resolve it before switching or updating T3")
+        if not unit.is_file():
+            # A first-install rollback removes its new unit before reloading
+            # systemd. If reload fails, systemd still reports the cached path.
+            # Only an owned, incomplete fresh activation permits that absence.
+            state = _activation_state(prefix / ".activation")
+            if (values["ActiveState"] not in {"inactive", "failed"} or state is None
+                    or state["had_unit"] or state["was_active"] or state["was_enabled"]):
+                raise RuntimeError("Unmanaged or overridden Basaltwater T3 service; resolve it before switching or updating T3")
 
 
 def preflight(config: SetupConfig) -> None:
     """Check T3 prerequisites before the setup runner installs any packages."""
     home = _home(config)
-    _prefix, unit = _check_managed_paths(home)
-    _check_service_ownership(unit)
+    prefix, unit = _check_managed_paths(home)
+    _check_service_ownership(prefix, unit)
     if config.t3code_desktop:
         _desktop_data_paths(home)
         command = aur.install_command(home, DESKTOP_PACKAGE)
@@ -158,7 +166,7 @@ def install_desktop(config: SetupConfig) -> None:
         return
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
-    _check_service_ownership(unit)
+    _check_service_ownership(prefix, unit)
     _desktop_data_paths(home)
     version = aur.package_version(DESKTOP_PACKAGE)
     if version is None:
@@ -191,7 +199,7 @@ def install_desktop(config: SetupConfig) -> None:
     _directory(prefix)
     with _setup_lock(prefix):
         _check_managed_paths(home)
-        _check_service_ownership(unit)
+        _check_service_ownership(prefix, unit)
         _recover_activation(prefix, unit, start_previous=False)
         if unit.exists():
             run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
@@ -414,7 +422,7 @@ def install(config: SetupConfig) -> None:
         return
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
-    _check_service_ownership(unit)
+    _check_service_ownership(prefix, unit)
     version = _user_run(["node", "--version"], home, capture_output=True, timeout=30).stdout.strip()
     if not is_supported_node(version):
         raise RuntimeError(f"T3 requires managed Node {SUPPORTED_NODE_RANGE}; update your Node runtime and rerun")
@@ -423,7 +431,7 @@ def install(config: SetupConfig) -> None:
     _directory(prefix)
     with _setup_lock(prefix):
         _check_managed_paths(home)
-        _check_service_ownership(unit)
+        _check_service_ownership(prefix, unit)
         _recover_activation(prefix, unit)
         _install_locked(config, home, prefix, unit)
         desktop.disable_autostart(home)
@@ -446,24 +454,39 @@ def _same_entry(left: Path, right: Path) -> bool:
     return left.is_file() and right.is_file() and filecmp.cmp(left, right, shallow=False)
 
 
-def _recover_activation(prefix: Path, unit: Path, *, start_previous: bool = True) -> None:
-    transaction = prefix / ".activation"
+def _activation_state(transaction: Path) -> dict[str, bool | int] | None:
+    """Read an owned activation record without changing files or systemd state."""
     if not transaction.exists() and not transaction.is_symlink():
-        return
-    _directory(transaction)
+        return None
+    if transaction.is_symlink() or not transaction.is_dir():
+        raise ValueError("Unmanaged T3 .activation directory; inspect it before retrying")
     owner = transaction / "owner"
     if owner.is_symlink() or not owner.is_file() or owner.read_text() != _MARKER:
         raise ValueError("Unmanaged T3 .activation directory; inspect it before retrying")
     if (transaction / "committed").is_file() or not (transaction / "state.json").exists():
         # No activation began, or it passed its UI check before interruption.
-        shutil.rmtree(transaction)
-        return
+        return None
     state = read_json_file(str(transaction / "state.json"), max_bytes=1024)
     if (not isinstance(state, dict)
             or set(state) != {"had_binary", "had_unit", "was_active", "was_enabled", "unit_mode"}
             or any(type(state[key]) is not bool for key in ("had_binary", "had_unit", "was_active", "was_enabled"))
             or type(state["unit_mode"]) is not int or not 0 <= state["unit_mode"] <= 0o777):
         raise ValueError("Invalid T3 recovery record; inspect the private .activation directory")
+    proposed = transaction / T3_SERVICE
+    if proposed.is_symlink() or not proposed.is_file() or _MARKER not in proposed.read_text():
+        raise ValueError("Invalid T3 recovery unit; inspect the private .activation directory")
+    return state
+
+
+def _recover_activation(prefix: Path, unit: Path, *, start_previous: bool = True) -> None:
+    transaction = prefix / ".activation"
+    state = _activation_state(transaction)
+    if not transaction.exists():
+        return
+    _directory(transaction)
+    if state is None:
+        shutil.rmtree(transaction)
+        return
     proposed = transaction / T3_SERVICE
     previous = transaction / "previous-unit"
     allowed_units = [proposed.read_text()]

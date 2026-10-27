@@ -236,11 +236,22 @@ The temporary root service has a one-shot runtime, bounded stop, and no restart
 policy. Reboot or expiry stops its process group and closes active sessions;
 the refresh record never saves or replays a password window. Persistent
 password authentication for the existing account remains enabled until
-`--no-ssh-password-auth` or `--no-ssh` is selected. It requires explicit
-`--lan-access` or private `--access-source` on each request. `--no-ssh` also
-clears password selection. A refresh that includes a fresh window starts a new
-one-shot window; an ordinary refresh does not recreate one. Do not combine
+the next full setup unless `--ssh-password-auth` is selected again. Full setup
+intentionally defaults to key-only authentication even for an existing managed
+password service. An ordinary `refresh` preserves a saved persistent password
+selection; use `--no-ssh-password-auth` or `--no-ssh` to clear it. Password mode
+requires explicit `--lan-access` or private `--access-source` on each request.
+`--no-ssh` also clears password selection. A refresh that includes a fresh
+window starts a new one-shot window; an ordinary refresh does not recreate one. Do not combine
 persistent password authentication with a temporary password window.
+
+Lockdown restarts only the port-22 listener, preserving established SSH
+sessions, including sessions authenticated with a password. Legacy managed units
+first receive the same session-preserving stop policy before authentication
+changes. Existing sessions are not revoked. Enroll and test a key in a second
+connection before closing your password session; new password logins stop
+working after lockdown. Temporary port-2222 sessions still close on expiry or
+ordinary refresh.
 
 To repeat a successful selection while opening a fresh 15-minute enrollment
 window, preserve the selected tools and explicitly select LAN access for this

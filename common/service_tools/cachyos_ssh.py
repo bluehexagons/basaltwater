@@ -43,7 +43,7 @@ def _command(*args: str) -> str:
 
 def _show(unit: str) -> dict[str, str]:
     output = _command("/usr/bin/systemctl", "show", unit, "--no-pager",
-                      "--property=LoadState,ActiveState,UnitFileState,FragmentPath,DropInPaths,"
+                      "--property=LoadState,ActiveState,SubState,UnitFileState,FragmentPath,DropInPaths,"
                       "MainPID,Transient,Description,RuntimeMaxUSec,TimeoutStopUSec,KillMode,Restart,User,ExecStart,"
                       "InaccessiblePaths,Accept,Triggers")
     return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
@@ -206,8 +206,14 @@ def _port_free(port: int, allowed_pid: str = "0", *, other_pids: tuple[str, ...]
 
 
 def _known_state(unit: str, state: dict[str, str]) -> None:
+    # No start job is executing while our Restart=on-failure daemon waits
+    # between attempts. Let ownership checks and the unit transaction repair
+    # or disable it; actual start/stop transitions remain unsafe to adopt.
+    retrying = (unit == SERVICE and state.get("LoadState") == "loaded"
+                and state.get("ActiveState") == "activating"
+                and state.get("SubState") == "auto-restart")
     if (state.get("LoadState") not in {"loaded", "not-found"}
-            or state.get("ActiveState") not in {"active", "inactive", "failed"}
+            or (state.get("ActiveState") not in {"active", "inactive", "failed"} and not retrying)
             or state.get("UnitFileState") not in {"", "enabled", "enabled-runtime", "disabled", "static", "indirect"}
             or (state.get("LoadState") == "loaded" and not state.get("UnitFileState"))
             or (state["LoadState"] == "not-found" and

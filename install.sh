@@ -841,6 +841,40 @@ if [ -e "$INSTALL_DIR" ]; then
     BACKUP_DIR="${INSTALL_DIR}.backup.$(date +%s).$$"
     [ ! -e "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ] || fail "backup path already exists: $BACKUP_DIR"
 fi
+# The web service keeps SQLite files open here. Copying while it runs forks
+# live state into the backup and silently loses later writes on restart.
+# Never stop it automatically: this installer may be running in its terminal.
+if [ "$HOST_OS_ID" = cachyos ] && [ -e "$INSTALL_DIR/cachyos-t3/data" ]; then
+    python3 - <<'EOF'
+from __future__ import annotations
+import subprocess
+import sys
+
+service = 'basaltwater-cachyos-t3.service'
+message = (
+    'Basaltwater installer: cannot safely copy T3 web data. From an independent '
+    f'KDE terminal, run `systemctl --user stop {service}`, rerun the installer, '
+    f'then run `systemctl --user start {service}` if keeping web mode. '
+    'The user service state must be inspectable; do not start it during installation.'
+)
+try:
+    result = subprocess.run(
+        ['systemctl', '--user', 'show', service, '--property=LoadState,ActiveState,MainPID'],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+except (OSError, subprocess.TimeoutExpired):
+    sys.exit(message)
+values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+if (result.returncode not in (0, 4)
+        or set(values) != {'LoadState', 'ActiveState', 'MainPID'}
+        or values['ActiveState'] not in {'inactive', 'failed'}
+        or values['MainPID'] != '0'
+        or values['LoadState'] not in {'loaded', 'not-found'}
+        or (values['LoadState'] == 'not-found' and values['ActiveState'] != 'inactive')
+        or (result.returncode == 4 and values['LoadState'] != 'not-found')):
+    sys.exit(message)
+EOF
+fi
 # Set the rollback guard before either rename, including signal boundaries.
 ACTIVATION_PENDING=1
 if [ -n "$BACKUP_DIR" ]; then
