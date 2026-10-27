@@ -22,7 +22,9 @@ from lib.build_target_client import BuildTargetClient, TargetOperationUnconfirme
 from lib.operation_state import OperationStateStore
 
 
-class TestBuildDelivery(unittest.TestCase):
+class BuildDeliveryFixture:
+    """Offline clients and real artifact verification shared by controller tests."""
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -223,6 +225,8 @@ class TestBuildDelivery(unittest.TestCase):
         self.target.cancel.assert_not_called()
         self.builder.cancel.assert_not_called()
 
+
+class TestBuildDelivery(BuildDeliveryFixture, unittest.TestCase):
     def test_completed_receipt_and_global_ordering(self) -> None:
         receipt = self.controller.deliver(self.plans)
         names = [name for name, _ in self.events]
