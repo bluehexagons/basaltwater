@@ -169,6 +169,22 @@ function Write-NativeSkillInventory([string]$path, [hashtable]$files) {
     }
 }
 
+function Get-NativeAgentSkillNames([string]$Source) {
+    $path = Join-Path $Source 'windows\agent-skills.json'
+    $catalog = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($catalog.version -ne 1 -or $catalog.skills -isnot [array] -or -not $catalog.skills.Count) {
+        throw "Invalid native agent skill catalog: $path"
+    }
+    $names = @($catalog.skills)
+    foreach ($name in $names) {
+        if ($name -isnot [string] -or $name.Length -gt 64 -or $name -cnotmatch '\Abasaltwater-[a-z0-9-]+\z') {
+            throw "Invalid native agent skill name in $path"
+        }
+    }
+    if (@($names | Select-Object -Unique).Count -ne $names.Count) { throw "Duplicate native agent skills in $path" }
+    return $names
+}
+
 function Invoke-NativeAgentSetup {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$Source,
@@ -183,6 +199,7 @@ function Invoke-NativeAgentSetup {
     }
     $AgentTool = @($selected | Select-Object -Unique)
     $Source = [IO.Path]::GetFullPath($Source)
+    $skillNames = @(Get-NativeAgentSkillNames $Source)
     Write-Host 'Native Windows coding account (WSL is not required).'
     if (-not $Plan) { Ensure-Winget; Update-NativePath }
     Ensure-NativeTool git Git.Git -Plan:$Plan
@@ -237,8 +254,7 @@ function Invoke-NativeAgentSetup {
     $catalogs = @('.agents\skills')
     if ('claude' -in $AgentTool) { $catalogs += '.claude\skills' }
     foreach ($catalog in $catalogs) {
-        foreach ($skill in @('basaltwater-windows-workspace', 'basaltwater-project-development',
-                             'basaltwater-frontend-design', 'basaltwater-subagents', 'basaltwater-t3-preview-testing')) {
+        foreach ($skill in $skillNames) {
             Install-NativeSkill (Join-Path $Source "common\agent_skills\$skill") `
                 (Join-Path $env:USERPROFILE "$catalog\$skill") -Plan:$Plan
         }

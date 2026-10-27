@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -123,6 +124,9 @@ class ManagedAgentSkillTests(unittest.TestCase):
                     self.assertFalse((Path(home) / ".agents").exists())
 
     def test_every_managed_skill_belongs_to_an_installer_catalog(self) -> None:
+        windows_catalog_path = Path(__file__).resolve().parents[1] / "windows/agent-skills.json"
+        windows_catalog = json.loads(windows_catalog_path.read_text(encoding="utf-8"))
+        self.assertEqual(windows_catalog["version"], 1)
         source_names = {
             entry.name
             for entry in os.scandir(AGENT_SKILLS_ROOT)
@@ -136,6 +140,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
             *T3_AGENT_SKILL_NAMES,
             *GODOT_AGENT_SKILLS,
             *WSL_SKILL_NAMES,
+            *windows_catalog["skills"],
             "basaltwater-desktop",
         }
 

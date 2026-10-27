@@ -156,6 +156,10 @@ when applying a checkout. Junctions/symlinks in a skill path
 are refused. No browser payload is installed, and skills do not grant tools
 to sessions that do not expose them.
 
+The installer and repository catalog check share the
+[Windows skill catalog](../../windows/agent-skills.json), keeping the delivered
+bundle selection aligned with the complete shipped skill collection.
+
 ## Validation boundary
 
 Run the offline native setup tests without changing this account's tools:

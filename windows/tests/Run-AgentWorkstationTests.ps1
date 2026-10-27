@@ -23,6 +23,18 @@ try {
     }
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
+    $invalidCatalog = Join-Path $temporary 'invalid catalog'
+    New-Item -ItemType Directory -Path (Join-Path $invalidCatalog 'windows') -Force | Out-Null
+    $catalogPath = Join-Path $invalidCatalog 'windows\agent-skills.json'
+    foreach ($catalog in @(
+        @{ version = 1; skills = @('..\outside') },
+        @{ version = 1; skills = @('Basaltwater-example') },
+        @{ version = 1; skills = @('basaltwater-example', 'basaltwater-example') },
+        @{ version = 1; skills = @() }
+    )) {
+        $catalog | ConvertTo-Json | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+        Assert-Throws { Get-NativeAgentSkillNames $invalidCatalog } 'Invalid native|Duplicate native'
+    }
     $tokens = $null; $errors = $null
     $installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $repo 'install.ps1'), [ref]$tokens, [ref]$errors)
