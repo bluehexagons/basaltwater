@@ -15,6 +15,8 @@ is a separate operator decision that can discard newer writes.
 | Boundary | Marker | Recovery evidence |
 | --- | --- | --- |
 | Target setup | `/var/lib/basaltwater/setup-operation.json` | Current step, profile, username and error type |
+| Selected-builder controller setup | `<controller-workspace>/build-setups/<host-hash>/setup.json` | Pinned prepared inputs, delivery identities and expected releases in the recorded attempt directory |
+| Controller artifact delivery | `<attempt>/delivery/delivery.json` | Request and reservation keys, target generations, artifact identities and locally saved acknowledgements |
 | Manifest release | `/var/www/.basaltwater_shared/<app>/manifest-operation.json` | Staging/previous/failed paths, previous ports, desired units, adjacent `manifest-units.previous.json` |
 | Static release | `/var/www/.basaltwater_shared/<app>/static-operation.json` | Staging/previous/failed paths |
 | Systemd replacement or removal | `/etc/systemd/system/.basaltwater-unit-operation.json` | `backup_dir/previous.json` with old files, modes, ownership, and activation states |
@@ -47,6 +49,21 @@ sudo python3 -m json.tool /var/lib/basaltwater/setup-operation.json
 Do not publish private snapshots or raw error contexts in support reports.
 Nginx snapshots contain private TLS keys encoded as base64; encoding does not
 make them safe to share.
+
+For an unfinished selected-builder setup, inspect its local metadata without
+contacting the builder or target:
+
+```bash
+python3 -B -m lib.build_setup_recovery --journal /absolute/path/to/setup.json
+```
+
+Run this from the controller's installed environment as the evidence owner.
+`-B` prevents interpreter imports from creating bytecode caches. The report
+distinguishes saved local acknowledgements from unresolved outcomes; it does
+not establish current remote state or verify payload contents. Preserve the
+guard and exact inputs for explicit reconciliation. See
+[controller setup](../agents/contributing/build-setup.md) for the inspection
+contract and limitations.
 
 ## Recover by phase
 
