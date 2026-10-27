@@ -76,6 +76,13 @@ WinGet identities and preserve installed versions with `--no-upgrade`. Existing
 T3 desktop installations are detected without launching or stopping the app.
 Updates remain deliberate through the tool's updater or package manager.
 
+For Antistatic builds, Windows tests and packaging, select `-GameDev`; add
+`-ShaderTools` for shader validation. `-NodeVersions` independently prepares
+fnm for project-selected Node versions. Optional `-StorageRoot F:\Basaltwater`
+places runtime versions and development caches on an already mounted NTFS
+volume. See [Windows game tooling](windows-game-development.md) for the bundle,
+copy-and-paste setup, storage limits and project validation commands.
+
 Setup enables Git's user-level `core.longpaths` when that setting is absent.
 An explicit existing value is preserved, including `false`; repository-specific
 settings still take precedence. Without long-path support, Git can warn that a
@@ -143,8 +150,8 @@ aliases if it shadows the managed interpreter in a fresh terminal. Do not
 consider `Get-Command python` alone proof of a usable interpreter.
 
 Python packages that fall back to a native build require the project's Windows
-build prerequisites. The basic profile supplies Python/uv; MSVC and the Windows
-SDK remain project-specific requirements. Honor the project's Python version
+build prerequisites. The basic profile supplies Python/uv; the optional
+`-GameDev` bundle supplies MSVC and the Windows SDK. Honor the project's Python version
 pin and dependency choices when qualifying Windows builds.
 
 Codex/OpenCode receive skills under `%USERPROFILE%\.agents\skills`; Claude

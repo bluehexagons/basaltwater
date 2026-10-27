@@ -26,6 +26,21 @@ working runtime. After installations, start a new terminal and restart T3 Code
 so provider processes inherit the new PATH. Existing providers may be supplied
 by a desktop app rather than npm; preserve their installation and login.
 
+Optional `-GameDev` supplies native C++/SDK, CMake, Ninja, LLVM and packaging
+tools. Enter the supported x64 Visual Studio developer environment before
+Ninja builds or C analysis; `cl.exe` on PATH alone does not supply SDK headers
+and libraries. `-ShaderTools` separately supplies shader validation.
+With `-NodeVersions`, use fnm to install the project's reviewed runtime and
+`fnm exec --using=VERSION -- npm.cmd ...` to select it per command. The system
+Node LTS may be too old for the checkout. Keep the project's vcpkg/library pins
+and bootstrap authoritative; host tools do not establish game/GPU readiness.
+See [Windows game tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-game-development.md).
+
+A selected `-StorageRoot` puts Node versions and npm/uv/Go/vcpkg caches on that
+mounted NTFS drive and provides `repos` for new checkouts. Inspect saved cache
+environment variables and keep the drive connected. Existing checkouts/build
+trees remain in place; do not assume the configured cache root moved them.
+
 Use the installed `basaltwater-project-development` skill for repository work,
 `basaltwater-frontend-design` for UI work, and `basaltwater-subagents` for
 authorized delegation. Basaltwater CLI examples in shared references require

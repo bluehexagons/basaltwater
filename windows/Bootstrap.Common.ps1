@@ -17,10 +17,21 @@ function Ensure-Winget {
     }
 }
 
-function Ensure-WingetPackage([string]$packageId, [string]$label, [switch]$NoUpgrade) {
+function ConvertTo-WingetOverride([string]$value) {
+    # Legacy native argument passing removes embedded quotes. Escape them for
+    # the Windows argv parser while keeping the vendor override one argument.
+    $mode = Get-Variable PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue
+    if ($PSVersionTable.PSVersion -lt [version]'7.3' -or $mode -eq 'Legacy') {
+        return $value.Replace('"', '\"')
+    }
+    return $value
+}
+
+function Ensure-WingetPackage([string]$packageId, [string]$label, [switch]$NoUpgrade, [string]$Override = '') {
     $arguments = @('install', '--id', $packageId, '--exact', '--source', 'winget',
                    '--accept-source-agreements', '--accept-package-agreements')
     if ($NoUpgrade) { $arguments += '--no-upgrade' }
+    if ($Override) { $arguments += @('--override', (ConvertTo-WingetOverride $Override)) }
     & winget.exe @arguments
     $exitCode = $LASTEXITCODE
     if ($exitCode -eq 0) { return }

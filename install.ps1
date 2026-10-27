@@ -7,6 +7,10 @@ param(
     [switch]$Node,
     [switch]$Python,
     [switch]$Go,
+    [switch]$NodeVersions,
+    [switch]$GameDev,
+    [switch]$ShaderTools,
+    [string]$StorageRoot = '',
     [string[]]$AgentTool = @(),
     [string]$LinuxUser = "",
     [string]$DistroName = "",
@@ -59,6 +63,12 @@ function Read-State {
         ($saved.PSObject.Properties['Profile'] -and $saved.Profile -ne $Profile)) {
         throw 'Saved setup state does not match this account, profile or source'
     }
+    foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools')) {
+        if (-not $saved.PSObject.Properties[$option]) {
+            $saved | Add-Member -NotePropertyName $option -NotePropertyValue $false
+        }
+    }
+    if (-not $saved.PSObject.Properties['StorageRoot']) { $saved | Add-Member -NotePropertyName StorageRoot -NotePropertyValue '' }
     return $saved
 }
 
@@ -66,6 +76,31 @@ function Invoke-Checked([string]$label, [scriptblock]$command) {
     & $command
     if ($LASTEXITCODE -ne 0) {
         throw "$label failed (exit code $LASTEXITCODE)"
+    }
+}
+
+function Get-NativeOptionalArguments($selection) {
+    $arguments = @{}
+    $supported = (Get-Command Invoke-NativeAgentSetup).Parameters
+    foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'StorageRoot')) {
+        if ($selection.$option) {
+            if (-not $supported.ContainsKey($option)) { throw "Pinned source lacks $option; use the current installer with -Resume -UpdateSource." }
+            $arguments[$option] = $selection.$option
+        }
+    }
+    return $arguments
+}
+
+function Assert-NativeSourceOptions([string]$source, $selection) {
+    $selected = @('NodeVersions', 'GameDev', 'ShaderTools', 'StorageRoot') | Where-Object { $selection.$_ }
+    if (-not $selected) { return }
+    $tokens = $null; $errors = $null
+    $installer = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $source 'install.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'Selected source installer has invalid PowerShell syntax' }
+    $parameters = @($installer.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    foreach ($option in $selected) {
+        if ($option -notin $parameters) { throw "Selected source does not support $option; select a newer Basaltwater revision." }
     }
 }
 
@@ -290,6 +325,10 @@ try {
             if ($PSBoundParameters.ContainsKey($option)) { throw "$option is not available with agent_windows" }
         }
         if (-not $PSBoundParameters.ContainsKey('T3CodeDesktop')) { $T3CodeDesktop = $true }
+    } else {
+        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'StorageRoot')) {
+            if ($PSBoundParameters.ContainsKey($option)) { throw "$option requires agent_windows" }
+        }
     }
     if ($LinuxUser -and ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root")) {
         throw "Invalid Ubuntu username"
@@ -333,14 +372,22 @@ try {
                 $agentTools = @($preview.AgentTool)
                 $Node = $preview.Node; $Python = $preview.Python; $Go = $preview.Go
                 $T3CodeDesktop = $preview.T3CodeDesktop
+                foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools')) {
+                    if (-not $PSBoundParameters.ContainsKey($option)) { Set-Variable -Name $option -Value $preview.$option }
+                }
+                if (-not $PSBoundParameters.ContainsKey('StorageRoot')) { $StorageRoot = $preview.StorageRoot }
             }
             $nativeHelpers = Join-Path $planSource 'windows\AgentWorkstation.Common.ps1'
             if (Test-Path -LiteralPath $nativeHelpers) {
                 . $nativeHelpers
+                $nativeOptions = Get-NativeOptionalArguments ([pscustomobject]@{
+                    NodeVersions = [bool]$NodeVersions; GameDev = [bool]$GameDev;
+                    ShaderTools = [bool]$ShaderTools; StorageRoot = $StorageRoot })
                 Invoke-NativeAgentSetup -Source $planSource -AgentTool $agentTools -Node:$Node `
-                    -Python:$Python -Go:$Go -T3CodeDesktop:$T3CodeDesktop -Plan
+                    -Python:$Python -Go:$Go -T3CodeDesktop:$T3CodeDesktop -Plan @nativeOptions
             } else {
-                Write-Host "Plan: native Windows Git, agents $($agentTools -join ', '), shared skills; Node: $Node; Python: $Python; Go: $Go; T3 desktop: $T3CodeDesktop."
+                Write-Host "Plan: native Windows Git, agents $($agentTools -join ', '), shared skills; Node: $Node; Python: $Python; Go: $Go; Node versions: $NodeVersions; Game dev: $GameDev; Shader tools: $ShaderTools; T3 desktop: $T3CodeDesktop."
+                if ($StorageRoot) { Write-Host "Development storage: $StorageRoot (mounted NTFS directory; existing data is not moved)" }
             }
             return
         }
@@ -367,6 +414,11 @@ try {
             }
         }
         $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
+        if ($Profile -eq 'agent_windows') {
+            Assert-NativeSourceOptions $resolved.Source ([pscustomobject]@{
+                NodeVersions = [bool]$NodeVersions; GameDev = [bool]$GameDev;
+                ShaderTools = [bool]$ShaderTools; StorageRoot = $StorageRoot })
+        }
         $state = [pscustomobject]@{
             Version = 1
             Profile = $Profile
@@ -384,6 +436,10 @@ try {
             Node = [bool]$Node
             Python = [bool]$Python
             Go = [bool]$Go
+            NodeVersions = [bool]$NodeVersions
+            GameDev = [bool]$GameDev
+            ShaderTools = [bool]$ShaderTools
+            StorageRoot = $StorageRoot
             AgentTool = $agentTools
             GitHubRunner = $runnerConfig
             Phase = "staged"
@@ -406,8 +462,15 @@ try {
         $state | Add-Member -NotePropertyName GitHubRunner -NotePropertyValue $null
     }
     if ($runnerConfig) { $state.GitHubRunner = $runnerConfig; Save-State $state }
+    if ($Profile -eq 'agent_windows') {
+        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools')) {
+            if ($PSBoundParameters.ContainsKey($option)) { $state.$option = [bool](Get-Variable -Name $option -ValueOnly) }
+        }
+        if ($PSBoundParameters.ContainsKey('StorageRoot')) { $state.StorageRoot = $StorageRoot }
+    }
     if ($UpdateSource) {
         $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
+        if ($Profile -eq 'agent_windows') { Assert-NativeSourceOptions $resolved.Source $state }
         $state.Revision = $resolved.Revision
         $state.Source = $resolved.Source
         Save-State $state
@@ -425,10 +488,11 @@ try {
     }
     if ($Profile -eq 'agent_windows') {
         . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
+        $nativeOptions = Get-NativeOptionalArguments $state
         $state.Phase = 'applying'
         Save-State $state
         Invoke-NativeAgentSetup -Source $state.Source -AgentTool @($state.AgentTool) -Node:$state.Node `
-            -Python:$state.Python -Go:$state.Go -T3CodeDesktop:$state.T3CodeDesktop
+            -Python:$state.Python -Go:$state.Go -T3CodeDesktop:$state.T3CodeDesktop @nativeOptions
         $state.Phase = 'complete'
         Save-State $state
         Write-Host 'Basaltwater native Windows coding setup complete. Restart T3 Code to load the updated PATH and skills.'

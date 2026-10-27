@@ -16,13 +16,29 @@ $savedPath = $env:PATH
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     foreach ($file in @('install.ps1', 'windows\Bootstrap.Common.ps1', 'windows\AgentWorkstation.Common.ps1',
-                        'windows\Setup-AgentWorkstation.ps1', 'windows\tests\Run-AgentWorkstationTests.ps1')) {
+                        'windows\Setup-AgentWorkstation.ps1', 'windows\GameDevelopment.Common.ps1',
+                        'windows\DevelopmentStorage.Common.ps1',
+                        'windows\Enter-GameDevShell.ps1', 'windows\tests\Run-GameDevelopmentTests.ps1',
+                        'windows\tests\Run-AgentWorkstationTests.ps1')) {
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo $file), [ref]$tokens, [ref]$errors) | Out-Null
         Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in $file`: $errors"
     }
+    & (Join-Path $PSScriptRoot 'Run-GameDevelopmentTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
+    # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
+    $python = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $python -or $python.Source -match '\\WindowsApps\\') { throw 'Native argument tests require an installed Python on PATH' }
+    $argvProbe = Join-Path $temporary 'native argv.py'
+    Set-Content -LiteralPath $argvProbe -Encoding UTF8 -Value "from __future__ import annotations`nimport json, sys`nprint(json.dumps(sys.argv[1:]))"
+    foreach ($override in @('--wait --installPath "F:\coding with spaces\tools\vs2022"',
+                            '--wait --path cache="F:\cache with spaces"')) {
+        $nativeArgs = @('--override', (ConvertTo-WingetOverride $override))
+        $received = & $python.Source $argvProbe @nativeArgs | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $received.Count -eq 2 -and
+            $received[0] -eq '--override' -and $received[1] -eq $override) 'WinGet vendor override changed across the native argv boundary'
+    }
     $invalidCatalog = Join-Path $temporary 'invalid catalog'
     New-Item -ItemType Directory -Path (Join-Path $invalidCatalog 'windows') -Force | Out-Null
     $catalogPath = Join-Path $invalidCatalog 'windows\agent-skills.json'
@@ -42,6 +58,17 @@ try {
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Expand-SourceArchive'
     }, $true)
     Invoke-Expression $extractor.Extent.Text
+    $optionBuilder = $installerAst.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-NativeOptionalArguments'
+    }, $true)
+    Invoke-Expression $optionBuilder.Extent.Text
+    & {
+        function Invoke-NativeAgentSetup { param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go) }
+        $legacy = [pscustomobject]@{ NodeVersions = $false; GameDev = $false; ShaderTools = $false; StorageRoot = '' }
+        Assert-True ((Get-NativeOptionalArguments $legacy).Count -eq 0) 'Older pinned helpers received unsupported defaults'
+        $legacy.GameDev = $true
+        Assert-Throws { Get-NativeOptionalArguments $legacy } 'Pinned source lacks GameDev'
+    }
     Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
     $unsafeZip = Join-Path $temporary 'unsafe.zip'
     $zip = [IO.Compression.ZipFile]::Open($unsafeZip, [IO.Compression.ZipArchiveMode]::Create)
@@ -128,6 +155,11 @@ try {
         Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'restart'
         $script:InstallExit = 17
         Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'exit code 17'
+        $script:InstallExit = 0
+        $override = '--wait --installPath "F:\tools with spaces"'
+        Ensure-WingetPackage Microsoft.VisualStudio.2022.BuildTools 'Compiler install' -NoUpgrade -Override $override
+        $forwarded = $script:WingetCalls[-1]
+        Assert-True ($forwarded[-2] -eq '--override' -and $forwarded[-1] -eq (ConvertTo-WingetOverride $override)) 'Vendor overrides were split or dropped'
     } finally { Remove-Item Function:\winget.exe }
 
     # Source staging and resume use the saved native selection, never WSL.
@@ -147,16 +179,26 @@ try {
     $global:AgentInstallerTestCalls = @()
     $global:AgentInstallerTestFailure = $true
     try {
-        foreach ($revision in @(('a' * 40), ('b' * 40))) {
+        foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40))) {
             $pinned = Join-Path $temporary "archive-source\basaltwater-$revision"
             New-Item -ItemType Directory -Path (Join-Path $pinned 'windows') -Force | Out-Null
             Copy-Item -LiteralPath (Join-Path $repo 'install.ps1') -Destination (Join-Path $pinned 'install.ps1')
+            if ($revision -eq ('c' * 40)) {
+                Set-Content -LiteralPath (Join-Path $pinned 'install.ps1') -Value @'
+[CmdletBinding()]
+param([string]$Profile, [switch]$Resume)
+throw 'Older pinned installer must not execute with unsupported selections'
+'@
+            }
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
             Set-Content -LiteralPath (Join-Path $pinned 'windows\AgentWorkstation.Common.ps1') -Value @'
 function Invoke-NativeAgentSetup {
-    param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go, [switch]$T3CodeDesktop, [switch]$Plan)
+    param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go, [switch]$NodeVersions,
+          [switch]$GameDev, [switch]$ShaderTools, $StorageRoot, [switch]$T3CodeDesktop, [switch]$Plan)
     $global:AgentInstallerTestCalls += [pscustomobject]@{ Source = $Source; Tools = $AgentTool; Node = [bool]$Node;
-        Python = [bool]$Python; Go = [bool]$Go; Desktop = [bool]$T3CodeDesktop; Plan = [bool]$Plan }
+        Python = [bool]$Python; Go = [bool]$Go; NodeVersions = [bool]$NodeVersions;
+        GameDev = [bool]$GameDev; ShaderTools = [bool]$ShaderTools; StorageRoot = $StorageRoot;
+        Desktop = [bool]$T3CodeDesktop; Plan = [bool]$Plan }
     if ($global:AgentInstallerTestFailure) { throw 'simulated interrupted native setup' }
 }
 '@
@@ -167,7 +209,7 @@ function Invoke-NativeAgentSetup {
             finally { $zip.Dispose() }
             $global:AgentInstallerTestArchives[$revision] = $archive
         }
-        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Node -Python } 'interrupted native setup'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Node -Python -GameDev -ShaderTools -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
         $nativeStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'applying') 'Failed native setup was marked complete'
@@ -178,6 +220,7 @@ function Invoke-NativeAgentSetup {
         $beforePlan = (Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Plan
         Assert-True ($global:AgentInstallerTestCalls[-1].Plan -and $global:AgentInstallerTestCalls[-1].Python) 'Resume plan lost saved selections'
+        Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Resume plan lost game selections'
         Assert-True ((Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash -eq $beforePlan) 'Resume plan rewrote setup state'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
@@ -190,8 +233,30 @@ function Invoke-NativeAgentSetup {
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Revision -eq $global:AgentInstallerTestRevision -and
             $global:AgentInstallerTestCalls[-1].Source -eq $nativeState.Source) 'Source update did not execute the newly pinned source'
+        Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
+        Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'
+        # Old saved states acquire false defaults; new opt-ins can be saved on resume.
+        $nativeState.PSObject.Properties.Remove('NodeVersions')
+        $nativeState.PSObject.Properties.Remove('GameDev')
+        $nativeState.PSObject.Properties.Remove('ShaderTools')
+        $nativeState.PSObject.Properties.Remove('StorageRoot')
+        $nativeState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $nativeStatePath -Encoding UTF8
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -NodeVersions
+        Assert-True ($global:AgentInstallerTestCalls[-1].NodeVersions -and
+            -not $global:AgentInstallerTestCalls[-1].GameDev) 'Legacy state defaults/resume opt-in were not respected'
+        $beforeOldSource = (Get-FileHash -LiteralPath $nativeStatePath).Hash
+        $global:AgentInstallerTestRevision = 'c' * 40
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -GameDev } 'Selected source does not support'
+        Assert-True ((Get-FileHash -LiteralPath $nativeStatePath).Hash -eq $beforeOldSource) 'Unsupported source update replaced saved selections/revision'
+        $savedInstallerLocal = $env:LOCALAPPDATA
+        try {
+            $env:LOCALAPPDATA = Join-Path $temporary 'fresh old source account'
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -GameDev } 'Selected source does not support'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'))) 'Unsupported source was saved as an installation'
+        } finally { $env:LOCALAPPDATA = $savedInstallerLocal }
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -BuildServer -Plan } 'not available with agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Version "main`n" -Plan } 'Invalid release reference'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -GameDev -Plan } 'requires agent_windows'
     } finally {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
@@ -257,6 +322,7 @@ function Invoke-NativeAgentSetup {
             'OpenJS.NodeJS.LTS' { $script:Tools.node = 'Mock-Version'; $script:Tools.npm = 'Mock-Npm' }
             'astral-sh.uv' { $script:Tools.uv = 'Mock-Uv' }
             'GoLang.Go' { $script:Tools.go = 'Mock-Version' }
+            'Schniz.fnm' { $script:Tools.fnm = 'Mock-Version' }
             'Anthropic.ClaudeCode' { $script:Tools.claude = 'Mock-Version' }
             'T3Tools.T3Code' { $script:Desktop = $true }
             default { throw "Unexpected package: $packageId" }
@@ -278,11 +344,11 @@ function Invoke-NativeAgentSetup {
     $script:EnsureCalls = 0; $script:Packages = @(); $script:Tools = @{}; $script:Desktop = $false
     $script:AddedPaths = @(); $script:NpmCalls = @(); $script:NpmExit = 0
     $script:VersionExit = 0; $script:FailPackage = $false
-    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -T3CodeDesktop -Plan
+    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Plan
     Assert-True ($script:EnsureCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude'))) 'Plan changed the fake home'
-    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -T3CodeDesktop
-    Assert-True ($script:Packages.Count -eq 7) 'Fresh setup missed a selected native package'
+    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop
+    Assert-True ($script:Packages.Count -eq 8) 'Fresh setup missed a selected native package'
     Assert-True ($script:NpmCalls.Count -eq 2) 'Fresh setup missed npm providers'
     Assert-True ($script:NpmCalls[0] -contains '--prefix') 'npm install was not scoped to the user prefix'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude\skills\basaltwater-subagents\references\t3-orchestration.md')) 'Claude supporting resources were not copied'

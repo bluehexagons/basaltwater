@@ -189,7 +189,9 @@ function Invoke-NativeAgentSetup {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$Source,
           [string[]]$AgentTool = @('gh', 'codex'), [switch]$Node, [switch]$Python,
-          [switch]$Go, [switch]$T3CodeDesktop, [switch]$Plan)
+          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools,
+          [string]$StorageRoot = '',
+          [switch]$T3CodeDesktop, [switch]$Plan)
     $selected = @('gh', 'codex')
     foreach ($selection in $AgentTool) {
         foreach ($tool in $selection.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() }) {
@@ -200,6 +202,16 @@ function Invoke-NativeAgentSetup {
     $AgentTool = @($selected | Select-Object -Unique)
     $Source = [IO.Path]::GetFullPath($Source)
     $skillNames = @(Get-NativeAgentSkillNames $Source)
+    if ($StorageRoot) {
+        . (Join-Path $Source 'windows\DevelopmentStorage.Common.ps1')
+        $StorageRoot = Resolve-NativeStorageRoot $StorageRoot
+    }
+    if ($GameDev -or $ShaderTools) {
+        . (Join-Path $Source 'windows\GameDevelopment.Common.ps1')
+        if (-not $Plan) { Assert-NativeGameSpace $StorageRoot }
+    }
+    if ($StorageRoot) { Set-NativeDevelopmentStorage $StorageRoot -Plan:$Plan }
+    if ($GameDev) { $Python = $true; $Go = $true; $NodeVersions = $true }
     Write-Host 'Native Windows coding account (WSL is not required).'
     if (-not $Plan) { Ensure-Winget; Update-NativePath }
     Ensure-NativeTool git Git.Git -Plan:$Plan
@@ -242,6 +254,13 @@ function Invoke-NativeAgentSetup {
         }
     }
     if ($Go) { Ensure-NativeTool go GoLang.Go -Plan:$Plan }
+    if ($NodeVersions) {
+        Ensure-NativeTool fnm Schniz.fnm -Plan:$Plan
+        Write-Host 'Node versions: fnm prepared; select/install the project pin explicitly. Shell profiles and default Node are unchanged.'
+    }
+    if ($GameDev -or $ShaderTools) {
+        Install-NativeGameTools -GameDev:$GameDev -ShaderTools:$ShaderTools -Plan:$Plan -StorageRoot $StorageRoot
+    }
     if ($T3CodeDesktop) {
         $desktop = Get-NativeT3Desktop
         if ($desktop) { Write-Host "Reuse T3 Code desktop: $desktop" }
