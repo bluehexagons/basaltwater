@@ -323,7 +323,8 @@ class BuildRetentionStore:
             root_fd = directories["inputs"]
             with self.inputs._locked(root_fd):
                 intents, _charged, metadata_bytes = self.inputs._scan_intents(
-                    root_fd, pruning_temporary=request_id + ".settlement.tmp" if prune_kinds else None,
+                    root_fd, maintenance_temporary=(request_id + ".settlement.tmp"
+                                                    if expected_revision is not None else None),
                 )
                 if request_id not in intents:
                     raise ValueError("Build retention input was not found")
@@ -348,9 +349,13 @@ class BuildRetentionStore:
                 if expected_revision is not None and not plan["settled"]:
                     updated = {**record, "schema": 2, "charge_bytes": plan["charge_bytes"],
                                "settlement_revision": plan["revision"]}
+                    self._check_save(updated, metadata_bytes=metadata_bytes, encoded_size=encoded_size)
+                    self._discard_staged(root_fd, updated)
                     self._save(root_fd, updated, metadata_bytes=metadata_bytes, encoded_size=encoded_size)
                     plan["settled"] = True
                     plan["current_charge_bytes"] = plan["charge_bytes"]
+                elif expected_revision is not None:
+                    _absent(root_fd, request_id + ".settlement.tmp")
                 return view
 
     def _prune(self, request_id: str, record: dict[str, Any], plan: dict[str, Any],
@@ -420,35 +425,39 @@ class BuildRetentionStore:
         return self._view(verified, updated)
 
     def _discard_staged(self, directory: int, pending: dict[str, Any]) -> None:
-        """Explicitly reconcile only an exact, complete staged prune transition.
+        """Discard only an exact, complete staged settlement/prune transition.
 
         Never adopt a temporary's lower charge. Reverify persisted evidence and
         redo directory syncs before saving completion. Partial or unrelated
         metadata remains ambiguous and is retained for root reconciliation.
         """
         name = pending["request_id"] + ".settlement.tmp"
+        maximum = MAX_INTENT_BYTES if pending["schema"] == 2 else MAX_PRUNING_INTENT_BYTES
         try:
             descriptor = os.open(name, _READ, dir_fd=directory)
         except FileNotFoundError:
             return
         try:
             before = os.fstat(descriptor)
-            _check_regular(before, "staged pruning intent", modes=frozenset({0o600}),
-                           max_size=MAX_PRUNING_INTENT_BYTES)
-            raw = os.read(descriptor, MAX_PRUNING_INTENT_BYTES + 1)
+            _check_regular(before, "staged retention intent", modes=frozenset({0o600}),
+                           max_size=maximum)
+            raw = os.read(descriptor, maximum + 1)
             staged = self.inputs._validate_intent(
-                decode_document(raw, maximum=MAX_PRUNING_INTENT_BYTES), request_id=pending["request_id"],
+                decode_document(raw, maximum=maximum), request_id=pending["request_id"],
             )
-            completed = copy.deepcopy(pending)
-            operation = completed["pruning"]["operations"][-1]
-            operation["state"] = "completed"
-            completed["charge_bytes"] = operation["charge_bytes"]
+            candidates = [pending]
+            if pending["schema"] == 3:
+                completed = copy.deepcopy(pending)
+                operation = completed["pruning"]["operations"][-1]
+                operation["state"] = "completed"
+                completed["charge_bytes"] = operation["charge_bytes"]
+                candidates.append(completed)
             if (len(raw) != before.st_size or os.read(descriptor, 1)
-                    or staged not in (pending, completed)
-                    or encode_document(staged, maximum=MAX_PRUNING_INTENT_BYTES) != raw
+                    or staged not in candidates
+                    or encode_document(staged, maximum=maximum) != raw
                     or _identity(os.fstat(descriptor)) != _identity(before)
                     or _identity(os.stat(name, dir_fd=directory, follow_symlinks=False)) != _identity(before)):
-                raise ValueError("Build retention staged pruning intent is ambiguous")
+                raise ValueError("Build retention staged intent is ambiguous")
             os.unlink(name, dir_fd=directory)
             os.fsync(directory)
         finally:

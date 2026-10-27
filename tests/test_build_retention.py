@@ -116,6 +116,263 @@ class BuildRetentionTests(unittest.TestCase):
         return self.retention.prune_terminal(self.request["request_id"],
                                              expected_revision=plan["revision"], kinds=kinds)
 
+    def stage_settlement(self, plan):
+        """Retain the real synced pre-replace output, as an uncatchable kill does.
+
+        Suppress only the save's finally cleanup; payloads and the version-1
+        intent still come from the ordinary admission/worker/save paths.
+        """
+        real_unlink = os.unlink
+
+        def retain_temporary(name, *args, **kwargs):
+            if name != self.request["request_id"] + ".settlement.tmp":
+                return real_unlink(name, *args, **kwargs)
+
+        with patch.object(build_inputs.os, "replace", side_effect=OSError("pre-replace crash")), \
+             patch.object(build_inputs.os, "unlink", side_effect=retain_temporary):
+            with self.assertRaisesRegex(OSError, "pre-replace crash"):
+                self.settle(plan)
+        self.assertEqual(self.intent()["schema"], 1)
+        return self.path("inputs", ".settlement.tmp")
+
+    def test_staged_initial_settlement_exact_retry_preserves_payloads_jobs_and_sibling(self):
+        self.inputs.max_bytes = 2 * self.reservation + 65536
+        terminal = self.terminal("succeeded")
+        sibling = {**self.request, "request_id": "b" * 32}
+        self.admit(sibling)
+        plan = self.inspect()
+        original = self.intent()
+        retained = [path for root in self.roots.values() for path in root.iterdir()
+                    if path != self.path("inputs", ".upload.json")]
+        before = {path: (path.read_bytes(), path.stat().st_ino) for path in retained}
+        temporary = self.stage_settlement(plan)
+        staged = temporary.read_bytes()
+        self.assertEqual(json.loads(staged), {
+            **original, "schema": 2, "charge_bytes": plan["charge_bytes"],
+            "settlement_revision": plan["revision"],
+        })
+        for operation in (self.admit, self.inspect, self.inputs.capacity_snapshot):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(ValueError, "unrecognized retained"):
+                    if operation == self.inputs.capacity_snapshot:
+                        with operation():
+                            self.fail("staged settlement accepted for capacity")
+                    else:
+                        operation()
+                self.assertEqual(temporary.read_bytes(), staged)
+                self.assertEqual(self.intent(), original)
+        self.inputs = BuildInputStore(self.roots["inputs"], max_bytes=self.inputs.max_bytes)
+        self.jobs = BuildJobStore(self.roots["state"] / "jobs.json", clock=lambda: 1000.0)
+        self.retention = self.reopen()
+        receipt = self.settle(plan)
+        self.assertEqual(self.settle(plan), receipt)
+        self.assertTrue(receipt["settled"])
+        self.assertFalse(temporary.exists())
+        self.assertEqual(self.intent()["reservation_bytes"], original["reservation_bytes"])
+        for path, value in before.items():
+            self.assertEqual((path.read_bytes(), path.stat().st_ino), value)
+        self.assertEqual(self.admit(), terminal)
+
+    def test_staged_settlement_refuses_stale_or_changed_evidence_before_discard(self):
+        self.inputs.max_bytes = 12 * self.reservation
+        for number, change in enumerate(("revision", "job", "source", "log", "bundle", "root"), 1):
+            with self.subTest(change=change):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                self.terminal("succeeded")
+                plan = self.inspect()
+                original = self.path("inputs", ".upload.json").read_bytes()
+                temporary = self.stage_settlement(plan)
+                staged = temporary.read_bytes()
+                if change == "revision":
+                    plan = {**plan, "revision": "f" * 64}
+                elif change == "job":
+                    with self.jobs._locked() as (state, directory):
+                        state["jobs"][self.request["request_id"]]["finished_at"] += 1
+                        state["last_time"] += 1
+                        self.jobs._save(directory, state)
+                elif change == "source":
+                    source = self.path("inputs", ".source")
+                    source.chmod(0o600)
+                    source.write_bytes(b"X" * len(self.payload))
+                    source.chmod(0o400)
+                elif change == "log":
+                    self.path("logs", ".log").write_bytes(b"changed log")
+                elif change == "bundle":
+                    self.bundle(b"changed output")
+                else:
+                    old = self.root / "old-scratch"
+                    self.roots["scratch"].rename(old)
+                    self.roots["scratch"].mkdir(mode=0o700)
+                with self.assertRaises(ValueError):
+                    self.settle(plan)
+                self.assertEqual(temporary.read_bytes(), staged)
+                self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), original)
+                temporary.unlink()  # fixture cleanup only
+                if change == "root":
+                    self.roots["scratch"].rmdir()
+                    old.rename(self.roots["scratch"])
+
+    def test_staged_settlement_requires_exact_canonical_safe_bounded_transition(self):
+        self.terminal("succeeded")
+        plan = self.inspect()
+        temporary = self.stage_settlement(plan)
+        original = self.path("inputs", ".upload.json").read_bytes()
+        raw = temporary.read_bytes()
+        record = json.loads(raw)
+        alias = self.root / "temporary-alias"
+        for change in ("partial", "malformed", "noncanonical", "wrong charge", "wrong revision",
+                       "version1", "other id", "oversized", "mode", "symlink", "hardlink", "owner"):
+            with self.subTest(change=change):
+                temporary.unlink()
+                temporary.write_bytes(raw)
+                temporary.chmod(0o600)
+                if change == "partial":
+                    temporary.write_bytes(raw[:-1])
+                elif change == "malformed":
+                    temporary.write_bytes(b"not json")
+                elif change == "noncanonical":
+                    temporary.write_bytes(raw + b"\n")
+                elif change == "wrong charge":
+                    temporary.write_bytes(encode_document({**record, "charge_bytes": record["charge_bytes"] + 1}))
+                elif change == "wrong revision":
+                    temporary.write_bytes(encode_document({**record, "settlement_revision": "f" * 64}))
+                elif change == "version1":
+                    temporary.write_bytes(original)
+                elif change == "other id":
+                    temporary.write_bytes(encode_document({**record, "request_id": "b" * 32}))
+                elif change == "oversized":
+                    temporary.write_bytes(b"x" * (build_inputs.MAX_INTENT_BYTES + 1))
+                elif change == "mode":
+                    temporary.chmod(0o644)
+                elif change == "symlink":
+                    temporary.unlink()
+                    temporary.symlink_to(self.path("inputs", ".source"))
+                elif change == "hardlink":
+                    os.link(temporary, alias)
+                before = temporary.lstat()
+                real_check = build_retention._check_regular
+
+                def check_owner(info, label, **kwargs):
+                    if change == "owner" and label == "staged retention intent":
+                        values = list(info)
+                        values[4] = info.st_uid + 1
+                        info = os.stat_result(values)
+                    return real_check(info, label, **kwargs)
+
+                with patch.object(build_retention, "_check_regular", side_effect=check_owner):
+                    with self.assertRaises((ValueError, OSError)):
+                        self.settle(plan)
+                self.assertEqual(build_retention._identity(temporary.lstat()), build_retention._identity(before))
+                self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), original)
+                if alias.exists():
+                    alias.unlink()
+        temporary.unlink()
+        temporary.write_bytes(raw)
+        temporary.chmod(0o600)
+        other = temporary.with_name("b" * 32 + ".settlement.tmp")
+        temporary.rename(other)
+        with self.assertRaisesRegex(ValueError, "unrecognized retained"):
+            self.settle(plan)
+        self.assertEqual(other.read_bytes(), raw)
+
+    def test_staged_settlement_checks_quota_and_metadata_bounds_before_discard(self):
+        self.terminal()
+        plan = self.inspect()
+        temporary = self.stage_settlement(plan)
+        staged = temporary.read_bytes()
+        for module, name, bound in ((build_retention, "MAX_INTENT_BYTES", len(staged) - 1),
+                                     (build_retention, "MAX_RETAINED_METADATA_BYTES", len(staged) - 1),
+                                     (self.inputs, "max_bytes", self.reservation - 1),
+                                     (self.inputs, "max_records", 0)):
+            with self.subTest(name=name), patch.object(module, name, bound):
+                with self.assertRaises(ValueError):
+                    self.settle(plan)
+            self.assertEqual(temporary.read_bytes(), staged)
+            self.assertEqual(self.intent()["schema"], 1)
+        self.assertTrue(self.settle(plan)["settled"])
+
+    def test_staged_settlement_discard_sync_and_new_save_interruptions_keep_original_charge(self):
+        self.inputs.max_bytes = 5 * self.reservation
+        for number, stage in enumerate(("discard", "sync", "save", "new temporary"), 1):
+            with self.subTest(stage=stage):
+                self.request = {**self.request, "request_id": f"{number:032x}"}
+                self.terminal("succeeded")
+                plan = self.inspect()
+                temporary = self.stage_settlement(plan)
+                original = self.path("inputs", ".upload.json").read_bytes()
+                real_unlink, real_sync = os.unlink, os.fsync
+                real_save = self.inputs._save_settlement
+                discarded = []
+                synced = []
+
+                def unlink(name, *args, **kwargs):
+                    if name == temporary.name:
+                        if stage == "discard":
+                            raise KeyboardInterrupt
+                        result = real_unlink(name, *args, **kwargs)
+                        discarded.append(kwargs["dir_fd"])
+                        return result
+                    return real_unlink(name, *args, **kwargs)
+
+                def sync(descriptor):
+                    if descriptor in discarded:
+                        if stage == "sync":
+                            raise KeyboardInterrupt
+                        synced.append(True)
+                    return real_sync(descriptor)
+
+                def fail_save(*args, **kwargs):
+                    self.assertTrue(synced)
+                    if stage == "new temporary":
+                        # Another pre-replace kill can leave a fresh complete
+                        # temporary after the prior one was durably discarded.
+                        with patch.object(build_inputs.os, "replace", side_effect=KeyboardInterrupt), \
+                             patch.object(build_inputs.os, "unlink", return_value=None):
+                            return real_save(*args, **kwargs)
+                    raise KeyboardInterrupt
+
+                with patch.object(build_retention.os, "unlink", side_effect=unlink), \
+                     patch.object(build_retention.os, "fsync", side_effect=sync), \
+                     patch.object(self.inputs, "_save_settlement", side_effect=fail_save):
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.settle(plan)
+                self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), original)
+                self.assertEqual(temporary.exists(), stage in {"discard", "new temporary"})
+                self.retention = self.reopen()
+                self.inputs.max_bytes = sum(
+                    record.get("charge_bytes", record["reservation_bytes"])
+                    for record in (json.loads(path.read_bytes())
+                                   for path in self.roots["inputs"].glob("*.upload.json")))
+                with self.assertRaises(ValueError):
+                    self.admit({**self.request, "request_id": "f" * 32})
+                receipt = self.settle(plan)
+                self.assertEqual(self.settle(plan), receipt)
+                self.inputs.max_bytes = 5 * self.reservation
+
+    def test_staged_settlement_is_not_accepted_for_changed_revision_or_settled_intent(self):
+        self.terminal()
+        plan = self.inspect()
+        temporary = self.stage_settlement(plan)
+        staged = temporary.read_bytes()
+        original = self.path("inputs", ".upload.json").read_bytes()
+        self.write("logs", ".log", b"new evidence")
+        # Recompute a fresh revision without asking inspect to ignore staged
+        # metadata. Even that revision cannot authorize the old temporary.
+        temporary.rename(self.root / "held-temporary")
+        changed = self.inspect()
+        (self.root / "held-temporary").rename(temporary)
+        with self.assertRaisesRegex(ValueError, "staged intent is ambiguous"):
+            self.settle(changed)
+        self.assertEqual(temporary.read_bytes(), staged)
+        self.assertEqual(self.path("inputs", ".upload.json").read_bytes(), original)
+        temporary.unlink()
+        receipt = self.settle(changed)
+        self.write("inputs", ".settlement.tmp", self.path("inputs", ".upload.json").read_bytes())
+        with self.assertRaises(ValueError):
+            self.settle(changed)
+        self.assertTrue(temporary.exists())
+        self.assertEqual(self.intent()["charge_bytes"], receipt["charge_bytes"])
+
     def test_explicit_settlement_frees_capacity_preserves_all_bytes_and_replay_after_reopen(self):
         terminal = self.terminal("succeeded")
         original = self.intent()

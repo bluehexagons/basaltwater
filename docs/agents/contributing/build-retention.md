@@ -160,7 +160,17 @@ Metadata replacement syncs a private fixed temporary intent, replaces the
 original and syncs the input directory. Post-replace sync/reply uncertainty is
 reconciled by syncing the saved record and directory before admission uses its
 charge. Admission never resumes pruning. A leftover temporary fails closed for
-admission/inspection. Explicit same-operation prune can discard only a fully
+admission/inspection, including read-only capacity inspection. An exact
+`settle_terminal(ID, expected_revision=...)` retry from a retained version-1
+intent can discard only its own complete canonical version-2 temporary, exactly
+matching the freshly recomputed proposed transition. It revalidates the full
+job, payload, root, revision, quota and metadata evidence under the usual locks
+before discarding that owned, single-link, no-follow `0600` bounded file. It
+syncs the input directory, then performs the ordinary durable settlement save;
+it never adopts the staged charge. Interruption during discard, sync or a new
+pre-replace save retains the original reservation charge and permits the same
+exact retry. Inspection and admission never discard or resume staged settlement.
+Explicit same-operation prune can discard only a fully
 validated, canonical temporary matching the exact pending or completed next
 transition; it then redoes deletion checks and syncs without adopting a staged
 lower charge. Partial or unrelated temporaries require root reconciliation.

@@ -466,7 +466,7 @@ class BuildInputStore:
         return named
 
     def _scan_intents(
-        self, root_fd: int, *, pruning_temporary: str | None = None, reconcile: bool = True,
+        self, root_fd: int, *, maintenance_temporary: str | None = None, reconcile: bool = True,
     ) -> tuple[dict[str, tuple[dict[str, Any], int, os.stat_result | None, os.stat_result | None]], int, int]:
         if reconcile:
             names = set(os.listdir(root_fd))
@@ -484,9 +484,9 @@ class BuildInputStore:
         for name in names:
             if name in allowed:
                 continue
-            # Only explicit prune may inspect its own fixed temporary. It must
-            # validate an exact staged transition before discarding that file.
-            if name == pruning_temporary:
+            # Only explicit settlement/prune may inspect its own fixed temporary.
+            # It must validate the exact staged transition before discarding it.
+            if name == maintenance_temporary:
                 continue
             match = re.fullmatch(r"([0-9a-f]{32})\.upload\.json", name)
             if match is not None:
