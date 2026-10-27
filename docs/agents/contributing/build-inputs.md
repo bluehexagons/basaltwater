@@ -114,9 +114,12 @@ A failed replacement leaves the previous charge intact. If replacement succeeds
 but directory sync or acknowledgement fails, subsequent reads sync the settled
 intent and directory before using its charge; explicit retry reconciles the
 same verified revision without applying another credit. A leftover settlement
-temporary file after a crash is ambiguous evidence and fails closed for root
-reconciliation. Only an exact explicit pruning retry can reconcile a complete
-canonical temporary matching its pending/completed transition, as described in
+temporary fails closed for admission and inspection. An exact explicit
+settlement retry from a version-1 intent can revalidate and discard only its
+matching complete canonical version-2 temporary, sync the directory, then
+perform the ordinary durable save. Explicit pruning retry can reconcile its
+matching canonical pending/completed transition. Neither adopts a temporary's
+charge; partial or unrelated evidence remains for root reconciliation. See
 [terminal retention](build-retention.md). Payload files are never removed or
 changed by settlement.
 
