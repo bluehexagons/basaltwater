@@ -73,9 +73,14 @@ including after reopening or pruning the other kind separately.
 Maintenance acquires worker (nonblocking), input, exclusive per-job payload
 protection (nonblocking), then a short job-state snapshot, in that order. It
 never acquires worker/input locks while holding job state and never hashes
-payloads under job state. Drain and job reads remain available during hashing.
-A busy worker, log reader or artifact download refuses maintenance immediately.
-All protection is held through final verification and metadata save.
+payloads under job state. The job snapshot requires the existing state lock,
+exact initialization witness and ledger; it reads them without creating,
+rewriting, syncing or repairing job-state evidence, and refuses state-lock
+contention without waiting. This guarantee covers job-state evidence; input-side
+durability reconciliation may still occur during maintenance. Drain and job
+reads remain available during hashing. A busy worker, log reader or artifact
+download refuses maintenance immediately. All protection is held through final
+verification and metadata save.
 
 `lib.build_payloads.payload_lease()` uses Linux OFD record locks on the existing
 stable worker-lock inode, independent of its worker `flock`. A request ID hashes
