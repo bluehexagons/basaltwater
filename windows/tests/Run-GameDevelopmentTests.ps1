@@ -35,19 +35,24 @@ try {
         Set-Content -LiteralPath $launcher -Value @'
 param($Arch, $HostArch, [switch]$SkipAutomaticLocation)
 if ($Arch -ne 'amd64' -or $HostArch -ne 'amd64' -or -not $SkipAutomaticLocation) { throw 'Incorrect developer environment arguments' }
+if ((Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer') -notin @($env:PATH -split ';')) { throw 'Vendor vswhere lookup has no PATH entry' }
 $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
 '@
         function Get-NativeVisualStudio { return $fakeVs }
         function Test-NativeWindowsSdk { return $true }
         function Get-NativeCommand { return 'mock-cl.exe' }
         $savedVcpkg = [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'Process')
+        $savedDeveloperPath = $env:PATH
         try {
             foreach ($prior in @($null, 'F:\project vcpkg')) {
                 [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $prior, 'Process')
                 Enter-NativeGameDevEnvironment
                 Assert-True ([Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'Process') -eq $prior) 'Developer environment replaced project vcpkg selection'
             }
-        } finally { [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $savedVcpkg, 'Process') }
+        } finally {
+            [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $savedVcpkg, 'Process')
+            $env:PATH = $savedDeveloperPath
+        }
     }
     & {
         function Get-NativeVisualStudio { return $script:VisualStudio }

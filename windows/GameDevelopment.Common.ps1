@@ -149,6 +149,9 @@ function Enter-NativeGameDevEnvironment {
         throw 'Visual Studio 2022 C++ tools/Windows SDK are missing; apply setup with -GameDev first.'
     }
     $projectVcpkgRoot = [Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'Process')
+    # Vendor environment extensions call vswhere by name, even for custom VS paths.
+    $installerBin = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+    if ($installerBin -notin @($env:PATH -split ';')) { $env:PATH = $installerBin + ';' + $env:PATH }
     try {
         & (Join-Path $visualStudio 'Common7\Tools\Launch-VsDevShell.ps1') -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
     } finally {
