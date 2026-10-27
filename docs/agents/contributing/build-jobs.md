@@ -126,7 +126,17 @@ terminal during status, cancellation, admission, drain, or claim operations;
 claim always checks expiry again before writing `running`.
 
 The store retains at most 4096 request IDs and 16 MiB of encoded state. Both
-limits fail closed. It does not prune replay IDs, reset state, or provide a
+limits fail closed. Before accepting a new request, admission reserves encoded
+space for every queued/running job's eventual lease, timestamps, fixed reason
+and complete bounded artifact identity, plus future ledger-clock growth. The
+size projection deliberately combines maximum fields and is never persisted.
+An acknowledged job can therefore progress, cancel, expire or recover without
+exhausting the ledger byte ceiling. Terminal history costs its exact retained
+encoding; no identities are removed. This check applies to new admissions and
+does not repair jobs accepted by older code without growth allowance. Capacity
+inspection's metadata headroom remains raw unused bytes, not an admission
+decision or an allowance after future lifecycle growth.
+The store does not prune replay IDs, reset state, or provide a
 repair path. Corrupt, unsupported, unsafe, or unreadable state is an error and
 is never treated as an empty store. State updates use a private same-directory
 atomic replacement and filesystem sync before acknowledgement. Stable state

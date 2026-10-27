@@ -294,6 +294,114 @@ class BuildJobStoreTests(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text())["jobs"], {})
         self.assertEqual(self.submit()["sequence"], 1)
 
+    def sizing_store(self) -> BuildJobStore:
+        return BuildJobStore(self.root / "sizing.json", clock=self.clock)
+
+    def test_admission_refuses_queued_only_capacity_without_consuming_identity(self) -> None:
+        reference = self.sizing_store()
+        reference.submit(build_request(), owner="controller")
+        ceiling = Path(reference.path).stat().st_size
+        with patch.object(build_jobs, "MAX_STORE_BYTES", ceiling):
+            with self.assertRaisesRegex(ValueError, "lifecycle metadata"):
+                self.submit()
+            state = json.loads(self.path.read_bytes())
+            self.assertEqual(state["jobs"], {})
+            self.assertEqual(state["last_sequence"], 0)
+        self.assertEqual(self.submit()["sequence"], 1)
+
+    def test_admission_reserves_success_growth_even_when_running_record_fits(self) -> None:
+        reference = self.sizing_store()
+        reference.submit(build_request(), owner="controller")
+        with reference.worker() as lease:
+            lease.claim()
+        ceiling = Path(reference.path).stat().st_size
+        with patch.object(build_jobs, "MAX_STORE_BYTES", ceiling):
+            with self.assertRaisesRegex(ValueError, "lifecycle metadata"):
+                self.submit()
+        self.assertEqual(json.loads(self.path.read_bytes())["jobs"], {})
+
+    def test_admission_reserves_each_queued_and_running_job_and_preserves_history(self) -> None:
+        reference = self.sizing_store()
+        first = reference.submit(build_request(), owner="controller")
+        with reference.worker() as lease:
+            lease.claim()
+            lease.finish(first["request_id"], outcome="succeeded", work_stopped=True,
+                         artifact=artifact_for(build_request()))
+        reference.submit(build_request("b" * 32), owner="controller")
+        # Enough for one artifact and two queued records, but not two artifacts.
+        ceiling = Path(reference.path).stat().st_size + 256
+        for running in (False, True):
+            with self.subTest(running=running), patch.object(build_jobs, "MAX_STORE_BYTES", ceiling):
+                path = self.root / ("running.json" if running else "queued.json")
+                store = BuildJobStore(path, clock=self.clock)
+                store.submit(build_request(), owner="controller")
+                with store.worker() as lease:
+                    if running:
+                        lease.claim()
+                    before = path.read_bytes()
+                    with self.assertRaisesRegex(ValueError, "lifecycle metadata"):
+                        store.submit(build_request("b" * 32), owner="controller")
+                    self.assertEqual(path.read_bytes(), before)
+                    if running:
+                        lease.finish(first["request_id"], outcome="succeeded", work_stopped=True,
+                                     artifact=artifact_for(build_request()))
+                    else:
+                        store.cancel(first["request_id"], owner="controller")
+                historical = store.status(first["request_id"], owner="controller")
+                # A cancellation releases unused growth allowance. A retained
+                # success still consumes artifact metadata and may refuse work.
+                if running:
+                    with self.assertRaisesRegex(ValueError, "lifecycle metadata"):
+                        store.submit(build_request("b" * 32), owner="controller")
+                else:
+                    self.assertEqual(store.submit(build_request("b" * 32), owner="controller")["sequence"], 2)
+                self.assertEqual(store.status(first["request_id"], owner="controller"), historical)
+            self.assertEqual(store.submit(build_request("b" * 32), owner="controller")["sequence"], 2)
+
+    def test_accepted_jobs_can_finish_cancel_expire_and_recover_near_byte_ceiling(self) -> None:
+        request = build_request()
+        artifact = artifact_for(request)
+        artifact["size"] = build_jobs._ARTIFACT_SIZE_LIMIT
+        reference = self.sizing_store()
+        reference.submit(request, owner="controller")
+        with reference.worker() as lease:
+            lease.claim()
+            lease.finish(request["request_id"], outcome="succeeded", work_stopped=True,
+                         artifact=artifact)
+        ceiling = Path(reference.path).stat().st_size + 256
+        for outcome in ("succeeded", "failed", "cancelled", "uncertain", "queue_cancel", "expired"):
+            with self.subTest(outcome=outcome), patch.object(build_jobs, "MAX_STORE_BYTES", ceiling):
+                self.clock.value = 1000.0
+                path = self.root / (outcome + ".json")
+                store = BuildJobStore(path, clock=self.clock)
+                store.submit(request, owner="controller")
+                # A new process/object has no in-memory reservation to rely on.
+                store = BuildJobStore(path, clock=self.clock)
+                if outcome == "queue_cancel":
+                    result = store.cancel(request["request_id"], owner="controller")
+                elif outcome == "expired":
+                    self.clock.value = 1.2345678901234567e300
+                    result = store.status(request["request_id"], owner="controller")
+                else:
+                    with store.worker() as lease:
+                        lease.claim()
+                        if outcome == "cancelled":
+                            store.cancel(request["request_id"], owner="controller")
+                        self.clock.value = 1.2345678901234567e300
+                        if outcome != "uncertain":
+                            result = lease.finish(request["request_id"], outcome=outcome,
+                                                  work_stopped=True,
+                                                  artifact=artifact if outcome == "succeeded" else None)
+                    if outcome == "uncertain":
+                        with store.worker() as lease:
+                            result = lease.recover_interrupted(request["request_id"], cleanup=lambda *_: True)
+                self.assertEqual(result["state"], "cancelled" if outcome == "queue_cancel" else outcome)
+                self.assertLessEqual(path.stat().st_size, ceiling)
+                self.assertTrue(store.set_draining(True))
+                self.assertFalse(store.set_draining(False))
+                self.assertEqual(store.status(request["request_id"], owner="controller"), result)
+                self.assertEqual(store.submit(request, owner="controller"), result)
+
     def test_running_cancel_is_cooperative_and_finish_requires_verified_cleanup(self) -> None:
         request = build_request()
         queued = self.store.submit(request, owner="controller")

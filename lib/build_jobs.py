@@ -269,6 +269,40 @@ def _validate_state(value: object) -> dict[str, Any]:
     }
 
 
+def _check_lifecycle_capacity(state: dict[str, Any]) -> None:
+    """Reserve encoded space for every live job before accepting another.
+
+    This deliberately oversized projection is only for sizing, never storage:
+    it combines the longest state/reason, a lease and a successful artifact.
+    JSON encodings of finite nonnegative float timestamps fit within 32 bytes;
+    a 32-character string (including its extra quotes) bounds future clocks.
+    Terminal records and immutable request fields retain their exact encoding.
+    """
+    future = {**state, "last_time": "0" * 32, "draining": False, "jobs": {}}
+    for identifier, record in state["jobs"].items():
+        projected = record
+        if record["state"] in {"queued", "running"}:
+            request = record["request"]
+            projected = {
+                **record, "state": "succeeded", "cancel_requested": False,
+                "started_at": "0" * 32, "finished_at": "0" * 32,
+                "lease_id": "0" * 32, "reason": _REASONS["uncertain"],
+                "artifact": {
+                    "sha256": "0" * 64, "size": _ARTIFACT_SIZE_LIMIT,
+                    "descriptor_sha256": "0" * 64,
+                    "request_id": identifier, "request_sha256": record["request_sha256"],
+                    "project": request["project"], "source": request["source"],
+                    "platform": request["platform"],
+                },
+            }
+        future["jobs"][identifier] = projected
+    try:
+        # Include the ledger's trailing newline in the existing byte ceiling.
+        encode_document(future, maximum=MAX_STORE_BYTES - 1)
+    except ValueError:
+        raise ValueError("Build job store lacks space for lifecycle metadata") from None
+
+
 class BuildJobStore:
     """A bounded private queue with a single exclusive worker lease.
 
@@ -618,6 +652,7 @@ class BuildJobStore:
             state["jobs"][job["request_id"]] = record
             state["last_sequence"] = sequence
             self._touch(state, now)
+            _check_lifecycle_capacity(state)
             self._save(parent_fd, state)
             return self._public(record)
 
