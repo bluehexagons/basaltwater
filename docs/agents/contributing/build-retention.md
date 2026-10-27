@@ -163,11 +163,14 @@ lower charge. Partial or unrelated temporaries require root reconciliation.
 After completed pruning, input replay compares owner, request digest, source
 size and digest before reading bytes. It uses a short job-lock snapshot that
 requires the exact retained terminal job digest and never calls `submit()`.
-Missing, changed, active or uncertain jobs refuse; pruned payloads are never
-recreated. A supplied stream still undergoes bounded exact size, EOF and SHA-256
-checks; source-less exact replay also returns the existing receipt. Pending
-pruning refuses submit replay until explicit completion. A pruned terminal log
-returns the service's fixed `unavailable`, never `waiting`.
+The snapshot requires an existing stable state lock, exact initialization
+witness and ledger; it is read-only and refuses lock contention without
+initializing or reconciling job evidence. Missing, changed, active or uncertain
+jobs refuse before replay stream reads; pruned payloads are never recreated. A
+supplied stream still undergoes bounded exact size, EOF and SHA-256 checks;
+source-less exact replay also returns the existing receipt. Pending pruning
+refuses submit replay until explicit completion. A pruned terminal log returns
+the service's fixed `unavailable`, never `waiting`.
 
 The default 128 input-intent ceiling and independent 4096-job/16-MiB history
 ceilings still fail closed. Pruning cannot free slots or provide indefinite
