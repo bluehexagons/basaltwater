@@ -45,6 +45,38 @@ try {
     Assert-True ($env:PATH.StartsWith('C:\transient-provider;')) 'PATH refresh dropped the invoking provider'
     $env:PATH = $savedPath
 
+    & {
+        function Get-NativeCommand { if ($script:GitAvailable) { return 'Mock-NativeGit' } }
+        function Mock-NativeGit {
+            if ($args -contains '--get') {
+                $global:LASTEXITCODE = $script:GitQueryExit
+                if ($script:GitQueryExit -eq 0) { return $script:GitSetting }
+            } else {
+                $script:GitWrites++
+                Assert-True (($args -join ' ') -eq 'config --global core.longpaths true') 'Git setting changed outside the intended user scope'
+                $global:LASTEXITCODE = $script:GitWriteExit
+            }
+        }
+        $script:GitAvailable = $false
+        Ensure-NativeGitSettings -Plan
+        Assert-Throws { Ensure-NativeGitSettings } 'Git is unavailable'
+        $script:GitAvailable = $true
+        $script:GitQueryExit = 1; $script:GitWriteExit = 0; $script:GitWrites = 0
+        Ensure-NativeGitSettings -Plan
+        Assert-True ($script:GitWrites -eq 0) 'Git configuration changed during a plan'
+        Ensure-NativeGitSettings
+        Assert-True ($script:GitWrites -eq 1) 'Unset Git long-path support was not enabled'
+        foreach ($value in @('true', 'false')) {
+            $script:GitQueryExit = 0; $script:GitSetting = $value
+            Ensure-NativeGitSettings
+        }
+        Assert-True ($script:GitWrites -eq 1) 'An explicit Git setting was overwritten'
+        $script:GitQueryExit = 128
+        Assert-Throws { Ensure-NativeGitSettings } 'Could not read Git'
+        $script:GitQueryExit = 1; $script:GitWriteExit = 5
+        Assert-Throws { Ensure-NativeGitSettings } 'Could not enable Git'
+    }
+
     # WinGet repair must bootstrap its PowerShell dependencies for this account.
     & {
         $script:WingetAvailable = $false

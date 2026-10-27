@@ -77,8 +77,7 @@ CI, and native packaging. This experimental setup prepares the current
 Windows 11 x64 account with Git, GitHub CLI, Codex, T3 Code desktop, Node.js LTS,
 Python/uv, and shared agent skills. It does not register a CI runner.
 
-Once the native profile is published to `main`, open PowerShell as the
-intended account and copy the entire block:
+Open PowerShell as the intended account and copy the entire block:
 
 ```powershell
 & {

@@ -59,6 +59,25 @@ function Ensure-NativeTool([string]$name, [string]$packageId, [switch]$Plan) {
     }
 }
 
+function Ensure-NativeGitSettings([switch]$Plan) {
+    $git = Get-NativeCommand git
+    if (-not $git) {
+        if ($Plan) { Write-Host 'Enable Git core.longpaths after Git installation'; return }
+        throw 'Git is unavailable for long-path configuration'
+    }
+    $configured = & $git config --global --get core.longpaths
+    $queryExit = $LASTEXITCODE
+    if ($queryExit -eq 0) {
+        Write-Host "Preserve Git core.longpaths: $configured"
+        return
+    }
+    if ($queryExit -ne 1) { throw "Could not read Git long-path configuration (exit code $queryExit)" }
+    if ($Plan) { Write-Host 'Enable Git core.longpaths for the current Windows account'; return }
+    & $git config --global core.longpaths true
+    if ($LASTEXITCODE -ne 0) { throw "Could not enable Git long-path support (exit code $LASTEXITCODE)" }
+    Write-Host 'Enabled Git core.longpaths for the current Windows account'
+}
+
 function Assert-NativeSkillPath([string]$path) {
     $current = [IO.Path]::GetFullPath($path)
     while ($current) {
@@ -165,6 +184,7 @@ function Invoke-NativeAgentSetup {
     Write-Host 'Native Windows coding account (WSL is not required).'
     if (-not $Plan) { Ensure-Winget; Update-NativePath }
     Ensure-NativeTool git Git.Git -Plan:$Plan
+    Ensure-NativeGitSettings -Plan:$Plan
     Ensure-NativeTool gh GitHub.cli -Plan:$Plan
     $npmAgents = @($AgentTool | Where-Object { $_ -in @('codex', 'opencode') -and -not (Get-NativeCommand $_) })
     if ($Node -or $npmAgents.Count) { Ensure-NativeTool node OpenJS.NodeJS.LTS -Plan:$Plan }

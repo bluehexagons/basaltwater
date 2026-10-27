@@ -74,8 +74,8 @@ compatibility testing, CI, and native packaging. The experimental setup prepares
 the current Windows 11 x64 account with Git, GitHub CLI, Codex, T3 Code desktop,
 Node.js LTS, Python/uv, and shared agent skills.
 
-Once the native profile is published to `main`, open PowerShell as the account
-that will use these tools and paste the complete block:
+Open PowerShell as the account that will use these tools and paste the complete
+block:
 
 ```powershell
 & {

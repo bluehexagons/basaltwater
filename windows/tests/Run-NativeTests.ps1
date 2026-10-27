@@ -32,7 +32,8 @@ function Assert-NewReceipt([int]$before, [string]$state) {
 }
 
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-$temporary = Join-Path $env:RUNNER_TEMP ('basaltwater-windows-' + [guid]::NewGuid().ToString('N'))
+$testRoot = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+$temporary = Join-Path $testRoot ('basaltwater-windows-' + [guid]::NewGuid().ToString('N'))
 $checkout = Join-Path $temporary 'checkout with spaces'
 $credential = Join-Path $temporary 'token.dpapi'
 $originalLocalAppData = $env:LOCALAPPDATA
@@ -388,5 +389,10 @@ try {
     Write-Host 'Native Windows qualification passed.'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData
-    Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
+    $resolvedTemporary = [IO.Path]::GetFullPath($temporary)
+    $resolvedRoot = [IO.Path]::GetFullPath($testRoot).TrimEnd('\') + '\'
+    if (-not $resolvedTemporary.StartsWith($resolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Refusing test cleanup outside the temporary root'
+    }
+    Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force -ErrorAction SilentlyContinue
 }

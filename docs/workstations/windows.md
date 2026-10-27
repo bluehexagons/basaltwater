@@ -20,8 +20,8 @@ are not installed on Windows. WSL is a separate opt-in path in the
 
 ## Install
 
-Once the native profile is published to `main`, open PowerShell as the intended
-account and paste the complete block. It installs the standard tools above,
+Open PowerShell as the intended account and paste the complete block.
+It installs the standard tools above,
 plus Node.js LTS and Python/uv:
 
 ```powershell
@@ -43,7 +43,7 @@ script on exit. The child PowerShell process uses execution-policy bypass
 without changing the account's saved policy. Package installers may ask for UAC.
 CI runner registration and managed build-host setup are separate operations.
 
-For the unpublished changes in this checkout, use the local command below.
+To apply a reviewed checkout, use the local command below.
 
 ## Review and apply the current checkout
 
@@ -75,6 +75,13 @@ stops setup with its failure; repair it and rerun. Missing packages use exact
 WinGet identities and preserve installed versions with `--no-upgrade`. Existing
 T3 desktop installations are detected without launching or stopping the app.
 Updates remain deliberate through the tool's updater or package manager.
+
+Setup enables Git's user-level `core.longpaths` when that setting is absent.
+An explicit existing value is preserved, including `false`; repository-specific
+settings still take precedence. Without long-path support, Git can warn that a
+directory name is too long and omit its contents even while returning success.
+This setting covers Git's built-in commands; other Windows tools have their own
+path limits, and setup does not change the system-wide long-path policy.
 
 ## Pinned source and recovery
 
@@ -120,6 +127,7 @@ uv --version
 uv run --no-project python --version
 git config --get user.name
 git config --get user.email
+git config --get core.longpaths
 ```
 
 Only check optional runtimes you selected. Sign in with `gh auth login` or
@@ -157,3 +165,10 @@ existing Windows 11 machine verifies discovery, not installation on a fresh PC.
 Fresh WinGet repair, UAC, package downloads, reboot recovery, provider login,
 and a new T3 coding session still require live qualification before declaring
 this experimental profile production ready.
+
+The complete native offline suite also runs directly on a workstation; it uses
+the local temporary directory when GitHub Actions' `RUNNER_TEMP` is absent:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-NativeTests.ps1
+```
