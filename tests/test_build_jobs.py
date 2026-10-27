@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import multiprocessing
@@ -233,6 +234,58 @@ class BuildJobStoreTests(unittest.TestCase):
             lease.recover_interrupted(request["request_id"], cleanup=lambda *_: True)
         with self.assertRaisesRegex(ValueError, "certain terminal"):
             replay_current_state()
+
+    def test_reopened_terminal_replay_is_read_only_and_refuses_busy_state(self) -> None:
+        request = build_request()
+        self.submit()
+        terminal = self.store.cancel(request["request_id"], owner="controller")
+        self.submit("b" * 32)
+        self.clock.value += 36000
+        record = json.loads(self.path.read_bytes())["jobs"][request["request_id"]]
+        job_sha256 = hashlib.sha256(encode_document(record)).hexdigest()
+        reopened = BuildJobStore(self.path, clock=self.clock)
+
+        def snapshot():
+            def metadata(path):
+                info = path.stat()
+                return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+                        info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            return metadata(self.root), {
+                path.name: (metadata(path), path.read_bytes()) for path in self.root.iterdir()
+            }
+
+        before = snapshot()
+        real_open = os.open
+        real_flock = fcntl.flock
+
+        def readonly_open(path, flags, *args, **kwargs):
+            self.assertEqual(flags & os.O_ACCMODE, os.O_RDONLY)
+            self.assertFalse(flags & (os.O_CREAT | os.O_TRUNC | os.O_APPEND))
+            return real_open(path, flags, *args, **kwargs)
+
+        def nonblocking_flock(descriptor, operation):
+            self.assertEqual(operation, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return real_flock(descriptor, operation)
+
+        def replay():
+            return reopened.replay_terminal(
+                request, owner="controller", expected_job_sha256=job_sha256,
+            )
+
+        with (
+            patch.object(build_jobs.os, "open", side_effect=readonly_open),
+            patch.object(build_jobs.os, "fsync", side_effect=AssertionError("must not sync")),
+            patch.object(build_jobs.os, "pwrite", side_effect=AssertionError("must not write")),
+            patch.object(reopened, "_save", side_effect=AssertionError("must not save")),
+            patch.object(build_jobs.fcntl, "flock", side_effect=nonblocking_flock),
+        ):
+            self.assertEqual(replay(), terminal)
+            with self.path.with_name("jobs.json.lock").open("rb") as held:
+                real_flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaisesRegex(RuntimeError, "busy"):
+                    replay()
+            self.assertEqual(replay(), terminal)
+        self.assertEqual(snapshot(), before)
 
     def test_encoded_state_byte_limit_does_not_publish_partial_state(self) -> None:
         with patch.object(build_jobs, "MAX_STORE_BYTES", 128):
