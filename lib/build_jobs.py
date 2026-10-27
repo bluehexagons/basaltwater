@@ -448,6 +448,47 @@ class BuildJobStore:
             finally:
                 os.close(descriptor)
 
+    @contextmanager
+    def _readonly_state(self) -> Iterator[dict[str, Any]]:
+        """Read established job evidence under a nonblocking lock, without repair."""
+        # Import at use time: input admission itself depends on this job store.
+        from lib.build_inputs import _private_root
+
+        with _private_root(self.parent) as parent_fd:
+            try:
+                descriptor = os.open(
+                    self.lock_name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=parent_fd,
+                )
+            except FileNotFoundError:
+                raise ValueError("Build store state lock is missing") from None
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise ValueError("Build store state lock must not be a symlink") from exc
+                raise
+            try:
+                opened = self._check_private_file(descriptor, "state lock")
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise RuntimeError("Build job state is busy") from None
+                current = self._check_named_file(parent_fd, self.lock_name, "state lock", required=True)
+                if (current is None or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+                        or opened.st_size != len(_INITIALIZED)
+                        or os.pread(descriptor, len(_INITIALIZED) + 1, 0) != _INITIALIZED):
+                    raise ValueError("Build store initialization witness is invalid")
+                before = self._check_named_file(parent_fd, self.name, "state", required=True)
+                state = self._load(parent_fd, required=True)
+                after = self._check_named_file(parent_fd, self.name, "state", required=True)
+                identity = lambda info: (info.st_dev, info.st_ino, info.st_size,
+                                         info.st_mtime_ns, info.st_ctime_ns)
+                if before is None or after is None or identity(before) != identity(after):
+                    raise ValueError("Build store changed during read-only inspection")
+                yield state
+            finally:
+                os.close(descriptor)
+
     def _save(self, parent_fd: int, state: dict[str, Any]) -> None:
         _validate_state(state)
         encoded = encode_document(state, maximum=MAX_STORE_BYTES - 1) + b"\n"
@@ -613,7 +654,7 @@ class BuildJobStore:
         job = parse_build_request(request)
         digest = request_digest(job)
         expected_job_sha256 = _identifier(expected_job_sha256, "Terminal job identity", _SHA256)
-        with self._locked() as (state, _parent_fd):
+        with self._readonly_state() as state:
             record = self._owned_record(state, job["request_id"], principal)
             if record["request_sha256"] != digest:
                 raise ValueError("Build request ID is already bound to different inputs")

@@ -762,6 +762,8 @@ class BuildRetentionTests(unittest.TestCase):
     def test_pruned_replay_checks_owner_input_exact_stream_and_existing_terminal_before_read(self):
         terminal = self.terminal("succeeded")
         self.prune(self.settle())
+        self.jobs = BuildJobStore(self.roots["state"] / "jobs.json", clock=lambda: 1000.0)
+        self.assertEqual(self.admit(), terminal)
         for owner, request, size in (("other", self.request, len(self.payload)),
                                      ("controller", {**self.request, "project": "other"}, len(self.payload)),
                                      ("controller", self.request, len(self.payload) + 1)):
@@ -790,12 +792,57 @@ class BuildRetentionTests(unittest.TestCase):
             state["jobs"].clear()
             state["last_sequence"] = 0
             self.jobs._save(directory, state)
+        stream = CountingStream(self.payload)
         with patch.object(self.jobs, "submit", side_effect=AssertionError("must never queue")):
             with self.assertRaisesRegex(ValueError, "not found"):
                 self.inputs.admit(self.request, owner="controller", source=stream,
                                   source_size=len(self.payload), jobs=self.jobs)
         self.assertEqual(stream.read_calls, 0)
 
+    def test_pruned_replay_does_not_initialize_or_rewrite_missing_job_evidence(self):
+        self.terminal("succeeded")
+        self.prune(self.settle())
+        ledger = self.roots["state"] / "jobs.json"
+        witness = self.roots["state"] / "jobs.json.lock"
+        ledger_bytes = ledger.read_bytes()
+        witness_bytes = witness.read_bytes()
+
+        def restore():
+            ledger.write_bytes(ledger_bytes)
+            ledger.chmod(0o600)
+            witness.write_bytes(witness_bytes)
+            witness.chmod(0o600)
+
+        for case in ("missing lock", "empty witness", "invalid witness", "missing ledger", "both missing"):
+            with self.subTest(case=case):
+                restore()
+                if case == "missing lock":
+                    witness.unlink()
+                elif case == "empty witness":
+                    witness.write_bytes(b"")
+                elif case == "invalid witness":
+                    witness.write_bytes(b"invalid\n")
+                elif case == "missing ledger":
+                    ledger.unlink()
+                else:
+                    ledger.unlink()
+                    witness.unlink()
+                before = {
+                    "ledger_exists": ledger.exists(),
+                    "ledger": ledger.read_bytes() if ledger.exists() else None,
+                    "witness_exists": witness.exists(),
+                    "witness": witness.read_bytes() if witness.exists() else None,
+                }
+                stream = CountingStream(self.payload)
+                with patch.object(self.jobs, "submit", side_effect=AssertionError("must never queue")):
+                    with self.assertRaises((OSError, ValueError)):
+                        self.inputs.admit(self.request, owner="controller", source=stream,
+                                          source_size=len(self.payload), jobs=self.jobs)
+                self.assertEqual(stream.read_calls, 0)
+                self.assertEqual(ledger.exists(), before["ledger_exists"])
+                self.assertEqual(ledger.read_bytes() if ledger.exists() else None, before["ledger"])
+                self.assertEqual(witness.exists(), before["witness_exists"])
+                self.assertEqual(witness.read_bytes() if witness.exists() else None, before["witness"])
     def test_shared_payload_reader_makes_pruning_busy_without_changing_intent(self):
         self.terminal("succeeded")
         plan = self.settle()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import multiprocessing
 import os
@@ -11,7 +12,7 @@ from unittest.mock import Mock, patch
 
 import lib.build_jobs as build_jobs
 from lib.build_jobs import BuildJobStore
-from lib.build_protocol import DEFAULT_LIMITS, request_digest
+from lib.build_protocol import DEFAULT_LIMITS, encode_document, request_digest
 
 
 def build_request(request_id: str = "a" * 32, *, project: str = "sample") -> dict:
@@ -209,6 +210,29 @@ class BuildJobStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot be pruned"):
                 store.submit(build_request("b" * 32), owner="controller")
         self.assertEqual(len(json.loads(self.path.read_text())["jobs"]), 1)
+
+    def test_terminal_replay_refuses_queued_running_and_uncertain_jobs(self) -> None:
+        request = build_request()
+        self.submit()
+
+        def replay_current_state():
+            with self.store._locked() as (state, _directory):
+                record = state["jobs"][request["request_id"]]
+                job_sha256 = hashlib.sha256(encode_document(record)).hexdigest()
+            return self.store.replay_terminal(
+                request, owner="controller", expected_job_sha256=job_sha256,
+            )
+
+        with self.assertRaisesRegex(ValueError, "certain terminal"):
+            replay_current_state()
+        with self.store.worker() as lease:
+            lease.claim()
+            with self.assertRaisesRegex(ValueError, "certain terminal"):
+                replay_current_state()
+        with self.store.worker() as lease:
+            lease.recover_interrupted(request["request_id"], cleanup=lambda *_: True)
+        with self.assertRaisesRegex(ValueError, "certain terminal"):
+            replay_current_state()
 
     def test_encoded_state_byte_limit_does_not_publish_partial_state(self) -> None:
         with patch.object(build_jobs, "MAX_STORE_BYTES", 128):
