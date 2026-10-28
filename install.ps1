@@ -382,10 +382,10 @@ try {
             if ($Resume) {
                 $preview = Read-State
                 $planSource = $preview.Source
-                $agentTools = @($preview.AgentTool)
-                $Node = $preview.Node; $Python = $preview.Python; $Go = $preview.Go
-                $T3CodeDesktop = $preview.T3CodeDesktop
-                foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot')) {
+                if ($PSBoundParameters.ContainsKey('AgentTool')) {
+                    $agentTools = @(@($preview.AgentTool) + $agentTools | Select-Object -Unique)
+                } else { $agentTools = @($preview.AgentTool) }
+                foreach ($option in @('Node', 'Python', 'Go', 'T3CodeDesktop', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot')) {
                     if (-not $PSBoundParameters.ContainsKey($option)) { Set-Variable -Name $option -Value $preview.$option }
                 }
                 if (-not $storageSelected) { $StorageRoot = $preview.StorageRoot }
@@ -477,8 +477,11 @@ try {
     }
     if ($runnerConfig) { $state.GitHubRunner = $runnerConfig; Save-State $state }
     if ($Profile -eq 'agent_windows') {
-        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot')) {
+        foreach ($option in @('Node', 'Python', 'Go', 'T3CodeDesktop', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot')) {
             if ($PSBoundParameters.ContainsKey($option)) { $state.$option = [bool](Get-Variable -Name $option -ValueOnly) }
+        }
+        if ($PSBoundParameters.ContainsKey('AgentTool')) {
+            $state.AgentTool = @(@($state.AgentTool) + $agentTools | Select-Object -Unique)
         }
         if ($storageSelected) { $state.StorageRoot = $StorageRoot }
     }

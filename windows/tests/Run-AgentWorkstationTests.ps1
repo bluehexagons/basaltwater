@@ -84,6 +84,13 @@ try {
     $env:PATH = 'C:\transient-provider'
     Update-NativePath
     Assert-True ($env:PATH.StartsWith('C:\transient-provider;')) 'PATH refresh dropped the invoking provider'
+    $firstPath = $env:PATH
+    Update-NativePath
+    Assert-True ($env:PATH -eq $firstPath) 'Repeated PATH refresh accumulated duplicate entries'
+    $merged = Merge-NativePath @($null, '', 'C:\transient;C:\bin;C:\bin\;c:/BIN;;""', '"C:\tools with spaces";C:\tools with spaces')
+    Assert-True ($merged -eq 'C:\transient;C:\bin;"C:\tools with spaces"') 'PATH merge changed priority or retained equivalent Windows entries'
+    $merged = Merge-NativePath @('%SystemRoot%\System32', (Join-Path $env:SystemRoot 'system32'))
+    Assert-True ($merged -eq (Join-Path $env:SystemRoot 'System32')) 'PATH merge did not expand variables before deduplicating'
     $env:PATH = $savedPath
 
     & {
@@ -239,11 +246,26 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].Node -and $global:AgentInstallerTestCalls[-1].Python -and
             $global:AgentInstallerTestCalls[-1].Desktop) 'Native resume lost the saved tools/desktop defaults'
         Assert-True ('codex' -in $global:AgentInstallerTestCalls[-1].Tools) 'Native default provider was not saved'
+        $beforeRuntimePlan = (Get-FileHash -LiteralPath $nativeStatePath).Hash
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Go -AgentTool claude -Node:$false -Python:$false -T3CodeDesktop:$false -Plan
+        $selected = $global:AgentInstallerTestCalls[-1]
+        Assert-True ($selected.Go -and -not $selected.Node -and -not $selected.Python -and
+            -not $selected.Desktop -and 'claude' -in $selected.Tools -and 'codex' -in $selected.Tools) 'Resume preview ignored explicit runtime/provider/desktop changes'
+        Assert-True ((Get-FileHash -LiteralPath $nativeStatePath).Hash -eq $beforeRuntimePlan) 'Runtime/provider preview rewrote saved state'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Go -AgentTool claude -Node:$false -Python:$false -T3CodeDesktop:$false
+        $selected = $global:AgentInstallerTestCalls[-1]
+        Assert-True ($selected.Go -and -not $selected.Node -and -not $selected.Python -and
+            -not $selected.Desktop -and 'claude' -in $selected.Tools) 'Resume application ignored explicit runtime/provider/desktop changes'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Node -Python -T3CodeDesktop
+        $selected = $global:AgentInstallerTestCalls[-1]
+        Assert-True ($selected.Node -and $selected.Python -and $selected.Desktop -and $selected.Go -and
+            'claude' -in $selected.Tools) 'Reselection lost saved runtime/provider settings'
         $global:AgentInstallerTestRevision = 'b' * 40
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Revision -eq $global:AgentInstallerTestRevision -and
             $global:AgentInstallerTestCalls[-1].Source -eq $nativeState.Source) 'Source update did not execute the newly pinned source'
+        Assert-True ($global:AgentInstallerTestCalls[-1].Go -and 'claude' -in $global:AgentInstallerTestCalls[-1].Tools) 'Source update lost saved runtime/provider additions'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Source update lost Godot selection'
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'

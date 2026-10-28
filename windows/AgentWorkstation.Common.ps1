@@ -1,9 +1,24 @@
 <# Native Windows agent tools and catalogs; no Linux runtime imports. #>
+function Merge-NativePath([string[]]$paths) {
+    $seen = @{}
+    $entries = @(foreach ($path in $paths) {
+        if (-not $path) { continue }
+        foreach ($entry in ([Environment]::ExpandEnvironmentVariables($path) -split ';')) {
+            $entry = $entry.Trim()
+            if (-not $entry) { continue }
+            $key = $entry.Trim('"').Replace('/', '\')
+            if (-not $key) { continue }
+            if ($key.Length -gt 3) { $key = $key.TrimEnd('\') }
+            if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; $entry }
+        }
+    })
+    return ($entries -join ';')
+}
+
 function Update-NativePath {
     # Retain transient paths supplied by the invoking agent or terminal.
-    $paths = @($env:PATH, [Environment]::GetEnvironmentVariable('Path', 'Machine'),
-              [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
-    $env:PATH = [Environment]::ExpandEnvironmentVariables($paths)
+    $env:PATH = Merge-NativePath @($env:PATH, [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+                                 [Environment]::GetEnvironmentVariable('Path', 'User'))
 }
 
 function Add-NativeUserPath([string]$directory) {
@@ -12,7 +27,7 @@ function Add-NativeUserPath([string]$directory) {
     if ($directory -notin @($entries | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') })) {
         [Environment]::SetEnvironmentVariable('Path', (@($directory) + $entries -join ';'), 'User')
     }
-    $env:PATH = $directory + ';' + $env:PATH
+    $env:PATH = Merge-NativePath @($directory, $env:PATH)
 }
 
 function Get-NativeCommand([string]$name) {

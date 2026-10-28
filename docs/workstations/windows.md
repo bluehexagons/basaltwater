@@ -118,7 +118,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source
 ```
 
 Add `-UpdateSource` to deliberately resolve and save a newer source revision.
-Resume reuses saved tool selections; add `-Plan` to preview them without writes.
+Resume reuses saved tool selections. Explicit runtime, game-tool and desktop
+switches update those selections; `-AgentTool` adds providers to the saved list.
+For example, use `-Resume -Go -AgentTool claude` to add Go and Claude while
+retaining existing providers. Add `-Plan` to preview the merged selections
+without writes. Selected bundles continue to supply their dependencies;
+existing installed tools and provider logins are retained.
 The checkout command applies its explicit options directly and does not create
 or update pinned-installer state.
 
