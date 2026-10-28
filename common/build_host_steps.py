@@ -806,17 +806,37 @@ def _install_node_toolchain(config: SetupConfig) -> None:
     if not config.install_node:
         return
     from common.common_steps import install_node_for_user
+    from lib.node_toolchain import supported_node_baselines
 
     _ensure_directory(BUILD_NODE_HOME, mode=0o755)
     # Setup holds the drained worker lease. No project source is present here.
-    run(["chown", BUILD_ACCOUNT + ":" + BUILD_ACCOUNT, "--", BUILD_NODE_HOME])
+    previous_umask = os.umask(0o022)
     try:
+        # A prior enrollment froze the whole inventory, including NVM's cache
+        # and runtime ownership records. Hand all of it back for this idle update.
+        run(["chown", "-hR", BUILD_ACCOUNT + ":" + BUILD_ACCOUNT, "--", BUILD_NODE_HOME])
+        run(["chmod", "-R", "u+rwX", "--", BUILD_NODE_HOME])
         install_node_for_user(BUILD_ACCOUNT, BUILD_NODE_HOME,
                               refresh=config.refresh_packages)
+        # Keep the shared LTS selection npm-ready too: a newer LTS in the
+        # inventory takes precedence over the exact floor for a major pin.
+        for version in (*supported_node_baselines(), "lts/*"):
+            run([
+                "runuser", "-u", BUILD_ACCOUNT, "--", "env", "-i",
+                "HOME=" + BUILD_NODE_HOME, "NVM_DIR=" + BUILD_NODE_HOME + "/.nvm",
+                "USER=" + BUILD_ACCOUNT, "LOGNAME=" + BUILD_ACCOUNT,
+                "PATH=/usr/bin:/bin", "LANG=C.UTF-8",
+                "/usr/bin/python3", "-I", SOURCE_ROOT + "/basaltwater.py", "node", "install",
+                "--project", BUILD_NODE_HOME, "--version", version,
+                "--package-manager", "npm@11.18.0",
+            ], cwd=BUILD_NODE_HOME)
     finally:
-        run(["chown", "-hR", "root:root", "--", BUILD_NODE_HOME])
-        run(["chmod", "-R", "go-w", "--", BUILD_NODE_HOME])
-        run(["chmod", "0755", "--", BUILD_NODE_HOME])
+        try:
+            run(["chown", "-hR", "root:root", "--", BUILD_NODE_HOME])
+            run(["chmod", "-R", "a+rX,go-w", "--", BUILD_NODE_HOME])
+            run(["chmod", "0755", "--", BUILD_NODE_HOME])
+        finally:
+            os.umask(previous_umask)
 
 
 def _store_snapshot(store) -> tuple[bool, bool]:

@@ -127,7 +127,22 @@ replaying a job whose claim outcome is uncertain. Required packages are
 `git`, `e2fsprogs`, `openssh-server`, and `sudo`. Explicit `--node` setup uses
 the shared managed Node installer and freezes its inventory under the
 root-controlled `/opt/basaltwater-build-tools/.nvm`; project builds cannot
-install or replace that inventory. Go installation remains with the common
+install or replace that inventory. In addition to the shared latest-LTS
+bootstrap, explicit `--node` enrollment installs every exact supported policy
+baseline (currently 24.22.1 and 26.12.1) through the trusted `node install
+--project /opt/basaltwater-build-tools --version VERSION` CLI. Each baseline
+receives exact npm 11.18.0, satisfying the shipped Node-26 project's npm engine.
+The same CLI also prepares latest LTS with that npm version so a newer LTS
+selected by a major pin remains ready.
+These commands run as the worker with a clean environment, the managed tool
+home and `NVM_DIR`, and umask 022, without project code or personal credentials.
+Only the tool inventory is temporarily made recursively worker-owned while
+the worker is drained, leased and idle; it is frozen back to root ownership
+and made readable/searchable even if installation fails. Re-enrollment can
+therefore refresh an existing frozen NVM tree. Other missing supported pins
+still require explicit administrator installation into this inventory during
+an idle maintenance window; build requests never install runtimes.
+Go installation remains with the common
 setup flow, and Python uses the operating-system Python 3.
 Prerequisite installs use the shared 300-second APT lock timeout.
 

@@ -372,26 +372,107 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
 
     def test_node_provisioning_is_explicit_and_freezes_inventory_even_on_failure(self):
-        for selected, failure in ((False, False), (True, False), (True, True)):
+        from lib.node_toolchain import supported_node_baselines
+
+        for selected, failure in ((False, None), (True, None), (True, "bootstrap"),
+                                  (True, "24.22.1"), (True, "26.12.1"),
+                                  (True, "lts/*"), (True, "chown")):
+            events = []
+
+            def command(argv, **kwargs):
+                events.append(argv)
+                if argv[0] == "runuser":
+                    self.assertEqual(kwargs["cwd"], setup.BUILD_NODE_HOME)
+                    self.assertEqual(argv[:6], ["runuser", "-u", setup.BUILD_ACCOUNT, "--", "env", "-i"])
+                    self.assertIn("HOME=" + setup.BUILD_NODE_HOME, argv)
+                    self.assertIn("NVM_DIR=" + setup.BUILD_NODE_HOME + "/.nvm", argv)
+                    self.assertEqual(argv[argv.index("--project") + 1], setup.BUILD_NODE_HOME)
+                    self.assertEqual(argv[argv.index("/usr/bin/python3"):][:6], [
+                        "/usr/bin/python3", "-I", setup.SOURCE_ROOT + "/basaltwater.py",
+                        "node", "install", "--project"])
+                    self.assertEqual(argv[-2:], ["--package-manager", "npm@11.18.0"])
+                    if argv[argv.index("--version") + 1] == failure:
+                        raise RuntimeError("install failed")
+                elif failure == "chown" and argv[2] != "root:root" and argv[0] == "chown":
+                    raise RuntimeError("install failed")
+
+            def bootstrap(*_args, **_kwargs):
+                events.append("bootstrap")
+                current = os.umask(0o022)
+                self.assertEqual(current, 0o022)
+                if failure == "bootstrap":
+                    raise RuntimeError("install failed")
+
             with self.subTest(selected=selected, failure=failure), \
                  patch.object(setup, "_ensure_directory") as directory, \
-                 patch.object(setup, "run") as run, \
+                 patch.object(setup, "run", side_effect=command) as run, \
                  patch("common.common_steps.install_node_for_user",
-                       side_effect=RuntimeError("install failed") if failure else None) as install:
+                       side_effect=bootstrap) as install:
                 config = setup_config(install_node=selected, refresh_packages=False)
-                if failure:
-                    with self.assertRaisesRegex(RuntimeError, "install failed"):
+                previous = os.umask(0o077)
+                try:
+                    if failure:
+                        with self.assertRaisesRegex(RuntimeError, "install failed"):
+                            setup._install_node_toolchain(config)
+                    else:
                         setup._install_node_toolchain(config)
-                else:
-                    setup._install_node_toolchain(config)
+                    self.assertEqual(os.umask(0o077), 0o077)
+                finally:
+                    os.umask(previous)
                 if not selected:
                     install.assert_not_called()
                     run.assert_not_called()
                     directory.assert_not_called()
                     continue
-                install.assert_called_once_with(setup.BUILD_ACCOUNT, setup.BUILD_NODE_HOME, refresh=False)
-                self.assertIn(["chown", "-hR", "root:root", "--", setup.BUILD_NODE_HOME],
-                              [call.args[0] for call in run.call_args_list])
+                if failure != "chown":
+                    install.assert_called_once_with(setup.BUILD_ACCOUNT, setup.BUILD_NODE_HOME, refresh=False)
+                    self.assertEqual(events[1], ["chmod", "-R", "u+rwX", "--", setup.BUILD_NODE_HOME])
+                self.assertEqual(events[0], ["chown", "-hR", "basaltwater-build:basaltwater-build",
+                                             "--", setup.BUILD_NODE_HOME])
+                self.assertEqual(events[-3:], [
+                    ["chown", "-hR", "root:root", "--", setup.BUILD_NODE_HOME],
+                    ["chmod", "-R", "a+rX,go-w", "--", setup.BUILD_NODE_HOME],
+                    ["chmod", "0755", "--", setup.BUILD_NODE_HOME]])
+                if failure is None:
+                    installs = [e for e in events if isinstance(e, list) and e[0] == "runuser"]
+                    self.assertEqual([e[e.index("--version") + 1] for e in installs],
+                                     [*supported_node_baselines(), "lts/*"])
+                    self.assertLess(events.index("bootstrap"), events.index(installs[0]))
+
+    def test_provisioned_baselines_select_shipped_pins_and_refuse_other_missing_pins(self):
+        from lib.node_toolchain import NodeSelectionUnavailable, select_node
+
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "tools"
+            home.mkdir()
+            nvm = home / ".nvm"
+            project = Path(temp) / "project"
+            project.mkdir()
+            (project / ".git").mkdir()
+
+            def command(argv, **_kwargs):
+                if argv[0] == "runuser":
+                    version = argv[argv.index("--version") + 1]
+                    if version == "lts/*":
+                        version = "24.23.0"
+                    node = nvm / "versions/node" / ("v" + version) / "bin/node"
+                    node.parent.mkdir(parents=True, exist_ok=True)
+                    node.touch(mode=0o755)
+
+            with patch.object(setup, "BUILD_NODE_HOME", str(home)), \
+                 patch.object(setup, "_ensure_directory"), \
+                 patch.object(setup, "run", side_effect=command), \
+                 patch("common.common_steps.install_node_for_user"):
+                setup._install_node_toolchain(setup_config(install_node=True, refresh_packages=True))
+                # Refresh the already-populated inventory through the same path.
+                setup._install_node_toolchain(setup_config(install_node=True, refresh_packages=True))
+            for pin, expected in (("24.22.1", "24.22.1"), ("26", "26.12.1")):
+                (project / ".nvmrc").write_text(pin)
+                self.assertEqual(select_node(str(project), nvm_dir=str(nvm)).version, expected)
+            (project / ".nvmrc").write_text("24.22.2")
+            with patch("lib.node_toolchain.shutil.which", return_value=None), \
+                 self.assertRaisesRegex(NodeSelectionUnavailable, "node install --version 24.22.2"):
+                select_node(str(project), nvm_dir=str(nvm))
 
     def test_service_and_ssh_sudo_configuration_are_fixed(self) -> None:
         unit = setup._service_content()
@@ -920,6 +1001,31 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
         return {str(path.relative_to(self.base)): (stat.S_IMODE(path.stat().st_mode),
                                                    path.read_bytes() if path.is_file() else None)
                 for path in self.base.rglob("*")}
+
+    def test_node_install_and_refresh_remain_under_drained_worker_lease(self) -> None:
+        home = self.base / "tools"
+        installs = []
+
+        def bootstrap(*_args, **_kwargs):
+            self.assertTrue(self.store.leased)
+            self.assertTrue(self.store.state["draining"])
+
+        def command(argv, **kwargs):
+            if argv[0] in {"runuser", "chown", "chmod"}:
+                self.assertTrue(self.store.leased)
+                self.assertTrue(self.store.state["draining"])
+            if argv[0] == "runuser":
+                installs.append(argv[argv.index("--version") + 1])
+            return self.native(argv, **kwargs)
+
+        with patch.object(setup, "BUILD_NODE_HOME", str(home)), \
+             patch.object(setup, "run", side_effect=command), \
+             patch("common.common_steps.install_node_for_user", side_effect=bootstrap):
+            for refresh in (False, True):
+                setup.configure_build_host(setup_config(install_node=True, refresh_packages=refresh))
+                self.assertFalse(self.store.leased)
+                self.assertFalse(self.store.state["draining"])
+        self.assertEqual(installs, ["24.22.1", "26.12.1", "lts/*"] * 2)
 
     def test_hardened_enrollment_rerun_and_disable_use_only_owned_primary_groups(self) -> None:
         from common.build_ssh_admission import managed_transport_groups

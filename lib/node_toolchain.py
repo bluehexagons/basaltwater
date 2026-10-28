@@ -33,6 +33,11 @@ MAX_RELEASE_INDEX_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_ENTRIES = 4096
 
 
+def supported_node_baselines() -> tuple[str, ...]:
+    """Return exact policy floors for explicit managed-host provisioning."""
+    return tuple(".".join(map(str, floor)) for floor in _SUPPORTED_NODE_FLOORS)
+
+
 def is_supported_node(version: str) -> bool:
     """Check managed runtime policy without restricting the generic range parser."""
     try:
