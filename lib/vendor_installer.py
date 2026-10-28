@@ -51,7 +51,11 @@ def installer_command(tool: str) -> str:
 
 
 def _state_directory() -> Path:
-    home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    # Setup supplies a dedicated HOME when installing for a locked service
+    # account. Keep provenance beside that inventory, rather than /nonexistent.
+    home = Path(os.environ.get("HOME") or pwd.getpwuid(os.geteuid()).pw_dir)
+    if not home.is_absolute():
+        raise ValueError("Installer home must be absolute")
     root = Path("/var/lib/basaltwater/installer-provenance") if os.geteuid() == 0 else home / ".local/state/basaltwater/installers"
     validate_filesystem_path(str(root), must_exist=False)
     for path in reversed((root, *root.parents)):

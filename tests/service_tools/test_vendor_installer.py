@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from lib import vendor_installer as installer
 
@@ -222,3 +223,25 @@ class TestVendorInstaller(unittest.TestCase):
         os.mkfifo(fifo)
         with self.assertRaisesRegex(ValueError, "regular"):
             installer.record_installer("codex", str(fifo))
+
+
+class TestInstallerStateDirectory(unittest.TestCase):
+    def test_service_account_uses_explicit_owned_home_without_creating_login_home(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            installer.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/nonexistent"),
+        ), patch.dict(os.environ, {"HOME": directory}):
+            # Observe ownership as the real fixture user; never write root state.
+            if os.geteuid() == 0:
+                self.skipTest("non-root installer home fixture")
+            expected = Path(directory) / ".local/state/basaltwater/installers"
+            self.assertEqual(installer._state_directory(), expected)
+            self.assertEqual(expected.stat().st_mode & 0o777, 0o700)
+            expected.chmod(0o755)
+            with self.assertRaisesRegex(ValueError, "private"):
+                installer._state_directory()
+
+    def test_relative_home_refuses_before_directory_creation(self):
+        with patch.dict(os.environ, {"HOME": "relative"}), patch.object(Path, "mkdir") as mkdir:
+            with self.assertRaisesRegex(ValueError, "absolute"):
+                installer._state_directory()
+        mkdir.assert_not_called()
