@@ -134,7 +134,10 @@ paths with untrusted accounts.
 The game bundle requires at least 15 GiB free on the system/account drives and
 25 GiB on the selected storage drive before installing missing tooling. A
 complete existing bundle still receives version checks on reconciliation,
-without requiring the fresh-install allowance again. Without separate
+without requiring the fresh-install allowance again. Discovery checks both
+PATH and the vendor locations used during setup, including 7-Zip, CMake,
+LLVM and the Vulkan SDK; a vendor CLI outside PATH does not by itself require
+a new installation. Without separate
 storage, the larger floor applies to the account drive. These are conservative
 bootstrap floors; vcpkg sources, intermediate builds, packages, captures and
 multiple checkouts need additional space. Shared Windows SDK components,

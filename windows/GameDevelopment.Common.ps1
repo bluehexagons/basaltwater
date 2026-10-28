@@ -55,31 +55,36 @@ function Ensure-NativeCppTools([switch]$Plan, [string]$StorageRoot = '') {
     }
 }
 
-function Ensure-NativeGameCommand([string]$name, [string]$packageId, [string[]]$directories = @(),
-                                 [string]$versionArgument = '--version', [switch]$Plan) {
-    # Some vendor packages (notably 7-Zip) intentionally do not add their CLI to PATH.
+function Get-NativeGameDirectories([string]$name) {
+    switch ($name) {
+        { $_ -in @('cmake', 'ctest') } { Join-Path $env:ProgramFiles 'CMake\bin' }
+        { $_ -in @('clang', 'clang-format', 'clang-tidy', 'llvm-symbolizer') } { Join-Path $env:ProgramFiles 'LLVM\bin' }
+        '7z' { Join-Path $env:ProgramFiles '7-Zip' }
+        { $_ -in @('glslang', 'glslangValidator') } { Get-NativeShaderDirectories }
+    }
+}
+
+function Get-NativeGameCommand([string]$name, [string[]]$directories = @()) {
+    # Discovery must agree with the disk preflight and must not change PATH.
     $command = Get-NativeCommand $name
     foreach ($directory in $directories) {
         if ($command) { break }
         $candidate = Join-Path $directory ($name + '.exe')
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-            if (-not $Plan) { Add-NativeUserPath $directory }
             $command = $candidate
         }
     }
+    return $command
+}
+
+function Ensure-NativeGameCommand([string]$name, [string]$packageId, [string[]]$directories = @(),
+                                 [string]$versionArgument = '--version', [switch]$Plan) {
+    $command = Get-NativeGameCommand $name $directories
     if (-not $command -and -not $Plan) {
         Ensure-WingetPackage $packageId "$name installation" -NoUpgrade
         Update-NativePath
         if ($packageId -eq 'KhronosGroup.VulkanSDK') { $directories += @(Get-NativeShaderDirectories) }
-        $command = Get-NativeCommand $name
-        foreach ($directory in $directories) {
-            if ($command) { break }
-            $candidate = Join-Path $directory ($name + '.exe')
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                Add-NativeUserPath $directory
-                $command = $candidate
-            }
-        }
+        $command = Get-NativeGameCommand $name $directories
         if (-not $command) { throw "$name is unavailable after $packageId installation; repair the package/PATH and rerun setup." }
     }
     if ($Plan) {
@@ -87,6 +92,7 @@ function Ensure-NativeGameCommand([string]$name, [string]$packageId, [string[]]$
         else { Write-Host "Install $name via WinGet: $packageId" }
         return
     }
+    if (-not (Get-NativeCommand $name)) { Add-NativeUserPath (Split-Path -Parent $command) }
     & $command $versionArgument
     if ($LASTEXITCODE -ne 0) { throw "$name version check failed (exit code $LASTEXITCODE)" }
 }
@@ -102,10 +108,11 @@ function Test-NativeGameToolsPresent([switch]$GameDev, [switch]$ShaderTools) {
     if ($GameDev) {
         if (-not (Get-NativeVisualStudio) -or -not (Test-NativeWindowsSdk)) { return $false }
         foreach ($name in @('cmake', 'ctest', 'ninja', 'clang', 'clang-format', 'clang-tidy', 'llvm-symbolizer', '7z')) {
-            if (-not (Get-NativeCommand $name)) { return $false }
+            if (-not (Get-NativeGameCommand $name @(Get-NativeGameDirectories $name))) { return $false }
         }
     }
-    if ($ShaderTools -and -not (Get-NativeCommand glslangValidator) -and -not (Get-NativeCommand glslang)) { return $false }
+    if ($ShaderTools -and -not (Get-NativeGameCommand glslangValidator @(Get-NativeShaderDirectories)) -and
+        -not (Get-NativeGameCommand glslang @(Get-NativeShaderDirectories))) { return $false }
     return $true
 }
 
@@ -127,18 +134,17 @@ function Assert-NativeGameSpace([string]$StorageRoot = '') {
 function Install-NativeGameTools([switch]$GameDev, [switch]$ShaderTools, [switch]$Plan, [string]$StorageRoot = '') {
     if ($GameDev) {
         Ensure-NativeCppTools -Plan:$Plan -StorageRoot $StorageRoot
-        Ensure-NativeGameCommand cmake Kitware.CMake @((Join-Path $env:ProgramFiles 'CMake\bin')) -Plan:$Plan
-        Ensure-NativeGameCommand ctest Kitware.CMake @((Join-Path $env:ProgramFiles 'CMake\bin')) -Plan:$Plan
+        Ensure-NativeGameCommand cmake Kitware.CMake @(Get-NativeGameDirectories cmake) -Plan:$Plan
+        Ensure-NativeGameCommand ctest Kitware.CMake @(Get-NativeGameDirectories ctest) -Plan:$Plan
         Ensure-NativeGameCommand ninja Ninja-build.Ninja -Plan:$Plan
-        $llvmBin = Join-Path $env:ProgramFiles 'LLVM\bin'
         foreach ($name in @('clang', 'clang-format', 'clang-tidy', 'llvm-symbolizer')) {
-            Ensure-NativeGameCommand $name LLVM.LLVM @($llvmBin) -Plan:$Plan
+            Ensure-NativeGameCommand $name LLVM.LLVM @(Get-NativeGameDirectories $name) -Plan:$Plan
         }
-        Ensure-NativeGameCommand 7z 7zip.7zip @((Join-Path $env:ProgramFiles '7-Zip')) -versionArgument 'i' -Plan:$Plan
+        Ensure-NativeGameCommand 7z 7zip.7zip @(Get-NativeGameDirectories 7z) -versionArgument 'i' -Plan:$Plan
     }
     if ($ShaderTools) {
         # VULKAN_SDK is set by the SDK installer for new processes.
-        $name = if (Get-NativeCommand glslang) { 'glslang' } else { 'glslangValidator' }
+        $name = if (Get-NativeGameCommand glslang @(Get-NativeShaderDirectories)) { 'glslang' } else { 'glslangValidator' }
         Ensure-NativeGameCommand $name KhronosGroup.VulkanSDK @(Get-NativeShaderDirectories) -Plan:$Plan
     }
 }

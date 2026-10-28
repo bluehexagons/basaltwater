@@ -102,11 +102,24 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         $script:Missing = ''; $script:ReadySdk = $true
         function Get-NativeVisualStudio { return 'F:\VS' }
         function Test-NativeWindowsSdk { return $script:ReadySdk }
+        function Get-NativeGameDirectories { return (Join-Path $temporary 'vendor discovery') }
+        function Get-NativeShaderDirectories { return (Join-Path $temporary 'shader discovery') }
         function Get-NativeCommand($name) { if ($name -ne $script:Missing) { return "mock-$name.exe" } }
         Assert-True (Test-NativeGameToolsPresent -GameDev -ShaderTools) 'Complete installed tooling was not recognized for reconciliation'
         $script:Missing = 'clang-tidy'
         Assert-True (-not (Test-NativeGameToolsPresent -GameDev)) 'Missing selected analyzer bypassed installation space checks'
         Assert-True (Test-NativeGameToolsPresent -ShaderTools) 'Unselected game tooling blocked shader-only reconciliation'
+        $vendor = Join-Path $temporary 'vendor discovery'
+        New-Item -ItemType Directory -Path $vendor | Out-Null
+        foreach ($name in @('7z', 'cmake', 'ctest', 'clang', 'clang-format', 'clang-tidy', 'llvm-symbolizer')) {
+            $script:Missing = $name
+            Set-Content -LiteralPath (Join-Path $vendor "$name.exe") -Value 'fixture'
+            Assert-True (Test-NativeGameToolsPresent -GameDev) "Installed $name outside PATH triggered installation space requirements"
+        }
+        function Add-NativeUserPath { throw 'Discovery changed PATH' }
+        function Ensure-WingetPackage { throw 'Discovery installed a package' }
+        $script:Missing = '7z'
+        Assert-True (Test-NativeGameToolsPresent -GameDev) 'Vendor-only tool was not reusable without installation'
         $script:ReadySdk = $false
         Assert-True (-not (Test-NativeGameToolsPresent -GameDev)) 'Missing SDK bypassed installation space checks'
     }
