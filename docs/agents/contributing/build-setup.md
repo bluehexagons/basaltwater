@@ -7,6 +7,13 @@ under the controller's existing setup-target lock. Without a selected builder,
 ordinary setup preserves its existing flow. See the operator
 [selected-builder guide](../../services/deployments.md#build-on-a-saved-builder).
 
+Both controller CLI entrypoints validate selected-build configuration before
+provisioning or starting a guest, resolving credentials, or saving setup state.
+Patch and saved deploy use the same check. Unsupported profile options and
+missing target enrollment therefore leave the saved setup and guests untouched.
+Source preparation and live builder/target checks still run at execution; this
+early configuration check does not establish source or host readiness.
+
 The first slice requires explicit `--build-target-policy`, an enrolled saved
 builder and controller-local SSH identity/trust files. Selection resolves an
 exact, case-insensitive unique saved host, friendly name or tag, then binds the

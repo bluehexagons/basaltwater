@@ -181,11 +181,80 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         self.apply.assert_called_once()
         self.assertFalse(self.apply.call_args.args[0].artifact_deployments)
 
+    def test_unsupported_patch_preserves_saved_setup_and_credentials(self):
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        for options in (("--ssl",), ("--cloudflare",), ("--app-server",), ("--go",)):
+            for dry_run in (False, True):
+                with self.subTest(options=options, dry_run=dry_run), \
+                     patch.object(basaltwater, "store_cli_credentials") as credentials, \
+                     patch.object(basaltwater, "save_setup_command") as save:
+                    self.assertEqual(basaltwater.run_patch_command(self.patch_args(
+                        *options, *(["--dry-run"] if dry_run else []),
+                    )), 1)
+                    credentials.assert_not_called()
+                    save.assert_not_called()
+                self.assertEqual(
+                    {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before,
+                )
+        self.sources.assert_not_called()
+        self.builder.assert_not_called()
+        self.target.assert_not_called()
+        self.apply.assert_not_called()
+
+    def test_unsupported_saved_deploy_preserves_setup_and_credentials(self):
+        self.config.enable_ssl = True
+        save_setup_command(self.config)
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        with patch.object(basaltwater, "store_cli_credentials") as credentials, \
+             patch.object(basaltwater, "save_setup_command") as save:
+            args = self.parser.parse_args(["deploy", "target.example", "--yes"])
+            self.assertEqual(basaltwater.run_deploy_command(args), 1)
+        credentials.assert_not_called()
+        save.assert_not_called()
+        self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+        self.sources.assert_not_called()
+        self.builder.assert_not_called()
+        self.apply.assert_not_called()
+
 
 class BuildSetupTransportTests(unittest.TestCase):
     def config(self, **kwargs):
         return SetupConfig(host="target.example", username="agent", system_type="server_web",
                            machine_type="vm", **kwargs)
+
+    def test_unsupported_setup_refuses_before_provisioning_or_saving(self):
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        with tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, {"BASALTWATER_WORKSPACE": temporary}))
+            stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
+            stack.enter_context(patch("lib.system_utils.get_local_timezone", return_value="UTC"))
+            provision = stack.enter_context(patch("lib.proxmox_vm.provision_vm"))
+            start = stack.enter_context(patch("lib.proxmox_vm.ensure_vm_running"))
+            credentials = stack.enter_context(patch.object(basaltwater, "store_cli_credentials"))
+            save = stack.enter_context(patch.object(basaltwater, "save_setup_command"))
+            apply = stack.enter_context(patch.object(basaltwater, "run_remote_setup"))
+            for options in (("--ssl",), ("--cloudflare",), ("--go",), ()):
+                for dry_run in (False, True):
+                    with self.subTest(options=options, dry_run=dry_run):
+                        args = parser.parse_args([
+                            "setup", "server_web", "192.0.2.52", "agent",
+                            "--provision-on", "192.0.2.10", "--build-on", "builder",
+                            "--deploy", "example.com", "https://example.com/source.git",
+                            *options, *(["--dry-run"] if dry_run else []),
+                        ])
+                        self.assertEqual(basaltwater.run_setup_command(args), 1)
+            provision.assert_not_called()
+            start.assert_not_called()
+            credentials.assert_not_called()
+            save.assert_not_called()
+            apply.assert_not_called()
+
+    def test_legacy_runtime_preparation_checks_selection_before_credentials(self):
+        config = self.config(build_on="builder", enable_ssl=True)
+        with patch.object(setup_common, "prepare_runtime_config") as credentials, \
+             self.assertRaisesRegex(ValueError, "Cloudflare or SSL"):
+            setup_common.prepare_validated_runtime_config(config, None)
+        credentials.assert_not_called()
 
     def test_selected_builder_runs_inside_existing_target_lock_without_recursive_hook(self):
         owned = False

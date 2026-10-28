@@ -1281,6 +1281,10 @@ def prepare_validated_runtime_config(
     """Apply saved-host defaults, resolve credentials, and validate a setup."""
     validate_kiosk_settings(config)
     _apply_hosted_proxmox_defaults(config, workspace)
+    if config.build_on is not None:
+        from lib.build_setup import validate_build_setup_selection
+
+        validate_build_setup_selection(config)
     runtime_config = prepare_runtime_config(config, workspace)
     validate_timezone_name(runtime_config.timezone)
     validate_apt_packages(runtime_config.apt_packages)

@@ -71,7 +71,12 @@ def _private_directory(path: str) -> None:
         os.close(descriptor)
 
 
-def _validate_selection(config: SetupConfig) -> None:
+def validate_build_setup_selection(config: SetupConfig) -> None:
+    """Check selected-build configuration before provisioning or saving state.
+
+    This is a local, side-effect-free check. Builder selection, source planning
+    and live target probes still run under the setup-target lock at execution.
+    """
     from common.build_target_refresh import validate_artifact_refresh
 
     validate_artifact_refresh(config)
@@ -164,7 +169,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
     Preparation and read-only probes precede bootstrap. Any uncertain mutating
     outcome retains a host-scoped durable guard, sources and all exact inputs.
     """
-    _validate_selection(config)
+    validate_build_setup_selection(config)
     selected = resolve_saved_builder(config.build_on)
     endpoint = resolve_target_endpoint(config)
     with ExitStack() as stack:
