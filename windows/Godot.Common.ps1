@@ -64,6 +64,10 @@ function Install-NativeGodot([switch]$Plan) {
         '@echo off', '"%BASALTWATER_GODOT_EXE%" %*', 'exit /b %errorlevel%' |
             Set-Content -LiteralPath $launcher -Encoding ASCII
         Add-NativeUserPath $bin
+    } elseif ($env:BASALTWATER_GODOT_EXE -or [Environment]::GetEnvironmentVariable('BASALTWATER_GODOT_EXE', 'User')) {
+        # A new PATH executable can supersede the portable package. Keep the
+        # existing managed launcher and project consumers on the validated tool.
+        Set-NativeGodotExecutable $command
     }
     Write-Host 'Godot ready. Match each project engine version; install matching export templates in the editor. C# requires Godot .NET and its SDK separately.'
 }

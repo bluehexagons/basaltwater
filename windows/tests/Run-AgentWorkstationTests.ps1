@@ -179,6 +179,13 @@ try {
         param($DriveLetter)
         if ($DriveLetter -ne 'X') { return @{ FileSystem = 'NTFS'; HealthStatus = 'Healthy' } }
     }
+    function global:Join-Path {
+        param([string]$Path, [string]$ChildPath)
+        # The mocked F: volume need not exist on this PC. Join-Path otherwise
+        # consults the real provider before storage validation can use the mock.
+        if ($Path -match '\AF:[\\/]') { return [IO.Path]::Combine($Path, $ChildPath) }
+        Microsoft.PowerShell.Management\Join-Path -Path $Path -ChildPath $ChildPath
+    }
     function global:Invoke-RestMethod {
         param($Uri)
         $global:AgentInstallerTestRequests += $Uri
@@ -320,6 +327,10 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\Basaltwater') 'Refresh forgot the split-storage selection'
         $beforeBadStorage = (Get-FileHash -LiteralPath $nativeStatePath).Hash
         $beforeBadCalls = $global:AgentInstallerTestCalls.Count
+        foreach ($emptyRoot in @('', ' ')) {
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageRoot $emptyRoot } 'StorageRoot cannot be empty'
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -StorageRoot $emptyRoot -Plan } 'StorageRoot cannot be empty'
+        }
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageDrive X } 'healthy mounted NTFS'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -StorageDrive X } 'healthy mounted NTFS'
         $linkedRoot = Join-Path $temporary 'unsafe storage'
@@ -371,7 +382,7 @@ function Invoke-NativeAgentSetup {
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Godot -Plan } 'requires agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -StorageDrive F -Plan } 'requires agent_windows'
     } finally {
-        foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
+        foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Join-Path', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
         }
         Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests -Scope Global

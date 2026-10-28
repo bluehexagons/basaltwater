@@ -176,6 +176,7 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         function Update-NativePath { }
         function Set-NativeGodotExecutable($command) { $script:GodotWrites += $command; $env:BASALTWATER_GODOT_EXE = $command }
         function Mock-GodotVersion { $script:VersionArguments = @($args); $global:LASTEXITCODE = $script:VersionExit }
+        function Mock-ReplacementGodotVersion { Mock-GodotVersion @args }
         function Invoke-NativeGodotVersion($command) {
             & $command --headless --version
             if ($LASTEXITCODE -ne 0) { throw 'Godot version check failed' }
@@ -196,11 +197,16 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         $script:Tool = $godotLauncher
         Install-NativeGodot
         Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 2) 'Managed Godot launcher was not reconciled against its real executable'
-        $script:Tool = 'Mock-GodotVersion'
+        # The old portable package disappeared and a real PATH command replaced
+        # it. Project scripts and the retained launcher must follow that tool.
+        $script:PackageTool = $null
+        $script:Tool = 'Mock-ReplacementGodotVersion'
         Install-NativeGodot
-        Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 2) 'Existing Godot was replaced'
+        Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 3 -and
+            $script:GodotWrites[-1] -eq $script:Tool -and $env:BASALTWATER_GODOT_EXE -eq $script:Tool) 'Godot refresh retained the obsolete portable executable'
         $script:VersionExit = 7
         Assert-Throws { Install-NativeGodot } 'version check failed'
+        Assert-True ($script:GodotWrites.Count -eq 3) 'Failed Godot verification changed the saved executable'
         $script:VersionExit = 0; $script:Tool = $null; $script:PackageTool = $null; $script:InstallWorks = $false
         Assert-Throws { Install-NativeGodot } 'unavailable after installation'
     }

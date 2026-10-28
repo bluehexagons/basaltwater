@@ -36,7 +36,9 @@ headlessly. The version probe waits for the actual process, including a GUI
 executable, and fails on a nonzero exit or a 30-second timeout.
 When WinGet extracts its portable package without creating an
 alias, setup supplies a per-account command launcher. Reconciliation refreshes
-that launcher against the installed package. Match each project's required
+that launcher and its `BASALTWATER_GODOT_EXE` selection against the validated
+engine, including when a real PATH command supersedes the portable package.
+Match each project's required
 engine version; this host selection does not override repository pins.
 Install matching export templates through **Editor > Manage Export Templates**.
 C# projects additionally need Godot .NET and the project's .NET SDK; Android and
@@ -107,6 +109,8 @@ The volume and every managed subdirectory are checked before replacing saved
 selections or entering setup. An absent/unhealthy drive, non-NTFS filesystem,
 invalid path or junction fails with the previous saved setup intact. Restore
 the drive or explicitly select a new letter; setup never falls back to C:.
+An explicit empty `-StorageRoot` is rejected; it cannot clear a saved selection
+while leaving the account's cache settings on the old drive.
 
 The resolved root explicitly selects account-level `FNM_DIR`, `UV_CACHE_DIR`,
 `npm_config_cache`, `GOMODCACHE`, `GOCACHE` and `VCPKG_DEFAULT_BINARY_CACHE`.

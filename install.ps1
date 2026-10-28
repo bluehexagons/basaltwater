@@ -338,6 +338,9 @@ try {
             if ($PSBoundParameters.ContainsKey('StorageRoot')) { throw 'Choose StorageDrive or StorageRoot, not both' }
             $StorageRoot = $StorageDrive.Substring(0, 1).ToUpperInvariant() + ':\Basaltwater'
         }
+        if ($PSBoundParameters.ContainsKey('StorageRoot') -and [string]::IsNullOrWhiteSpace($StorageRoot)) {
+            throw 'StorageRoot cannot be empty; omit it to retain saved storage or select a directory.'
+        }
     } else {
         foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'StorageRoot', 'StorageDrive')) {
             if ($PSBoundParameters.ContainsKey($option)) { throw "$option requires agent_windows" }
