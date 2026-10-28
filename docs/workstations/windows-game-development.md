@@ -205,6 +205,31 @@ Do not switch generators in an existing build directory without following the
 project's build-state cleanup procedure. Shader checks can deliberately skip a
 missing validator; verify its executable before claiming that coverage.
 
+## Godot project qualification
+
+`-Godot` supplies the standard engine, not a project's exported builds. Check
+the project's engine pin against `godot --headless --version`; install matching
+export templates using Godot's Export Template Manager. On native Windows the
+ordinary template directory is `%APPDATA%\Godot\export_templates\VERSION.stable`;
+a self-contained editor uses its own `editor_data` directory instead. See
+[Godot's export instructions](https://docs.godotengine.org/en/stable/tutorials/export/exporting_projects.html).
+
+For [snake2d](https://github.com/bluehexagons/snake2d), enter its native checkout
+and use its project-owned PowerShell commands:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test.ps1 source
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 windows
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test.ps1 windows-export
+```
+
+Source tests require no templates. The native scripts resolve the actual Godot
+executable from `BASALTWATER_GODOT_EXE` when no project override is supplied;
+use `GODOT_BIN` for a different project pin. Git Bash does not find `godot.cmd`
+as `godot`. Batch launchers also expand literal `%NAME%` argument text, so use
+the real executable for such paths. A successful source suite/export smoke
+does not replace a rendered game, real input and audio checks.
+
 ## Related repositories
 
 Animator uses its own `npm ci`, Node requirement and Electron package; no global

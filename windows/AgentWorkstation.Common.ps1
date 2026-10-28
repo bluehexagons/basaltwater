@@ -264,13 +264,17 @@ function Invoke-NativeAgentSetup {
     if ('claude' -in $AgentTool) { Ensure-NativeTool claude Anthropic.ClaudeCode -Plan:$Plan }
     if ($Python) {
         Ensure-NativeTool uv astral-sh.uv -Plan:$Plan
-        Write-Host 'Python: uv python install --default (existing Python commands are preserved)'
+        Write-Host 'Python: reuse/install managed host Python, ignoring project version requests'
         if (-not $Plan) {
             $uv = Get-NativeCommand uv
-            & $uv python install --default
-            if ($LASTEXITCODE -ne 0) { throw "Python installation failed (exit code $LASTEXITCODE)" }
-            $bin = & $uv python dir --bin
-            if ($LASTEXITCODE -ne 0 -or -not $bin) { throw 'Could not locate uv Python executables' }
+            $projectPython = $env:UV_PYTHON
+            try {
+                $env:UV_PYTHON = $null
+                & $uv python install --default --no-config
+                if ($LASTEXITCODE -ne 0) { throw "Python installation failed (exit code $LASTEXITCODE)" }
+                $bin = & $uv python dir --bin --no-config
+                if ($LASTEXITCODE -ne 0 -or -not $bin) { throw 'Could not locate uv Python executables' }
+            } finally { $env:UV_PYTHON = $projectPython }
             Add-NativeUserPath ($bin | Select-Object -Last 1)
         }
     }

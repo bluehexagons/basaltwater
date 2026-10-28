@@ -410,11 +410,17 @@ function Invoke-NativeAgentSetup {
     }
     function Mock-Uv {
         $global:LASTEXITCODE = 0
+        if ($args[0] -eq 'python') {
+            Assert-True ($args -contains '--no-config' -and -not $env:UV_PYTHON) 'Host Python adopted a project configuration/request'
+            $script:UvCalls += ,$args
+            $global:LASTEXITCODE = $script:UvExit
+        }
         if ($args.Count -ge 2 -and $args[1] -eq 'dir') { return (Join-Path $env:USERPROFILE '.local\bin') }
     }
     $script:EnsureCalls = 0; $script:Packages = @(); $script:Tools = @{}; $script:Desktop = $false
     $script:AddedPaths = @(); $script:NpmCalls = @(); $script:NpmExit = 0
     $script:VersionExit = 0; $script:FailPackage = $false
+    $script:UvCalls = @(); $script:UvExit = 0
     Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Plan
     Assert-True ($script:EnsureCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude'))) 'Plan changed the fake home'
@@ -424,6 +430,23 @@ function Invoke-NativeAgentSetup {
     Assert-True ($script:NpmCalls[0] -contains '--prefix') 'npm install was not scoped to the user prefix'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude\skills\basaltwater-subagents\references\t3-orchestration.md')) 'Claude supporting resources were not copied'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.agents\skills\basaltwater-windows-workspace\SKILL.md')) 'Windows workspace guidance was not installed'
+    $pinnedProject = Join-Path $temporary 'project with Python pin'
+    New-Item -ItemType Directory -Path $pinnedProject | Out-Null
+    Set-Content -LiteralPath (Join-Path $pinnedProject '.python-version') -Value '3.12'
+    $savedPythonRequest = $env:UV_PYTHON
+    Push-Location -LiteralPath $pinnedProject
+    try {
+        $env:UV_PYTHON = '3.11'
+        Invoke-NativeAgentSetup -Source $repo -Python
+        Assert-True ($env:UV_PYTHON -eq '3.11' -and $script:UvCalls[-2] -contains '--default') 'Host setup changed the caller Python request'
+        $script:UvExit = 23
+        Assert-Throws { Invoke-NativeAgentSetup -Source $repo -Python } 'Python installation failed'
+        Assert-True ($env:UV_PYTHON -eq '3.11') 'Python failure lost the caller request'
+    } finally {
+        $script:UvExit = 0
+        $env:UV_PYTHON = $savedPythonRequest
+        Pop-Location
+    }
     $script:Packages = @(); $script:NpmCalls = @()
     Invoke-NativeAgentSetup -Source $repo -T3CodeDesktop
     Assert-True ($script:Packages.Count -eq 0 -and $script:NpmCalls.Count -eq 0) 'Rerun reinstalled existing tools'

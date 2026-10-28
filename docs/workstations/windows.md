@@ -62,8 +62,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-AgentWor
 ```
 
 `-Node` selects Node.js LTS. Missing npm-based providers also select Node
-automatically. `-Python` installs uv and uses `uv python install --default`
-to provide a current managed Python; it does not replace another installation.
+automatically. `-Python` installs uv and reuses its installed managed Python,
+or installs the current stable Python when none is managed. It ignores the
+invoking project's version files/configuration and temporarily clears
+`UV_PYTHON` for host selection, restoring that process value even on failure.
+It does not replace another installation. Select project Python pins separately.
 `-Go` selects Go. `-AgentTool claude,opencode` adds providers to GitHub CLI and
 Codex. npm installations use the current account's `%APPDATA%\npm` prefix and
 invoke `npm.cmd`, avoiding PowerShell's script-policy restriction on `npm.ps1`.
@@ -159,6 +162,18 @@ checkout-only setup installs the launcher, but `refresh`/`info` require the
 pinned installation created by `install.ps1 -Profile agent_windows`. Existing
 PCs without the launcher must first use a current installer download with
 `-Profile agent_windows -Resume -UpdateSource`.
+
+Windows batch launchers expand literal `%NAME%` text in arguments, even when
+called from PowerShell. For a storage path containing percent expressions,
+invoke the PowerShell entry point directly so the path stays literal:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Basaltwater\bin\Invoke-Basaltw.ps1" refresh --storage-root 'F:\cache %NAME%' --dry-run
+```
+
+The direct installer/checkout scripts also accept literal paths through
+`-StorageRoot`. For Godot project paths use its real console executable,
+available as `BASALTWATER_GODOT_EXE` for Basaltwater's managed launcher.
 
 ## Verify this account
 
