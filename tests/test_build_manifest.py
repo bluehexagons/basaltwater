@@ -70,8 +70,9 @@ class BuildManifestTests(unittest.TestCase):
         request = self.request(manifest)
         self.assertEqual([item["artifacts"] for item in request["components"]], [["dist"], ["bin/api", "assets"]])
         manifest.components[1].artifacts = None
-        with self.assertRaisesRegex(ValueError, "explicit artifacts"):
-            self.request(manifest)
+        inferred = self.request(manifest)
+        self.assertEqual(inferred["components"][1]["artifacts"], ["bin/api"])
+        self.assertEqual(validate_manifest_request(manifest, inferred), inferred)
 
     def test_pinned_source_markers_infer_tools_without_reading_shell_commands(self):
         manifest = self.manifest()

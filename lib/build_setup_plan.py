@@ -12,7 +12,9 @@ from lib.build_manifest import (
     DEBIAN_PLATFORM, check_tool_readiness, request_from_manifest, required_tools,
 )
 from lib.build_protocol import DEFAULT_LIMITS, MAX_DESCRIPTOR_BYTES, encode_document
-from lib.build_runtime import _normalize_binary_path, _reject_interpreter
+from lib.manifest_serving import (
+    _normalize_binary_path, _exec_binary_path, _reject_interpreter, runtime_from_component,
+)
 from lib.build_target_policy import authorize_target_deployment
 from lib.build_target_service import MAX_HEADER_LINE_BYTES, _parse_header
 from lib.cicd_deploy_policy import validate_nginx_path
@@ -46,7 +48,7 @@ def _projection(component: Component, domain: str) -> dict[str, Any]:
         raise ValueError("Only static and binary Go service components are supported")
     # These fields cannot be represented by the typed target projection. Check
     # even static dataclasses, so a caller cannot lose meaningful runtime inputs.
-    if (component.exec is not None or component.runtime_env or component.env_file is not None
+    if component.type == "static" and (component.exec is not None or component.runtime_env or component.env_file is not None
             or component.working_dir is not None or component.sqlite_backup is not None
             or component.public_udp or component.backup_retention != 10
             or component.port is not None or component.reverse_proxy is not True):
@@ -69,11 +71,15 @@ def _projection(component: Component, domain: str) -> dict[str, Any]:
             raise ValueError("Static components require an output path")
         result.update(output=os.path.normpath(component.output), spa=component.spa)
     else:
-        if component.binary is None or component.output is not None or component.spa is not False:
-            raise ValueError("Services require a binary and cannot declare static settings")
-        binary = _normalize_binary_path(component.binary)
+        if component.output is not None or component.spa is not False:
+            raise ValueError("Services cannot declare static settings")
+        binary = (_normalize_binary_path(component.binary) if component.binary is not None
+                  else _exec_binary_path(component.exec))
         _reject_interpreter(binary)
         result.update(binary=binary, health=component.health)
+        runtime = runtime_from_component(component)
+        if runtime is not None:
+            result["runtime"] = runtime
     return result
 
 
@@ -116,7 +122,10 @@ def prepare_delivery_plan(
     routes = {item["name"]: {key: item[key] for key in ("type", "domain", "path")}
               for item in components}
     candidates = [(name, grant) for name, grant in enrollment["policy"]["applications"].items()
-                  if target_principal in grant["principals"] and grant["components"] == routes]
+                  if target_principal in grant["principals"] and {
+                      name: {key: route[key] for key in ("type", "domain", "path")}
+                      for name, route in grant["components"].items()
+                  } == routes]
     if len(candidates) != 1:
         raise ValueError("Delivery requires exactly one matching target application")
     application, target = candidates[0]

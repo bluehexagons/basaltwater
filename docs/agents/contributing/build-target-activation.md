@@ -12,11 +12,12 @@ projection and the exact ordered build inputs. It executes no build commands.
 Ready static exports omit the manifest's optional `build` field when their
 request has no commands; activation and retained-release replay preserve that
 empty command list.
-Service binaries use the first-slice convention of reading `PORT` and `HOST`
-from fixed generated runtime values; `HOST` is `127.0.0.1`. A program must honor
-those values and its declared health path. Custom commands, arguments, runtime
-environment and secret bindings remain outside this adapter. Existing ordinary
-local deployment is unaffected.
+Legacy service projections without `runtime` read implicit `PORT` and `HOST`
+values; `HOST` is `127.0.0.1`. An explicitly approved `runtime` mapping instead
+reconstructs the ordinary manifest's exact exec arguments, runtime environment,
+port, working directory, SQLite backup settings and UDP declarations. No implicit
+environment is added to that mapping. Secret bindings remain unsupported.
+Service installation and backups use the existing orchestrator implementation.
 
 The administrator's deployment root is used exactly. Generated service users,
 ports, persistent directories, prebuilt runtime verification and health rollback
@@ -164,8 +165,8 @@ runtime-install flags retain their ordinary meanings. Post-setup never calls
 ordinary `deploy_repository`, unscoped Nginx pruning or manifest UDP setup in
 this mode; the activator owns scoped retained-route publication. Cloudflare and
 SSL setup options are refused during plan construction because they have no
-supported target policy in this slice. This does not add runtime environment,
-UDP or Node packaging support.
+supported target policy in this slice. Approved runtime environment and UDP
+metadata follow the target policy; Node runtime packaging remains unsupported.
 
 A dry run reports retained artifact reconciliation without entering maintenance,
 loading target state, opening artifacts, contacting a builder or changing target

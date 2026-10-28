@@ -385,14 +385,19 @@ class TestArtifactPaths(unittest.TestCase):
                 component = parse_manifest(_manifest(declaration)).components[0]
                 self.assertEqual(artifact_paths(component), expected)
 
-    def test_exec_service_parses_without_artifacts_but_selection_requires_them(self):
+    def test_exec_service_infers_only_release_root_artifacts(self):
         component = parse_manifest(
             _manifest(_service(binary=None, exec="/usr/bin/app --serve"))
         ).components[0]
         self.assertEqual(component.exec, "/usr/bin/app --serve")
         self.assertIsNone(component.artifacts)
-        with self.assertRaisesRegex(ValueError, "require explicit artifacts"):
+        with self.assertRaisesRegex(ValueError, "must start with"):
             artifact_paths(component)
+
+        inferred = parse_manifest(_manifest(_service(
+            binary=None, exec="{{release_dir}}/.basaltwater/bin/api -port {{port}}"
+        ))).components[0]
+        self.assertEqual(artifact_paths(inferred), [".basaltwater/bin/api"])
 
         declared = parse_manifest(_manifest(_service(
             binary=None, exec="/usr/bin/app --serve", artifacts=["server/app"]

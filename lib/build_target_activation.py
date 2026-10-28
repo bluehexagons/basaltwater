@@ -25,7 +25,7 @@ from lib.cicd_deploy_policy import validate_nginx_path
 from lib.deployment import DeploymentOrchestrator
 from lib.nginx_config import create_nginx_sites_for_groups
 from lib.operation_state import OperationStateStore
-from lib.project_manifest import Manifest, parse_manifest
+from lib.project_manifest import Manifest, parse_manifest, collect_public_udp
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
 
@@ -38,6 +38,18 @@ _ID = re.compile(r"[0-9a-f]{32}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def _runtime_collisions(manifests: list[Manifest], occupied: set[int] | None = None) -> None:
+    """Reject listener collisions before any release or publication mutation."""
+    collect_public_udp([(str(index), manifest) for index, manifest in enumerate(manifests)])
+    ports = set(occupied or ())
+    for manifest in manifests:
+        for component in manifest.components:
+            if component.port is not None:
+                if component.port in ports:
+                    raise ValueError("Target release conflicts with another service port")
+                ports.add(component.port)
 
 
 def parse_expected_releases(value: object) -> list[dict[str, Any]] | None:
@@ -112,7 +124,7 @@ def _bindings_manifest(bindings: object, request: object, principal: str) -> tup
     components = bindings["components"]
     if not isinstance(components, list):
         raise ValueError("Invalid authorized target components")
-    routes = {item["name"]: {key: item[key] for key in ("type", "domain", "path")}
+    routes = {item["name"]: {key: item[key] for key in ("type", "domain", "path", "runtime") if key in item}
               for item in components if isinstance(item, dict) and "name" in item}
     policy = {"schema": 1, "applications": {bindings["application"]: {
         "project": bindings["project"], "principals": [principal],
@@ -135,9 +147,13 @@ def _bindings_manifest(bindings: object, request: object, principal: str) -> tup
         if build["commands"]:
             component["build"] = build["commands"]
         if component["type"] == "service":
-            # First-slice service convention; the client cannot supply runtime
-            # values, arbitrary arguments or secret paths through this projection.
-            component.update(port="auto", runtime_env={"PORT": "{{port}}", "HOST": "127.0.0.1"})
+            runtime = component.pop("runtime", None)
+            if runtime is None:
+                component.update(port="auto", runtime_env={"PORT": "{{port}}", "HOST": "127.0.0.1"})
+            else:
+                if "exec" in runtime:
+                    component.pop("binary")
+                component.update(runtime)
         manifest_components.append(component)
     manifest = parse_manifest({"version": 1, "components": manifest_components})
     validate_manifest_request(manifest, job)
@@ -406,6 +422,12 @@ class TargetReleaseActivator:
                                             record["request"], **arguments):
                         pass
                     prepared.append((app, record, manifest, parent, basename, arguments))
+                _runtime_collisions([item[2] for item in prepared])
+                for app, _record, manifest, *_rest in prepared:
+                    occupied = {route["backend_port"]
+                                for other, record in state["applications"].items() if other != app
+                                for route in record["deployments"] if route["backend_port"] is not None}
+                    _runtime_collisions([manifest], occupied)
                 marker = operation.begin("target-release-refresh", self.root, "reconciling", context={
                     "applications": [app for app, *_ in prepared],
                 })
@@ -479,6 +501,15 @@ class TargetReleaseActivator:
                     if any((item.domain, item.path.rstrip("/") or "/") in existing_routes
                            for item in manifest.components):
                         raise ValueError("Target release conflicts with another active application's route")
+                    _, retained = _bindings_manifest(record["bindings"], record["request"],
+                                                     record["bindings"]["principal"])
+                    occupied = {item["backend_port"] for item in record["deployments"]
+                                if item["backend_port"] is not None}
+                    # The retained manifest contains its declared fixed port;
+                    # actual assigned auto ports are also reserved here.
+                    _runtime_collisions([manifest], occupied)
+                    collect_public_udp([(binding["application"], manifest), (application, retained)])
+                _runtime_collisions([manifest])
                 installed = {
                     "operation_id": operation_id, "generation": generation,
                     "artifact_sha256": artifact_sha256, "request_sha256": request_digest(job),

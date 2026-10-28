@@ -243,7 +243,7 @@ class BuildSetupPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "health paths must be canonical"):
             self.plan(data)
 
-    def test_unsupported_execution_and_routing_fields_are_never_dropped(self):
+    def test_execution_settings_require_support_and_explicit_runtime_grants(self):
         changes = (
             {"runtime_env": {"PORT": "{{port}}"}}, {"env_file": "/etc/app.env"},
             {"working_dir": "{{release_dir}}"}, {"working_dir": "."},
@@ -253,13 +253,13 @@ class BuildSetupPlanTests(unittest.TestCase):
         for change in changes:
             data = manifest_data()
             data["components"][1].update(change)
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "unsupported execution"):
+            with self.subTest(change=change), self.assertRaises((ValueError, PermissionError)):
                 self.plan(data)
         for command in ("{{release_dir}}/bin/api", "node app.js", "python3 app.py"):
             data = manifest_data()
             data["components"][1].pop("binary")
             data["components"][1].update(exec=command, artifacts=["bin/api"])
-            with self.subTest(command=command), self.assertRaises(ValueError):
+            with self.subTest(command=command), self.assertRaises((ValueError, PermissionError)):
                 self.plan(data)
         for binary in ("bin/python3", "bin/node", "bin/bash"):
             data = manifest_data()

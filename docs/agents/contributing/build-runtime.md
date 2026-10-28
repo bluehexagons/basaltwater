@@ -12,8 +12,9 @@ The helper currently accepts only the `linux` / `x86_64` / `debian-13`
 platform. Static components have no executable runtime requirement. Service
 components must identify a declared, executable regular file through
 `binary`, or through the first `exec` argument in the exact form
-`{{release_dir}}/relative/path`. Exec-only services still need explicit
-manifest `artifacts`; the executable must be covered by the selected exports.
+`{{release_dir}}/relative/path`. Exec-only services infer that safe argv[0]
+as their default artifact export through the shared `lib.manifest_serving`
+validator. Explicit exports still take precedence and must cover the executable.
 The executable path must stay literal through service-unit generation: no
 systemd `%` specifiers, `$` expansion, quotes, backslashes, or whitespace in
 the checked token or resolved release path. The deployment boundary checks both

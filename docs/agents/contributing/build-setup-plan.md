@@ -49,18 +49,22 @@ and `./bin/api` defaults normalize using the existing artifact/runtime helpers.
 
 ## First supported slice
 
-Static outputs, including SPA fallback, and literal binary Go services are
-supported. Services require an explicit `go` runtime, automatic ports, default
-working directory and reverse proxy, and may declare a typed health path.
+Static outputs, including SPA fallback, and self-contained Go services are
+supported. Services require a `go` build runtime and reverse proxy, and may
+declare a typed health path. A safe release-root exec command can infer its
+executable export without changing ordinary manifests. Runtime settings are
+projected through `lib.manifest_serving.runtime_from_component()` and require
+an exact administrator-approved `runtime` mapping on the service route.
 Health paths must survive target parsing unchanged; noncanonical endpoints such
 as `/ready/` are refused rather than probing a different URL.
 Target runtime validation still must prove a self-contained x86-64 ELF binary;
 a Go declaration does not prove what arbitrary build commands produced.
 
-Arbitrary `exec`, interpreter services, Godot, runtime environment, environment
-files, custom working/data paths, SQLite backup settings, public UDP, fixed
-ports and alternate proxy settings are refused. Nondefault backup retention and
-unmodeled dataclass fields are refused too. CI/publishing workflows are outside
+Interpreter services, Godot, environment files, unmanaged working/data paths,
+and alternate proxy settings are refused. Approved exec arguments, runtime
+environment, managed working directories, SQLite backup/retention, public UDP
+and fixed ports use the [target runtime policy](build-target-policy.md).
+Unmodeled dataclass fields are refused too. CI/publishing workflows are outside
 this bounded slice. SPA is the only static option in the current manifest and
 target schemas. Existing target renderer cache/compression behavior remains its
 own policy; no new gzip/expires override is invented or silently discarded.

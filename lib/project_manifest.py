@@ -161,8 +161,7 @@ def artifact_paths(component: Component) -> StrList:
 
     This helper does not affect normal manifest deployment behavior. Explicit
     declarations take precedence; otherwise static outputs and built service
-    binaries are selected. Exec services need an explicit declaration because
-    they have no single repository artifact to infer.
+    binaries are selected. Exec services can infer a safe release-root argv[0].
     """
     if not isinstance(component, Component):
         raise ValueError("artifact selection requires a Component")
@@ -188,9 +187,9 @@ def artifact_paths(component: Component) -> StrList:
     elif component.binary is not None:
         default = component.binary
     else:
-        raise ValueError(
-            f"{where}: exec services require explicit artifacts for prebuilt packaging"
-        )
+        from lib.manifest_serving import _exec_binary_path, _reject_interpreter
+        default = _exec_binary_path(component.exec)
+        _reject_interpreter(default)
     if not isinstance(default, str) or not default:
         raise ValueError(f"{where}: artifact paths require a non-empty output or binary")
     _require_repo_relative(default, "artifact paths", where)

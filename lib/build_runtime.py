@@ -8,7 +8,6 @@ verified extraction directory here before activation.
 from __future__ import annotations
 
 import os
-import shlex
 import stat
 import struct
 from collections.abc import Mapping
@@ -17,10 +16,10 @@ from lib.build_manifest import DEBIAN_PLATFORM
 from lib.build_protocol import validate_artifact_path
 from lib.project_manifest import Component, Manifest, artifact_paths
 from lib.setup_directories import directory_fd
-from lib.validation import (
-    validate_filesystem_path,
-    validate_no_control_characters,
-    validate_systemd_exec_command,
+from lib.validation import validate_filesystem_path
+from lib.manifest_serving import (
+    _normalize_binary_path, _exec_binary_path, _reject_interpreter,
+    _validate_literal_systemd_path,
 )
 
 
@@ -46,7 +45,6 @@ _DT_NEEDED = 1
 
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-_SYSTEMD_PATH_META = frozenset("%$'\"\\")
 
 
 def validate_prebuilt_runtime(
@@ -112,80 +110,11 @@ def validate_prebuilt_runtime(
         raise ValueError("Cannot safely inspect the prebuilt release directory") from exc
 
 
-def _normalize_binary_path(value: object) -> str:
-    """Apply the manifest's legacy normpath behavior, then validate canonically."""
-    if not isinstance(value, str) or not value:
-        raise ValueError("Service binary must be a non-empty relative path")
-    validate_no_control_characters(value, "Service binary")
-    validate_filesystem_path(value, must_exist=False)
-    if os.path.isabs(value):
-        raise ValueError("Service binary must be relative to the release directory")
-    if "{{" in value or "}}" in value:
-        raise ValueError("Service binary must be a literal relative release path")
-    normalized = os.path.normpath(value)
-    _validate_literal_systemd_path(normalized, "Service binary")
-    try:
-        return validate_artifact_path(normalized)
-    except ValueError as exc:
-        raise ValueError("Service binary is not a safe relative release path") from exc
-
-
-def _exec_binary_path(value: object) -> str:
-    """Accept only an explicit release-root executable as argv[0]."""
-    if not isinstance(value, str) or not value:
-        raise ValueError("Exec-only services require an explicit executable command")
-    validate_systemd_exec_command(value, "Service exec")
-    try:
-        arguments = shlex.split(value, posix=True)
-    except ValueError as exc:
-        raise ValueError("Service exec must use valid command quoting") from exc
-    if not arguments:
-        raise ValueError("Service exec must name an executable")
-
-    raw_first = value.split(None, 1)[0]
-    if raw_first != arguments[0]:
-        raise ValueError("Service exec executable must be an unquoted literal token")
-    _validate_literal_systemd_path(raw_first, "Service exec executable")
-
-    prefix = "{{release_dir}}/"
-    first = raw_first
-    if not first.startswith(prefix):
-        raise ValueError(
-            "Exec-only services must start with {{release_dir}}/relative/path"
-        )
-    relative = first[len(prefix):]
-    if "{{" in relative or "}}" in relative:
-        raise ValueError("Service executable path cannot contain additional placeholders")
-    _validate_literal_systemd_path(relative, "Service exec executable path")
-    try:
-        return validate_artifact_path(relative)
-    except ValueError as exc:
-        raise ValueError("Service exec must name a safe relative release executable") from exc
-
-
-def _validate_literal_systemd_path(value: str, where: str) -> None:
-    """Keep the checked executable path identical to raw generated ExecStart."""
-    if any(character in _SYSTEMD_PATH_META or character.isspace() for character in value):
-        raise ValueError(
-            f"{where} must not contain systemd specifiers, variable expansion, "
-            "quoting, escapes, or whitespace"
-        )
-
-
 def _is_exported(executable: str, exports: list[str]) -> bool:
     return any(
         export == "." or executable == export or executable.startswith(export + "/")
         for export in exports
     )
-
-
-def _reject_interpreter(path: str) -> None:
-    name = path.rsplit("/", 1)[-1].casefold()
-    shells = {"ash", "bash", "busybox", "dash", "fish", "ksh", "sh", "zsh"}
-    if name in shells or name in {"node", "nodejs", "python"}:
-        raise ValueError("Interpreter and shell service commands are unsupported for prebuilt runtimes")
-    if name in {"python2", "python3"} or name.startswith(("python2.", "python3.")):
-        raise ValueError("Interpreter and shell service commands are unsupported for prebuilt runtimes")
 
 
 def _open_relative_parent(root: int, path: str) -> tuple[int, str]:

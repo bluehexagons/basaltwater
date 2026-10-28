@@ -65,10 +65,27 @@ Static components also require a relative `output` covered by the exports,
 using the manifest and Nginx character set `[A-Za-z0-9_./-]+`, and a boolean
 `spa`. Nested output paths are allowed when an export covers them. Services
 require a literal relative `binary` covered by the exports and may include a
-safe `health` URL path. Service ports and generated service identities use
-target defaults; client fields for `port`, `exec`,
-`env_file`, `runtime_env`, environment values, commands, writable directories,
-SQLite, UDP, or identity overrides are rejected as unknown fields.
+safe `health` URL path. Services may include a `runtime` mapping, also supported
+on the administrator's named service route. Its canonical value must match the
+grant exactly; an existing route without `runtime` grants no runtime overrides.
+The wire `binary` remains the safe executable export, including for exec services.
+Top-level execution, environment, secret and identity override fields are rejected.
+
+`lib.manifest_serving.parse_runtime()` validates this mapping through the ordinary
+manifest parser. Supported fields are `exec`, `port` (`auto` or 1024–65535),
+`runtime_env` (string values), `working_dir`, `sqlite_backup`, `backup_retention`
+(1–100), and `public_udp` (ordinary port/optional hostname records). Missing
+settings canonicalize to auto port, empty environment/listeners, null working
+directory/SQLite path, and retention 10. `exec` is optional and must identify the
+same release-root executable as `binary`. Commands and environment values reject
+systemd expansion. Working directories may be canonical release-relative paths
+(including `.`), or use exact `{{release_dir}}`,
+`{{shared_dir}}` or `{{data_dir}}` roots with literal safe suffixes; SQLite paths
+must use `{{data_dir}}`. Secret bindings and `env_file` remain unsupported.
+Each runtime mapping is bounded to 64 KiB. Duplicate UDP listeners and fixed
+service ports are rejected across policy applications, and activation checks
+retained applications before changing releases. Runtime values enter canonical
+binding digests but never build requests or capability responses.
 
 The projection contains no build commands or build environment. The service
 binary is checked for safe relative syntax, templates, systemd expansion and

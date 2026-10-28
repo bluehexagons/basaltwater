@@ -26,6 +26,7 @@ from lib.build_protocol import (
 from lib.cicd_deploy_policy import validate_nginx_path
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
+from lib.manifest_serving import parse_runtime, _exec_binary_path
 
 
 POLICY_SCHEMA = 1
@@ -120,16 +121,24 @@ def _domain(value: object, where: str) -> str:
     return normalized
 
 
-def _route(value: object, where: str) -> dict[str, str]:
-    data = _record(value, {"type", "domain", "path"}, where)
+def _route(value: object, where: str) -> dict[str, Any]:
+    fields = {"type", "domain", "path"}
+    if isinstance(value, Mapping) and "runtime" in value:
+        fields.add("runtime")
+    data = _record(value, fields, where)
     component_type = data["type"]
     if not isinstance(component_type, str) or component_type not in _SUPPORTED_COMPONENT_TYPES:
         raise ValueError(f"{where}: target component type must be static or service")
-    return {
+    result: dict[str, Any] = {
         "type": component_type,
         "domain": _domain(data["domain"], where + " domain"),
         "path": _route_path(data["path"], where + " path"),
     }
+    if "runtime" in data:
+        if component_type != "service":
+            raise ValueError("Runtime settings require a service route")
+        result["runtime"] = parse_runtime(data["runtime"])
+    return result
 
 
 def _target_limits(value: object, where: str) -> dict[str, int]:
@@ -171,6 +180,8 @@ def parse_target_policy(value: object) -> dict[str, Any]:
     roots: list[tuple[str, str]] = []
     identity_fragments: dict[str, str] = {}
     routes: dict[tuple[str, str], tuple[str, str]] = {}
+    udp_owners: set[int] = set()
+    fixed_ports: set[int] = set()
 
     for application in sorted(application_names):
         grant = _record(
@@ -243,6 +254,16 @@ def parse_target_policy(value: object) -> dict[str, Any]:
         components: dict[str, Any] = {}
         for name in sorted(component_names):
             route = _route(components_value[name], f"Component {name!r}")
+            runtime = route.get("runtime", {})
+            for listener in runtime.get("public_udp", []):
+                if listener["port"] in udp_owners:
+                    raise ValueError("Target policy contains conflicting public UDP ports")
+                udp_owners.add(listener["port"])
+            port = runtime.get("port", "auto")
+            if port != "auto":
+                if port in fixed_ports:
+                    raise ValueError("Target policy contains conflicting fixed service ports")
+                fixed_ports.add(port)
             route_key = (route["domain"], route["path"])
             previous = routes.get(route_key)
             if previous is not None:
@@ -309,7 +330,7 @@ def _component(value: object, where: str) -> dict[str, Any]:
         allowed = base | {"output", "spa"}
         required = allowed
     elif component_type == "service":
-        allowed = base | {"binary", "health"}
+        allowed = base | {"binary", "health", "runtime"}
         required = base | {"binary"}
     else:
         raise ValueError(f"{where}: type must be static or service")
@@ -345,15 +366,19 @@ def _component(value: object, where: str) -> dict[str, Any]:
     if health is not None:
         health = _route_path(health, where + " health")
     normalized.update(binary=binary, health=health)
+    if "runtime" in raw:
+        runtime = parse_runtime(raw["runtime"])
+        if "exec" in runtime and _exec_binary_path(runtime["exec"]) != binary:
+            raise ValueError("Runtime exec differs from the projected executable")
+        normalized["runtime"] = runtime
     return normalized
 
 
 def parse_target_deployment(value: object, *, request: object) -> dict[str, Any]:
     """Validate the safe serving projection and bind it to exact build exports.
 
-    Service ports and generated service identities are implicit defaults. The
-    schema intentionally has no command, build environment, runtime environment,
-    secret, arbitrary execution, persistent-data, or identity fields.
+    Optional service runtime metadata requires an exact administrator grant.
+    Build commands, build environment, secrets and identity overrides are absent.
     """
     data = _record(value, {"schema", "application", "project", "platform", "components"},
                    "target deployment")
@@ -441,6 +466,8 @@ def authorize_target_deployment(
             raise PermissionError(
                 f"Target component {item['name']!r} does not match its approved route"
             )
+        if item.get("runtime") != route.get("runtime"):
+            raise PermissionError(f"Target component {item['name']!r} runtime is not approved")
 
     bindings = {
         "schema": POLICY_SCHEMA,
@@ -474,7 +501,7 @@ def capabilities_for_principal(policy: object, *, principal: str) -> dict[str, A
             "platform": dict(grant["platform"]),
             "limits": dict(grant["limits"]),
             "components": [
-                {"name": name, **dict(route)}
+                {"name": name, **{key: route[key] for key in ("type", "domain", "path")}}
                 for name, route in grant["components"].items()
             ],
         }

@@ -241,9 +241,11 @@ class BuildRuntimeTests(unittest.TestCase):
         )
         self.validate(manifest)
 
-        missing_exports = self.manifest(exec_command="{{release_dir}}/bin/api")
-        with self.assertRaisesRegex(ValueError, "explicit artifacts"):
-            self.validate(missing_exports)
+        inferred_exports = self.manifest(exec_command="{{release_dir}}/bin/api")
+        self.validate(inferred_exports)
+        self.executable(b"#!/bin/sh\nexit 0\n")
+        with self.assertRaisesRegex(ValueError, "ELF"):
+            self.validate(inferred_exports)
 
     def test_exec_interpreters_and_ambiguous_executable_paths_are_rejected(self):
         self.executable()
