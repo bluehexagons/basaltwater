@@ -12,7 +12,9 @@ import stat
 import time
 from urllib.parse import quote
 
-from common.build_ssh_admission import admission_content, managed_transport_groups, ssh_admission_lock
+from common.build_ssh_admission import (
+    admission_content, build_host_recovery_groups, managed_transport_groups, ssh_admission_lock,
+)
 from lib.atomic_io import write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.kernel_restart import install_kernel_restart_hook
@@ -907,6 +909,18 @@ Match all
 
 
 def _apply_ssh_hardening(config: SetupConfig, sshd_path: str, hardening_content: str) -> None:
+    recovery_groups = build_host_recovery_groups(config)
+    if recovery_groups is not None:
+        from lib.build_target_maintenance import read_protected
+
+        existing_policy = read_protected(_SSHD_DROPIN_FILE, mode=0o600, maximum=1024 * 1024)
+        if (existing_policy is None or not existing_policy.startswith(
+                b"# Managed by basaltwater - SSH hardening drop-in.\n")):
+            raise ValueError("Build-host recovery requires existing managed SSH hardening")
+        _validate_ssh_config(sshd_path)
+        _verify_ssh_policy(sshd_path, config, recovery_groups)
+        print("  ✓ Existing SSH hardening verified; deferring changes to matching build-host reconciliation")
+        return
     transport_groups = managed_transport_groups()
     hardening_content = hardening_content.replace(
         "AllowGroups remoteusers\n",

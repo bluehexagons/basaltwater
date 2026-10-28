@@ -107,6 +107,15 @@ inventory; it cannot migrate outside the role's idle ownership. Schema-1
 markers still require operator reconciliation. SSH validation/activation
 failures retain the drain and existing reconciliation evidence.
 
+After a tool installation failure, the identical explicitly selected build-host
+enrollment can retry past generic SSH hardening while its marker is pending.
+This path validates the prior completed admission inventories, exclusive
+identities and existing managed effective SSH policy, and leaves the drop-in
+unchanged. Pending identities gain no admission. The role installer then
+reconciles under its normal drain and lease checks. Missing or changed policy,
+an SSH admission transition, a different enrollment, or unrelated setup still
+refuses recovery through this path.
+
 The schema-2 marker's optional `ssh_pending` field records an exact `create`
 or `remove` action and inventory `sha256` before the corresponding file change.
 Creation is tied to the pending enrollment's exact primary groups; removal

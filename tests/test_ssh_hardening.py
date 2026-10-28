@@ -597,3 +597,141 @@ class TestSSHConfigValidation(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Root privileges"):
                 ssh._validate_ssh_config("/usr/sbin/sshd")
         self.assertFalse(self.runtime.exists())
+
+
+class TestBuildHostSSHRecovery(unittest.TestCase):
+    """Run failed tool enrollment through hardening and the real role installer."""
+
+    def setUp(self):
+        from common import build_host_steps as host
+        from tests.test_build_host_setup import BuildHostTransportIntegrationTests, enrollment, setup_config
+
+        self.host = host
+        self.enrollment = enrollment
+        self.fixture = BuildHostTransportIntegrationTests(methodName="runTest")
+        self.addCleanup(self.fixture.doCleanups)
+        self.fixture.setUp()
+        self.path, self.run, self.activate = self.enterContext(
+            transport_ssh_fixture(self.fixture.base, "build-host"))
+        self.enterContext(patch.object(host, "_install_node_toolchain"))
+        self.config = setup_config(is_build_server=True, username="root", harden_user=False,
+                                   install_go=True, install_node=True)
+
+    def interrupt_tools(self):
+        with patch.object(self.host, "_install_node_toolchain", side_effect=RuntimeError("Node failed")):
+            with self.assertRaisesRegex(RuntimeError, "Node failed"):
+                self.host.configure_build_host(self.config)
+        self.assertIsNotNone(self.marker()["pending"])
+
+    def marker(self):
+        return self.host._parse_marker(Path(self.host.MARKER_PATH).read_bytes())
+
+    def test_first_install_and_refresh_retry_reach_installer_without_granting_pending_groups(self):
+        from common.build_ssh_admission import managed_transport_groups
+
+        for refresh in (False, True):
+            with self.subTest(refresh=refresh):
+                if refresh:
+                    self.config.build_host_enrollment = self.enrollment(("alice", "bob"))
+                self.interrupt_tools()
+                before = self.path.read_bytes()
+                prior_groups = [] if not refresh else [self.host._transport_username("alice")]
+                self.assertEqual(before.count(b"bw-build-"), len(prior_groups))
+                with self.assertRaisesRegex(RuntimeError, "requires reconciliation"):
+                    managed_transport_groups()
+                self.activate.reset_mock()
+                for _ in range(2):
+                    ssh.harden_ssh(self.config)
+                    self.assertEqual(self.path.read_bytes(), before)
+                self.activate.assert_not_called()
+                self.host.configure_build_host(self.config)
+                self.assertIsNone(self.marker()["pending"])
+                self.assertEqual(managed_transport_groups(), sorted(
+                    self.host._transport_username(name) for name in self.config.build_host_enrollment["keys"]))
+                ssh.harden_ssh(self.config)
+
+    def test_unrelated_or_changed_selection_cannot_defer_hardening(self):
+        self.interrupt_tools()
+        before = self.path.read_bytes()
+        for changes, error in (
+            ({"is_build_server": False}, "requires reconciliation"),
+            ({"build_host_enrollment": None}, "requires reconciliation"),
+            ({"disable_build_host": True}, "requires reconciliation"),
+            ({"machine_type": "oci"}, "requires reconciliation"),
+            ({"build_host_enrollment": self.enrollment(("bob",))}, "identical pending enrollment"),
+        ):
+            config = SimpleNamespace(**(vars(self.config) | changes))
+            with self.subTest(changes=changes), self.assertRaisesRegex(RuntimeError, error):
+                ssh.harden_ssh(config)
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_modified_missing_or_proposed_admission_fails_closed(self):
+        from lib.build_protocol import encode_document
+
+        self.host.configure_build_host(self.config)
+        self.config.build_host_enrollment = self.enrollment(("alice", "bob"))
+        self.interrupt_tools()
+        inventory = Path(self.host.SSH_ADMISSION_PATH)
+        original = inventory.read_bytes()
+        marker = self.marker()
+        for content, recorded in ((None, False), (b"tampered\n", False),
+                                  (admission_content("build-host", [self.host._transport_username("bob")]), True)):
+            with self.subTest(content=content):
+                if content is None:
+                    inventory.unlink()
+                else:
+                    inventory.write_bytes(content)
+                    inventory.chmod(0o600)
+                if recorded:
+                    marker["files"]["ssh"] = [hashlib.sha256(content).hexdigest()]
+                    Path(self.host.MARKER_PATH).write_bytes(encode_document(marker))
+                with self.assertRaisesRegex(ValueError, "Unowned, missing or modified"):
+                    ssh.harden_ssh(self.config)
+                inventory.write_bytes(original)
+                inventory.chmod(0o600)
+
+    def test_malformed_peer_marker_and_unsafe_policy_still_reject(self):
+        from common import build_target_steps as target
+        from lib.build_protocol import encode_document
+
+        self.interrupt_tools()
+        peer = self.fixture.base / "peer-marker"
+        peer.write_bytes(b"{}")
+        peer.chmod(0o600)
+        with patch.object(target, "MARKER_PATH", str(peer)), self.assertRaises(ValueError):
+            ssh.harden_ssh(self.config)
+        peer.write_bytes(encode_document({"schema": 2, "state": "updating", "principals": {},
+                                         "files": {}, "pending": None}))
+        with patch.object(target, "MARKER_PATH", str(peer)), self.assertRaisesRegex(
+                RuntimeError, "Incomplete target enrollment"):
+            ssh.harden_ssh(self.config)
+        original = self.path.read_text()
+        for content in (None, "# operator policy\n", original.replace(
+                "AllowGroups remoteusers", "AllowGroups remoteusers " + self.host._transport_username("alice"))):
+            with self.subTest(content=content):
+                if content is None:
+                    self.path.unlink()
+                else:
+                    self.path.write_text(content)
+                    self.path.chmod(0o600)
+                with self.assertRaises((ValueError, RuntimeError)):
+                    ssh.harden_ssh(self.config)
+                self.path.write_text(original)
+                self.path.chmod(0o600)
+
+    def test_malformed_host_marker_and_admission_transition_cannot_defer(self):
+        from lib.build_protocol import encode_document
+
+        self.interrupt_tools()
+        marker = self.marker()
+        marker_path = Path(self.host.MARKER_PATH)
+        marker_path.write_bytes(b"{}")
+        with self.assertRaises(ValueError):
+            ssh.harden_ssh(self.config)
+        content = admission_content("build-host", [self.host._transport_username("alice")])
+        digest = hashlib.sha256(content).hexdigest()
+        marker["files"]["ssh"] = [digest]
+        marker["ssh_pending"] = {"action": "create", "sha256": digest}
+        marker_path.write_bytes(encode_document(marker))
+        with self.assertRaisesRegex(RuntimeError, "transition requires reconciliation"):
+            ssh.harden_ssh(self.config)
