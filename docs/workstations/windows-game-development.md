@@ -30,32 +30,48 @@ older than a game's minimum. Antistatic currently requires Node 26.4 or newer;
 its `.nvmrc` selects major 26 and its build manifest owns the exact packaging
 runtime. Use those project files when versions change.
 
-For a fresh PC, paste this block into PowerShell as the coding account.
-Set `$storageRoot` to an existing mounted NTFS drive directory; omit
-`-StorageRoot $storageRoot` to keep the normal account locations. Package
-installers may show UAC or require a restart.
+`-Godot` independently prepares the standard Godot editor and `godot` command
+through `GodotEngine.GodotEngine`. Existing engines are retained and checked
+headlessly. When WinGet extracts its portable package without creating an
+alias, setup supplies a per-account command launcher. Reconciliation refreshes
+that launcher against the installed package. Match each project's required
+engine version; this host selection does not override repository pins.
+Install matching export templates through **Editor > Manage Export Templates**.
+C# projects additionally need Godot .NET and the project's .NET SDK; Android and
+other export SDKs remain separate. See the official
+[Windows downloads](https://godotengine.org/download/windows/) and
+[export guide](https://docs.godotengine.org/en/stable/tutorials/export/exporting_projects.html).
+
+For a fresh Antistatic/Godot PC, paste this block into PowerShell as the coding
+account. It includes T3 Code, Git/GitHub CLI/Codex, Node LTS, Python/uv, Go,
+fnm, native game tools, shader validation and Godot. Package installers may
+show UAC or require a restart.
 
 ```powershell
-& {
-    $storageRoot = 'F:\Basaltwater'
-    $installer = Join-Path $env:TEMP ("basaltwater-" + [guid]::NewGuid() + ".ps1")
-    try {
-        Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $installer -TimeoutSec 120 -ErrorAction Stop
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -GameDev -ShaderTools -StorageRoot $storageRoot
-        if ($LASTEXITCODE -ne 0) { throw "Game tooling setup failed (exit code $LASTEXITCODE)." }
-    } finally {
-        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
-    }
-}
+irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/windows/Install-GameWorkstation.ps1 | iex
 ```
 
-Add `-Plan` to preview. From a reviewed checkout, use
-`powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Setup-AgentWorkstation.ps1 -GameDev -ShaderTools -StorageRoot F:\Basaltwater`.
-Pinned installer state saves these selections. An existing native installation
-can adopt them through the current `install.ps1` with
-`-Profile agent_windows -Resume -UpdateSource -GameDev -ShaderTools -StorageRoot F:\Basaltwater`.
-Older installer copies do not recognize the new flags; use a current download
-or checkout for that first update. Later `-Resume` reuses the selections.
+The convenience entry point downloads the installer to a unique temporary
+file, checks download/setup failures, and removes the file afterward. Existing
+native installations resume with an explicit source update and preserve saved
+storage. No drive letter is assumed on fresh PCs. Restart T3 Code and terminals
+after setup. Review the script or use a checked-out copy when preferred:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -Plan
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -StorageRoot F:\Basaltwater
+```
+
+`-StorageRoot` selects an existing mounted NTFS directory for runtimes/caches
+and new checkouts; setup does not format or select disks.
+From a reviewed checkout, use
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Setup-AgentWorkstation.ps1 -Node -GameDev -ShaderTools -Godot`.
+Pinned installer state saves the selections. Once installed, use
+`basaltw refresh` to update Basaltwater and reconcile them; add
+`--game-dev --shader-tools --godot` to adopt game tools on an existing account.
+The one-line entry point also upgrades older native installations lacking
+`basaltw` or the new Godot selection. Older installer copies do not recognize
+new flags; use the current download for that first update.
 
 ## Storage
 

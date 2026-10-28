@@ -16,8 +16,9 @@ $savedPath = $env:PATH
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     foreach ($file in @('install.ps1', 'windows\Bootstrap.Common.ps1', 'windows\AgentWorkstation.Common.ps1',
-                        'windows\Setup-AgentWorkstation.ps1', 'windows\GameDevelopment.Common.ps1',
-                        'windows\DevelopmentStorage.Common.ps1',
+                        'windows\Setup-AgentWorkstation.ps1', 'windows\Install-GameWorkstation.ps1', 'windows\GameDevelopment.Common.ps1',
+                        'windows\DevelopmentStorage.Common.ps1', 'windows\Invoke-Basaltw.ps1',
+                        'windows\Cli.Common.ps1', 'windows\Godot.Common.ps1', 'windows\tests\Run-CliTests.ps1',
                         'windows\Enter-GameDevShell.ps1', 'windows\tests\Run-GameDevelopmentTests.ps1',
                         'windows\tests\Run-AgentWorkstationTests.ps1')) {
         $tokens = $null; $errors = $null
@@ -25,6 +26,7 @@ try {
         Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in $file`: $errors"
     }
     & (Join-Path $PSScriptRoot 'Run-GameDevelopmentTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
@@ -64,7 +66,7 @@ try {
     Invoke-Expression $optionBuilder.Extent.Text
     & {
         function Invoke-NativeAgentSetup { param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go) }
-        $legacy = [pscustomobject]@{ NodeVersions = $false; GameDev = $false; ShaderTools = $false; StorageRoot = '' }
+        $legacy = [pscustomobject]@{ NodeVersions = $false; GameDev = $false; ShaderTools = $false; Godot = $false; StorageRoot = '' }
         Assert-True ((Get-NativeOptionalArguments $legacy).Count -eq 0) 'Older pinned helpers received unsupported defaults'
         $legacy.GameDev = $true
         Assert-Throws { Get-NativeOptionalArguments $legacy } 'Pinned source lacks GameDev'
@@ -194,10 +196,10 @@ throw 'Older pinned installer must not execute with unsupported selections'
             Set-Content -LiteralPath (Join-Path $pinned 'windows\AgentWorkstation.Common.ps1') -Value @'
 function Invoke-NativeAgentSetup {
     param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go, [switch]$NodeVersions,
-          [switch]$GameDev, [switch]$ShaderTools, $StorageRoot, [switch]$T3CodeDesktop, [switch]$Plan)
+          [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, $StorageRoot, [switch]$T3CodeDesktop, [switch]$Plan)
     $global:AgentInstallerTestCalls += [pscustomobject]@{ Source = $Source; Tools = $AgentTool; Node = [bool]$Node;
         Python = [bool]$Python; Go = [bool]$Go; NodeVersions = [bool]$NodeVersions;
-        GameDev = [bool]$GameDev; ShaderTools = [bool]$ShaderTools; StorageRoot = $StorageRoot;
+        GameDev = [bool]$GameDev; ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; StorageRoot = $StorageRoot;
         Desktop = [bool]$T3CodeDesktop; Plan = [bool]$Plan }
     if ($global:AgentInstallerTestFailure) { throw 'simulated interrupted native setup' }
 }
@@ -209,7 +211,7 @@ function Invoke-NativeAgentSetup {
             finally { $zip.Dispose() }
             $global:AgentInstallerTestArchives[$revision] = $archive
         }
-        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Node -Python -GameDev -ShaderTools -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Node -Python -GameDev -ShaderTools -Godot -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
         $nativeStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'applying') 'Failed native setup was marked complete'
@@ -221,6 +223,7 @@ function Invoke-NativeAgentSetup {
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Plan
         Assert-True ($global:AgentInstallerTestCalls[-1].Plan -and $global:AgentInstallerTestCalls[-1].Python) 'Resume plan lost saved selections'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Resume plan lost game selections'
+        Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Resume plan lost Godot selection'
         Assert-True ((Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash -eq $beforePlan) 'Resume plan rewrote setup state'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
@@ -234,16 +237,20 @@ function Invoke-NativeAgentSetup {
         Assert-True ($nativeState.Revision -eq $global:AgentInstallerTestRevision -and
             $global:AgentInstallerTestCalls[-1].Source -eq $nativeState.Source) 'Source update did not execute the newly pinned source'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
+        Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Source update lost Godot selection'
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'
         # Old saved states acquire false defaults; new opt-ins can be saved on resume.
         $nativeState.PSObject.Properties.Remove('NodeVersions')
         $nativeState.PSObject.Properties.Remove('GameDev')
         $nativeState.PSObject.Properties.Remove('ShaderTools')
+        $nativeState.PSObject.Properties.Remove('Godot')
         $nativeState.PSObject.Properties.Remove('StorageRoot')
         $nativeState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $nativeStatePath -Encoding UTF8
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -NodeVersions
         Assert-True ($global:AgentInstallerTestCalls[-1].NodeVersions -and
-            -not $global:AgentInstallerTestCalls[-1].GameDev) 'Legacy state defaults/resume opt-in were not respected'
+            -not $global:AgentInstallerTestCalls[-1].GameDev -and -not $global:AgentInstallerTestCalls[-1].Godot) 'Legacy state defaults/resume opt-in were not respected'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Godot
+        Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Existing Windows setup could not adopt Godot'
         $beforeOldSource = (Get-FileHash -LiteralPath $nativeStatePath).Hash
         $global:AgentInstallerTestRevision = 'c' * 40
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -GameDev } 'Selected source does not support'
@@ -257,6 +264,7 @@ function Invoke-NativeAgentSetup {
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -BuildServer -Plan } 'not available with agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Version "main`n" -Plan } 'Invalid release reference'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -GameDev -Plan } 'requires agent_windows'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Godot -Plan } 'requires agent_windows'
     } finally {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"

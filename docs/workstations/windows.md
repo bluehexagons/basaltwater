@@ -2,8 +2,9 @@
 
 The experimental `agent_windows` installer profile prepares the current
 x86-64 Windows 11 account for local coding with T3 Code. It installs missing
-Git, GitHub CLI, and Codex, with T3 Code desktop enabled by default. Existing
-tools, provider logins, Git identity, and T3 settings are preserved. Run as the
+Git, GitHub CLI, Codex and a small native `basaltw` command, with T3 Code
+desktop enabled by default. Existing tools, provider logins, Git identity,
+and T3 settings are preserved. Run as the
 intended Windows account; package installers may ask for UAC. Allow at least
 5 GiB of free space, plus space for your projects and their dependencies.
 
@@ -12,8 +13,8 @@ development priority. Its primary role is compatibility testing, CI, and native
 packaging; CachyOS remains the main workstation for developing new features.
 Project-owned Windows build and test commands stay authoritative.
 
-This is a tools-and-skills setup. Basaltwater's Linux controller, `basaltw`
-launcher, managed web services, privilege broker, and remote setup profiles
+This is a tools-and-skills setup. Basaltwater's Linux controller,
+managed web services, privilege broker, and remote setup profiles
 are not installed on Windows. WSL is a separate opt-in path in the
 [Ubuntu WSL guide](windows-wsl.md). Native Windows build-host services remain
 [planned work](../plans/windows-support.md).
@@ -82,6 +83,9 @@ fnm for project-selected Node versions. Optional `-StorageRoot F:\Basaltwater`
 places runtime versions and development caches on an already mounted NTFS
 volume. See [Windows game tooling](windows-game-development.md) for the bundle,
 copy-and-paste setup, storage limits and project validation commands.
+`-Godot` independently installs the standard Godot editor/CLI; existing engines
+are reused and checked with `--headless --version`. Export templates, .NET/C#
+and mobile SDKs remain project requirements.
 
 Setup enables Git's user-level `core.longpaths` when that setting is absent.
 An explicit existing value is preserved, including `false`; repository-specific
@@ -115,6 +119,37 @@ Resume reuses saved tool selections; add `-Plan` to preview them without writes.
 The checkout command applies its explicit options directly and does not create
 or update pinned-installer state.
 
+## Native basaltw commands
+
+Setup adds `%LOCALAPPDATA%\Basaltwater\bin` to the account PATH. Its `.cmd`
+launcher works from PowerShell and Command Prompt without installing Python or
+changing the account execution policy. Open a new terminal after first setup.
+
+```powershell
+basaltw --help
+basaltw --version
+basaltw info --json
+basaltw refresh --dry-run
+basaltw refresh
+basaltw refresh --godot
+```
+
+`refresh` resolves current `main` and reapplies the saved native selections,
+including providers, game tools and storage. It preserves installed package
+versions and provider logins; use vendor/package updaters for tool upgrades.
+`--dry-run` previews the currently pinned source without downloads or writes.
+Use `--channel dev` or `--version REF` for an explicit source selection.
+`--game-dev`, `--shader-tools`, `--godot`, `--node-versions` and
+`--storage-root PATH` can add saved selections; run `basaltw refresh --help`.
+The CLI reports setup failures through its exit code, including restart needs.
+
+`info` reports only the saved local native installation. Linux controller,
+server, desktop and agent subcommands remain unavailable on Windows. A
+checkout-only setup installs the launcher, but `refresh`/`info` require the
+pinned installation created by `install.ps1 -Profile agent_windows`. Existing
+PCs without the launcher must first use a current installer download with
+`-Profile agent_windows -Resume -UpdateSource`.
+
 ## Verify this account
 
 Restart T3 Code and open a new terminal after setup so providers inherit PATH.
@@ -123,6 +158,8 @@ Select the local Windows connection and open a native repository, for example
 [provider CLIs](https://github.com/pingdotgg/t3code#installation).
 
 ```powershell
+basaltw --version
+basaltw info --json
 git --version
 gh --version
 gh auth status

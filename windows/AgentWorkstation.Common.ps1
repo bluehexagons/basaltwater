@@ -189,7 +189,7 @@ function Invoke-NativeAgentSetup {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$Source,
           [string[]]$AgentTool = @('gh', 'codex'), [switch]$Node, [switch]$Python,
-          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools,
+          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot,
           [string]$StorageRoot = '',
           [switch]$T3CodeDesktop, [switch]$Plan)
     $selected = @('gh', 'codex')
@@ -202,6 +202,7 @@ function Invoke-NativeAgentSetup {
     $AgentTool = @($selected | Select-Object -Unique)
     $Source = [IO.Path]::GetFullPath($Source)
     $skillNames = @(Get-NativeAgentSkillNames $Source)
+    . (Join-Path $Source 'windows\Cli.Common.ps1')
     if ($StorageRoot) {
         . (Join-Path $Source 'windows\DevelopmentStorage.Common.ps1')
         $StorageRoot = Resolve-NativeStorageRoot $StorageRoot
@@ -266,6 +267,10 @@ function Invoke-NativeAgentSetup {
     if ($GameDev -or $ShaderTools) {
         Install-NativeGameTools -GameDev:$GameDev -ShaderTools:$ShaderTools -Plan:$Plan -StorageRoot $StorageRoot
     }
+    if ($Godot) {
+        . (Join-Path $Source 'windows\Godot.Common.ps1')
+        Install-NativeGodot -Plan:$Plan
+    }
     if ($T3CodeDesktop) {
         $desktop = Get-NativeT3Desktop
         if ($desktop) { Write-Host "Reuse T3 Code desktop: $desktop" }
@@ -283,6 +288,7 @@ function Invoke-NativeAgentSetup {
                 (Join-Path $env:USERPROFILE "$catalog\$skill") -Plan:$Plan
         }
     }
-    Write-Host 'Verify in a new terminal: git --version; gh auth status; codex login status.'
+    Install-NativeCli -Source $Source -Plan:$Plan
+    Write-Host 'Verify in a new terminal: basaltw --help; git --version; gh auth status; codex login status.'
     Write-Host 'Set your Git user.name/user.email if missing; select the local Windows connection in T3 Code.'
 }

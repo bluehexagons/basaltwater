@@ -1,0 +1,168 @@
+<# Offline CLI/Godot checks. Only temporary files and process environment change. #>
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+function Assert-True([bool]$condition, [string]$message) { if (-not $condition) { throw $message } }
+function Assert-Throws([scriptblock]$action, [string]$pattern) {
+    $caught = $null
+    try { & $action | Out-Null } catch { $caught = $_ }
+    if (-not $caught -or $caught.Exception.Message -notmatch $pattern) { throw "Expected $pattern; received $caught" }
+}
+$repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+. (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
+. (Join-Path $repo 'windows\Cli.Common.ps1')
+. (Join-Path $repo 'windows\Godot.Common.ps1')
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-cli-' + [guid]::NewGuid().ToString('N'))
+$savedLocal = $env:LOCALAPPDATA; $savedPath = $env:PATH
+$savedGodot = $env:BASALTWATER_GODOT_EXE
+$savedCapture = $env:BASALTWATER_TEST_CAPTURE; $savedExit = $env:BASALTWATER_TEST_EXIT
+New-Item -ItemType Directory -Path $temporary | Out-Null
+try {
+    $env:LOCALAPPDATA = Join-Path $temporary ('account with spaces ' + [char]0x03bb)
+    $script:Paths = @()
+    function Add-NativeUserPath($directory) { $script:Paths += $directory }
+    Install-NativeCli -Source $repo -Plan
+    $bin = Join-Path $env:LOCALAPPDATA 'Basaltwater\bin'
+    Assert-True (-not (Test-Path -LiteralPath $bin) -and $script:Paths.Count -eq 0) 'CLI plan wrote files/PATH'
+    Install-NativeCli -Source $repo
+    Assert-True ($script:Paths.Count -eq 1 -and $script:Paths[0] -eq $bin) 'CLI directory was not exposed on PATH'
+    $launcher = Join-Path $bin 'basaltw.cmd'
+    $version = & $launcher --version | Out-String
+    Assert-True ($LASTEXITCODE -eq 0 -and $version -match 'Basaltwater .+native Windows') 'Installed CLI did not run from a Unicode account directory'
+    $env:PATH = $bin + ';' + $env:PATH
+    $version = & powershell.exe -NoProfile -ExecutionPolicy Restricted -Command 'basaltw --version; exit $LASTEXITCODE' | Out-String
+    Assert-True ($LASTEXITCODE -eq 0 -and $version -match 'native Windows') 'Unqualified basaltw command was blocked by script execution policy'
+    $help = & $launcher | Out-String
+    Assert-True ($LASTEXITCODE -eq 0 -and $help -match 'refresh' -and $help -match '--godot') 'CLI help failed without saved state'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--unknown') } 'Unsupported refresh option'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--storage-root') } 'Missing value'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--storage-root', 'C:relative') } 'absolute local'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--channel', 'other') } 'Channel must'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--version', "main`n") } 'Invalid release'
+    Assert-Throws { Invoke-NativeCli @('agent') } 'Unsupported Windows command'
+    Assert-Throws { Invoke-NativeCli @('refresh') } 'No saved native Windows setup'
+    $source = Join-Path $temporary 'pinned source with spaces'
+    New-Item -ItemType Directory -Path $source | Out-Null
+    Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Encoding UTF8 -Value @'
+param($Profile, [switch]$Resume, [switch]$UpdateSource, [switch]$Plan,
+      [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$NodeVersions,
+      $StorageRoot, $Channel, $Version)
+$PSBoundParameters | ConvertTo-Json | Set-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Encoding UTF8
+exit ([int]$env:BASALTWATER_TEST_EXIT)
+'@
+    $statePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
+    $state = [pscustomobject]@{ Version = 1; Profile = 'agent_windows';
+        OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+        Revision = 'a' * 40; Source = $source; Phase = 'complete'; AgentTool = @('gh', 'codex');
+        GameDev = $true; Godot = $true; StorageRoot = 'F:\Basaltwater'; Secret = 'must-not-print' }
+    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
+    $info = & $launcher info --json | Out-String
+    Assert-True ($LASTEXITCODE -eq 0 -and $info -notmatch 'must-not-print') 'Info failed or disclosed arbitrary saved fields'
+    $record = $info | ConvertFrom-Json
+    Assert-True ($record.Revision -eq $state.Revision -and $record.Godot) 'Info omitted saved installation evidence'
+    $env:BASALTWATER_TEST_CAPTURE = Join-Path $temporary 'forwarded.json'
+    $env:BASALTWATER_TEST_EXIT = '0'
+    $before = (Get-FileHash -LiteralPath $statePath).Hash
+    $code = Invoke-NativeCli @('refresh', '--dry-run', '--game-dev', '--shader-tools', '--godot',
+        '--node-versions', '--storage-root', 'F:\cache with spaces & punctuation', '--channel', 'dev', '--version', 'main')
+    $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+    Assert-True ($code -eq 0 -and $forwarded.Resume -and $forwarded.UpdateSource -and $forwarded.Plan -and
+        $forwarded.Godot -and $forwarded.GameDev -and $forwarded.ShaderTools -and $forwarded.NodeVersions) 'Refresh lost its saved-setup/preview/tool contract'
+    Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation' -and
+        $forwarded.Profile -eq 'agent_windows') 'Refresh changed native argument boundaries/profile'
+    Assert-True ((Get-FileHash -LiteralPath $statePath).Hash -eq $before) 'CLI rewrote saved setup during preview'
+    # Exercise the actual cmd -> PowerShell -> installer argument boundary too.
+    & $launcher refresh --storage-root 'F:\cache with spaces & punctuation' | Out-Null
+    Assert-True ($LASTEXITCODE -eq 0) 'Installed refresh launcher failed'
+    $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+    Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation') 'Installed launcher split the storage argument'
+    $env:BASALTWATER_TEST_EXIT = '23'
+    & $launcher refresh | Out-Null
+    Assert-True ($LASTEXITCODE -eq 23) 'Installed CLI swallowed setup failure status'
+    $state.OwnerSid = 'S-1-0-0'
+    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
+    Assert-Throws { Invoke-NativeCli @('refresh') } 'does not match this account'
+
+    & {
+        $global:BasaltwaterShortcutTest = @{ Downloads = @(); Exit = 0; Arguments = @() }
+        function Invoke-WebRequest {
+            param($Uri, [switch]$UseBasicParsing, $OutFile, $TimeoutSec, $ErrorAction)
+            Assert-True ($Uri -eq 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1') 'Shortcut selected an unexpected installer source'
+            $global:BasaltwaterShortcutTest.Downloads += $OutFile
+            Set-Content -LiteralPath $OutFile -Value '# downloaded fixture'
+        }
+        function powershell.exe { $global:BasaltwaterShortcutTest.Arguments = @($args); $global:LASTEXITCODE = $global:BasaltwaterShortcutTest.Exit }
+        $shortcut = Join-Path $repo 'windows\Install-GameWorkstation.ps1'
+        & $shortcut -StorageRoot 'F:\development cache' -Plan
+        $forwarded = $global:BasaltwaterShortcutTest.Arguments
+        Assert-True ($forwarded -contains '-Godot' -and $forwarded -contains '-GameDev' -and
+            $forwarded -contains '-ShaderTools' -and $forwarded -contains '-Node' -and
+            $forwarded -contains '-Resume' -and $forwarded -contains '-UpdateSource' -and
+            $forwarded -contains '-Plan' -and $forwarded -contains 'F:\development cache') 'Shortcut lost the game bundle/resume/storage selections'
+        Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Shortcut retained its temporary download'
+        $global:BasaltwaterShortcutTest.Exit = 19
+        Assert-Throws { & $shortcut } 'exit code 19'
+        Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Failed shortcut retained its download'
+        $global:BasaltwaterShortcutTest.Exit = 0
+        $priorLocal = $env:LOCALAPPDATA
+        try {
+            $env:LOCALAPPDATA = Join-Path $temporary 'fresh shortcut account'
+            # The public one-liner evaluates a downloaded script without PSScriptRoot.
+            Invoke-Expression (Get-Content -LiteralPath $shortcut -Raw)
+            Assert-True ($global:BasaltwaterShortcutTest.Arguments -notcontains '-Resume') 'Fresh shortcut tried to resume an absent setup'
+        } finally { $env:LOCALAPPDATA = $priorLocal }
+        $beforeDownloadFailure = $global:BasaltwaterShortcutTest.Arguments -join "`n"
+        function Invoke-WebRequest { throw 'simulated download failure' }
+        Assert-Throws { & $shortcut } 'simulated download failure'
+        Assert-True (($global:BasaltwaterShortcutTest.Arguments -join "`n") -eq $beforeDownloadFailure) 'Shortcut executed an installer after a failed download'
+    }
+
+    & {
+        $script:Tool = $null; $script:PackageTool = $null; $script:Installs = 0; $script:VersionExit = 0
+        $script:GodotWrites = @(); $script:VersionArguments = @()
+        function Get-NativeCommand { return $script:Tool }
+        function Get-NativeGodotPackageCommand { return $script:PackageTool }
+        function Update-NativePath { }
+        function Set-NativeGodotExecutable($command) { $script:GodotWrites += $command; $env:BASALTWATER_GODOT_EXE = $command }
+        function Mock-GodotVersion { $script:VersionArguments = @($args); $global:LASTEXITCODE = $script:VersionExit }
+        function Ensure-WingetPackage {
+            param($packageId, $label, [switch]$NoUpgrade)
+            Assert-True ($packageId -eq 'GodotEngine.GodotEngine' -and $NoUpgrade) 'Godot used the wrong package/upgrade policy'
+            $script:Installs++
+            if ($script:InstallWorks) { $script:PackageTool = 'Mock-GodotVersion' }
+        }
+        $godotLauncher = Join-Path $bin 'godot.cmd'
+        $script:InstallWorks = $true
+        Install-NativeGodot -Plan
+        Assert-True ($script:Installs -eq 0 -and -not (Test-Path -LiteralPath $godotLauncher)) 'Godot plan installed/wrote a launcher'
+        Install-NativeGodot
+        Assert-True ($script:Installs -eq 1 -and (Test-Path -LiteralPath $godotLauncher) -and
+            $script:GodotWrites.Count -eq 1 -and ($script:VersionArguments -join ' ') -eq '--headless --version') 'Godot portable fallback was not installed and checked headlessly'
+        $script:Tool = $godotLauncher
+        Install-NativeGodot
+        Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 2) 'Managed Godot launcher was not reconciled against its real executable'
+        $script:Tool = 'Mock-GodotVersion'
+        Install-NativeGodot
+        Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 2) 'Existing Godot was replaced'
+        $script:VersionExit = 7
+        Assert-Throws { Install-NativeGodot } 'version check failed'
+        $script:VersionExit = 0; $script:Tool = $null; $script:PackageTool = $null; $script:InstallWorks = $false
+        Assert-Throws { Install-NativeGodot } 'unavailable after installation'
+    }
+    # Discover only the standard Godot package, ignoring the .NET variant.
+    $packages = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    foreach ($package in @('GodotEngine.GodotEngine_Microsoft.Winget.Source_test', 'GodotEngine.GodotEngine.Mono_test')) {
+        $directory = Join-Path $packages $package
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $directory 'Godot_v4.7.2-stable_win64_console.exe') -Value 'fixture'
+    }
+    Assert-True ((Get-NativeGodotPackageCommand) -like '*GodotEngine.GodotEngine_Microsoft*') 'Godot package discovery chose the wrong edition'
+    Write-Host 'Native CLI and Godot tests passed.'
+} finally {
+    Remove-Variable BasaltwaterShortcutTest -Scope Global -ErrorAction SilentlyContinue
+    $env:LOCALAPPDATA = $savedLocal; $env:PATH = $savedPath; $env:BASALTWATER_GODOT_EXE = $savedGodot
+    $env:BASALTWATER_TEST_CAPTURE = $savedCapture; $env:BASALTWATER_TEST_EXIT = $savedExit
+    $resolved = [IO.Path]::GetFullPath($temporary)
+    $root = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    if (-not $resolved.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe CLI test cleanup path' }
+    [IO.Directory]::Delete('\\?\' + $resolved, $true)
+}
