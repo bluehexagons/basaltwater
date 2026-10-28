@@ -79,9 +79,12 @@ Updates remain deliberate through the tool's updater or package manager.
 
 For Antistatic builds, Windows tests and packaging, select `-GameDev`; add
 `-ShaderTools` for shader validation. `-NodeVersions` independently prepares
-fnm for project-selected Node versions. Optional `-StorageRoot F:\Basaltwater`
-places runtime versions and development caches on an already mounted NTFS
-volume. See [Windows game tooling](windows-game-development.md) for the bundle,
+fnm for project-selected Node versions. Optional `-StorageDrive F:` uses
+`F:\Basaltwater` for runtime versions, development caches and new checkouts
+on a mounted NTFS volume. Use `-StorageRoot PATH` for a custom directory;
+choose one of these options. The resolved root is saved for refresh/resume.
+See [Windows game tooling](windows-game-development.md#storage) for split-storage
+setup commands, the layout and validation. See the same guide for the bundle,
 copy-and-paste setup, storage limits and project validation commands.
 `-Godot` independently installs the standard Godot editor/CLI; existing engines
 are reused and checked with `--headless --version`. Export templates, .NET/C#
@@ -140,7 +143,9 @@ versions and provider logins; use vendor/package updaters for tool upgrades.
 `--dry-run` previews the currently pinned source without downloads or writes.
 Use `--channel dev` or `--version REF` for an explicit source selection.
 `--game-dev`, `--shader-tools`, `--godot`, `--node-versions` and
-`--storage-root PATH` can add saved selections; run `basaltw refresh --help`.
+`--storage-drive F:` (or `--storage-root PATH`) can add saved selections;
+run `basaltw refresh --help`. Storage selection requires a healthy mounted
+NTFS volume. Invalid selections are rejected before changing saved setup.
 The CLI reports setup failures through its exit code, including restart needs.
 
 `info` reports only the saved local native installation. Linux controller,

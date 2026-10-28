@@ -59,11 +59,11 @@ after setup. Review the script or use a checked-out copy when preferred:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -Plan
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -StorageRoot F:\Basaltwater
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -StorageDrive F:
 ```
 
-`-StorageRoot` selects an existing mounted NTFS directory for runtimes/caches
-and new checkouts; setup does not format or select disks.
+`-StorageDrive F:` selects `F:\Basaltwater` on a mounted NTFS drive for
+runtimes/caches and new checkouts. See the repeatable split-storage setup below.
 From a reviewed checkout, use
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Setup-AgentWorkstation.ps1 -Node -GameDev -ShaderTools -Godot`.
 Pinned installer state saves the selections. Once installed, use
@@ -75,13 +75,55 @@ new flags; use the current download for that first update.
 
 ## Storage
 
-`-StorageRoot` explicitly selects account-level `FNM_DIR`, `UV_CACHE_DIR`,
+For systems with a separate development drive, select its letter explicitly.
+This version of the download command accepts setup flags:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/windows/Install-GameWorkstation.ps1))) -StorageDrive F:
+```
+
+Replace `F:` with the mounted development drive on each PC. Both `F` and `F:`
+are accepted. `-StorageDrive` works with `install.ps1 -Profile agent_windows`,
+`windows/Setup-AgentWorkstation.ps1` and the game-workstation entry point.
+Add `-Plan` to preview. For a custom directory, use
+`-StorageRoot 'F:\Development\Basaltwater'` instead; the two options are
+mutually exclusive. Omit both to retain an existing saved choice or, on a
+fresh PC, use normal account locations.
+
+On an installed workstation, update Basaltwater first if its CLI predates this
+option, then select or preview the drive:
+
+```powershell
+basaltw refresh
+basaltw refresh --storage-drive F: --dry-run
+basaltw refresh --storage-drive F:
+```
+
+Setup saves only the resolved `StorageRoot`, such as `F:\Basaltwater`.
+Subsequent `basaltw refresh` and installer `-Resume` reuse it without flags.
+The volume and every managed subdirectory are checked before replacing saved
+selections or entering setup. An absent/unhealthy drive, non-NTFS filesystem,
+invalid path or junction fails with the previous saved setup intact. Restore
+the drive or explicitly select a new letter; setup never falls back to C:.
+
+The resolved root explicitly selects account-level `FNM_DIR`, `UV_CACHE_DIR`,
 `npm_config_cache`, `GOMODCACHE`, `GOCACHE` and `VCPKG_DEFAULT_BINARY_CACHE`.
 It creates `repos` for new checkouts and places a newly installed VS Build Tools
 instance under `tools\vs2022`. Existing installations, repositories and caches
 are not moved or deleted. Existing values for these six variables are replaced
 by this explicit selection. Restart T3 and terminals to inherit them.
 Keep the drive connected and its letter stable whenever using these tools.
+
+For `-StorageDrive F:`, the layout is:
+
+| Location | Purpose |
+| --- | --- |
+| `F:\Basaltwater\node` | fnm-managed project Node versions |
+| `F:\Basaltwater\cache\npm`, `cache\uv` | JavaScript and Python download caches |
+| `F:\Basaltwater\cache\go-mod`, `cache\go-build` | Go modules and build cache |
+| `F:\Basaltwater\cache\vcpkg` | Native dependency binary cache |
+| `F:\Basaltwater\repos` | New project checkouts |
+| `F:\Basaltwater\tools\vs2022` | A newly installed VS Build Tools instance |
 
 Setup validates the volume and directory paths, refusing non-NTFS volumes and
 junctions/symlinks. It does not repartition, format, mount or pick disks. A Linux

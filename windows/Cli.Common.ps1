@@ -55,6 +55,7 @@ Refresh options:
   --godot           Add the standard Godot editor/CLI
   --node-versions   Add fnm for project-selected Node versions
   --storage-root PATH  Select a mounted NTFS directory for development caches
+  --storage-drive DRIVE  Use DRIVE:\Basaltwater (for example: --storage-drive F:)
   --channel main|dev   Select the source channel (default: main)
   --version REF        Select a specific source reference
 
@@ -101,7 +102,8 @@ function Invoke-NativeCli([string[]]$Arguments) {
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
     $switches = @{ '--dry-run' = '-Plan'; '--game-dev' = '-GameDev'; '--shader-tools' = '-ShaderTools';
                    '--godot' = '-Godot'; '--node-versions' = '-NodeVersions' }
-    $values = @{ '--storage-root' = '-StorageRoot'; '--channel' = '-Channel'; '--version' = '-Version' }
+    $values = @{ '--storage-root' = '-StorageRoot'; '--storage-drive' = '-StorageRoot'; '--channel' = '-Channel'; '--version' = '-Version' }
+    $storageSelected = $false
     for ($index = 0; $index -lt $options.Count; $index++) {
         $option = $options[$index]
         if ($switches.ContainsKey($option)) { $forward += $switches[$option]; continue }
@@ -111,6 +113,14 @@ function Invoke-NativeCli([string[]]$Arguments) {
                 throw "Missing value for $option"
             }
             $value = $options[$index]
+            if ($option -in @('--storage-root', '--storage-drive')) {
+                if ($storageSelected) { throw 'Choose one --storage-drive or --storage-root option' }
+                $storageSelected = $true
+            }
+            if ($option -eq '--storage-drive') {
+                if ($value -notmatch '\A[A-Za-z]:?\z') { throw 'Storage drive must be one drive letter, such as F or F:' }
+                $value = $value.Substring(0, 1).ToUpperInvariant() + ':\Basaltwater'
+            }
             if ($option -eq '--channel' -and $value -notin @('main', 'dev')) { throw 'Channel must be main or dev' }
             if ($option -eq '--version' -and $value -notmatch '\A[A-Za-z0-9._-]+\z') { throw 'Invalid release reference' }
             if ($option -eq '--storage-root' -and ($value -notmatch '\A[A-Za-z]:[\\/]' -or $value -match '["\x00-\x1f]')) {

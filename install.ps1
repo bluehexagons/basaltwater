@@ -12,6 +12,7 @@ param(
     [switch]$ShaderTools,
     [switch]$Godot,
     [string]$StorageRoot = '',
+    [string]$StorageDrive = '',
     [string[]]$AgentTool = @(),
     [string]$LinuxUser = "",
     [string]$DistroName = "",
@@ -102,6 +103,11 @@ function Assert-NativeSourceOptions([string]$source, $selection) {
     $parameters = @($installer.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
     foreach ($option in $selected) {
         if ($option -notin $parameters) { throw "Selected source does not support $option; select a newer Basaltwater revision." }
+    }
+    if ($selection.StorageRoot) {
+        . (Join-Path $source 'windows\DevelopmentStorage.Common.ps1')
+        # Validate the entire layout before persisting source or storage changes.
+        Set-NativeDevelopmentStorage $selection.StorageRoot -Plan 6>$null
     }
 }
 
@@ -326,8 +332,14 @@ try {
             if ($PSBoundParameters.ContainsKey($option)) { throw "$option is not available with agent_windows" }
         }
         if (-not $PSBoundParameters.ContainsKey('T3CodeDesktop')) { $T3CodeDesktop = $true }
+        $storageSelected = $PSBoundParameters.ContainsKey('StorageRoot') -or [bool]$StorageDrive
+        if ($StorageDrive) {
+            if ($StorageDrive -notmatch '\A[A-Za-z]:?\z') { throw 'StorageDrive must be one drive letter, such as F or F:' }
+            if ($PSBoundParameters.ContainsKey('StorageRoot')) { throw 'Choose StorageDrive or StorageRoot, not both' }
+            $StorageRoot = $StorageDrive.Substring(0, 1).ToUpperInvariant() + ':\Basaltwater'
+        }
     } else {
-        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'StorageRoot')) {
+        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'StorageRoot', 'StorageDrive')) {
             if ($PSBoundParameters.ContainsKey($option)) { throw "$option requires agent_windows" }
         }
     }
@@ -376,7 +388,7 @@ try {
                 foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot')) {
                     if (-not $PSBoundParameters.ContainsKey($option)) { Set-Variable -Name $option -Value $preview.$option }
                 }
-                if (-not $PSBoundParameters.ContainsKey('StorageRoot')) { $StorageRoot = $preview.StorageRoot }
+                if (-not $storageSelected) { $StorageRoot = $preview.StorageRoot }
             }
             $nativeHelpers = Join-Path $planSource 'windows\AgentWorkstation.Common.ps1'
             if (Test-Path -LiteralPath $nativeHelpers) {
@@ -468,7 +480,7 @@ try {
         foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot')) {
             if ($PSBoundParameters.ContainsKey($option)) { $state.$option = [bool](Get-Variable -Name $option -ValueOnly) }
         }
-        if ($PSBoundParameters.ContainsKey('StorageRoot')) { $state.StorageRoot = $StorageRoot }
+        if ($storageSelected) { $state.StorageRoot = $StorageRoot }
     }
     if ($UpdateSource) {
         $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
@@ -489,6 +501,7 @@ try {
         return
     }
     if ($Profile -eq 'agent_windows') {
+        Assert-NativeSourceOptions $state.Source $state
         . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
         $nativeOptions = Get-NativeOptionalArguments $state
         $state.Phase = 'applying'

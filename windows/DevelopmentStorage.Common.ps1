@@ -10,8 +10,8 @@ function Resolve-NativeStorageRoot([string]$StorageRoot) {
     if (@($parts | Where-Object { $_ -match '[:]|[. ]\z' -or $_ -match '\A(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|\z)' }).Count) {
         throw 'StorageRoot contains an invalid Windows directory name'
     }
-    $volume = Get-Volume -DriveLetter $root.Substring(0, 1) -ErrorAction Stop
-    if ($volume.FileSystem -ne 'NTFS' -or $volume.HealthStatus -ne 'Healthy') {
+    $volume = Get-Volume -DriveLetter $root.Substring(0, 1) -ErrorAction SilentlyContinue
+    if (-not $volume -or $volume.FileSystem -ne 'NTFS' -or $volume.HealthStatus -ne 'Healthy') {
         throw 'StorageRoot requires a healthy mounted NTFS volume; setup does not format or mount disks'
     }
     $current = $root

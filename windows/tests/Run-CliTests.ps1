@@ -36,6 +36,10 @@ try {
     Assert-Throws { Invoke-NativeCli @('refresh', '--unknown') } 'Unsupported refresh option'
     Assert-Throws { Invoke-NativeCli @('refresh', '--storage-root') } 'Missing value'
     Assert-Throws { Invoke-NativeCli @('refresh', '--storage-root', 'C:relative') } 'absolute local'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--storage-drive') } 'Missing value'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--storage-drive', 'F:\folder') } 'one drive letter'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--storage-root', 'F:\root', '--storage-drive', 'G') } 'Choose one'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--storage-drive', 'F', '--storage-root', 'G:\root') } 'Choose one'
     Assert-Throws { Invoke-NativeCli @('refresh', '--channel', 'other') } 'Channel must'
     Assert-Throws { Invoke-NativeCli @('refresh', '--version', "main`n") } 'Invalid release'
     Assert-Throws { Invoke-NativeCli @('agent') } 'Unsupported Windows command'
@@ -76,6 +80,12 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-True ($LASTEXITCODE -eq 0) 'Installed refresh launcher failed'
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation') 'Installed launcher split the storage argument'
+    foreach ($drive in @('f', 'F:')) {
+        & $launcher refresh --storage-drive $drive --dry-run | Out-Null
+        Assert-True ($LASTEXITCODE -eq 0) 'Installed drive-based refresh failed'
+        $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+        Assert-True ($forwarded.StorageRoot -eq 'F:\Basaltwater' -and $forwarded.Plan) 'Drive shorthand was not forwarded as the canonical root'
+    }
     $env:BASALTWATER_TEST_EXIT = '23'
     & $launcher refresh | Out-Null
     Assert-True ($LASTEXITCODE -eq 23) 'Installed CLI swallowed setup failure status'
@@ -104,6 +114,14 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
             $forwarded -contains '-Resume' -and $forwarded -contains '-UpdateSource' -and
             $forwarded -contains '-Plan' -and $forwarded -contains 'F:\development cache') 'Shortcut lost the game bundle/resume/storage selections'
         Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Shortcut retained its temporary download'
+        $shortcutText = Get-Content -LiteralPath $shortcut -Raw
+        & ([scriptblock]::Create($shortcutText)) -StorageDrive f: -Plan
+        $forwarded = $global:BasaltwaterShortcutTest.Arguments
+        Assert-True ($forwarded -contains 'F:\Basaltwater' -and $forwarded -notcontains '-StorageDrive') 'Downloaded shortcut did not resolve drive selection for the installer'
+        $beforeConflict = $global:BasaltwaterShortcutTest.Downloads.Count
+        Assert-Throws { & $shortcut -StorageDrive F -StorageRoot 'F:\custom' } 'Choose StorageDrive or StorageRoot'
+        Assert-Throws { & $shortcut -StorageDrive 'F:\invalid' } 'StorageDrive'
+        Assert-True ($global:BasaltwaterShortcutTest.Downloads.Count -eq $beforeConflict) 'Invalid shortcut storage downloaded an installer'
         $global:BasaltwaterShortcutTest.Exit = 19
         Assert-Throws { & $shortcut } 'exit code 19'
         Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Failed shortcut retained its download'

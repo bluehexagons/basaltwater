@@ -154,8 +154,8 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
     }
     & {
         . (Join-Path $PSScriptRoot '..\DevelopmentStorage.Common.ps1')
-        $script:FileSystem = 'NTFS'; $script:StorageWrites = @{}
-        function Get-Volume { return @{ FileSystem = $script:FileSystem; HealthStatus = 'Healthy' } }
+        $script:FileSystem = 'NTFS'; $script:Health = 'Healthy'; $script:Mounted = $true; $script:StorageWrites = @{}
+        function Get-Volume { if ($script:Mounted) { return @{ FileSystem = $script:FileSystem; HealthStatus = $script:Health } } }
         function Set-NativeStorageVariable($name, $path) { $script:StorageWrites[$name] = $path }
         $root = Join-Path $temporary 'development storage'
         foreach ($invalid in @('relative\path', '\\server\share', 'C:\', 'C:\NUL', 'C:\cache:stream')) {
@@ -164,6 +164,11 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         $script:FileSystem = 'exFAT'
         Assert-Throws { Resolve-NativeStorageRoot $root } 'NTFS'
         $script:FileSystem = 'NTFS'
+        $script:Health = 'Unhealthy'
+        Assert-Throws { Set-NativeDevelopmentStorage $root } 'healthy mounted NTFS'
+        $script:Health = 'Healthy'; $script:Mounted = $false
+        Assert-Throws { Set-NativeDevelopmentStorage $root } 'healthy mounted NTFS'
+        $script:Mounted = $true
         Set-NativeDevelopmentStorage $root -Plan
         Assert-True ($script:StorageWrites.Count -eq 0 -and -not (Test-Path -LiteralPath $root)) 'Storage plan wrote directories/environment'
         Set-NativeDevelopmentStorage $root

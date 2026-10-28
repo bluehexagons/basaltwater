@@ -1,6 +1,12 @@
 <# Download entry point: native Antistatic/Godot coding account, including T3 Code. #>
 [CmdletBinding()]
-param([string]$StorageRoot = '', [switch]$Plan)
+param([string]$StorageRoot = '', [string]$StorageDrive = '', [switch]$Plan)
+
+if ($StorageDrive) {
+    if ($StorageDrive -notmatch '\A[A-Za-z]:?\z') { throw 'StorageDrive must be one drive letter, such as F or F:' }
+    if ($PSBoundParameters.ContainsKey('StorageRoot')) { throw 'Choose StorageDrive or StorageRoot, not both' }
+    $StorageRoot = $StorageDrive.Substring(0, 1).ToUpperInvariant() + ':\Basaltwater'
+}
 
 & {
     $ErrorActionPreference = 'Stop'

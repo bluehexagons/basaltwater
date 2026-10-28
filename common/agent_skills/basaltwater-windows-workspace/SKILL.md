@@ -44,8 +44,12 @@ Node LTS may be too old for the checkout. Keep the project's vcpkg/library pins
 and bootstrap authoritative; host tools do not establish game/GPU readiness.
 See [Windows game tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-game-development.md).
 
-A selected `-StorageRoot` puts Node versions and npm/uv/Go/vcpkg caches on that
-mounted NTFS drive and provides `repos` for new checkouts. Inspect saved cache
+`-StorageDrive F:` (or `basaltw refresh --storage-drive F:`) selects
+`F:\Basaltwater`; use `-StorageRoot PATH` for a custom directory, choosing
+one option. The resolved root is saved for subsequent refresh/resume runs.
+It puts Node versions and npm/uv/Go/vcpkg caches on that mounted NTFS drive
+and provides `repos` for new checkouts. An unavailable drive fails without
+falling back to C: or replacing saved selections. Inspect saved cache
 environment variables and keep the drive connected. Existing checkouts/build
 trees remain in place; do not assume the configured cache root moved them.
 

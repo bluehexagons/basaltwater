@@ -167,6 +167,10 @@ try {
     # Source staging and resume use the saved native selection, never WSL.
     function global:Get-CimInstance { return [pscustomobject]@{ ProductType = 1; BuildNumber = 26100 } }
     function global:Get-PSDrive { return [pscustomobject]@{ Free = 100GB } }
+    function global:Get-Volume {
+        param($DriveLetter)
+        if ($DriveLetter -ne 'X') { return @{ FileSystem = 'NTFS'; HealthStatus = 'Healthy' } }
+    }
     function global:Invoke-RestMethod { return @{ sha = $global:AgentInstallerTestRevision } }
     function global:Invoke-WebRequest {
         param([switch]$UseBasicParsing, [string]$Uri, [string]$OutFile)
@@ -181,6 +185,9 @@ try {
     $global:AgentInstallerTestCalls = @()
     $global:AgentInstallerTestFailure = $true
     try {
+        $splitPlan = & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive f: -Plan 6>&1 | Out-String
+        Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
+        Assert-Throws { & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive F -StorageRoot 'F:\custom' -Plan } 'Choose StorageDrive or StorageRoot'
         foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40))) {
             $pinned = Join-Path $temporary "archive-source\basaltwater-$revision"
             New-Item -ItemType Directory -Path (Join-Path $pinned 'windows') -Force | Out-Null
@@ -193,6 +200,7 @@ throw 'Older pinned installer must not execute with unsupported selections'
 '@
             }
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
+            Copy-Item -LiteralPath (Join-Path $repo 'windows\DevelopmentStorage.Common.ps1') -Destination (Join-Path $pinned 'windows\DevelopmentStorage.Common.ps1')
             Set-Content -LiteralPath (Join-Path $pinned 'windows\AgentWorkstation.Common.ps1') -Value @'
 function Invoke-NativeAgentSetup {
     param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go, [switch]$NodeVersions,
@@ -239,6 +247,38 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Source update lost Godot selection'
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageDrive 'f:' -Plan
+        Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\Basaltwater') 'Drive preview retained the old custom root'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageDrive f
+        $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
+        Assert-True ($nativeState.StorageRoot -eq 'F:\Basaltwater' -and
+            -not $nativeState.PSObject.Properties['StorageDrive']) 'Drive selection was not saved as one canonical root'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource
+        Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\Basaltwater') 'Refresh forgot the split-storage selection'
+        $beforeBadStorage = (Get-FileHash -LiteralPath $nativeStatePath).Hash
+        $beforeBadCalls = $global:AgentInstallerTestCalls.Count
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageDrive X } 'healthy mounted NTFS'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -StorageDrive X } 'healthy mounted NTFS'
+        $linkedRoot = Join-Path $temporary 'unsafe storage'
+        New-Item -ItemType Directory -Path (Join-Path $linkedRoot 'cache') -Force | Out-Null
+        $linkedCache = Join-Path $linkedRoot 'cache\npm'
+        New-Item -ItemType Junction -Path $linkedCache -Target $temporary | Out-Null
+        try {
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageRoot $linkedRoot } 'junctions/symlinks'
+        } finally { [IO.Directory]::Delete($linkedCache) }
+        Assert-True ((Get-FileHash -LiteralPath $nativeStatePath).Hash -eq $beforeBadStorage -and
+            $global:AgentInstallerTestCalls.Count -eq $beforeBadCalls) 'Invalid storage changed saved state or entered setup'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F -StorageRoot 'F:\other' -Plan } 'Choose StorageDrive or StorageRoot'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive 'F:\folder' -Plan } 'StorageDrive'
+        $savedFreshLocal = $env:LOCALAPPDATA
+        try {
+            $env:LOCALAPPDATA = Join-Path $temporary 'fresh split account'
+            Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive X } 'healthy mounted NTFS'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'))) 'Fresh invalid storage created saved selections'
+            & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F:
+            $freshState = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
+            Assert-True ($freshState.Phase -eq 'complete' -and $freshState.StorageRoot -eq 'F:\Basaltwater') 'Fresh drive-based setup did not complete with saved storage'
+        } finally { $env:LOCALAPPDATA = $savedFreshLocal }
         # Old saved states acquire false defaults; new opt-ins can be saved on resume.
         $nativeState.PSObject.Properties.Remove('NodeVersions')
         $nativeState.PSObject.Properties.Remove('GameDev')
@@ -265,8 +305,9 @@ function Invoke-NativeAgentSetup {
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Version "main`n" -Plan } 'Invalid release reference'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -GameDev -Plan } 'requires agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Godot -Plan } 'requires agent_windows'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -StorageDrive F -Plan } 'requires agent_windows'
     } finally {
-        foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
+        foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
         }
         Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure -Scope Global
