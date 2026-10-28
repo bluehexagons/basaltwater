@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from typing import Any
 
 from common.build_target_steps import parse_build_target_enrollment
@@ -45,7 +46,7 @@ def _destination(value: str) -> str:
 def _projection(component: Component, domain: str) -> dict[str, Any]:
     if (not isinstance(component, Component) or set(vars(component)) != _COMPONENT_FIELDS
             or component.type not in {"static", "service"}):
-        raise ValueError("Only static and binary Go service components are supported")
+        raise ValueError("Only static and native binary service components are supported")
     # These fields cannot be represented by the typed target projection. Check
     # even static dataclasses, so a caller cannot lose meaningful runtime inputs.
     if component.type == "static" and (component.exec is not None or component.runtime_env or component.env_file is not None
@@ -87,6 +88,7 @@ def prepare_delivery_plan(
     manifest: Manifest, *, destination: str, source: object, source_path: str,
     request_id: str, idempotency_key: str, target_enrollment: object,
     target_principal: str, builder_capabilities: object,
+    build_tools: tuple[str, ...] | None = None,
 ) -> DeliveryPlan:
     """Plan one application from caller-pinned inputs, without I/O or ID creation.
 
@@ -108,13 +110,16 @@ def prepare_delivery_plan(
         raise ValueError("Source snapshot must be an absolute text path")
     snapshot = _absolute_path(source_path, "Source snapshot")
     components = [_projection(component, domain) for component in manifest.components]
-    tools = required_tools(manifest)
-    if any(component.build for component in manifest.components) and not tools:
-        raise ValueError("Remote builds with commands require nonempty explicit build_runtimes")
-    if "node" in tools:
-        raise ValueError("Node package-manager readiness is outside the first public build slice")
-    if any(item["type"] == "service" for item in components) and "go" not in tools:
-        raise ValueError("Binary services require explicit Go build_runtimes")
+    effective_manifest = manifest
+    if build_tools is not None:
+        if (not isinstance(build_tools, tuple) or len(build_tools) > 3
+                or any(not isinstance(tool, str) or tool not in {"go", "node", "python"}
+                       for tool in build_tools) or len(set(build_tools)) != len(build_tools)):
+            raise ValueError("Invalid pinned-source runtime selection")
+        if manifest.build_runtimes is not None and list(build_tools) != required_tools(manifest):
+            raise ValueError("Pinned runtime selection differs from explicit build_runtimes")
+        effective_manifest = replace(manifest, build_runtimes=list(build_tools))
+    tools = required_tools(effective_manifest)
 
     enrollment = parse_build_target_enrollment(target_enrollment)
     if not isinstance(target_principal, str) or target_principal not in enrollment["keys"]:
@@ -136,7 +141,7 @@ def prepare_delivery_plan(
             or builder["platform"] != DEBIAN_PLATFORM
             or not set(tools).issubset(builder["runtimes"])):
         raise PermissionError("Builder lacks the target project, platform or runtime grant")
-    check_tool_readiness(manifest, capabilities["tool_versions"])
+    check_tool_readiness(effective_manifest, capabilities["tool_versions"])
     # Defaults are conservative requests, not permission to consume an entire
     # larger grant. Validated lower ceilings remain valid protocol values.
     limits = {key: min(default, builder["limits"][key], target["limits"].get(key, default))

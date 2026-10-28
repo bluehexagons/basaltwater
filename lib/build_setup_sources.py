@@ -28,6 +28,7 @@ from lib.cicd_deadline import command_timeout
 from lib.cicd_deploy_policy import validate_nginx_path
 from lib.deploy_utils import parse_deploy_spec, parse_repository_source
 from lib.project_manifest import MANIFEST_FILENAME, Manifest, parse_manifest
+from lib.build_manifest import required_tools
 from lib.setup_directories import directory_fd
 from lib.validation import validate_deploy_specs, validate_filesystem_path
 from lib.validators import validate_host
@@ -54,6 +55,7 @@ class PreparedSource:
     manifest: Manifest
     source: dict[str, str]
     source_path: str
+    build_tools: tuple[str, ...] | None = None
 
 
 def _plans(deploy_specs: list[list[str]]) -> list[tuple[str, str, str | None]]:
@@ -331,7 +333,7 @@ def prepare_setup_sources(
 
     repositories: dict[str, str] = {}
     selections: dict[tuple[str, str | None], str] = {}
-    snapshots: dict[tuple[str, str], tuple[Manifest, dict[str, str], str]] = {}
+    snapshots: dict[tuple[str, str], tuple[Manifest, dict[str, str], str, tuple[str, ...]]] = {}
     prepared = []
     with storage.monitor():
         for target, url, ref in plans:
@@ -375,14 +377,15 @@ def prepare_setup_sources(
                 git(repository, ["checkout", "--no-recurse-submodules", "--detach", "--force",
                                  revision])
                 manifest, manifest_digest = _manifest(repository)
+                tools = tuple(required_tools(manifest, source_path=repository))
                 storage.check(limits.max_snapshot_bytes + limits.max_history_bytes)
                 path = os.path.join(root, f"source-{len(snapshots)}.snapshot")
                 source = create_source_snapshot(repository, path, limits=limits, runner=bounded_runner)
                 if (source["revision"] != revision
                         or source["manifest_sha256"] != manifest_digest):
                     raise ValueError("Pinned snapshot and parsed manifest identity differ")
-                snapshots[key] = manifest, source, path
-            manifest, source, path = snapshots[key]
+                snapshots[key] = manifest, source, path, tools
+            manifest, source, path, tools = snapshots[key]
             # Consumers can render a manifest without mutating another destination's input.
-            prepared.append(PreparedSource(target, deepcopy(manifest), dict(source), path))
+            prepared.append(PreparedSource(target, deepcopy(manifest), dict(source), path, tools))
     return prepared

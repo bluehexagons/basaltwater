@@ -51,12 +51,15 @@ and target clients retain their independent strict transport.
 [Source preparation](build-setup-sources.md) accepts public HTTPS committed
 source with an explicit tracked `basaltwater.json`, pins complete revisions and
 verifies manifest/snapshot identity. [Planning](build-setup-plan.md) supports ready
-static outputs, Python static builds and Go binary services with declared exports
-and explicit `build_runtimes` for commands. It refuses Node, Godot, custom exec,
-interpreter services, environment files/runtime environment, custom paths,
-SQLite settings, UDP, fixed ports, alternate proxy settings and CI/publishing
-workflows. The target grant must match the complete component route map; its
-project selects the builder grant. Do not broaden this contract through inference.
+static outputs, Go/Node/Python builds and self-contained native services with
+declared or safely inferred exports. Runtime selection honors explicit
+`build_runtimes`, or shared source-marker inference recorded on the pinned
+checkout. Approved service arguments, environment, managed working directories,
+SQLite backups, UDP and fixed ports reuse ordinary manifest deployment.
+Interpreter services, Godot, environment files, unmanaged runtime paths,
+alternate proxy settings and CI/publishing workflows remain unsupported.
+The target grant must match the complete component route and runtime map; its
+project selects the builder grant.
 
 All manifests, source identities, application grants, tools, limits and aggregate
 retained artifact storage are checked before target bootstrap. Dry runs prepare
@@ -129,8 +132,9 @@ effective-UID-owned, single-link regular `0600` files. Stable operation locks
 must already exist and be empty. They are opened **read only** and locked
 exclusively without waiting, setup first and then delivery, until validation and
 projection finish. No `OperationStateStore` instance or ownership method is used.
-Descriptor and directory-entry identities, modes, owners, links, sizes and
-mtime/ctime are rechecked before returning, including absent optional entries.
+Descriptor and directory-entry identities, modes and owners are rechecked before
+returning, including absent optional entries. Files also pin links, sizes and
+mtime/ctime; unrelated children may change ancestor directory timestamps.
 Read access may update atime. This does not defend against a malicious process
 with the same UID or establish an atomic snapshot against uncooperative writers.
 

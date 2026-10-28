@@ -137,6 +137,7 @@ def _plans(config: SetupConfig, destination: str, capabilities: object,
         source_path=item.source_path, request_id=uuid.uuid4().hex,
         idempotency_key=uuid.uuid4().hex, target_enrollment=config.build_target_enrollment,
         target_principal=principal, builder_capabilities=capabilities,
+        build_tools=item.build_tools,
     ) for item in sources]
     if len({item.deployment["application"] for item in plans}) != len(plans):
         raise ValueError("Build-on setup selects the same target application more than once")

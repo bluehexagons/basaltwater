@@ -208,28 +208,27 @@ class BuildSetupPlanTests(unittest.TestCase):
         data["components"][0].update(build="python3 build.py", env={"MODE": "release"})
         self.assertEqual(self.plan(data).required_tools, ("python",))
 
-    def test_explicit_runtimes_required_and_node_readiness_never_assumed(self):
-        for runtimes in (None, [], ["python"], ["node"], ["go", "node"]):
-            data = manifest_data()
-            if runtimes is None:
-                data.pop("build_runtimes")
-            else:
-                data["build_runtimes"] = runtimes
-            with self.subTest(runtimes=runtimes), self.assertRaises(ValueError):
-                self.plan(data)
+    def test_pinned_runtime_inference_and_explicit_shell_builds(self):
         data = self.static_data(build="python3 build.py")
         with self.assertRaisesRegex(ValueError, "explicit build_runtimes"):
             self.plan(data)
+        self.assertEqual(self.plan(data, build_tools=("python",)).required_tools, ("python",))
         data["build_runtimes"] = []
-        with self.assertRaisesRegex(ValueError, "nonempty explicit build_runtimes"):
-            self.plan(data)
+        self.assertEqual(self.plan(data).required_tools, ())
+        with self.assertRaisesRegex(ValueError, "differs"):
+            self.plan(data, build_tools=("python",))
+
+    def test_node_requires_a_grant_and_observed_tool(self):
+        data = self.static_data(build="npm run build")
         data.update(build_runtimes=["node"])
-        data["components"][0]["build"] = "npm run build"
+        with self.assertRaises(PermissionError):
+            self.plan(data)
         cap = capabilities()
         cap["projects"]["approved-source"]["runtimes"].insert(1, "node")
-        cap["tool_versions"]["node"] = "v26.0.0"
-        with self.assertRaisesRegex(ValueError, "package-manager readiness"):
+        with self.assertRaisesRegex(ValueError, "unavailable"):
             self.plan(data, builder_capabilities=cap)
+        cap["tool_versions"]["node"] = "v26.12.1"
+        self.assertEqual(self.plan(data, builder_capabilities=cap).required_tools, ("node",))
 
     def test_health_endpoint_is_preserved_or_refused_before_delivery(self):
         for health in (None, "/", "/ready"):

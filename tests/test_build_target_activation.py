@@ -52,6 +52,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
             autospec=True, side_effect=self.deploy_prebuilt,
         ))
         self.publish = self.enterContext(patch("lib.build_target_activation.create_nginx_sites_for_groups"))
+        self.udp = self.enterContext(patch("deploy.network_steps.configure_public_udp"))
 
     def inputs(self, app="shop", *, route="/", domain="shop.example", service=False, with_api=False):
         name = "api" if service else "site"

@@ -773,7 +773,7 @@ class TestPostSetupArtifactReplay(unittest.TestCase):
         source.assert_not_called()
         deploy.assert_not_called()
 
-    def test_unsupported_route_setup_refuses_during_plan_construction(self):
+    def test_serving_options_preserve_cloudflare_steps_around_artifact_replay(self):
         from plugins.post_setup import build_post_setup_steps
 
         for option in ("enable_cloudflare", "enable_ssl"):
@@ -782,7 +782,14 @@ class TestPostSetupArtifactReplay(unittest.TestCase):
                     host="localhost", username="root", system_type="server_lite",
                     artifact_deployments=True, **{option: True},
                 )
-                with self.assertRaisesRegex(ValueError, "does not support Cloudflare or SSL"):
+                names = [name for name, _step in build_post_setup_steps(config, MagicMock())]
+                expected = ["Reconciling retained target artifacts"]
+                if option == "enable_cloudflare":
+                    expected = ["Preparing Cloudflare tunnel support", *expected,
+                                "Verifying Cloudflare tunnel activation"]
+                self.assertEqual(names, expected)
+                setattr(config, option, "invalid")
+                with self.assertRaisesRegex(ValueError, "booleans"):
                     build_post_setup_steps(config, MagicMock())
 
     def test_artifact_remote_dry_run_reports_reconcile_without_accessing_target_inputs(self):

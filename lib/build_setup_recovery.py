@@ -84,7 +84,12 @@ def _timestamp(value: object) -> None:
 
 
 def _identity(info: os.stat_result) -> tuple[int, ...]:
-    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink,
+    stable = (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid)
+    # Ancestor directories such as /tmp legitimately gain unrelated children.
+    # Their named edges, ownership and permissions remain pinned independently.
+    if stat.S_ISDIR(info.st_mode):
+        return stable
+    return (*stable, info.st_nlink,
             info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
@@ -198,8 +203,6 @@ def _plans(prepared: object) -> list[dict[str, Any]]:
         _require(isinstance(tools, list) and len(tools) <= 3
                  and all(isinstance(tool, str) and tool in {"go", "node", "python"} for tool in tools)
                  and len(set(tools)) == len(tools)
-                 and (tools or not any(item["commands"] for item in request["components"]))
-                 and ("go" in tools or not any(item["type"] == "service" for item in deployment["components"]))
                  and type(plan["ttl_seconds"]) is int and 1 <= plan["ttl_seconds"] <= MAX_TTL_SECONDS)
         plans.append({"application": deployment["application"], "project": request["project"],
                       "request_id": request["request_id"], "idempotency_key": plan["idempotency_key"],

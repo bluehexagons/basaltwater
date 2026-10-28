@@ -73,7 +73,7 @@ class BuildSetupTests(unittest.TestCase):
         path.chmod(0o600)
         return [SimpleNamespace(destination="example.com", manifest=parse_manifest(manifest_data()),
                                 source={"revision": "a" * 40, "snapshot_sha256": "b" * 64,
-                                        "manifest_sha256": "c" * 64}, source_path=str(path))]
+                                        "manifest_sha256": "c" * 64}, source_path=str(path), build_tools=None)]
 
     def applied(self, config, **kwargs):
         self.events.append("profile" if config.artifact_deployments else "bootstrap")

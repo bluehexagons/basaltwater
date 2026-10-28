@@ -145,6 +145,14 @@ class BuildSetupSourcesTests(unittest.TestCase):
         self.assertEqual(sum("clone" in command for command, _ in self.git.calls), 2)
         self.assertNotEqual(result[0].source_path, result[1].source_path)
 
+    def test_runtime_inference_is_frozen_before_another_ref_replaces_checkout(self):
+        with patch.object(sources, "required_tools", side_effect=[["node"], ["go"]]) as infer:
+            result = self.prepare([["a.example", URL + "#branch=release/v1"],
+                                   ["b.example", URL + "#tag=v1"], ["c.example", URL]])
+        self.assertEqual([item.build_tools for item in result], [("node",), ("node",), ("go",)])
+        self.assertEqual(infer.call_count, 2)
+        self.assertIsNone(result[0].manifest.build_runtimes)
+
     def test_missing_explicit_ref_refuses_namespace_fallback_before_checkout_or_snapshot(self):
         for kind, exact, shadow in (
             ("branch", "refs/heads/release", "refs/tags/refs/heads/release"),

@@ -8,7 +8,8 @@ authenticated clients, durable delivery and recovery.
 
 The keyword arguments are `destination`, `source`, `source_path`, `request_id`,
 `idempotency_key`, `target_enrollment`, `target_principal`, and
-`builder_capabilities`. IDs are caller-selected 32-character lowercase hex
+`builder_capabilities`, with optional `build_tools` from pinned-source
+preparation. IDs are caller-selected 32-character lowercase hex
 values. `source` is the protocol's pinned revision/snapshot/manifest hash record;
 `source_path` is a canonical absolute text path. Planning performs no file,
 network, process or system operations, creates no IDs, and never checks snapshot
@@ -49,8 +50,8 @@ and `./bin/api` defaults normalize using the existing artifact/runtime helpers.
 
 ## First supported slice
 
-Static outputs, including SPA fallback, and self-contained Go services are
-supported. Services require a `go` build runtime and reverse proxy, and may
+Static outputs, including SPA fallback, and self-contained native services are
+supported. Services require a reverse proxy, and may
 declare a typed health path. A safe release-root exec command can infer its
 executable export without changing ordinary manifests. Runtime settings are
 projected through `lib.manifest_serving.runtime_from_component()` and require
@@ -58,7 +59,7 @@ an exact administrator-approved `runtime` mapping on the service route.
 Health paths must survive target parsing unchanged; noncanonical endpoints such
 as `/ready/` are refused rather than probing a different URL.
 Target runtime validation still must prove a self-contained x86-64 ELF binary;
-a Go declaration does not prove what arbitrary build commands produced.
+a runtime declaration does not prove what arbitrary build commands produced.
 
 Interpreter services, Godot, environment files, unmanaged working/data paths,
 and alternate proxy settings are refused. Approved exec arguments, runtime
@@ -69,12 +70,12 @@ this bounded slice. SPA is the only static option in the current manifest and
 target schemas. Existing target renderer cache/compression behavior remains its
 own policy; no new gzip/expires override is invented or silently discarded.
 
-Ready static outputs need no tool declaration. Command-bearing manifests require
-explicit `build_runtimes`; Python static build commands and Go builds are
-supported when their runtimes are granted and their installed versions are
-present. An empty runtime list is insufficient when build commands are present.
-Node-declared builds are refused even with a Node version: the current
-capability contract does not qualify package-manager readiness.
+Explicit `build_runtimes` take precedence, including an empty list for shell-only
+builds. Otherwise source preparation records shared marker-based inference
+before another ref can replace the checkout. The worker repeats inference on
+its verified source. Go, Node and Python must be installed and granted; builds
+never provision tools. Node selection and package-manager checks use the shared
+ordinary deployment helpers inside the supervised unprivileged execution.
 
 Every request limit is the minimum of its protocol default and the builder's
 project ceiling, additionally constrained by target artifact-byte/entry limits.
