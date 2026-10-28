@@ -178,7 +178,7 @@ codex login status
 node --version
 npm.cmd --version
 uv --version
-uv run --no-project python --version
+python --version
 git config --get user.name
 git config --get user.email
 git config --get core.longpaths
@@ -190,6 +190,14 @@ is configured through Codex, not by weakening provider approvals in setup.
 Configure your preferred Git name/email if the final commands return nothing.
 Login available through a temporary environment token in one session may not
 be available in a fresh terminal. Setup does not collect or copy credentials.
+
+`info` describes saved selections and the last installer phase; `complete`
+does not establish current tool health. `refresh --dry-run` checks discovery,
+storage paths and managed skill collisions, without running every tool's
+version probe. Run the relevant version commands above to check executable
+health. Neither command installs a project's dependencies or validates its
+build. Use the [game tooling examples](windows-game-development.md#antistatic-qualification)
+for Antistatic's Node selection, native bootstrap and Windows test gate.
 
 Python's Microsoft Store execution alias can exist before Python is installed.
 Use the project's uv environment, or disable that alias in Windows App execution
