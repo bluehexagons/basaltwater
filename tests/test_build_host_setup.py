@@ -346,9 +346,9 @@ class BuildHostSetupUnitTests(unittest.TestCase):
             setup.configure_build_host(setup_config(machine_type="oci"))
         run.assert_not_called()
 
-    def test_node_package_is_selected_only_when_requested(self) -> None:
+    def test_fixed_packages_do_not_install_distribution_node(self) -> None:
         for install_node, expected in ((False, set(setup._FIXED_PACKAGES)),
-                                       (True, set(setup._FIXED_PACKAGES) | {"nodejs"})):
+                                       (True, set(setup._FIXED_PACKAGES))):
             installed: set[str] = set()
 
             def is_installed(package: str) -> bool:
@@ -370,6 +370,28 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                 self.assertEqual(argv[4:4 + len(APT_LOCK_OPTIONS)], APT_LOCK_OPTIONS)
                 self.assertEqual(set(argv[4 + len(APT_LOCK_OPTIONS):]), expected)
                 self.assertEqual(run.call_args.kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
+
+    def test_node_provisioning_is_explicit_and_freezes_inventory_even_on_failure(self):
+        for selected, failure in ((False, False), (True, False), (True, True)):
+            with self.subTest(selected=selected, failure=failure), \
+                 patch.object(setup, "_ensure_directory") as directory, \
+                 patch.object(setup, "run") as run, \
+                 patch("common.common_steps.install_node_for_user",
+                       side_effect=RuntimeError("install failed") if failure else None) as install:
+                config = setup_config(install_node=selected, refresh_packages=False)
+                if failure:
+                    with self.assertRaisesRegex(RuntimeError, "install failed"):
+                        setup._install_node_toolchain(config)
+                else:
+                    setup._install_node_toolchain(config)
+                if not selected:
+                    install.assert_not_called()
+                    run.assert_not_called()
+                    directory.assert_not_called()
+                    continue
+                install.assert_called_once_with(setup.BUILD_ACCOUNT, setup.BUILD_NODE_HOME, refresh=False)
+                self.assertIn(["chown", "-hR", "root:root", "--", setup.BUILD_NODE_HOME],
+                              [call.args[0] for call in run.call_args_list])
 
     def test_service_and_ssh_sudo_configuration_are_fixed(self) -> None:
         unit = setup._service_content()

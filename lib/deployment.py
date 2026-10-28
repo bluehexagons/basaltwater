@@ -46,6 +46,7 @@ from lib.project_manifest import (
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 from lib.node_toolchain import is_supported_node
+from lib.project_build_tools import node_build_command, node_cli, source_has_marker
 
 
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
@@ -1347,26 +1348,7 @@ class DeploymentOrchestrator:
             shell_parts.extend(f"export {key}={shlex.quote(value)}" for key, value in component.env.items())
             if use_node:
                 shell_parts.append(f"export NVM_DIR={shlex.quote(nvm_dir)}")
-                # Existing generated builds call `nvm use` after cd frontend.
-                # Keep that activation syntax, with policy and .node-version
-                # precedence supplied by the shared selector in the new cwd.
-                node_env = shlex.join([*self._node_cli(), "env"])
-                node_command = (
-                    'nvm() {\n'
-                    '  [ "${1-}" = use ] || return 2\n'
-                    '  shift\n'
-                    '  if [ "$#" -eq 0 ]; then\n'
-                    f'    node_exports=$({node_env} --project "$PWD") || return\n'
-                    '  elif [ "$#" -eq 1 ]; then\n'
-                    f'    node_exports=$({node_env} --project "$PWD" --version "$1") || return\n'
-                    '  else return 2; fi\n'
-                    '  eval "$node_exports"\n'
-                    '}\n' + command
-                )
-                shell_parts.append(shlex.join([
-                    *self._node_cli(), "exec", "--project", dest_path, "--",
-                    "/bin/bash", "--noprofile", "--norc", "-c", node_command,
-                ]))
+                shell_parts.append(node_build_command(command, dest_path, self._node_cli()))
             else:
                 shell_parts.append(command)
             build_shell = " && ".join(shell_parts)
@@ -1384,7 +1366,7 @@ class DeploymentOrchestrator:
     @staticmethod
     def _node_cli() -> list[str]:
         """Use the trusted installed CLI, independent of the project's Python path."""
-        return ["/usr/bin/python3", "-I", str(Path(__file__).resolve().parents[1] / "basaltwater.py"), "node"]
+        return node_cli()
 
     def _run_build_node_cli(self, build_user: str, arguments: list[str]):
         build_home = self._build_home(build_user)
@@ -1454,12 +1436,7 @@ class DeploymentOrchestrator:
 
     @staticmethod
     def _source_has_marker(source_path: str, markers: set[str]) -> bool:
-        ignored = {".git", ".basaltwater", ".venv", "node_modules", "vendor"}
-        for _current_dir, directories, filenames in os.walk(source_path):
-            directories[:] = [name for name in directories if name not in ignored]
-            if markers.intersection(filenames):
-                return True
-        return False
+        return source_has_marker(source_path, markers)
 
     @staticmethod
     def _validate_manifest_artifacts(manifest: Manifest, staging_path: str) -> None:

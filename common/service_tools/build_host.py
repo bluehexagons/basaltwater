@@ -169,10 +169,17 @@ def require_platform() -> None:
 def observe_tools() -> dict[str, str]:
     """Probe fixed installed tools without repository configuration or commands."""
     result = {}
+    from lib.project_build_tools import BUILD_NVM_DIR
+    from lib.node_toolchain import select_node
+
+    try:
+        selected_node = select_node("/", nvm_dir=BUILD_NVM_DIR).executable
+    except (OSError, ValueError, RuntimeError):
+        selected_node = None
     environment = {"PATH": TOOL_PATH, "HOME": "/nonexistent", "LANG": "C.UTF-8",
                    "GOTOOLCHAIN": "local", "GOENV": "off"}
     for name, command in (("go", "go"), ("node", "node"), ("python", "python3")):
-        executable = shutil.which(command, path=TOOL_PATH)
+        executable = selected_node if name == "node" else shutil.which(command, path=TOOL_PATH)
         if executable is None:
             continue
         try:

@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from lib.build_protocol import DEFAULT_LIMITS, parse_build_request
 from lib.project_manifest import Manifest, artifact_paths
+from lib.project_build_tools import RUNTIME_MARKERS, source_has_marker
 
 
 DEBIAN_PLATFORM = {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"}
@@ -39,12 +40,15 @@ def validate_manifest_request(manifest: Manifest, request: object) -> dict[str, 
     return job
 
 
-def required_tools(manifest: Manifest) -> list[str]:
-    """Require explicit tools for command-bearing remote builds, without guessing."""
+def required_tools(manifest: Manifest, *, source_path: str | None = None) -> list[str]:
+    """Honor explicit runtimes or infer markers from the pinned source tree."""
     manifest_components(manifest)
     if manifest.build_runtimes is None:
         if any(item.build for item in manifest.components):
-            raise ValueError("Remote builds with commands require explicit build_runtimes")
+            if source_path is None:
+                raise ValueError("Runtime inference requires pinned source_path or explicit build_runtimes")
+            return [name for name, markers in RUNTIME_MARKERS.items()
+                    if source_has_marker(source_path, markers)]
         return []
     tools = manifest.build_runtimes
     if (not isinstance(tools, list) or len(tools) > 3
@@ -54,9 +58,10 @@ def required_tools(manifest: Manifest) -> list[str]:
     return list(tools)
 
 
-def check_tool_readiness(manifest: Manifest, versions: Mapping[str, str]) -> dict[str, str]:
+def check_tool_readiness(manifest: Manifest, versions: Mapping[str, str], *,
+                         source_path: str | None = None) -> dict[str, str]:
     """Select observed tools after a trusted worker has probed installed versions."""
-    tools = required_tools(manifest)
+    tools = required_tools(manifest, source_path=source_path)
     if any(not isinstance(versions.get(name), str) or not versions[name].strip() for name in tools):
         raise ValueError("A declared remote build tool is unavailable")
     return {name: versions[name] for name in tools}

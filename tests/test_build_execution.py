@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from contextlib import nullcontext
 from pathlib import Path
 import subprocess
@@ -9,6 +10,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from lib import build_execution as execution
+from lib import project_build_tools as build_tools
+from lib.agent_probe import ProbeResult
 from lib.build_protocol import encode_document, request_digest
 from tests.test_build_admission import build_request
 
@@ -74,7 +77,7 @@ class BuildExecutionTests(unittest.TestCase):
                          "--property=MemoryMax=2147483648", "--property=CPUQuota=100%",
                          "--property=MemorySwapMax=0", "--property=ProtectSystem=strict",
                          "--property=TemporaryFileSystem=/tmp:ro /var/tmp:ro",
-                         "--property=BindPaths=/var/lib/build-scratch/owned/fs:/run/basaltwater-build-work",
+                         "--property=BindPaths=/var/lib/build-scratch/owned/fs:/run/basaltwater-build-work /var/lib/build-scratch/owned/fs/home/tmp:/tmp",
                          "--property=ReadWritePaths=/run/basaltwater-build-work/source/checkout /run/basaltwater-build-work/home",
                          "--property=TasksMax=256", "--clear-groups", "--bounding-set=-all",
                          "--reuid=1234", "--regid=1234", "/usr/bin/env", "-i"):
@@ -365,6 +368,60 @@ class BuildExecutionTests(unittest.TestCase):
                         execution._empty_cgroup(unit)
                 else:
                     self.assertEqual(execution._empty_cgroup(unit), expected)
+
+    def test_managed_node_checks_and_wraps_commands_inside_unprivileged_helper(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package.json").write_text('{}')
+            job = build_request()
+            job["components"][0]["commands"] = ["npm ci --ignore-scripts --include=dev && npm run generate-sprites"]
+            path = root / "request.json"
+            path.write_bytes(encode_document(job))
+            process = Mock(stdout=FakePipe(), poll=Mock(return_value=0), wait=Mock(return_value=0))
+            with patch.object(execution.os, "getuid", return_value=1234), \
+                 patch.object(execution.os, "getgid", return_value=1234), \
+                 patch.object(execution.os, "getgroups", return_value=[]), \
+                 patch.object(execution, "prepare_history"), \
+                 patch.object(execution, "check_node_projects") as check, \
+                 patch.object(execution.subprocess, "Popen", return_value=process) as spawn, \
+                 patch.object(execution.selectors, "DefaultSelector", return_value=FakeSelector([True])), \
+                 patch.object(execution.os, "read", return_value=b""), \
+                 patch.dict(execution.os.environ):
+                self.assertEqual(execution.execute_request(str(path), request_digest(job), temporary,
+                                                          temporary, "/work/history.bundle"), 0)
+            check.assert_called_once_with(temporary)
+            payload = spawn.call_args.args[0][-1]
+            self.assertIn("node exec --project", payload)
+            self.assertIn("generate-sprites", payload)
+            environment = spawn.call_args.kwargs["env"]
+            self.assertEqual(environment["NVM_DIR"], build_tools.BUILD_NVM_DIR)
+            self.assertEqual(environment["COREPACK_ENABLE_NETWORK"], "0")
+            self.assertEqual(environment["HOME"], temporary)
+            self.assertIn("/usr/local/go/bin", environment["PATH"])
+            self.assertNotIn("SSH_AUTH_SOCK", environment)
+
+    def test_node_policy_rejects_unhealthy_engines_conflicting_locks_and_manager_versions(self):
+        report = {"healthy": True, "selection": {"executable": "/opt/node/bin/node"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "package.json"
+            package.write_text(json.dumps({"packageManager": "npm@12.1.0"}))
+            with patch.object(build_tools, "inspect_project_node", return_value=report), \
+                 patch.object(build_tools, "run_probe", return_value=ProbeResult(output="12.1.0\n")) as probe:
+                build_tools.check_node_projects(temporary)
+                self.assertEqual(probe.call_args.args[0], ["/opt/node/bin/npm", "--version"])
+                self.assertEqual(probe.call_args.kwargs["env"]["COREPACK_ENABLE_NETWORK"], "0")
+                probe.return_value = ProbeResult(output="12.2.0\n")
+                with self.assertRaisesRegex(ValueError, "exact package manager"):
+                    build_tools.check_node_projects(temporary)
+                (root / "pnpm-lock.yaml").write_text('lockfileVersion: 9')
+                probe.reset_mock()
+                with self.assertRaisesRegex(ValueError, "Conflicting"):
+                    build_tools.check_node_projects(temporary)
+                probe.assert_not_called()
+            with patch.object(build_tools, "inspect_project_node", return_value={"healthy": False}), \
+                 self.assertRaisesRegex(ValueError, "Node/npm"):
+                build_tools.check_node_projects(temporary)
 
 
 if __name__ == "__main__":

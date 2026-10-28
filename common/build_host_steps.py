@@ -21,6 +21,7 @@ from lib.remote_utils import is_dry_run, is_package_installed, run
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path, validate_package_name
 from lib.validators import validate_username
+from lib.project_build_tools import BUILD_NODE_HOME
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -788,8 +789,6 @@ def _validate_transport_namespace(principals: set[str]) -> None:
 
 def _install_packages(config: SetupConfig) -> None:
     packages = list(_FIXED_PACKAGES)
-    if config.install_node:
-        packages.append("nodejs")
     packages = [validate_package_name(package) for package in packages]
     missing = [package for package in packages if not is_package_installed(package)]
     if not missing:
@@ -800,6 +799,24 @@ def _install_packages(config: SetupConfig) -> None:
     remaining = [package for package in missing if not is_package_installed(package)]
     if remaining:
         raise RuntimeError("Build-host package installation was not verified: " + ", ".join(remaining))
+
+
+def _install_node_toolchain(config: SetupConfig) -> None:
+    """Explicit setup only: reuse managed installation, then freeze the inventory."""
+    if not config.install_node:
+        return
+    from common.common_steps import install_node_for_user
+
+    _ensure_directory(BUILD_NODE_HOME, mode=0o755)
+    # Setup holds the drained worker lease. No project source is present here.
+    run(["chown", BUILD_ACCOUNT + ":" + BUILD_ACCOUNT, "--", BUILD_NODE_HOME])
+    try:
+        install_node_for_user(BUILD_ACCOUNT, BUILD_NODE_HOME,
+                              refresh=config.refresh_packages)
+    finally:
+        run(["chown", "-hR", "root:root", "--", BUILD_NODE_HOME])
+        run(["chmod", "-R", "go-w", "--", BUILD_NODE_HOME])
+        run(["chmod", "0755", "--", BUILD_NODE_HOME])
 
 
 def _store_snapshot(store) -> tuple[bool, bool]:
@@ -915,6 +932,7 @@ def _prepare_enrollment(config: SetupConfig, enrollment: dict[str, Any], marker:
     _write_marker(marker)
 
     _install_packages(config)
+    _install_node_toolchain(config)
 
     desired_principals = set(enrollment["keys"])
     for principal in sorted(desired_principals):

@@ -25,6 +25,11 @@ from lib.build_git import prepare_history
 from lib.cicd_deadline import run_command
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path
+from lib.project_build_tools import (
+    BUILD_NVM_DIR, RUNTIME_MARKERS, check_node_projects,
+    node_build_command, node_cli, source_has_marker,
+)
+from lib.project_manifest import load_manifest
 
 
 _ID = re.compile(r"[0-9a-f]{32}")
@@ -79,7 +84,7 @@ def execution_argv(request: object, *, uid: int, gid: int, scratch_path: str,
         "PrivateDevices=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
         "ProtectKernelLogs=yes", "ProtectControlGroups=yes", "RestrictSUIDSGID=yes",
         "LockPersonality=yes", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
-        f"BindPaths={scratch_path}:{WORK_ROOT}",
+        f"BindPaths={scratch_path}:{WORK_ROOT} {scratch_path}/home/tmp:/tmp",
         f"ReadWritePaths={WORKSPACE} {BUILD_HOME}", "StandardInput=null",
         f"StandardOutput=append:{log_path}", "StandardError=inherit",
     ]
@@ -241,15 +246,30 @@ def execute_request(input_path: str, expected_digest: str, workspace: str, home:
     prepare_history(history_path, job["source"]["revision"], workspace, home)
     base = {"PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
             "HOME": home, "TMPDIR": os.path.join(home, "tmp"),
+            "GOTOOLCHAIN": "local", "GOENV": "off",
             "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_CONFIG_GLOBAL": "/dev/null"}
     remaining = job["limits"]["log_bytes"]
+    # Selection and project commands both run only after dropping privileges,
+    # inside the same resource/output supervision. Never provision here.
+    use_node = source_has_marker(workspace, RUNTIME_MARKERS["node"])
+    manifest = load_manifest(workspace)
+    if manifest is not None and manifest.build_runtimes is not None:
+        use_node = "node" in manifest.build_runtimes
+    if use_node and any(component["commands"] for component in job["components"]):
+        os.environ["NVM_DIR"] = BUILD_NVM_DIR
+        check_node_projects(workspace)
     for component in job["components"]:
         for command in component["commands"]:
+            environment = {**base, **component["env"], "HOME": home,
+                           "TMPDIR": os.path.join(home, "tmp")}
+            if use_node:
+                environment["NVM_DIR"] = BUILD_NVM_DIR
+                environment["COREPACK_ENABLE_NETWORK"] = "0"
+                command = node_build_command(command, workspace, node_cli())
             process = subprocess.Popen(
                 ["/bin/bash", "--noprofile", "--norc", "-c", command], cwd=workspace,
-                env={**base, **component["env"], "HOME": home,
-                     "TMPDIR": os.path.join(home, "tmp")}, stdin=subprocess.DEVNULL,
+                env=environment, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
             assert process.stdout is not None

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
+import tempfile
 import unittest
 
 from lib.build_manifest import (
@@ -70,6 +72,41 @@ class BuildManifestTests(unittest.TestCase):
         manifest.components[1].artifacts = None
         with self.assertRaisesRegex(ValueError, "explicit artifacts"):
             self.request(manifest)
+
+    def test_pinned_source_markers_infer_tools_without_reading_shell_commands(self):
+        manifest = self.manifest()
+        manifest.build_runtimes = None
+        with tempfile.TemporaryDirectory() as source:
+            root = Path(source)
+            manifest.components[0].build = ["npm ci && npm run build"]
+            self.assertEqual(required_tools(manifest, source_path=source), [])
+            (root / "package.json").write_text('{}')
+            self.assertEqual(required_tools(manifest, source_path=source), ["node"])
+            (root / "package.json").unlink()
+            (root / "go.mod").write_text('module example.test/api')
+            self.assertEqual(required_tools(manifest, source_path=source), ["go"])
+            with self.assertRaises(ValueError):
+                check_tool_readiness(manifest, {"node": "installed-but-not-granted-go"}, source_path=source)
+            self.assertEqual(check_tool_readiness(manifest, {"go": "go1.27"}, source_path=source), {"go": "go1.27"})
+            (root / "frontend").mkdir()
+            (root / "frontend/package.json").write_text('{}')
+            self.assertEqual(required_tools(manifest, source_path=source), ["go", "node"])
+            manifest.build_runtimes = []
+            self.assertEqual(required_tools(manifest, source_path=source), [])
+            manifest.build_runtimes = ["python"]
+            self.assertEqual(required_tools(manifest, source_path=source), ["python"])
+
+    def test_inference_ignores_dependency_trees_and_links(self):
+        manifest = self.manifest()
+        manifest.build_runtimes = None
+        with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as external:
+            root = Path(source)
+            for name in ("node_modules", "vendor", ".git", ".venv", ".basaltwater"):
+                (root / name).mkdir()
+                (root / name / "package.json").write_text('{}')
+            (Path(external) / "package.json").write_text('{}')
+            (root / "linked").symlink_to(external, target_is_directory=True)
+            self.assertEqual(required_tools(manifest, source_path=source), [])
 
 
 if __name__ == "__main__":

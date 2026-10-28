@@ -248,6 +248,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
     def test_fixed_tool_probe_has_no_repository_context(self):
         completed = SimpleNamespace(returncode=0, stdout=b"tool-version\n")
         with patch.object(build_host.shutil, "which", side_effect=lambda name, **_: "/usr/bin/" + name), \
+             patch("lib.node_toolchain.select_node", return_value=SimpleNamespace(executable="/opt/tools/node")), \
              patch.object(build_host.subprocess, "run", return_value=completed) as run:
             self.assertEqual(set(build_host.observe_tools()), {"go", "node", "python"})
             self.assertEqual(run.call_count, 3)

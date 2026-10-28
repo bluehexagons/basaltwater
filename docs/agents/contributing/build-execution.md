@@ -17,8 +17,9 @@ credentials belong in the build account or its input.
 The caller places the verified history bundle, workspace, private home and
 `home/tmp` on the bounded scratch filesystem. The fixed unprivileged helper
 imports local history and checks the restored source before project commands.
-`/tmp` and `/var/tmp` are read-only inside the unit; `TMPDIR` selects `home/tmp`,
-so ordinary temporary files cannot bypass the scratch capacity limit.
+`/var/tmp` is read-only inside the unit. `/tmp` is bind-mounted from the same
+scratch `home/tmp` used by `TMPDIR`, including for the shared Node selector's
+fixed-path probes. Temporary files remain within the scratch capacity limit.
 The managed `HOME` and `TMPDIR` values take precedence over component environment
 entries; project-specific build inputs cannot redirect these managed paths.
 The service bind-mounts only the scratch filesystem at the fixed private unit
@@ -69,6 +70,28 @@ contains the admitted request ID and cannot be reused for a new attempt.
 
 This adapter does not provision bounded scratch storage, enrollment, toolchains,
 credentials or retention. The worker and setup layers own those contracts.
+`required_tools(manifest, source_path=pinned_checkout)` and
+`check_tool_readiness(manifest, observed_versions, source_path=pinned_checkout)`
+share marker-based runtime inference between controller and worker. Explicit
+`build_runtimes`, including an empty list, overrides inference. Commands without
+an explicit selection require the pinned checkout; shell text is never scanned.
+Markers include Go modules, Node packages/pins, and Python project files, while
+dependency and metadata directories and links are ignored. The worker checks
+both initial and fresh observations filtered by the current builder grant.
+
+Builder `--node` setup reuses the managed Node installer in
+`/opt/basaltwater-build-tools`, running installer commands as the build identity
+while drained and freezing the inventory as root-owned afterward. It contains
+tools only; each job retains its fresh scratch HOME and no credentials.
+Managed Node execution shares the ordinary deployment command wrapper, including
+nested `nvm use`, pin precedence and engines policy. Node/npm and conventional
+frontend package-manager declarations are checked unprivileged inside the unit;
+Corepack network activation is disabled. Missing versions or exact package
+managers must be provisioned explicitly by the operator before retrying. The
+broker never installs tools to satisfy a repository. Go commands retain
+`/usr/local/go/bin` on PATH.
+This path has mocked/temp coverage; native Debian Node qualification remains
+required before claiming live support.
 Its unit tests mock systemd and process boundaries; selected Debian execution
 also has bounded native coverage. See the [coverage map](../../plans/testing-coverage.md)
 for tested boundaries and remaining qualification. Persistent jobs under one

@@ -201,9 +201,9 @@ def _observed_tools(authorize: Callable[[str, dict[str, Any]], object],
     return dict(result)
 
 
-def _ready_toolchains(manifest: Manifest, observed: dict[str, str]) -> dict[str, str]:
+def _ready_toolchains(manifest: Manifest, observed: dict[str, str], *, source_path: str) -> dict[str, str]:
     try:
-        ready = check_tool_readiness(manifest, observed)
+        ready = check_tool_readiness(manifest, observed, source_path=source_path)
     except ValueError:
         raise _KnownFailure from None
     for name, version in ready.items():
@@ -510,7 +510,7 @@ def run_next(
                         _check_request_policy(validated, manifest)
                     except ValueError:
                         raise _KnownFailure from None
-                    _ready_toolchains(manifest, first_observation)
+                    _ready_toolchains(manifest, first_observation, source_path=checkout)
                     if _cancel_requested(store, request_id, owner):
                         raise _KnownFailure
 
@@ -522,7 +522,7 @@ def run_next(
                     # Re-read both policy and installed tools at the launch
                     # boundary; only these fresh observations enter the bundle.
                     second_observation = _observed_tools(authorize, owner, validated)
-                    toolchains = _ready_toolchains(manifest, second_observation)
+                    toolchains = _ready_toolchains(manifest, second_observation, source_path=checkout)
                     if _cancel_requested(store, request_id, owner):
                         raise _KnownFailure
                     result = run_systemd_build(

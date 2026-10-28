@@ -273,6 +273,16 @@ class BuildWorkerTests(unittest.TestCase):
         self.assertTrue(all(uid == 12345 and gid == 12345 for _, uid, gid in build_handoffs))
         self.assertFalse(any("/source" in path and "/checkout" not in path for path, _, _ in self.chowns))
 
+    def test_inferred_runtime_must_be_in_grant_filtered_observation(self):
+        manifest = parse_manifest(manifest_data())
+        manifest.build_runtimes = None
+        with tempfile.TemporaryDirectory() as source:
+            (Path(source) / "go.mod").write_text("module example.test/api\n")
+            with self.assertRaises(build_worker._KnownFailure):
+                build_worker._ready_toolchains(manifest, {"node": "installed"}, source_path=source)
+            self.assertEqual(build_worker._ready_toolchains(
+                manifest, {"go": "go1.27", "node": "installed"}, source_path=source), {"go": "go1.27"})
+
     def test_tampered_input_and_manifest_request_mismatch_fail_before_execution(self) -> None:
         raw = bytearray(self.snapshot)
         marker = b"H" + struct.pack("!Q", len(HISTORY)) + HISTORY
