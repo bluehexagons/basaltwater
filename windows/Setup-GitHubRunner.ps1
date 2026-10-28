@@ -59,12 +59,34 @@ function Get-RegistrationToken([string]$Target, [bool]$IsOrganization) {
 }
 
 function Install-RunnerApplication([string]$Directory) {
+    $Directory = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
     $app = Join-Path $Directory 'app'
+    $previous = Join-Path $Directory 'app.previous'
+    $staged = Join-Path $Directory ('staging-' + [guid]::NewGuid().ToString('N'))
+    # Verify every rename/recursive cleanup target stays inside this instance.
+    foreach ($path in @($app, $previous, $staged)) {
+        if (-not [IO.Path]::GetFullPath($path).StartsWith(($Directory + '\'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Runner application path escapes its instance'
+        }
+        if ((Test-Path -LiteralPath $path) -and
+            (Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Runner application directory must not be a reparse point'
+        }
+    }
+    # Recover a process interruption between renaming the old app and activation.
+    if ((Test-Path -LiteralPath $previous) -and -not (Test-Path -LiteralPath $app)) {
+        Move-Item -LiteralPath $previous -Destination $app
+    }
     $marker = Join-Path $app 'basaltwater-version'
-    if ((Test-Path -LiteralPath $marker) -and
+    $ready = (Test-Path -LiteralPath $marker) -and
         [IO.File]::ReadAllText($marker).Trim() -eq $script:RunnerVersion -and
         (Test-Path -LiteralPath (Join-Path $app 'bin\Runner.Listener.exe')) -and
-        (Test-Path -LiteralPath (Join-Path $app 'bin\Runner.Worker.exe'))) { return }
+        (Test-Path -LiteralPath (Join-Path $app 'bin\Runner.Worker.exe'))
+    if (Test-Path -LiteralPath $previous) {
+        if (-not $ready) { throw "Runner recovery backup needs inspection before retrying: $previous" }
+        Remove-Item -LiteralPath $previous -Recurse -Force
+    }
+    if ($ready) { return }
     $archive = Join-Path (Get-RunnerRoot) ('actions-runner-win-x64-' + $script:RunnerVersion + '.zip')
     if (-not (Test-Path -LiteralPath $archive)) {
         $download = $archive + '.download'
@@ -81,7 +103,6 @@ function Install-RunnerApplication([string]$Directory) {
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $script:RunnerSha256) {
         throw 'Runner archive checksum mismatch; remove the cached archive and retry'
     }
-    $staged = Join-Path $Directory ('staging-' + [guid]::NewGuid().ToString('N'))
     try {
         Expand-Archive -LiteralPath $archive -DestinationPath $staged
         foreach ($name in @('Runner.Listener.exe', 'Runner.Worker.exe')) {
@@ -91,10 +112,20 @@ function Install-RunnerApplication([string]$Directory) {
             foreach ($name in @('.runner', '.credentials', '.credentials_rsaparams')) {
                 if (Test-Path -LiteralPath (Join-Path $app $name)) { Copy-Item -LiteralPath (Join-Path $app $name) -Destination $staged -Force }
             }
-            Remove-Item -LiteralPath $app -Recurse -Force
         }
-        Move-Item -LiteralPath $staged -Destination $app
-        [IO.File]::WriteAllText($marker, $script:RunnerVersion)
+        [IO.File]::WriteAllText((Join-Path $staged 'basaltwater-version'), $script:RunnerVersion)
+        if (Test-Path -LiteralPath $app) { Move-Item -LiteralPath $app -Destination $previous }
+        try {
+            Move-Item -LiteralPath $staged -Destination $app
+        } catch {
+            $activationError = $_
+            if ((Test-Path -LiteralPath $previous) -and -not (Test-Path -LiteralPath $app)) {
+                try { Move-Item -LiteralPath $previous -Destination $app }
+                catch { throw "Runner activation and rollback failed; registration is preserved at $previous" }
+            }
+            throw $activationError
+        }
+        if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Recurse -Force }
     } finally { Remove-Item -LiteralPath $staged -Recurse -Force -ErrorAction SilentlyContinue }
 }
 

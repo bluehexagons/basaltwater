@@ -75,6 +75,10 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation' -and
         $forwarded.Profile -eq 'agent_windows') 'Refresh changed native argument boundaries/profile'
     Assert-True ((Get-FileHash -LiteralPath $statePath).Hash -eq $before) 'CLI rewrote saved setup during preview'
+    $trailingRoot = 'F:\cache with spaces\'
+    $code = Invoke-NativeCli @('refresh', '--dry-run', '--storage-root', $trailingRoot)
+    $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+    Assert-True ($code -eq 0 -and $forwarded.StorageRoot -eq $trailingRoot.TrimEnd('\')) 'Refresh changed a storage path across native argument forwarding'
     # Exercise the actual cmd -> PowerShell -> installer argument boundary too.
     & $launcher refresh --storage-root 'F:\cache with spaces & punctuation' | Out-Null
     Assert-True ($LASTEXITCODE -eq 0) 'Installed refresh launcher failed'
@@ -114,6 +118,9 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
             $forwarded -contains '-Resume' -and $forwarded -contains '-UpdateSource' -and
             $forwarded -contains '-Plan' -and $forwarded -contains 'F:\development cache') 'Shortcut lost the game bundle/resume/storage selections'
         Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Shortcut retained its temporary download'
+        & $shortcut -StorageRoot 'F:\development cache\' -Plan
+        Assert-True ($global:BasaltwaterShortcutTest.Arguments -contains 'F:\development cache' -and
+            $global:BasaltwaterShortcutTest.Arguments -notcontains 'F:\development cache\') 'Shortcut did not normalize a trailing storage separator'
         $shortcutText = Get-Content -LiteralPath $shortcut -Raw
         & ([scriptblock]::Create($shortcutText)) -StorageDrive f: -Plan
         $forwarded = $global:BasaltwaterShortcutTest.Arguments
@@ -151,6 +158,10 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         function Update-NativePath { }
         function Set-NativeGodotExecutable($command) { $script:GodotWrites += $command; $env:BASALTWATER_GODOT_EXE = $command }
         function Mock-GodotVersion { $script:VersionArguments = @($args); $global:LASTEXITCODE = $script:VersionExit }
+        function Invoke-NativeGodotVersion($command) {
+            & $command --headless --version
+            if ($LASTEXITCODE -ne 0) { throw 'Godot version check failed' }
+        }
         function Ensure-WingetPackage {
             param($packageId, $label, [switch]$NoUpgrade)
             Assert-True ($packageId -eq 'GodotEngine.GodotEngine' -and $NoUpgrade) 'Godot used the wrong package/upgrade policy'
@@ -175,6 +186,16 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         $script:VersionExit = 0; $script:Tool = $null; $script:PackageTool = $null; $script:InstallWorks = $false
         Assert-Throws { Install-NativeGodot } 'unavailable after installation'
     }
+    # Real GUI-subsystem fixtures protect the PS 5.1 wait/exit-code boundary.
+    $guiFailure = Join-Path $temporary 'Godot GUI failure.exe'
+    Add-Type -TypeDefinition 'public class GodotFailureFixture { public static int Main() { System.Threading.Thread.Sleep(250); return 23; } }' `
+        -OutputAssembly $guiFailure -OutputType WindowsApplication
+    $global:LASTEXITCODE = 0
+    Assert-Throws { Invoke-NativeGodotVersion $guiFailure } 'exit code 23'
+    $guiHang = Join-Path $temporary 'Godot GUI timeout.exe'
+    Add-Type -TypeDefinition 'public class GodotHangFixture { public static int Main() { System.Threading.Thread.Sleep(20000); return 0; } }' `
+        -OutputAssembly $guiHang -OutputType WindowsApplication
+    Assert-Throws { Invoke-NativeGodotVersion $guiHang -TimeoutSeconds 1 } 'version check timed out'
     # Discover only the standard Godot package, ignoring the .NET variant.
     $packages = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
     foreach ($package in @('GodotEngine.GodotEngine_Microsoft.Winget.Source_test', 'GodotEngine.GodotEngine.Mono_test')) {

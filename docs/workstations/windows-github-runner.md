@@ -6,6 +6,16 @@ There is no Windows web panel. Live Windows 11/WSL qualification remains open.
 
 ## Set up
 
+Open a PowerShell process that permits these local scripts:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass
+```
+
+Run the remaining PowerShell examples inside that process. This leaves the
+account's saved execution policy unchanged and supports the array arguments
+used for repositories, users and labels.
+
 ```powershell
 $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | ConvertFrom-Json
 $runner = Join-Path $state.Source 'windows\Setup-GitHubRunner.ps1'
@@ -50,11 +60,12 @@ Confirm **Online/Idle** in GitHub; local task status alone cannot prove it.
 & $runner -Action status
 & $runner -Action stop   # interrupts jobs
 & $runner -Action start
-wsl.exe --distribution $env:BASALTWATER_WSL_DISTRO --user $env:BASALTWATER_WSL_USER --exec /usr/bin/git --version
+wsl.exe --distribution $state.Distro --user $state.LinuxUser --exec /usr/bin/git --version
 if ($LASTEXITCODE -ne 0) { throw 'WSL command failed' }
 ```
 
-The WSL variables above are provided **inside workflow jobs**. Tasks start at
+Inside workflow jobs, use `BASALTWATER_WSL_DISTRO` and
+`BASALTWATER_WSL_USER` instead of reading local setup state. Tasks start at
 the owner's login with limited privileges. Logout, sleep, restart and WSL
 shutdown can interrupt jobs. Use NTFS for Windows builds and the Linux filesystem
 for Linux builds. Keep WSL commands in the foreground and clean up background
@@ -71,6 +82,13 @@ Basaltwater source revision for updates. From an updated installer, run
 ordinary `-Resume` retains its pin. This also upgrades an existing WSL installation
 that predates runner support. Add the desired `-CIRepository`/`-CIAllowedUser`
 options to that update command to configure it.
+
+Application upgrades retain the old runner and registration files until the
+new application is activated. A failed activation restores the old application;
+rerun setup after resolving the error. If both activation and rollback fail,
+the error identifies the retained `app.previous` recovery directory. Do not
+delete that directory before recovering its registration files. A subsequent
+setup also recovers an interruption between the application renames.
 
 The checksum-pinned official x64 runner is **2.338.1**. State, workspaces, bounded
 gate outcomes and `_diag` logs live under `%LOCALAPPDATA%\Basaltwater\github-runner`,

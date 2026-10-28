@@ -68,7 +68,8 @@ before adding sudo membership or completing preparation. Existing accounts
 without a pending managed marker retain their password and lock policy.
 Setup syncs the state directory hierarchy and pending marker before creating
 an account; a directory sync failure stops preparation before account changes.
-`-Channel main|dev` or `-Version REF` pins the source revision. `-Go`, `-Node`,
+Both `-Channel main` and `-Channel dev` currently resolve `main` to a pinned
+commit. `-Version REF` overrides the channel. `-Go`, `-Node`,
 `-Python`, and `-AgentTool gh,codex,claude,opencode` select Ubuntu tools.
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create
 a Basaltwater-managed T3 service in WSL. `-BuildServer` installs Git for
@@ -116,7 +117,7 @@ First save the upload token using Windows user-bound DPAPI encryption:
 
 ```powershell
 $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | ConvertFrom-Json
-& (Join-Path $state.Source 'windows\Save-BasaltwaterToken.ps1')
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'windows\Save-BasaltwaterToken.ps1')
 ```
 
 Then run a job from the pinned installation source, using your own checkout,
@@ -130,10 +131,14 @@ git clone https://github.com/bluehexagons/basaltwater.git C:\work\project
 $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | ConvertFrom-Json
 $tools = Join-Path $state.Source 'windows'
 $commit = (git -C C:\work\project rev-parse HEAD).Trim()
-& "$tools\Invoke-BasaltwaterJob.ps1" -SourceDirectory C:\work\project -Revision $commit -Script windows\examples\Smoke-Artifact.ps1 -Artifact out\wsl-smoke.txt -UploadUri https://artifacts.example.test/upload -CredentialFile "$env:LOCALAPPDATA\Basaltwater\artifact-token.dpapi"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$tools\Invoke-BasaltwaterJob.ps1" -SourceDirectory C:\work\project -Revision $commit -Script windows\examples\Smoke-Artifact.ps1 -Artifact out\wsl-smoke.txt -UploadUri https://artifacts.example.test/upload -CredentialFile "$env:LOCALAPPDATA\Basaltwater\artifact-token.dpapi"
+if ($LASTEXITCODE -ne 0) { throw 'Native artifact job failed' }
 ```
 
-The runner writes a result receipt and separate logs under
+These commands bypass script policy only in the child process. The runner
+checks the artifact's path again after the job exits, rejecting junctions or
+symlinks created in its parent directories during execution.
+It writes a result receipt and separate logs under
 `%LOCALAPPDATA%\Basaltwater\jobs`. Jobs have a one-hour timeout by default,
 50 MiB combined log limit, and 1 GiB artifact limit. On timeout it kills the
 PowerShell process tree; on failure or checksum mismatch it reports failure and
@@ -144,12 +149,23 @@ filesystem rather than `/mnt/c`.
 
 ## Manage and recover
 
-Run `windows\Manage-Wsl.ps1 -Action status|start|stop|refresh|logs` from the
-pinned source directory. `refresh` updates WSL, Ubuntu packages, selected
+Run the management script from the pinned source, choosing
+`status`, `start`, `stop`, `refresh`, or `logs`:
+
+```powershell
+$state = Get-Content "$env:LOCALAPPDATA\Basaltwater\wsl-setup.json" -Raw | ConvertFrom-Json
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'windows\Manage-Wsl.ps1') -Action status
+```
+
+`refresh` updates WSL, Ubuntu packages, selected
 tools, and selected WinGet packages without changing the pinned Basaltwater
 source. To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
 revision for both Windows and Ubuntu before reapplying setup.
+Fresh setup and resume take the same account-level lock as native workstation
+setup before staging source or saving selections. Wait for an active setup to
+exit before retrying. A source update is marked `staged` until setup applies it
+successfully; a failed handoff does not preserve a stale `complete` phase.
 `stop` terminates the selected distribution and interrupts its active
 work. The optional login worker keeps WSL available after its terminal closes;
 logout, sleep, reboot, or `wsl --shutdown` can still interrupt jobs. Use

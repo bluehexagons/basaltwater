@@ -353,6 +353,8 @@ try {
         throw "Distribution location must be an absolute Windows drive path"
     }
     if ($Version -and $Version -notmatch '\A[A-Za-z0-9._-]+\z') { throw "Invalid release reference" }
+    # Both supported Windows channels track main; Version selects an explicit ref.
+    $sourceReference = if ($Version) { $Version } else { 'main' }
     $runnerConfig = $null
     if ($CIRepository.Count -or $CIOrganization) {
         # The download-only entry point has no companion files. The pinned
@@ -409,10 +411,13 @@ try {
         if ($runnerConfig) { Write-Host 'GitHub Actions: native Windows login tasks with WSL access; registration may be completed later.' }
         return
     }
-    if (Test-Path -LiteralPath $statePath) {
-        if (-not $Resume) { throw "An installation already exists. Rerun the saved installer with -Resume." }
+    New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
+    try {
         $setupLock = [IO.File]::Open((Join-Path $stateDirectory 'setup.lock'),
             [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch [IO.IOException] { throw 'Another Windows setup is already running; wait for it to finish.' }
+    if (Test-Path -LiteralPath $statePath) {
+        if (-not $Resume) { throw "An installation already exists. Rerun the saved installer with -Resume." }
         $state = Read-State
     } elseif ($Resume) {
         throw "No saved $Profile setup is available to resume"
@@ -426,7 +431,7 @@ try {
                 throw "Invalid Ubuntu username"
             }
         }
-        $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
+        $resolved = Resolve-Source $sourceReference
         if ($Profile -eq 'agent_windows') {
             Assert-NativeSourceOptions $resolved.Source ([pscustomobject]@{
                 NodeVersions = [bool]$NodeVersions; GameDev = [bool]$GameDev;
@@ -466,6 +471,8 @@ try {
             $resumeOptions.CIRegistrationTokenFile = $CIRegistrationTokenFile
             $resumeOptions.CIPromptToken = $CIPromptToken
         }
+        $setupLock.Dispose()
+        $setupLock = $null
         & $stagedInstaller @resumeOptions
         if (-not $?) { throw "Staged setup failed; rerun the saved installer with -Profile $Profile -Resume" }
         return
@@ -486,10 +493,11 @@ try {
         if ($storageSelected) { $state.StorageRoot = $StorageRoot }
     }
     if ($UpdateSource) {
-        $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
+        $resolved = Resolve-Source $sourceReference
         if ($Profile -eq 'agent_windows') { Assert-NativeSourceOptions $resolved.Source $state }
         $state.Revision = $resolved.Revision
         $state.Source = $resolved.Source
+        $state.Phase = 'staged'
         Save-State $state
         $setupLock.Dispose()
         $setupLock = $null

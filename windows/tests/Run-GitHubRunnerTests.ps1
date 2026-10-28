@@ -58,6 +58,58 @@ try {
     foreach ($name in @('Get-RegistrationToken', 'Register-Runner', 'Set-RunnerTask', 'Install-RunnerApplication')) {
         Invoke-Expression (Import-TestFunction $setupScript $name)
     }
+    # Upgrade a disposable ZIP and inject a failed activation rename.
+    & {
+        $instance = Join-Path $temporary 'upgrade instance'
+        $app = Join-Path $instance 'app'
+        $bundle = Join-Path $temporary 'runner bundle'
+        New-Item -ItemType Directory -Path (Join-Path $app 'bin'), (Join-Path $bundle 'bin') -Force | Out-Null
+        foreach ($name in @('Runner.Listener.exe', 'Runner.Worker.exe')) {
+            Set-Content -LiteralPath (Join-Path $app ('bin\' + $name)) -Value 'old executable'
+            Set-Content -LiteralPath (Join-Path $bundle ('bin\' + $name)) -Value 'new executable'
+        }
+        foreach ($name in @('.runner', '.credentials', '.credentials_rsaparams')) {
+            [IO.File]::WriteAllText((Join-Path $app $name), 'preserved registration')
+        }
+        [IO.File]::WriteAllText((Join-Path $app 'basaltwater-version'), 'old version')
+        $archive = Join-Path (Get-RunnerRoot) ('actions-runner-win-x64-' + $script:RunnerVersion + '.zip')
+        Compress-Archive -Path (Join-Path $bundle '*') -DestinationPath $archive
+        $savedDigest = $script:RunnerSha256
+        $script:RunnerSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $script:FailActivation = $true
+        $script:FailRollback = $false
+        function Move-Item {
+            param($LiteralPath, $Destination, [switch]$Force)
+            if ($script:FailActivation -and (Split-Path -Leaf $LiteralPath) -like 'staging-*') {
+                throw 'simulated activation failure'
+            }
+            if ($script:FailRollback -and (Split-Path -Leaf $LiteralPath) -eq 'app.previous') {
+                throw 'simulated rollback failure'
+            }
+            Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+        }
+        try {
+            Assert-Throws { Install-RunnerApplication $instance } 'activation failure'
+            Assert-True ([IO.File]::ReadAllText((Join-Path $app 'basaltwater-version')) -eq 'old version') 'Failed upgrade lost the old app'
+            foreach ($name in @('.runner', '.credentials', '.credentials_rsaparams')) {
+                Assert-True ([IO.File]::ReadAllText((Join-Path $app $name)) -eq 'preserved registration') 'Failed upgrade lost registration'
+            }
+            Assert-True (@(Get-ChildItem -LiteralPath $instance -Filter 'staging-*').Count -eq 0) 'Failed upgrade left a staging directory'
+            $script:FailRollback = $true
+            Assert-Throws { Install-RunnerApplication $instance } 'registration is preserved at'
+            $previous = Join-Path $instance 'app.previous'
+            Assert-True ([IO.File]::ReadAllText((Join-Path $previous '.credentials')) -eq 'preserved registration') 'Failed rollback lost its recovery copy'
+            $script:FailRollback = $false
+            # Also exercise recovery after a process stops between the two renames.
+            Assert-Throws { Install-RunnerApplication $instance } 'activation failure'
+            Assert-True (Test-Path -LiteralPath (Join-Path $app '.credentials')) 'Interrupted rename did not recover registration'
+            $script:FailActivation = $false
+            Install-RunnerApplication $instance
+            Assert-True ([IO.File]::ReadAllText((Join-Path $app 'basaltwater-version')) -eq $script:RunnerVersion) 'Upgrade retry did not activate the new app'
+            Assert-True ([IO.File]::ReadAllText((Join-Path $app '.credentials')) -eq 'preserved registration') 'Successful upgrade lost registration'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $instance 'app.previous'))) 'Successful upgrade left a backup'
+        } finally { $script:RunnerSha256 = $savedDigest }
+    }
     $RegisterWithGh = $false; $PromptToken = $false
     $RegistrationTokenFile = Join-Path $temporary 'registration-token'
     [IO.File]::WriteAllText($RegistrationTokenFile, ('a' * 30) + "`n")

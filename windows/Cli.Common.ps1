@@ -56,7 +56,7 @@ Refresh options:
   --node-versions   Add fnm for project-selected Node versions
   --storage-root PATH  Select a mounted NTFS directory for development caches
   --storage-drive DRIVE  Use DRIVE:\Basaltwater (for example: --storage-drive F:)
-  --channel main|dev   Select the source channel (default: main)
+  --channel main|dev   Select the source channel (both currently track main)
   --version REF        Select a specific source reference
 
 Refresh preserves installed tool versions and provider logins. Package upgrades
@@ -126,6 +126,8 @@ function Invoke-NativeCli([string[]]$Arguments) {
             if ($option -eq '--storage-root' -and ($value -notmatch '\A[A-Za-z]:[\\/]' -or $value -match '["\x00-\x1f]')) {
                 throw 'Storage root must be an absolute local Windows drive path'
             }
+            # A trailing backslash can escape PS 5.1's native argument quotes.
+            if ($option -eq '--storage-root' -and $value.Length -gt 3) { $value = $value.TrimEnd('\', '/') }
             $forward += @($values[$option], $value)
             continue
         }

@@ -18,7 +18,10 @@ if ($StorageDrive) {
         if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json')) {
             $selection += @('-Resume', '-UpdateSource')
         }
-        if ($StorageRoot) { $selection += @('-StorageRoot', $StorageRoot) }
+        if ($StorageRoot) {
+            if ($StorageRoot.Length -gt 3) { $StorageRoot = $StorageRoot.TrimEnd('\', '/') }
+            $selection += @('-StorageRoot', $StorageRoot)
+        }
         if ($Plan) { $selection += '-Plan' }
         try {
             # Native stderr warnings are error records in Windows PowerShell

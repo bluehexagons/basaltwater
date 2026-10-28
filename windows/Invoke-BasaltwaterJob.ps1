@@ -124,6 +124,8 @@ try {
         $result.State = 'failed'
         throw "Native job exited with code $($process.ExitCode); logs: $jobDirectory"
     }
+    # A job can create junctions after the initial preflight; recheck ancestors.
+    $artifactPath = Resolve-JobPath $source $Artifact
     if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Job produced no artifact" }
     $artifactItem = Get-Item -LiteralPath $artifactPath -Force
     if ($artifactItem.Attributes -band [IO.FileAttributes]::ReparsePoint -or $artifactItem.Length -gt 1GB) {

@@ -90,8 +90,9 @@ See [Windows game tooling](windows-game-development.md#storage) for split-storag
 setup commands, the layout and validation. See the same guide for the bundle,
 copy-and-paste setup, storage limits and project validation commands.
 `-Godot` independently installs the standard Godot editor/CLI; existing engines
-are reused and checked with `--headless --version`. Export templates, .NET/C#
-and mobile SDKs remain project requirements.
+are reused and checked with `--headless --version`. Setup waits for console or
+GUI executables to exit successfully, with a 30-second timeout. Export templates,
+.NET/C# and mobile SDKs remain project requirements.
 
 Setup enables Git's user-level `core.longpaths` when that setting is absent.
 An explicit existing value is preserved, including `false`; repository-specific
@@ -110,7 +111,14 @@ the checkout preview above also discovers installed tools and skill collisions.
 Source extraction handles paths longer than 260 characters without changing
 Windows policy and rejects archive paths that escape the staging directory.
 Use `-Version REF` to select a published tag, branch, or commit supported by
-the installer. A reference predating the native profile cannot supply it.
+the installer. Both `-Channel main` and `-Channel dev` currently resolve `main`;
+an explicit `-Version` overrides the channel. A reference predating the native
+profile cannot supply it.
+
+Fresh installs and resumes share an account-level setup lock with WSL setup.
+If another setup is running, wait for it to exit before retrying. `-Plan` remains
+read-only and can run while that lock is held. An updated source is saved as
+`staged` before execution; it becomes `complete` only after setup succeeds.
 
 For interruption, a package requiring restart, or later reconciliation, run
 the saved source's installer with `-Profile agent_windows -Resume`:
@@ -149,11 +157,14 @@ basaltw refresh --godot
 including providers, game tools and storage. It preserves installed package
 versions and provider logins; use vendor/package updaters for tool upgrades.
 `--dry-run` previews the currently pinned source without downloads or writes.
-Use `--channel dev` or `--version REF` for an explicit source selection.
+`--channel dev` is currently an alias for `main`; use `--version REF` for a
+specific source reference.
 `--game-dev`, `--shader-tools`, `--godot`, `--node-versions` and
 `--storage-drive F:` (or `--storage-root PATH`) can add saved selections;
 run `basaltw refresh --help`. Storage selection requires a healthy mounted
 NTFS volume. Invalid selections are rejected before changing saved setup.
+Trailing directory separators are normalized before forwarding storage paths
+through Windows PowerShell's native command boundary.
 The CLI reports setup failures through its exit code, including restart needs.
 
 `info` reports only the saved local native installation. Linux controller,
@@ -228,8 +239,11 @@ Codex/OpenCode receive skills under `%USERPROFILE%\.agents\skills`; Claude
 uses `%USERPROFILE%\.claude\skills`. Setup installs Windows workspace, project
 development, frontend design, subagent, and T3 preview guidance, including their
 supporting files. It records file hashes, refreshes unchanged managed files,
-and stops before overwriting personal edits. Generated Python caches are excluded
-when applying a checkout. Junctions/symlinks in a skill path
+and stops before overwriting personal edits. Each managed file is copied and
+hash-checked in a temporary sibling before replacement, so an interrupted copy
+can be retried without mistaking partial contents for a personal edit.
+Generated Python caches are excluded when applying a checkout.
+Junctions/symlinks in a skill path
 are refused. No browser payload is installed, and skills do not grant tools
 to sessions that do not expose them.
 

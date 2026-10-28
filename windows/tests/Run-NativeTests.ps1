@@ -251,6 +251,12 @@ try {
     Set-Content -LiteralPath (Join-Path $checkout 'ci\missing.ps1') -Value 'Write-Output no-artifact'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\slow.ps1') -Value 'Start-Sleep -Seconds 6'
     Set-Content -LiteralPath (Join-Path $checkout 'ci\large-log.ps1') -Value "[Console]::Out.Write('x' * (50MB + 1))"
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\junction.ps1') -Value @'
+$target = Join-Path (Split-Path -Parent $PSScriptRoot) '..\external artifact'
+New-Item -ItemType Directory -Path $target -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $target 'artifact.txt') -Value 'outside checkout'
+New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'redirect') -Target $target | Out-Null
+'@
     & git.exe -C $checkout add -- ci
     Assert-True ($LASTEXITCODE -eq 0) 'Could not stage native job fixtures'
     & git.exe -C $checkout -c user.name=BasaltwaterCI -c user.email=ci@example.invalid `
@@ -289,6 +295,19 @@ try {
         Assert-NewReceipt $before 'uploaded' | Out-Null
         Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Successful job did not upload'
         Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
+
+        $before = @(Get-Receipts).Count
+        $junction = Join-Path $checkout 'redirect'
+        try {
+            Assert-Throws {
+                & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\junction.ps1' `
+                    -Artifact 'redirect\artifact.txt' -UploadUri $uri -CredentialFile $credential
+            } 'contains a reparse point'
+            Assert-NewReceipt $before 'failed' | Out-Null
+            Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Job-created artifact junction attempted upload'
+        } finally {
+            if (Test-Path -LiteralPath $junction) { [IO.Directory]::Delete($junction) }
+        }
 
         Set-Content -LiteralPath (Join-Path $checkout 'ci\untracked.ps1') -Value 'exit 0'
         $before = @(Get-Receipts).Count

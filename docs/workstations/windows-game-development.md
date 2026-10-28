@@ -32,7 +32,9 @@ runtime. Use those project files when versions change.
 
 `-Godot` independently prepares the standard Godot editor and `godot` command
 through `GodotEngine.GodotEngine`. Existing engines are retained and checked
-headlessly. When WinGet extracts its portable package without creating an
+headlessly. The version probe waits for the actual process, including a GUI
+executable, and fails on a nonzero exit or a 30-second timeout.
+When WinGet extracts its portable package without creating an
 alias, setup supplies a per-account command launcher. Reconciliation refreshes
 that launcher against the installed package. Match each project's required
 engine version; this host selection does not override repository pins.

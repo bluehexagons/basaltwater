@@ -161,7 +161,15 @@ function Install-NativeSkill([string]$source, [string]$destination, [switch]$Pla
     foreach ($relative in $files.Keys) {
         $target = Join-Path $destination $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
-        Copy-Item -LiteralPath (Join-Path $source $relative) -Destination $target -Force
+        $temporary = $target + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+        try {
+            Copy-Item -LiteralPath (Join-Path $source $relative) -Destination $temporary -Force
+            if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ne $files[$relative]) {
+                throw "Skill source changed during copy: $relative"
+            }
+            if ([IO.File]::Exists($target)) { [IO.File]::Replace($temporary, $target, [NullString]::Value) }
+            else { [IO.File]::Move($temporary, $target) }
+        } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
     }
     foreach ($relative in $recorded.Keys) {
         if ($files.ContainsKey($relative)) { continue }

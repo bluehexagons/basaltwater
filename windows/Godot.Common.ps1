@@ -18,6 +18,23 @@ function Set-NativeGodotExecutable([string]$command) {
     $env:BASALTWATER_GODOT_EXE = $command
 }
 
+function Invoke-NativeGodotVersion([string]$command, [ValidateRange(1, 300)][int]$TimeoutSeconds = 30) {
+    # PowerShell 5.1 does not wait for GUI executables invoked with &.
+    $process = Start-Process -FilePath $command -ArgumentList @('--headless', '--version') `
+        -WindowStyle Hidden -PassThru
+    try {
+        $null = $process.Handle
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            if ($LASTEXITCODE -ne 0 -or -not $process.WaitForExit(5000)) {
+                throw 'Godot version check timed out; process cleanup could not be confirmed'
+            }
+            throw 'Godot version check timed out'
+        }
+        if ($process.ExitCode -ne 0) { throw "Godot version check failed (exit code $($process.ExitCode))" }
+    } finally { $process.Dispose() }
+}
+
 function Install-NativeGodot([switch]$Plan) {
     $bin = Join-Path $env:LOCALAPPDATA 'Basaltwater\bin'
     $launcher = Join-Path $bin 'godot.cmd'
@@ -38,8 +55,7 @@ function Install-NativeGodot([switch]$Plan) {
         if (-not $command) { $command = Get-NativeGodotPackageCommand }
         if (-not $command) { throw 'Godot is unavailable after installation; repair its WinGet package/PATH and rerun setup.' }
     }
-    & $command --headless --version
-    if ($LASTEXITCODE -ne 0) { throw "Godot version check failed (exit code $LASTEXITCODE)" }
+    Invoke-NativeGodotVersion $command
     if ($managed -or -not (Get-NativeCommand godot)) {
         Assert-NativeSkillPath $launcher
         New-Item -ItemType Directory -Path $bin -Force | Out-Null

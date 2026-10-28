@@ -178,7 +178,11 @@ try {
         param($DriveLetter)
         if ($DriveLetter -ne 'X') { return @{ FileSystem = 'NTFS'; HealthStatus = 'Healthy' } }
     }
-    function global:Invoke-RestMethod { return @{ sha = $global:AgentInstallerTestRevision } }
+    function global:Invoke-RestMethod {
+        param($Uri)
+        $global:AgentInstallerTestRequests += $Uri
+        return @{ sha = $global:AgentInstallerTestRevision }
+    }
     function global:Invoke-WebRequest {
         param([switch]$UseBasicParsing, [string]$Uri, [string]$OutFile)
         if ($Uri -notmatch '/archive/([a-f0-9]{40})\.zip\z' -or
@@ -190,12 +194,13 @@ try {
     $global:AgentInstallerTestRevision = 'a' * 40
     $global:AgentInstallerTestArchives = @{}
     $global:AgentInstallerTestCalls = @()
+    $global:AgentInstallerTestRequests = @()
     $global:AgentInstallerTestFailure = $true
     try {
         $splitPlan = & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
         Assert-Throws { & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive F -StorageRoot 'F:\custom' -Plan } 'Choose StorageDrive or StorageRoot'
-        foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40))) {
+        foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40), ('d' * 40))) {
             $pinned = Join-Path $temporary "archive-source\basaltwater-$revision"
             New-Item -ItemType Directory -Path (Join-Path $pinned 'windows') -Force | Out-Null
             Copy-Item -LiteralPath (Join-Path $repo 'install.ps1') -Destination (Join-Path $pinned 'install.ps1')
@@ -205,6 +210,11 @@ try {
 param([string]$Profile, [switch]$Resume)
 throw 'Older pinned installer must not execute with unsupported selections'
 '@
+            }
+            if ($revision -eq ('d' * 40)) {
+                $entry = Join-Path $pinned 'install.ps1'
+                (Get-Content -LiteralPath $entry -Raw).Replace('$ErrorActionPreference = "Stop"',
+                    "throw 'simulated source entry failure'") | Set-Content -LiteralPath $entry -Encoding UTF8
             }
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
             Copy-Item -LiteralPath (Join-Path $repo 'windows\DevelopmentStorage.Common.ps1') -Destination (Join-Path $pinned 'windows\DevelopmentStorage.Common.ps1')
@@ -226,7 +236,19 @@ function Invoke-NativeAgentSetup {
             finally { $zip.Dispose() }
             $global:AgentInstallerTestArchives[$revision] = $archive
         }
-        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Node -Python -GameDev -ShaderTools -Godot -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
+        $lockDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
+        New-Item -ItemType Directory -Path $lockDirectory -Force | Out-Null
+        $held = [IO.File]::Open((Join-Path $lockDirectory 'setup.lock'), [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        try {
+            foreach ($profile in @('agent_windows', 'server_wsl')) {
+                Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile $profile } 'Another Windows setup'
+            }
+            Assert-True ($global:AgentInstallerTestRequests.Count -eq 0) 'Locked fresh setup resolved source before taking the lock'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $lockDirectory 'windows-setup.json'))) 'Locked fresh setup wrote state'
+        } finally { $held.Dispose() }
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Channel dev -Node -Python -GameDev -ShaderTools -Godot -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
+        Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/main$') 'Dev channel did not resolve main'
         $nativeStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'applying') 'Failed native setup was marked complete'
@@ -243,6 +265,16 @@ function Invoke-NativeAgentSetup {
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'complete') 'Native resume did not complete'
+        $held = [IO.File]::Open((Join-Path $lockDirectory 'setup.lock'), [IO.FileMode]::Open,
+            [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $beforeLocked = (Get-FileHash -LiteralPath $nativeStatePath).Hash
+        try {
+            foreach ($profile in @('agent_windows', 'server_wsl')) {
+                Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile $profile -Resume } 'Another Windows setup'
+            }
+            & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Plan
+            Assert-True ((Get-FileHash -LiteralPath $nativeStatePath).Hash -eq $beforeLocked) 'Locked resume/plan changed state'
+        } finally { $held.Dispose() }
         Assert-True ($global:AgentInstallerTestCalls[-1].Node -and $global:AgentInstallerTestCalls[-1].Python -and
             $global:AgentInstallerTestCalls[-1].Desktop) 'Native resume lost the saved tools/desktop defaults'
         Assert-True ('codex' -in $global:AgentInstallerTestCalls[-1].Tools) 'Native default provider was not saved'
@@ -269,6 +301,14 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Source update lost Godot selection'
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'
+        $global:AgentInstallerTestRevision = 'd' * 40
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -Channel dev } 'source entry failure'
+        $failedUpdate = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
+        Assert-True ($failedUpdate.Phase -eq 'staged' -and $failedUpdate.Revision -eq ('d' * 40)) 'Failed source entry was marked complete'
+        Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/main$') 'Dev source update did not resolve main'
+        $global:AgentInstallerTestRevision = 'b' * 40
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource
+        Assert-True ((Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json).Phase -eq 'complete') 'Source recovery did not complete'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageDrive 'f:' -Plan
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\Basaltwater') 'Drive preview retained the old custom root'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -StorageDrive f
@@ -297,7 +337,8 @@ function Invoke-NativeAgentSetup {
             $env:LOCALAPPDATA = Join-Path $temporary 'fresh split account'
             Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive X } 'healthy mounted NTFS'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'))) 'Fresh invalid storage created saved selections'
-            & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F:
+            & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F: -Channel dev -Version release-test
+            Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/release-test$') 'Version did not override the channel'
             $freshState = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
             Assert-True ($freshState.Phase -eq 'complete' -and $freshState.StorageRoot -eq 'F:\Basaltwater') 'Fresh drive-based setup did not complete with saved storage'
         } finally { $env:LOCALAPPDATA = $savedFreshLocal }
@@ -332,7 +373,7 @@ function Invoke-NativeAgentSetup {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
         }
-        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure -Scope Global
+        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests -Scope Global
     }
 
     # Real bundle copies only touch a private fake home; supporting files are preserved.
@@ -350,6 +391,19 @@ function Invoke-NativeAgentSetup {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $destination 'scripts'))) 'Generated Python caches were installed as skill resources'
     Set-Content -LiteralPath (Join-Path $destination 'personal.txt') -Value 'keep'
     Set-Content -LiteralPath (Join-Path $source 'references\guide.md') -Value 'second version'
+    & {
+        function Copy-Item {
+            param($LiteralPath, $Destination, [switch]$Force)
+            if ($LiteralPath -like '*references\guide.md') {
+                [IO.File]::WriteAllText($Destination, 'partial interrupted copy')
+                throw 'simulated interrupted skill copy'
+            }
+            Microsoft.PowerShell.Management\Copy-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+        }
+        Assert-Throws { Install-NativeSkill $source $destination } 'interrupted skill copy'
+    }
+    Assert-True ((Get-Content -LiteralPath (Join-Path $destination 'references\guide.md')) -eq 'first version') 'Interrupted skill copy replaced the managed file'
+    Assert-True (@(Get-ChildItem -LiteralPath $destination -Recurse -Filter '*.tmp').Count -eq 0) 'Interrupted skill copy left temporary files'
     Install-NativeSkill $source $destination
     Assert-True ((Get-Content -LiteralPath (Join-Path $destination 'references\guide.md')) -eq 'second version') 'Managed reference was not refreshed'
     Set-Content -LiteralPath (Join-Path $destination 'references\guide.md') -Value 'personal edit'
