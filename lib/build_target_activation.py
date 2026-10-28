@@ -20,6 +20,7 @@ from lib.build_admission import DeploymentAdmissionStore
 from lib.build_manifest import DEBIAN_PLATFORM, validate_manifest_request
 from lib.build_protocol import encode_document, parse_build_request, request_digest
 from lib.build_target_policy import authorize_target_deployment
+from lib.build_target_routing import load_target_routing, routing_for_config
 from lib.cicd_deploy_policy import validate_nginx_path
 from lib.deployment import DeploymentOrchestrator
 from lib.nginx_config import create_nginx_sites_for_groups
@@ -261,6 +262,40 @@ class TargetReleaseActivator:
     def _save(self, state: dict) -> None:
         write_bytes_atomic(self.registry, encode_document(state, maximum=MAX_REGISTRY_BYTES), mode=0o600)
 
+    def check_routing(self, config) -> None:
+        """Refuse local refresh with serving policy not enrolled by root setup."""
+        if load_target_routing(self.root) != routing_for_config(config):
+            raise ValueError("Artifact serving policy differs; enroll it from the controller before refresh")
+
+    def _publish(self, state: dict, old_groups: dict) -> None:
+        """Use the ordinary Nginx, UDP and TLS publishers with retained policy."""
+        from deploy.network_steps import configure_public_udp
+
+        routing = load_target_routing(self.root)
+        groups = self._groups(state["applications"])
+        scope = set(old_groups) | set(groups)
+        listeners = self._listeners(state)
+        create_nginx_sites_for_groups(groups, managed_domains=scope,
+                                     enable_https_redirect=not routing.cloudflare)
+        configure_public_udp(listeners)
+        if routing.ssl and not routing.cloudflare:
+            from web.ssl_steps import install_certbot, setup_ssl_for_deployments
+
+            install_certbot()
+            setup_ssl_for_deployments(
+                [item for deployments in groups.values() for item in deployments],
+                routing.ssl_email, managed_domains=scope,
+            )
+
+    @staticmethod
+    def _listeners(state: dict) -> list:
+        from lib.project_manifest import collect_public_udp
+
+        manifests = [(app, _bindings_manifest(record["bindings"], record["request"],
+                                             record["bindings"]["principal"])[1])
+                     for app, record in state["applications"].items()]
+        return collect_public_udp(manifests)
+
     @staticmethod
     def _groups(applications: dict) -> dict[str, list[dict]]:
         groups: dict[str, list[dict]] = {}
@@ -339,6 +374,7 @@ class TargetReleaseActivator:
         """
         expected = parse_expected_releases(expected_releases)
         with _trusted_directory(self.root, private=True), _trusted_directory(self.staging_root, private=True):
+            load_target_routing(self.root)
             if expected is not None:
                 # Refusals must not initialize the registry or create an
                 # activation lock/marker, open artifacts, or preflight releases.
@@ -352,6 +388,7 @@ class TargetReleaseActivator:
                     state = self._load()
                 if not state["applications"]:
                     raise ValueError("No retained target releases; run deployment from the controller")
+                self._listeners(state)
                 prepared = []
                 # Check every descriptor and retained bundle before changing an
                 # application. Accessors use one shared staging lock, so open
@@ -385,10 +422,10 @@ class TargetReleaseActivator:
                                 staging_root=self.staging_root, target_platform=DEBIAN_PLATFORM,
                             )
                         record["deployments"] = _deployments(deployments, record["root"])
-                    groups = self._groups(state["applications"])
+                    self._groups(state["applications"])
                     encode_document(state, maximum=MAX_REGISTRY_BYTES)
                     operation.transition(marker.operation_id, "publishing")
-                    create_nginx_sites_for_groups(groups, managed_domains=set(old_groups) | set(groups))
+                    self._publish(state, old_groups)
                     self._save(state)
                     operation.complete(marker.operation_id)
                 except BaseException:
@@ -417,6 +454,7 @@ class TargetReleaseActivator:
                for private in (self.root, self.staging_root)):
             raise ValueError("Target release overlaps private target evidence")
         with _trusted_directory(parent, private=False), _trusted_directory(self.root, private=True), _trusted_directory(self.staging_root, private=True):
+            load_target_routing(self.root)
             operation = OperationStateStore(os.path.join(self.root, "activation.json"))
             with operation.ownership():
                 state = self._load()
@@ -448,6 +486,7 @@ class TargetReleaseActivator:
                 }
                 candidate = copy.deepcopy(state)
                 candidate["applications"][binding["application"]] = installed
+                self._listeners(candidate)
                 # Keep room for bounded rendered routes before changing the
                 # release. Large retained input documents consume the same
                 # registry capacity as other protected evidence.
@@ -473,12 +512,12 @@ class TargetReleaseActivator:
                         )
                     installed["deployments"] = _deployments(deployments, root)
                     state["applications"][binding["application"]] = installed
-                    groups = self._groups(state["applications"])
+                    self._groups(state["applications"])
                     # Bound the next registry before changing Nginx; the release
                     # operation remains inspectable if either boundary fails.
                     encode_document(state, maximum=MAX_REGISTRY_BYTES)
                     operation.transition(marker.operation_id, "publishing")
-                    create_nginx_sites_for_groups(groups, managed_domains=set(old_groups) | set(groups))
+                    self._publish(state, old_groups)
                     self._save(state)
                     operation.complete(marker.operation_id)
                 except BaseException:

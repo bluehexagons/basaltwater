@@ -23,7 +23,7 @@ def _certificate_is_usable(cert_path: str, key_path: str, domains: StrList) -> b
     return certificate_is_usable(cert_path, key_path, domains)
 
 
-def install_certbot(config: SetupConfig) -> None:
+def install_certbot(config: SetupConfig | None = None) -> None:
     print("Installing certbot...")
     run("apt-get update -qq", check=False)
     install_package("certbot", "certbot", "apt-get install -y -qq certbot python3-certbot-nginx")
@@ -146,6 +146,8 @@ def setup_ssl_for_deployments(
     deployments: Deployments,
     email: Optional[str] = None,
     enable_https_redirect: bool = True,
+    *,
+    managed_domains: set[Optional[str]] | None = None,
 ) -> None:
     """
     Set up Let's Encrypt SSL using SANs for all deployed domains.
@@ -204,7 +206,10 @@ def setup_ssl_for_deployments(
         grouped_deployments.setdefault(key, []).append(dep)
     
     # Create nginx sites from grouped deployments
-    create_nginx_sites_for_groups(grouped_deployments, enable_https_redirect=enable_https_redirect)
+    create_nginx_sites_for_groups(
+        grouped_deployments, enable_https_redirect=enable_https_redirect,
+        **({"managed_domains": managed_domains} if managed_domains is not None else {}),
+    )
     
     setup_certificate_renewal()
     

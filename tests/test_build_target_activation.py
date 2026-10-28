@@ -311,7 +311,7 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.assertEqual((units / "app-shop-api.service").read_bytes(), original_unit)
         find_port.assert_called_once()
         self.assertEqual(self.deploy.call_count, 2)
-        self.publish.assert_called_once_with(groups, managed_domains={"shop.example"})
+        self.publish.assert_called_once_with(groups, managed_domains={"shop.example"}, enable_https_redirect=True)
         self.assertFalse((self.state / "activation.json").exists())
 
     def test_second_application_preserves_shared_domain_route_group(self):

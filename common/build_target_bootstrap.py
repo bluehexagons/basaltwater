@@ -6,6 +6,8 @@ import os
 from typing import TYPE_CHECKING
 
 from common.build_target_steps import configure_build_target
+from lib.build_target_maintenance import target_maintenance
+from lib.build_target_routing import save_target_routing
 from lib.machine_state import STATE_DIR
 from lib.operation_state import OperationStateStore
 from lib.remote_utils import is_dry_run
@@ -16,6 +18,18 @@ if TYPE_CHECKING:
 
 BOOTSTRAP_STEP = "bootstrap_build_target"
 SETUP_OPERATION_FILE = os.path.join(STATE_DIR, "setup-operation.json")
+
+
+def configure_target_routing(config: SetupConfig) -> None:
+    """Enroll serving policy through root setup, outside the artifact protocol."""
+    from common.service_tools.build_target import load_config
+
+    with target_maintenance():
+        installed = load_config()
+        root = installed["roots"]["releases"]
+        if OperationStateStore(os.path.join(root, "activation.json")).load() is not None:
+            raise RuntimeError("Unfinished artifact activation requires routing reconciliation")
+        save_target_routing(root, config)
 
 
 def bootstrap_build_target(config: SetupConfig) -> None:
@@ -34,6 +48,8 @@ def bootstrap_build_target(config: SetupConfig) -> None:
         host=config.host, username=config.username, system_type="custom_steps",
         machine_type=config.machine_type, custom_steps=BOOTSTRAP_STEP,
         build_target_enrollment=config.build_target_enrollment, dry_run=config.dry_run,
+        enable_cloudflare=config.enable_cloudflare, enable_ssl=config.enable_ssl,
+        ssl_email=config.ssl_email,
     )
     # Compare executable target intent, allowing the parser's equivalent
     # None/False/default-list representations after an argv round trip.
@@ -50,4 +66,5 @@ def bootstrap_build_target(config: SetupConfig) -> None:
         if setup.load() is not None:
             raise RuntimeError("Unfinished target setup must be reconciled before target bootstrap")
         configure_build_target(config)
+        configure_target_routing(config)
         print("  Typed target enrollment ready; saved application profile retained")

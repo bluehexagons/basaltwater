@@ -41,7 +41,11 @@ descriptors and retained artifacts even without `deploy_specs`. Missing target
 inputs require deployment from the controller and never fall back to uploaded
 source or a target build. Explicit runtime-install flags keep their ordinary
 meanings. Dry runs report reconciliation without reading installed artifacts.
-Cloudflare/SSL setup options are outside this target policy and are refused.
+Cloudflare/SSL settings are enrolled separately through administrative target
+bootstrap. They are retained in protected target routing state and reused by
+activation and refresh; build inputs cannot change them. Cloudflare origins
+remain HTTP without an origin HTTPS redirect. Direct TLS uses the ordinary
+scoped Nginx/certificate setup.
 
 Builder resolution, capability checks, build submission, initial external
 bootstrap and artifact delivery remain separate controller work. This replay

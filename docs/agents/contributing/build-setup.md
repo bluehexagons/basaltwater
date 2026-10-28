@@ -23,12 +23,20 @@ keys stay on the controller. Read-only
 platform checks require Debian 13 x86-64 and refuse unfinished setup or legacy
 enrollment before bootstrap. Selected-builder failures never fall back to a
 target build. Custom steps, build-host roles, legacy app-server roles, explicit
-build toolchains, network activation and Cloudflare/SSL profile setup are outside
+build toolchains and network activation are outside
 this first slice. App-server steps weaken the trusted deployment parent permissions;
 network activation cannot yet carry the verified address back to saved selection.
 Targets must be remote, explicitly `vm` or `hardware`, with profiles restricted
 to `server_lite` and `server_web`. See [saved selection](build-selection.md) and
 [selection configuration](build-selection-config.md) for identity and replay rules.
+
+Cloudflare and SSL use the ordinary profile steps. Minimal administrative
+bootstrap separately saves protected serving settings under the target releases
+root in `routing.json`, with an initialization witness. Activation and retained
+refresh reuse these settings, keeping Cloudflare origins HTTP without redirects;
+direct SSL uses the shared scoped certificate setup. Build requests cannot
+change this policy. Missing initialized policy or a local profile mismatch
+refuses with controller guidance before replay changes applications.
 
 Root preflight, enrollment bootstrap and final profile uploads use the resolved
 target endpoint's explicit identity, port and workspace host-key pins. The shared

@@ -257,7 +257,7 @@ class BuildSetupTests(unittest.TestCase):
         self.assertEqual(synced, [str(path), str(self.root)] * 2)
 
     def test_unsupported_target_roles_and_explicit_toolchains_refuse_before_network(self):
-        for changes in ({"enable_ssl": True}, {"is_build_server": True}, {"install_go": True},
+        for changes in ({"enable_ssl": "yes"}, {"is_build_server": True}, {"install_go": True},
                         {"install_node_versions": True}, {"system_type": "workstation"},
                         {"disable_build_target": True}, {"host": "localhost"}):
             config = copy.deepcopy(self.config)

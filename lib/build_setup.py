@@ -148,6 +148,8 @@ def _bootstrap_config(config: SetupConfig) -> SetupConfig:
         host=config.host, username=config.username, system_type="custom_steps",
         machine_type=config.machine_type, custom_steps="bootstrap_build_target",
         build_target_enrollment=config.build_target_enrollment, ssh_key=config.ssh_key,
+        enable_cloudflare=config.enable_cloudflare, enable_ssl=config.enable_ssl,
+        ssl_email=config.ssl_email,
     )
 
 

@@ -124,8 +124,10 @@ The independent root unit is `basaltwater-build-host.service`. It uses the
 installed entrypoint in isolated `--worker` mode, `UMask=0077`,
 `KillMode=control-group`, and `Restart=no`. Disabling automatic restart avoids
 replaying a job whose claim outcome is uncertain. Required packages are
-`git`, `e2fsprogs`, `openssh-server`, and `sudo`; `nodejs` is added only when
-Node installation is selected. Go installation remains with the common
+`git`, `e2fsprogs`, `openssh-server`, and `sudo`. Explicit `--node` setup uses
+the shared managed Node installer and freezes its inventory under the
+root-controlled `/opt/basaltwater-build-tools/.nvm`; project builds cannot
+install or replace that inventory. Go installation remains with the common
 setup flow, and Python uses the operating-system Python 3.
 Prerequisite installs use the shared 300-second APT lock timeout.
 

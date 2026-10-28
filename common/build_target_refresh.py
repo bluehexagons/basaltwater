@@ -14,6 +14,7 @@ from lib.build_admission import DeploymentAdmissionStore
 from lib.build_target_activation import TargetReleaseActivator, parse_expected_releases
 from lib.build_target_artifacts import BuildTargetArtifactStore
 from lib.build_target_maintenance import target_maintenance
+from lib.build_target_routing import routing_for_config
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run
 
@@ -43,12 +44,8 @@ _ACTIVE_SETUP: ContextVar[_RefreshContext | None] = ContextVar("expected_artifac
 
 
 def validate_artifact_refresh(config: SetupConfig) -> None:
-    """Reject setup route policies outside the retained activation contract."""
-    if config.enable_cloudflare or config.enable_ssl:
-        raise ValueError(
-            "Retained artifact reconciliation does not support Cloudflare or SSL setup; "
-            "use the supported target routing policy from the controller"
-        )
+    """Validate serving policy without reading or changing target state."""
+    routing_for_config(config)
 
 
 def _require_refresh_platform(config: SetupConfig) -> None:
@@ -69,6 +66,7 @@ def _compose_refresh(config: SetupConfig, installed: dict, expected: list[dict[s
     activator = TargetReleaseActivator(
         roots["releases"], roots["verify"], open_artifact=artifacts.open_verified_bundle,
     )
+    activator.check_routing(config)
     admissions = (DeploymentAdmissionStore(os.path.join(roots["admission"], "admissions.json"))
                   if expected is not None else None)
     return _RefreshContext(config, expected, activator, admissions)

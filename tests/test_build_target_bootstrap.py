@@ -27,6 +27,7 @@ class TargetBootstrapTests(unittest.TestCase):
         self.enterContext(patch.object(bootstrap.os, "geteuid", return_value=0))
         self.enterContext(patch.object(bootstrap, "is_dry_run", return_value=False))
         self.configure = self.enterContext(patch.object(bootstrap, "configure_build_target"))
+        self.routing = self.enterContext(patch.object(bootstrap, "configure_target_routing"))
         self.config = SetupConfig(
             host="localhost", username="agent", system_type="custom_steps",
             machine_type="vm", custom_steps=bootstrap.BOOTSTRAP_STEP,
@@ -50,6 +51,7 @@ class TargetBootstrapTests(unittest.TestCase):
         self.assertEqual((saved.stat().st_ino, saved.read_bytes()), before)
         self.assertFalse(Path(self.marker).exists())
         self.assertFalse(Path(self.marker + ".last.json").exists())
+        self.routing.assert_called_once_with(self.config)
 
     def test_existing_or_corrupt_setup_guard_refuses_before_enrollment(self) -> None:
         store = OperationStateStore(self.marker)
@@ -87,6 +89,8 @@ class TargetBootstrapTests(unittest.TestCase):
         self.configure.assert_not_called()
 
     def test_remote_round_trip_dispatches_only_bootstrap_without_saved_setup(self) -> None:
+        self.config.enable_cloudflare = True
+        self.config.enable_ssl = True
         tokens = _expand_remote_args(self.config.to_remote_args())
         with patch.object(sys, "argv", ["remote_setup.py", *tokens]), \
              patch("lib.cachyos.is_cachyos", return_value=False), \
@@ -97,6 +101,9 @@ class TargetBootstrapTests(unittest.TestCase):
              patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(remote_setup._run_main(), 0)
         self.configure.assert_called_once()
+        installed = self.configure.call_args.args[0]
+        self.assertTrue(installed.enable_cloudflare)
+        self.assertTrue(installed.enable_ssl)
         save_machine.assert_not_called()
         save_config.assert_not_called()
         steps.assert_not_called()

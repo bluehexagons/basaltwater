@@ -183,7 +183,7 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
 
     def test_unsupported_patch_preserves_saved_setup_and_credentials(self):
         before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
-        for options in (("--ssl",), ("--cloudflare",), ("--app-server",), ("--go",)):
+        for options in (("--node",), ("--app-server",), ("--go",)):
             for dry_run in (False, True):
                 with self.subTest(options=options, dry_run=dry_run), \
                      patch.object(basaltwater, "store_cli_credentials") as credentials, \
@@ -202,7 +202,7 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         self.apply.assert_not_called()
 
     def test_unsupported_saved_deploy_preserves_setup_and_credentials(self):
-        self.config.enable_ssl = True
+        self.config.is_app_server = True
         save_setup_command(self.config)
         before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         with patch.object(basaltwater, "store_cli_credentials") as credentials, \
@@ -233,13 +233,16 @@ class BuildSetupTransportTests(unittest.TestCase):
             credentials = stack.enter_context(patch.object(basaltwater, "store_cli_credentials"))
             save = stack.enter_context(patch.object(basaltwater, "save_setup_command"))
             apply = stack.enter_context(patch.object(basaltwater, "run_remote_setup"))
-            for options in (("--ssl",), ("--cloudflare",), ("--go",), ()):
+            policy = Path(temporary) / "target.json"
+            policy.write_text(json.dumps(enrollment()))
+            for options in (("--node",), ("--app-server",), ("--go",), ()):
                 for dry_run in (False, True):
                     with self.subTest(options=options, dry_run=dry_run):
                         args = parser.parse_args([
                             "setup", "server_web", "192.0.2.52", "agent",
                             "--provision-on", "192.0.2.10", "--build-on", "builder",
                             "--deploy", "example.com", "https://example.com/source.git",
+                            *(["--build-target-policy", str(policy)] if options else []),
                             *options, *(["--dry-run"] if dry_run else []),
                         ])
                         self.assertEqual(basaltwater.run_setup_command(args), 1)
@@ -250,9 +253,11 @@ class BuildSetupTransportTests(unittest.TestCase):
             apply.assert_not_called()
 
     def test_legacy_runtime_preparation_checks_selection_before_credentials(self):
-        config = self.config(build_on="builder", enable_ssl=True)
+        config = self.config(build_on="builder", is_app_server=True,
+                             build_target_enrollment=enrollment(),
+                             deploy_specs=[["example.com", "https://example.com/source.git"]])
         with patch.object(setup_common, "prepare_runtime_config") as credentials, \
-             self.assertRaisesRegex(ValueError, "Cloudflare or SSL"):
+             self.assertRaisesRegex(ValueError, "legacy app-server"):
             setup_common.prepare_validated_runtime_config(config, None)
         credentials.assert_not_called()
 
