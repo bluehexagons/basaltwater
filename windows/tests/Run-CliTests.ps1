@@ -47,6 +47,7 @@ param($Profile, [switch]$Resume, [switch]$UpdateSource, [switch]$Plan,
       [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$NodeVersions,
       $StorageRoot, $Channel, $Version)
 $PSBoundParameters | ConvertTo-Json | Set-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Encoding UTF8
+[Console]::Error.WriteLine('fixture warning on stderr')
 exit ([int]$env:BASALTWATER_TEST_EXIT)
 '@
     $statePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
@@ -83,14 +84,18 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-Throws { Invoke-NativeCli @('refresh') } 'does not match this account'
 
     & {
-        $global:BasaltwaterShortcutTest = @{ Downloads = @(); Exit = 0; Arguments = @() }
+        $global:BasaltwaterShortcutTest = @{ Downloads = @(); Exit = 0; Arguments = @(); Warning = $false }
         function Invoke-WebRequest {
             param($Uri, [switch]$UseBasicParsing, $OutFile, $TimeoutSec, $ErrorAction)
             Assert-True ($Uri -eq 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1') 'Shortcut selected an unexpected installer source'
             $global:BasaltwaterShortcutTest.Downloads += $OutFile
             Set-Content -LiteralPath $OutFile -Value '# downloaded fixture'
         }
-        function powershell.exe { $global:BasaltwaterShortcutTest.Arguments = @($args); $global:LASTEXITCODE = $global:BasaltwaterShortcutTest.Exit }
+        function powershell.exe {
+            $global:BasaltwaterShortcutTest.Arguments = @($args)
+            if ($global:BasaltwaterShortcutTest.Warning) { Write-Error 'fixture warning on stderr' }
+            $global:LASTEXITCODE = $global:BasaltwaterShortcutTest.Exit
+        }
         $shortcut = Join-Path $repo 'windows\Install-GameWorkstation.ps1'
         & $shortcut -StorageRoot 'F:\development cache' -Plan
         $forwarded = $global:BasaltwaterShortcutTest.Arguments
@@ -103,6 +108,10 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         Assert-Throws { & $shortcut } 'exit code 19'
         Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Failed shortcut retained its download'
         $global:BasaltwaterShortcutTest.Exit = 0
+        $global:BasaltwaterShortcutTest.Warning = $true
+        & $shortcut
+        Assert-True ($global:BasaltwaterShortcutTest.Arguments -contains '-Resume') 'Warning on stderr interrupted the shortcut'
+        $global:BasaltwaterShortcutTest.Warning = $false
         $priorLocal = $env:LOCALAPPDATA
         try {
             $env:LOCALAPPDATA = Join-Path $temporary 'fresh shortcut account'

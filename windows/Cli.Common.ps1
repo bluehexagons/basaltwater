@@ -122,6 +122,14 @@ function Invoke-NativeCli([string[]]$Arguments) {
         throw "Unsupported refresh option '$option'. Run basaltw refresh --help."
     }
     $saved = Read-NativeCliSetup
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $saved.Source 'install.ps1') @forward | Out-Host
-    return $LASTEXITCODE
+    $previousPreference = $ErrorActionPreference
+    try {
+        # PS 5.1 converts redirected native stderr (including harmless tool
+        # warnings) to error records. The installer exit code owns success.
+        $ErrorActionPreference = 'Continue'
+        & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $saved.Source 'install.ps1') @forward 2>&1 |
+            ForEach-Object { Write-Host "$_" }
+        $code = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousPreference }
+    return $code
 }

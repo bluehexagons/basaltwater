@@ -14,8 +14,15 @@ param([string]$StorageRoot = '', [switch]$Plan)
         }
         if ($StorageRoot) { $selection += @('-StorageRoot', $StorageRoot) }
         if ($Plan) { $selection += '-Plan' }
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer @selection
-        if ($LASTEXITCODE -ne 0) { throw "Windows game workstation setup failed (exit code $LASTEXITCODE)." }
+        try {
+            # Native stderr warnings are error records in Windows PowerShell
+            # 5.1. Preserve their text and decide success from the exit code.
+            $ErrorActionPreference = 'Continue'
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer @selection 2>&1 |
+                ForEach-Object { Write-Host "$_" }
+            $code = $LASTEXITCODE
+        } finally { $ErrorActionPreference = 'Stop' }
+        if ($code -ne 0) { throw "Windows game workstation setup failed (exit code $code)." }
     } finally {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
     }
