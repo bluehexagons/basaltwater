@@ -121,6 +121,41 @@ Bounded no-follow checks compare tracked worktree bytes after Git's built-in
 path normalization. Git-ignored files are outside the snapshot and do not
 affect its identity.
 
+### Tracked project npm policy
+
+A committed regular file named exactly `.npmrc` (at the root or in a source
+subdirectory) is preserved byte for byte when it contains only this bounded
+literal subset of npm project policy:
+
+| Option | Accepted values |
+| --- | --- |
+| `ignore-scripts` | `true`, `false` |
+| `engine-strict` | `true`, `false` |
+| `min-release-age` | Canonical decimal integer from 0 through 525600 (minutes) |
+
+Blank lines and full-line `#`/`;` comments are accepted, as are spaces/tabs
+around keys and values and LF/CRLF endings. Files must contain ASCII text,
+at most 8192 bytes, 128 lines (including an empty final line), and 512 bytes
+per line (excluding the line ending). Duplicate keys, unknown keys, sections,
+arrays, quoted values, inline comments, bare options, dollar signs, backslashes,
+and other control bytes are refused. This intentionally excludes registry URLs,
+auth settings, environment interpolation, user/global config overrides, paths,
+and shell overrides. It is a small allowlist, not a general npm INI parser.
+Comments are ordinary source text; this does not scan arbitrary source text
+for secrets. `.npmrc` directories and alternate case spellings are refused;
+other reserved credential filenames, including `.netrc`, remain forbidden.
+
+Creation validates both bounded no-follow worktree reads and the exact committed
+blob bytes. Extraction independently validates the payload before publication,
+even when all supplied checksums match. Worktree `.npmrc` bytes must themselves
+fit this text subset; Git encoding conversions do not bypass the check. The
+file-specific limit applies before committed blob reads and extraction and
+also bounds growing worktree reads. Revalidation through extraction uses the
+same parser. Errors never include rejected configuration contents. No file is
+stripped or rewritten, the manifest digest still covers its exact original
+bytes, and the snapshot identity covers `.npmrc` as an ordinary tracked file.
+The source/request schema and filtered history protocol are unchanged.
+
 ## Fixed ceilings
 
 Callers may lower these values through `SourceLimits`; they cannot raise the

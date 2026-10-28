@@ -10,13 +10,35 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from lib.build_protocol import DEFAULT_LIMITS, parse_build_request
 from lib.build_source import (
     MAGIC,
+    MAX_PROJECT_NPM_CONFIG_BYTES,
     SourceLimits,
     create_source_snapshot,
     unpack_source_snapshot,
+)
+
+
+UNSAFE_NPM_CONFIGS = (
+    b"_authToken=secret-canary\n", b"//registry.npmjs.org/:_authToken=secret-canary\n",
+    b"_auth=secret-canary\n", b"username=secret-canary\n", b"_password=secret-canary\n",
+    b"email=secret-canary\n", b"always-auth=true\n", b"registry=https://example.test\n",
+    b"@scope:registry=https://example.test\n", b"userconfig=/tmp/config\n",
+    b"globalconfig=/tmp/config\n", b"prefix=/tmp/install\n", b"cache=/tmp/cache\n",
+    b"cafile=/tmp/ca\n", b"script-shell=/bin/sh\n", b"strict-ssl=false\n",
+    b"ignore-scripts=${POLICY}\n", b"ignore-scripts=$POLICY\n",
+    b"ignore-scripts=true\\\nengine-strict=true\n", b"[section]\nignore-scripts=true\n",
+    b"ignore-scripts[]=true\n", b"Ignore-Scripts=true\n", b"ignore-scripts\n",
+    b"ignore-scripts=1\n", b'ignore-scripts="true"\n', b"ignore-scripts=true # comment\n",
+    b"ignore-scripts=true\nignore-scripts=false\n", b"engine-strict=True\n",
+    b"min-release-age=-1\n", b"min-release-age=1.5\n", b"min-release-age=525601\n",
+    b"min-release-age=01\n", b"min-release-age=" + b"9" * 500 + b"\n",
+    b"ignore-scripts=true\x00\n", b"ignore-scripts=true\rengine-strict=true\n",
+    b"\xef\xbb\xbfignore-scripts=true\n", b"# non-ascii \xff\n",
+    b"#" * 513, b"\n" * 128, b"#" * (MAX_PROJECT_NPM_CONFIG_BYTES + 1),
 )
 
 
@@ -374,6 +396,148 @@ class BuildSourceTest(unittest.TestCase):
         self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
         self.assertEqual(env["GIT_NO_LAZY_FETCH"], "1")
         self.assertNotIn("GIT_CONFIG_PARAMETERS", env)
+
+    def prepare_npm_config(self, content, path=".npmrc"):
+        self.git = FakeGit(self.repository, entries=[
+            *FakeGit(self.repository).entries, (path, "100644", "blob", content),
+        ])
+        target = self.repository / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+    def test_literal_project_npm_policy_is_preserved_with_protocol_and_history(self):
+        content = b"# Project policy\r\nignore-scripts=true\r\n"
+        nested = b"; policy\nengine-strict = false\nmin-release-age=525600\n"
+        self.prepare_npm_config(content)
+        self.git = FakeGit(self.repository, entries=[
+            *self.git.entries, ("src/.npmrc", "100644", "blob", nested),
+        ])
+        (self.repository / "src/.npmrc").write_bytes(nested)
+        self.source = self.create()
+        checkout, history = self.unpack()
+        self.assertEqual((Path(checkout) / ".npmrc").read_bytes(), content)
+        self.assertEqual((Path(checkout) / "src/.npmrc").read_bytes(), nested)
+        self.assertEqual(Path(history).read_bytes(), self.git.bundle)
+        self.assertEqual(self.source["manifest_sha256"], hashlib.sha256(
+            (self.repository / "basaltwater.json").read_bytes()).hexdigest())
+        request = {
+            "schema": 1, "request_id": "c" * 32, "project": "snapshot-test",
+            "source": self.source,
+            "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+            "components": [{"name": "site", "type": "static", "artifacts": ["src/main.py"],
+                            "commands": [], "env": {}}], "limits": dict(DEFAULT_LIMITS),
+        }
+        self.assertEqual(parse_build_request(request)["source"], self.source)
+        bundle = next(command for command, _ in self.git.calls if "bundle" in command)
+        self.assertIn("--filter=blob:none", bundle)
+
+    def test_unsafe_npm_configuration_is_refused_without_input_in_errors(self):
+        for index, content in enumerate(UNSAFE_NPM_CONFIGS):
+            with self.subTest(case=index):
+                self.prepare_npm_config(content)
+                with self.assertRaisesRegex(ValueError, r"\.npmrc|byte limit") as caught:
+                    self.create()
+                self.assertNotIn("secret-canary", str(caught.exception))
+                self.assertFalse(self.snapshot.exists())
+
+    def test_npm_literal_values_and_exact_bounds_roundtrip(self):
+        accepted = (
+            b"", b"\n" * 127, b"#" * 512, (b"#" + b"a" * 510 + b"\n") * 16,
+            b"ignore-scripts=false\nengine-strict=true\nmin-release-age=0",
+        )
+        for index, content in enumerate(accepted):
+            with self.subTest(case=index):
+                self.prepare_npm_config(content)
+                self.snapshot = self.root / f"policy-{index}.bws"
+                self.output = self.root / f"policy-{index}"
+                self.source = self.create()
+                checkout, _history = self.unpack()
+                self.assertEqual((Path(checkout) / ".npmrc").read_bytes(), content)
+
+    def test_growing_worktree_npm_read_stops_at_config_bound(self):
+        self.prepare_npm_config(b"ignore-scripts=true\n")
+        original_read = os.read
+        npm_reads = []
+
+        def growing_read(descriptor, size):
+            if size == MAX_PROJECT_NPM_CONFIG_BYTES + 1:
+                npm_reads.append(size)
+                return b"#" * size
+            return original_read(descriptor, size)
+
+        with patch("lib.build_source.os.read", side_effect=growing_read):
+            with self.assertRaisesRegex(ValueError, "byte limit"):
+                self.create()
+        self.assertEqual(npm_reads, [MAX_PROJECT_NPM_CONFIG_BYTES + 1])
+        self.assertFalse(self.snapshot.exists())
+
+    def test_committed_npm_bytes_are_validated_independently_of_worktree_checks(self):
+        self.prepare_npm_config(b"_authToken=secret-canary\n")
+        with patch("lib.build_source._check_clean_repository"), self.assertRaisesRegex(
+            ValueError, "unsafe project configuration",
+        ):
+            self.create()
+        self.assertFalse(self.snapshot.exists())
+
+    def test_unpack_rejects_unsafe_npm_bytes_even_with_valid_checksums(self):
+        safe = b"ignore-scripts=true\n"
+        self.prepare_npm_config(safe)
+        self.source = self.create()
+        original = self.snapshot.read_bytes()
+        offset = original.index(safe)
+        for index, content in enumerate(UNSAFE_NPM_CONFIGS):
+            with self.subTest(case=index):
+                forged = (original[:offset - 8] + struct.pack("!Q", len(content))
+                          + content + hashlib.sha256(content).digest()
+                          + original[offset + len(safe) + 32:])
+                self.snapshot.chmod(0o600)
+                self.snapshot.write_bytes(forged)
+                expected = {**self.source, "snapshot_sha256": hashlib.sha256(forged).hexdigest()}
+                with self.assertRaises(ValueError) as caught:
+                    self.unpack(expected)
+                self.assertNotIn("secret-canary", str(caught.exception))
+                self.assertFalse(self.output.exists())
+
+    def test_npm_config_aliases_directories_and_other_credentials_remain_forbidden(self):
+        for path in (".NPMRC", "src/.Npmrc", ".npmrc/child", ".netrc", "src/.pypirc"):
+            with self.subTest(path=path):
+                self.git = FakeGit(self.repository, entries=[
+                    *FakeGit(self.repository).entries, (path, "100644", "blob", b""),
+                ])
+                with self.assertRaises(ValueError):
+                    self.create()
+                self.assertFalse(self.snapshot.exists())
+
+    def test_npm_config_symlink_and_fifo_are_refused_without_reading(self):
+        self.prepare_npm_config(b"ignore-scripts=true\n")
+        target = self.repository / ".npmrc"
+        for kind in ("symlink", "fifo"):
+            with self.subTest(kind=kind):
+                target.unlink()
+                if kind == "symlink":
+                    target.symlink_to(self.root / "outside")
+                else:
+                    os.mkfifo(target)
+                with self.assertRaisesRegex(ValueError, "symlink or special"):
+                    self.create()
+                self.assertFalse(self.snapshot.exists())
+
+    def test_unpack_refuses_npm_directory_and_case_alias(self):
+        self.source = self.create()
+        original = self.snapshot.read_bytes()
+        # The first directory frame names src. Reject .npmrc before children.
+        directory = b"D\x00" + struct.pack("!I", 3) + b"src"
+        for name in (b".npmrc", b".NPMRC"):
+            with self.subTest(name=name):
+                replacement = b"D\x00" + struct.pack("!I", len(name)) + name
+                forged = original.replace(directory, replacement, 1)
+                self.assertNotEqual(forged, original)
+                self.snapshot.chmod(0o600)
+                self.snapshot.write_bytes(forged)
+                expected = {**self.source, "snapshot_sha256": hashlib.sha256(forged).hexdigest()}
+                with self.assertRaisesRegex(ValueError, r"npm|regular file"):
+                    self.unpack(expected)
+                self.assertFalse(self.output.exists())
 
     def test_clean_crlf_text_checkout_matches_its_normalized_blob(self):
         canonical = self.prepare_crlf_checkout()

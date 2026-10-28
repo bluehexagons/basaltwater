@@ -43,7 +43,7 @@ _FILTER_ATTRIBUTE_SENTINELS = frozenset({b"unspecified", b"unset"})
 _FILTER_DRIVER_ACTIONS = ("clean", "smudge", "process")
 _FORBIDDEN_COMPONENTS = frozenset({
     ".git", ".gitconfig", ".git-credentials", ".git-credential-cache",
-    ".git-credential-store", ".netrc", ".npmrc", ".pypirc", ".dockercfg",
+    ".git-credential-store", ".netrc", ".pypirc", ".dockercfg",
     ".aws", ".azure", ".docker", ".ssh", ".gnupg", "id_rsa", "id_ed25519",
     "known_hosts", "authorized_keys",
 })
@@ -62,6 +62,50 @@ MAX_SOURCE_PATH_BYTES = 4096
 MAX_COMMAND_SECONDS = 3600
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_BLOB_BATCH_BYTES = 64 * 1024 * 1024
+MAX_PROJECT_NPM_CONFIG_BYTES = 8192
+
+
+def _validate_project_npm_config(content: bytes) -> None:
+    """Accept a deliberately small literal subset of project npm INI policy.
+
+    Never echo input: rejected settings can contain credentials. Do not use a
+    general INI parser, whose sections, quoting and interpolation add ambiguity.
+    """
+    error = "Tracked .npmrc contains unsupported or unsafe project configuration"
+    if len(content) > MAX_PROJECT_NPM_CONFIG_BYTES:
+        raise ValueError("Tracked .npmrc exceeds its byte limit")
+    if (any(byte not in (9, 10, 13) and not 32 <= byte <= 126 for byte in content)
+            or b"$" in content or b"\\" in content):
+        raise ValueError(error)
+    text = content.replace(b"\r\n", b"\n")
+    if b"\r" in text:
+        raise ValueError(error)
+    lines = text.split(b"\n")
+    if len(lines) > 128 or any(len(line) > 512 for line in lines):
+        raise ValueError("Tracked .npmrc exceeds its line limits")
+    seen: set[bytes] = set()
+    for line in lines:
+        line = line.strip(b" \t")
+        if not line or line.startswith((b"#", b";")):
+            continue
+        key, separator, value = line.partition(b"=")
+        key, value = key.strip(b" \t"), value.strip(b" \t")
+        if not separator or key in seen:
+            raise ValueError(error)
+        seen.add(key)
+        if key in {b"ignore-scripts", b"engine-strict"}:
+            if value not in {b"true", b"false"}:
+                raise ValueError(error)
+        elif key == b"min-release-age":
+            if (re.fullmatch(rb"(?:0|[1-9][0-9]{0,5})", value) is None
+                    or int(value) > 525600):
+                raise ValueError(error)
+        else:
+            raise ValueError(error)
+
+
+def _is_project_npm_config(path: str) -> bool:
+    return path.rsplit("/", 1)[-1] == ".npmrc"
 
 
 @dataclass(frozen=True)
@@ -313,11 +357,13 @@ def _validate_source_path(path: str, limits: SourceLimits) -> str:
     parts = path.split("/")
     if not parts or any(part in {"", ".", ".."} for part in parts):
         raise ValueError("Git source path contains traversal or empty components")
-    for part in parts:
+    for index, part in enumerate(parts):
         validate_no_control_characters(part, "Git source path")
         if any(unicodedata.category(char) == "Cc" for char in part):
             raise ValueError("Git source path contains control characters")
         folded = unicodedata.normalize("NFC", part).casefold()
+        if folded == ".npmrc" and (part != ".npmrc" or index != len(parts) - 1):
+            raise ValueError("Git source contains unsupported project npm configuration path")
         if folded in _FORBIDDEN_COMPONENTS:
             raise ValueError("Git source contains forbidden Git or credential metadata")
         if part.endswith((".", " ")):
@@ -430,6 +476,8 @@ def _object_sizes(raw: bytes, files: Sequence[_TreeEntry], limits: SourceLimits)
             raise ValueError("Git source exceeds its total byte limit")
         if entry.path == MANIFEST_FILENAME and size > MAX_MANIFEST_BYTES:
             raise ValueError("Git source manifest exceeds its byte limit")
+        if _is_project_npm_config(entry.path) and size > MAX_PROJECT_NPM_CONFIG_BYTES:
+            raise ValueError("Tracked .npmrc exceeds its byte limit")
         result.append(_TreeEntry(entry.path, entry.kind, entry.object_id,
                                  entry.executable, size))
     return result
@@ -853,6 +901,12 @@ def _check_worktree_blob(
             raise ValueError("Git repository is dirty")
         if path_info.st_size > limits.max_file_bytes:
             raise ValueError("Git source file exceeds its byte limit")
+        npm_config = _is_project_npm_config(entry.path)
+        file_limit = limits.max_file_bytes
+        if npm_config:
+            file_limit = min(file_limit, MAX_PROJECT_NPM_CONFIG_BYTES)
+        if path_info.st_size > file_limit:
+            raise ValueError("Tracked .npmrc exceeds its byte limit")
         if entry.path == MANIFEST_FILENAME and path_info.st_size > MAX_MANIFEST_BYTES:
             raise ValueError("Git source manifest exceeds its byte limit")
         if source_bytes + path_info.st_size > limits.max_source_bytes:
@@ -878,11 +932,11 @@ def _check_worktree_blob(
             read_bytes = 0
             worktree_content = bytearray()
             while True:
-                chunk = os.read(descriptor, _CHUNK)
+                chunk = os.read(descriptor, min(_CHUNK, file_limit + 1 - read_bytes))
                 if not chunk:
                     break
                 read_bytes += len(chunk)
-                if (read_bytes > limits.max_file_bytes
+                if (read_bytes > file_limit
                         or source_bytes + read_bytes > limits.max_source_bytes):
                     raise ValueError("Git source exceeds its byte limit")
                 digest.update(chunk)
@@ -900,6 +954,8 @@ def _check_worktree_blob(
                 normalized_oid = normalize_blob(entry.path, bytes(worktree_content))
                 if normalized_oid != entry.object_id:
                     raise ValueError("Git repository is dirty")
+            if npm_config:
+                _validate_project_npm_config(bytes(worktree_content))
             return read_bytes
         finally:
             os.close(descriptor)
@@ -1135,6 +1191,8 @@ def create_source_snapshot(
 
                     for batch_entries, contents in _read_blob_batches(sized, invoke, limits):
                         for entry, content in zip(batch_entries, contents, strict=True):
+                            if _is_project_npm_config(entry.path):
+                                _validate_project_npm_config(content)
                             if _is_lfs_pointer(content):
                                 raise ValueError("Git LFS pointer files are unsupported")
                             _metadata_record(writer, b"F", int(entry.executable), entry.path,
@@ -1283,6 +1341,9 @@ def _relative_parent(root: int, path: str) -> Iterator[tuple[int, str]]:
 
 def _write_extracted_file(reader: _SnapshotReader, root: int, path: str,
                           size: int, executable: bool) -> str:
+    npm_config = _is_project_npm_config(path)
+    if npm_config and size > MAX_PROJECT_NPM_CONFIG_BYTES:
+        raise ValueError("Tracked .npmrc exceeds its byte limit")
     with _relative_parent(root, path) as (parent, name):
         descriptor = os.open(
             name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
@@ -1291,7 +1352,13 @@ def _write_extracted_file(reader: _SnapshotReader, root: int, path: str,
         digest = hashlib.sha256()
         try:
             with os.fdopen(descriptor, "wb") as output:
-                reader.copy_payload(size, output, digest)
+                if npm_config:
+                    content = reader.payload(size)
+                    _validate_project_npm_config(content)
+                    output.write(content)
+                    digest.update(content)
+                else:
+                    reader.copy_payload(size, output, digest)
                 expected = reader.metadata(32)
                 if digest.digest() != expected:
                     raise ValueError("Source file checksum mismatch")
@@ -1386,6 +1453,8 @@ def unpack_source_snapshot(
                         if parent_path not in directories:
                             raise ValueError("Source snapshot is missing a parent directory")
                     if kind == b"D":
+                        if _is_project_npm_config(path):
+                            raise ValueError("Project .npmrc must be a regular file")
                         if flags != 0 or reading_files:
                             raise ValueError("Source snapshot directory metadata is invalid")
                         order = (path.count("/"), path)
