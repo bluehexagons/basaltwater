@@ -11,11 +11,15 @@ Keep Windows projects on native paths such as `C:\Users\NAME\repos`. Use the
 project's documented Windows build/test commands. The native setup installs
 tools and skills for the current Windows account; it does not port Basaltwater's
 Linux controller, `basaltw agent` commands, systemd, or Debian setup profiles.
-The native `basaltw` command supports help, version, saved-installation `info`
-and `refresh`. Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
+The native `basaltw` command supports help, version, saved-installation `info`,
+`doctor` and `refresh`. Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
 to update Basaltwater from main and reapply saved selections; existing tool
 versions and logins are preserved. `basaltw --help` lists Windows options.
-Checkout-only setup needs a pinned installer run before refresh/info work.
+Checkout-only setup needs a pinned installer run before refresh/info/doctor work.
+Use `basaltw doctor --json` for read-only checks of saved selections and actual
+tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
+checks establish discovery, while logins, project builds, export templates and
+GPU readiness require their own qualification. Doctor does not apply setup.
 
 Discover the actual shell and tools before composing commands. Windows
 PowerShell 5.1 does not support `&&`; use separate invocations and check

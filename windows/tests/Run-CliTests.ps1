@@ -44,6 +44,24 @@ try {
     Assert-Throws { Invoke-NativeCli @('refresh', '--version', "main`n") } 'Invalid release'
     Assert-Throws { Invoke-NativeCli @('agent') } 'Unsupported Windows command'
     Assert-Throws { Invoke-NativeCli @('refresh') } 'No saved native Windows setup'
+    Assert-Throws { Invoke-NativeCli @('doctor', '--unknown') } 'Usage: basaltw doctor'
+    # Dispatch the installed CLI against a disposable diagnostic source. This
+    # proves policy bypass, JSON isolation and failure propagation without
+    # probing the host or requiring the saved setup's source to be current.
+    $doctorSource = Join-Path $temporary 'diagnostic source'
+    New-Item -ItemType Directory -Path (Join-Path $doctorSource 'windows') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $doctorSource 'windows\Test-AgentWorkstation.ps1') -Value @'
+param([switch]$Json)
+if ($Json) { '{"Healthy":false,"Checks":[{"Name":"fixture","State":"failed"}]}' }
+exit 1
+'@
+    $receiptPath = Join-Path $bin 'cli-source.json'
+    $receiptText = Get-Content -LiteralPath $receiptPath -Raw
+    try {
+        @{ Source = $doctorSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath
+        $doctor = & $launcher doctor --json | Out-String
+        Assert-True ($LASTEXITCODE -eq 1 -and -not ($doctor | ConvertFrom-Json).Healthy) 'Installed doctor lost JSON or failure status'
+    } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }
     $source = Join-Path $temporary 'pinned source with spaces'
     New-Item -ItemType Directory -Path $source | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Encoding UTF8 -Value @'

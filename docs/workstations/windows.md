@@ -148,6 +148,8 @@ changing the account execution policy. Open a new terminal after first setup.
 basaltw --help
 basaltw --version
 basaltw info --json
+basaltw doctor
+basaltw doctor --json
 basaltw refresh --dry-run
 basaltw refresh
 basaltw refresh --godot
@@ -169,7 +171,7 @@ The CLI reports setup failures through its exit code, including restart needs.
 
 `info` reports only the saved local native installation. Linux controller,
 server, desktop and agent subcommands remain unavailable on Windows. A
-checkout-only setup installs the launcher, but `refresh`/`info` require the
+checkout-only setup installs the launcher, but `refresh`/`info`/`doctor` require the
 pinned installation created by `install.ps1 -Profile agent_windows`. Existing
 PCs without the launcher must first use a current installer download with
 `-Profile agent_windows -Resume -UpdateSource`.
@@ -218,11 +220,37 @@ Login available through a temporary environment token in one session may not
 be available in a fresh terminal. Setup does not collect or copy credentials.
 
 `info` describes saved selections and the last installer phase; `complete`
-does not establish current tool health. `refresh --dry-run` checks discovery,
-storage paths and managed skill collisions, without running every tool's
-version probe. Run the relevant version commands above to check executable
-health. Neither command installs a project's dependencies or validates its
-build. Use the [game tooling examples](windows-game-development.md#antistatic-qualification)
+does not establish current tool health. `doctor` checks that phase and runs
+version probes for Git, GitHub CLI, Codex, and saved optional providers/runtimes,
+including dependencies selected by the game bundle. It checks npm alongside
+selected Node, identifies a failing Microsoft Store Python alias, resolves managed
+Godot to its actual executable, and validates configured storage paths.
+Selected Visual Studio/Windows SDK and T3 desktop checks establish discovery;
+they do not compile code or launch the desktop.
+
+`doctor` runs no installers or sign-in commands and does not change saved
+setup, PATH, skills or storage configuration. Each executable probe has a
+30-second timeout; a hung probe's Windows process tree is terminated. It keeps
+checking other tools after a failed version probe. `--json` returns a schema-1
+report with `Healthy` and named `Checks` containing `State`, `Command` and
+`Detail`; it exports no arbitrary saved-state fields or vendor stderr.
+Exit status is zero when all selected host checks pass, or one for failed,
+missing, timed-out or incomplete setup. Provider login, project dependencies,
+builds, engine/export-template pins and GPU readiness need separate checks.
+
+After updating the CLI, use `basaltw doctor`. To check a saved installation with
+the current checkout's diagnostics before applying an update, run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Test-AgentWorkstation.ps1 -Json
+```
+
+The script also accepts `-TimeoutSeconds 10` to change the per-probe bound.
+It requires the account's saved native installation, including when optional
+selections are absent in an older state. Checkout-only setup has no saved
+selection to diagnose. `refresh --dry-run` checks discovery, storage paths and
+managed skill collisions without running version probes. Use the
+[game tooling examples](windows-game-development.md#antistatic-qualification)
 for Antistatic's Node selection, native bootstrap and Windows test gate.
 
 Python's Microsoft Store execution alias can exist before Python is installed.

@@ -27,6 +27,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'Run-GameDevelopmentTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.

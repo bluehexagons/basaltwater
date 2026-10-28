@@ -12,7 +12,7 @@ function Install-NativeCli([string]$Source, [switch]$Plan) {
     $metadata = Get-Content -LiteralPath (Join-Path $Source 'pyproject.toml') -Raw
     if ($metadata -notmatch '(?m)^version\s*=\s*"([A-Za-z0-9.+-]+)"\s*$') { throw 'Missing Basaltwater package version' }
     $version = $Matches[1]
-    Write-Host "Native basaltw command: $bin (help, version, info, refresh)"
+    Write-Host "Native basaltw command: $bin (help, version, info, doctor, refresh)"
     if ($Plan) { return }
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     foreach ($file in $files) {
@@ -46,6 +46,7 @@ Native Windows commands:
   --help, help       Show this help
   --version, version Show the installed Basaltwater version
   info [--json]      Show this account's saved native setup
+  doctor [--json]    Check selected native tools without applying setup
   refresh           Update Basaltwater from main and reapply saved selections
 
 Refresh options:
@@ -96,6 +97,22 @@ function Invoke-NativeCli([string[]]$Arguments) {
         if ($options -contains '--json') { Write-Host ($info | ConvertTo-Json -Depth 4) }
         else { Write-Host (($info.GetEnumerator() | ForEach-Object { "  $($_.Key): $($_.Value -join ', ')" }) -join "`n") }
         return 0
+    }
+    if ($command -eq 'doctor') {
+        if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
+        if ($options.Count -gt 1 -or ($options.Count -eq 1 -and $options[0] -ne '--json')) { throw 'Usage: basaltw doctor [--json]' }
+        # Use this CLI's source, including when saved setup is interrupted at a
+        # different revision. The diagnostic itself reads the saved selections.
+        $source = Split-Path -Parent $PSScriptRoot
+        $receipt = Join-Path $PSScriptRoot 'cli-source.json'
+        if (Test-Path -LiteralPath $receipt) { $source = (Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json).Source }
+        $entry = Join-Path $source 'windows\Test-AgentWorkstation.ps1'
+        if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw 'Windows diagnostic source is missing; refresh Basaltwater from a current installer.' }
+        $diagnosticOptions = @()
+        if ($options -contains '--json') { $diagnosticOptions += '-Json' }
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $entry @diagnosticOptions |
+            ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
     }
     if ($command -ne 'refresh') { throw "Unsupported Windows command '$command'. Run basaltw --help for available commands." }
     if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
