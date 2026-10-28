@@ -281,6 +281,10 @@ bundle selection aligned with the complete shipped skill collection.
 
 ## Validation boundary
 
+Use the [local qualification procedure](windows-qualification.md) and its report
+template to retain host, workload and operator-reported lifecycle evidence.
+Windows qualification can run entirely on the workstation.
+
 Run the offline native setup tests without changing this account's tools:
 
 ```powershell

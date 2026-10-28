@@ -149,6 +149,9 @@ and release output otherwise remain with the checkout.
 
 ## Antistatic qualification
 
+Use the [local qualification report](windows-qualification.md) to record the
+tested revisions, tool pins, commands and open manual checks.
+
 Use the game's [setup](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md)
 and [Windows testing guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development/testing.md)
 at the revision being tested. Start an x64 developer shell from the Basaltwater
