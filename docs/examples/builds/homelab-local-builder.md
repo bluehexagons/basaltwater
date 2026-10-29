@@ -113,3 +113,8 @@ The normal saved six-site deployment and actual target refresh with the builder
 powered off both passed, preserving SQLite state and private backups. The
 SSH-only trusted-source policy replaced the default connection limiter while
 keeping public web ingress.
+Administrator SSH capacity inspection and exact-revision terminal settlement
+also passed, preserving source, log, artifact and replay identities. Maintenance
+remains unavailable through the restricted build transport. Automated coverage
+verifies that direct SSL delivery defers new certificates until final setup has
+configured web ingress.

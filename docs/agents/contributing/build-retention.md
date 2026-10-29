@@ -61,9 +61,11 @@ retrieval; it does not change historical success or the job's artifact identity.
 The local `--config` option selects administrator configuration. Root, isolated
 Python, trusted installed code, platform, account,
 configuration and root checks precede maintenance. No maintenance mode accepts
-a principal or `--once`; settlement, pruning and release require a revision. Any
-SSH original-command, connection or client environment rejects maintenance before
-project imports or configuration reads. No SSH action or user panel is added.
+a principal or `--once`; settlement, pruning and release require a revision.
+Normal root/sudo administrator SSH sessions are supported. Any forced-command
+`SSH_ORIGINAL_COMMAND` marker, including an empty value, rejects maintenance
+before project imports or configuration reads. No typed SSH action or user
+panel is added.
 
 Plans and receipts contain request ID, terminal state, revision, original
 reservation, current/proposed charges, settlement status, metadata charge,

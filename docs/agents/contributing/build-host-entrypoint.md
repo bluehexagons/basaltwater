@@ -38,8 +38,8 @@ grant the build identity that key or an interactive shell. The entrypoint
 requires the exact original command `basaltwater-build-v1`, accepts one typed
 request on stdin, and limits the connection to 15 minutes. The client cannot
 select a principal, path, shell command, drain operation or configuration file.
-Root administrators can select `--config` when operating the helper locally;
-that option must never be interpolated from SSH input.
+Root administrators can select `--config` from a local or normal administrator
+SSH shell; that option must never be interpolated from typed transport input.
 
 The connection deadline bounds normal framing, upload and download waits. A
 kernel syscall that cannot be interrupted can delay process exit. Accepted
@@ -53,22 +53,23 @@ native Debian checks cover SSH builds, artifact retrieval and selected public
 setup flows; see the [coverage map](../../plans/testing-coverage.md) for limits.
 Persistent jobs sharing an identity must be mutually trusted.
 
-Explicit root-local [terminal settlement](build-retention.md) can lower unused
+Explicit root-administered [terminal settlement](build-retention.md) can lower unused
 reservation charges after verifying certain terminal jobs and retained payloads.
-It preserves payloads and replay IDs and is unavailable through SSH.
+It preserves payloads and replay IDs and is unavailable through the typed SSH
+transport. Normal administrator SSH shells with root/sudo access are supported.
 After settlement, `--prune-terminal ID --expected-revision DIGEST` explicitly
 deletes source and log payloads by default. Repeat `--prune-kind source` or
 `--prune-kind log` to choose kinds explicitly. Inspect reports availability and
 pending/completed pruning; interrupted pruning requires its original revision
-and kind set. This is also root-local only, rejected before imports/configuration
-when any SSH environment marker is present. The separate root-local
+and kind set. This is rejected before imports/configuration when a forced-command
+`SSH_ORIGINAL_COMMAND` marker is present, even if empty. The separate root-administered
 `--release-bundle ID --expected-revision DIGEST` action relinquishes builder
 retrieval and deletes only an exact settled successful bundle. It accepts no
 principal, `--once` or `--prune-kind`, and uses the same launcher, code, platform,
-account, configuration and root checks. SSH markers reject it before project
+account, configuration and root checks. Forced-command markers reject it before project
 imports or configuration reads. Downloads never release holds. Failed,
 cancelled, expired and uncertain orphan bundles remain charged. Job results and
-replay identities remain retained; no automatic policy or SSH action is added.
+replay identities remain retained; no automatic policy or typed SSH action is added.
 
 ## Read-only local capacity inspection
 
@@ -80,9 +81,10 @@ replay identities remain retained; no automatic policy or SSH action is added.
 Use the trusted installation path and optionally the local administrator's
 `--config`. This mode has the same root, isolated Python, trusted code,
 platform, account, configuration and root restrictions as `--inspect-retention`.
-Any SSH original-command, connection or client environment marker rejects it
-before project imports or file access. It accepts no principal, `--once`,
-revision or prune kinds. It adds no SSH action.
+A forced-command `SSH_ORIGINAL_COMMAND` marker rejects it before project imports
+or file access. Ordinary administrator `SSH_CONNECTION` and `SSH_CLIENT` markers
+are accepted. It accepts no principal, `--once`, revision or prune kinds and adds
+no typed SSH action.
 
 Capacity inspection disables Python bytecode cache writes before the first
 project import, including the dependencies imported by `load_config()`. The
@@ -149,5 +151,5 @@ A selected Debian check runs this CLI from a cold protected code copy against
 retained pruned and unsettled inputs. Repeated reports match independently read
 accounting totals and separate logical headroom from filesystem space. Installed
 code, caches and retained evidence stay unchanged; the copied CLI creates no
-bytecode, refuses an SSH connection marker and leaves separate empty fixture roots
+bytecode and leaves separate empty fixture roots
 uninitialized. This does not qualify power loss or reserve physical capacity.

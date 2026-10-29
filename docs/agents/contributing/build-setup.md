@@ -43,8 +43,10 @@ Cloudflare and SSL use the ordinary profile steps. Minimal administrative
 bootstrap separately saves protected serving settings under the target releases
 root in `routing.json`, with an initialization witness. Activation and retained
 refresh reuse these settings, keeping Cloudflare origins HTTP without redirects;
-direct SSL uses the shared scoped certificate setup. Build requests cannot
-change this policy. Missing initialized policy or a local profile mismatch
+direct SSL reuses installed certificates during delivery and uses the shared
+scoped certificate setup during administrative replay after web firewall setup.
+Missing certificates leave HTTP routes until that final profile succeeds.
+Build requests cannot change this policy. Missing initialized policy or a local profile mismatch
 refuses with controller guidance before replay changes applications.
 
 Root preflight, enrollment bootstrap and final profile uploads use the resolved

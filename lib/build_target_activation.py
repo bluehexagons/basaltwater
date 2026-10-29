@@ -283,8 +283,8 @@ class TargetReleaseActivator:
         if load_target_routing(self.root) != routing_for_config(config):
             raise ValueError("Artifact serving policy differs; enroll it from the controller before refresh")
 
-    def _publish(self, state: dict, old_groups: dict) -> None:
-        """Use the ordinary Nginx, UDP and TLS publishers with retained policy."""
+    def _publish(self, state: dict, old_groups: dict, *, provision_certificates: bool = False) -> None:
+        """Publish routes; administrative replay provisions missing certificates."""
         from deploy.network_steps import configure_public_udp
 
         routing = load_target_routing(self.root)
@@ -294,7 +294,10 @@ class TargetReleaseActivator:
         create_nginx_sites_for_groups(groups, managed_domains=scope,
                                      enable_https_redirect=not routing.cloudflare)
         configure_public_udp(listeners)
-        if routing.ssl and not routing.cloudflare:
+        # Delivery precedes the final profile's web firewall reconciliation.
+        # Keep using usable installed certificates, but defer ACME and package
+        # installation until administrative replay has prepared web ingress.
+        if provision_certificates and routing.ssl and not routing.cloudflare:
             from web.ssl_steps import install_certbot, setup_ssl_for_deployments
 
             install_certbot()
@@ -447,7 +450,7 @@ class TargetReleaseActivator:
                     self._groups(state["applications"])
                     encode_document(state, maximum=MAX_REGISTRY_BYTES)
                     operation.transition(marker.operation_id, "publishing")
-                    self._publish(state, old_groups)
+                    self._publish(state, old_groups, provision_certificates=True)
                     self._save(state)
                     operation.complete(marker.operation_id)
                 except BaseException:

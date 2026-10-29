@@ -258,7 +258,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 self.assertEqual(call.kwargs["timeout"], 10)
                 self.assertNotIn("SSH_AUTH_SOCK", call.kwargs["env"])
 
-    def test_retention_modes_require_local_root_and_isolation_before_trust_or_config_reads(self):
+    def test_retention_modes_require_admin_root_and_isolation_before_trust_or_config_reads(self):
         inspect = ["--inspect-retention", "a" * 32]
         settle = ["--settle-terminal", "a" * 32, "--expected-revision", "b" * 64]
         prune = ["--prune-terminal", "a" * 32, "--expected-revision", "b" * 64]
@@ -274,13 +274,46 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 with patch.object(build_host.os, "geteuid", return_value=0), \
                      patch.object(build_host.sys, "flags", SimpleNamespace(isolated=0)):
                     self.assertEqual(build_host.main(arguments), 1)
-                for name in ("SSH_ORIGINAL_COMMAND", "SSH_CONNECTION", "SSH_CLIENT"):
-                    with patch.dict(os.environ, {name: build_host.SSH_COMMAND}), \
+                for original in ("", build_host.SSH_COMMAND, "bash"):
+                    with patch.dict(os.environ, {"SSH_ORIGINAL_COMMAND": original}), \
                          patch.object(build_host.os, "geteuid", return_value=0), \
                          patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)):
                         self.assertEqual(build_host.main(arguments), 1)
             trusted.assert_not_called()
             loader.assert_not_called()
+
+    def test_administrator_ssh_can_inspect_and_maintain_without_entering_typed_transport(self):
+        configured = config()
+        identifier, revision = "a" * 32, "b" * 64
+        with patch.object(build_host.os, "geteuid", return_value=0), \
+             patch.object(build_host.sys, "flags", SimpleNamespace(isolated=1)), \
+             patch.object(build_host, "_trusted_code"), \
+             patch.object(build_host, "_trusted_libraries"), \
+             patch.object(build_host, "require_platform"), \
+             patch.object(build_host, "load_config", return_value=configured), \
+             patch("lib.build_capacity.inspect_build_capacity", return_value={"schema": 1}) as inspect, \
+             patch.object(build_host, "retain_terminal", return_value={"revision": revision}) as retain, \
+             patch.object(build_host, "serve") as serve, \
+             patch.object(build_host, "run_worker") as worker, \
+             patch.object(build_host.sys, "stdout"), \
+             patch.object(build_host.sys, "stderr"), \
+             patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.5 12345 192.0.2.10 22",
+                                     "SSH_CLIENT": "192.0.2.5 12345 22"}, clear=True):
+            self.assertEqual(build_host.main(["--inspect-capacity"]), 0)
+            inspect.assert_called_once_with(configured)
+            cases = [(["--inspect-retention", identifier], {"expected_revision": None})]
+            for mode, options in (("--settle-terminal", {}),
+                                  ("--prune-terminal", {"prune_kinds": ("source", "log")}),
+                                  ("--release-bundle", {"release_bundle": True})):
+                cases.append(([mode, identifier, "--expected-revision", revision],
+                              {"expected_revision": revision, **options}))
+            for arguments, options in cases:
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(build_host.main(arguments), 0)
+                    retain.assert_called_once_with(configured, request_id=identifier, **options)
+                    retain.reset_mock()
+            serve.assert_not_called()
+            worker.assert_not_called()
 
     def test_capacity_mode_is_local_and_passes_only_loaded_configuration(self):
         configured = config()

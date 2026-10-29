@@ -72,7 +72,7 @@ class TargetRoutingTests(unittest.TestCase):
              patch("deploy.network_steps.configure_public_udp") as udp, \
              patch("web.ssl_steps.install_certbot") as certbot, \
              patch("web.ssl_steps.setup_ssl_for_deployments") as ssl:
-            activator._publish({"applications": {}}, {"retired.example": []})
+            activator._publish({"applications": {}}, {"retired.example": []}, provision_certificates=True)
         nginx.assert_called_once_with({}, managed_domains={"retired.example"}, enable_https_redirect=False)
         udp.assert_called_once_with([])
         certbot.assert_not_called()
@@ -91,7 +91,7 @@ class TargetRoutingTests(unittest.TestCase):
              patch("deploy.network_steps.configure_public_udp"), \
              patch("web.ssl_steps.install_certbot") as certbot, \
              patch("web.ssl_steps.setup_ssl_for_deployments") as ssl:
-            activator._publish({"applications": {}}, {"retired.example": []})
+            activator._publish({"applications": {}}, {"retired.example": []}, provision_certificates=True)
         nginx.assert_called_once_with({}, managed_domains={"retired.example"}, enable_https_redirect=True)
         certbot.assert_called_once_with()
         ssl.assert_called_once_with([], "admin@example.com", managed_domains={"retired.example"})

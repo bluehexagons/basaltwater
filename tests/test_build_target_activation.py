@@ -20,6 +20,8 @@ from lib.build_protocol import DEFAULT_LIMITS, encode_document
 from lib.build_target_activation import TargetReleaseActivator, parse_expected_releases
 from lib.build_target_artifacts import BuildTargetArtifactStore
 from lib.build_target_policy import authorize_target_deployment
+from lib.build_target_routing import save_target_routing
+from lib.config import SetupConfig
 from lib.deployment import DeploymentOrchestrator
 from lib.nginx_config import generate_merged_nginx_config
 from lib.systemd_service import generate_managed_service
@@ -164,6 +166,27 @@ class TargetReleaseActivationTests(unittest.TestCase):
         self.assertIsNone(component.env_file)
         self.assertIsNone(component.working_dir)
         self.assertEqual(component.health, "/health")
+
+    def test_direct_ssl_activation_defers_acme_until_administrative_replay(self):
+        config = SetupConfig(host="target.example", username="deploy", system_type="server_web",
+                             enable_ssl=True, ssl_email="admin@example.com")
+        save_target_routing(str(self.state), config)
+        bindings, request = self.inputs()
+        with patch("web.ssl_steps.install_certbot") as certbot, \
+             patch("web.ssl_steps.setup_ssl_for_deployments") as ssl:
+            result = self.activate(bindings, request)
+            certbot.assert_not_called()
+            ssl.assert_not_called()
+            before = (self.state / "releases.json").read_bytes()
+            refreshed = self.activator.reconcile_installed()
+        certbot.assert_called_once_with()
+        ssl.assert_called_once_with(
+            self.publish.call_args.args[0]["shop.example"], "admin@example.com",
+            managed_domains={"shop.example"},
+        )
+        self.assertEqual(self.identity(refreshed[0]), self.identity(result))
+        self.assertEqual((self.state / "releases.json").read_bytes(), before)
+        self.assertFalse((self.state / "activation.json").exists())
 
     def test_combined_spa_api_admission_activation_and_retained_shared_domain_reconcile(self):
         # Exercise real release verification/activation, without host services,

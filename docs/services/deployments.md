@@ -181,7 +181,10 @@ Go, Node and Godot installation flags, build-host and legacy app-server roles,
 network activation and custom setup steps. SSL and Cloudflare settings are
 installed through administrative setup and retained separately from artifact
 authority. Cloudflare with SSL retains an HTTP origin without an ACME redirect;
-direct SSL uses the shared certificate and nginx helpers. `--python`
+direct SSL uses the shared certificate and nginx helpers. Delivery reuses valid
+installed certificates; new certificate issuance waits for final profile setup
+to configure web ingress. Until that succeeds, routes without a certificate use
+HTTP. `--python`
 remains a profile option that installs Python tooling and uv; a Python static
 build needs Python on the builder, not that target flag. The broader manifest
 examples below describe ordinary target builds; they do not expand this bounded
@@ -237,9 +240,10 @@ the final profile failed. See [controller setup](../agents/contributing/build-se
 Builder retention is separate from these controller workspaces and target
 releases. See [builder capacity and maintenance](build-systems.md#inspect-capacity-and-retain-evidence)
 for local-root capacity inspection, exact-revision settlement, source/log
-pruning and successful bundle release. Those actions reject SSH invocation
-contexts and never reclaim input/history slots. Downloading a bundle does not
-release its retention.
+pruning and successful bundle release. Administrators can run these actions
+through normal root or sudo SSH sessions; forced-command transport contexts
+are rejected. They never reclaim input/history slots. Downloading a bundle does
+not release its retention.
 
 For a bounded offline view of an unfinished controller build setup, use its
 original absolute journal path:

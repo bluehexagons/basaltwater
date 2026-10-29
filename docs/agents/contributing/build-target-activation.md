@@ -163,10 +163,16 @@ Artifact-mode transport skips repository preparation and source upload, and
 target runtime inference returns before inspecting uploaded repositories. Explicit
 runtime-install flags retain their ordinary meanings. Post-setup never calls
 ordinary `deploy_repository`, unscoped Nginx pruning or manifest UDP setup in
-this mode; the activator owns scoped retained-route publication. Cloudflare and
-SSL setup options are refused during plan construction because they have no
-supported target policy in this slice. Approved runtime environment and UDP
-metadata follow the target policy; Node runtime packaging remains unsupported.
+this mode; the activator owns scoped retained-route publication. Administrative
+bootstrap enrolls Cloudflare/SSL settings in protected target routing policy;
+artifact requests cannot change them. Refresh requires its profile to match
+that policy. Cloudflare origins use HTTP without HTTPS redirects or ACME.
+Direct SSL activation reuses usable installed certificates; new certificate
+issuance and certbot installation occur only during administrative replay,
+after the profile's web firewall setup. A missing certificate therefore leaves
+HTTP routes until that final profile succeeds. Approved runtime environment and
+UDP metadata follow the target policy; interpreter service packaging remains
+unsupported.
 
 A dry run reports retained artifact reconciliation without entering maintenance,
 loading target state, opening artifacts, contacting a builder or changing target

@@ -326,8 +326,9 @@ def main(argv: list[str] | None = None) -> int:
                                                            or args.release_bundle is not None)
                 or args.prune_kind is not None and args.prune_terminal is None
                 or maintenance and (args.principal is not None or args.once
-                                    or any(name in os.environ for name in
-                                           ("SSH_ORIGINAL_COMMAND", "SSH_CONNECTION", "SSH_CLIENT")))):
+                                    or "SSH_ORIGINAL_COMMAND" in os.environ)):
+            # An administrator's normal root/sudo shell may be reached over
+            # SSH. A forced-command transport must never select maintenance.
             raise ValueError("Invalid builder invocation")
         script = Path(os.path.abspath(__file__))
         _trusted_code(script)

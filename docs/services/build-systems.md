@@ -127,13 +127,21 @@ or compiler. Missing retained inputs refuse with controller guidance. See
 
 ## Inspect capacity and retain evidence
 
-On the builder, use its installed entrypoint from a local root administration
-context. These maintenance actions reject SSH invocation environment markers;
-they are not actions in the authenticated build protocol.
+On the builder, use its installed entrypoint from a root administration shell,
+including a normal SSH session with root or sudo access. Maintenance is refused
+when `SSH_ORIGINAL_COMMAND` is present, including restricted forced-command
+sessions; these actions are not in the authenticated build protocol.
 
 ```bash
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py --inspect-capacity
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py --inspect-retention REQUEST_ID
+```
+
+For example, from the controller with an administrative key:
+
+```bash
+ssh deploy@build.example.com \
+  'sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py --inspect-capacity'
 ```
 
 Capacity inspection reports logical byte charges, record/history limits and
