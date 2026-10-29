@@ -16,13 +16,13 @@ $savedPath = $env:PATH
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     foreach ($file in @('install.ps1', 'windows\Bootstrap.Common.ps1', 'windows\AgentWorkstation.Common.ps1',
-                        'windows\Setup-AgentWorkstation.ps1', 'windows\Install-GameWorkstation.ps1', 'windows\GameDevelopment.Common.ps1',
+                        'windows\GameDevelopment.Common.ps1', 'windows\tests\Run-InstallerEntryTests.ps1',
                         'windows\DevelopmentStorage.Common.ps1', 'windows\Invoke-Basaltw.ps1',
                         'windows\Cli.Common.ps1', 'windows\Godot.Common.ps1', 'windows\tests\Run-CliTests.ps1',
                         'windows\Enter-GameDevShell.ps1', 'windows\tests\Run-GameDevelopmentTests.ps1',
                         'windows\tests\Run-AgentWorkstationTests.ps1', 'windows\T3Completion.Common.ps1',
                         'windows\Complete-T3Desktop.ps1', 'windows\Start-T3Desktop.ps1',
-                        'windows\Sunshine.Common.ps1', 'windows\Setup-Sunshine.ps1',
+                        'windows\Sunshine.Common.ps1',
                         'windows\tests\Run-SunshineTests.ps1', 'windows\tests\Run-T3CompletionTests.ps1')) {
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo $file), [ref]$tokens, [ref]$errors) | Out-Null
@@ -33,6 +33,7 @@ try {
     & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-T3CompletionTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-SunshineTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-InstallerEntryTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
@@ -76,6 +77,9 @@ try {
         Assert-True ((Get-NativeOptionalArguments $legacy).Count -eq 0) 'Older pinned helpers received unsupported defaults'
         $legacy.GameDev = $true
         Assert-Throws { Get-NativeOptionalArguments $legacy } 'Pinned source lacks GameDev'
+        $legacy.GameDev = $false
+        $legacy | Add-Member -NotePropertyName Sunshine -NotePropertyValue $true
+        Assert-Throws { Get-NativeOptionalArguments $legacy } 'Pinned source lacks Sunshine'
     }
     Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
     $unsafeZip = Join-Path $temporary 'unsafe.zip'
@@ -211,9 +215,9 @@ try {
     $global:AgentInstallerTestFailure = $true
     $global:AgentInstallerTestCompletions = @()
     try {
-        $splitPlan = & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive f: -Plan 6>&1 | Out-String
+        $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
-        Assert-Throws { & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive F -StorageRoot 'F:\custom' -Plan } 'Choose StorageDrive or StorageRoot'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F -StorageRoot 'F:\custom' -Plan } 'Choose StorageDrive or StorageRoot'
         foreach ($revision in @(('a' * 40), ('b' * 40), ('c' * 40), ('d' * 40))) {
             $pinned = Join-Path $temporary "archive-source\basaltwater-$revision"
             New-Item -ItemType Directory -Path (Join-Path $pinned 'windows') -Force | Out-Null
@@ -243,10 +247,10 @@ function Invoke-NativeSetupCompletion {
             Set-Content -LiteralPath (Join-Path $pinned 'windows\AgentWorkstation.Common.ps1') -Value @'
 function Invoke-NativeAgentSetup {
     param($Source, $AgentTool, [switch]$Node, [switch]$Python, [switch]$Go, [switch]$NodeVersions,
-          [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, $StorageRoot, [switch]$T3CodeDesktop, [switch]$Plan)
+          [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine, $StorageRoot, [switch]$T3CodeDesktop, [switch]$Plan)
     $global:AgentInstallerTestCalls += [pscustomobject]@{ Source = $Source; Tools = $AgentTool; Node = [bool]$Node;
         Python = [bool]$Python; Go = [bool]$Go; NodeVersions = [bool]$NodeVersions;
-        GameDev = [bool]$GameDev; ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; StorageRoot = $StorageRoot;
+        GameDev = [bool]$GameDev; ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; Sunshine = [bool]$Sunshine; StorageRoot = $StorageRoot;
         Desktop = [bool]$T3CodeDesktop; Plan = [bool]$Plan }
     if ($global:AgentInstallerTestFailure) { throw 'simulated interrupted native setup' }
 }
@@ -269,7 +273,7 @@ function Invoke-NativeAgentSetup {
             Assert-True ($global:AgentInstallerTestRequests.Count -eq 0) 'Locked fresh setup resolved source before taking the lock'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $lockDirectory 'windows-setup.json'))) 'Locked fresh setup wrote state'
         } finally { $held.Dispose() }
-        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Channel dev -Node -Python -GameDev -ShaderTools -Godot -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Channel dev -Node -Python -GameDev -ShaderTools -Godot -Sunshine -StorageRoot 'F:\coding with spaces' } 'interrupted native setup'
         Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/main$') 'Dev channel did not resolve main'
         $nativeStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
@@ -284,6 +288,7 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].Plan -and $global:AgentInstallerTestCalls[-1].Python) 'Resume plan lost saved selections'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Resume plan lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Resume plan lost Godot selection'
+        Assert-True $global:AgentInstallerTestCalls[-1].Sunshine 'Resume plan lost Sunshine selection'
         Assert-True ((Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash -eq $beforePlan) 'Resume plan rewrote setup state'
         Assert-True ($global:AgentInstallerTestCompletions.Count -eq 0) 'Plan queued desktop completion'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume
@@ -325,6 +330,7 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].Go -and 'claude' -in $global:AgentInstallerTestCalls[-1].Tools) 'Source update lost saved runtime/provider additions'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Source update lost Godot selection'
+        Assert-True $global:AgentInstallerTestCalls[-1].Sunshine 'Source update lost Sunshine selection'
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'
         $global:AgentInstallerTestRevision = 'd' * 40
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -Channel dev } 'source entry failure'
@@ -376,6 +382,7 @@ function Invoke-NativeAgentSetup {
         $nativeState.PSObject.Properties.Remove('GameDev')
         $nativeState.PSObject.Properties.Remove('ShaderTools')
         $nativeState.PSObject.Properties.Remove('Godot')
+        $nativeState.PSObject.Properties.Remove('Sunshine')
         $nativeState.PSObject.Properties.Remove('StorageRoot')
         $nativeState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $nativeStatePath -Encoding UTF8
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -NodeVersions
@@ -383,6 +390,17 @@ function Invoke-NativeAgentSetup {
             -not $global:AgentInstallerTestCalls[-1].GameDev -and -not $global:AgentInstallerTestCalls[-1].Godot) 'Legacy state defaults/resume opt-in were not respected'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Godot
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Existing Windows setup could not adopt Godot'
+        Assert-True (-not $global:AgentInstallerTestCalls[-1].Sunshine) 'Legacy state unexpectedly selected Sunshine'
+        $beforeSunshinePlan = (Get-FileHash -LiteralPath $nativeStatePath).Hash
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Sunshine -Plan
+        Assert-True ($global:AgentInstallerTestCalls[-1].Sunshine -and
+            (Get-FileHash -LiteralPath $nativeStatePath).Hash -eq $beforeSunshinePlan) 'Sunshine preview changed saved selections'
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Sunshine
+        Assert-True $global:AgentInstallerTestCalls[-1].Sunshine 'Existing setup could not select Sunshine'
+        $beforeSunshinePlan = (Get-FileHash -LiteralPath $nativeStatePath).Hash
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Sunshine:$false -Plan
+        Assert-True (-not $global:AgentInstallerTestCalls[-1].Sunshine -and
+            (Get-FileHash -LiteralPath $nativeStatePath).Hash -eq $beforeSunshinePlan) 'Explicit Sunshine opt-out preview was lost or rewrote saved setup'
         $beforeOldSource = (Get-FileHash -LiteralPath $nativeStatePath).Hash
         $global:AgentInstallerTestRevision = 'c' * 40
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -GameDev } 'Selected source does not support'
@@ -397,6 +415,7 @@ function Invoke-NativeAgentSetup {
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Version "main`n" -Plan } 'Invalid release reference'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -GameDev -Plan } 'requires agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Godot -Plan } 'requires agent_windows'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Sunshine -Plan } 'requires agent_windows'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -StorageDrive F -Plan } 'requires agent_windows'
     } finally {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Join-Path', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
@@ -504,7 +523,7 @@ function Invoke-NativeAgentSetup {
     $script:AddedPaths = @(); $script:NpmCalls = @(); $script:NpmExit = 0
     $script:VersionExit = 0; $script:FailPackage = $false
     $script:UvCalls = @(); $script:UvExit = 0
-    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Plan
+    Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop -Sunshine -Plan
     Assert-True ($script:EnsureCalls -eq 0 -and $script:Packages.Count -eq 0) 'Plan invoked a package manager'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.claude'))) 'Plan changed the fake home'
     Invoke-NativeAgentSetup -Source $repo -AgentTool 'gh,codex,claude,opencode' -Node -Python -Go -NodeVersions -T3CodeDesktop

@@ -5,19 +5,28 @@ CachyOS setup. Windows uses the vendor's `SunshineService` at boot rather than
 a systemd user service at graphical login. It does not need WSL or a second
 scheduled copy of `sunshine.exe`.
 
-From a reviewed Basaltwater checkout, preview without installing packages or
-changing services:
+Select streaming through the standard installer as the intended Windows account:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-Sunshine.ps1 -Plan
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -Python -Sunshine
 ```
 
-To apply, open an administrator PowerShell on x86-64 Windows 11, return to the
-checkout, and omit `-Plan`. The command installs or updates the exact
+Append `-Plan` to preview without installing packages or changing services.
+For an existing workstation, append `-Resume -UpdateSource` to the same command
+or use `basaltw refresh --sunshine` after updating Basaltwater. The installer
+saves the selection, so subsequent `basaltw refresh` runs update and reconcile
+Sunshine along with the other selected tools. Older saved states without a
+Sunshine field default to false; existing selections are retained.
+
+The command installs or updates the exact
 `LizardByte.Sunshine` WinGet package, enables automatic startup for its service,
 starts it and waits up to 30 seconds for the running state. An already pending
 start uses the same bounded wait; stopping or paused services require manual
-resolution before retrying. A missing service or failed start stops setup.
+resolution before retrying. Package installation can request UAC. If service
+configuration still needs administrator rights, setup requests UAC for that
+step while retaining account setup under the intended user. Cancelling UAC or
+a failed service configuration stops setup for an explicit resume.
+A missing service or failed start stops setup.
 The vendor installer owns its service files and
 firewall rules. Basaltwater does not replace existing settings, credentials,
 pairings, encoder choices or application lists, or configure router forwarding.
@@ -25,18 +34,15 @@ Review installer feature/driver choices. Switching an existing EXE installation
 to MSI may require a manual uninstall first; follow the vendor's
 [Windows installation instructions](https://docs.lizardbyte.dev/projects/sunshine/latest/md_docs_2getting__started.html).
 
-This optional machine-wide installation is separate from `agent_windows` and
-its saved selections. Rerun `Setup-Sunshine.ps1` explicitly for updates; ordinary
-`basaltw refresh` does not select or update Sunshine.
-
 Inspect service readiness without elevation or configuration changes:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-Sunshine.ps1 -Status
+basaltw doctor --json
 ```
 
-Status returns JSON and exits nonzero if the service is absent, stopped or not
-automatic. A running service establishes process/startup readiness only. Open
+When Sunshine is selected, the `sunshine` check fails if its service is absent,
+stopped or not automatic. Doctor checks the other saved selections too.
+A running service establishes process/startup readiness only. Open
 `https://localhost:47990` locally, create credentials if this is a first install,
 and enter the Moonlight PIN through Sunshine's administration UI. Keep the web
 interface private; inspect Windows firewall profiles/rules for the intended

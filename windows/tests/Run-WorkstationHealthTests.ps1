@@ -77,6 +77,9 @@ public class HealthGuiFixture {
         function Get-NativeVisualStudio { return 'C:\VS2022' }
         function Test-NativeWindowsSdk { return $true }
         function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
+        function Get-NativeSunshineHealth {
+            return [pscustomobject]@{ State = $(if ($script:BadSunshine) { 'failed' } else { 'ok' }); Detail = 'fixture service' }
+        }
         function Get-NativeT3LoginHealth($Source) {
             $state = if ($script:BadLogin) { 'failed' } else { 'ok' }
             return [pscustomobject]@{ Name = 't3-login'; State = $state; Command = $null; Detail = 'fixture task' }
@@ -93,10 +96,10 @@ public class HealthGuiFixture {
         }
         $saved = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'a' * 40; Phase = 'complete'; Source = 'C:\source';
             AgentTool = @('gh', 'codex', 'claude', 'opencode'); Node = $true; GameDev = $true;
-            ShaderTools = $true; Godot = $true; T3CodeDesktop = $true; StorageRoot = 'F:\coding'; Secret = 'never-publish' }
+            ShaderTools = $true; Godot = $true; Sunshine = $true; T3CodeDesktop = $true; StorageRoot = 'F:\coding'; Secret = 'never-publish' }
         $script:Probes = @(); $script:MissingGo = $false; $script:StorePython = $false
         $script:BadStorage = $false; $script:BrokenCodex = $false
-        $script:BrokenPython = $false; $script:BadLogin = $false
+        $script:BrokenPython = $false; $script:BadLogin = $false; $script:BadSunshine = $false
         $report = Get-NativeWorkstationHealth $saved -TimeoutSeconds 1
         Assert-True $report.Healthy 'Complete healthy selection did not pass'
         Assert-True (($report | ConvertTo-Json -Depth 5) -notmatch 'never-publish|Secret') 'Doctor exposed arbitrary saved fields'
@@ -108,6 +111,9 @@ public class HealthGuiFixture {
         $script:BadLogin = $true
         Assert-True (-not (Get-NativeWorkstationHealth $saved).Healthy) 'Broken login task was reported healthy'
         $script:BadLogin = $false
+        $script:BadSunshine = $true
+        Assert-True (-not (Get-NativeWorkstationHealth $saved).Healthy) 'Selected Sunshine service failure was reported healthy'
+        $script:BadSunshine = $false
         $script:BrokenCodex = $true; $script:MissingGo = $true; $script:BrokenPython = $true; $script:BadStorage = $true
         $report = Get-NativeWorkstationHealth $saved
         Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.State -ne 'ok' }).Count -eq 4) 'Doctor stopped early or lost independent failures'

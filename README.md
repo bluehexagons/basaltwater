@@ -74,26 +74,17 @@ compatibility testing, CI, and native packaging. The experimental setup prepares
 the current Windows 11 x64 account with Git, GitHub CLI, Codex, T3 Code desktop,
 Node.js LTS, Python/uv, and shared agent skills.
 
-Open PowerShell as the account that will use these tools and paste the complete
-block:
+Open PowerShell as the account that will use these tools and paste:
 
 ```powershell
-& {
-    $installer = Join-Path $env:TEMP ("basaltwater-" + [guid]::NewGuid() + ".ps1")
-    try {
-        Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $installer -TimeoutSec 120 -ErrorAction Stop
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -Node -Python
-        if ($LASTEXITCODE -ne 0) { throw "Windows workstation setup failed (exit code $LASTEXITCODE)." }
-    } finally {
-        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
-    }
-}
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -Python
 ```
 
-Add `-Plan` after `-Python` to preview selections. See the
-[Windows workstation guide](docs/workstations/windows.md) for the current-checkout
-command, provider login, verification, and recovery. CI runner registration is
-a separate operation.
+Append `-Plan` to preview, `-Sunshine` for Moonlight desktop streaming, or
+`-GameDev -ShaderTools -Godot` for native game development. Options are saved
+for `basaltw refresh`; an existing installation uses `-Resume -UpdateSource`
+with the same command. See the [Windows workstation guide](docs/workstations/windows.md)
+for flags, provider login, verification and recovery.
 
 ## Supported targets
 

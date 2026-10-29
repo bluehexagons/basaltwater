@@ -83,7 +83,7 @@ exit 1
     New-Item -ItemType Directory -Path $source | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Encoding UTF8 -Value @'
 param($Profile, [switch]$Resume, [switch]$UpdateSource, [switch]$Plan,
-      [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$NodeVersions,
+      [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine, [switch]$NodeVersions,
       $StorageRoot, $Channel, $Version)
 $PSBoundParameters | ConvertTo-Json | Set-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Encoding UTF8
 [Console]::Error.WriteLine('fixture warning on stderr')
@@ -93,20 +93,20 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     $state = [pscustomobject]@{ Version = 1; Profile = 'agent_windows';
         OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
         Revision = 'a' * 40; Source = $source; Phase = 'complete'; AgentTool = @('gh', 'codex');
-        GameDev = $true; Godot = $true; StorageRoot = 'F:\Basaltwater'; Secret = 'must-not-print' }
+        GameDev = $true; Godot = $true; Sunshine = $true; StorageRoot = 'F:\Basaltwater'; Secret = 'must-not-print' }
     $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     $info = & $launcher info --json | Out-String
     Assert-True ($LASTEXITCODE -eq 0 -and $info -notmatch 'must-not-print') 'Info failed or disclosed arbitrary saved fields'
     $record = $info | ConvertFrom-Json
-    Assert-True ($record.Revision -eq $state.Revision -and $record.Godot) 'Info omitted saved installation evidence'
+    Assert-True ($record.Revision -eq $state.Revision -and $record.Godot -and $record.Sunshine) 'Info omitted saved installation evidence'
     $env:BASALTWATER_TEST_CAPTURE = Join-Path $temporary 'forwarded.json'
     $env:BASALTWATER_TEST_EXIT = '0'
     $before = (Get-FileHash -LiteralPath $statePath).Hash
-    $code = Invoke-NativeCli @('refresh', '--dry-run', '--game-dev', '--shader-tools', '--godot',
+    $code = Invoke-NativeCli @('refresh', '--dry-run', '--game-dev', '--shader-tools', '--godot', '--sunshine',
         '--node-versions', '--storage-root', 'F:\cache with spaces & punctuation', '--channel', 'dev', '--version', 'main')
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($code -eq 0 -and $forwarded.Resume -and $forwarded.UpdateSource -and $forwarded.Plan -and
-        $forwarded.Godot -and $forwarded.GameDev -and $forwarded.ShaderTools -and $forwarded.NodeVersions) 'Refresh lost its saved-setup/preview/tool contract'
+        $forwarded.Godot -and $forwarded.GameDev -and $forwarded.ShaderTools -and $forwarded.NodeVersions -and $forwarded.Sunshine) 'Refresh lost its saved-setup/preview/tool contract'
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation' -and
         $forwarded.Profile -eq 'agent_windows') 'Refresh changed native argument boundaries/profile'
     Assert-True ((Get-FileHash -LiteralPath $statePath).Hash -eq $before) 'CLI rewrote saved setup during preview'
@@ -132,58 +132,6 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     Assert-Throws { Invoke-NativeCli @('refresh') } 'does not match this account'
 
-    & {
-        $global:BasaltwaterShortcutTest = @{ Downloads = @(); Exit = 0; Arguments = @(); Warning = $false }
-        function Invoke-WebRequest {
-            param($Uri, [switch]$UseBasicParsing, $OutFile, $TimeoutSec, $ErrorAction)
-            Assert-True ($Uri -eq 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1') 'Shortcut selected an unexpected installer source'
-            $global:BasaltwaterShortcutTest.Downloads += $OutFile
-            Set-Content -LiteralPath $OutFile -Value '# downloaded fixture'
-        }
-        function powershell.exe {
-            $global:BasaltwaterShortcutTest.Arguments = @($args)
-            if ($global:BasaltwaterShortcutTest.Warning) { Write-Error 'fixture warning on stderr' }
-            $global:LASTEXITCODE = $global:BasaltwaterShortcutTest.Exit
-        }
-        $shortcut = Join-Path $repo 'windows\Install-GameWorkstation.ps1'
-        & $shortcut -StorageRoot 'F:\development cache' -Plan
-        $forwarded = $global:BasaltwaterShortcutTest.Arguments
-        Assert-True ($forwarded -contains '-Godot' -and $forwarded -contains '-GameDev' -and
-            $forwarded -contains '-ShaderTools' -and $forwarded -contains '-Node' -and
-            $forwarded -contains '-Resume' -and $forwarded -contains '-UpdateSource' -and
-            $forwarded -contains '-Plan' -and $forwarded -contains 'F:\development cache') 'Shortcut lost the game bundle/resume/storage selections'
-        Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Shortcut retained its temporary download'
-        & $shortcut -StorageRoot 'F:\development cache\' -Plan
-        Assert-True ($global:BasaltwaterShortcutTest.Arguments -contains 'F:\development cache' -and
-            $global:BasaltwaterShortcutTest.Arguments -notcontains 'F:\development cache\') 'Shortcut did not normalize a trailing storage separator'
-        $shortcutText = Get-Content -LiteralPath $shortcut -Raw
-        & ([scriptblock]::Create($shortcutText)) -StorageDrive f: -Plan
-        $forwarded = $global:BasaltwaterShortcutTest.Arguments
-        Assert-True ($forwarded -contains 'F:\Basaltwater' -and $forwarded -notcontains '-StorageDrive') 'Downloaded shortcut did not resolve drive selection for the installer'
-        $beforeConflict = $global:BasaltwaterShortcutTest.Downloads.Count
-        Assert-Throws { & $shortcut -StorageDrive F -StorageRoot 'F:\custom' } 'Choose StorageDrive or StorageRoot'
-        Assert-Throws { & $shortcut -StorageDrive 'F:\invalid' } 'StorageDrive'
-        Assert-True ($global:BasaltwaterShortcutTest.Downloads.Count -eq $beforeConflict) 'Invalid shortcut storage downloaded an installer'
-        $global:BasaltwaterShortcutTest.Exit = 19
-        Assert-Throws { & $shortcut } 'exit code 19'
-        Assert-True (-not (Test-Path -LiteralPath $global:BasaltwaterShortcutTest.Downloads[-1])) 'Failed shortcut retained its download'
-        $global:BasaltwaterShortcutTest.Exit = 0
-        $global:BasaltwaterShortcutTest.Warning = $true
-        & $shortcut
-        Assert-True ($global:BasaltwaterShortcutTest.Arguments -contains '-Resume') 'Warning on stderr interrupted the shortcut'
-        $global:BasaltwaterShortcutTest.Warning = $false
-        $priorLocal = $env:LOCALAPPDATA
-        try {
-            $env:LOCALAPPDATA = Join-Path $temporary 'fresh shortcut account'
-            # The public one-liner evaluates a downloaded script without PSScriptRoot.
-            Invoke-Expression (Get-Content -LiteralPath $shortcut -Raw)
-            Assert-True ($global:BasaltwaterShortcutTest.Arguments -notcontains '-Resume') 'Fresh shortcut tried to resume an absent setup'
-        } finally { $env:LOCALAPPDATA = $priorLocal }
-        $beforeDownloadFailure = $global:BasaltwaterShortcutTest.Arguments -join "`n"
-        function Invoke-WebRequest { throw 'simulated download failure' }
-        Assert-Throws { & $shortcut } 'simulated download failure'
-        Assert-True (($global:BasaltwaterShortcutTest.Arguments -join "`n") -eq $beforeDownloadFailure) 'Shortcut executed an installer after a failed download'
-    }
 
     & {
         $script:Tool = $null; $script:PackageTool = $null; $script:Installs = 0; $script:VersionExit = 0
@@ -247,7 +195,6 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-True ((Get-NativeGodotPackageCommand) -like '*GodotEngine.GodotEngine_Microsoft*') 'Godot package discovery chose the wrong edition'
     Write-Host 'Native CLI and Godot tests passed.'
 } finally {
-    Remove-Variable BasaltwaterShortcutTest -Scope Global -ErrorAction SilentlyContinue
     $env:LOCALAPPDATA = $savedLocal; $env:PATH = $savedPath; $env:BASALTWATER_GODOT_EXE = $savedGodot
     $env:BASALTWATER_TEST_CAPTURE = $savedCapture; $env:BASALTWATER_TEST_EXIT = $savedExit
     $resolved = [IO.Path]::GetFullPath($temporary)

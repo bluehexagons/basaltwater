@@ -26,7 +26,7 @@ function Install-NativeCli([string]$Source, [switch]$Plan) {
 function Read-NativeCliSetup {
     $path = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw 'No saved native Windows setup. Run install.ps1 -Profile agent_windows first; checkout-only setup does not save refresh selections.'
+        throw 'No saved native Windows setup. Run install.ps1 -Profile agent_windows first.'
     }
     $saved = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -54,6 +54,7 @@ Refresh options:
   --game-dev        Add native game build tools, Python, Go and fnm
   --shader-tools    Add Vulkan SDK shader validation
   --godot           Add the standard Godot editor/CLI
+  --sunshine        Add the native Sunshine streaming service (UAC may be required)
   --node-versions   Add fnm for project-selected Node versions
   --storage-root PATH  Select a mounted NTFS directory for development caches
   --storage-drive DRIVE  Use DRIVE:\Basaltwater (for example: --storage-drive F:)
@@ -92,7 +93,7 @@ function Invoke-NativeCli([string[]]$Arguments) {
         $saved = Read-NativeCliSetup
         $info = [ordered]@{ Platform = 'windows'; Profile = $saved.Profile; Revision = $saved.Revision;
             Source = $saved.Source; Phase = $saved.Phase }
-        foreach ($name in @('AgentTool', 'T3CodeDesktop', 'Node', 'Python', 'Go', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'StorageRoot')) {
+        foreach ($name in @('AgentTool', 'T3CodeDesktop', 'Node', 'Python', 'Go', 'NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot')) {
             if ($saved.PSObject.Properties[$name]) { $info[$name] = $saved.$name }
         }
         if ($options -contains '--json') { Write-Host ($info | ConvertTo-Json -Depth 4) }
@@ -119,7 +120,7 @@ function Invoke-NativeCli([string[]]$Arguments) {
     if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
     $switches = @{ '--dry-run' = '-Plan'; '--game-dev' = '-GameDev'; '--shader-tools' = '-ShaderTools';
-                   '--godot' = '-Godot'; '--node-versions' = '-NodeVersions' }
+                   '--godot' = '-Godot'; '--sunshine' = '-Sunshine'; '--node-versions' = '-NodeVersions' }
     $values = @{ '--storage-root' = '-StorageRoot'; '--storage-drive' = '-StorageRoot'; '--channel' = '-Channel'; '--version' = '-Version' }
     $storageSelected = $false
     for ($index = 0; $index -lt $options.Count; $index++) {

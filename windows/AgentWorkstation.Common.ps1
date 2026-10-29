@@ -212,7 +212,7 @@ function Invoke-NativeAgentSetup {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$Source,
           [string[]]$AgentTool = @('gh', 'codex'), [switch]$Node, [switch]$Python,
-          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot,
+          [switch]$Go, [switch]$NodeVersions, [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine,
           [string]$StorageRoot = '',
           [switch]$T3CodeDesktop, [switch]$Plan)
     $selected = @('gh', 'codex')
@@ -295,6 +295,10 @@ function Invoke-NativeAgentSetup {
     if ($Godot) {
         . (Join-Path $Source 'windows\Godot.Common.ps1')
         Install-NativeGodot -Plan:$Plan
+    }
+    if ($Sunshine) {
+        . (Join-Path $Source 'windows\Sunshine.Common.ps1')
+        Install-NativeSunshine -Plan:$Plan
     }
     if ($T3CodeDesktop) {
         if ($Plan) { Write-Host 'T3 Code: configure current-user login startup and queue start/restart with a hidden PowerShell helper' }

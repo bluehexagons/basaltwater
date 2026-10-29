@@ -48,50 +48,45 @@ other export SDKs remain separate. See the official
 [Windows downloads](https://godotengine.org/download/windows/) and
 [export guide](https://docs.godotengine.org/en/stable/tutorials/export/exporting_projects.html).
 
-For a fresh Antistatic/Godot PC, paste this block into PowerShell as the coding
+For a fresh Antistatic/Godot PC, paste this command into PowerShell as the coding
 account. It includes T3 Code, Git/GitHub CLI/Codex, Node LTS, Python/uv, Go,
 fnm, native game tools, shader validation and Godot. Package installers may
 show UAC or require a restart.
 
 ```powershell
-irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/windows/Install-GameWorkstation.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -GameDev -ShaderTools -Godot
 ```
 
-The convenience entry point downloads the installer to a unique temporary
-file, checks download/setup failures, and removes the file afterward. Existing
-native installations resume with an explicit source update and preserve saved
-storage. No drive letter is assumed on fresh PCs. Restart T3 Code and terminals
-after setup. Review the script or use a checked-out copy when preferred:
+These are optional flags on the same Windows installer used for a basic
+workstation. Append `-Sunshine` for Moonlight desktop streaming, or `-Plan` to
+preview. Existing native installations use `-Resume -UpdateSource` with the
+same command and preserve saved storage. No drive letter is assumed on fresh
+PCs. Setup queues T3's restart; reopen other terminals afterward.
+From a reviewed checkout, preview through the root installer:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -Plan
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Install-GameWorkstation.ps1 -StorageDrive F:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Profile agent_windows -Node -GameDev -ShaderTools -Godot -Plan
 ```
 
 `-StorageDrive F:` selects `F:\Basaltwater` on a mounted NTFS drive for
 runtimes/caches and new checkouts. See the repeatable split-storage setup below.
-From a reviewed checkout, use
-`powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows/Setup-AgentWorkstation.ps1 -Node -GameDev -ShaderTools -Godot`.
 Pinned installer state saves the selections. Once installed, use
 `basaltw refresh` to update Basaltwater and reconcile them; add
 `--game-dev --shader-tools --godot` to adopt game tools on an existing account.
-The one-line entry point also upgrades older native installations lacking
-`basaltw` or the new Godot selection. Older installer copies do not recognize
-new flags; use the current download for that first update.
+Use the current root installer download with `-Resume -UpdateSource` to
+upgrade an older installation whose saved source or CLI predates these flags.
 
 ## Storage
 
 For systems with a separate development drive, select its letter explicitly.
-This version of the download command accepts setup flags:
+Append the storage flag to the same download command:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/windows/Install-GameWorkstation.ps1))) -StorageDrive F:
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -GameDev -ShaderTools -Godot -StorageDrive F:
 ```
 
 Replace `F:` with the mounted development drive on each PC. Both `F` and `F:`
-are accepted. `-StorageDrive` works with `install.ps1 -Profile agent_windows`,
-`windows/Setup-AgentWorkstation.ps1` and the game-workstation entry point.
-Add `-Plan` to preview. For a custom directory, use
+are accepted. Add `-Plan` to preview. For a custom directory, use
 `-StorageRoot 'F:\Development\Basaltwater'` instead; the two options are
 mutually exclusive. Omit both to retain an existing saved choice or, on a
 fresh PC, use normal account locations.

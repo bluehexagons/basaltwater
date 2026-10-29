@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 try {
     foreach ($file in @('Cli.Common.ps1', 'AgentWorkstation.Common.ps1', 'GameDevelopment.Common.ps1',
-                        'Godot.Common.ps1', 'DevelopmentStorage.Common.ps1', 'T3Completion.Common.ps1', 'WorkstationHealth.Common.ps1')) {
+                        'Godot.Common.ps1', 'Sunshine.Common.ps1', 'DevelopmentStorage.Common.ps1', 'T3Completion.Common.ps1', 'WorkstationHealth.Common.ps1')) {
         . (Join-Path $PSScriptRoot $file)
     }
     $report = Get-NativeWorkstationHealth (Read-NativeCliSetup) -TimeoutSeconds $TimeoutSeconds

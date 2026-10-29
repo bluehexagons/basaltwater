@@ -21,45 +21,43 @@ are not installed on Windows. WSL is a separate opt-in path in the
 
 ## Install
 
-Open PowerShell as the intended account and paste the complete block.
+Open PowerShell as the intended account and paste this command.
 It installs the standard tools above,
 plus Node.js LTS and Python/uv:
 
 ```powershell
-& {
-    $installer = Join-Path $env:TEMP ("basaltwater-" + [guid]::NewGuid() + ".ps1")
-    try {
-        Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $installer -TimeoutSec 120 -ErrorAction Stop
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Profile agent_windows -Node -Python
-        if ($LASTEXITCODE -ne 0) { throw "Windows workstation setup failed (exit code $LASTEXITCODE)." }
-    } finally {
-        Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
-    }
-}
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile agent_windows -Node -Python
 ```
 
-Add `-Plan` after `-Python` to preview selections. The download must succeed
-before execution; the block reports installer failures and removes its temporary
-script on exit. The child PowerShell process uses execution-policy bypass
-without changing the account's saved policy. Package installers may ask for UAC.
-CI runner registration and managed build-host setup are separate operations.
+Append optional flags to the same command:
 
-To apply a reviewed checkout, use the local command below.
+- `-Sunshine` adds the native Moonlight streaming host.
+- `-GameDev -ShaderTools -Godot` adds native game tools, shader validation and Godot.
+- `-StorageDrive F:` selects a mounted NTFS drive for development caches.
+- `-AgentTool claude,opencode` adds providers.
+- `-Plan` previews selections without applying setup.
+- `-Resume -UpdateSource` updates an existing installation and retains its selections.
 
-## Review and apply the current checkout
+The downloaded root installer relays through a temporary script in a child
+Windows PowerShell process with execution-policy bypass. It preserves typed
+flags, provider arrays and literal paths, reports failures and removes the
+temporary script afterward. The account's saved execution policy is unchanged.
+Package installers and selected machine-wide service configuration can ask for
+UAC; account tooling and provider logins remain with the intended account.
+CI runner registration and managed build-host setup use their existing flags.
 
-From the repository root, preview without downloading source, installing
-packages, changing PATH, or writing skills:
+## Review selections from a checkout
+
+The same root installer can preview a reviewed checkout without downloading
+source, installing packages, changing PATH or writing skills:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-AgentWorkstation.ps1 -Node -Python -Plan
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Profile agent_windows -Node -Python -Plan
 ```
 
-Apply the reviewed checkout by omitting `-Plan`:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-AgentWorkstation.ps1 -Node -Python
-```
+Omitting `-Plan` follows the normal pinned-source installation flow. Use
+`-Version REF` for a reviewed published revision. Setup always saves selections
+through this root installer; feature-specific installation wrappers are unnecessary.
 
 `-Node` selects Node.js LTS. Selected npm-based providers also select Node
 automatically. `-Python` installs uv and reuses its installed managed Python,
@@ -113,9 +111,11 @@ there is no restart loop. You can disable the task in Task Scheduler to pause
 login startup; applying desktop setup again enables it. No password or automatic
 Windows login is configured.
 
-Optional native desktop streaming is available through the separate
-[Windows Sunshine setup](windows-sunshine.md). It uses Sunshine's vendor service
-and remains independent of coding tools and WSL.
+Optional native desktop streaming is available through the
+[Windows Sunshine option](windows-sunshine.md). Append `-Sunshine` to setup or
+use `basaltw refresh --sunshine`; it uses the vendor service and is saved for
+subsequent refreshes. `basaltw doctor` checks the selected service without
+starting it. Pairing and streaming qualification remain manual.
 
 At completion, setup also reports Windows restart indicators from Windows Update,
 component servicing and pending file replacements. An unreadable check produces
@@ -180,8 +180,7 @@ For example, use `-Resume -Go -AgentTool claude` to add Go and Claude while
 retaining existing providers. Add `-Plan` to preview the merged selections
 without writes. Selected bundles continue to supply their dependencies;
 selected host tools receive available updates and provider logins are retained.
-The checkout command applies its explicit options directly and does not create
-or update pinned-installer state.
+The downloaded and checkout entry points share the same pinned-installer state.
 
 ## Native basaltw commands
 
@@ -198,6 +197,7 @@ basaltw doctor --json
 basaltw refresh --dry-run
 basaltw refresh
 basaltw refresh --godot
+basaltw refresh --sunshine
 ```
 
 `refresh` resolves current `main` and reapplies the saved native selections,
@@ -206,7 +206,7 @@ selected host tools and preserves provider logins.
 `--dry-run` previews the currently pinned source without downloads or writes.
 `--channel dev` is currently an alias for `main`; use `--version REF` for a
 specific source reference.
-`--game-dev`, `--shader-tools`, `--godot`, `--node-versions` and
+`--game-dev`, `--shader-tools`, `--godot`, `--sunshine`, `--node-versions` and
 `--storage-drive F:` (or `--storage-root PATH`) can add saved selections;
 run `basaltw refresh --help`. Storage selection requires a healthy mounted
 NTFS volume. Invalid selections are rejected before changing saved setup.
@@ -215,9 +215,9 @@ through Windows PowerShell's native command boundary.
 The CLI reports setup failures through its exit code, including restart needs.
 
 `info` reports only the saved local native installation. Linux controller,
-server, desktop and agent subcommands remain unavailable on Windows. A
-checkout-only setup installs the launcher, but `refresh`/`info`/`doctor` require the
-pinned installation created by `install.ps1 -Profile agent_windows`. Existing
+server, desktop and agent subcommands remain unavailable on Windows.
+`refresh`/`info`/`doctor` require the pinned installation created by
+`install.ps1 -Profile agent_windows`. Existing
 PCs without the launcher must first use a current installer download with
 `-Profile agent_windows -Resume -UpdateSource`.
 

@@ -18,7 +18,9 @@ WinGet/npm tool updates; provider logins are preserved. `basaltw --help` lists W
 An updating T3 installer can close its desktop; run refresh from a separate
 PowerShell when that would interrupt the invoking terminal. Successful desktop
 setup configures current-account login startup with a hidden PowerShell helper.
-Checkout-only setup needs a pinned installer run before refresh/info/doctor work.
+Windows setup uses the root `install.ps1` with `-Profile agent_windows` and
+optional feature flags; downloaded and checkout entry points save the same
+selections. Use the documented one-command PowerShell invocation for a new PC.
 Use `basaltw doctor --json` for read-only checks of saved selections and actual
 tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
 checks establish discovery, while logins, project builds, export templates and
@@ -60,10 +62,11 @@ falling back to C: or replacing saved selections. Inspect saved cache
 environment variables and keep the drive connected. Existing checkouts/build
 trees remain in place; do not assume the configured cache root moved them.
 
-Optional Sunshine hosting is separate: `windows/Setup-Sunshine.ps1 -Plan`
-previews it, application requires an administrator PowerShell, and `-Status`
-checks the vendor service without mutations. It starts at Windows boot and is
-not selected by ordinary refresh. Pairing, display/GPU, sound and input still
+Optional `-Sunshine` (or `basaltw refresh --sunshine`) selects the native
+streaming service and saves it for later refreshes. Setup can request UAC for
+package/service configuration while retaining the intended account's tools
+and logins. Doctor checks the selected service without mutations. It starts
+at Windows boot. Pairing, display/GPU, sound and input still
 need a Moonlight check. See [Windows Sunshine](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-sunshine.md).
 
 Use the installed `basaltwater-project-development` skill for repository work,

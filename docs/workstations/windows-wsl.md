@@ -27,9 +27,7 @@ This command downloads the current `main` installer and pins its setup source to
 one commit. It may ask for UAC and an Ubuntu password.
 
 ```powershell
-$p = Join-Path $env:TEMP ("basaltwater-wsl-" + [guid]::NewGuid() + ".ps1")
-Invoke-WebRequest "https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1" -UseBasicParsing -OutFile $p -ErrorAction Stop
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Profile server_wsl -BuildServer -T3CodeDesktop -Node -Python -AgentTool gh,codex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1))) -Profile server_wsl -BuildServer -T3CodeDesktop -Node -Python -AgentTool gh,codex
 ```
 
 From Command Prompt, the equivalent one-line entry point is:
@@ -176,7 +174,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source
 tools, and selected WinGet packages without changing the pinned Basaltwater
 source. Selected Windows packages, including T3, receive available WinGet
 updates. WinGet's catalog can lag the app's own updater; see
-[native update behavior](windows.md#review-and-apply-the-current-checkout).
+[native update behavior](windows.md#review-selections-from-a-checkout).
 To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
 revision for both Windows and Ubuntu before reapplying setup.

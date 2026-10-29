@@ -105,6 +105,10 @@ function Get-NativeWorkstationHealth {
             Command = $desktop; Detail = 'Desktop executable discovery only; the app was not launched.' })
         $checks.Add((Get-NativeT3LoginHealth $Saved.Source))
     }
+    if (& $selected 'Sunshine') {
+        $sunshine = Get-NativeSunshineHealth
+        $checks.Add([pscustomobject]@{ Name = 'sunshine'; State = $sunshine.State; Command = 'SunshineService'; Detail = $sunshine.Detail })
+    }
     if ($Saved.PSObject.Properties['StorageRoot'] -and $Saved.StorageRoot) {
         $storageState = 'ok'; $detail = 'Configured storage volume and managed directory paths are valid.'
         try { Assert-NativeDevelopmentStorage $Saved.StorageRoot }
