@@ -22,6 +22,9 @@ try {
         function Show-NativeRebootNotice { $script:Notices++ }
         function Set-NativeT3Login($Source) { $script:Logins++ }
         function Queue-NativeT3Completion($Source) { $script:Queues++ }
+        function Invoke-NativeWindowsRestart($State, [switch]$NoReboot, [switch]$NoRestartT3) {
+            return ($script:RebootPending -and -not $NoReboot)
+        }
         $script:Notices = 0; $script:Logins = 0; $script:Queues = 0
         Invoke-NativeSetupCompletion -Source $windows -T3CodeDesktop
         Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 1) 'Successful desktop setup did not restart by default'
@@ -29,6 +32,11 @@ try {
         Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 2 -and $script:Notices -eq 2) 'Restart opt-out queued a restart or skipped login setup/reboot notices'
         Invoke-NativeSetupCompletion -Source $windows
         Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 2) 'Unselected desktop reached task registration'
+        $script:RebootPending = $true
+        Invoke-NativeSetupCompletion -Source $windows -T3CodeDesktop -SetupState @{ Phase = 'complete' }
+        Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 3) 'Queued Windows reboot launched T3 before reboot or omitted login startup'
+        Invoke-NativeSetupCompletion -Source $windows -T3CodeDesktop -SetupState @{ Phase = 'complete' } -NoReboot
+        Assert-True ($script:Queues -eq 2) 'Windows reboot opt-out also skipped the T3 restart'
     }
     & {
         function Get-NativeWindowsUpdateReboot {

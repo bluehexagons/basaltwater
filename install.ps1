@@ -32,6 +32,7 @@ param(
     [switch]$UpdateSource,
     [switch]$NoUpdateSource,
     [switch]$NoRestartT3,
+    [switch]$NoReboot,
     [switch]$Resume
 )
 
@@ -129,6 +130,10 @@ function Get-InstallerResumeOptions([string]$source) {
     if ($NoRestartT3) {
         if ('NoRestartT3' -notin $parameters) { throw 'Selected source does not support NoRestartT3; select a newer Basaltwater revision.' }
         $options.NoRestartT3 = $true
+    }
+    if ($NoReboot) {
+        if ('NoReboot' -notin $parameters) { throw 'Selected source does not support NoReboot; select a newer Basaltwater revision.' }
+        $options.NoReboot = $true
     }
     if ($Profile -eq 'server_wsl') {
         $options.CIRegisterWithGh = $CIRegisterWithGh
@@ -404,7 +409,7 @@ try {
             throw 'StorageRoot cannot be empty; omit it to retain saved storage or select a directory.'
         }
     } else {
-        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot', 'StorageDrive')) {
+        foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot', 'StorageDrive', 'NoReboot')) {
             if ($PSBoundParameters.ContainsKey($option)) { throw "$option requires agent_windows" }
         }
     }
@@ -447,6 +452,8 @@ try {
         if ($Profile -eq 'agent_windows') {
             if ($updateSourceSelected) { Write-Host 'Plan: resolve current Basaltwater source when applying; preview uses local source without downloads.' }
             if ($NoRestartT3) { Write-Host 'Plan: skip the T3 Code start/restart after setup.' }
+            if ($NoReboot) { Write-Host 'Plan: report required Windows reboots without restarting Windows.' }
+            else { Write-Host 'Plan: restart Windows when required; continue interrupted setup once after boot and login.' }
             $planSource = $PSScriptRoot
             if ($Resume) {
                 $preview = Read-State
@@ -581,6 +588,9 @@ try {
         if ($NoRestartT3) { $completionOptions.NoRestartT3 = $true }
         Assert-NativeSourceOptions $state.Source $state
         . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
+        . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
+        . (Join-Path $state.Source 'windows\WindowsRestart.Common.ps1')
+        Clear-NativeWindowsRestart
         $nativeOptions = Get-NativeOptionalArguments $state
         $state.Phase = 'applying'
         Save-State $state
@@ -589,8 +599,8 @@ try {
         $state.Phase = 'complete'
         Save-State $state
         Write-Host 'Basaltwater native Windows coding setup complete.'
-        . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
-        Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop @completionOptions
+        Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop `
+            -SetupState $state -NoReboot:$NoReboot @completionOptions
         return
     }
     if ($state.GitHubRunner) {
@@ -662,7 +672,14 @@ try {
     . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
     Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop -NoRestartT3:$NoRestartT3
 } catch {
-    Write-Error $_
+    $setupError = $_
+    if ($Profile -eq 'agent_windows' -and $setupLock -and
+        $setupError.Exception.Data['Basaltwater.WindowsRestartRequired']) {
+        $state.Phase = 'restart-required'
+        Save-State $state
+        if (Invoke-NativeWindowsRestart -State $state -Required -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+    }
+    Write-Error $setupError
     exit 1
 } finally {
     if ($setupLock) { $setupLock.Dispose() }

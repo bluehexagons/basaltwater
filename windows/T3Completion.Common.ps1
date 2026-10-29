@@ -263,11 +263,19 @@ function Queue-NativeT3Completion([string]$Source) {
     Write-Host "T3 Code start/restart queued outside this terminal. Completion status: $requestPath.status.json"
 }
 
-function Invoke-NativeSetupCompletion([string]$Source, [switch]$T3CodeDesktop, [switch]$NoRestartT3) {
-    Show-NativeRebootNotice
+function Invoke-NativeSetupCompletion([string]$Source, [switch]$T3CodeDesktop, [switch]$NoRestartT3,
+                                     $SetupState = $null, [switch]$NoReboot) {
     if ($T3CodeDesktop) {
         try { Set-NativeT3Login $Source }
         catch { Write-Warning 'T3 Code login startup could not be configured. Rerun setup to retry Task Scheduler registration.' }
+    }
+    if ($SetupState) {
+        if (Invoke-NativeWindowsRestart -State $SetupState -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) {
+            Write-Host 'Desktop startup will use the next account login after Windows restarts.'
+            return
+        }
+    } else { Show-NativeRebootNotice }
+    if ($T3CodeDesktop) {
         if ($NoRestartT3) {
             Write-Host 'T3 Code start/restart skipped. Reopen it when ready to load the updated PATH and skills.'
             return

@@ -53,6 +53,7 @@ Refresh options:
   --dry-run         Preview saved/current selections without writes or downloads
   --no-update-source   Reapply the saved Basaltwater revision; still update tools
   --no-restart-t3      Skip the T3 Code start/restart after setup
+  --no-reboot          Report required Windows reboots without rebooting
   --game-dev        Add native game build tools, Python, Go and fnm
   --shader-tools    Add Vulkan SDK shader validation
   --godot           Add the standard Godot editor/CLI
@@ -65,6 +66,8 @@ Refresh options:
 
 Refresh installs available updates for selected host tools and preserves provider
 logins. Successful setup queues a graceful T3 Code start/restart.
+Required Windows reboots are automatic, with a 30-second grace period and no
+forced app closure. Interrupted setup continues once after boot and login.
 Other open terminals need to be reopened after setup changes PATH.
 Linux controller, server, desktop and agent commands require a Linux installation.
 '@
@@ -125,7 +128,7 @@ function Invoke-NativeCli([string[]]$Arguments) {
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
     $switches = @{ '--dry-run' = '-Plan'; '--game-dev' = '-GameDev'; '--shader-tools' = '-ShaderTools';
                    '--godot' = '-Godot'; '--sunshine' = '-Sunshine'; '--node-versions' = '-NodeVersions';
-                   '--no-restart-t3' = '-NoRestartT3' }
+                   '--no-restart-t3' = '-NoRestartT3'; '--no-reboot' = '-NoReboot' }
     $values = @{ '--storage-root' = '-StorageRoot'; '--storage-drive' = '-StorageRoot'; '--channel' = '-Channel'; '--version' = '-Version' }
     $storageSelected = $false
     for ($index = 0; $index -lt $options.Count; $index++) {

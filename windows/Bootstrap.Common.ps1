@@ -41,7 +41,9 @@ function Ensure-WingetPackage([string]$packageId, [string]$label, [string]$Overr
     }
     # Raw installer exits and WinGet's mapped reboot HRESULTs.
     if ($exitCode -in @(1641, 3010, -1978334967, -1978334966, -1978334965)) {
-        throw "$label requires a Windows restart. Restart, then rerun the same setup command."
+        $failure = New-Object InvalidOperationException("$label requires a Windows restart. Restart, then rerun the same setup command.")
+        $failure.Data['Basaltwater.WindowsRestartRequired'] = $true
+        throw $failure
     }
     throw "$label failed (exit code $exitCode)"
 }

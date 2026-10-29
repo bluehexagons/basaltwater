@@ -38,10 +38,13 @@ Append optional flags to the same command:
 - `-Plan` previews selections without applying setup.
 - `-NoUpdateSource` reapplies the saved Basaltwater revision while still updating tools.
 - `-NoRestartT3` skips the T3 Code start/restart after setup.
+- `-NoReboot` reports required Windows reboots without restarting Windows.
 
 Rerun the same command to update an existing workstation. Setup automatically
 retains saved selections, resolves current Basaltwater source and installs
 available updates for selected tools, then starts or gracefully restarts T3 Code.
+When Windows requires a reboot, setup queues it automatically instead of
+restarting T3 immediately; desktop startup uses the next account login.
 No resume, source-update or desktop-restart flag is needed. These opt-outs apply
 to one invocation and do not change the next run's defaults.
 
@@ -129,13 +132,35 @@ use `basaltw refresh --sunshine`; it uses the vendor service and is saved for
 subsequent refreshes. `basaltw doctor` checks the selected service without
 starting it. Pairing and streaming qualification remain manual.
 
-At completion, setup also reports Windows restart indicators from Windows Update,
-component servicing and pending file replacements. An unreadable check produces
-an unknown-status notice, and a detected restart is advisory; setup never reboots
-Windows. These conservative checks do not establish that every possible restart
-requirement is absent. See Microsoft's
+Native setup checks Windows restart indicators from Windows Update, component
+servicing and pending file replacements at completion. A detected requirement
+queues a hidden, limited current-account worker. After setup releases its lock,
+the worker allows 30 seconds to save work and requests a Windows restart.
+Windows can ask you to close apps or block the restart; setup never forces apps
+closed. The delay runs in the helper because a positive `shutdown.exe` timeout
+implicitly forces closure; see Microsoft's [shutdown reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown/).
+Unreadable indicators alone produce a notice and do not trigger a reboot.
+These checks do not establish that every possible restart requirement is absent.
+See Microsoft's
 [Windows Update restart property](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-isysteminformation-get_rebootrequired)
 and [pending file replacement limitation](https://learn.microsoft.com/en-us/windows/win32/msi/msisystemrebootpending).
+
+An installer that requires reboot before setup can finish leaves the saved phase
+as `restart-required`. Setup queues the reboot and a one-time, hidden continuation
+for this account's next login after an actual Windows boot. Logging off and back
+on without rebooting does not consume it. Recovery reapplies the same pinned
+source and saved selections, preserving the T3 restart opt-out. It disables
+further automatic reboots for that continuation to prevent a restart loop;
+if another reboot is required, restart and rerun setup deliberately. No password
+or automatic Windows login is configured. Other installer failures stop setup
+without queuing a reboot.
+
+Use `-NoReboot` or `basaltw refresh --no-reboot` to defer a reboot for one run.
+T3 still starts/restarts unless separately disabled. Restart/recovery status is
+saved in `%LOCALAPPDATA%\Basaltwater\windows-restart.json`; scheduler or shutdown
+failures require a manual restart/retry. A later setup run clears prior queued
+restart work before applying changes. The WSL profile retains its existing
+manual Windows-reboot flow.
 
 For Antistatic builds, Windows tests and packaging, select `-GameDev`; add
 `-ShaderTools` for shader validation. `-NodeVersions` independently prepares
@@ -222,7 +247,8 @@ selected host tools and preserves provider logins.
 specific source reference.
 `--no-update-source` reapplies the saved Basaltwater revision while still updating
 selected tools. `--no-restart-t3` skips the completion start/restart but retains
-login startup. Neither option is saved for subsequent runs. A source-update
+login startup. `--no-reboot` defers required Windows reboots. These options are
+not saved for subsequent runs. A source-update
 opt-out cannot be combined with an explicit source version.
 `--game-dev`, `--shader-tools`, `--godot`, `--sunshine`, `--node-versions` and
 `--storage-drive F:` (or `--storage-root PATH`) can add saved selections;
@@ -366,6 +392,9 @@ These tests use mocked package/provider commands, desktop completion, reboot
 signals and temporary catalogs. They verify completion follows a successful
 receipt, that hidden login tasks stay within the current account, and that
 graceful close failures do not force termination or launch a duplicate desktop.
+Restart tests mock Windows shutdown and Scheduler operations; they cover default
+reboot selection, opt-outs, installer interruption, one-time boot/login recovery,
+stale request rejection and dispatch failures. No live reboot was performed.
 Sunshine tests mock package and service operations; they do not install it.
 The [manual Windows workflow](../../.github/workflows/windows-manual.yml) also
 runs them with the existing native/WSL bootstrap tests and Python output-capture

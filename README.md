@@ -83,7 +83,8 @@ Open PowerShell as the account that will use these tools and paste:
 Append `-Plan` to preview, `-Sunshine` for Moonlight desktop streaming, or
 `-GameDev -ShaderTools -Godot` for native game development. Options are saved
 for `basaltw refresh`. Rerun the same command to update Basaltwater and selected
-tools, retain saved selections and restart T3 Code. See the [Windows workstation guide](docs/workstations/windows.md)
+tools, retain saved selections and restart T3 Code. Required Windows reboots are
+automatic; append `-NoReboot` to defer them. See the [Windows workstation guide](docs/workstations/windows.md)
 for flags, provider login, verification and recovery.
 
 ## Supported targets

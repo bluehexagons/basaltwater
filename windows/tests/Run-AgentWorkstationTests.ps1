@@ -22,6 +22,8 @@ try {
                         'windows\Enter-GameDevShell.ps1', 'windows\tests\Run-GameDevelopmentTests.ps1',
                         'windows\tests\Run-AgentWorkstationTests.ps1', 'windows\T3Completion.Common.ps1',
                         'windows\Complete-T3Desktop.ps1', 'windows\Start-T3Desktop.ps1',
+                        'windows\WindowsRestart.Common.ps1', 'windows\Restart-WindowsSetup.ps1',
+                        'windows\tests\Run-WindowsRestartTests.ps1',
                         'windows\Sunshine.Common.ps1',
                         'windows\tests\Run-SunshineTests.ps1', 'windows\tests\Run-T3CompletionTests.ps1')) {
         $tokens = $null; $errors = $null
@@ -32,6 +34,7 @@ try {
     & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-T3CompletionTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-WindowsRestartTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-SunshineTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-InstallerEntryTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
@@ -170,6 +173,9 @@ try {
         Assert-Throws { Ensure-WingetPackage T3Tools.T3Code 'T3 install' } 'failed'
         $script:InstallExit = 3010
         Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'restart'
+        $rebootFailure = $null
+        try { Ensure-WingetPackage Git.Git 'Git install' } catch { $rebootFailure = $_ }
+        Assert-True ([bool]$rebootFailure.Exception.Data['Basaltwater.WindowsRestartRequired']) 'Installer restart lost its structured recovery signal'
         $script:InstallExit = -1978334966
         Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'restart'
         $script:InstallExit = 17
@@ -215,6 +221,8 @@ try {
     $global:AgentInstallerTestFailure = $true
     $global:AgentInstallerTestCompletions = @()
     $global:AgentInstallerTestEntryRoots = @()
+    $global:AgentInstallerTestRebootRequired = $false
+    $global:AgentInstallerTestRestartCalls = @()
     try {
         $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
@@ -242,10 +250,19 @@ throw 'Older pinned installer must not execute with unsupported selections'
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
             Set-Content -LiteralPath (Join-Path $pinned 'windows\T3Completion.Common.ps1') -Value @'
 function Invoke-NativeSetupCompletion {
-    param($Source, [switch]$T3CodeDesktop, [switch]$NoRestartT3)
+    param($Source, [switch]$T3CodeDesktop, [switch]$NoRestartT3, $SetupState, [switch]$NoReboot)
     $receipt = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
     if ($receipt.Phase -ne 'complete') { throw 'Desktop completion preceded successful setup receipt' }
-    $global:AgentInstallerTestCompletions += [pscustomobject]@{ Source = $Source; Desktop = [bool]$T3CodeDesktop; NoRestartT3 = [bool]$NoRestartT3 }
+    $global:AgentInstallerTestCompletions += [pscustomobject]@{ Source = $Source; Desktop = [bool]$T3CodeDesktop;
+        NoRestartT3 = [bool]$NoRestartT3; NoReboot = [bool]$NoReboot }
+}
+'@
+            Set-Content -LiteralPath (Join-Path $pinned 'windows\WindowsRestart.Common.ps1') -Value @'
+function Clear-NativeWindowsRestart { }
+function Invoke-NativeWindowsRestart {
+    param($State, [switch]$Required, [switch]$NoReboot, [switch]$NoRestartT3)
+    $global:AgentInstallerTestRestartCalls += [pscustomobject]@{ Phase = $State.Phase; Required = [bool]$Required; NoReboot = [bool]$NoReboot }
+    return (-not $NoReboot)
 }
 '@
             Copy-Item -LiteralPath (Join-Path $repo 'windows\DevelopmentStorage.Common.ps1') -Destination (Join-Path $pinned 'windows\DevelopmentStorage.Common.ps1')
@@ -258,6 +275,11 @@ function Invoke-NativeAgentSetup {
         GameDev = [bool]$GameDev; ShaderTools = [bool]$ShaderTools; Godot = [bool]$Godot; Sunshine = [bool]$Sunshine; StorageRoot = $StorageRoot;
         Desktop = [bool]$T3CodeDesktop; Plan = [bool]$Plan }
     if ($global:AgentInstallerTestFailure) { throw 'simulated interrupted native setup' }
+    if ($global:AgentInstallerTestRebootRequired) {
+        $failure = New-Object InvalidOperationException('simulated package restart required')
+        $failure.Data['Basaltwater.WindowsRestartRequired'] = $true
+        throw $failure
+    }
 }
 '@
             $archive = Join-Path $temporary ($revision + '.zip')
@@ -306,6 +328,17 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestRequests.Count -eq $beforePlanRequests + 1) 'Default rerun skipped source resolution or resolved it recursively'
         Assert-True ($global:AgentInstallerTestEntryRoots.Count -eq $beforeRerunEntries + 1 -and
             $global:AgentInstallerTestEntryRoots[-1] -eq $nativeState.Source) 'Unchanged-source rerun did not enter the pinned installer with its companion helpers'
+        $global:AgentInstallerTestRebootRequired = $true
+        $beforeRestart = $global:AgentInstallerTestCompletions.Count
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows
+        Assert-True ((Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json).Phase -eq 'restart-required' -and
+            $global:AgentInstallerTestRestartCalls[-1].Required -and
+            $global:AgentInstallerTestCompletions.Count -eq $beforeRestart) 'Package reboot did not preserve interrupted setup before queuing Windows restart'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoReboot } 'package restart required'
+        Assert-True ($global:AgentInstallerTestRestartCalls[-1].NoReboot) 'Package restart ignored the reboot opt-out across source handoff'
+        $global:AgentInstallerTestRebootRequired = $false
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoReboot
+        Assert-True $global:AgentInstallerTestCompletions[-1].NoReboot 'Successful completion lost the reboot opt-out'
         $held = [IO.File]::Open((Join-Path $lockDirectory 'setup.lock'), [IO.FileMode]::Open,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         $beforeLocked = (Get-FileHash -LiteralPath $nativeStatePath).Hash
@@ -355,6 +388,7 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestEntryRoots.Count -eq $beforePinnedEntries + 1 -and
             $global:AgentInstallerTestEntryRoots[-1] -eq $nativeState.Source) 'Source opt-out bypassed the pinned installer entry'
         Assert-True (-not $global:AgentInstallerTestCompletions[-1].NoRestartT3) 'Restart opt-out was persisted across invocations'
+        Assert-True (-not $global:AgentInstallerTestCompletions[-1].NoReboot) 'Windows reboot opt-out was persisted across invocations'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -UpdateSource -NoUpdateSource -Plan } 'Choose UpdateSource or NoUpdateSource'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Version main -NoUpdateSource -Plan } 'Version cannot be combined'
         $global:AgentInstallerTestRevision = 'd' * 40
@@ -449,7 +483,7 @@ function Invoke-NativeAgentSetup {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Join-Path', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
         }
-        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests, AgentInstallerTestCompletions, AgentInstallerTestEntryRoots -Scope Global
+        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests, AgentInstallerTestCompletions, AgentInstallerTestEntryRoots, AgentInstallerTestRebootRequired, AgentInstallerTestRestartCalls -Scope Global
     }
 
     # Real bundle copies only touch a private fake home; supporting files are preserved.

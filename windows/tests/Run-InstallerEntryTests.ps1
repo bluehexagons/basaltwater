@@ -59,9 +59,9 @@ function Invoke-WebRequest { throw 'Plan tried to download source' }
     Set-Content -LiteralPath (Join-Path $source 'windows\AgentWorkstation.Common.ps1') -Value '# source marker'
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Value @'
 [CmdletBinding()]
-param($Profile, [switch]$Resume, [switch]$NoUpdateSource, [switch]$NoRestartT3)
+param($Profile, [switch]$Resume, [switch]$NoUpdateSource, [switch]$NoRestartT3, [switch]$NoReboot)
 @{ Source = $PSScriptRoot; Resume = [bool]$Resume; NoUpdateSource = [bool]$NoUpdateSource;
-   NoRestartT3 = [bool]$NoRestartT3 } | ConvertTo-Json |
+   NoRestartT3 = [bool]$NoRestartT3; NoReboot = [bool]$NoReboot } | ConvertTo-Json |
     Set-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Encoding UTF8
 '@
     @{ Version = 1; Profile = 'agent_windows'; Revision = $revision; Source = $source;
@@ -69,10 +69,10 @@ param($Profile, [switch]$Resume, [switch]$NoUpdateSource, [switch]$NoRestartT3)
        AgentTool = @('gh', 'codex'); Node = $true; Python = $true; Go = $false;
        T3CodeDesktop = $true; Phase = 'complete' } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $temporary 'Basaltwater\windows-setup.json') -Encoding UTF8
-    & ([scriptblock]::Create($safe)) -Profile agent_windows -NoUpdateSource -NoRestartT3
+    & ([scriptblock]::Create($safe)) -Profile agent_windows -NoUpdateSource -NoRestartT3 -NoReboot
     $received = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($received.Source -eq $source -and $received.Resume -and $received.NoUpdateSource -and
-        $received.NoRestartT3) 'Pasted source opt-out lost the pinned entry or restart opt-out'
+        $received.NoRestartT3 -and $received.NoReboot) 'Pasted source opt-out lost the pinned entry or restart opt-out'
     $apply = $safe.Replace("throw 'Plan tried to download source'", "return @{ sha = ('a' * 40) }")
     & ([scriptblock]::Create($apply)) -Profile agent_windows
     $received = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
