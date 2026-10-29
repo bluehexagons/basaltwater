@@ -42,7 +42,7 @@ function New-NativeDesktopPrivateDirectory([string]$Path) {
         $acl.AddAccessRule($rule)
         # Create with the final ACL, using the appropriate framework API.
         if ($PSVersionTable.PSVersion.Major -le 5) { [IO.Directory]::CreateDirectory($Path, $acl) | Out-Null }
-        else { [IO.FileSystemAclExtensions]::Create((New-Object IO.DirectoryInfo($Path)), $acl) }
+        else { [IO.FileSystemAclExtensions]::Create((New-Object IO.DirectoryInfo($Path)), $acl) | Out-Null }
     }
     Assert-NativeDesktopPrivatePath $Path
 }

@@ -52,8 +52,10 @@ separate from the first Debian application-build slice.
 Begin with one manually prepared, current stable Windows 11 x64 Proxmox VM.
 Record the exact OS build and tool/project versions; do not add Windows VM
 provisioning or a historical platform matrix. Reuse `install.ps1` where useful.
-Tools-only installation remains independent of runner, build service and panel.
-Optional T3 Code is a package convenience, not an agent/desktop integration.
+Workstation installation remains independent of runner, build service and panel.
+Its [desktop and development integration](../workstations/windows-desktop.md)
+operates in the coding account's interactive session. The dedicated managed
+build-host identity, transport and panel described here remain proposed work.
 
 Use a small native Python 3 backend for shared protocol, policy and job records,
 with PowerShell for installation and Windows process/ACL adapters. Use the same

@@ -3,16 +3,38 @@
    Receipts are deliberately conservative: interrupted guardians require inspection.
 #>
 function Get-DevelopmentRoot { Join-Path $env:LOCALAPPDATA 'Basaltwater\development' }
+function Assert-DevelopmentPath([string]$Path) {
+    $cursor = [IO.Path]::GetFullPath($Path)
+    if ($cursor -notmatch '\A[A-Za-z]:[\\/]' -or $cursor -match '[\x00-\x1f]' -or $cursor.Substring(2).Contains(':')) { throw 'Development state requires an absolute local path without streams' }
+    while ($cursor) {
+        if (Test-Path -LiteralPath $cursor) {
+            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Development state cannot use reparse paths' }
+        }
+        $cursor = Split-Path -Parent $cursor
+    }
+}
 function Get-DevelopmentSid { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+function Read-DevelopmentJson([string]$Path) {
+    Assert-DevelopmentPath $Path
+    if ((Get-Item -LiteralPath $Path).Length -gt 4MB) { throw 'Development state exceeds its size bound' }
+    $options = @{}
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $options.DateKind = 'String' }
+    return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json @options
+}
 function Stop-DevelopmentProcess($Job, $Process, [bool]$Started, [object[]]$Copies) {
     if ($Job) { $Job.TerminateAndWait(10000) }
     elseif ($Started) {
         if (-not $Process.HasExited) { $Process.Kill() }
         if (-not $Process.WaitForExit(10000)) { throw 'Gated child did not settle.' }
     }
-    foreach ($copy in $Copies) { if (-not $copy.Wait(10000)) { throw 'Output stream did not settle.' } }
+    $streamIndex = 0
+    foreach ($copy in $Copies) {
+        if (-not $copy.Wait(10000)) { throw "Output stream $streamIndex did not settle (task status: $($copy.Status))." }
+        $streamIndex++
+    }
 }
 function Write-DevelopmentJson([string]$Path, $Value) {
+    Assert-DevelopmentPath $Path
     $temp = $Path + '.' + [guid]::NewGuid().ToString('N')
     try {
         [IO.File]::WriteAllText($temp, ($Value | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -20,14 +42,18 @@ function Write-DevelopmentJson([string]$Path, $Value) {
     } finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
 }
 function Get-DevelopmentDirectory([string]$Id) {
-    if ($Id -notmatch '^[a-f0-9]{32}$') { throw 'Expected a development task ID (32 lowercase hex characters); use the ID returned by develop exec/node/editor/run/import.' }
-    Join-Path (Get-DevelopmentRoot) $Id
+    if ($Id -notmatch '\A[a-f0-9]{32}\z') { throw 'Expected a development task ID (32 lowercase hex characters); use the ID returned by develop exec/node/editor/run/import.' }
+    $directory = Join-Path (Get-DevelopmentRoot) $Id
+    Assert-DevelopmentPath $directory
+    return $directory
 }
 function Get-DevelopmentRecord([string]$Id) {
     $path = Join-Path (Get-DevelopmentDirectory $Id) 'receipt.json'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Unknown development task $Id; check the ID and Windows account." }
-    $record = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($record.OwnerSid -ne (Get-DevelopmentSid)) { throw 'Development task belongs to another account.' }
+    Assert-DevelopmentPath $path
+    if ((Get-Item -LiteralPath $path).Length -gt 65536) { throw 'Development receipt exceeds its size limit' }
+    $record = Read-DevelopmentJson $path
+    if ($record.OwnerSid -ne (Get-DevelopmentSid) -or $record.Id -ne $Id -or $record.TaskName -ne ('Basaltwater Development ' + $Id)) { throw 'Development task belongs to another account or has an invalid identity.' }
     return $record
 }
 function Test-DevelopmentProcess([int]$ProcessId, [string]$StartedUtc) {
@@ -69,7 +95,7 @@ function Resolve-DevelopmentNode([string]$Project, [string]$Runtime) {
     $pins = @()
     foreach ($name in @('.node-version', '.nvmrc')) {
         $path = Join-Path $Project $name
-        if (Test-Path -LiteralPath $path -PathType Leaf) { $pins += (Get-Content -LiteralPath $path -Raw).Trim().TrimStart('v') }
+        if (Test-Path -LiteralPath $path -PathType Leaf) { $pins += (Get-Content -LiteralPath $path -Raw -Encoding UTF8).Trim().TrimStart('v') }
     }
     if (@($pins | Select-Object -Unique).Count -gt 1) { throw 'Conflicting .node-version/.nvmrc pins; align the project pins.' }
     if (-not $Runtime -and $pins.Count) { $Runtime = $pins[0] }
@@ -130,13 +156,13 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         'node' {
             if (-not $scriptName) { throw 'node requires a package script name before --project.' }
             $node = Resolve-DevelopmentNode $project $runtime
-            $package = Get-Content -LiteralPath (Join-Path $project 'package.json') -Raw | ConvertFrom-Json
+            $package = Get-Content -LiteralPath (Join-Path $project 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             if (-not $package.PSObject.Properties['scripts'] -or -not $package.scripts.PSObject.Properties[$scriptName]) { throw "package.json has no script '$scriptName'." }
             if ($package.PSObject.Properties['packageManager'] -and $package.packageManager -notmatch '^npm@\d+\.\d+\.\d+$') { throw 'Only installed runtime npm is supported. Use exec with an explicitly provisioned matching package manager for this project.' }
             $npm = Join-Path (Split-Path -Parent $node) 'node_modules\npm\bin\npm-cli.js'
             if (-not (Test-Path -LiteralPath $npm)) { throw 'Selected fnm runtime lacks npm; repair that runtime explicitly.' }
             if ($package.PSObject.Properties['packageManager']) {
-                $npmPackage = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $node) 'node_modules\npm\package.json') -Raw | ConvertFrom-Json
+                $npmPackage = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $node) 'node_modules\npm\package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($package.packageManager -ne ('npm@' + $npmPackage.version)) { throw 'Project packageManager pin does not match selected runtime npm. Provision the pinned manager explicitly.' }
             }
             $exe = $node; $argv = @($npm, 'run', $scriptName, '--') + $literal
@@ -144,7 +170,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         }
         { $_ -in @('editor','run','import') } {
             if (-not (Test-Path -LiteralPath (Join-Path $project 'project.godot') -PathType Leaf)) { throw 'Godot project.godot is missing.' }
-            $godot = if ($env:BASALTWATER_GODOT_EXE) { $env:BASALTWATER_GODOT_EXE } elseif ($env:GODOT_BIN) { $env:GODOT_BIN } else { 'godot.exe' }
+            $godot = if ($env:GODOT_BIN) { $env:GODOT_BIN } elseif ($env:BASALTWATER_GODOT_EXE) { $env:BASALTWATER_GODOT_EXE } else { 'godot.exe' }
             $exe = Resolve-DevelopmentExecutable $godot
             $argv = @('--path', $project)
             if ($verb -eq 'editor') { $argv += '--editor' }
@@ -156,6 +182,7 @@ function New-DevelopmentPlan([string[]]$Arguments) {
         Msvc = $msvc; TimeoutSeconds = $timeout; Plan = $plan; Node = $node }
 }
 function Initialize-DevelopmentDirectory([string]$Directory) {
+    Assert-DevelopmentPath $Directory
     New-Item -ItemType Directory -Path $Directory -Force | Out-Null
     # Provider environments can contain credentials. Do not inherit broad profile ACLs.
     $acl = [Security.AccessControl.DirectorySecurity]::new()
@@ -208,6 +235,13 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     }
     $powershell = Get-NativePowerShell7
     if ($request.Plan) { return $request }
+    if (-not $powershell) { throw 'Stable PowerShell 7 is required; reapply native setup' }
+    $setupDirectory = Join-Path $env:LOCALAPPDATA 'Basaltwater'
+    Assert-DevelopmentPath $setupDirectory
+    New-Item -ItemType Directory -Path $setupDirectory -Force | Out-Null
+    try { $admission = [IO.File]::Open((Join-Path $setupDirectory 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+    catch [IO.IOException] { throw 'Windows setup/reboot is active; wait for it before starting a development task' }
+    try {
     $id = [guid]::NewGuid().ToString('N'); $directory = Get-DevelopmentDirectory $id
     Initialize-DevelopmentDirectory $directory
     $provider = Get-Process -Id $PID
@@ -231,4 +265,5 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         throw $record.Message
     }
     return $record
+    } finally { $admission.Dispose() }
 }

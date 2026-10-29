@@ -2,7 +2,7 @@
 
 The experimental `agent_windows` installer profile prepares the current
 x86-64 Windows 11 account for local coding with T3 Code. It installs missing
-Git, GitHub CLI, Codex and a small native `basaltw` command, with T3 Code
+PowerShell 7, Git, GitHub CLI, Codex and a native `basaltw` command, with T3 Code
 desktop enabled by default. Provider logins, Git identity,
 and T3 settings are preserved. Run as the
 intended Windows account; package installers may ask for UAC. Allow at least
@@ -48,6 +48,14 @@ restarting T3 immediately; desktop startup uses the next account login.
 No resume, source-update or desktop-restart flag is needed. These opt-outs apply
 to one invocation and do not change the next run's defaults.
 
+After source staging, native setup installs stable PowerShell 7 if missing and
+hands off to it before applying the development tools. It preserves saved
+selections and literal arguments and releases the setup lock before re-entry.
+The PowerShell 5.1 bootstrap remains usable on a fresh Windows installation.
+Setup also adds a Basaltwater Windows Terminal profile and Start Menu development
+shell. See [native desktop and project integration](windows-desktop.md) for
+artifact opening, UI Automation, screenshots and supervised tasks.
+
 The downloaded root installer relays through a temporary script in a child
 Windows PowerShell process with execution-policy bypass. It preserves typed
 flags, provider arrays and literal paths, reports failures and removes the
@@ -91,6 +99,7 @@ WinGet identities, without a separate update-check command. npm providers are
 updated through npm. Tools are rediscovered and version-checked afterward;
 a failed update or broken tool stops setup. T3 Code is updated too, and its
 installer may close the running desktop. If that interrupts a T3 terminal,
+the default detached refresh continues independently. For a foreground installer,
 resume from a separate PowerShell window using the saved installation.
 
 WinGet's catalog can lag T3's stable release feed. Setup and refresh use the
@@ -207,7 +216,7 @@ the download command or use `basaltw refresh`. To retry the saved Basaltwater
 revision without fetching newer source, run:
 
 ```powershell
-$state = Get-Content "$env:LOCALAPPDATA\Basaltwater\windows-setup.json" -Raw | ConvertFrom-Json
+$state = Get-Content "$env:LOCALAPPDATA\Basaltwater\windows-setup.json" -Raw -Encoding UTF8 | ConvertFrom-Json
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'install.ps1') -Profile agent_windows -NoUpdateSource
 ```
 
@@ -239,9 +248,14 @@ basaltw refresh --godot
 basaltw refresh --sunshine
 ```
 
-`refresh` resolves current `main` and reapplies the saved native selections,
+`refresh` submits a hidden, limited current-account job, resolves current `main`
+and reapplies the saved native selections,
 including providers, game tools and storage. It installs available updates for
 selected host tools and preserves provider logins.
+Its job survives the invoking T3 desktop closing during an upgrade. The returned
+ID supports `refresh --status ID`, `--logs ID` and cancellation while queued with
+`--cancel ID`. Use `--wait` for foreground execution. Inspect the receipt/logs
+for final success; submission success alone does not establish completion.
 `--dry-run` previews the currently pinned source without downloads or writes.
 `--channel dev` is currently an alias for `main`; use `--version REF` for a
 specific source reference.
@@ -258,8 +272,9 @@ Trailing directory separators are normalized before forwarding storage paths
 through Windows PowerShell's native command boundary.
 The CLI reports setup failures through its exit code, including restart needs.
 
-`info` reports only the saved local native installation. Linux controller,
-server, desktop and agent subcommands remain unavailable on Windows.
+`info` reports only the saved local native installation. `desktop` supplies the
+native Windows application/task interface. Linux controller, server and agent
+subcommands remain unavailable on Windows.
 `refresh`/`info`/`doctor` require the pinned installation created by
 `install.ps1 -Profile agent_windows`. Existing
 PCs without the launcher can use the same current installer download with
@@ -405,9 +420,11 @@ Task Scheduler independence when refreshing inside T3, graceful desktop relaunch
 and a new T3 coding session still require live qualification before declaring
 this experimental profile production ready.
 
-The complete native offline suite requires Python 3.11+ on PATH and also runs
-directly on a workstation. It uses the local temporary directory when GitHub
-Actions' `RUNNER_TEMP` is absent:
+The complete native suite requires Python 3.11+ on PATH and stable PowerShell 7.
+It also runs directly on a workstation, using the local temporary directory when
+GitHub Actions' `RUNNER_TEMP` is absent. Disposable process fixtures verify native
+descendant cleanup after failure, timeout, cancellation, early parent exit and
+guardian termination; Scheduler, notifications and sleep requests remain mocked:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-NativeTests.ps1

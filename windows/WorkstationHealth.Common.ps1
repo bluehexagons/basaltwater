@@ -56,7 +56,7 @@ function Get-NativeWorkstationHealth {
     $checks.Add([pscustomobject]@{ Name = 'setup'; State = $(if ($complete) { 'ok' } else { 'failed' });
         Command = $null; Detail = "Saved setup phase: $($Saved.Phase)." })
     $selected = { param($Name) return $Saved.PSObject.Properties[$Name] -and [bool]$Saved.$Name }
-    $tools = @('git', 'gh', 'codex')
+    $tools = @('git', 'gh', 'codex', 'pwsh')
     if ($Saved.PSObject.Properties['AgentTool']) {
         foreach ($tool in $Saved.AgentTool) {
             if ($tool -notin @('gh', 'codex', 'claude', 'opencode')) { throw 'Unsupported provider in saved Windows setup' }
@@ -85,6 +85,7 @@ function Get-NativeWorkstationHealth {
     if (& $selected 'Godot') { $tools += 'godot' }
     foreach ($name in $tools | Select-Object -Unique) {
         $command = Get-NativeCommand $name
+        if ($name -eq 'pwsh') { $command = Get-NativePowerShell7 }
         if ($name -eq 'godot' -and (-not $command -or
             $command -eq (Join-Path $env:LOCALAPPDATA 'Basaltwater\bin\godot.cmd'))) {
             $command = Get-NativeGodotPackageCommand
@@ -100,6 +101,11 @@ function Get-NativeWorkstationHealth {
         $checks.Add($check)
     }
     if (& $selected 'T3CodeDesktop') {
+        $readiness = Get-NativeDesktopReadiness
+        $checks.Add([pscustomobject]@{ Name = 'desktop-session'; State = $(if ($readiness.healthy) { 'ok' } else { 'failed' });
+            Command = 'basaltw desktop doctor'; Detail = $(if ($readiness.healthy) {
+                'Interactive desktop and Windows API readiness; no screenshot or input performed. Rendering, audio and streaming require qualification.'
+            } else { 'Interactive desktop is unavailable, locked or inaccessible. Inspect desktop doctor in the intended login session.' }) })
         $desktop = Get-NativeT3Desktop
         $checks.Add([pscustomobject]@{ Name = 't3-desktop'; State = $(if ($desktop) { 'ok' } else { 'missing' });
             Command = $desktop; Detail = 'Desktop executable discovery only; the app was not launched.' })

@@ -72,7 +72,9 @@ before changing the project.
 Windows workstations are a lower-priority companion to CachyOS, primarily for
 compatibility testing, CI, and native packaging. The experimental setup prepares
 the current Windows 11 x64 account with Git, GitHub CLI, Codex, T3 Code desktop,
-Node.js LTS, Python/uv, and shared agent skills.
+Node.js LTS, Python/uv, and shared agent skills. Native setup installs stable
+PowerShell 7 when missing and continues in it, with a prepared Terminal profile
+and Start Menu development shell.
 
 Open PowerShell as the account that will use these tools and paste:
 
@@ -86,6 +88,9 @@ for `basaltw refresh`. Rerun the same command to update Basaltwater and selected
 tools, retain saved selections and restart T3 Code. Required Windows reboots are
 automatic; append `-NoReboot` to defer them. See the [Windows workstation guide](docs/workstations/windows.md)
 for flags, provider login, verification and recovery.
+The [Windows desktop guide](docs/workstations/windows-desktop.md) covers native
+application inspection/control, artifact handoff, supervised project tasks and
+detached refresh progress.
 
 ## Supported targets
 

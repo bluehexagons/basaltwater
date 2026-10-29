@@ -94,7 +94,7 @@ function Test-SourceFile([string]$path) {
 }
 
 function Read-State {
-    $saved = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $saved = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($saved.Version -ne 1 -or $saved.OwnerSid -ne $owner.User.Value -or
         $saved.Revision -notmatch '\A[0-9a-f]{40}\z' -or
         -not (Test-SourceFile (Join-Path $saved.Source $sourceMarker)) -or
@@ -450,6 +450,7 @@ try {
     if ($Profile -eq 'agent_windows') { $agentTools = @(@('gh', 'codex') + $agentTools | Select-Object -Unique) }
     if ($Plan) {
         if ($Profile -eq 'agent_windows') {
+            Write-Host 'Plan: install stable PowerShell 7 if missing, then run native setup in PowerShell 7.'
             if ($updateSourceSelected) { Write-Host 'Plan: resolve current Basaltwater source when applying; preview uses local source without downloads.' }
             if ($NoRestartT3) { Write-Host 'Plan: skip the T3 Code start/restart after setup.' }
             if ($NoReboot) { Write-Host 'Plan: report required Windows reboots without restarting Windows.' }
@@ -590,10 +591,21 @@ try {
         . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
         . (Join-Path $state.Source 'windows\WindowsRestart.Common.ps1')
+        . (Join-Path $state.Source 'windows\PowerShell.Common.ps1')
+        . (Join-Path $state.Source 'windows\Development.Common.ps1')
+        Assert-NativeDevelopmentIdle
         Clear-NativeWindowsRestart
         $nativeOptions = Get-NativeOptionalArguments $state
         $state.Phase = 'applying'
         Save-State $state
+        if (-not (Test-NativePowerShell7Host)) {
+            $shell = Ensure-NativePowerShell7
+            Write-Host 'Continuing native Windows setup in PowerShell 7.'
+            $handoff = Get-InstallerResumeOptions $state.Source
+            $setupLock.Dispose(); $setupLock = $null
+            Invoke-NativePowerShell7Installer -Shell $shell -Installer (Join-Path $state.Source 'install.ps1') -Options $handoff
+            return
+        }
         Invoke-NativeAgentSetup -Source $state.Source -AgentTool @($state.AgentTool) -Node:$state.Node `
             -Python:$state.Python -Go:$state.Go -T3CodeDesktop:$state.T3CodeDesktop @nativeOptions
         $state.Phase = 'complete'

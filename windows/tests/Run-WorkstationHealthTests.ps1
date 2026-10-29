@@ -77,6 +77,8 @@ public class HealthGuiFixture {
         function Get-NativeVisualStudio { return 'C:\VS2022' }
         function Test-NativeWindowsSdk { return $true }
         function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
+        function Get-NativePowerShell7 { if (-not $script:MissingPowerShell) { return 'C:\fixture\pwsh.exe' } }
+        function Get-NativeDesktopReadiness { return @{ healthy = (-not $script:LockedDesktop) } }
         function Get-NativeSunshineHealth {
             return [pscustomobject]@{ State = $(if ($script:BadSunshine) { 'failed' } else { 'ok' }); Detail = 'fixture service' }
         }
@@ -100,12 +102,20 @@ public class HealthGuiFixture {
         $script:Probes = @(); $script:MissingGo = $false; $script:StorePython = $false
         $script:BadStorage = $false; $script:BrokenCodex = $false
         $script:BrokenPython = $false; $script:BadLogin = $false; $script:BadSunshine = $false
+        $script:MissingPowerShell = $false; $script:LockedDesktop = $false
         $report = Get-NativeWorkstationHealth $saved -TimeoutSeconds 1
         Assert-True $report.Healthy 'Complete healthy selection did not pass'
         Assert-True (($report | ConvertTo-Json -Depth 5) -notmatch 'never-publish|Secret') 'Doctor exposed arbitrary saved fields'
         Assert-True (@($script:Probes | Where-Object { $_.Command -like '*\codex.exe' }).Count -eq 1) 'Provider was probed more than once'
         Assert-True (@($script:Probes | Where-Object { $_.Command -like '*Godot_console.exe' -and $_.Arguments -eq '--headless --version' }).Count -eq 1) 'Doctor did not resolve the managed Godot launcher to its executable'
         Assert-True (@($script:Probes | Where-Object { $_.Command -like '*\go.exe' -and $_.Arguments -eq 'version' }).Count -eq 1) 'Game bundle dependencies or Go arguments were lost'
+        $script:MissingPowerShell = $true
+        $report = Get-NativeWorkstationHealth $saved
+        Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.Name -eq 'pwsh' -and $_.State -eq 'missing' }).Count -eq 1) 'Missing stable PowerShell 7 was reported healthy'
+        $script:MissingPowerShell = $false; $script:LockedDesktop = $true
+        $report = Get-NativeWorkstationHealth $saved
+        Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.Name -eq 'desktop-session' -and $_.State -eq 'failed' }).Count -eq 1) 'Locked desktop readiness was reported healthy'
+        $script:LockedDesktop = $false
         $script:StorePython = $true
         Assert-True (Get-NativeWorkstationHealth $saved).Healthy 'Working Store Python was rejected solely by its path'
         $script:BadLogin = $true
@@ -122,7 +132,7 @@ public class HealthGuiFixture {
         $minimal = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'b' * 40; Phase = 'complete' }
         $script:Probes = @(); $script:BrokenCodex = $false
         Assert-True (Get-NativeWorkstationHealth $minimal).Healthy 'Legacy state without optional selections failed'
-        Assert-True ($script:Probes.Count -eq 3) 'Unselected runtimes were required'
+        Assert-True ($script:Probes.Count -eq 4) 'Unselected runtimes were required'
     }
     Write-Host 'Native workstation doctor tests passed.'
 } finally {

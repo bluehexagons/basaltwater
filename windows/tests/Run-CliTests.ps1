@@ -79,7 +79,7 @@ exit 1
         $doctor = & $launcher doctor --json | Out-String
         Assert-True ($LASTEXITCODE -eq 1 -and -not ($doctor | ConvertFrom-Json).Healthy) 'Installed doctor lost JSON or failure status'
     } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }
-    $source = Join-Path $temporary 'pinned source with spaces'
+    $source = Join-Path $temporary ('pinned source with spaces ' + [char]0x03bb)
     New-Item -ItemType Directory -Path $source | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Encoding UTF8 -Value @'
 param($Profile, [switch]$Resume, [switch]$UpdateSource, [switch]$NoUpdateSource, [switch]$NoRestartT3, [switch]$NoReboot, [switch]$Plan,
@@ -94,7 +94,7 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
         Revision = 'a' * 40; Source = $source; Phase = 'complete'; AgentTool = @('gh', 'codex');
         GameDev = $true; Godot = $true; Sunshine = $true; StorageRoot = 'F:\Basaltwater'; Secret = 'must-not-print' }
-    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
+    [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
     $info = & $launcher info --json | Out-String
     Assert-True ($LASTEXITCODE -eq 0 -and $info -notmatch 'must-not-print') 'Info failed or disclosed arbitrary saved fields'
     $record = $info | ConvertFrom-Json
@@ -110,7 +110,7 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation' -and
         $forwarded.Profile -eq 'agent_windows') 'Refresh changed native argument boundaries/profile'
     Assert-True ((Get-FileHash -LiteralPath $statePath).Hash -eq $before) 'CLI rewrote saved setup during preview'
-    & $launcher refresh --no-update-source --no-restart-t3 --no-reboot | Out-Null
+    & $launcher refresh --wait --no-update-source --no-restart-t3 --no-reboot | Out-Null
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($LASTEXITCODE -eq 0 -and $forwarded.NoUpdateSource -and $forwarded.NoRestartT3 -and $forwarded.NoReboot -and
         -not $forwarded.PSObject.Properties['UpdateSource']) 'Installed refresh lost opt-outs or also requested a source update'
@@ -119,7 +119,7 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($code -eq 0 -and $forwarded.StorageRoot -eq $trailingRoot.TrimEnd('\')) 'Refresh changed a storage path across native argument forwarding'
     # Exercise the actual cmd -> PowerShell -> installer argument boundary too.
-    & $launcher refresh --storage-root 'F:\cache with spaces & punctuation' | Out-Null
+    & $launcher refresh --wait --storage-root 'F:\cache with spaces & punctuation' | Out-Null
     Assert-True ($LASTEXITCODE -eq 0) 'Installed refresh launcher failed'
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation') 'Installed launcher split the storage argument'
@@ -130,7 +130,7 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
         Assert-True ($forwarded.StorageRoot -eq 'F:\Basaltwater' -and $forwarded.Plan) 'Drive shorthand was not forwarded as the canonical root'
     }
     $env:BASALTWATER_TEST_EXIT = '23'
-    & $launcher refresh | Out-Null
+    & $launcher refresh --wait | Out-Null
     Assert-True ($LASTEXITCODE -eq 23) 'Installed CLI swallowed setup failure status'
     $state.OwnerSid = 'S-1-0-0'
     $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8

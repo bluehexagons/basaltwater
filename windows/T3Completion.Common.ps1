@@ -198,7 +198,7 @@ function Invoke-NativeT3CompletionWorker([string]$RequestPath, [string]$TaskName
     $completionLock = $null
     $setupLock = $null
     try {
-        $request = Get-Content -LiteralPath $RequestPath -Raw | ConvertFrom-Json
+        $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $sid = (Get-NativeCompletionOwner).User.Value
         if ($request.Version -ne 1 -or $request.OwnerSid -ne $sid -or
             $request.Desktop -notmatch '\A[A-Za-z]:[\\/]' -or

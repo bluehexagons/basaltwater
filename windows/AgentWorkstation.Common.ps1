@@ -1,4 +1,6 @@
 <# Native Windows agent tools and catalogs; no Linux runtime imports. #>
+. (Join-Path $PSScriptRoot 'PowerShell.Common.ps1')
+. (Join-Path $PSScriptRoot 'ShellIntegration.Common.ps1')
 function Merge-NativePath([string[]]$paths) {
     $seen = @{}
     $entries = @(foreach ($path in $paths) {
@@ -126,7 +128,7 @@ function Install-NativeSkill([string]$source, [string]$destination, [switch]$Pla
     Assert-NativeSkillPath $inventoryPath
     $recorded = @{}
     if (Test-Path -LiteralPath $inventoryPath) {
-        $inventory = Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json
+        $inventory = Get-Content -LiteralPath $inventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($inventory.Version -ne 1) { throw "Unsupported skill inventory: $inventoryPath" }
         foreach ($property in $inventory.Files.PSObject.Properties) {
             if ($property.Name -notmatch '\A[A-Za-z0-9_.\\-]+\z' -or
@@ -194,7 +196,7 @@ function Write-NativeSkillInventory([string]$path, [hashtable]$files) {
 
 function Get-NativeAgentSkillNames([string]$Source) {
     $path = Join-Path $Source 'windows\agent-skills.json'
-    $catalog = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $catalog = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($catalog.version -ne 1 -or $catalog.skills -isnot [array] -or -not $catalog.skills.Count) {
         throw "Invalid native agent skill catalog: $path"
     }
@@ -317,6 +319,7 @@ function Invoke-NativeAgentSetup {
         }
     }
     Install-NativeCli -Source $Source -Plan:$Plan
+    Install-NativeShellIntegration -Source $Source -StorageRoot $StorageRoot -Plan:$Plan
     Write-Host 'Verify in a new terminal: basaltw --help; git --version; gh auth status; codex login status.'
     Write-Host 'Set your Git user.name/user.email if missing; select the local Windows connection in T3 Code.'
 }

@@ -16,7 +16,7 @@ $savedLocal = $env:LOCALAPPDATA
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     $env:LOCALAPPDATA = $temporary
-    $source = Join-Path $temporary "source & quote's"
+    $source = Join-Path $temporary ("source & quote's " + [char]0x03bb)
     New-Item -ItemType Directory -Path (Join-Path $source 'windows'), (Join-Path $temporary 'Basaltwater') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'windows\Restart-WindowsSetup.ps1') -Value '# fixture'
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Value @'
@@ -61,14 +61,16 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     $state = [pscustomobject]@{ Version = 1; Profile = 'agent_windows'; OwnerSid = 'owner';
         Revision = 'a' * 40; Source = $source; Phase = 'complete' }
     $statePath = Join-Path $temporary 'Basaltwater\windows-setup.json'
-    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath
+    [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
     Assert-True (-not (Invoke-NativeWindowsRestart $state)) 'Clear indicators queued a reboot'
     $script:Unknown = $true
     Assert-True (-not (Invoke-NativeWindowsRestart $state) -and $script:Started.Count -eq 0) 'Unknown status queued a reboot'
     $script:Required = $true
     Assert-True (-not (Invoke-NativeWindowsRestart $state -NoReboot) -and $script:Started.Count -eq 0) 'Reboot opt-out dispatched a task'
     Assert-True (Invoke-NativeWindowsRestart $state) 'Required reboot was not queued by default'
-    $request = Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw | ConvertFrom-Json
+    $requestPath = Get-NativeWindowsRestartPath
+    [IO.File]::WriteAllText($requestPath, [IO.File]::ReadAllText($requestPath), [Text.UTF8Encoding]::new($false))
+    $request = Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True (-not $request.Resume -and $script:Tasks.Count -eq 1) 'Completed setup scheduled unnecessary recovery'
     $task = $script:Tasks['Basaltwater-Windows-Restart-owner']
     Assert-True ($task.Principal.UserId -eq 'owner' -and $task.Principal.LogonType -eq 'Interactive' -and
@@ -80,7 +82,7 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     Assert-True ((Read-NativeWindowsRestartRequest $request.Id).Status -eq 'restart-requested') 'Reboot status was not persisted'
 
     $state.Phase = 'restart-required'
-    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath
+    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     $script:Required = $false
     Assert-True (Invoke-NativeWindowsRestart $state -Required -NoRestartT3) 'Installer reboot was ignored when registry indicators were clear'
     $request = Read-NativeWindowsRestartRequest ((Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw | ConvertFrom-Json).Id)
@@ -104,10 +106,10 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     Assert-True (-not (Test-NativeWindowsRestartIdentity $request)) 'Old recovery can overwrite a newer restart request'
     Write-NativeWindowsRestartRequest $request
     $state.OwnerSid = 'other'
-    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath
+    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     Assert-Throws { Read-NativeWindowsRestartRequest $request.Id } 'no longer matches'
     $state.OwnerSid = 'owner'
-    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath
+    $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     Assert-Throws { Read-NativeWindowsRestartRequest ('f' * 32) } 'no longer matches'
     $script:DispatchFailure = $true
     Assert-Throws { Invoke-NativeWindowsRestart $state -Required } 'scheduler failure'

@@ -23,6 +23,8 @@ try {
                         'windows\tests\Run-AgentWorkstationTests.ps1', 'windows\T3Completion.Common.ps1',
                         'windows\Complete-T3Desktop.ps1', 'windows\Start-T3Desktop.ps1',
                         'windows\WindowsRestart.Common.ps1', 'windows\Restart-WindowsSetup.ps1',
+                        'windows\PowerShell.Common.ps1', 'windows\ShellIntegration.Common.ps1',
+                        'windows\Enter-DevelopmentShell.ps1',
                         'windows\tests\Run-WindowsRestartTests.ps1',
                         'windows\Sunshine.Common.ps1',
                         'windows\tests\Run-SunshineTests.ps1', 'windows\tests\Run-T3CompletionTests.ps1')) {
@@ -37,6 +39,11 @@ try {
     & (Join-Path $PSScriptRoot 'Run-WindowsRestartTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-SunshineTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-InstallerEntryTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-PowerShellTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-ShellIntegrationTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-RefreshTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-DesktopTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-DevelopmentTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
@@ -223,6 +230,8 @@ try {
     $global:AgentInstallerTestEntryRoots = @()
     $global:AgentInstallerTestRebootRequired = $false
     $global:AgentInstallerTestRestartCalls = @()
+    $global:AgentInstallerTestNeedsShell = $false
+    $global:AgentInstallerTestShellOptions = $null
     try {
         $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
@@ -248,6 +257,16 @@ throw 'Older pinned installer must not execute with unsupported selections'
                     "throw 'simulated source entry failure'") | Set-Content -LiteralPath $entry -Encoding UTF8
             }
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
+            Set-Content -LiteralPath (Join-Path $pinned 'windows\Development.Common.ps1') -Value 'function Assert-NativeDevelopmentIdle { }'
+            Set-Content -LiteralPath (Join-Path $pinned 'windows\PowerShell.Common.ps1') -Value @'
+function Test-NativePowerShell7Host { return (-not $global:AgentInstallerTestNeedsShell) }
+function Ensure-NativePowerShell7 { return 'C:\verified\pwsh.exe' }
+function Invoke-NativePowerShell7Installer($Shell, $Installer, $Options) {
+    $global:AgentInstallerTestShellOptions = $Options
+    $global:AgentInstallerTestNeedsShell = $false
+    & $Installer @Options
+}
+'@
             Set-Content -LiteralPath (Join-Path $pinned 'windows\T3Completion.Common.ps1') -Value @'
 function Invoke-NativeSetupCompletion {
     param($Source, [switch]$T3CodeDesktop, [switch]$NoRestartT3, $SetupState, [switch]$NoReboot)
@@ -339,6 +358,10 @@ function Invoke-NativeAgentSetup {
         $global:AgentInstallerTestRebootRequired = $false
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoReboot
         Assert-True $global:AgentInstallerTestCompletions[-1].NoReboot 'Successful completion lost the reboot opt-out'
+        $global:AgentInstallerTestNeedsShell = $true
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoReboot -NoRestartT3
+        Assert-True ($global:AgentInstallerTestShellOptions.Resume -and $global:AgentInstallerTestShellOptions.NoUpdateSource -and
+            $global:AgentInstallerTestShellOptions.NoReboot -and $global:AgentInstallerTestShellOptions.NoRestartT3) 'PowerShell 7 handoff lost saved-source/runtime flags'
         $held = [IO.File]::Open((Join-Path $lockDirectory 'setup.lock'), [IO.FileMode]::Open,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         $beforeLocked = (Get-FileHash -LiteralPath $nativeStatePath).Hash
@@ -483,7 +506,7 @@ function Invoke-NativeAgentSetup {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Join-Path', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
         }
-        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests, AgentInstallerTestCompletions, AgentInstallerTestEntryRoots, AgentInstallerTestRebootRequired, AgentInstallerTestRestartCalls -Scope Global
+        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests, AgentInstallerTestCompletions, AgentInstallerTestEntryRoots, AgentInstallerTestRebootRequired, AgentInstallerTestRestartCalls, AgentInstallerTestNeedsShell, AgentInstallerTestShellOptions -Scope Global
     }
 
     # Real bundle copies only touch a private fake home; supporting files are preserved.
@@ -541,6 +564,7 @@ function Invoke-NativeAgentSetup {
 
     # Exercise the complete tool workflow without invoking any actual installer/provider.
     function Ensure-Winget { $script:EnsureCalls++ }
+    function Install-NativeShellIntegration($Source, $StorageRoot, [switch]$Plan) { }
     function Update-NativePath { }
     function Add-NativeUserPath([string]$directory) { $script:AddedPaths += $directory }
     function Get-NativeCommand([string]$name) {

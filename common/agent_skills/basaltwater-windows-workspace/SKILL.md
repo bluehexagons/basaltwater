@@ -12,16 +12,21 @@ project's documented Windows build/test commands. The native setup installs
 tools and skills for the current Windows account; it does not port Basaltwater's
 Linux controller, `basaltw agent` commands, systemd, or Debian setup profiles.
 The native `basaltw` command supports help, version, saved-installation `info`,
-`doctor` and `refresh`. Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
+`doctor`, `refresh`, and `desktop` observation/control and supervised project tasks.
+Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
 to update Basaltwater from main and reapply saved selections, including available
 WinGet/npm tool updates; provider logins are preserved. `basaltw --help` lists Windows options.
-An updating T3 installer can close its desktop; run refresh from a separate
-PowerShell when that would interrupt the invoking terminal. Successful desktop
+Refresh returns a detached job ID: inspect `refresh --status ID` and `--logs ID`
+for completion. `--wait` runs in the invoking terminal; `--cancel ID` only cancels
+a queued job. An updating T3 installer can close its desktop. Successful desktop
 setup configures current-account login startup with a hidden PowerShell helper.
 Windows setup uses the root `install.ps1` with `-Profile agent_windows` and
 optional feature flags; downloaded and checkout entry points save the same
 selections. The documented one-command PowerShell invocation installs a new PC
 or updates an existing setup automatically, retaining its selections.
+Native setup installs stable PowerShell 7 if missing and hands off to it before
+applying development tools. It also supplies a managed Windows Terminal profile
+and Start Menu development shell without replacing personal Terminal settings.
 T3 starts or gracefully restarts after successful setup by default. For one run,
 `-NoUpdateSource` / `refresh --no-update-source` keeps the saved Basaltwater source
 while still updating tools; `-NoRestartT3` / `refresh --no-restart-t3` skips the
@@ -39,6 +44,11 @@ tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
 checks establish discovery, while logins, project builds, export templates and
 GPU readiness require their own qualification. Doctor does not apply setup.
 
+For native application observation, human handoff, or supervised project runs,
+read [Windows desktop and tasks](references/desktop.md). Active or uncertain
+development tasks block setup/reboot until cleanup is confirmed. These commands
+do not install Basaltwater's Linux controller or expose GUI access from services.
+
 Discover the actual shell and tools before composing commands. Windows
 PowerShell 5.1 does not support `&&`; use separate invocations and check
 `$LASTEXITCODE` after native executables. Prefer `npm.cmd` to `npm.ps1` when
@@ -49,8 +59,9 @@ Windows command without project guidance.
 The Microsoft Store `python.exe` alias can exist without an installed Python.
 Verify the interpreter or use `uv run`/the project's virtual environment.
 Use `Get-Command TOOL` and `TOOL --version` to distinguish discovery from a
-working runtime. After installations, start a new terminal and restart T3 Code
-so provider processes inherit the new PATH. Existing providers may be supplied
+working runtime. Setup normally restarts T3; reopen other terminals to inherit
+the new PATH, and inspect the completion status if restart was deferred or failed.
+Existing providers may be supplied
 by a desktop app rather than npm; preserve their installation and login.
 
 Optional `-GameDev` supplies native C++/SDK, CMake, Ninja, LLVM and packaging

@@ -28,7 +28,7 @@ function Read-NativeCliSetup {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw 'No saved native Windows setup. Run install.ps1 -Profile agent_windows first.'
     }
-    $saved = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $saved = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     if ($saved.Version -ne 1 -or $saved.OwnerSid -ne $sid -or $saved.Profile -ne 'agent_windows' -or
         $saved.Revision -notmatch '\A[0-9a-f]{40}\z' -or $saved.Source -notmatch '\A[A-Za-z]:[\\/]' -or
@@ -36,6 +36,12 @@ function Read-NativeCliSetup {
         throw 'Saved Windows setup does not match this account, profile or source; repair the saved installation before refreshing.'
     }
     return $saved
+}
+
+function Get-NativeCliSource {
+    $receipt = Join-Path $PSScriptRoot 'cli-source.json'
+    if (Test-Path -LiteralPath $receipt) { return (Get-Content -LiteralPath $receipt -Raw -Encoding UTF8 | ConvertFrom-Json).Source }
+    return Split-Path -Parent $PSScriptRoot
 }
 
 function Show-NativeCliHelp {
@@ -48,8 +54,14 @@ Native Windows commands:
   info [--json]      Show this account's saved native setup
   doctor [--json]    Check selected native tools without applying setup
   refresh           Update Basaltwater from main and reapply saved selections
+  desktop           Native desktop status, observation, control and handoff
+  desktop develop   Supervise project tasks, logs and cancellation
 
 Refresh options:
+  --wait            Run refresh in this terminal instead of a detached job
+  --status ID       Read a detached refresh receipt
+  --logs ID         Read the last 100 lines of its log
+  --cancel ID       Cancel a queued refresh before setup starts
   --dry-run         Preview saved/current selections without writes or downloads
   --no-update-source   Reapply the saved Basaltwater revision; still update tools
   --no-restart-t3      Skip the T3 Code start/restart after setup
@@ -69,7 +81,9 @@ logins. Successful setup queues a graceful T3 Code start/restart.
 Required Windows reboots are automatic, with a 30-second grace period and no
 forced app closure. Interrupted setup continues once after boot and login.
 Other open terminals need to be reopened after setup changes PATH.
-Linux controller, server, desktop and agent commands require a Linux installation.
+Desktop handoff: open PATH [--reveal], terminal --project PATH [--msvc],
+notify --title TEXT --message TEXT. Other desktop commands list their own help.
+Linux controller, server and agent commands require a Linux installation.
 '@
 }
 
@@ -80,11 +94,44 @@ function Invoke-NativeCli([string[]]$Arguments) {
     }
     $command = $Arguments[0]
     $options = @($Arguments | Select-Object -Skip 1)
+    if ($command -eq 'desktop') {
+        if (-not $options.Count -or $options[0] -in @('--help','help','-h')) {
+            Write-Host @'
+Native desktop commands (explicit actions use the current account's session):
+  status|doctor|windows [--json]
+  inspect --pid PID [--name NAME] [--role ROLE] [--json]
+  screenshot --window HWND --identity TOKEN --generation GEN --output NEW.png
+  window focus|move|resize|maximize|minimize|restore|close --window HWND --identity TOKEN --generation GEN
+  element invoke|set-text|focus --ref REF --generation GEN [--text TEXT]
+  input key|text|click --window HWND --identity TOKEN --generation GEN --width W --height H
+  control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
+  open PATH [--reveal] | terminal --project PATH [--msvc]
+  notify --title TEXT --message TEXT
+  develop doctor|exec|node|editor|run|import|status|logs|cancel ...
+Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
+'@
+            return 0
+        }
+        $source = Get-NativeCliSource
+        . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
+        . (Join-Path $source 'windows\Desktop.Common.ps1')
+        if ($options.Count -and $options[0] -eq 'develop') {
+            . (Join-Path $source 'windows\Development.Common.ps1')
+            $result = Invoke-NativeDevelopmentCli @($options | Select-Object -Skip 1)
+        } elseif ($options.Count -and $options[0] -in @('open','terminal','notify')) {
+            $result = Invoke-NativeDesktopHandoff -Source $source -Arguments $options
+        } else { $result = Invoke-NativeDesktopCli $options }
+        if ($null -ne $result) { Write-Host ($result | ConvertTo-Json -Depth 12) }
+        if ($result -and (($result -is [Collections.IDictionary] -and $result.Contains('ok') -and -not $result.ok) -or
+            ($result.PSObject.Properties['ok'] -and -not $result.ok))) { return 1 }
+        if ($options[0] -eq 'doctor' -and -not $result.healthy) { return 1 }
+        return 0
+    }
     if ($command -in @('--version', 'version')) {
         if ($options.Count) { throw 'Usage: basaltw --version' }
         $receipt = Join-Path $PSScriptRoot 'cli-source.json'
         if (Test-Path -LiteralPath $receipt) {
-            $version = (Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json).PackageVersion
+            $version = (Get-Content -LiteralPath $receipt -Raw -Encoding UTF8 | ConvertFrom-Json).PackageVersion
         } else {
             $metadata = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'pyproject.toml') -Raw
             if ($metadata -notmatch '(?m)^version\s*=\s*"([A-Za-z0-9.+-]+)"\s*$') { throw 'Missing Basaltwater package version' }
@@ -112,7 +159,7 @@ function Invoke-NativeCli([string[]]$Arguments) {
         # different revision. The diagnostic itself reads the saved selections.
         $source = Split-Path -Parent $PSScriptRoot
         $receipt = Join-Path $PSScriptRoot 'cli-source.json'
-        if (Test-Path -LiteralPath $receipt) { $source = (Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json).Source }
+        if (Test-Path -LiteralPath $receipt) { $source = (Get-Content -LiteralPath $receipt -Raw -Encoding UTF8 | ConvertFrom-Json).Source }
         $entry = Join-Path $source 'windows\Test-AgentWorkstation.ps1'
         if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw 'Windows diagnostic source is missing; refresh Basaltwater from a current installer.' }
         $diagnosticOptions = @()
@@ -123,6 +170,27 @@ function Invoke-NativeCli([string[]]$Arguments) {
     }
     if ($command -ne 'refresh') { throw "Unsupported Windows command '$command'. Run basaltw --help for available commands." }
     if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
+    if ($options.Count -eq 2 -and $options[0] -in @('--status','--logs','--cancel')) {
+        $source = Get-NativeCliSource
+        . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
+        . (Join-Path $source 'windows\Refresh.Common.ps1')
+        if ($options[0] -eq '--cancel') {
+            Write-Host ((Stop-NativeQueuedRefresh $options[1]) | ConvertTo-Json)
+            return 0
+        }
+        $receipt = Read-NativeRefreshReceipt $options[1]
+        if ($options[0] -eq '--logs') {
+            $log = Join-Path (Get-NativeRefreshDirectory $receipt.Id) 'setup.log'
+            Assert-NativeSkillPath $log
+            if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 100 -Encoding UTF8 | ForEach-Object { Write-Host $_ } }
+        } else {
+            Write-Host ($receipt | Select-Object Id,Status,StartedUtc,CompletedUtc,Log | ConvertTo-Json)
+        }
+        if ($options[0] -eq '--status' -and $receipt.Status -in @('failed','dispatch-failed')) { return 1 }
+        return 0
+    }
+    $wait = $options -contains '--wait'
+    $options = @($options | Where-Object { $_ -ne '--wait' })
     # Explicit switches also let an installed CLI update an older saved entry
     # point that predates automatic native reruns and source updates.
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
@@ -166,6 +234,14 @@ function Invoke-NativeCli([string[]]$Arguments) {
         throw "Unsupported refresh option '$option'. Run basaltw refresh --help."
     }
     $saved = Read-NativeCliSetup
+    if (-not $wait -and '-Plan' -notin $forward) {
+        $source = Get-NativeCliSource
+        . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
+        . (Join-Path $source 'windows\Refresh.Common.ps1')
+        $job = Start-NativeRefresh -Saved $saved -Source $source -Arguments $forward
+        Write-Host ($job | ConvertTo-Json)
+        return 0
+    }
     $previousPreference = $ErrorActionPreference
     try {
         # PS 5.1 converts redirected native stderr (including harmless tool

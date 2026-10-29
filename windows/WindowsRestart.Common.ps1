@@ -25,10 +25,10 @@ function Read-NativeWindowsRestartRequest([string]$Id) {
     if ($Id -notmatch '\A[0-9a-f]{32}\z') { throw 'Invalid Windows restart request identity' }
     $path = Get-NativeWindowsRestartPath
     Assert-NativeSkillPath $path
-    $request = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $request = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
     $statePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
     Assert-NativeSkillPath $statePath
-    $saved = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $saved = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $sid = (Get-NativeCompletionOwner).User.Value
     if ($request.Version -ne 1 -or $request.Id -ne $Id -or $request.OwnerSid -ne $sid -or
         $request.Profile -ne 'agent_windows' -or $request.Revision -notmatch '\A[0-9a-f]{40}\z' -or
@@ -51,7 +51,7 @@ function Test-NativeWindowsRestartIdentity($Request) {
     # Recovery's installer clears the old request. A newer run may replace it
     # while recovery has released the lock; never overwrite that newer work.
     if (-not (Test-Path -LiteralPath $path)) { return $true }
-    return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).Id -eq $Request.Id
+    return (Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json).Id -eq $Request.Id
 }
 
 function Set-NativeWindowsRestartTask($Request, [ValidateSet('Restart', 'Resume')][string]$Mode) {
@@ -139,6 +139,7 @@ function Invoke-NativeWindowsRestartWorker([ValidateSet('Restart', 'Resume')][st
         if ($Mode -eq 'Restart') {
             if ($request.Status -ne 'queued') { return }
             if ($request.Boot -ne (Get-NativeWindowsBoot)) { return }
+            if (Get-Command Assert-NativeDevelopmentIdle -ErrorAction SilentlyContinue) { Assert-NativeDevelopmentIdle }
             Start-Sleep -Seconds 30
             $request = Read-NativeWindowsRestartRequest $Id
             $request.Status = 'restart-requested'

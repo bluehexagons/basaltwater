@@ -158,8 +158,13 @@ namespace Basaltwater {
             IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
         IntPtr handle;
-        public ProcessJob(IntPtr process) {
-            handle = CreateJobObject(IntPtr.Zero, null);
+        public ProcessJob(IntPtr process) : this(process, null) { }
+        public ProcessJob(IntPtr process, string name) {
+            handle = CreateJobObject(IntPtr.Zero, name);
+            int creationError = Marshal.GetLastWin32Error();
+            if (name != null && handle != IntPtr.Zero && creationError == 183) {
+                Dispose(); throw new Win32Exception(creationError); // Never reuse another job.
+            }
             var info = new Extended(); info.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE
             if (handle == IntPtr.Zero || !SetInformationJobObject(handle, 9, ref info,
                 (uint)Marshal.SizeOf(info)) || !AssignProcessToJobObject(handle, process)) {
