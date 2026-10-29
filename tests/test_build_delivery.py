@@ -341,7 +341,7 @@ class TestBuildDelivery(BuildDeliveryFixture, unittest.TestCase):
         variants = [
             [self.plans[0], replace(second, deployment=changed)],
             [self.plans[0], self.plans[0]], [], [self.plans[0]] * (MAX_PLANS + 1),
-            [replace(second, required_tools=())], [replace(second, idempotency_key="unstable")],
+            [replace(second, required_tools=("ruby",))], [replace(second, idempotency_key="unstable")],
             [replace(second, ttl_seconds=True)], [replace(second, required_tools=("Go",))],
         ]
         for plans in variants:
@@ -349,6 +349,25 @@ class TestBuildDelivery(BuildDeliveryFixture, unittest.TestCase):
                 self.controller.deliver(plans)
         self.builder.capabilities.assert_not_called()
         self.target.reserve.assert_not_called()
+
+    def test_shell_builds_and_native_services_need_no_invented_go_grant(self) -> None:
+        selected = []
+        for plan in self.plans:
+            request = deepcopy(plan.request)
+            request["components"][0]["commands"] = ["printf 'built' > output"]
+            plan = replace(plan, request=request, required_tools=())
+            selected.append(plan)
+            self.artifacts[request["request_id"]] = self.bundle(plan)
+            self.by_request[request["request_id"]] = plan
+            self.by_app[plan.deployment["application"]] = plan
+        self.plans = selected
+        capabilities = self.capabilities()
+        capabilities["projects"]["project"]["runtimes"] = []
+        capabilities["tool_versions"] = {}
+        self.builder.capabilities.side_effect = None
+        self.builder.capabilities.return_value = capabilities
+        receipt = self.controller.deliver(self.plans)
+        self.assertEqual(len(receipt.applications), 2)
 
     def test_each_identity_must_be_unique(self) -> None:
         first, second = self.plans

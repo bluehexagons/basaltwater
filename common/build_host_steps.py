@@ -801,6 +801,27 @@ def _install_packages(config: SetupConfig) -> None:
         raise RuntimeError("Build-host package installation was not verified: " + ", ".join(remaining))
 
 
+def _restore_node_metadata_modes() -> None:
+    """Repair private installer records widened by the old inventory freeze."""
+    nvm = Path(BUILD_NODE_HOME) / ".nvm"
+    paths = [nvm / ".basaltwater-runtime.lock"]
+    paths.extend(nvm.glob("versions/node/v*/.basaltwater-runtime.json"))
+    for path in paths:
+        if not os.path.lexists(path):
+            continue
+        _trusted_path(str(path), final_directory=False)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) not in {0o600, 0o644}):
+                raise ValueError("Unsafe managed Node installer metadata")
+            os.fchmod(descriptor, 0o600)
+        finally:
+            os.close(descriptor)
+
+
 def _install_node_toolchain(config: SetupConfig) -> None:
     """Explicit setup only: reuse managed installation, then freeze the inventory."""
     if not config.install_node:
@@ -809,6 +830,7 @@ def _install_node_toolchain(config: SetupConfig) -> None:
     from lib.node_toolchain import supported_node_baselines
 
     _ensure_directory(BUILD_NODE_HOME, mode=0o755)
+    _restore_node_metadata_modes()
     # Setup holds the drained worker lease. No project source is present here.
     previous_umask = os.umask(0o022)
     try:
@@ -833,7 +855,7 @@ def _install_node_toolchain(config: SetupConfig) -> None:
     finally:
         try:
             run(["chown", "-hR", "root:root", "--", BUILD_NODE_HOME])
-            run(["chmod", "-R", "a+rX,go-w", "--", BUILD_NODE_HOME])
+            run(["chmod", "-R", "go-w", "--", BUILD_NODE_HOME])
             run(["chmod", "0755", "--", BUILD_NODE_HOME])
         finally:
             os.umask(previous_umask)

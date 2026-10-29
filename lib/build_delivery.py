@@ -133,10 +133,6 @@ def _validated(plan: DeliveryPlan, tick: Callable[[], None]) -> DeliveryPlan:
             or any(not isinstance(tool, str) or tool not in {"go", "node", "python"} for tool in tools)
             or len(set(tools)) != len(tools)):
         raise ValueError("Required tools must be distinct explicit supported tool names")
-    if any(item["commands"] for item in request["components"]) and not tools:
-        raise ValueError("Command-bearing requests require explicit tools")
-    if any(item["type"] == "service" for item in deployment["components"]) and "go" not in tools:
-        raise ValueError("First-slice services require the explicit Go tool declaration")
     # Ensure later stage headers fit too, before any target reservation.
     _parse_header(encode_document({
         "schema": 1, "action": "stage", "operation_id": "0" * 32,

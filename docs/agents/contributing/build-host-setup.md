@@ -147,7 +147,10 @@ These commands run as the worker with a clean environment, the managed tool
 home and `NVM_DIR`, and umask 022, without project code or personal credentials.
 Only the tool inventory is temporarily made recursively worker-owned while
 the worker is drained, leased and idle; it is frozen back to root ownership
-and made readable/searchable even if installation fails. Re-enrollment can
+with group/other write permissions removed even if installation fails. Private
+installer records stay mode 0600. An explicit rerun repairs mode-0644 records
+from the earlier freeze only after validating their ownership and file safety.
+Re-enrollment can
 therefore refresh an existing frozen NVM tree. Other missing supported pins
 still require explicit administrator installation into this inventory during
 an idle maintenance window; build requests never install runtimes.

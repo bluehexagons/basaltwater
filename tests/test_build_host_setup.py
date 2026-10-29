@@ -431,7 +431,7 @@ class BuildHostSetupUnitTests(unittest.TestCase):
                                              "--", setup.BUILD_NODE_HOME])
                 self.assertEqual(events[-3:], [
                     ["chown", "-hR", "root:root", "--", setup.BUILD_NODE_HOME],
-                    ["chmod", "-R", "a+rX,go-w", "--", setup.BUILD_NODE_HOME],
+                    ["chmod", "-R", "go-w", "--", setup.BUILD_NODE_HOME],
                     ["chmod", "0755", "--", setup.BUILD_NODE_HOME]])
                 if failure is None:
                     installs = [e for e in events if isinstance(e, list) and e[0] == "runuser"]
