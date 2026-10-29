@@ -65,6 +65,7 @@ no root key; preflight and setup use root with the same selected identity file.
 ```bash
 basaltw setup server_web web.example.com deploy --machine vm \
   --key /home/controller/.ssh/web_ed25519 \
+  --ssh-access-source 192.0.2.5/32 \
   --build-on builds --build-target-policy /home/controller/web-target.json \
   --deploy app.example.com 'https://github.com/example/app.git#tag=v1' \
   --dry-run
@@ -76,6 +77,15 @@ the entire saved host, friendly name or tag case-insensitively and requires one
 unique record; host matches have no priority over names or tags. Ambiguous,
 missing or unenrolled builders refuse. A chosen builder's failure never falls
 back to another builder or to building on the target.
+
+Replace the SSH source with the controller's address as seen by the target.
+Web targets require effective trusted SSH sources to permit delivery's
+connection bursts. Repeat `--ssh-access-source` for other administration sources;
+it restricts SSH while keeping public web ingress. Generic `--access-source`
+or `--lan-access` also qualifies but applies to other managed services.
+Preflight verifies the current controller is included, and minimal enrollment
+reconciles an existing active firewall before delivery. For a cloud target,
+use the controller's public egress IP or VPN source instead of its LAN address.
 
 Both endpoints require managed Debian 13 x86_64 enrollment and an explicit VM or
 hardware machine type. The target must be remote and use `server_lite` or

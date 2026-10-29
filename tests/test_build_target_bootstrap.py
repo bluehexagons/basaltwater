@@ -28,6 +28,7 @@ class TargetBootstrapTests(unittest.TestCase):
         self.enterContext(patch.object(bootstrap, "is_dry_run", return_value=False))
         self.configure = self.enterContext(patch.object(bootstrap, "configure_build_target"))
         self.routing = self.enterContext(patch.object(bootstrap, "configure_target_routing"))
+        self.firewall = self.enterContext(patch.object(bootstrap, "configure_firewall_ssh_only"))
         self.config = SetupConfig(
             host="localhost", username="agent", system_type="custom_steps",
             machine_type="vm", custom_steps=bootstrap.BOOTSTRAP_STEP,
@@ -52,6 +53,21 @@ class TargetBootstrapTests(unittest.TestCase):
         self.assertFalse(Path(self.marker).exists())
         self.assertFalse(Path(self.marker + ".last.json").exists())
         self.routing.assert_called_once_with(self.config)
+        self.firewall.assert_not_called()
+
+    def test_explicit_ssh_sources_reconcile_active_firewall_before_enrollment(self) -> None:
+        self.config.ssh_access_sources = ["192.0.2.5"]
+        events = []
+        self.firewall.side_effect = lambda *_args, **_kwargs: events.append("ssh")
+        self.configure.side_effect = lambda *_args: events.append("enrollment")
+        bootstrap.bootstrap_build_target(self.config)
+        self.assertEqual(events, ["ssh", "enrollment"])
+        self.firewall.assert_called_once_with(self.config, active_only=True)
+        self.configure.reset_mock()
+        self.firewall.side_effect = RuntimeError("SSH policy refused")
+        with self.assertRaisesRegex(RuntimeError, "SSH policy refused"):
+            bootstrap.bootstrap_build_target(self.config)
+        self.configure.assert_not_called()
 
     def test_existing_or_corrupt_setup_guard_refuses_before_enrollment(self) -> None:
         store = OperationStateStore(self.marker)
@@ -70,6 +86,7 @@ class TargetBootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid operation marker"):
             bootstrap.bootstrap_build_target(self.config)
         self.configure.assert_not_called()
+        self.firewall.assert_not_called()
 
     def test_dry_run_has_no_target_state_access_and_rejects_unrelated_options(self) -> None:
         self.config.dry_run = True
@@ -91,6 +108,7 @@ class TargetBootstrapTests(unittest.TestCase):
     def test_remote_round_trip_dispatches_only_bootstrap_without_saved_setup(self) -> None:
         self.config.enable_cloudflare = True
         self.config.enable_ssl = True
+        self.config.ssh_access_sources = ["192.0.2.5"]
         tokens = _expand_remote_args(self.config.to_remote_args())
         with patch.object(sys, "argv", ["remote_setup.py", *tokens]), \
              patch("lib.cachyos.is_cachyos", return_value=False), \
@@ -104,6 +122,8 @@ class TargetBootstrapTests(unittest.TestCase):
         installed = self.configure.call_args.args[0]
         self.assertTrue(installed.enable_cloudflare)
         self.assertTrue(installed.enable_ssl)
+        self.assertEqual(installed.ssh_access_sources, ["192.0.2.5"])
+        self.firewall.assert_called_once_with(installed, active_only=True)
         save_machine.assert_not_called()
         save_config.assert_not_called()
         steps.assert_not_called()

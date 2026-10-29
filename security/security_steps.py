@@ -1446,11 +1446,17 @@ def configure_firewall_web(config: SetupConfig) -> None:
     )
 
 
-def configure_firewall_ssh_only(config: SetupConfig) -> None:
-    """Configure SSH and optional mDNS firewall rules, without adding web or RDP access."""
+def configure_firewall_ssh_only(config: SetupConfig, *, active_only: bool = False) -> None:
+    """Configure SSH and optional mDNS without adding web or RDP access.
+
+    Minimal target enrollment uses ``active_only`` to reconcile an existing
+    firewall before delivery without enabling a firewall on a fresh target.
+    """
     _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
+    if active_only and not firewall_active:
+        return
 
     if firewall_active:
         _source_restricted_firewall_status(config, include_rdp=False)

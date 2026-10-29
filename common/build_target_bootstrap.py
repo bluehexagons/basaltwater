@@ -11,6 +11,7 @@ from lib.build_target_routing import save_target_routing
 from lib.machine_state import STATE_DIR
 from lib.operation_state import OperationStateStore
 from lib.remote_utils import is_dry_run
+from security.security_steps import configure_firewall_ssh_only
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -50,6 +51,8 @@ def bootstrap_build_target(config: SetupConfig) -> None:
         build_target_enrollment=config.build_target_enrollment, dry_run=config.dry_run,
         enable_cloudflare=config.enable_cloudflare, enable_ssl=config.enable_ssl,
         ssl_email=config.ssl_email,
+        access_sources=config.access_sources, lan_access=config.lan_access,
+        ssh_access_sources=config.ssh_access_sources,
     )
     # Compare executable target intent, allowing the parser's equivalent
     # None/False/default-list representations after an argv round trip.
@@ -65,6 +68,11 @@ def bootstrap_build_target(config: SetupConfig) -> None:
     with OperationStateStore(SETUP_OPERATION_FILE).ownership() as setup:
         if setup.load() is not None:
             raise RuntimeError("Unfinished target setup must be reconciled before target bootstrap")
+        if config.effective_ssh_sources():
+            # Existing web profiles rate-limit unrestricted SSH. Install the
+            # explicit trusted sources before the typed delivery opens its
+            # connection burst, without enabling a new firewall or touching web.
+            configure_firewall_ssh_only(config, active_only=True)
         configure_build_target(config)
         configure_target_routing(config)
         print("  Typed target enrollment ready; saved application profile retained")

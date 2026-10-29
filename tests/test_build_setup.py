@@ -45,6 +45,7 @@ class BuildSetupTests(unittest.TestCase):
             host="target.example", username="agent", system_type="server_web", machine_type="vm",
             build_on="builder", build_target_enrollment=enrollment(),
             deploy_specs=[["example.com", "https://example.com/source.git"]], ssh_key="/private/key",
+            ssh_access_sources=["192.0.2.10/32"],
         )
         self.endpoint = SSHEndpoint("target.example", "bw-target-fixed", "/private/key",
                                     "/private/known_hosts", "alice")
@@ -104,6 +105,7 @@ class BuildSetupTests(unittest.TestCase):
         self.assertEqual(bootstrap.custom_steps, "bootstrap_build_target")
         self.assertIsNone(bootstrap.deploy_specs)
         self.assertIsNone(bootstrap.build_on)
+        self.assertEqual(bootstrap.ssh_access_sources, self.config.ssh_access_sources)
         profile = self.apply.call_args_list[1].args[0]
         self.assertTrue(profile.artifact_deployments)
         self.assertIsNone(profile.build_on)
@@ -114,6 +116,16 @@ class BuildSetupTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob("build-setups/*/setup.json")), [])
         result = json.loads(next(self.root.glob("build-setups/*/setup.json.last.json")).read_text())
         self.assertEqual(result["outcome"], "succeeded")
+
+    def test_bootstrap_freezes_inferred_lan_sources_without_network_mutation_options(self):
+        self.config.host = "192.168.0.52"
+        self.config.lan_access = True
+        self.config.static_ipv4 = "192.168.0.52/20"
+        bootstrap = build_setup._bootstrap_config(self.config)
+        self.assertEqual(bootstrap.effective_access_sources(), self.config.effective_access_sources())
+        self.assertIn("192.168.0.0/20", bootstrap.effective_access_sources())
+        self.assertFalse(bootstrap.lan_access)
+        self.assertIsNone(bootstrap.static_ipv4)
 
     def test_uncertain_bootstrap_delivery_or_profile_preserves_exact_inputs_and_blocks_reentry(self):
         self.deliver.side_effect = KeyboardInterrupt
@@ -223,6 +235,21 @@ class BuildSetupTests(unittest.TestCase):
         self.deliver.assert_not_called()
         self.assertFalse(list(self.root.glob("build-setups/*/setup.json")))
 
+    def test_web_target_requires_trusted_ssh_sources_before_network_or_preparation(self):
+        self.config.ssh_access_sources = None
+        with self.assertRaisesRegex(ValueError, "--ssh-access-source"):
+            build_setup.run_build_setup(self.config, apply_setup=self.apply)
+        self.builder.capabilities.assert_not_called()
+        self.probe.assert_not_called()
+        self.source.assert_not_called()
+        self.apply.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.config.system_type = "server_lite"
+        build_setup.validate_build_setup_selection(self.config)
+        self.config.system_type = "server_web"
+        self.config.access_sources = ["192.0.2.0/24"]
+        build_setup.validate_build_setup_selection(self.config)
+
     def test_insufficient_storage_and_duplicate_applications_refuse_before_bootstrap(self):
         self.capacity.side_effect = ValueError("insufficient capacity")
         with self.assertRaisesRegex(ValueError, "capacity"):
@@ -307,7 +334,8 @@ class BuildSetupTests(unittest.TestCase):
 
     def test_real_probe_uses_pinned_identity_no_agent_and_rejects_bad_state(self):
         value = {"uid": 0, "os": "debian", "version": "13", "architecture": "x86_64",
-                 "setup_pending": False, "legacy_ssh": False, "enrollment_schema": None}
+                 "setup_pending": False, "legacy_ssh": False, "enrollment_schema": None,
+                 "ssh_peer": ["192.0.2.10"]}
         # Use the actual function rather than the orchestration fixture's mock.
         with patch.object(build_setup.subprocess, "run", return_value=SimpleNamespace(
                 stdout=json.dumps(value).encode())) as run:
@@ -318,7 +346,9 @@ class BuildSetupTests(unittest.TestCase):
             self.assertIn("/private/known_hosts", " ".join(argv))
             self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
             for key, wrong in (("setup_pending", True), ("legacy_ssh", True),
-                               ("enrollment_schema", 1), ("version", "12"), ("uid", 1000)):
+                               ("enrollment_schema", 1), ("version", "12"), ("uid", 1000),
+                               ("ssh_peer", []), ("ssh_peer", ["198.51.100.2"]),
+                               ("ssh_peer", ["invalid"]), ("ssh_peer", "192.0.2.10")):
                 run.return_value.stdout = json.dumps(dict(value, **{key: wrong})).encode()
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     _REAL_PREFLIGHT_TARGET(self.config, self.endpoint)
@@ -337,6 +367,7 @@ class BuildSetupControllerCrashTests(BuildDeliveryFixture, unittest.TestCase):
             host="target.example", username="agent", system_type="server_web", machine_type="vm",
             build_on="builder", build_target_enrollment=enrollment(),
             deploy_specs=[["example.com", "https://example.com/source.git"]], ssh_key="/private/key",
+            ssh_access_sources=["192.0.2.10/32"],
         )
         endpoint = SSHEndpoint("target.example", "bw-target-fixed", "/private/key",
                                "/private/known_hosts", "alice")

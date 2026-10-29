@@ -30,6 +30,15 @@ Targets must be remote, explicitly `vm` or `hardware`, with profiles restricted
 to `server_lite` and `server_web`. See [saved selection](build-selection.md) and
 [selection configuration](build-selection-config.md) for identity and replay rules.
 
+Web targets require effective trusted SSH sources; `--ssh-access-source` keeps
+web ingress public while allowing managed delivery's connection bursts. The
+read-only platform probe checks the controller source observed by the target
+against that policy before enrollment or application changes. Minimal enrollment
+uses the shared SSH-only firewall helper in active-only mode before installing
+typed transport access. It reconciles an existing firewall without enabling one
+on a fresh host or changing web rules. Resolved generic sources are frozen into
+bootstrap arguments; network configuration options are not carried across.
+
 Cloudflare and SSL use the ordinary profile steps. Minimal administrative
 bootstrap separately saves protected serving settings under the target releases
 root in `routing.json`, with an initialization witness. Activation and retained

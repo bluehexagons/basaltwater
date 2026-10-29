@@ -84,6 +84,7 @@ already provisioned, preflight without applying:
 ```bash
 basaltw setup server_web web.example.com root --machine vm \
   --key /home/controller/.ssh/web_ed25519 \
+  --ssh-access-source 192.0.2.5/32 \
   --build-on builds --build-target-policy /home/controller/build-target.json \
   --deploy app.example.com 'https://github.com/OWNER/spa-api.git#tag=v1' \
   --dry-run
@@ -96,6 +97,13 @@ bootstraps target authority, reserves every application before submitting
 builds, stages every artifact before activation, and finally applies the full
 profile against the exact installed release identities. A chosen builder's
 failure does not fall back to building on the target.
+
+Replace `192.0.2.5/32` with the controller source address observed by this target.
+Web targets require trusted SSH sources because managed delivery opens more
+connections than the default SSH rate limit permits. SSH-only sources leave
+HTTP/HTTPS public; repeat the flag for other administrators. A cloud VPS usually
+sees the controller's public egress or VPN address. Preflight checks this before
+enrollment; existing active firewall rules are reconciled before delivery.
 
 ## Update and reconcile
 

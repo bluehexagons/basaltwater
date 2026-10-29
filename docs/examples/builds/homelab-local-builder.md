@@ -25,6 +25,7 @@ sites=(
 )
 build_key="$HOME/.ssh/id_ed25519"
 policy_dir="$HOME/basaltwater-homelab-policies"
+controller_ssh_source='192.168.0.10/32' # replace with this controller's address seen by the target
 
 python3 scripts/prepare_build_policies.py \
   --builder-key "$build_key.pub" --target-key "$build_key.pub" \
@@ -55,7 +56,7 @@ with your values:
 ```
 
 The target command keeps the original deployment and serving options and adds
-the saved builder and target policy:
+the saved builder, target policy and trusted controller SSH source:
 
 ```bash
 ./basaltwater.py setup server_web 192.168.0.52 deploy \
@@ -63,6 +64,7 @@ the saved builder and target policy:
   --provision-on ts1 --image-storage scrap_100_1_write \
   --memory 1G --cores 2 --storage root local-lvm 20G --disk-ssd root \
   --password 'redacted' --key "$build_key" \
+  --ssh-access-source "$controller_ssh_source" \
   --web-panel --ssl --web-panel-password 'redacted' \
   --notify webhook 'redacted' --notify webhook 'redacted' \
   --hostname bluehexagons-homelab \
@@ -76,6 +78,13 @@ Initial Cloudflare tunnel creation uses the existing interactive authentication
 wizard. With Cloudflare and SSL together, the origin remains HTTP and the
 public tunnel supplies HTTPS. A direct HTTPS VPS without Cloudflare uses
 `--ssl` and the ordinary certificate setup instead.
+
+The SSH-only source allows delivery's connection bursts without restricting
+public web access. Repeat it for every controller or administration network
+that needs SSH access. Preflight verifies the current controller is included.
+For the production VPS, use the controller's public egress IP or VPN source as
+seen by that VPS; its LAN address usually does not apply there. Enrollment
+reconciles existing SSH rules before delivery, preserving web ingress.
 
 Use a separate target policy and saved setup for production. Do not point two
 active tunnels at the same public hostname unintentionally. For later updates,

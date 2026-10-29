@@ -52,6 +52,7 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         self.config = SetupConfig(
             host="target.example", username="agent", system_type="server_web", machine_type="vm",
             build_on="BUILDS", build_target_enrollment=policy,
+            ssh_access_sources=["192.0.2.10/32"],
             deploy_specs=[["EXAMPLE.COM./", self.old], ["sibling.example", self.sibling]],
         )
         stack = ExitStack()
@@ -235,7 +236,7 @@ class BuildSetupTransportTests(unittest.TestCase):
             apply = stack.enter_context(patch.object(basaltwater, "run_remote_setup"))
             policy = Path(temporary) / "target.json"
             policy.write_text(json.dumps(enrollment()))
-            for options in (("--node",), ("--app-server",), ("--go",), ()):
+            for options in (("--node",), ("--app-server",), ("--go",), ("--ssl",), ()):
                 for dry_run in (False, True):
                     with self.subTest(options=options, dry_run=dry_run):
                         args = parser.parse_args([

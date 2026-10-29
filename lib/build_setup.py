@@ -7,6 +7,7 @@ from contextlib import ExitStack
 import copy
 from dataclasses import asdict
 import hashlib
+import ipaddress
 import json
 import os
 import shlex
@@ -25,7 +26,7 @@ from lib.build_target_client import BuildTargetClient
 from lib.config import SetupConfig
 from lib.operation_state import OperationStateStore
 from lib.ssh_utils import build_ssh_command, strict_ssh_transport
-from lib.validation import validate_deploy_specs
+from lib.validation import validate_deploy_specs, validate_network_ip, validate_network_ip_or_cidr
 from lib.workspace import get_workspace_dir
 
 
@@ -95,6 +96,12 @@ def validate_build_setup_selection(config: SetupConfig) -> None:
     if (config.custom_steps or config.is_build_server or config.install_go or config.install_node
             or config.install_node_versions or config.install_godot):
         raise ValueError("Build-on target setup cannot request builder roles, custom steps or build toolchains")
+    if config.system_type == "server_web" and not config.effective_ssh_sources():
+        raise ValueError(
+            "Build-on web targets require --ssh-access-source IP[/PREFIX] for the controller; "
+            "the default SSH rate limit cannot support managed delivery connection bursts. "
+            "Existing --access-source or --lan-access also satisfies this requirement."
+        )
 
 
 def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
@@ -104,7 +111,8 @@ def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
         "v=platform.freedesktop_os_release(); "
         "m='/etc/basaltwater/build-target/.managed.json'; "
         "print(json.dumps({'uid':os.geteuid(),'os':v.get('ID'),'version':v.get('VERSION_ID'),"
-        "'architecture':platform.machine(),'setup_pending':os.path.lexists("
+        "'architecture':platform.machine(),'ssh_peer':os.environ.get('SSH_CONNECTION','').split()[:1],"
+        "'setup_pending':os.path.lexists("
         "'/var/lib/basaltwater/setup-operation.json'),'legacy_ssh':os.path.lexists("
         "'/var/lib/basaltwater/build-target-ssh'),'enrollment_schema':"
         "json.load(open(m)).get('schema') if os.path.lexists(m) else None}))"
@@ -125,6 +133,19 @@ def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
             or value.get("setup_pending") is not False or value.get("legacy_ssh") is not False
             or value.get("enrollment_schema") not in {None, 2}):
         raise ValueError("Target must be Debian 13 x86-64 with no unfinished setup or legacy enrollment")
+    sources = config.effective_ssh_sources()
+    if sources:
+        observed = value.get("ssh_peer")
+        if not isinstance(observed, list) or len(observed) != 1:
+            raise ValueError("Cannot verify the controller's SSH source on the target")
+        peer = ipaddress.ip_address(validate_network_ip(observed[0], "SSH setup peer"))
+        networks = [ipaddress.ip_network(validate_network_ip_or_cidr(source, "SSH source"), strict=False)
+                    for source in sources]
+        if not any(peer in network for network in networks):
+            raise ValueError(
+                f"Target observes controller SSH source {peer}; include "
+                f"--ssh-access-source {peer}/{peer.max_prefixlen} before deployment"
+            )
 
 
 def _plans(config: SetupConfig, destination: str, capabilities: object,
@@ -151,6 +172,8 @@ def _bootstrap_config(config: SetupConfig) -> SetupConfig:
         build_target_enrollment=config.build_target_enrollment, ssh_key=config.ssh_key,
         enable_cloudflare=config.enable_cloudflare, enable_ssl=config.enable_ssl,
         ssl_email=config.ssl_email,
+        access_sources=config.effective_access_sources() or None,
+        ssh_access_sources=config.ssh_access_sources,
     )
 
 
