@@ -1340,6 +1340,26 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
     return _write_executable_if_changed(path, content)
 
 
+def _install_t3_cli_launcher(home: str, uid: int, gid: int) -> bool:
+    """Expose the managed runtime on PATH while preserving existing commands."""
+
+    launcher = os.path.join(home, ".local", "bin", "t3")
+    validate_filesystem_path(launcher)
+    target = "basaltwater-t3code-pairing-provider"
+    try:
+        # Exclusive creation also preserves dangling links and concurrent installs.
+        os.symlink(target, launcher)
+    except FileExistsError:
+        if not (os.path.islink(launcher) and os.readlink(launcher) == target):
+            print(
+                "  Keeping existing ~/.local/bin/t3; managed CLI remains available "
+                "as ~/.local/bin/basaltwater-t3code-pairing-provider"
+            )
+        return False
+    os.lchown(launcher, uid, gid)
+    return True
+
+
 def _url_host(host: str) -> str:
     return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
@@ -2137,6 +2157,7 @@ def install_t3code_web(config: SetupConfig) -> None:
     )
     os.chown(pair_wrapper, account.pw_uid, account.pw_gid)
     os.chown(t3_cli_wrapper, account.pw_uid, account.pw_gid)
+    _install_t3_cli_launcher(home, account.pw_uid, account.pw_gid)
     os.chown(workspace, account.pw_uid, account.pw_gid)
     _ensure_t3_agent_skill(config)
 

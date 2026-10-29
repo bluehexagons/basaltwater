@@ -53,6 +53,12 @@ migration state.
 
 ## Provider updates and records
 
+Managed Debian headless setup exposes `t3` through `~/.local/bin/t3`; it follows
+the selected service runtime. Setup preserves any existing command at that
+path. Check `command -v t3` and `t3 --version` before using host CLI commands;
+`~/.local/bin/basaltwater-t3code-pairing-provider` invokes the managed runtime
+directly when another installation takes precedence.
+
 Use **Update all** at the sidebar bottom for requested bulk updates across
 connected environments. For one provider, use **Settings → Providers** or
 `basaltw agent update HOST USER --tool TOOL`. Record readiness afterwards:

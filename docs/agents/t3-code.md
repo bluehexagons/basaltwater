@@ -618,6 +618,12 @@ managed authentication policy and upstream assets.
 
 ### Current provider and thread workflows
 
+Managed Debian headless setup exposes `~/.local/bin/t3`, linked to the stable
+wrapper that follows the service's selected runtime after updates. Setup
+preserves an existing command at that path; the managed wrapper is also
+available as `~/.local/bin/basaltwater-t3code-pairing-provider`. Use
+`t3 --version` to check which runtime the shell invokes.
+
 Stable 0.1.2 adds `t3 thread` commands for scripts on the environment host.
 `t3 thread list --json` and `t3 thread show THREAD_ID` inspect existing work;
 `start` creates an ordinary thread and `send` queues a message without
