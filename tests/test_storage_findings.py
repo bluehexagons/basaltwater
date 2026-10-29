@@ -462,9 +462,11 @@ class TestFindings(unittest.TestCase):
 
 
 class TestScrubCLI(unittest.TestCase):
-    def parser(self):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
         from basaltwater import create_basaltwater_parser
-        return create_basaltwater_parser()[0]
+        cls.parser = create_basaltwater_parser()[0]
 
     def test_all_commands_parse(self):
         for action in scrub_cli.ACTIONS:
@@ -473,11 +475,11 @@ class TestScrubCLI(unittest.TestCase):
                 argv += ["--file", "/data/file"]
             if action == "restore":
                 argv += ["--from", "/backup/file"]
-            self.assertEqual(self.parser().parse_args(argv).scrub_action, action)
+            self.assertEqual(self.parser.parse_args(argv).scrub_action, action)
 
     def test_remote_arguments_quoted_and_cached_key_used(self):
         path = "/data/file with spaces"
-        args = self.parser().parse_args(["scrub", "verify", "nas", "--file", path, "--json"])
+        args = self.parser.parse_args(["scrub", "verify", "nas", "--file", path, "--json"])
         with patch.object(scrub_cli, "load_setup_command", return_value=Mock(ssh_key="/keys/key")), patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/tmp/known_hosts"), patch.object(scrub_cli.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)) as run:
             self.assertEqual(scrub_cli.run_scrub_command(args), 1)
         command = run.call_args.args[0]
@@ -488,7 +490,7 @@ class TestScrubCLI(unittest.TestCase):
         self.assertIn("--json", remote)
 
     def test_noninteractive_mutation_requires_yes(self):
-        args = self.parser().parse_args(["scrub", "accept", "nas", "--file", "/data/file"])
+        args = self.parser.parse_args(["scrub", "accept", "nas", "--file", "/data/file"])
         with patch.object(scrub_cli.sys.stdin, "isatty", return_value=False), patch.object(scrub_cli.subprocess, "run") as run:
             self.assertEqual(scrub_cli.run_scrub_command(args), 1)
         run.assert_not_called()

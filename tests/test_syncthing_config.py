@@ -249,11 +249,15 @@ class SyncthingConfigTest(unittest.TestCase):
 
 
 class SyncthingSavedConfigTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser = basaltwater.create_basaltwater_parser()[0]
+
     def setUp(self) -> None:
         cache_dir = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch("lib.cache.get_setup_cache_dir", return_value=cache_dir))
         self.enterContext(patch("lib.system_utils.get_local_timezone", return_value="UTC"))
-        self.parser = basaltwater.create_basaltwater_parser()[0]
         self.cache_path = get_cache_path_for_host("fileserver")
 
     def _write_saved_config(self, **overrides: object) -> None:

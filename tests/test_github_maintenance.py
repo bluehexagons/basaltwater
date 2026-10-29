@@ -16,17 +16,20 @@ from lib.github_maintenance import _release_tags_to_delete, discover_github_repo
 
 
 class TestMaintenanceCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def test_parser_accepts_github_audit(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["maintenance", "github", "audit", "--json"])
+        args = self.parser.parse_args(["maintenance", "github", "audit", "--json"])
         self.assertEqual(args.command, "maintenance")
         self.assertEqual(args.maintenance_command, "github")
         self.assertEqual(args.github_command, "audit")
         self.assertTrue(args.json)
 
     def test_parser_accepts_github_prune(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args([
+        args = self.parser.parse_args([
             "maintenance",
             "github",
             "prune",
@@ -46,8 +49,7 @@ class TestMaintenanceCli(unittest.TestCase):
         self.assertEqual(_release_tags_to_delete(releases, 2), ["v1.0.0"])
 
     def test_run_maintenance_command_requires_subcommand(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["maintenance"])
+        args = self.parser.parse_args(["maintenance"])
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = run_maintenance_command(args)

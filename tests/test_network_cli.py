@@ -15,10 +15,13 @@ from lib.network_inventory import find_network_profile
 
 
 class TestNetworkCli(unittest.TestCase):
-    def test_parser_accepts_network_init(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
 
-        args = parser.parse_args(
+    def test_parser_accepts_network_init(self) -> None:
+        args = self.parser.parse_args(
             [
                 "network",
                 "--workspace",
@@ -43,9 +46,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertEqual(args.profile, "homelab")
 
     def test_parser_accepts_import_proxmox(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "network",
                 "--workspace",
@@ -68,9 +69,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertTrue(args.no_control_plane)
 
     def test_parser_accepts_import_proxmox_guests(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "network",
                 "--workspace",
@@ -91,9 +90,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertEqual(args.hosts, ["pve1"])
 
     def test_parser_accepts_plan_proxmox(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "network",
                 "--workspace",
@@ -110,9 +107,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertTrue(args.json)
 
     def test_parser_accepts_plan_proxmox_rendered(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "network",
                 "--workspace",
@@ -129,11 +124,9 @@ class TestNetworkCli(unittest.TestCase):
         self.assertTrue(args.proxmox)
 
     def test_help_epilog_aligns_network_command(self) -> None:
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-
         self.assertIn(
             "network [subcommand]        Manage generic network inventory profiles",
-            parser.epilog,
+            self.parser.epilog,
         )
 
     def test_init_and_add_host_through_main(self) -> None:

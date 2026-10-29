@@ -40,8 +40,10 @@ def _completed(
 
 
 class TestFirmwareParser(unittest.TestCase):
-    def setUp(self) -> None:
-        self.parser, _setup, _patch = basaltwater.create_basaltwater_parser()
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _setup, _patch = basaltwater.create_basaltwater_parser()
 
     def test_parses_audit_options(self) -> None:
         args = self.parser.parse_args(

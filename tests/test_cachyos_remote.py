@@ -17,9 +17,13 @@ from lib import cachyos_remote as remote
 
 
 class CachyosRemoteTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def args(self, *options: str):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        return parser.parse_args(["setup", "agent_cachyos", "desktop.lan", "alice", *options])
+        return self.parser.parse_args(["setup", "agent_cachyos", "desktop.lan", "alice", *options])
 
     def test_controller_defaults_and_explicit_opt_out(self):
         self.assertTrue(remote.controller_config(self.args()).install_ssh)

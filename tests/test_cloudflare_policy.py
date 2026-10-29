@@ -187,9 +187,13 @@ class TestCloudflareWebPolicy(unittest.TestCase):
 
 
 class TestCloudflareDirectCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def _parse_config(self, argv):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(argv)
+        args = self.parser.parse_args(argv)
         with patch('lib.system_utils.get_local_timezone', return_value='UTC'):
             return SetupConfig.from_args(args, 'server_web')
 

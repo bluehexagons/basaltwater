@@ -167,6 +167,11 @@ class TestWorkspaceInheritance(unittest.TestCase):
 
 
 class TestWorkspaceCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def test_setup_parser_accepts_workspace(self):
         parser = create_setup_argument_parser("test")
         args = parser.parse_args(["example.com", "--workspace", "/tmp/workspace"])
@@ -178,22 +183,19 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertTrue(args.control_plane)
 
     def test_basaltwater_parser_accepts_credentials_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["credentials", "--workspace", "/tmp/workspace", "list"])
+        args = self.parser.parse_args(["credentials", "--workspace", "/tmp/workspace", "list"])
         self.assertEqual(args.command, "credentials")
         self.assertEqual(args.workspace, "/tmp/workspace")
         self.assertEqual(args.credentials_command, "list")
 
     def test_basaltwater_parser_accepts_list_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["list", "--workspace", "/tmp/workspace", "prod"])
+        args = self.parser.parse_args(["list", "--workspace", "/tmp/workspace", "prod"])
         self.assertEqual(args.command, "list")
         self.assertEqual(args.workspace, "/tmp/workspace")
         self.assertEqual(args.pattern, "prod")
 
     def test_setup_parser_accepts_deploy_latest_pairs(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args([
+        args = self.parser.parse_args([
             "setup",
             "server_web",
             "example.com",
@@ -231,8 +233,7 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertEqual(args.deploy_specs, [["clicker.example.com", "https://github.com/user/clicker.git"]])
 
     def test_setup_parser_still_accepts_repeated_deploy_flags(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args([
+        args = self.parser.parse_args([
             "setup",
             "server_web",
             "example.com",
@@ -251,55 +252,47 @@ class TestWorkspaceCli(unittest.TestCase):
         ])
 
     def test_basaltwater_parser_accepts_recall_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["recall", "example.com", "admin", "--key", "~/.ssh/id_ed25519"])
+        args = self.parser.parse_args(["recall", "example.com", "admin", "--key", "~/.ssh/id_ed25519"])
         self.assertEqual(args.command, "recall")
         self.assertEqual(args.host, "example.com")
         self.assertEqual(args.username, "admin")
         self.assertEqual(args.ssh_key, "~/.ssh/id_ed25519")
 
     def test_basaltwater_parser_accepts_reconstruct_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["reconstruct", "--compact"])
+        args = self.parser.parse_args(["reconstruct", "--compact"])
         self.assertEqual(args.command, "reconstruct")
         self.assertTrue(args.compact)
 
     def test_basaltwater_parser_accepts_completions_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["completions", "--shell", "zsh", "--global"])
+        args = self.parser.parse_args(["completions", "--shell", "zsh", "--global"])
         self.assertEqual(args.command, "completions")
         self.assertEqual(args.shell, "zsh")
         self.assertTrue(args.global_install)
 
     def test_basaltwater_parser_accepts_python_tools_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["python-tools", "--shell", "fish"])
+        args = self.parser.parse_args(["python-tools", "--shell", "fish"])
         self.assertEqual(args.command, "python-tools")
         self.assertEqual(args.shell, "fish")
 
     def test_basaltwater_parser_accepts_bootstrap_command(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["bootstrap", "--user", "admin", "--shell", "zsh", "--skip-system-packages"])
+        args = self.parser.parse_args(["bootstrap", "--user", "admin", "--shell", "zsh", "--skip-system-packages"])
         self.assertEqual(args.command, "bootstrap")
         self.assertEqual(args.bootstrap_user, "admin")
         self.assertEqual(args.shell, "zsh")
         self.assertTrue(args.skip_system_packages)
 
     def test_basaltwater_parser_accepts_channel_selectors(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["channel", "branch-feature/example"])
+        args = self.parser.parse_args(["channel", "branch-feature/example"])
         self.assertEqual(args.command, "channel")
         self.assertEqual(args.channel_name, "branch-feature/example")
 
     def test_basaltwater_upgrade_without_hosts_is_tool_upgrade(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["upgrade"])
+        args = self.parser.parse_args(["upgrade"])
         self.assertEqual(args.command, "upgrade")
         self.assertEqual(args.hosts, [])
 
     def test_basaltwater_setup_parser_accepts_antistatic_flags(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args([
+        args = self.parser.parse_args([
             "setup",
             "server_web",
             "example.com",
@@ -316,8 +309,7 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertEqual(args.antistatic_db, "db.example.com:9091")
 
     def test_basaltwater_setup_parser_accepts_gogs_flag(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args([
+        args = self.parser.parse_args([
             "setup",
             "server_web",
             "example.com",
@@ -677,8 +669,7 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_print.assert_called_with("Error: Invalid timezone: Mars/Olympus")
 
     def test_run_patch_command_preserves_cached_lxc_machine_when_omitted(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["patch", "example.com", "testuser"])
+        args = self.parser.parse_args(["patch", "example.com", "testuser"])
         cached = SetupConfig(
             host="example.com",
             username="testuser",
@@ -700,8 +691,7 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertIn("vm_balloon_min", basaltwater._patch_preserve_keys(args))
 
     def test_run_patch_command_allows_explicit_machine_override(self):
-        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["patch", "example.com", "testuser", "--machine", "vm"])
+        args = self.parser.parse_args(["patch", "example.com", "testuser", "--machine", "vm"])
         cached = SetupConfig(
             host="example.com",
             username="testuser",

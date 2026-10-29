@@ -357,9 +357,13 @@ class TestProjectMemory(MemoryFixture):
 
 
 class TestMemoryCLI(MemoryFixture):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser = create_basaltwater_parser()[0]
+
     def invoke(self, *arguments: str, stdin: str = "") -> tuple[int, dict]:
-        parser = create_basaltwater_parser()[0]
-        args = parser.parse_args(["agent", "memory", *arguments, "--json"])
+        args = self.parser.parse_args(["agent", "memory", *arguments, "--json"])
         output = StringIO()
         with (patch.object(agent_memory_cli, "AgentMemory", return_value=self.memory),
               patch.object(agent_memory_cli.sys, "stdin", StringIO(stdin)), redirect_stdout(output)):

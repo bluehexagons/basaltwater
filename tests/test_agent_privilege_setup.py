@@ -27,12 +27,16 @@ from plugins.common import extend_web_panel_steps
 
 
 class SetupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = create_basaltwater_parser()
+
     def config(self, **kwargs):
         return SetupConfig(host="vm.example", username="agent", system_type="agent_vm", **kwargs)
 
     def test_default_port_is_private_transient_and_survives_remote_parsing(self):
-        parser, _, _ = create_basaltwater_parser()
-        args = parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
+        args = self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
                                   "--privilege-broker-password", "test-only independent password"])
         config = SetupConfig.from_args(args, "agent_vm")
         self.assertNotIn("test-only independent password", repr(config))
@@ -52,14 +56,13 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(privilege_broker_origin(received), "https://vm.example:9444")
 
     def test_custom_port_is_accepted_and_url_is_rejected(self):
-        parser, _, _ = create_basaltwater_parser()
-        args = parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker", "9445"])
+        args = self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker", "9445"])
         config = SetupConfig.from_args(args, "agent_vm")
         self.assertEqual(config.privilege_broker_port, 9445)
         self.assertEqual(privilege_broker_origin(config), "https://vm.example:9445")
         self.assertIn("--privilege-broker 9445", config.to_setup_command())
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
+            self.parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
                                "https://vm.example:9444"])
 
     def test_ipv4_cidr_host_uses_address_for_approval_origin(self):
@@ -80,25 +83,22 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(privilege_broker_origin(config), "https://approval.example:9444")
 
     def test_command_request_keeps_the_top_level_command(self):
-        parser, _, _ = create_basaltwater_parser()
-        args = parser.parse_args([
+        args = self.parser.parse_args([
             "agent", "privilege", "request", "command.run", "--reason", "Test", "--command", "/usr/bin/true",
         ])
         self.assertEqual(args.command, "agent")
         self.assertEqual(args.privilege_argv, ["/usr/bin/true"])
 
     def test_omitted_patch_preserves_and_explicit_disable_removes(self):
-        parser, _, _ = create_basaltwater_parser()
         cached = self.config(privilege_broker_port=9444)
         for flags, expected in (([], cached.privilege_broker_port), (["--no-privilege-broker"], None)):
-            args = parser.parse_args(["patch", "vm.example", "agent", *flags])
+            args = self.parser.parse_args(["patch", "vm.example", "agent", *flags])
             config = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"), preserve_keys=_patch_preserve_keys(args))
             self.assertEqual(config.privilege_broker_port, expected)
 
     def test_password_only_patch_rotates_without_losing_origin(self):
-        parser, _, _ = create_basaltwater_parser()
         cached = self.config(privilege_broker_port=9444)
-        args = parser.parse_args(["patch", "vm.example", "agent", "--privilege-broker-password", "test-only changed password"])
+        args = self.parser.parse_args(["patch", "vm.example", "agent", "--privilege-broker-password", "test-only changed password"])
         config = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"), preserve_keys=_patch_preserve_keys(args))
         self.assertEqual(config.privilege_broker_port, cached.privilege_broker_port)
         self.assertEqual(json.loads(config.privilege_broker_auth)["username"], "agent")
@@ -125,8 +125,7 @@ class SetupTests(unittest.TestCase):
     def test_runner_host_approvals_do_not_select_agent_workloads(self):
         from plugins.server import build_github_runner_steps
 
-        parser, _, _ = create_basaltwater_parser()
-        args = parser.parse_args(["setup", "server_github_runner", "vm.example", "operator",
+        args = self.parser.parse_args(["setup", "server_github_runner", "vm.example", "operator",
                                  "--ci-repository", "owner/project", "--ci-allowed-user", "owner",
                                  "--web-panel", "--ssl", "--privilege-broker"])
         config = SetupConfig.from_args(args, "server_github_runner")
@@ -145,7 +144,7 @@ class SetupTests(unittest.TestCase):
         remote = received.parse_args(shlex.split(" ".join(config.to_remote_args())))
         remote.host = "localhost"
         self.assertEqual(SetupConfig.from_args(remote, "server_github_runner").privilege_broker_port, 9444)
-        args = parser.parse_args(["patch", "vm.example", "operator", "--no-privilege-broker"])
+        args = self.parser.parse_args(["patch", "vm.example", "operator", "--no-privilege-broker"])
         with patch("basaltwater.load_setup_command", return_value=config), patch("basaltwater._execute_patch_config", return_value=0) as execute:
             self.assertEqual(run_patch_command(args), 0)
         merged = execute.call_args.args[0]
@@ -157,7 +156,6 @@ class SetupTests(unittest.TestCase):
     def test_runner_patch_preserves_or_replaces_the_complete_scope(self):
         from lib.github_runner_config import runner_repositories
 
-        parser, _, _ = create_basaltwater_parser()
         for cached_scope in ({"ci_repository": "owner/one"}, {"ci_repositories": ["owner/one", "owner/two"]},
                              {"ci_organization": "owner", "ci_runner_group": "Private CI"}):
             cached = SetupConfig(host="vm.example", username="operator", system_type="server_github_runner",
@@ -165,7 +163,7 @@ class SetupTests(unittest.TestCase):
             for flags in (["--privilege-broker"], ["--ci-repository", "owner/three"],
                           ["--ci-organization", "other"], ["--ci-repository", "owner/one", "--ci-repository", "owner/two"]):
                 with self.subTest(cached=cached_scope, flags=flags):
-                    args = parser.parse_args(["patch", "vm.example", "operator", *flags])
+                    args = self.parser.parse_args(["patch", "vm.example", "operator", *flags])
                     with patch("basaltwater.load_setup_command", return_value=cached), patch("basaltwater._execute_patch_config", return_value=0) as execute:
                         self.assertEqual(run_patch_command(args), 0)
                     updated = execute.call_args.args[0]

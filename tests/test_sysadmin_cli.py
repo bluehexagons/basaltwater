@@ -13,8 +13,10 @@ from lib.sysadmin_cli import run_sysadmin_command
 
 
 class SysadminCliTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        self.parser, _, _ = create_basaltwater_parser()
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = create_basaltwater_parser()
 
     def _parse(self, *argv: str) -> argparse.Namespace:
         return self.parser.parse_args(list(argv))

@@ -125,8 +125,12 @@ class ProbeTests(unittest.TestCase):
 
 
 class DoctorOutputTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
-        self.parser, _, _ = basaltwater.create_basaltwater_parser()
         self.report = {
             "schema_version": 1,
             "observed_at": "2026-09-14T12:00:00+00:00",

@@ -55,9 +55,13 @@ def _transition_payload(
 
 
 class TestNetworkSetupCLI(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = create_basaltwater_parser()
+
     def test_parses_and_serializes_network_and_hostname_options(self):
-        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "setup",
                 "server_lite",
@@ -93,8 +97,7 @@ class TestNetworkSetupCLI(unittest.TestCase):
         self.assertEqual(config.to_dict()["network_interface"], "enp1s0")
 
     def test_parses_and_serializes_live_network_activation(self):
-        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "patch",
                 "192.168.10.20",
@@ -118,8 +121,7 @@ class TestNetworkSetupCLI(unittest.TestCase):
         self.assertFalse(legacy.activate_network)
 
     def test_initial_provisioned_setup_rejects_live_handoff(self):
-        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "setup",
                 "server_lite",
@@ -137,8 +139,7 @@ class TestNetworkSetupCLI(unittest.TestCase):
         mock_prepare.assert_not_called()
 
     def test_provisioned_setup_rejects_duplicate_ipv4_option(self):
-        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "setup",
                 "server_lite",

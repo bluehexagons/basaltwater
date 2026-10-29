@@ -11,12 +11,16 @@ from lib import sysadmin_user
 
 
 class TestSysadminUserCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _, _ = create_basaltwater_parser()
+
     def test_default_admin_remains_saved_account_with_explicit_admin_override(self):
-        parser, _, _ = create_basaltwater_parser()
         config = SimpleNamespace(username="olduser", ssh_key=None)
         for options, expected_admin in (([], "olduser"), (["--admin-user", "root"], "root")):
             with self.subTest(options=options):
-                args = parser.parse_args(["user", "rename", "server.example", "newuser", *options])
+                args = self.parser.parse_args(["user", "rename", "server.example", "newuser", *options])
                 with patch.object(sysadmin_user, "load_setup_command", return_value=config):
                     admin, key, saved = sysadmin_user._resolve_credentials(args.host, args.admin_user, None)
                 self.assertEqual(admin, expected_admin)
@@ -24,8 +28,7 @@ class TestSysadminUserCli(unittest.TestCase):
                 self.assertIs(saved, config)
 
     def test_rename_parser(self):
-        parser, _, _ = create_basaltwater_parser()
-        args = parser.parse_args(
+        args = self.parser.parse_args(
             [
                 "user",
                 "rename",
@@ -48,9 +51,8 @@ class TestSysadminUserCli(unittest.TestCase):
         self.assertTrue(args.yes)
 
     def test_rename_home_options_are_mutually_exclusive(self):
-        parser, _, _ = create_basaltwater_parser()
         with self.assertRaises(SystemExit):
-            parser.parse_args(
+            self.parser.parse_args(
                 [
                     "user",
                     "rename",
@@ -63,10 +65,9 @@ class TestSysadminUserCli(unittest.TestCase):
             )
 
     def test_resume_options_cannot_change_durable_home_selection_or_dry_run(self):
-        parser, _, _ = create_basaltwater_parser()
         for options in (["--keep-home"], ["--new-home", "/srv/newadmin"], ["--dry-run"]):
             with self.subTest(options=options):
-                args = parser.parse_args([
+                args = self.parser.parse_args([
                     "user", "rename", "server.example", "newadmin", "--resume", "0123456789abcdef", *options,
                 ])
                 with patch.object(sysadmin_user, "_resolve_credentials") as resolve:
