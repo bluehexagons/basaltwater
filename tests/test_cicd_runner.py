@@ -57,6 +57,20 @@ class DebianCITests(unittest.TestCase):
         self.assertEqual(run.call_count, len(ci.IMAGES))
         self.assertTrue(all(call.args[0][1] == "pull" for call in run.call_args_list))
 
+    def test_node_compatibility_runs_its_suite_once_and_preserves_failure(self):
+        with patch.object(ci.subprocess, "run", side_effect=[
+                Mock(returncode=0), Mock(returncode=7), Mock(returncode=0)]) as run:
+            self.assertEqual(self.run_ci(node_only=True), 7)
+        self.assertEqual([call.args[0][1] for call in run.call_args_list], ["pull", "run", "rm"])
+        self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1],
+                         "make test SUITE=node TEST_ARGS='--durations 10'")
+
+    def test_incompatible_check_modes_fail_before_any_commands(self):
+        with patch.object(ci.subprocess, "run") as run, self.assertRaises(ValueError):
+            self.run_ci(coverage=True, node_only=True)
+        self.probe.assert_not_called()
+        run.assert_not_called()
+
     def test_check_failure_does_not_select_another_registry_or_repeat_commands(self):
         with patch.object(ci.subprocess, "run", side_effect=[
                 Mock(returncode=0), Mock(returncode=7), Mock(returncode=0)]) as run:

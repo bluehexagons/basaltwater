@@ -24,6 +24,10 @@ from lib.system_types import get_steps_for_system_type
 
 
 class CachyOSRefreshTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
@@ -47,7 +51,6 @@ class CachyOSRefreshTests(unittest.TestCase):
         stack.enter_context(patch("common.cachyos_reboot.report_reboot_notice"))
         stack.enter_context(patch("lib.cachyos_doctor.collect_cachyos_doctor", return_value={"capabilities": []}))
         stack.enter_context(patch("lib.cachyos_health.source_metadata", return_value={"commit": "abc123", "channel": "dev"}))
-        self.parser, _, _ = basaltwater.create_basaltwater_parser()
         self.record = self.home / ".local/state/basaltwater/cachyos/last-setup.json"
 
     def config(self, *options):

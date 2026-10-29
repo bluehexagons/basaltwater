@@ -249,6 +249,13 @@ TEST_SUITES: dict[str, list[str]] = {
         "tests.test_proxmox_node",
         "tests.test_upgrade_safety",
     ],
+    # Execute generated JavaScript under each supported Node runtime. The
+    # primary CI job still runs every Python and JavaScript test with coverage.
+    "node": [
+        "tests.test_agent_context_plugin",
+        "tests.test_web_guacamole_browser",
+        "tests.test_web_panel_ca",
+    ],
     **{
         name: _discover_pattern_suite(patterns)
         for name, patterns in TEST_SUITE_PATTERNS.items()

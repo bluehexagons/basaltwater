@@ -22,9 +22,12 @@ from lib.system_types import get_steps_for_system_type
 
 
 class CachyOSSetupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def config(self, *options):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        return cachyos_config_from_args(parser.parse_args(
+        return cachyos_config_from_args(self.parser.parse_args(
             ["setup", "agent_cachyos", "localhost", "human", *options]))
 
     def test_default_plan_is_only_local_tooling(self):
@@ -48,10 +51,9 @@ class CachyOSSetupTests(unittest.TestCase):
             ["--agent-auth", "login"], ["--t3code-ready"],
             ["--web-interface", "t3code", "--web-interface-host", "0.0.0.0"],
         ]
-        parser, _, _ = basaltwater.create_basaltwater_parser()
         for options in cases:
             with self.subTest(options=options), patch("remote_setup.run_cachyos_setup") as execute:
-                args = parser.parse_args(["setup", "agent_cachyos", "localhost", "human", *options])
+                args = self.parser.parse_args(["setup", "agent_cachyos", "localhost", "human", *options])
                 self.assertEqual(basaltwater.run_setup_command(args), 1)
                 execute.assert_not_called()
 
@@ -60,12 +62,11 @@ class CachyOSSetupTests(unittest.TestCase):
             "--web-interface", "t3code", "--web-interface-host", "192.168.1.50",
         )
         self.assertEqual(config.web_interface_host, "192.168.1.50")
-        parser, _, _ = basaltwater.create_basaltwater_parser()
         for host in ("8.8.8.8", "0.0.0.0", "2001:db8::10", "192.0.2.1", "169.254.1.2",
                      "198.51.100.1", "240.0.0.1", "127.0.0.2", "192.168.1.50/24"):
             with self.subTest(host=host):
                 with self.assertRaisesRegex(ValueError, "private IPv4"):
-                    cachyos_config_from_args(parser.parse_args([
+                    cachyos_config_from_args(self.parser.parse_args([
                         "setup", "agent_cachyos", "localhost", "human",
                         "--web-interface", "t3code", "--web-interface-host", host,
                     ]))
@@ -78,8 +79,7 @@ class CachyOSSetupTests(unittest.TestCase):
                 self.config(*options, "--web-interface-port", "4000")
 
     def test_rejects_remote_target(self):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        args = parser.parse_args(["setup", "agent_cachyos", "example.com", "human"])
+        args = self.parser.parse_args(["setup", "agent_cachyos", "example.com", "human"])
         with self.assertRaisesRegex(ValueError, "local setup only"):
             cachyos_config_from_args(args)
 
@@ -90,8 +90,7 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertIsNone(config.web_interfaces)
         self.assertIn("--t3code-desktop", config.to_remote_args())
         self.assertTrue(SetupConfig.from_dict("localhost", "agent_cachyos", config.to_dict()).t3code_desktop)
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        restored = cachyos_config_from_args(parser.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:]))
+        restored = cachyos_config_from_args(self.parser.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:]))
         self.assertTrue(restored.t3code_desktop)
         functions = [function for _, function in get_steps_for_system_type(config)]
         self.assertIn(steps.install_cachyos_t3_desktop, functions)
@@ -110,7 +109,6 @@ class CachyOSSetupTests(unittest.TestCase):
             self.config("--t3code-desktop", "--no-agent-tool", "codex")
 
     def test_setup_command_places_t3_options_after_positionals(self):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
         for profile, option in (("agent_cachyos", "t3code_desktop"),
                                 ("server_dev", "t3code_ready")):
             config = SetupConfig(host="localhost", username="human", system_type=profile,
@@ -122,7 +120,7 @@ class CachyOSSetupTests(unittest.TestCase):
                     if include_username:
                         positionals.append("human")
                     self.assertEqual(command[:len(positionals)], positionals)
-                    args = parser.parse_args(command[1:])
+                    args = self.parser.parse_args(command[1:])
                     self.assertEqual(args.username, "human" if include_username else None)
                     self.assertTrue(getattr(args, option))
 

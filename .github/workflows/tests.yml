@@ -17,15 +17,22 @@ concurrency:
 
 jobs:
   test:
-    name: Python ${{ matrix.python-version }} / Node ${{ matrix.node-version }} (Debian Trixie)
+    name: ${{ matrix.check-name }} / Node ${{ matrix.node-version }} (Debian Trixie)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Trixie ships Python 3.13; keep routine branch and PR checks focused
-        # on the interpreter used by the supported Debian CI environment.
-        python-version: ['3.13']
-        node-version: ['24.22.1', '26.12.1']
+        # Run all checks and coverage once. Repeat the JavaScript behavior
+        # checks on the other supported Node major, in the same Debian image.
+        include:
+          - python-version: '3.13'
+            node-version: '24.22.1'
+            check-name: Full validation
+            check-mode: --coverage
+          - python-version: '3.13'
+            node-version: '26.12.1'
+            check-name: Node compatibility
+            check-mode: --node-only
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +52,8 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Run Debian checks and coverage
+      - name: Run Debian checks
         env:
           BASALTWATER_CI_PYTHON: ${{ steps.python.outputs.python-path }}
-        run: python3 scripts/run_debian_ci.py --python "$BASALTWATER_CI_PYTHON" --tool-cache "$RUNNER_TOOL_CACHE" --node "$(command -v node)" --coverage
+          BASALTWATER_CI_MODE: ${{ matrix.check-mode }}
+        run: python3 scripts/run_debian_ci.py --python "$BASALTWATER_CI_PYTHON" --tool-cache "$RUNNER_TOOL_CACHE" --node "$(command -v node)" "$BASALTWATER_CI_MODE"

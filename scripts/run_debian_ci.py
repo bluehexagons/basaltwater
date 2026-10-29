@@ -44,8 +44,12 @@ def _path(value: str) -> Path:
     return path
 
 
-def run_debian_ci(python: str, tool_cache: str, *, node: str, coverage: bool = False) -> int:
+def run_debian_ci(
+    python: str, tool_cache: str, *, node: str, coverage: bool = False, node_only: bool = False,
+) -> int:
     """Try alternate pulls only; never repeat failed checks or setup commands."""
+    if coverage and node_only:
+        raise ValueError("Node compatibility checks do not run full-suite coverage")
     executable, cache, workspace = _path(python), _path(tool_cache), _path(str(ROOT))
     node_executable = _path(node)
     if not cache.is_dir() or not executable.is_file() or not executable.is_relative_to(cache):
@@ -69,7 +73,10 @@ def run_debian_ci(python: str, tool_cache: str, *, node: str, coverage: bool = F
     if image is None:
         raise RuntimeError("All Debian image registries failed; checks were not started")
     name = f"basaltwater-ci-{os.getpid()}"
-    script = CONTAINER_SCRIPT + ("make check-ci\n" if coverage else "make check\n")
+    command = "make test SUITE=node TEST_ARGS='--durations 10'" if node_only else (
+        "make check-ci" if coverage else "make check"
+    )
+    script = CONTAINER_SCRIPT + command + "\n"
     try:
         result = subprocess.run([
             "docker", "run", "--rm", "--name", name,
@@ -96,10 +103,13 @@ def main() -> int:
     parser.add_argument("--python", required=True, help="actions/setup-python executable")
     parser.add_argument("--tool-cache", required=True, help="Hosted runner's tool cache")
     parser.add_argument("--node", required=True, help="actions/setup-node executable inside the tool cache")
-    parser.add_argument("--coverage", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--coverage", action="store_true")
+    mode.add_argument("--node-only", action="store_true", help="Run the Node compatibility suite only")
     args = parser.parse_args()
     try:
-        return run_debian_ci(args.python, args.tool_cache, node=args.node, coverage=args.coverage)
+        return run_debian_ci(args.python, args.tool_cache, node=args.node,
+                             coverage=args.coverage, node_only=args.node_only)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         print(f"Debian CI failed: {exc}", file=sys.stderr)
         return 1

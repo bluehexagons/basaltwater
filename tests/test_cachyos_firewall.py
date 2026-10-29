@@ -16,6 +16,10 @@ from lib.cachyos import cachyos_config_from_args
 
 
 class FirewallTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def test_privileged_capture_retains_authenticated_terminal_and_reports_errors(self):
         command = ["sudo", "-n", "ufw", "status", "numbered"]
 
@@ -33,8 +37,7 @@ class FirewallTests(unittest.TestCase):
             firewall._sudo_capture(command)
 
     def config(self, *options):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        return cachyos_config_from_args(parser.parse_args([
+        return cachyos_config_from_args(self.parser.parse_args([
             "setup", "agent_cachyos", "localhost", "human", *options,
         ]))
 

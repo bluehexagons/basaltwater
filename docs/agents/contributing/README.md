@@ -114,6 +114,13 @@ suite once with branch coverage, matching branch CI. Do not also run
 the full suite. `make check` remains available for full verification without
 coverage, and `make coverage` produces a standalone full-suite report. Fast
 selections do not narrow `check-ci` or `coverage`.
+Branch CI runs the complete covered suite and all static/artifact checks once
+on Node 24. The Node 26 job runs only `make test SUITE=node`: generated OpenCode
+hooks, Guacamole browser behavior, and the certificate-install UI. Keep this
+selection in `run_tests.py` current when adding tests that execute JavaScript.
+Both jobs retain the Debian environment and registry fallback. Release CI still
+runs full checks at both supported Python version endpoints.
+
 CI replaces obsolete runs when a newer revision is pushed to the same branch
 or pull request. The coverage run reports the ten slowest modules and tests;
 module totals reveal accumulated fixture cost that individual timings can hide.

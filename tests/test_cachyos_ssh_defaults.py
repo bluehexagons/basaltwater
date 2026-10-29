@@ -21,6 +21,11 @@ def unit_state(load="loaded", active="inactive", enabled="disabled", code=0):
 
 
 class CachyOSSSHDefaultsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+        cls.remote_parser = create_setup_argument_parser("test", for_remote=True, allow_steps=True)
+
     def setUp(self):
         self.environment = patch.dict(os.environ, {"SSH_CONNECTION": "", "SSH_TTY": ""})
         self.environment.start()
@@ -31,11 +36,9 @@ class CachyOSSSHDefaultsTests(unittest.TestCase):
 
     def config(self, *options, remote=False):
         if remote:
-            parser = create_setup_argument_parser("test", for_remote=True, allow_steps=True)
-            args = parser.parse_args(["--system-type", "agent_cachyos", "--username", "human", *options])
+            args = self.remote_parser.parse_args(["--system-type", "agent_cachyos", "--username", "human", *options])
         else:
-            parser, _, _ = basaltwater.create_basaltwater_parser()
-            args = parser.parse_args(["setup", "agent_cachyos", "localhost", "human", *options])
+            args = self.parser.parse_args(["setup", "agent_cachyos", "localhost", "human", *options])
         return cachyos_config_from_args(args, for_remote=remote)
 
     def test_active_or_enabled_native_socket_and_managed_service(self):

@@ -28,6 +28,10 @@ TARGET = "https://panel.example/api/v1/notifications#" + TOKEN
 
 
 class CachyOSNotificationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
@@ -59,7 +63,6 @@ class CachyOSNotificationTests(unittest.TestCase):
         response.__enter__.return_value.status = 204
         self.request = stack.enter_context(patch.object(notifications, "_open_webhook_request", return_value=response))
         stack.enter_context(patch.object(notifications.time, "sleep"))
-        self.parser, _, _ = basaltwater.create_basaltwater_parser()
         self.record = self.home / ".local/state/basaltwater/cachyos/last-setup.json"
         previous_dry_run = is_dry_run()
         self.addCleanup(set_dry_run, previous_dry_run)
