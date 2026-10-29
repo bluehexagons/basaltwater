@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import stat
 import tempfile
 from types import SimpleNamespace
@@ -74,3 +75,26 @@ class BuildNodeInventoryTests(unittest.TestCase):
         self.installer.side_effect = lambda *a, **kw: mark_runtime(self.nvm, "24.22.1", owner="project")
         host._install_node_toolchain(self.config)
         self.assert_private_records()
+
+    def test_repair_refuses_unrecognized_modes_and_links_before_installer(self):
+        for kind in ("group-readable", "writable", "symlink", "hardlink"):
+            with self.subTest(kind=kind):
+                mark_runtime(self.nvm, "24.22.1", owner="project")
+                marker = self.runtime / ".basaltwater-runtime.json"
+                extra = self.runtime / "other-record"
+                if kind == "group-readable":
+                    marker.chmod(0o640)
+                elif kind == "writable":
+                    marker.chmod(0o666)
+                elif kind == "symlink":
+                    marker.rename(extra)
+                    marker.symlink_to(extra)
+                else:
+                    os.link(marker, extra)
+                self.installer.reset_mock()
+                with self.assertRaises((ValueError, OSError)):
+                    host._install_node_toolchain(self.config)
+                self.installer.assert_not_called()
+                marker.unlink()
+                if extra.exists():
+                    extra.unlink()
