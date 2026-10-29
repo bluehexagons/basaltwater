@@ -222,6 +222,18 @@ Run the update command when the check lists T3; a direct Shelly update can
 rebuild an already-current package. Do not configure Shelly as Arch-Update's
 `AURHelper`: their command-line interfaces differ.
 
+With Shelly 3.1.9's terminal interface, the PKGBUILD diff is printed inline
+before review approval, followed by a separate package-install confirmation;
+there is no preview window to close. Basaltwater keeps those approvals attached
+to the terminal. Shelly's `--no-confirm` also automatically accepts ordinary PKGBUILD
+reviews, so it is unsuitable for removing only the final installation prompt
+while retaining a chance to review and decline. `CollapsePkgbuildDiff` controls
+unchanged diff context, not confirmation count. These behaviors are defined by
+Shelly's [terminal question handler](https://github.com/Seafoam-Labs/Shelly-ALPM/blob/v3.1.9/Shelly.Cli.Zig/src/output/standard_single_pane.zig).
+If a terminal update still opens a separate preview, record the helper/version
+and command used before changing review settings; paru, yay and graphical
+updaters have different policies.
+
 Finish active work and quit/reopen T3 Code afterward to load the updated embedded
 server. Installing a package does not update an already running process. If
 the warning remains, check which environment the other PC is connected to;
