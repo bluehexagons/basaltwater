@@ -40,14 +40,17 @@ PROFILE = [
 ]
 
 
-def profile() -> SetupConfig:
-    parser, _, _ = create_basaltwater_parser()
-    return SetupConfig.from_args(parser.parse_args(PROFILE), "agent_code_vm")
-
-
 class AgentCodeVMProfileTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = create_basaltwater_parser()
+
+    def profile(self) -> SetupConfig:
+        return SetupConfig.from_args(self.parser.parse_args(PROFILE), "agent_code_vm")
+
     def test_profile_survives_remote_argument_roundtrip_and_step_composition(self):
-        config = profile()
+        config = self.profile()
         self.assertEqual(config.selected_agent_tools(), ["codex"])
         self.assertIsNone(config.git_auth_source)
         parser = argparse.ArgumentParser()
@@ -71,13 +74,13 @@ class AgentCodeVMProfileTests(unittest.TestCase):
         self.assertLess(names.index("configure_privilege_broker"), names.index("configure_web_panel"))
 
     def test_existing_panel_bearer_token_is_removed_from_request_url(self):
-        config = profile()
+        config = self.profile()
         url, token = _webhook_request_target(config.notify_specs[1][1])
         self.assertEqual(url, "https://panel.example.invalid/api/v1/notifications")
         self.assertEqual(token, TOKEN)
 
     def test_brokered_user_setup_never_regrants_sudo_on_rerun(self):
-        config = profile()
+        config = self.profile()
         with patch.object(common_steps, "run", return_value=SimpleNamespace(returncode=0)) as run, \
              patch.object(common_steps, "set_user_password", return_value=True), \
              patch.object(common_steps, "_ensure_vm_setup_user_sudoers"), redirect_stdout(io.StringIO()):
@@ -112,7 +115,7 @@ class AgentCodeVMProfileTests(unittest.TestCase):
                 self.assertFalse(any(member.mode & 0o022 for member in archive))
 
     def test_remote_transport_disables_bytecode_without_putting_secrets_in_ssh(self):
-        config = profile()
+        config = self.profile()
         with patch.object(setup_common, "resource_lock", return_value=nullcontext()), \
              patch.object(setup_common, "get_ssh_control_path", return_value=None), \
              patch.object(setup_common, "ensure_remote_sudo", return_value=True), \

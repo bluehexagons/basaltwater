@@ -16,8 +16,10 @@ from lib.local_cli import run_local_command
 
 
 class TestLocalCommandParser(unittest.TestCase):
-    def setUp(self) -> None:
-        self.parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
     def test_parses_static_ip_and_dns_options(self):
         args = self.parser.parse_args(
