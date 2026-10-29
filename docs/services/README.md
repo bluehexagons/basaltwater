@@ -8,6 +8,7 @@ see [Storage](../storage/README.md).
 | Guide | Use it for |
 | --- | --- |
 | [Build systems and examples](build-systems.md) | Choose target builds, selected builders, webhooks or Actions runners; enroll, deploy and maintain a builder |
+| [Build operations](build-operations.md) | Add sites, update enrollment snapshots, diagnose refusals and choose capacity maintenance |
 | [Deployments and manifests](deployments.md) | Deploy repositories, static sites, services, and multi-component manifests |
 | [Deployment safety](deployment-safety.md) | Persistent data, verified backups, rollback, and safety boundaries |
 | [Internal web and previews](internal-web.md) | Internal HTTPS, live previews, TLS trust, and cleanup |

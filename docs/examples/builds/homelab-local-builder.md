@@ -3,6 +3,7 @@
 Run these commands from the controller's Basaltwater checkout. The controller
 must reach the builder and target over SSH. It relays artifacts, so this also
 works with a production VPS that cannot reach the LAN builder.
+The command blocks below use Bash, including the shared `sites` array.
 
 Choose an unused builder address; `192.168.0.53` below is an example. Use your
 controller's existing Ed25519 key that authorizes administrative setup on these
@@ -104,6 +105,14 @@ uses retained artifacts and does not contact the builder.
 ```bash
 ./basaltwater.py deploy bluehexagons-homelab-1 --yes
 ```
+
+For an existing cloud VPS, use the [existing-target command](../../services/build-systems.md#start-with-a-selected-builder)
+with `--machine vm`; omit the Proxmox provisioning, image, storage, CPU and memory
+options above. Establish root SSH access and verified host trust first. The
+same saved LAN builder can serve it. Before adding sites or changing authority,
+follow [policy updates](../../services/build-operations.md#add-a-site-or-change-its-grants):
+editing draft files alone does not update a server, and replacement builder
+authority must retain projects needed by both stage and production.
 
 The six unchanged manifests have been built and served on disposable Debian 13
 VMs with a 2 GiB builder and 1 GiB target. Checks cover verified HTTPS, service

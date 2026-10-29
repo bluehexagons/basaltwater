@@ -5,11 +5,15 @@ from __future__ import annotations
 import base64
 from contextlib import ExitStack
 import copy
+import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
+from common.build_host_steps import parse_build_host_enrollment
+from common.build_target_steps import parse_build_target_enrollment
 from lib.build_manifest import DEBIAN_PLATFORM, request_from_manifest
 from lib.build_protocol import DEFAULT_LIMITS
 from lib.build_setup_plan import prepare_delivery_plan
@@ -207,6 +211,38 @@ class BuildSetupPlanTests(unittest.TestCase):
         data.update(build_runtimes=["python"])
         data["components"][0].update(build="python3 build.py", env={"MODE": "release"})
         self.assertEqual(self.plan(data).required_tools, ("python",))
+
+    def test_documented_projects_plan_with_their_complete_enrollment_templates(self):
+        examples = Path(__file__).resolve().parents[1] / "docs/examples/builds"
+        public_key = enrollment()["keys"]["alice"]
+        envelopes = []
+        for name, parser in (("build-host", parse_build_host_enrollment),
+                             ("build-target", parse_build_target_enrollment)):
+            document = json.loads((examples / (name + ".example.json")).read_text())
+            document["keys"]["deploy"] = public_key
+            envelopes.append(parser(document))
+        builder, target = envelopes
+        observed = {"schema": 1, "tool_versions": {"go": "go1.26.2", "node": "v24.22.1", "python": "3.13.7"},
+                    "projects": builder["policy"]["principals"]["deploy"]["projects"]}
+        for directory, application, destination, tools in (
+                ("ready-static", "static-site", "static.example.com", ()),
+                ("node-static", "node-site", "node.example.com", ("node",)),
+                ("python-static", "python-site", "python.example.com", ("python",)),
+                ("spa-go", "spa-api", "app.example.com", ("go",))):
+            with self.subTest(project=directory):
+                manifest = parse_manifest(json.loads((examples / directory / "basaltwater.json").read_text()))
+                plan = prepare_delivery_plan(manifest, **dict(
+                    self.options, destination=destination, target_enrollment=target,
+                    target_principal="deploy", builder_capabilities=observed,
+                ))
+                self.assertEqual(plan.required_tools, tools)
+                self.assertEqual(plan.deployment["application"], application)
+                authorized = authorize_target_deployment(
+                    target["policy"], principal="deploy", application=application,
+                    request=plan.request, deployment=plan.deployment,
+                )
+                self.assertEqual(authorized["bindings"]["deployment_root"],
+                                 target["policy"]["applications"][application]["deployment_root"])
 
     def test_pinned_runtime_inference_and_explicit_shell_builds(self):
         data = self.static_data(build="python3 build.py")

@@ -50,8 +50,8 @@ with a placeholder that must be filled in before replay.
 Add `--build-on SAVED-BUILDER` to build supported manifest deployments on an
 enrolled saved builder and deliver verified artifacts to the target. Omitting
 the selection keeps the existing build-on-target flow for ordinary deployments.
-Selected Debian static/Go public flows have native coverage, including saved
-revision updates and retained refresh. Consult the
+Selected Debian Node/static/Go flows have native coverage, including saved
+revision updates, SQLite backups, UDP and retained refresh. Consult the
 [coverage map](../plans/testing-coverage.md) for the tested boundaries; a dry run
 does not establish that a particular deployment will succeed.
 
@@ -210,11 +210,13 @@ To update a saved selected-builder deployment from v1 to v2:
 
 ```bash
 basaltw patch web.example.com --deploy app.example.com 'https://github.com/example/app.git#tag=v2'
-basaltw deploy web.example.com --yes
 ```
 
-The patch replaces the source for the named destination, preserving omitted
-sibling destinations and the saved builder. Subsequent saved deployments use v2.
+The patch deploys and saves the change; no subsequent `deploy` is needed to
+finish it. Use `basaltw deploy web.example.com --yes` later to replay the saved
+selection. The patch replaces the source for the named destination, preserving
+omitted sibling destinations and the saved builder. Subsequent saved deployments
+use v2.
 Comma-separated destinations are updated individually. Domain case, a final DNS
 dot, an omitted root slash and trailing path slashes are normalized for matching;
 path case remains significant. Identical repeated selections collapse, while
@@ -247,6 +249,8 @@ pruning and successful bundle release. Administrators can run these actions
 through normal root or sudo SSH sessions; forced-command transport contexts
 are rejected. They never reclaim input/history slots. Downloading a bundle does
 not release its retention.
+Use the [operations guide](build-operations.md) to add sites, update saved policy
+snapshots or distinguish logical quota, physical storage and record exhaustion.
 
 For a bounded offline view of an unfinished controller build setup, use its
 original absolute journal path:

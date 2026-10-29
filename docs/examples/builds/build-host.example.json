@@ -10,6 +10,11 @@
             "runtimes": [],
             "limits": {"timeout_seconds": 300, "memory_bytes": 1073741824, "cpu_percent": 100, "scratch_bytes": 1073741824, "artifact_bytes": 67108864, "artifact_entries": 4096, "log_bytes": 1048576}
           },
+          "node-site": {
+            "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
+            "runtimes": ["node"],
+            "limits": {"timeout_seconds": 300, "memory_bytes": 1073741824, "cpu_percent": 100, "scratch_bytes": 1073741824, "artifact_bytes": 67108864, "artifact_entries": 4096, "log_bytes": 1048576}
+          },
           "python-site": {
             "platform": {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"},
             "runtimes": ["python"],

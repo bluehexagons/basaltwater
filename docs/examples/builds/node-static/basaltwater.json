@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "build_runtimes": ["node"],
+  "components": [
+    {
+      "name": "site",
+      "type": "static",
+      "domain": "{{domain}}",
+      "path": "/",
+      "build": ["npm ci", "npm run build"],
+      "output": "dist",
+      "artifacts": ["dist"]
+    }
+  ]
+}

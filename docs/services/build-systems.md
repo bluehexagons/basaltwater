@@ -30,12 +30,18 @@ requires HTTPS source with a committed root `basaltwater.json`. Private sources
 use the controller's configured noninteractive global Git credential helper;
 credentials remain on the controller.
 [Complete sample projects and enrollment templates](../examples/builds/README.md)
-cover all three cases, including a ready SPA and Go API in one application.
+include ready output, Node and Python static builds, and a ready SPA with a Go
+API in one application.
 Service arguments, literal environment, managed working directories, SQLite
 backups and public UDP listeners require matching administrator policy grants.
 Cloudflare and SSL use the existing target setup and serving helpers.
 Interpreter services remain outside this path; see
 [the exact restrictions](deployments.md#build-on-a-saved-builder).
+
+Projects on one managed builder share a persistent unprivileged build identity
+and must be mutually trusted. Enrollment controls submission and activation
+authority; resource limits do not isolate mutually hostile repositories. See
+[execution boundaries](../agents/contributing/build-execution.md).
 
 Before setup:
 
@@ -107,15 +113,14 @@ enrollment; existing active firewall rules are reconciled before delivery.
 
 ## Update and reconcile
 
-After publishing a new committed tag:
+After publishing a new committed tag, apply the revision update:
 
 ```bash
 basaltw patch web.example.com --deploy app.example.com 'https://github.com/OWNER/spa-api.git#tag=v2'
-basaltw deploy web.example.com --yes
 ```
 
-The patch applies the revision update and saves it. The subsequent `deploy`
-replays the saved selection; it is not required to finish the patch. Selected
+The patch applies the revision update and saves it. To redeploy that saved
+selection later, use `basaltw deploy web.example.com --yes`. Selected
 builder patches replace the source for each named destination, retain omitted
 siblings and preserve the builder. `--no-build-on` explicitly clears that
 selection and artifact mode; it is not recovery for a failed delivery.
@@ -124,6 +129,13 @@ On an enrolled artifact-mode target, local `basaltw refresh` reconciles retained
 release descriptors and bundles without a builder connection, source checkout
 or compiler. Missing retained inputs refuse with controller guidance. See
 [deployment and recovery details](deployments.md#build-on-a-saved-builder).
+
+For a new site or changed grants, follow [policy updates](build-operations.md#add-a-site-or-change-its-grants).
+Saved setups hold enrollment snapshots: changing a JSON file alone changes
+neither the saved setup nor the server. The operations guide also provides a
+[capacity lookup](build-operations.md#choose-maintenance-by-the-exhausted-resource),
+[completed controller archival](build-operations.md#archive-completed-controller-attempts)
+and [refusal diagnostics](build-operations.md#diagnose-a-refusal).
 
 ## Inspect capacity and retain evidence
 
@@ -153,9 +165,18 @@ one explicit action:
 ```bash
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
   --settle-terminal REQUEST_ID --expected-revision INSPECTED_REVISION
-# Inspect again before choosing the next action and its current revision.
+```
+
+Only when source/log deletion is intended, inspect again and explicitly prune:
+
+```bash
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
   --prune-terminal REQUEST_ID --expected-revision INSPECTED_REVISION
+```
+
+Bundle release is another separate decision. Inspect its current revision first:
+
+```bash
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
   --release-bundle REQUEST_ID --expected-revision INSPECTED_REVISION
 ```

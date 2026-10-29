@@ -59,6 +59,10 @@ Override them with integer `--memory-bytes`, `--cpu-percent`, `--scratch-bytes`,
 `--artifact-bytes`, `--artifact-entries`, `--timeout-seconds` and `--log-bytes`.
 Shared protocol parsers enforce supported bounds and alignment. These are grants;
 actual delivery requests also remain capped by shared protocol defaults.
+The planner requests the minimum of each protocol default, builder grant and
+applicable target ceiling. In particular, the draft's 200% CPU grant produces
+a 100% CPU request because that is the current protocol default. Increasing
+an enrollment ceiling alone does not raise a request above its protocol default.
 
 Both enrollments default to 128 records; retained storage defaults to 64 GiB
 on the builder and 8 GiB on the target. Override with `--builder-max-records`,
@@ -74,3 +78,6 @@ identifies applications, roots, tools and routes; the full files contain runtime
 details. Review is an operator responsibility; the utility adds no approval
 prompt. Keep existing deployment/data identities during migration and reconcile
 existing enrollments explicitly rather than treating drafts as policy updates.
+Saved setups retain decoded envelopes, not live references to these JSON files.
+Use the [policy update procedure](build-operations.md#add-a-site-or-change-its-grants)
+to add sites or apply reviewed replacements without dropping existing authority.
