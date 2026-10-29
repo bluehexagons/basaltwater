@@ -82,7 +82,7 @@ exit 1
     $source = Join-Path $temporary 'pinned source with spaces'
     New-Item -ItemType Directory -Path $source | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Encoding UTF8 -Value @'
-param($Profile, [switch]$Resume, [switch]$UpdateSource, [switch]$Plan,
+param($Profile, [switch]$Resume, [switch]$UpdateSource, [switch]$NoUpdateSource, [switch]$NoRestartT3, [switch]$Plan,
       [switch]$GameDev, [switch]$ShaderTools, [switch]$Godot, [switch]$Sunshine, [switch]$NodeVersions,
       $StorageRoot, $Channel, $Version)
 $PSBoundParameters | ConvertTo-Json | Set-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Encoding UTF8
@@ -110,6 +110,10 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation' -and
         $forwarded.Profile -eq 'agent_windows') 'Refresh changed native argument boundaries/profile'
     Assert-True ((Get-FileHash -LiteralPath $statePath).Hash -eq $before) 'CLI rewrote saved setup during preview'
+    & $launcher refresh --no-update-source --no-restart-t3 | Out-Null
+    $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+    Assert-True ($LASTEXITCODE -eq 0 -and $forwarded.NoUpdateSource -and $forwarded.NoRestartT3 -and
+        -not $forwarded.PSObject.Properties['UpdateSource']) 'Installed refresh lost opt-outs or also requested a source update'
     $trailingRoot = 'F:\cache with spaces\'
     $code = Invoke-NativeCli @('refresh', '--dry-run', '--storage-root', $trailingRoot)
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json

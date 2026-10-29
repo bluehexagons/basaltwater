@@ -36,7 +36,14 @@ Append optional flags to the same command:
 - `-StorageDrive F:` selects a mounted NTFS drive for development caches.
 - `-AgentTool claude,opencode` adds providers.
 - `-Plan` previews selections without applying setup.
-- `-Resume -UpdateSource` updates an existing installation and retains its selections.
+- `-NoUpdateSource` reapplies the saved Basaltwater revision while still updating tools.
+- `-NoRestartT3` skips the T3 Code start/restart after setup.
+
+Rerun the same command to update an existing workstation. Setup automatically
+retains saved selections, resolves current Basaltwater source and installs
+available updates for selected tools, then starts or gracefully restarts T3 Code.
+No resume, source-update or desktop-restart flag is needed. These opt-outs apply
+to one invocation and do not change the next run's defaults.
 
 The downloaded root installer relays through a temporary script in a child
 Windows PowerShell process with execution-policy bypass. It preserves typed
@@ -48,8 +55,9 @@ CI runner registration and managed build-host setup use their existing flags.
 
 ## Review selections from a checkout
 
-The same root installer can preview a reviewed checkout without downloading
-source, installing packages, changing PATH or writing skills:
+The same root installer can preview selections without downloading source,
+installing packages, changing PATH or writing skills. An existing installation
+uses its saved source and selections for the preview; a fresh one uses the checkout:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Profile agent_windows -Node -Python -Plan
@@ -101,6 +109,10 @@ login session also requires a manual restart; it does not touch that session's
 desktop. Completion status is printed as a file
 under `%LOCALAPPDATA%\Basaltwater\t3-completion`; it contains no provider arguments
 or credentials. An app already relaunched after the completion request is kept.
+
+Use `-NoRestartT3` (or `basaltw refresh --no-restart-t3`) to skip this step.
+Login startup is still configured. A vendor installer may itself close or
+relaunch T3 during an upgrade, independently of setup's completion step.
 
 The PowerShell helpers for setup completion and login run hidden; the T3 desktop
 itself opens normally. Successful desktop setup also registers
@@ -165,18 +177,20 @@ If another setup is running, wait for it to exit before retrying. `-Plan` remain
 read-only and can run while that lock is held. An updated source is saved as
 `staged` before execution; it becomes `complete` only after setup succeeds.
 
-For interruption, a package requiring restart, or later reconciliation, run
-the saved source's installer with `-Profile agent_windows -Resume`:
+For interruption, a package requiring restart, or later reconciliation, rerun
+the download command or use `basaltw refresh`. To retry the saved Basaltwater
+revision without fetching newer source, run:
 
 ```powershell
 $state = Get-Content "$env:LOCALAPPDATA\Basaltwater\windows-setup.json" -Raw | ConvertFrom-Json
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'install.ps1') -Profile agent_windows -Resume
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source 'install.ps1') -Profile agent_windows -NoUpdateSource
 ```
 
-Add `-UpdateSource` to deliberately resolve and save a newer source revision.
-Resume reuses saved tool selections. Explicit runtime, game-tool and desktop
+Native Windows reruns reuse saved tool selections and update source by default.
+`-Resume` remains available to require an existing saved installation.
+Explicit runtime, game-tool and desktop
 switches update those selections; `-AgentTool` adds providers to the saved list.
-For example, use `-Resume -Go -AgentTool claude` to add Go and Claude while
+For example, append `-Go -AgentTool claude` to add Go and Claude while
 retaining existing providers. Add `-Plan` to preview the merged selections
 without writes. Selected bundles continue to supply their dependencies;
 selected host tools receive available updates and provider logins are retained.
@@ -206,6 +220,10 @@ selected host tools and preserves provider logins.
 `--dry-run` previews the currently pinned source without downloads or writes.
 `--channel dev` is currently an alias for `main`; use `--version REF` for a
 specific source reference.
+`--no-update-source` reapplies the saved Basaltwater revision while still updating
+selected tools. `--no-restart-t3` skips the completion start/restart but retains
+login startup. Neither option is saved for subsequent runs. A source-update
+opt-out cannot be combined with an explicit source version.
 `--game-dev`, `--shader-tools`, `--godot`, `--sunshine`, `--node-versions` and
 `--storage-drive F:` (or `--storage-root PATH`) can add saved selections;
 run `basaltw refresh --help`. Storage selection requires a healthy mounted
@@ -218,8 +236,8 @@ The CLI reports setup failures through its exit code, including restart needs.
 server, desktop and agent subcommands remain unavailable on Windows.
 `refresh`/`info`/`doctor` require the pinned installation created by
 `install.ps1 -Profile agent_windows`. Existing
-PCs without the launcher must first use a current installer download with
-`-Profile agent_windows -Resume -UpdateSource`.
+PCs without the launcher can use the same current installer download with
+`-Profile agent_windows`; existing selections are retained automatically.
 
 Windows batch launchers expand literal `%NAME%` text in arguments, even when
 called from PowerShell. For a storage path containing percent expressions,

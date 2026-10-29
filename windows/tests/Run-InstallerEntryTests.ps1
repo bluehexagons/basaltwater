@@ -50,6 +50,34 @@ function Invoke-WebRequest { throw 'Plan tried to download source' }
     $plan = & ([scriptblock]::Create($safe)) -Profile agent_windows -Node -GameDev -ShaderTools -Godot -Sunshine -StorageDrive F: -Plan 6>&1 | Out-String
     Assert-True ($plan -match 'Sunshine: True' -and $plan -match 'Game dev: True' -and $plan -match 'F:\\Basaltwater') 'Pasted installer did not forward optional feature flags'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $temporary 'Basaltwater\windows-setup.json'))) 'Downloaded preview wrote saved setup'
+
+    # Re-pasting on an installed account must enter its pinned installer even
+    # when main is unchanged, or when source updates are explicitly disabled.
+    $revision = 'a' * 40
+    $source = Join-Path $temporary ('Basaltwater\source\' + $revision)
+    New-Item -ItemType Directory -Path (Join-Path $source 'windows') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $source 'windows\AgentWorkstation.Common.ps1') -Value '# source marker'
+    Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Value @'
+[CmdletBinding()]
+param($Profile, [switch]$Resume, [switch]$NoUpdateSource, [switch]$NoRestartT3)
+@{ Source = $PSScriptRoot; Resume = [bool]$Resume; NoUpdateSource = [bool]$NoUpdateSource;
+   NoRestartT3 = [bool]$NoRestartT3 } | ConvertTo-Json |
+    Set-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Encoding UTF8
+'@
+    @{ Version = 1; Profile = 'agent_windows'; Revision = $revision; Source = $source;
+       OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+       AgentTool = @('gh', 'codex'); Node = $true; Python = $true; Go = $false;
+       T3CodeDesktop = $true; Phase = 'complete' } | ConvertTo-Json |
+        Set-Content -LiteralPath (Join-Path $temporary 'Basaltwater\windows-setup.json') -Encoding UTF8
+    & ([scriptblock]::Create($safe)) -Profile agent_windows -NoUpdateSource -NoRestartT3
+    $received = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+    Assert-True ($received.Source -eq $source -and $received.Resume -and $received.NoUpdateSource -and
+        $received.NoRestartT3) 'Pasted source opt-out lost the pinned entry or restart opt-out'
+    $apply = $safe.Replace("throw 'Plan tried to download source'", "return @{ sha = ('a' * 40) }")
+    & ([scriptblock]::Create($apply)) -Profile agent_windows
+    $received = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
+    Assert-True ($received.Source -eq $source -and $received.Resume -and $received.NoUpdateSource -and
+        -not $received.NoRestartT3) 'Pasted default rerun failed to enter the unchanged source with normal restart defaults'
     Write-Host 'Windows installer entry tests passed.'
 } finally {
     $env:LOCALAPPDATA = $savedLocal; $env:BASALTWATER_TEST_CAPTURE = $savedCapture

@@ -20,7 +20,13 @@ PowerShell when that would interrupt the invoking terminal. Successful desktop
 setup configures current-account login startup with a hidden PowerShell helper.
 Windows setup uses the root `install.ps1` with `-Profile agent_windows` and
 optional feature flags; downloaded and checkout entry points save the same
-selections. Use the documented one-command PowerShell invocation for a new PC.
+selections. The documented one-command PowerShell invocation installs a new PC
+or updates an existing setup automatically, retaining its selections.
+T3 starts or gracefully restarts after successful setup by default. For one run,
+`-NoUpdateSource` / `refresh --no-update-source` keeps the saved Basaltwater source
+while still updating tools; `-NoRestartT3` / `refresh --no-restart-t3` skips the
+completion start/restart, retaining login startup. A vendor upgrade can still
+close T3 independently.
 Use `basaltw doctor --json` for read-only checks of saved selections and actual
 tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
 checks establish discovery, while logins, project builds, export templates and

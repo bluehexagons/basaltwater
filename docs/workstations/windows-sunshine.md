@@ -12,8 +12,9 @@ Select streaming through the standard installer as the intended Windows account:
 ```
 
 Append `-Plan` to preview without installing packages or changing services.
-For an existing workstation, append `-Resume -UpdateSource` to the same command
-or use `basaltw refresh --sunshine` after updating Basaltwater. The installer
+The same command updates an existing workstation and retains its saved selections;
+no resume or update flags are needed. Alternatively, use
+`basaltw refresh --sunshine` after updating Basaltwater. The installer
 saves the selection, so subsequent `basaltw refresh` runs update and reconcile
 Sunshine along with the other selected tools. Older saved states without a
 Sunshine field default to false; existing selections are retained.

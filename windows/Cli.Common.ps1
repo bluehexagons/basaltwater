@@ -51,6 +51,8 @@ Native Windows commands:
 
 Refresh options:
   --dry-run         Preview saved/current selections without writes or downloads
+  --no-update-source   Reapply the saved Basaltwater revision; still update tools
+  --no-restart-t3      Skip the T3 Code start/restart after setup
   --game-dev        Add native game build tools, Python, Go and fnm
   --shader-tools    Add Vulkan SDK shader validation
   --godot           Add the standard Godot editor/CLI
@@ -118,13 +120,21 @@ function Invoke-NativeCli([string[]]$Arguments) {
     }
     if ($command -ne 'refresh') { throw "Unsupported Windows command '$command'. Run basaltw --help for available commands." }
     if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
+    # Explicit switches also let an installed CLI update an older saved entry
+    # point that predates automatic native reruns and source updates.
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
     $switches = @{ '--dry-run' = '-Plan'; '--game-dev' = '-GameDev'; '--shader-tools' = '-ShaderTools';
-                   '--godot' = '-Godot'; '--sunshine' = '-Sunshine'; '--node-versions' = '-NodeVersions' }
+                   '--godot' = '-Godot'; '--sunshine' = '-Sunshine'; '--node-versions' = '-NodeVersions';
+                   '--no-restart-t3' = '-NoRestartT3' }
     $values = @{ '--storage-root' = '-StorageRoot'; '--storage-drive' = '-StorageRoot'; '--channel' = '-Channel'; '--version' = '-Version' }
     $storageSelected = $false
     for ($index = 0; $index -lt $options.Count; $index++) {
         $option = $options[$index]
+        if ($option -eq '--no-update-source') {
+            $forward = @($forward | Where-Object { $_ -ne '-UpdateSource' })
+            $forward += '-NoUpdateSource'
+            continue
+        }
         if ($switches.ContainsKey($option)) { $forward += $switches[$option]; continue }
         if ($values.ContainsKey($option)) {
             $index++

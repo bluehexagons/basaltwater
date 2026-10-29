@@ -214,6 +214,7 @@ try {
     $global:AgentInstallerTestRequests = @()
     $global:AgentInstallerTestFailure = $true
     $global:AgentInstallerTestCompletions = @()
+    $global:AgentInstallerTestEntryRoots = @()
     try {
         $splitPlan = & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
@@ -222,6 +223,10 @@ try {
             $pinned = Join-Path $temporary "archive-source\basaltwater-$revision"
             New-Item -ItemType Directory -Path (Join-Path $pinned 'windows') -Force | Out-Null
             Copy-Item -LiteralPath (Join-Path $repo 'install.ps1') -Destination (Join-Path $pinned 'install.ps1')
+            $entry = Join-Path $pinned 'install.ps1'
+            (Get-Content -LiteralPath $entry -Raw).Replace('$ErrorActionPreference = "Stop"',
+                '$ErrorActionPreference = "Stop"; $global:AgentInstallerTestEntryRoots += $PSScriptRoot') |
+                Set-Content -LiteralPath $entry -Encoding UTF8
             if ($revision -eq ('c' * 40)) {
                 Set-Content -LiteralPath (Join-Path $pinned 'install.ps1') -Value @'
 [CmdletBinding()]
@@ -237,10 +242,10 @@ throw 'Older pinned installer must not execute with unsupported selections'
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
             Set-Content -LiteralPath (Join-Path $pinned 'windows\T3Completion.Common.ps1') -Value @'
 function Invoke-NativeSetupCompletion {
-    param($Source, [switch]$T3CodeDesktop)
+    param($Source, [switch]$T3CodeDesktop, [switch]$NoRestartT3)
     $receipt = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
     if ($receipt.Phase -ne 'complete') { throw 'Desktop completion preceded successful setup receipt' }
-    $global:AgentInstallerTestCompletions += [pscustomobject]@{ Source = $Source; Desktop = [bool]$T3CodeDesktop }
+    $global:AgentInstallerTestCompletions += [pscustomobject]@{ Source = $Source; Desktop = [bool]$T3CodeDesktop; NoRestartT3 = [bool]$NoRestartT3 }
 }
 '@
             Copy-Item -LiteralPath (Join-Path $repo 'windows\DevelopmentStorage.Common.ps1') -Destination (Join-Path $pinned 'windows\DevelopmentStorage.Common.ps1')
@@ -284,17 +289,23 @@ function Invoke-NativeAgentSetup {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\wsl-setup.json'))) 'Native installer wrote WSL state'
         $global:AgentInstallerTestFailure = $false
         $beforePlan = (Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash
-        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -Plan
+        $beforePlanRequests = $global:AgentInstallerTestRequests.Count
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Plan
         Assert-True ($global:AgentInstallerTestCalls[-1].Plan -and $global:AgentInstallerTestCalls[-1].Python) 'Resume plan lost saved selections'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Resume plan lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Resume plan lost Godot selection'
         Assert-True $global:AgentInstallerTestCalls[-1].Sunshine 'Resume plan lost Sunshine selection'
         Assert-True ((Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash -eq $beforePlan) 'Resume plan rewrote setup state'
         Assert-True ($global:AgentInstallerTestCompletions.Count -eq 0) 'Plan queued desktop completion'
-        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume
+        Assert-True ($global:AgentInstallerTestRequests.Count -eq $beforePlanRequests) 'Default rerun preview downloaded source'
+        $beforeRerunEntries = $global:AgentInstallerTestEntryRoots.Count
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'complete') 'Native resume did not complete'
         Assert-True ($global:AgentInstallerTestCompletions.Count -eq 1 -and $global:AgentInstallerTestCompletions[-1].Desktop) 'Successful setup did not queue selected desktop completion'
+        Assert-True ($global:AgentInstallerTestRequests.Count -eq $beforePlanRequests + 1) 'Default rerun skipped source resolution or resolved it recursively'
+        Assert-True ($global:AgentInstallerTestEntryRoots.Count -eq $beforeRerunEntries + 1 -and
+            $global:AgentInstallerTestEntryRoots[-1] -eq $nativeState.Source) 'Unchanged-source rerun did not enter the pinned installer with its companion helpers'
         $held = [IO.File]::Open((Join-Path $lockDirectory 'setup.lock'), [IO.FileMode]::Open,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         $beforeLocked = (Get-FileHash -LiteralPath $nativeStatePath).Hash
@@ -323,15 +334,29 @@ function Invoke-NativeAgentSetup {
         Assert-True ($selected.Node -and $selected.Python -and $selected.Desktop -and $selected.Go -and
             'claude' -in $selected.Tools) 'Reselection lost saved runtime/provider settings'
         $global:AgentInstallerTestRevision = 'b' * 40
-        & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource
+        $beforeDefaultUpdate = $global:AgentInstallerTestRequests.Count
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoRestartT3
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Revision -eq $global:AgentInstallerTestRevision -and
             $global:AgentInstallerTestCalls[-1].Source -eq $nativeState.Source) 'Source update did not execute the newly pinned source'
+        Assert-True ($global:AgentInstallerTestRequests.Count -eq $beforeDefaultUpdate + 1 -and
+            $global:AgentInstallerTestCompletions[-1].NoRestartT3) 'Default source transition repeated downloads or lost the restart opt-out'
         Assert-True ($global:AgentInstallerTestCalls[-1].Go -and 'claude' -in $global:AgentInstallerTestCalls[-1].Tools) 'Source update lost saved runtime/provider additions'
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Source update lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Source update lost Godot selection'
         Assert-True $global:AgentInstallerTestCalls[-1].Sunshine 'Source update lost Sunshine selection'
         Assert-True ($global:AgentInstallerTestCalls[-1].StorageRoot -eq 'F:\coding with spaces') 'Source update lost external storage'
+        $global:AgentInstallerTestRevision = 'a' * 40
+        $beforePinnedApply = $global:AgentInstallerTestRequests.Count
+        $beforePinnedEntries = $global:AgentInstallerTestEntryRoots.Count
+        & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoUpdateSource
+        Assert-True ($global:AgentInstallerTestRequests.Count -eq $beforePinnedApply -and
+            (Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json).Revision -eq ('b' * 40)) 'Source opt-out resolved or replaced the saved revision'
+        Assert-True ($global:AgentInstallerTestEntryRoots.Count -eq $beforePinnedEntries + 1 -and
+            $global:AgentInstallerTestEntryRoots[-1] -eq $nativeState.Source) 'Source opt-out bypassed the pinned installer entry'
+        Assert-True (-not $global:AgentInstallerTestCompletions[-1].NoRestartT3) 'Restart opt-out was persisted across invocations'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -UpdateSource -NoUpdateSource -Plan } 'Choose UpdateSource or NoUpdateSource'
+        Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Version main -NoUpdateSource -Plan } 'Version cannot be combined'
         $global:AgentInstallerTestRevision = 'd' * 40
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume -UpdateSource -Channel dev } 'source entry failure'
         $failedUpdate = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
@@ -372,10 +397,13 @@ function Invoke-NativeAgentSetup {
             $env:LOCALAPPDATA = Join-Path $temporary 'fresh split account'
             Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive X } 'healthy mounted NTFS'
             Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'))) 'Fresh invalid storage created saved selections'
-            & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F: -Channel dev -Version release-test
+            $beforeFreshRequests = $global:AgentInstallerTestRequests.Count
+            & (Join-Path $repo 'install.ps1') -Profile agent_windows -StorageDrive F: -Channel dev -Version release-test -NoRestartT3
             Assert-True ($global:AgentInstallerTestRequests[-1] -match '/commits/release-test$') 'Version did not override the channel'
             $freshState = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
             Assert-True ($freshState.Phase -eq 'complete' -and $freshState.StorageRoot -eq 'F:\Basaltwater') 'Fresh drive-based setup did not complete with saved storage'
+            Assert-True ($global:AgentInstallerTestRequests.Count -eq $beforeFreshRequests + 1 -and
+                $global:AgentInstallerTestCompletions[-1].NoRestartT3) 'Fresh source staging fetched twice or lost the restart opt-out'
         } finally { $env:LOCALAPPDATA = $savedFreshLocal }
         # Old saved states acquire false defaults; new opt-ins can be saved on resume.
         $nativeState.PSObject.Properties.Remove('NodeVersions')
@@ -421,7 +449,7 @@ function Invoke-NativeAgentSetup {
         foreach ($name in @('Get-CimInstance', 'Get-PSDrive', 'Get-Volume', 'Join-Path', 'Invoke-RestMethod', 'Invoke-WebRequest', 'wsl.exe', 'Read-Host')) {
             Remove-Item "Function:\$name"
         }
-        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests -Scope Global
+        Remove-Variable AgentInstallerTestRevision, AgentInstallerTestArchives, AgentInstallerTestCalls, AgentInstallerTestFailure, AgentInstallerTestRequests, AgentInstallerTestCompletions, AgentInstallerTestEntryRoots -Scope Global
     }
 
     # Real bundle copies only touch a private fake home; supporting files are preserved.

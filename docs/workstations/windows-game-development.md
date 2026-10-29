@@ -59,8 +59,8 @@ show UAC or require a restart.
 
 These are optional flags on the same Windows installer used for a basic
 workstation. Append `-Sunshine` for Moonlight desktop streaming, or `-Plan` to
-preview. Existing native installations use `-Resume -UpdateSource` with the
-same command and preserve saved storage. No drive letter is assumed on fresh
+preview. The same command updates existing native installations and preserves
+saved selections and storage. No drive letter is assumed on fresh
 PCs. Setup queues T3's restart; reopen other terminals afterward.
 From a reviewed checkout, preview through the root installer:
 
@@ -73,7 +73,7 @@ runtimes/caches and new checkouts. See the repeatable split-storage setup below.
 Pinned installer state saves the selections. Once installed, use
 `basaltw refresh` to update Basaltwater and reconcile them; add
 `--game-dev --shader-tools --godot` to adopt game tools on an existing account.
-Use the current root installer download with `-Resume -UpdateSource` to
+Use the same current root installer download to
 upgrade an older installation whose saved source or CLI predates these flags.
 
 ## Storage
@@ -101,7 +101,7 @@ basaltw refresh --storage-drive F:
 ```
 
 Setup saves only the resolved `StorageRoot`, such as `F:\Basaltwater`.
-Subsequent `basaltw refresh` and installer `-Resume` reuse it without flags.
+Subsequent `basaltw refresh` and installer reruns reuse it without flags.
 The volume and every managed subdirectory are checked before replacing saved
 selections or entering setup. An absent/unhealthy drive, non-NTFS filesystem,
 invalid path or junction fails with the previous saved setup intact. Restore

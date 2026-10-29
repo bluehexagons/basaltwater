@@ -30,6 +30,8 @@ param(
     [switch]$CIPromptToken,
     [switch]$Plan,
     [switch]$UpdateSource,
+    [switch]$NoUpdateSource,
+    [switch]$NoRestartT3,
     [switch]$Resume
 )
 
@@ -114,12 +116,34 @@ function Invoke-Checked([string]$label, [scriptblock]$command) {
     }
 }
 
+function Get-InstallerResumeOptions([string]$source) {
+    $tokens = $null; $errors = $null
+    $installer = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $source 'install.ps1'), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'Selected source installer has invalid PowerShell syntax' }
+    $parameters = @($installer.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+    $options = @{ Profile = $Profile; Resume = $true }
+    # The parent already resolved a pinned revision. Re-entry must not fetch
+    # main again or recurse; older installers did not update source by default.
+    if ('NoUpdateSource' -in $parameters) { $options.NoUpdateSource = $true }
+    if ($NoRestartT3) {
+        if ('NoRestartT3' -notin $parameters) { throw 'Selected source does not support NoRestartT3; select a newer Basaltwater revision.' }
+        $options.NoRestartT3 = $true
+    }
+    if ($Profile -eq 'server_wsl') {
+        $options.CIRegisterWithGh = $CIRegisterWithGh
+        $options.CIRegistrationTokenFile = $CIRegistrationTokenFile
+        $options.CIPromptToken = $CIPromptToken
+    }
+    return $options
+}
+
 function Get-NativeOptionalArguments($selection) {
     $arguments = @{}
     $supported = (Get-Command Invoke-NativeAgentSetup).Parameters
     foreach ($option in @('NodeVersions', 'GameDev', 'ShaderTools', 'Godot', 'Sunshine', 'StorageRoot')) {
         if ($selection.PSObject.Properties[$option] -and $selection.$option) {
-            if (-not $supported.ContainsKey($option)) { throw "Pinned source lacks $option; use the current installer with -Resume -UpdateSource." }
+            if (-not $supported.ContainsKey($option)) { throw "Pinned source lacks $option; rerun the current installer to update Basaltwater." }
             $arguments[$option] = $selection.$option
         }
     }
@@ -358,7 +382,11 @@ function Ensure-WorkerTask {
 
 try {
     Check-Host
-    if ($UpdateSource -and -not $Resume) { throw 'UpdateSource requires Resume' }
+    if ($UpdateSource -and $NoUpdateSource) { throw 'Choose UpdateSource or NoUpdateSource, not both' }
+    if ($NoUpdateSource -and $Version) { throw 'Version cannot be combined with NoUpdateSource' }
+    if ($Profile -eq 'agent_windows' -and (Test-Path -LiteralPath $statePath)) { $Resume = $true }
+    if ($UpdateSource -and -not $Resume) { throw 'UpdateSource requires Resume when no native installation exists' }
+    $updateSourceSelected = $UpdateSource -or ($Profile -eq 'agent_windows' -and -not $NoUpdateSource)
     if ($Profile -eq 'agent_windows') {
         foreach ($option in @('BuildServer', 'LinuxUser', 'DistroName', 'DistroLocation',
                               'CIRepository', 'CIOrganization', 'CIAllowedUser', 'CILabel',
@@ -417,6 +445,8 @@ try {
     if ($Profile -eq 'agent_windows') { $agentTools = @(@('gh', 'codex') + $agentTools | Select-Object -Unique) }
     if ($Plan) {
         if ($Profile -eq 'agent_windows') {
+            if ($updateSourceSelected) { Write-Host 'Plan: resolve current Basaltwater source when applying; preview uses local source without downloads.' }
+            if ($NoRestartT3) { Write-Host 'Plan: skip the T3 Code start/restart after setup.' }
             $planSource = $PSScriptRoot
             if ($Resume) {
                 $preview = Read-State
@@ -469,6 +499,7 @@ try {
             }
         }
         $resolved = Resolve-Source $sourceReference
+        $resumeOptions = Get-InstallerResumeOptions $resolved.Source
         if ($Profile -eq 'agent_windows') {
             Assert-NativeSourceOptions $resolved.Source ([pscustomobject]@{
                 NodeVersions = [bool]$NodeVersions; GameDev = [bool]$GameDev;
@@ -503,12 +534,6 @@ try {
         }
         Save-State $state
         $stagedInstaller = Join-Path $state.Source "install.ps1"
-        $resumeOptions = @{ Profile = $Profile; Resume = $true }
-        if ($Profile -eq 'server_wsl') {
-            $resumeOptions.CIRegisterWithGh = $CIRegisterWithGh
-            $resumeOptions.CIRegistrationTokenFile = $CIRegistrationTokenFile
-            $resumeOptions.CIPromptToken = $CIPromptToken
-        }
         $setupLock.Dispose()
         $setupLock = $null
         & $stagedInstaller @resumeOptions
@@ -530,26 +555,30 @@ try {
         }
         if ($storageSelected) { $state.StorageRoot = $StorageRoot }
     }
-    if ($UpdateSource) {
+    $resolved = @{ Revision = $state.Revision; Source = $state.Source }
+    if ($updateSourceSelected) {
         $resolved = Resolve-Source $sourceReference
         if ($Profile -eq 'agent_windows') { Assert-NativeSourceOptions $resolved.Source $state }
+    }
+    $resumeOptions = Get-InstallerResumeOptions $resolved.Source
+    # A pasted download has no companion helpers. Always enter the selected
+    # source directory, even when its revision is unchanged or updates are off.
+    $inSelectedSource = [string]::Equals([IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\'),
+        [IO.Path]::GetFullPath($resolved.Source).TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    if ($state.Revision -ne $resolved.Revision -or $state.Source -ne $resolved.Source -or -not $inSelectedSource) {
         $state.Revision = $resolved.Revision
         $state.Source = $resolved.Source
         $state.Phase = 'staged'
         Save-State $state
         $setupLock.Dispose()
         $setupLock = $null
-        $resumeOptions = @{ Profile = $Profile; Resume = $true }
-        if ($Profile -eq 'server_wsl') {
-            $resumeOptions.CIRegisterWithGh = $CIRegisterWithGh
-            $resumeOptions.CIRegistrationTokenFile = $CIRegistrationTokenFile
-            $resumeOptions.CIPromptToken = $CIPromptToken
-        }
         & (Join-Path $state.Source 'install.ps1') @resumeOptions
-        if (-not $?) { throw 'Updated source setup failed; rerun the saved installer with -Resume' }
+        if (-not $?) { throw 'Pinned source setup failed; rerun the installer to retry' }
         return
     }
     if ($Profile -eq 'agent_windows') {
+        $completionOptions = @{}
+        if ($NoRestartT3) { $completionOptions.NoRestartT3 = $true }
         Assert-NativeSourceOptions $state.Source $state
         . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
         $nativeOptions = Get-NativeOptionalArguments $state
@@ -561,7 +590,7 @@ try {
         Save-State $state
         Write-Host 'Basaltwater native Windows coding setup complete.'
         . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
-        Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop
+        Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop @completionOptions
         return
     }
     if ($state.GitHubRunner) {
@@ -631,7 +660,7 @@ try {
     if ($state.T3CodeDesktop) { Write-Host "In T3 Code Settings > Connections, select $($state.Distro)." }
     . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
     . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
-    Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop
+    Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop -NoRestartT3:$NoRestartT3
 } catch {
     Write-Error $_
     exit 1

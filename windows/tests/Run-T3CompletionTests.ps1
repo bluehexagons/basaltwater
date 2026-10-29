@@ -19,6 +19,18 @@ try {
     $env:LOCALAPPDATA = $temporary
     if (-not $env:SystemRoot) { $env:SystemRoot = $temporary }
     & {
+        function Show-NativeRebootNotice { $script:Notices++ }
+        function Set-NativeT3Login($Source) { $script:Logins++ }
+        function Queue-NativeT3Completion($Source) { $script:Queues++ }
+        $script:Notices = 0; $script:Logins = 0; $script:Queues = 0
+        Invoke-NativeSetupCompletion -Source $windows -T3CodeDesktop
+        Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 1) 'Successful desktop setup did not restart by default'
+        Invoke-NativeSetupCompletion -Source $windows -T3CodeDesktop -NoRestartT3
+        Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 2 -and $script:Notices -eq 2) 'Restart opt-out queued a restart or skipped login setup/reboot notices'
+        Invoke-NativeSetupCompletion -Source $windows
+        Assert-True ($script:Queues -eq 1 -and $script:Logins -eq 2) 'Unselected desktop reached task registration'
+    }
+    & {
         function Get-NativeWindowsUpdateReboot {
             if ($script:ProbeFailure) { throw 'unreadable update state' }
             return $script:UpdatePending
