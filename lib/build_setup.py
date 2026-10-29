@@ -180,8 +180,10 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
         target = stack.enter_context(BuildTargetClient(**endpoint.connection_kwargs(), timeout=900))
         capabilities = builder.capabilities()
         _preflight_target(config, endpoint)
+        workspace = get_workspace_dir()
+        _private_directory(workspace)
         if config.dry_run:
-            with tempfile.TemporaryDirectory(prefix="basaltwater-build-preflight-") as temporary:
+            with tempfile.TemporaryDirectory(prefix="basaltwater-build-preflight-", dir=workspace) as temporary:
                 plans = _plans(config, temporary, capabilities, endpoint.principal)
                 descriptor = _open_private_directory(temporary)
                 try:
@@ -194,8 +196,6 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                 print("  [DRY-RUN] Would bootstrap enrollment, reserve all, build/stage all, then apply saved profile")
             return 0
 
-        workspace = get_workspace_dir()
-        _private_directory(workspace)
         root = os.path.join(workspace, "build-setups")
         _private_directory(root)
         name = hashlib.sha256(config.host.lower().rstrip(".").encode()).hexdigest()

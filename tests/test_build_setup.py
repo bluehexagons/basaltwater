@@ -185,12 +185,33 @@ class BuildSetupTests(unittest.TestCase):
     def test_dry_run_never_mutates_remote_or_creates_persistent_attempt(self):
         self.config.dry_run = True
         self.assertEqual(build_setup.run_build_setup(self.config, apply_setup=self.apply), 0)
+        temporary = Path(self.source.call_args.args[1])
+        self.assertEqual(temporary.parent, self.root)
+        self.assertFalse(temporary.exists())
         self.apply.assert_not_called()
         self.deliver.assert_not_called()
         self.target.preflight.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])
         self.builder.capabilities.assert_called_once()
         self.probe.assert_called_once()
+        self.assertEqual(self.builder.mock_calls, [call.capabilities()])
+        self.assertEqual(self.target.mock_calls, [])
+
+    def test_dry_run_cleans_workspace_temporary_directory_on_failure(self):
+        self.config.dry_run = True
+        for stage in (self.source, self.capacity):
+            with self.subTest(stage=stage):
+                stage.side_effect = ValueError("preparation failed")
+                with self.assertRaisesRegex(ValueError, "preparation failed"):
+                    build_setup.run_build_setup(self.config, apply_setup=self.apply)
+                temporary = Path(self.source.call_args.args[1])
+                self.assertEqual(temporary.parent, self.root)
+                self.assertFalse(temporary.exists())
+                self.assertEqual(list(self.root.iterdir()), [])
+                stage.side_effect = self.sources if stage is self.source else None
+        self.apply.assert_not_called()
+        self.deliver.assert_not_called()
+        self.assertEqual(self.target.mock_calls, [])
 
     def test_all_local_requirements_fail_before_bootstrap(self):
         for failure in (ValueError("source"), PermissionError("source")):

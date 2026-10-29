@@ -44,6 +44,10 @@ class BuildPolicyDraftTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        self.workspace = self.root / "workspace"
+        workspace = patch.object(drafts, "get_workspace_dir", return_value=str(self.workspace))
+        workspace.start()
+        self.addCleanup(workspace.stop)
         self.key = self.root / "identity.pub"
         self.key.write_text(KEY + " operator@example\n")
         self.key.chmod(0o644)
@@ -174,12 +178,15 @@ class BuildPolicyDraftTests(unittest.TestCase):
         private.write_text("PRIVATE CONTENT MUST NEVER BE READ")
         def source(specs, destination):
             self.assertEqual(specs, [["example.com", "https://example.com/repo"]])
+            self.assertEqual(Path(destination).parent, self.workspace)
             self.assertEqual(stat.S_IMODE(os.stat(destination).st_mode), 0o700)
             return [replace(prepared(), source_path=destination + "/snapshot")]
         with patch.object(drafts, "prepare_setup_sources", side_effect=source) as fetch:
             with redirect_stdout(io.StringIO()) as output:
                 self.assertEqual(drafts.main(self.arguments()), 0)
         fetch.assert_called_once()
+        self.assertFalse(Path(fetch.call_args.args[1]).exists())
+        self.assertEqual(list(self.workspace.iterdir()), [])
         self.assertIn("review required", output.getvalue())
         for path in (self.root / "drafts").iterdir():
             self.assertNotIn("PRIVATE", path.read_text())
@@ -197,9 +204,13 @@ class BuildPolicyDraftTests(unittest.TestCase):
             fetch.assert_not_called()
             self.assertFalse((self.root / "drafts").exists())
         self.key.write_text(KEY)
-        with patch.object(drafts, "prepare_setup_sources", side_effect=ValueError("source failed")):
+        with patch.object(drafts, "prepare_setup_sources", side_effect=ValueError("source failed")) as fetch:
             with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 drafts.main(self.arguments())
+        temporary = Path(fetch.call_args.args[1])
+        self.assertEqual(temporary.parent, self.workspace)
+        self.assertFalse(temporary.exists())
+        self.assertEqual(list(self.workspace.iterdir()), [])
         self.assertFalse((self.root / "drafts").exists())
 
 

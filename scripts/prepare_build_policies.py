@@ -21,12 +21,14 @@ from common.build_host_steps import parse_build_host_enrollment
 from common.build_target_steps import parse_build_target_enrollment
 from lib.build_manifest import DEBIAN_PLATFORM, required_tools
 from lib.build_selection import _public_companion
+from lib.build_setup import _private_directory
 from lib.build_setup_plan import _destination, _projection, prepare_delivery_plan
 from lib.build_setup_sources import PreparedSource, prepare_setup_sources
 from lib.deploy_utils import parse_deploy_spec
 from lib.deployment import DeploymentOrchestrator
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path
+from lib.workspace import get_workspace_dir
 
 
 DRAFT_LIMITS = {
@@ -167,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
             validate_filesystem_path(path)
         builder_key = _public_companion(os.path.abspath(os.path.expanduser(args.builder_key)))
         target_key = _public_companion(os.path.abspath(os.path.expanduser(args.target_key)))
-        with tempfile.TemporaryDirectory(prefix="basaltwater-policy-drafts-") as root:
+        workspace = get_workspace_dir()
+        _private_directory(workspace)
+        with tempfile.TemporaryDirectory(prefix="basaltwater-policy-drafts-", dir=workspace) as root:
             os.chmod(root, 0o700)
             prepared = prepare_setup_sources(args.deploy, root)
             builder, target = draft_enrollments(
