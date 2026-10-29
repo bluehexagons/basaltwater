@@ -85,7 +85,7 @@ def execution_argv(request: object, *, uid: int, gid: int, scratch_path: str,
         "ProtectKernelLogs=yes", "ProtectControlGroups=yes", "RestrictSUIDSGID=yes",
         "LockPersonality=yes", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
         f"BindPaths={scratch_path}:{WORK_ROOT} {scratch_path}/home/tmp:/tmp",
-        f"ReadWritePaths={WORKSPACE} {BUILD_HOME}", "StandardInput=null",
+        f"ReadWritePaths={WORKSPACE} {BUILD_HOME} /tmp", "StandardInput=null",
         f"StandardOutput=append:{log_path}", "StandardError=inherit",
     ]
     # Omit explicit User=root: systemd's explicit-user seccomp setup can drop

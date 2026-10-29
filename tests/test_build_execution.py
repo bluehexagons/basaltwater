@@ -78,7 +78,7 @@ class BuildExecutionTests(unittest.TestCase):
                          "--property=MemorySwapMax=0", "--property=ProtectSystem=strict",
                          "--property=TemporaryFileSystem=/tmp:ro /var/tmp:ro",
                          "--property=BindPaths=/var/lib/build-scratch/owned/fs:/run/basaltwater-build-work /var/lib/build-scratch/owned/fs/home/tmp:/tmp",
-                         "--property=ReadWritePaths=/run/basaltwater-build-work/source/checkout /run/basaltwater-build-work/home",
+                         "--property=ReadWritePaths=/run/basaltwater-build-work/source/checkout /run/basaltwater-build-work/home /tmp",
                          "--property=TasksMax=256", "--clear-groups", "--bounding-set=-all",
                          "--reuid=1234", "--regid=1234", "/usr/bin/env", "-i"):
             self.assertIn(required, argv)
