@@ -24,14 +24,18 @@ deployment; it does not enable build services on that builder.
 
 ## Start with a selected builder
 
-The bounded path supports ready static sites, Python static builds and
-self-contained Go services on Debian 13 x86-64 VMs or physical hosts. It
-requires public HTTPS source with a committed root `basaltwater.json`.
+The bounded path supports ready static sites, shell, Node and Python static
+builds, and self-contained native services on Debian 13 x86-64 VMs or physical hosts. It
+requires HTTPS source with a committed root `basaltwater.json`. Private sources
+use the controller's configured noninteractive global Git credential helper;
+credentials remain on the controller.
 [Complete sample projects and enrollment templates](../examples/builds/README.md)
 cover all three cases, including a ready SPA and Go API in one application.
-Node/package-manager builds, interpreter services and runtime environment or
-database declarations are outside this path. Ordinary target builds support a
-broader manifest; see [the exact restrictions](deployments.md#build-on-a-saved-builder).
+Service arguments, literal environment, managed working directories, SQLite
+backups and public UDP listeners require matching administrator policy grants.
+Cloudflare and SSL use the existing target setup and serving helpers.
+Interpreter services remain outside this path; see
+[the exact restrictions](deployments.md#build-on-a-saved-builder).
 
 Before setup:
 
@@ -40,10 +44,11 @@ Before setup:
    workspace. Use existing administrative access to establish trust; never
    disable host-key verification to pass preflight. See [identity and trust
    requirements](../agents/contributing/build-selection.md).
-2. Copy the [enrollment templates](../examples/builds/README.md#enrollment-templates)
-   outside the repository. Replace their public-key placeholders and domains,
-   then review projects, routes, target roots, resource ceilings and storage
-   limits. These are enrollment envelopes, not just their nested policies.
+2. Prepare enrollment envelopes outside the repository using the
+   [policy draft utility](build-policy-drafts.md) or
+   [enrollment templates](../examples/builds/README.md#enrollment-templates).
+   Review projects, routes, runtime settings, target roots, resource ceilings
+   and storage limits. These are enrollment envelopes, not just their nested policies.
 3. Provision root setup access independently on both hosts. On the target,
    the selected identity must authorize root as well as its typed transport
    principal. Enrollment installs only a forced-command transport key; it
@@ -57,12 +62,20 @@ basaltw setup server_lite build.example.com root --machine vm --name builds \
   --build-server --build-host-policy /home/controller/build-host.json --go
 ```
 
-Use `--machine hardware` for physical hosts. Go is a builder tool; the
+Add `--node` on the builder for npm frontend builds. Explicit Node setup
+prepares the supported policy baselines and current LTS through the shared
+Node installer; jobs select an already installed version and cannot install
+new toolchains. Use `--machine hardware` for physical hosts. Go is a builder tool; the
 selected-builder target command refuses Go, Node and Godot installation flags.
 Ready static output needs no compiler; Python static builds use the builder's
 OS Python 3 and need no target `--python` flag. That flag remains available as
 a profile option for installing target Python tooling and uv. Inspect the
 builder's observed capabilities before assuming a runtime is ready.
+
+The controller opens SSH connections to both hosts and relays source and
+artifacts. The target does not connect to the builder. A LAN builder can serve
+a cloud VPS when the controller can reach both over SSH; no public builder
+listener or inbound cloud-to-LAN route is needed.
 
 Publish a sample as its own repository, with its manifest at the root, and
 replace the URL below. With the target's root access and existing host pin

@@ -40,8 +40,8 @@ Each source selector receives its own cache and upload path. Setup fetches the
 selected ref on every run and stops if it is missing, including during dry runs.
 Without a selector, deployments continue to follow the repository's default branch.
 For ordinary target builds, use the controller's Git credential helper or SSH
-key for private repositories. Selected-builder deployments accept public HTTPS
-source only, as described below.
+key for private repositories. Selected-builder deployments use HTTPS and the
+controller's configured global Git credential helper, as described below.
 Displayed commands also replace sensitive URLs from older saved configurations
 with a placeholder that must be filled in before replay.
 
@@ -87,21 +87,27 @@ must also authorize root setup on that target. Credentials remain on the
 controller. See the contributor [selection contract](../agents/contributing/build-selection.md)
 for exact identity, permissions and trust requirements.
 
-Source must be a public HTTPS repository with an explicit, committed
+Source must be an HTTPS repository with an explicit, committed
 `basaltwater.json`. Default HEAD, `#branch=NAME` and `#tag=NAME` are pinned to
 complete commit IDs. The controller clones with history and tags in a private
 workspace and verifies snapshot and manifest identity; it does not use ambient
-Git credentials, private repositories, redirects, LFS, submodules or inferred
-manifests. There are 1–16 application destinations per setup. Each manifest's
+Git configuration for checkout, redirects, LFS, submodules or inferred
+manifests. Cloning tries anonymous access first, then the controller's configured
+noninteractive global Git credential helper. Credentials are scoped to that
+repository, used only during clone, and never sent to the builder or target.
+There are 1–16 application destinations per setup. Each manifest's
 complete component/route map must match exactly one application granted to the
 selected target principal, and the builder must grant its project, platform and
 runtimes.
 
-Supported manifests contain ready static output (including SPA), Python static
-builds, or Go binary services. Declare `build_runtimes` explicitly for any build
-commands and export the serving files through `artifacts`; the manifest's
-`output` or `binary` supplies the default export when `artifacts` is omitted.
-Ready static output needs no runtime declaration. For example, a Python static
+Supported manifests contain ready static output (including SPA), shell, Node or
+Python static builds, or self-contained native services. Explicit
+`build_runtimes`, including `[]`, overrides the ordinary deployment's shared
+source marker inference. Otherwise the controller and worker infer tools from
+the same pinned checkout. Export serving files through `artifacts`; `output`,
+`binary`, or an exec-only service's literal release executable supplies the
+default export when `artifacts` is omitted. Ready static output needs no runtime
+declaration. For example, a Python static
 build can declare:
 
 ```json
@@ -119,11 +125,15 @@ build can declare:
 }
 ```
 
-Go services require `"go"` in `build_runtimes`, a literal `binary` export,
-automatic ports and default working directory/reverse proxy settings. Declare
-`"port": "auto"` to select automatic allocation. The verified binary must be a
-self-contained x86-64 ELF executable and honor generated `HOST=127.0.0.1` and
-`PORT` values. A canonical health path is supported.
+Services require a literal `binary` export or an `exec` command starting with
+`{{release_dir}}/relative/executable`. The verified executable must be a
+self-contained x86-64 ELF executable. The default binary command receives
+`HOST=127.0.0.1` and `PORT`; manifests can instead declare arguments and
+`runtime_env`, with matching exact runtime grants in the target policy.
+Automatic and explicitly granted fixed ports, canonical health paths, managed
+working directories, SQLite backups and public UDP declarations are supported.
+Persistent data remains in the ordinary deployment's shared directory when
+the same target root and component names are retained.
 
 A ready SPA and Go API can share one application and release bundle:
 
@@ -153,12 +163,15 @@ The target policy must authorize both components as one complete application.
 A separately authorized application can retain a neighboring route such as
 `/neighbor` on the same domain. This example does not build an npm frontend.
 
-The selected-builder flow refuses Node builds, Godot/interpreter services,
-custom `exec`, `env_file`, `runtime_env`, custom working/data paths, SQLite
-backup settings, public UDP, fixed service ports, alternate proxy settings,
-nondefault backup retention and CI/publishing workflows. It also refuses target
+The selected-builder flow refuses Godot/interpreter services, `env_file`,
+unmanaged working or database paths, alternate proxy settings and CI/publishing
+workflows. Environment grants are literal administrator-approved configuration;
+do not put secrets in manifests or policy drafts. It also refuses target
 Go, Node and Godot installation flags, build-host and legacy app-server roles,
-network activation, custom setup steps, SSL and Cloudflare setup. `--python`
+network activation and custom setup steps. SSL and Cloudflare settings are
+installed through administrative setup and retained separately from artifact
+authority. Cloudflare with SSL retains an HTTP origin without an ACME redirect;
+direct SSL uses the shared certificate and nginx helpers. `--python`
 remains a profile option that installs Python tooling and uv; a Python static
 build needs Python on the builder, not that target flag. The broader manifest
 examples below describe ordinary target builds; they do not expand this bounded
@@ -323,15 +336,15 @@ repository root. For example, `"artifacts": ["dist/index.html",
 
 `lib.project_manifest.artifact_paths()` uses `artifacts` when present; otherwise
 it selects `output` for static and Godot components or `binary` for a binary
-service. An exec-only service continues to parse without `artifacts`, but a
-caller selecting a prebuilt package must declare them because there is no single
-binary to infer. Safe redundant segments in legacy `output` and `binary`
+service. An exec-only service starting with an unquoted literal
+`{{release_dir}}/relative/executable` can infer that executable; other exec
+commands require explicit exports for callers packaging them. Safe redundant
+segments in legacy `output` and `binary`
 defaults are normalized for export selection; explicit `artifacts` entries
 must already be canonical.
 Ordinary deployments build on the target using `output`, `binary` or `exec`.
 Selected-builder deployments use these exports within the narrower
-[supported manifest scope](#build-on-a-saved-builder); an exec-only service is
-outside that scope even when it declares `artifacts`.
+[supported manifest scope](#build-on-a-saved-builder).
 
 ### Static site
 

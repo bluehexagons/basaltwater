@@ -45,5 +45,6 @@ admission, and worker rechecks remain caller responsibilities.
 This example is the policy alone. Managed enrollment wraps it with `keys`,
 record and byte limits, and requires lowercase principal slugs of at most 32
 characters. See the [complete enrollment templates](../../examples/builds/README.md#enrollment-templates).
-The policy parser models Node grants, but the public selected-builder flow
-currently refuses Node builds because package-manager readiness is unqualified.
+Node grants authorize builds against the explicitly provisioned, root-controlled
+inventory. The unprivileged worker checks the pinned project's Node/npm and
+package-manager selection before running commands; it cannot install tools.

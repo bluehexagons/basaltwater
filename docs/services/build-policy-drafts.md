@@ -14,10 +14,13 @@ python3 scripts/prepare_build_policies.py \
 Repeat `--deploy DOMAIN[/PATH] HTTPS_URL` for up to sixteen destinations. Explicit
 `#branch=NAME` or `#tag=NAME` selectors use the existing source preparation rules;
 each selection is pinned to its exact commit before planning. Sources must be
-public HTTPS repositories with a tracked `basaltwater.json` manifest. Fetching
-uses the shared bounded, credential-free source preparation flow in a temporary
-private directory, removed on completion or failure. The utility runs no build
+HTTPS repositories with a tracked `basaltwater.json` manifest. Fetching
+uses the shared bounded source preparation flow in a temporary
+private directory under the configured controller workspace, removed on completion
+or failure. The utility runs no build
 commands and makes no server mutations or enrollments.
+Anonymous access is tried first; private sources use the controller's configured
+noninteractive global Git credential helper. Credentials remain on the controller.
 
 Both key arguments are paths to **public companion files**, never private key
 paths. The same public key can serve both roles. One valid ssh-ed25519 public

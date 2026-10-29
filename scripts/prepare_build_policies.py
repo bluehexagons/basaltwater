@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draft managed build enrollments from public pinned manifests; enroll nothing."""
+"""Draft managed build enrollments from pinned HTTPS manifests; enroll nothing."""
 
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ def write_drafts(output_dir: str, builder: dict[str, Any], target: dict[str, Any
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Fetch bounded public inputs and write drafts for operator review."""
+    """Fetch bounded HTTPS inputs and write drafts for operator review."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deploy", nargs=2, action="append", required=True,
                         metavar=("DOMAIN[/PATH]", "HTTPS_URL"))

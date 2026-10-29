@@ -14,7 +14,7 @@ without a selected builder continue to build on the destination.
 
 | Area | Current boundary |
 | --- | --- |
-| On-demand builds | Managed Debian 13 x86-64 enrollment, typed SSH, pinned public HTTPS source, declared exports and one supervised build slot. Ready static sites, Python static builds and self-contained Go services are supported. |
+| On-demand builds | Managed Debian 13 x86-64 enrollment, typed SSH, pinned HTTPS source, declared or safely inferred exports and one supervised build slot. Static sites, shell/Node/Python builds and self-contained native services share manifest and serving helpers with ordinary deployment. |
 | Artifact delivery | Saved builder selection and revision replacement; target bootstrap/admission; verified staging and shared prebuilt activation; retained target refresh without source or builder access. |
 | Recovery and retention | Durable IDs/guards, offline controller inspection, explicit terminal settlement, source/log pruning, successful-bundle release and capacity inspection. Slots and replay history remain retained. |
 | Webhook CI/CD | Separate signed-event receiver/executor and queue; remote manifest publication is limited to one static/Godot component. |
@@ -130,10 +130,10 @@ project authorization, bounded escaped output, authenticated POST/CSRF and the
 existing one-time registration channel. The panel is not needed for execution;
 it must not gain arbitrary command, path, credential or deployment authority.
 
-Runtime environment/`env_file` bindings, Node/package-manager builds,
-interpreter services and stateful declarations remain outside selected-builder
+Secret/`env_file` bindings and interpreter services remain outside selected-builder
 deployment. Extend them through explicit [runtime secret bindings](deploy-secrets.md)
-and independently qualified runtime cases.
+and independently qualified runtime cases. Literal runtime environment, managed
+working directories, SQLite backups and UDP listeners require exact target grants.
 
 Automatic retention, orphan-bundle release and replay-history retirement need
 separate policy. [Windows adapters](windows-support.md), distributed scheduling,

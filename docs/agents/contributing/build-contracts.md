@@ -12,7 +12,7 @@ The internal [process entrypoint](build-host-entrypoint.md) connects a typed
 SSH dispatcher, project policy, bounded source admission and an independent
 worker. The public [controller setup flow](build-setup.md) connects explicit
 `--build-on` selection, managed enrollment, pinned sources, artifact delivery and
-guarded final profile application within its bounded static/Go scope. Ordinary
+guarded final profile application within its bounded static/native-service scope. Ordinary
 deployments without a selected builder retain build-on-target behavior. The
 [coverage map](../../plans/testing-coverage.md) records selected native static/Go
 public-flow checks and remaining qualification gaps separately from these
@@ -36,10 +36,11 @@ excluded from this request. Build inputs are visible to build code; never insert
 runtime secrets. Commands are data until an authorized worker executes them
 under its unprivileged identity.
 `lib.build_manifest` selects and revalidates those inputs against the pinned
-manifest. Command-bearing remote builds require explicit `build_runtimes` so
-the controller can check installed tools before admission. Ready-to-serve
-outputs without commands need no declared compiler. This requirement applies
-to remote builds; ordinary build-on-target inference is unchanged.
+manifest. Explicit `build_runtimes`, including `[]`, overrides shared source
+marker inference. Otherwise the controller freezes the inferred tools from the
+pinned checkout and the worker repeats that inference on verified source.
+Installed tools and policy grants are checked before execution. Ready-to-serve
+outputs without commands need no declared compiler.
 
 Limits cover elapsed build time, memory, CPU percentage (100 is one CPU), scratch
 filesystem capacity, export bytes and entry count, and log bytes. Scratch capacity

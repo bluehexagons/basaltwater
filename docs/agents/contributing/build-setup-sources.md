@@ -21,11 +21,16 @@ with TemporaryDirectory() as destination:
 ```
 
 The API is
-`prepare_setup_sources(deploy_specs, destination, *, limits=DEFAULT_SOURCE_LIMITS, runner=None)`.
+`prepare_setup_sources(deploy_specs, destination, *, limits=DEFAULT_SOURCE_LIMITS, runner=None, credential_runner=None)`.
 It returns `list[PreparedSource]`, preserving deployment order. The frozen
 dataclass fields are `destination: str` (one `DOMAIN[/PATH]` spec),
 `manifest: Manifest`, `source: dict[str, str]` (revision, snapshot and manifest
-digests), and `source_path: str` (absolute snapshot filename). Each result has a
+digests), `source_path: str` (absolute snapshot filename), and
+`build_tools: tuple[str, ...] | None` (the pinned checkout's runtime selection).
+Explicit `build_runtimes`, including an empty list, wins over the shared source
+marker inference. The selection is frozen before checking out another branch
+of the same repository and is passed separately to planning; committed manifest
+bytes and their digest remain unchanged. Each result has a
 detached manifest and identity mapping so planning one destination cannot alter
 another result. Identical inputs share the same read-only snapshot file.
 
@@ -75,14 +80,23 @@ links, unsafe paths, oversized files and dirty or changed checkouts.
 
 ## Git execution boundary
 
-The initial transport slice accepts public HTTPS repositories with no embedded
-credentials or query parameters. Private repositories, SSH, local paths, other
-transports and HTTP redirects are unsupported. A clone failure explicitly names
-the public-only credential boundary; no token is invented or requested.
+The transport accepts HTTPS repositories with no embedded credentials or query
+parameters. SSH, local paths, other transports and HTTP redirects are unsupported.
+Cloning tries anonymous access first. On failure, the controller's trusted global
+Git credential helper runs in a neutral directory with prompts disabled and
+bounded output/time. Returned credentials must match the requested origin and
+repository path. An ephemeral mode-0600 URL-scoped Git configuration supplies
+authentication for that clone only and is removed on success, failure or interruption.
+Credentials never enter repository configuration, snapshots, manifests, build
+requests, saved deployment state, command arguments or worker/target environments.
+The helper can use the controller's existing GitHub CLI configuration; no token
+is invented or requested. Mocked source runners perform no credential lookup
+unless a mocked `credential_runner` is explicitly supplied.
 
 Every command, including snapshot metadata commands, uses an allowlisted
 environment: private HOME/XDG configuration and temporary directories, disabled
-system/global Git configuration and attributes, no terminal prompts, no SSH
+system/global Git configuration and attributes except the scoped clone credential
+file, no terminal prompts, no SSH
 agent/proxy/config environment inheritance, and disabled askpass/SSH commands.
 Configuration disables credential helpers, fsmonitor, hooks, external global
 attributes and automatic maintenance. Clone uses the private empty template and

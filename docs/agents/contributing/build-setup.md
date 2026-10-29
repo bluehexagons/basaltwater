@@ -48,7 +48,7 @@ that scope. No shared control socket is created or reused. Exceptions restore
 the prior context; ordinary setup keeps its existing SSH behavior. Typed builder
 and target clients retain their independent strict transport.
 
-[Source preparation](build-setup-sources.md) accepts public HTTPS committed
+[Source preparation](build-setup-sources.md) accepts HTTPS committed
 source with an explicit tracked `basaltwater.json`, pins complete revisions and
 verifies manifest/snapshot identity. [Planning](build-setup-plan.md) supports ready
 static outputs, Go/Node/Python builds and self-contained native services with
