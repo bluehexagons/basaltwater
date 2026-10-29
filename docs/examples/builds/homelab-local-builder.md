@@ -55,6 +55,14 @@ with your values:
   --go --node
 ```
 
+Plan explicit builder maintenance. The default 64 GiB logical quota can fill
+after roughly fifteen unsettled jobs, even with free disk space. Inspect and
+settle terminal reservations using the [maintenance commands](../../services/build-systems.md#inspect-capacity-and-retain-evidence)
+to reclaim unused charges while preserving payloads. Settlement does not free
+record slots. The policies also default to 128 records, and the controller retains
+at most 32 attempts per target; these bounded histories need operator planning.
+There is no automatic collection or history retirement.
+
 The target command keeps the original deployment and serving options and adds
 the saved builder, target policy and trusted controller SSH source:
 
@@ -91,9 +99,17 @@ active tunnels at the same public hostname unintentionally. For later updates,
 the saved controller setup retains the builder selection; target-local refresh
 uses retained artifacts and does not contact the builder.
 
+```bash
+./basaltwater.py deploy bluehexagons-homelab-1 --yes
+```
+
 The six unchanged manifests have been built and served on disposable Debian 13
 VMs with a 2 GiB builder and 1 GiB target. Checks cover verified HTTPS, service
 health, the additional foodguide route, SQLite backups and real UDP STUN. The
 target's route to the builder was prohibited throughout. A separate retained
 routing check verified Cloudflare/SSL HTTP origins; public Tunnel authentication
 and public ACME issuance were not exercised in the lab.
+The normal saved six-site deployment and actual target refresh with the builder
+powered off both passed, preserving SQLite state and private backups. The
+SSH-only trusted-source policy replaced the default connection limiter while
+keeping public web ingress.
