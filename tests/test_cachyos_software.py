@@ -25,6 +25,11 @@ FLAGS = ("--material-maker", "--etcher", "--butler", "--steamcmd")
 
 
 class SoftwareTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
@@ -42,8 +47,7 @@ class SoftwareTests(unittest.TestCase):
         self.stack.enter_context(patch.object(software, "run", self.run))
 
     def config(self, *options):
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        return cachyos_config_from_args(parser.parse_args([
+        return cachyos_config_from_args(self.parser.parse_args([
             "setup", "agent_cachyos", "localhost", "human", *options,
         ]))
 
@@ -68,8 +72,7 @@ class SoftwareTests(unittest.TestCase):
 
     def test_flags_roundtrip_and_other_profiles_reject_them(self):
         config = self.config(*FLAGS)
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        reconstructed = cachyos_config_from_args(parser.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:]))
+        reconstructed = cachyos_config_from_args(self.parser.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:]))
         restored = SetupConfig.from_dict("localhost", "agent_cachyos", config.to_dict())
         for flag in FLAGS:
             field = "install_" + flag[2:].replace("-", "_")

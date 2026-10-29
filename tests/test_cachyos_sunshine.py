@@ -19,12 +19,16 @@ default_intel_encoder = sunshine._default_intel_encoder
 
 
 class SunshineSetupTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.home = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-        parser, _, _ = basaltwater.create_basaltwater_parser()
-        self.config = cachyos_config_from_args(parser.parse_args([
+        self.config = cachyos_config_from_args(self.parser.parse_args([
             "setup", "agent_cachyos", "localhost", "human", "--sunshine",
         ]))
         self.path = self.home / ".config/sunshine/sunshine.conf"

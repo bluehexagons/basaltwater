@@ -21,6 +21,11 @@ from lib.config import SetupConfig
 
 
 class CachyOSSSHOptionsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
@@ -47,7 +52,6 @@ class CachyOSSSHOptionsTests(unittest.TestCase):
         stack.enter_context(patch("common.cachyos_t3.setup_completion_lock",
             side_effect=lambda config: nullcontext(lock_file.fileno())))
         stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
-        self.parser, _, _ = basaltwater.create_basaltwater_parser()
         self.record = self.home / ".local/state/basaltwater/cachyos/last-setup.json"
 
     def config(self, *options):

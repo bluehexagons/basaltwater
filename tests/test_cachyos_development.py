@@ -23,6 +23,11 @@ from lib.system_types import get_steps_for_system_type
 
 
 class CachyOSDevelopmentTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.parser, _, _ = basaltwater.create_basaltwater_parser()
+
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
@@ -31,7 +36,6 @@ class CachyOSDevelopmentTests(unittest.TestCase):
         stack.enter_context(patch.object(steps, "_home", return_value=self.home))
         stack.enter_context(patch("lib.remote_utils.is_dry_run", return_value=False))
         stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
-        self.parser, _, _ = basaltwater.create_basaltwater_parser()
 
     def config(self, *options):
         return cachyos_config_from_args(self.parser.parse_args([
