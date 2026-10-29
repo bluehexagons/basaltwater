@@ -6,6 +6,16 @@ session/API readiness without capture, input or app launch; `desktop status`
 also reports persistent human control state. A locked or secure desktop, other
 accounts/sessions and UAC prompts are outside the adapter.
 
+Run these commands from the prepared PowerShell 7 development shell. Doctor's
+`worker: WindowsPowerShell-5.1` describes a hidden, bounded UI Automation helper
+using Windows' .NET Framework assemblies; it does not describe your shell or
+the PowerShell 7 guardians used for project tasks. Basaltwater isolates the
+helper's module paths without changing your shell's `PSModulePath`. Keep using
+the public `basaltw` commands rather than dot-sourcing its internal worker code.
+Use `$PSVersionTable.PSVersion` to check your shell. Run project scripts with
+`pwsh.exe -NoProfile -File SCRIPT.ps1` in PowerShell 7; `powershell.exe` selects
+Windows PowerShell 5.1.
+
 Use `desktop windows` for handles, identities, generation and physical geometry.
 `desktop inspect --pid PID` returns bounded UI Automation controls and references.
 Only explicit screenshot commands capture pixels; choose a new PNG path and

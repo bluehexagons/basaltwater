@@ -66,12 +66,27 @@ try {
     $fixtureSource = Join-Path $temporary "worker's unicode $([char]0x03bb)"
     New-NativeDesktopPrivateDirectory $fixtureSource
     $fixture = Join-Path $fixtureSource 'Desktop.Common.ps1'
-    [IO.File]::WriteAllText($fixture, 'function Invoke-NativeDesktopWorkerBody($Request) { return @{ echo = $Request.text } }')
+    [IO.File]::WriteAllText($fixture, @'
+function Invoke-NativeDesktopWorkerBody($Request) {
+    # Autoload a framework module in the isolated worker, without desktop APIs.
+    $null = Get-Command Get-Acl -ErrorAction Stop
+    return @{ echo = $Request.text; edition = $PSVersionTable.PSEdition;
+        major = $PSVersionTable.PSVersion.Major; modules = $env:PSModulePath }
+}
+'@)
+    $savedModulePath = $env:PSModulePath
+    $parentModules = Join-Path $temporary 'PowerShell7-only-modules'
     try {
         $script:NativeDesktopSource = $fixtureSource
         $text = "Quotes ' `" unicode $([char]0x03bb) `$literal `nnewline"
+        $env:PSModulePath = $parentModules + ';' + $savedModulePath
+        $inheritedModules = $env:PSModulePath
         $echo = & $realWorker @{ command = 'fixture'; text = $text }
         Assert-True ($echo.echo -ceq $text) 'Worker transport corrupted Unicode or executed text'
+        Assert-True ($echo.edition -eq 'Desktop' -and $echo.major -eq 5 -and
+            $echo.modules.Split(';') -notcontains $parentModules) 'Desktop worker inherited caller module paths or selected the project runtime'
+        Assert-True ($env:PSModulePath -ceq $inheritedModules) 'Worker isolation changed the invoking shell module path'
+        $env:PSModulePath = $savedModulePath
         [IO.File]::WriteAllText($fixture, 'function Invoke-NativeDesktopWorkerBody($Request) { throw "fixture failure" }')
         $caught = $null
         try { & $realWorker @{ command = 'fixture' } | Out-Null } catch { $caught = $_ }
@@ -80,7 +95,7 @@ try {
         $caught = $null
         try { & $realWorker @{ command = 'fixture' } 1 | Out-Null } catch { $caught = $_ }
         Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'timed out') 'Owned hanging worker not bounded'
-    } finally { $script:NativeDesktopSource = $originalSource }
+    } finally { $script:NativeDesktopSource = $originalSource; $env:PSModulePath = $savedModulePath }
     $readiness = Get-NativeDesktopReadiness
     Assert-True ($readiness.healthy -and -not $readiness.capture_performed -and -not (Test-Path -LiteralPath $script:DesktopTestPath)) 'Doctor wrote state or captured content'
     Assert-Failure (Invoke-NativeDesktopCli @('control','disabled')) 'human authorization'

@@ -23,6 +23,18 @@ The batch CLI and bounded Windows PowerShell worker rebuild their own module
 paths, avoiding incompatible PowerShell 7 modules inherited through intermediaries;
 see [Microsoft's module-path guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
 
+`$PSVersionTable.PSVersion` reports the invoking shell. The prepared development
+shell and supervised task guardians use PowerShell 7 (`pwsh.exe`). The public
+`basaltw.cmd` launcher uses Windows PowerShell 5.1 (`powershell.exe`) for its
+compatibility entry point, and desktop observation/control uses a separate,
+hidden worker bounded to eight seconds. Doctor's `worker: WindowsPowerShell-5.1`
+identifies that UI Automation backend, which loads Windows' installed .NET
+Framework assemblies; it does not mean project commands run in PowerShell 5.1.
+Invoke `basaltw` normally from PowerShell 7. Child module-path isolation preserves
+the caller's `PSModulePath`; no global module-path changes or shell downgrade are
+needed. Keep internal worker functions behind the public CLI. Use
+`pwsh.exe -NoProfile -File SCRIPT.ps1` for project scripts that need PowerShell 7.
+
 ```powershell
 basaltw desktop open 'F:\builds\package.zip' --reveal
 basaltw desktop open 'F:\reports\result.html'

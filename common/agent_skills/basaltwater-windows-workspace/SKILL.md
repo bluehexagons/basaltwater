@@ -54,8 +54,17 @@ read [Windows desktop and tasks](references/desktop.md). Active or uncertain
 development tasks block setup/reboot until cleanup is confirmed. These commands
 do not install Basaltwater's Linux controller or expose GUI access from services.
 
-Discover the actual shell and tools before composing commands. Windows
-PowerShell 5.1 does not support `&&`; use separate invocations and check
+Discover the actual shell with `$PSVersionTable.PSVersion` before composing
+commands. The prepared development shell and supervised task guardians use
+PowerShell 7 (`pwsh.exe`). `powershell.exe` selects Windows PowerShell 5.1;
+use `pwsh.exe -NoProfile -File SCRIPT.ps1` for project scripts needing PowerShell 7.
+`desktop doctor` reporting `worker: WindowsPowerShell-5.1` identifies its private
+UI Automation helper, not the invoking development shell. That helper uses the
+installed .NET Framework UI Automation assemblies. The CLI wrapper and worker
+rebuild only their child module paths; the invoking shell's `PSModulePath` is
+preserved. Call the public `basaltw` commands from PowerShell 7; no shell switch
+or global module-path change is needed for desktop commands.
+PowerShell 7 supports `&&`; Windows PowerShell 5.1 does not. Check
 `$LASTEXITCODE` after native executables. Prefer `npm.cmd` to `npm.ps1` when
 script execution policy blocks npm. Quote paths and use `-LiteralPath` for file
 operations. Do not substitute WSL or translate a Linux build command into a

@@ -5,8 +5,9 @@ Window/input require --window DECIMAL_HWND --identity TOKEN --generation GEN.
 Input additionally requires --width/--height from windows (window-relative x/y).
 Inspection references expire after 60s, any mutation, or control transition.
 All OS desktop calls are behind Invoke-NativeDesktopWorker for offline mocks.
-Windows PowerShell is used only in an owned 8s worker: it provides the installed
-.NET Framework UIAutomation assemblies without installing a runtime/package.
+Desktop APIs run in an owned Windows PowerShell 5.1 8s worker: it provides the
+installed .NET Framework UIAutomation assemblies without another runtime/package.
+The public CLI wrapper also uses 5.1; development shells/task guardians use 7.
 No start/stop, launch, lease, elevation, clipboard, key chords, or held input.
 #>
 $script:NativeDesktopSource = $PSScriptRoot
