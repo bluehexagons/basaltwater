@@ -150,9 +150,14 @@ checks the artifact's path again after the job exits, rejecting junctions or
 symlinks created in its parent directories during execution.
 It writes a result receipt and separate logs under
 `%LOCALAPPDATA%\Basaltwater\jobs`. Jobs have a one-hour timeout by default,
-50 MiB combined log limit, and 1 GiB artifact limit. On timeout it kills the
-PowerShell process tree; on failure or checksum mismatch it reports failure and
-does not report an uploaded artifact. A job can be retried explicitly with a
+50 MiB combined log limit, and 1 GiB artifact limit. A Windows Job Object owns
+the process tree before the script can run. On normal exit, failure or timeout,
+the runner terminates remaining descendants and verifies cleanup within five
+seconds before checking artifacts or recording completion. If cleanup cannot
+be confirmed, its receipt says `cleanup-uncertain` with no `CompletedUtc`;
+inspect owned processes and logs before retrying. On script failure or checksum
+mismatch it reports failure and does not report an uploaded artifact.
+A job can be retried explicitly with a
 fresh output path or clean checkout. Run Ubuntu builds in the selected distro
 as the configured non-root Linux user; keep Linux workspaces under its native
 filesystem rather than `/mnt/c`.
@@ -169,8 +174,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source
 
 `refresh` updates WSL, Ubuntu packages, selected
 tools, and selected WinGet packages without changing the pinned Basaltwater
-source. Existing T3 desktop versions are preserved; use its deliberate updater
-for desktop upgrades. To advance the source deliberately, run a freshly downloaded installer
+source. Selected Windows packages, including T3, receive available WinGet
+updates. WinGet's catalog can lag the app's own updater; see
+[native update behavior](windows.md#review-and-apply-the-current-checkout).
+To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
 revision for both Windows and Ubuntu before reapplying setup.
 Fresh setup and resume take the same account-level lock as native workstation

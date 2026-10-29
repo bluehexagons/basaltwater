@@ -61,7 +61,7 @@ Apply the reviewed checkout by omitting `-Plan`:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-AgentWorkstation.ps1 -Node -Python
 ```
 
-`-Node` selects Node.js LTS. Missing npm-based providers also select Node
+`-Node` selects Node.js LTS. Selected npm-based providers also select Node
 automatically. `-Python` installs uv and reuses its installed managed Python,
 or installs the current stable Python when none is managed. It ignores the
 invoking project's version files/configuration and temporarily clears
@@ -70,6 +70,9 @@ It does not replace another installation. Select project Python pins separately.
 `-Go` selects Go. `-AgentTool claude,opencode` adds providers to GitHub CLI and
 Codex. npm installations use the current account's `%APPDATA%\npm` prefix and
 invoke `npm.cmd`, avoiding PowerShell's script-policy restriction on `npm.ps1`.
+Tool discovery follows PATH order for `.exe` and `.cmd` commands, so an updated
+npm shim can take precedence over an older desktop-bundled executable later
+on PATH.
 When calling a script directly inside PowerShell, `-T3CodeDesktop:$false`
 disables the desktop selection. Windows PowerShell 5.1 cannot pass that switch
 value through `powershell.exe -File`; use its `-Command` form for this opt-out.
@@ -80,6 +83,13 @@ updated through npm. Tools are rediscovered and version-checked afterward;
 a failed update or broken tool stops setup. T3 Code is updated too, and its
 installer may close the running desktop. If that interrupts a T3 terminal,
 resume from a separate PowerShell window using the saved installation.
+
+WinGet's catalog can lag T3's stable release feed. Setup and refresh use the
+version available for `T3Tools.T3Code` in WinGet, without a desktop version pin.
+Use `winget show --id T3Tools.T3Code --exact --source winget --versions` to see
+the catalog versions. If T3 offers a newer stable release, wait for the catalog
+or use T3's [built-in updater](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md).
+Reapplying setup cannot install a release that WinGet has not published yet.
 
 Successful setup or refresh starts the selected T3 Code desktop if stopped,
 or requests a graceful close and relaunch to load the updated PATH and skills.
@@ -265,7 +275,11 @@ Godot to its actual executable, and validates configured storage paths,
 required directories and the six persisted cache/runtime variables. Storage
 diagnostics do not repair missing directories or variables; rerun setup to repair them.
 Selected Visual Studio/Windows SDK and T3 desktop checks establish discovery;
-they do not compile code or launch the desktop.
+they do not compile code or launch the desktop. A separate `t3-login` check
+verifies that the current account's task is enabled with its limited interactive
+principal, account-specific logon trigger and expected hidden helper from the
+saved source. Missing, disabled or changed tasks fail doctor; reapply desktop
+setup to repair them. Intentionally disabling login startup also fails that check.
 
 `doctor` runs no installers or sign-in commands and does not change saved
 setup, PATH, skills or storage configuration. Each executable probe has a

@@ -78,6 +78,9 @@ $stdoutStream = $null
 $stderrStream = $null
 $processJob = $null
 $startGate = $null
+$cleanupConfirmed = $false
+$cleanupFailure = $null
+$processStarted = $false
 try {
     . (Join-Path $PSScriptRoot 'GitHubRunner.Common.ps1')
     Import-RunnerJobType
@@ -103,6 +106,7 @@ try {
     $stdoutStream = [IO.File]::Open($stdout, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
     $stderrStream = [IO.File]::Open($stderr, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
     if (-not $process.Start()) { throw "Could not start native job" }
+    $processStarted = $true
     $processJob = New-Object Basaltwater.ProcessJob($process.Handle)
     $startGate.Set() | Out-Null
     $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
@@ -124,7 +128,8 @@ try {
     # Complete redirected output before checking its final size and process status.
     $process.WaitForExit()
     # A completed entry point cannot leave background workers modifying its checkout.
-    $processJob.Dispose()
+    try { $processJob.TerminateAndWait(5000); $cleanupConfirmed = $true }
+    catch { $cleanupFailure = $_; throw }
     if (-not $stdoutCopy.Wait(30000) -or -not $stderrCopy.Wait(30000)) {
         throw "Native job output streams did not close"
     }
@@ -173,15 +178,24 @@ try {
     if ($result.State -eq 'running') { $result.State = 'failed' }
     throw
 } finally {
+    try {
+        if (-not $cleanupFailure -and -not $cleanupConfirmed) {
+            if ($processJob) { $processJob.TerminateAndWait(5000) }
+            elseif ($processStarted) {
+                # Containment failed before the gate opened: only the blocked child exists.
+                if (-not $process.HasExited) { $process.Kill() }
+                if (-not $process.WaitForExit(5000)) { throw 'Blocked job process did not exit' }
+            }
+            $cleanupConfirmed = $true
+        }
+    } catch { $cleanupFailure = $_ }
     if ($processJob) { $processJob.Dispose() }
-    elseif ($process -and $process.StartInfo -and $startGate) {
-        # Containment failed before the gate opened: only the blocked child exists.
-        try { if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null } } catch { }
-    }
     if ($startGate) { $startGate.Dispose() }
     if ($stdoutStream) { $stdoutStream.Dispose() }
     if ($stderrStream) { $stderrStream.Dispose() }
     if ($process) { $process.Dispose() }
-    $result.CompletedUtc = [DateTime]::UtcNow.ToString('o')
+    if ($cleanupFailure) { $result.State = 'cleanup-uncertain' }
+    else { $result.CompletedUtc = [DateTime]::UtcNow.ToString('o') }
     $result | ConvertTo-Json | Set-Content -LiteralPath $receipt -Encoding UTF8
+    if ($cleanupFailure) { throw "Native job process cleanup could not be confirmed; inspect owned processes and logs: $jobDirectory" }
 }

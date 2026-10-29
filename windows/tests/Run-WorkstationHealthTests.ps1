@@ -77,6 +77,10 @@ public class HealthGuiFixture {
         function Get-NativeVisualStudio { return 'C:\VS2022' }
         function Test-NativeWindowsSdk { return $true }
         function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
+        function Get-NativeT3LoginHealth($Source) {
+            $state = if ($script:BadLogin) { 'failed' } else { 'ok' }
+            return [pscustomobject]@{ Name = 't3-login'; State = $state; Command = $null; Detail = 'fixture task' }
+        }
         function Set-NativeDevelopmentStorage { throw 'Doctor applied storage configuration' }
         function Assert-NativeDevelopmentStorage($StorageRoot) {
             if ($script:BadStorage) { throw 'unavailable volume' }
@@ -87,12 +91,12 @@ public class HealthGuiFixture {
                 ($Command -like '*WindowsApps*' -and $script:BrokenPython)) { 'failed' } else { 'ok' }
             return [pscustomobject]@{ State = $state; Command = $Command; Detail = 'fixture version' }
         }
-        $saved = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'a' * 40; Phase = 'complete';
+        $saved = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'a' * 40; Phase = 'complete'; Source = 'C:\source';
             AgentTool = @('gh', 'codex', 'claude', 'opencode'); Node = $true; GameDev = $true;
             ShaderTools = $true; Godot = $true; T3CodeDesktop = $true; StorageRoot = 'F:\coding'; Secret = 'never-publish' }
         $script:Probes = @(); $script:MissingGo = $false; $script:StorePython = $false
         $script:BadStorage = $false; $script:BrokenCodex = $false
-        $script:BrokenPython = $false
+        $script:BrokenPython = $false; $script:BadLogin = $false
         $report = Get-NativeWorkstationHealth $saved -TimeoutSeconds 1
         Assert-True $report.Healthy 'Complete healthy selection did not pass'
         Assert-True (($report | ConvertTo-Json -Depth 5) -notmatch 'never-publish|Secret') 'Doctor exposed arbitrary saved fields'
@@ -101,6 +105,9 @@ public class HealthGuiFixture {
         Assert-True (@($script:Probes | Where-Object { $_.Command -like '*\go.exe' -and $_.Arguments -eq 'version' }).Count -eq 1) 'Game bundle dependencies or Go arguments were lost'
         $script:StorePython = $true
         Assert-True (Get-NativeWorkstationHealth $saved).Healthy 'Working Store Python was rejected solely by its path'
+        $script:BadLogin = $true
+        Assert-True (-not (Get-NativeWorkstationHealth $saved).Healthy) 'Broken login task was reported healthy'
+        $script:BadLogin = $false
         $script:BrokenCodex = $true; $script:MissingGo = $true; $script:BrokenPython = $true; $script:BadStorage = $true
         $report = Get-NativeWorkstationHealth $saved
         Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.State -ne 'ok' }).Count -eq 4) 'Doctor stopped early or lost independent failures'

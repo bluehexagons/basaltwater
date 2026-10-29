@@ -15,8 +15,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Setup-Sunshine
 To apply, open an administrator PowerShell on x86-64 Windows 11, return to the
 checkout, and omit `-Plan`. The command installs or updates the exact
 `LizardByte.Sunshine` WinGet package, enables automatic startup for its service,
-starts it and waits up to 30 seconds for the running state. A missing service
-or failed start stops setup. The vendor installer owns its service files and
+starts it and waits up to 30 seconds for the running state. An already pending
+start uses the same bounded wait; stopping or paused services require manual
+resolution before retrying. A missing service or failed start stops setup.
+The vendor installer owns its service files and
 firewall rules. Basaltwater does not replace existing settings, credentials,
 pairings, encoder choices or application lists, or configure router forwarding.
 Review installer feature/driver choices. Switching an existing EXE installation
@@ -56,6 +58,6 @@ logoff, unlike CachyOS's graphical-session service. Successful startup does not
 establish logged-out or headless streaming support.
 
 The offline suite mocks package/service operations, including unelevated setup,
-missing services, installer failure and stopped/manual startup. Fresh package
-installation, firewall behavior, boot recovery and actual Moonlight streaming
+missing services, installer failure, stopped/manual startup and pending-start
+timeouts. Fresh package installation, firewall behavior, boot recovery and actual Moonlight streaming
 remain live qualification tasks; they were not exercised on the reference PC.

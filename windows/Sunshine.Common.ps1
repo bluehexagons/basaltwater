@@ -9,9 +9,11 @@ function Get-NativeSunshineHealth {
     if (-not $service) {
         return [pscustomobject]@{ Healthy = $false; State = 'missing'; Detail = 'Install the native LizardByte.Sunshine package with its Windows service.' }
     }
-    $ready = $service.Status -eq 'Running' -and $service.StartType -eq 'Automatic'
-    return [pscustomobject]@{ Healthy = $ready; State = $(if ($ready) { 'ok' } else { 'failed' });
-        Detail = "SunshineService: $($service.Status), startup: $($service.StartType). Video, audio, input and pairing require a Moonlight check." }
+    try {
+        $ready = $service.Status -eq 'Running' -and $service.StartType -eq 'Automatic'
+        return [pscustomobject]@{ Healthy = $ready; State = $(if ($ready) { 'ok' } else { 'failed' });
+            Detail = "SunshineService: $($service.Status), startup: $($service.StartType). Video, audio, input and pairing require a Moonlight check." }
+    } finally { $service.Dispose() }
 }
 
 function Install-NativeSunshine([switch]$Plan) {
@@ -25,9 +27,15 @@ function Install-NativeSunshine([switch]$Plan) {
     Ensure-WingetPackage LizardByte.Sunshine 'Sunshine installation'
     $service = Get-Service -Name SunshineService -ErrorAction SilentlyContinue
     if (-not $service) { throw 'The Sunshine installer did not provide SunshineService. Repair the vendor installation with the service feature enabled.' }
-    Set-Service -Name SunshineService -StartupType Automatic -ErrorAction Stop
-    Start-Service -Name SunshineService -ErrorAction Stop
-    $service.WaitForStatus('Running', [timespan]::FromSeconds(30))
+    try {
+        Set-Service -Name SunshineService -StartupType Automatic -ErrorAction Stop
+        $service.Refresh()
+        # Start-Service itself waits without a bound in StartPending. Start()
+        # submits the request, leaving our explicit timeout in control.
+        if ($service.Status -eq 'Stopped') { $service.Start() }
+        elseif ($service.Status -notin @('Running', 'StartPending')) { throw 'Sunshine service is stopping or paused; resolve its state before retrying setup.' }
+        $service.WaitForStatus('Running', [timespan]::FromSeconds(30))
+    } finally { $service.Dispose() }
     $health = Get-NativeSunshineHealth
     if (-not $health.Healthy) { throw $health.Detail }
     Write-Host 'Sunshine service is running and starts at Windows boot. Open https://localhost:47990 locally to set credentials and pair Moonlight.'

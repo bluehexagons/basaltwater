@@ -24,10 +24,7 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
         Assert-True ($Name -eq 'SunshineService' -and $StartupType -eq 'Automatic') 'Wrong service or startup selection'
         $script:Calls += 'enable'; $script:Service.StartType = 'Automatic'
     }
-    function Start-Service($Name) {
-        Assert-True ($Name -eq 'SunshineService') 'Wrong service start'
-        $script:Calls += 'start'; $script:Service.Status = 'Running'
-    }
+    function Start-Service { throw 'Unbounded Start-Service was invoked' }
     $script:Admin = $false; $script:InstallFailure = $false; $script:Calls = @(); $script:Service = $null
     Install-NativeSunshine -Plan
     Assert-True ($script:Calls.Count -eq 0) 'Plan changed packages/services'
@@ -37,14 +34,36 @@ function Assert-Throws([scriptblock]$Action, [string]$Pattern) {
     $script:Admin = $true
     Assert-Throws { Install-NativeSunshine } 'did not provide SunshineService'
     $script:Service = [pscustomobject]@{ Status = 'Stopped'; StartType = 'Manual' }
-    $script:Service | Add-Member ScriptMethod WaitForStatus { param($Status, $Timeout) $script:Calls += 'wait' }
+    $script:Disposes = 0; $script:WaitFailure = $false
+    $script:Service | Add-Member ScriptMethod Dispose { $script:Disposes++ }
+    $script:Service | Add-Member ScriptMethod Refresh { }
+    $script:Service | Add-Member ScriptMethod Start { $script:Calls += 'start'; $this.Status = 'StartPending' }
+    $script:Service | Add-Member ScriptMethod WaitForStatus {
+        param($Status, $Timeout)
+        Assert-True ($Status -eq 'Running' -and $Timeout.TotalSeconds -eq 30) 'Service startup timeout was lost'
+        $script:Calls += 'wait'
+        if ($script:WaitFailure) { throw 'service startup timed out' }
+        $this.Status = 'Running'
+    }
     Assert-True (-not (Get-NativeSunshineHealth).Healthy) 'Stopped/manual service was healthy'
     $script:Service.Status = 'Running'
     Assert-True (-not (Get-NativeSunshineHealth).Healthy) 'Running service without startup was healthy'
-    $script:Calls = @()
+    $script:Calls = @(); $script:Service.Status = 'Stopped'
     Install-NativeSunshine
     Assert-True (($script:Calls -join ',') -eq 'winget,install,enable,start,wait') 'Service started before package installation or enablement'
     Assert-True (Get-NativeSunshineHealth).Healthy 'Running automatic service was not healthy'
+    foreach ($state in @('Running', 'StartPending')) {
+        $script:Service.Status = $state; $script:Calls = @()
+        Install-NativeSunshine
+        Assert-True ($script:Calls -notcontains 'start') 'Already running/pending service was started twice'
+    }
+    $script:WaitFailure = $true; $script:Service.Status = 'StartPending'; $script:Calls = @()
+    $beforeDisposes = $script:Disposes
+    Assert-Throws { Install-NativeSunshine } 'service startup timed out'
+    Assert-True ($script:Disposes -eq $beforeDisposes + 1) 'Timed-out service controller was not disposed'
+    $script:Service.Status = 'StopPending'; $script:Calls = @()
+    Assert-Throws { Install-NativeSunshine } 'stopping or paused'
+    Assert-True ($script:Calls -notcontains 'wait') 'Stopping service entered startup wait'
     $script:InstallFailure = $true; $script:Calls = @()
     Assert-Throws { Install-NativeSunshine } 'installer failed'
     Assert-True (($script:Calls -join ',') -eq 'winget,install') 'Failed install continued to service changes'

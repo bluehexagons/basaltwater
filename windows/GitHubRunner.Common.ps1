@@ -130,12 +130,28 @@ namespace Basaltwater {
             public Io Io;
             public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
         }
+        [StructLayout(LayoutKind.Sequential)] struct Accounting {
+            public long UserTime, KernelTime, PeriodUserTime, PeriodKernelTime;
+            public uint PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcesses;
+        }
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         static extern IntPtr CreateJobObject(IntPtr attributes, string name);
         [DllImport("kernel32.dll", SetLastError=true)]
         static extern bool SetInformationJobObject(IntPtr job, int kind, ref Extended info, uint length);
         [DllImport("kernel32.dll", SetLastError=true)]
         static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, uint length, IntPtr returned);
+        [DllImport("kernel32.dll", SetLastError=true, EntryPoint="QueryInformationJobObject")]
+        static extern bool QueryProcessIds(IntPtr job, int kind, IntPtr info, uint length, IntPtr returned);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
         [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
         [DllImport("kernel32.dll", SetLastError=true)]
         static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source,
@@ -153,6 +169,63 @@ namespace Basaltwater {
         public void Dispose() {
             if (handle != IntPtr.Zero) { CloseHandle(handle); handle = IntPtr.Zero; }
             GC.SuppressFinalize(this);
+        }
+        public void TerminateAndWait(int timeoutMilliseconds) {
+            if (timeoutMilliseconds <= 0) throw new ArgumentOutOfRangeException("timeoutMilliseconds");
+            if (handle == IntPtr.Zero) throw new ObjectDisposedException("ProcessJob");
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var processes = new System.Collections.Generic.List<IntPtr>();
+            try {
+                // ActiveProcesses can reach zero before the process handles
+                // become signaled. Retain handles before requesting termination.
+                for (int capacity = 64; ; capacity *= 2) {
+                    if (capacity > 65536 || timer.ElapsedMilliseconds >= timeoutMilliseconds)
+                        throw new TimeoutException("Could not inventory the owned process tree before cleanup");
+                    int size = 8 + capacity * IntPtr.Size;
+                    IntPtr buffer = Marshal.AllocHGlobal(size);
+                    try {
+                        if (!QueryProcessIds(handle, 3, buffer, (uint)size, IntPtr.Zero)) {
+                            int error = Marshal.GetLastWin32Error();
+                            if (error == 234) continue; // ERROR_MORE_DATA: tree grew.
+                            throw new Win32Exception(error);
+                        }
+                        int count = Marshal.ReadInt32(buffer, 4);
+                        for (int index = 0; index < count; index++) {
+                            uint id = (uint)Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt64();
+                            IntPtr process = OpenProcess(0x101000, false, id); // SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+                            if (process == IntPtr.Zero) {
+                                int error = Marshal.GetLastWin32Error();
+                                if (error == 87) continue; // Process already gone.
+                                throw new Win32Exception(error);
+                            }
+                            bool owned;
+                            if (!IsProcessInJob(process, handle, out owned)) {
+                                int error = Marshal.GetLastWin32Error(); CloseHandle(process); throw new Win32Exception(error);
+                            }
+                            if (owned) processes.Add(process); else CloseHandle(process); // PID was reused.
+                        }
+                    } finally { Marshal.FreeHGlobal(buffer); }
+                    break;
+                }
+                if (!TerminateJobObject(handle, 1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                while (true) {
+                    Accounting info;
+                    if (!QueryInformationJobObject(handle, 1, out info, (uint)Marshal.SizeOf(typeof(Accounting)), IntPtr.Zero))
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    if (info.ActiveProcesses == 0) break;
+                    if (timer.ElapsedMilliseconds >= timeoutMilliseconds)
+                        throw new TimeoutException("Owned process tree did not exit before the cleanup deadline");
+                    System.Threading.Thread.Sleep(10);
+                }
+                foreach (IntPtr process in processes) {
+                    long remaining = Math.Max(0, timeoutMilliseconds - timer.ElapsedMilliseconds);
+                    uint result = WaitForSingleObject(process, (uint)remaining);
+                    if (result == 258) throw new TimeoutException("Owned process did not signal exit before the cleanup deadline");
+                    if (result != 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            } finally {
+                foreach (IntPtr process in processes) CloseHandle(process);
+            }
         }
         public static void KeepSlotUntilExit(IntPtr slot, IntPtr worker) {
             IntPtr duplicate;

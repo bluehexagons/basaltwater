@@ -17,6 +17,23 @@ $savedGodot = $env:BASALTWATER_GODOT_EXE
 $savedCapture = $env:BASALTWATER_TEST_CAPTURE; $savedExit = $env:BASALTWATER_TEST_EXIT
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
+    # A later .exe must not override an earlier npm .cmd shim on PATH.
+    $shimDirectory = Join-Path $temporary 'first shim'
+    $exeDirectory = Join-Path $temporary 'later exe'
+    New-Item -ItemType Directory -Path $shimDirectory, $exeDirectory | Out-Null
+    $shim = Join-Path $shimDirectory 'basaltwater-command-fixture.cmd'
+    $executable = Join-Path $exeDirectory 'basaltwater-command-fixture.exe'
+    Set-Content -LiteralPath $shim -Encoding ASCII -Value '@echo off', 'echo selected-shim'
+    Set-Content -LiteralPath $executable -Value 'discovery-only fixture'
+    Set-Content -LiteralPath (Join-Path $shimDirectory 'basaltwater-command-fixture.ps1') -Value "throw 'Must not select a policy-blocked PowerShell shim'"
+    try {
+        $env:PATH = $shimDirectory + ';' + $exeDirectory + ';' + $savedPath
+        $selected = Get-NativeCommand 'basaltwater-command-fixture'
+        Assert-True ($selected -eq $shim) 'A later executable overrode the earlier native command shim'
+        Assert-True ((& $selected) -eq 'selected-shim') 'Selected command did not run through the native shim'
+        $env:PATH = $exeDirectory + ';' + $shimDirectory + ';' + $savedPath
+        Assert-True ((Get-NativeCommand 'basaltwater-command-fixture') -eq $executable) 'Discovery ignored executable PATH priority'
+    } finally { $env:PATH = $savedPath }
     $env:LOCALAPPDATA = Join-Path $temporary ('account with spaces ' + [char]0x03bb)
     $script:Paths = @()
     function Add-NativeUserPath($directory) { $script:Paths += $directory }

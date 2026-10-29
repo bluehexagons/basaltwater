@@ -85,10 +85,43 @@ function Start-NativeT3Desktop([string]$Desktop) {
     Start-Process -FilePath $Desktop -WorkingDirectory $env:USERPROFILE -ErrorAction Stop | Out-Null
 }
 
-function New-NativeT3TaskAction([string]$Command) {
+function Get-NativeT3TaskArguments([string]$Command) {
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
+    return '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
+}
+
+function New-NativeT3TaskAction([string]$Command) {
     return New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-        -Argument ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
+        -Argument (Get-NativeT3TaskArguments $Command)
+}
+
+function Get-NativeT3AccountSid([string]$Account) {
+    if ($Account -match '\AS-1-') { return $Account }
+    return (New-Object Security.Principal.NTAccount($Account)).Translate([Security.Principal.SecurityIdentifier]).Value
+}
+
+function Get-NativeT3LoginHealth([string]$Source) {
+    $owner = Get-NativeCompletionOwner
+    $taskName = 'Basaltwater-T3-Login-' + $owner.User.Value
+    $state = 'failed'
+    try {
+        $task = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+        $worker = Join-Path ([IO.Path]::GetFullPath($Source)) 'windows\Start-T3Desktop.ps1'
+        $expected = Get-NativeT3TaskArguments ("& '" + $worker.Replace("'", "''") + "'")
+        $actions = @($task.Actions); $triggers = @($task.Triggers)
+        if ($task.Settings.Enabled -and $actions.Count -eq 1 -and $triggers.Count -eq 1 -and
+            $task.Principal.LogonType -in @('Interactive', 3) -and $task.Principal.RunLevel -in @('Limited', 0) -and
+            (Get-NativeT3AccountSid $task.Principal.UserId) -eq $owner.User.Value -and
+            $triggers[0].CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and $triggers[0].Enabled -and
+            (Get-NativeT3AccountSid $triggers[0].UserId) -eq $owner.User.Value -and
+            $actions[0].Execute -eq (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -and
+            $actions[0].Arguments -eq $expected -and (Test-Path -LiteralPath $worker -PathType Leaf)) {
+            $state = 'ok'
+        }
+    } catch { $state = 'failed' }
+    $detail = if ($state -eq 'ok') { 'Current-account T3 login task is enabled with the expected hidden helper; the app was not launched.' }
+              else { 'T3 login task is missing, unreadable, disabled or differs from setup. Reapply desktop setup to repair it.' }
+    return [pscustomobject]@{ Name = 't3-login'; State = $state; Command = $taskName; Detail = $detail }
 }
 
 function Set-NativeT3Login([string]$Source) {

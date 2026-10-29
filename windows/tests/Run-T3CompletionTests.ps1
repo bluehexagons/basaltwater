@@ -121,11 +121,14 @@ try {
         function Get-NativeCompletionOwner { return [pscustomobject]@{ Name = 'fixture'; User = [pscustomobject]@{ Value = 'owner' } } }
         function Get-Process($Id) { return [pscustomobject]@{ SessionId = 2 } }
         function Get-NativeT3Roots($Desktop, $OwnerSid) { return @() }
-        function New-ScheduledTaskAction($Execute, $Argument) { return [pscustomobject]@{ Execute = $Execute; Argument = $Argument } }
+        function New-ScheduledTaskAction($Execute, $Argument) { return [pscustomobject]@{ Execute = $Execute; Argument = $Argument; Arguments = $Argument } }
         function New-ScheduledTaskPrincipal($UserId, $LogonType, $RunLevel) { return [pscustomobject]@{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel } }
-        function New-ScheduledTaskTrigger([switch]$AtLogOn, $User) { return [pscustomobject]@{ AtLogOn = [bool]$AtLogOn; User = $User } }
+        function New-ScheduledTaskTrigger([switch]$AtLogOn, $User) {
+            return [pscustomobject]@{ AtLogOn = [bool]$AtLogOn; User = $User; UserId = $User; Enabled = $true;
+                CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskLogonTrigger' } }
+        }
         function New-ScheduledTaskSettingsSet($ExecutionTimeLimit, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) {
-            return [pscustomobject]@{ ExecutionTimeLimit = $ExecutionTimeLimit }
+            return [pscustomobject]@{ ExecutionTimeLimit = $ExecutionTimeLimit; Enabled = $true }
         }
         function Register-ScheduledTask($TaskName, $Action, $Principal, $Settings, $Trigger, [switch]$Force) {
             $script:Registered = [pscustomobject]@{ Name = $TaskName; Action = $Action; Principal = $Principal; Settings = $Settings; Trigger = $Trigger }
@@ -144,6 +147,26 @@ try {
             $script:Registered.Settings.ExecutionTimeLimit -eq [timespan]::Zero) 'Login helper can show a console or terminate its desktop later'
         $loginCommand = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($script:Registered.Action.Argument -split ' ')[-1]))
         Assert-True ($loginCommand.Contains('Start-T3Desktop.ps1') -and $loginCommand.Contains("quote''s")) 'Login worker did not preserve the source path'
+        function Get-NativeT3AccountSid($Account) { return $Account }
+        function Get-ScheduledTask($TaskName, $TaskPath) {
+            Assert-True ($TaskName -eq 'Basaltwater-T3-Login-owner' -and $TaskPath -eq '\') 'Doctor inspected another login task'
+            if ($script:LoginTaskMissing) { throw 'missing task' }
+            return $script:LoginTask
+        }
+        $script:LoginTaskMissing = $false
+        $script:LoginTask = [pscustomobject]@{ Actions = @($script:Registered.Action); Triggers = @($script:Registered.Trigger);
+            Principal = $script:Registered.Principal; Settings = $script:Registered.Settings }
+        Assert-True ((Get-NativeT3LoginHealth $source).State -eq 'ok') 'Managed login task was not healthy'
+        foreach ($scenario in @('missing', 'disabled', 'owner', 'privilege', 'trigger', 'action', 'source')) {
+            $script:LoginTaskMissing = $scenario -eq 'missing'
+            $script:LoginTask.Settings.Enabled = $scenario -ne 'disabled'
+            $script:LoginTask.Principal.UserId = if ($scenario -eq 'owner') { 'other' } else { 'owner' }
+            $script:LoginTask.Principal.RunLevel = if ($scenario -eq 'privilege') { 'Highest' } else { 'Limited' }
+            $script:LoginTask.Triggers[0].UserId = if ($scenario -eq 'trigger') { 'other' } else { 'owner' }
+            $script:LoginTask.Actions[0].Arguments = if ($scenario -eq 'action') { 'wrong action' } else { $script:Registered.Action.Argument }
+            $checkedSource = if ($scenario -eq 'source') { $temporary } else { $source }
+            Assert-True ((Get-NativeT3LoginHealth $checkedSource).State -eq 'failed') "Broken login task reported healthy: $scenario"
+        }
         Queue-NativeT3Completion $source
         Assert-True ($script:Registered.Action.Argument -match '-WindowStyle Hidden') 'Setup completion helper shows a PowerShell window'
         Assert-True ($script:Started -eq $script:Registered.Name -and $script:Registered.Principal.LogonType -eq 'Interactive' -and

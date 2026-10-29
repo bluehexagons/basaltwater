@@ -103,6 +103,7 @@ function Get-NativeWorkstationHealth {
         $desktop = Get-NativeT3Desktop
         $checks.Add([pscustomobject]@{ Name = 't3-desktop'; State = $(if ($desktop) { 'ok' } else { 'missing' });
             Command = $desktop; Detail = 'Desktop executable discovery only; the app was not launched.' })
+        $checks.Add((Get-NativeT3LoginHealth $Saved.Source))
     }
     if ($Saved.PSObject.Properties['StorageRoot'] -and $Saved.StorageRoot) {
         $storageState = 'ok'; $detail = 'Configured storage volume and managed directory paths are valid.'

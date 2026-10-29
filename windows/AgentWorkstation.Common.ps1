@@ -31,10 +31,12 @@ function Add-NativeUserPath([string]$directory) {
 }
 
 function Get-NativeCommand([string]$name) {
-    foreach ($extension in @('.exe', '.cmd')) {
-        $command = Get-Command ($name + $extension) -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($command) { return $command.Source }
-    }
+    # Resolve in PATH order, while excluding npm's policy-blocked .ps1 shims.
+    # Searching every .exe before any .cmd can select an older desktop-bundled
+    # provider over the freshly installed npm command at the front of PATH.
+    $command = Get-Command $name -CommandType Application -All -ErrorAction SilentlyContinue |
+        Where-Object { [IO.Path]::GetExtension($_.Source) -in @('.exe', '.cmd') } | Select-Object -First 1
+    if ($command) { return $command.Source }
     return $null
 }
 
