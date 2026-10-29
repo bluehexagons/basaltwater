@@ -40,7 +40,8 @@ class TestProbeDeadlines(unittest.TestCase):
                 remote_utils.is_service_active("nginx")
 
     def test_probe_timeout_never_becomes_absence_or_triggers_install(self):
-        for probe, value in ((remote_utils.is_package_installed, "curl"), (remote_utils.is_service_active, "nginx"), (remote_utils.user_exists, "agent")):
+        for probe, value in ((remote_utils.is_package_installed, "curl"), (remote_utils.missing_packages, ["curl"]),
+                             (remote_utils.is_service_active, "nginx"), (remote_utils.user_exists, "agent")):
             with self.subTest(probe=probe.__name__), patch.object(remote_utils.subprocess, "run", side_effect=subprocess.TimeoutExpired("probe", 15)) as command, patch.object(remote_utils, "run") as install:
                 with self.assertRaisesRegex(remote_utils.ProbeError, "state is unknown"):
                     remote_utils.install_with_verify("test", ["install"], lambda: probe(value))
@@ -51,6 +52,43 @@ class TestProbeDeadlines(unittest.TestCase):
         with patch.object(remote_utils, "_dry_run", True), patch.object(remote_utils.subprocess, "run", side_effect=FileNotFoundError):
             with self.assertRaises(remote_utils.ProbeError):
                 remote_utils.user_exists("agent")
+
+
+class TestPackageBundles(unittest.TestCase):
+    @patch("lib.remote_utils.subprocess.run")
+    def test_mixed_status_and_missing_names_use_one_query(self, probe):
+        probe.return_value = subprocess.CompletedProcess([], 1,
+            "curl\tinstall ok installed\njq\tdeinstall ok config-files\n")
+        self.assertEqual(remote_utils.missing_packages(["jq", "curl", "absent", "curl"]),
+                         ["jq", "absent"])
+        probe.assert_called_once_with(
+            ["dpkg-query", "-W", "-f=${Package}\t${Status}\\n", "--", "jq", "curl", "absent"],
+            capture_output=True, text=True, timeout=15,
+        )
+
+    @patch("lib.remote_utils.subprocess.run")
+    def test_multiarch_records_accept_an_installed_architecture(self, probe):
+        probe.return_value = subprocess.CompletedProcess([], 0,
+            "libc6\tdeinstall ok config-files\nlibc6\tinstall ok installed\n")
+        self.assertEqual(remote_utils.missing_packages(["libc6"]), [])
+
+    @patch("lib.remote_utils.subprocess.run")
+    def test_empty_bundle_and_invalid_names_never_query(self, probe):
+        self.assertEqual(remote_utils.missing_packages([]), [])
+        with self.assertRaises(ValueError):
+            remote_utils.missing_packages(["curl", "jq;touch /tmp/unwanted"])
+        probe.assert_not_called()
+
+    def test_unknown_state_never_becomes_missing_packages(self):
+        for code, output in (
+            (2, ""), (0, ""), (1, "curl\tunknown status\n"),
+            (0, "unrequested\tinstall ok installed\n"),
+            (1, "curl install ok installed\n"),
+        ):
+            with self.subTest(code=code, output=output), patch.object(
+                remote_utils.subprocess, "run", return_value=subprocess.CompletedProcess([], code, output),
+            ), self.assertRaises(remote_utils.ProbeError):
+                remote_utils.missing_packages(["curl"])
 
 
 class TestDryRun(unittest.TestCase):

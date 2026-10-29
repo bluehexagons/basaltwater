@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import os
 from pathlib import Path
 import shlex
@@ -24,7 +25,7 @@ RUNTIME_MARKERS = {
 }
 
 
-def source_has_marker(source_path: str, markers: set[str]) -> bool:
+def _source_markers(source_path: str, markers: set[str]) -> Iterator[str]:
     validate_filesystem_path(source_path, must_exist=True)
     if not os.path.isdir(source_path) or os.path.islink(source_path):
         raise ValueError("Build source must be a directory without links")
@@ -36,10 +37,25 @@ def source_has_marker(source_path: str, markers: set[str]) -> bool:
     for current, directories, filenames in os.walk(source_path, onerror=failed):
         directories[:] = [name for name in directories if name not in ignored
                           and not os.path.islink(os.path.join(current, name))]
-        if any(name in markers and os.path.isfile(os.path.join(current, name))
-               and not os.path.islink(os.path.join(current, name)) for name in filenames):
-            return True
-    return False
+        for name in markers.intersection(filenames):
+            path = os.path.join(current, name)
+            if os.path.isfile(path) and not os.path.islink(path):
+                yield name
+
+
+def source_has_marker(source_path: str, markers: set[str]) -> bool:
+    return next(_source_markers(source_path, markers), None) is not None
+
+
+def source_runtimes(source_path: str) -> list[str]:
+    """Infer all supported runtimes in one fresh traversal of the source tree."""
+    runtime_by_marker = {marker: name for name, markers in RUNTIME_MARKERS.items() for marker in markers}
+    found: set[str] = set()
+    for marker in _source_markers(source_path, set(runtime_by_marker)):
+        found.add(runtime_by_marker[marker])
+        if len(found) == len(RUNTIME_MARKERS):
+            break
+    return [name for name in RUNTIME_MARKERS if name in found]
 
 
 def node_cli() -> list[str]:

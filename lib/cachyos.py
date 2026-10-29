@@ -82,7 +82,7 @@ def cachyos_config_from_args(
             continue
         if value != defaults.get(name) and value is not None and value is not False:
             raise ValueError(f"agent_cachyos does not support setup option {name!r}")
-    copied = _default_args()
+    copied = _default_args() if for_remote else argparse.Namespace(**defaults)
     for name in _OPTIONS:
         if hasattr(args, name) and (
             name in {"install_ssh", "ssh_password_auth", "ssh_password_window"}

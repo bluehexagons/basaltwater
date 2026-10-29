@@ -39,6 +39,9 @@ under its unprivileged identity.
 manifest. Explicit `build_runtimes`, including `[]`, overrides shared source
 marker inference. Otherwise the controller freezes the inferred tools from the
 pinned checkout and the worker repeats that inference on verified source.
+Each inference collects Go, Node and Python markers in one fresh source-tree
+traversal, excluding dependency directories and symlinks. It propagates traversal
+errors rather than claiming a missing runtime from unreadable source.
 Installed tools and policy grants are checked before execution. Ready-to-serve
 outputs without commands need no declared compiler.
 

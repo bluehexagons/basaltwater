@@ -4,12 +4,14 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from lib.build_manifest import (
     DEBIAN_PLATFORM, check_tool_readiness, request_from_manifest,
     required_tools, validate_manifest_request,
 )
 from lib.project_manifest import parse_manifest
+from lib import project_build_tools
 from tests.test_build_protocol import build_request
 
 
@@ -108,6 +110,44 @@ class BuildManifestTests(unittest.TestCase):
             (Path(external) / "package.json").write_text('{}')
             (root / "linked").symlink_to(external, target_is_directory=True)
             self.assertEqual(required_tools(manifest, source_path=source), [])
+
+    def test_runtime_inference_walks_once_and_keeps_each_observation_fresh(self):
+        manifest = self.manifest()
+        manifest.build_runtimes = None
+        with tempfile.TemporaryDirectory() as source:
+            root = Path(source)
+            for paths, expected in (
+                ([], []),
+                (["frontend/package.json"], ["node"]),
+                (["backend/go.mod", "scripts/pyproject.toml"], ["go", "node", "python"]),
+            ):
+                for relative in paths:
+                    marker = root / relative
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text("")
+                with self.subTest(expected=expected), patch.object(
+                    project_build_tools.os, "walk", wraps=project_build_tools.os.walk,
+                ) as walk:
+                    self.assertEqual(required_tools(manifest, source_path=source), expected)
+                    walk.assert_called_once()
+
+    def test_marker_discovery_preserves_link_and_walk_error_guards(self):
+        with tempfile.TemporaryDirectory() as source:
+            root = Path(source)
+            (root / "regular").write_text("")
+            (root / "package.json").symlink_to(root / "regular")
+            self.assertFalse(project_build_tools.source_has_marker(source, {"package.json"}))
+            self.assertEqual(project_build_tools.source_runtimes(source), [])
+            (root / "linked-root").symlink_to(root, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "without links"):
+                project_build_tools.source_runtimes(str(root / "linked-root"))
+
+            def fail_walk(_path, *, onerror):
+                onerror(PermissionError("fixture directory is unreadable"))
+
+            with patch.object(project_build_tools.os, "walk", side_effect=fail_walk), \
+                    self.assertRaises(PermissionError):
+                project_build_tools.source_runtimes(source)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ import shlex
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -25,6 +25,7 @@ from common.common_steps import (
     generate_ssh_key,
     install_av_tools,
     install_cli_tools,
+    install_control_plane_tools,
     install_data_analysis_tools,
     install_gl_tools,
     update_and_upgrade_packages,
@@ -283,13 +284,11 @@ class TestDevelopmentToolPackages(unittest.TestCase):
         self.assertTrue(set(CLI_TOOL_PACKAGES).isdisjoint(GL_TOOL_PACKAGES))
 
     @patch("common.common_steps.run")
-    @patch("common.common_steps.is_package_installed")
+    @patch("common.common_steps.missing_packages")
     def test_cli_installer_requests_every_missing_baseline_package(
-        self, mock_is_installed, mock_run
+        self, mock_missing, mock_run
     ):
-        mock_is_installed.side_effect = (
-            [False] * len(CLI_TOOL_PACKAGES) + [True] * len(CLI_TOOL_PACKAGES)
-        )
+        mock_missing.side_effect = [list(CLI_TOOL_PACKAGES), []]
         mock_run.return_value = MagicMock(returncode=0)
 
         install_cli_tools(
@@ -303,14 +302,11 @@ class TestDevelopmentToolPackages(unittest.TestCase):
                 self.assertIn(f" {package}", command)
 
     @patch("common.common_steps.run")
-    @patch("common.common_steps.is_package_installed")
+    @patch("common.common_steps.missing_packages")
     def test_data_analysis_installer_requests_only_opt_in_bundle(
-        self, mock_is_installed, mock_run
+        self, mock_missing, mock_run
     ):
-        mock_is_installed.side_effect = (
-            [False] * len(DATA_ANALYSIS_PACKAGES)
-            + [True] * len(DATA_ANALYSIS_PACKAGES)
-        )
+        mock_missing.side_effect = [list(DATA_ANALYSIS_PACKAGES), []]
         mock_run.return_value = MagicMock(returncode=0)
 
         install_data_analysis_tools(
@@ -331,13 +327,11 @@ class TestDevelopmentToolPackages(unittest.TestCase):
                 self.assertNotIn(f" {package}", command)
 
     @patch("common.common_steps.run")
-    @patch("common.common_steps.is_package_installed")
+    @patch("common.common_steps.missing_packages")
     def test_av_installer_requests_only_opt_in_bundle(
-        self, mock_is_installed, mock_run
+        self, mock_missing, mock_run
     ):
-        mock_is_installed.side_effect = (
-            [False] * len(AV_TOOL_PACKAGES) + [True] * len(AV_TOOL_PACKAGES)
-        )
+        mock_missing.side_effect = [list(AV_TOOL_PACKAGES), []]
         mock_run.return_value = MagicMock(returncode=0)
 
         install_av_tools(
@@ -358,13 +352,11 @@ class TestDevelopmentToolPackages(unittest.TestCase):
                 self.assertNotIn(f" {package}", command)
 
     @patch("common.common_steps.run")
-    @patch("common.common_steps.is_package_installed")
+    @patch("common.common_steps.missing_packages")
     def test_gl_installer_requests_only_opt_in_bundle(
-        self, mock_is_installed, mock_run
+        self, mock_missing, mock_run
     ):
-        mock_is_installed.side_effect = (
-            [False] * len(GL_TOOL_PACKAGES) + [True] * len(GL_TOOL_PACKAGES)
-        )
+        mock_missing.side_effect = [list(GL_TOOL_PACKAGES), []]
         mock_run.return_value = MagicMock(returncode=0)
 
         install_gl_tools(
@@ -384,24 +376,47 @@ class TestDevelopmentToolPackages(unittest.TestCase):
             with self.subTest(default_package=package):
                 self.assertNotIn(f" {package}", command)
 
-    @patch("common.common_steps.run")
-    @patch("common.common_steps.is_package_installed")
-    def test_cli_installer_fails_when_a_package_remains_missing(
-        self, mock_is_installed, mock_run
-    ):
-        mock_is_installed.side_effect = (
-            [False] * len(CLI_TOOL_PACKAGES) + [False] * len(CLI_TOOL_PACKAGES)
-        )
-        mock_run.return_value = MagicMock(returncode=100)
+    def test_bundle_installs_only_missing_packages_and_observes_them_again(self):
+        config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
+        for installer, packages in (
+            (install_cli_tools, CLI_TOOL_PACKAGES),
+            (install_control_plane_tools, CONTROL_PLANE_PACKAGES),
+            (install_data_analysis_tools, DATA_ANALYSIS_PACKAGES),
+            (install_av_tools, AV_TOOL_PACKAGES),
+            (install_gl_tools, GL_TOOL_PACKAGES),
+        ):
+            with self.subTest(installer=installer.__name__), \
+                    patch("common.common_steps.missing_packages", side_effect=[[packages[0]], []]) as probe, \
+                    patch("common.common_steps.run", return_value=MagicMock(returncode=0)) as run:
+                installer(config)
+                self.assertEqual(probe.call_args_list, [call(packages), call([packages[0]])])
+                self.assertEqual(shlex.split(run.call_args.args[0])[-1:], [packages[0]])
+                run.assert_called_once()
 
-        with self.assertRaisesRegex(RuntimeError, "CLI tool installation failed"):
-            install_cli_tools(
-                SetupConfig(
-                    host="testhost",
-                    username="agent",
-                    system_type="agent_vm",
-                )
-            )
+    def test_bundle_failure_is_fatal_for_both_apt_errors_and_incomplete_installation(self):
+        config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
+        for code, missing, remaining in (
+            (100, list(CLI_TOOL_PACKAGES), list(CLI_TOOL_PACKAGES)),
+            (100, ["jq"], []),
+            (0, ["jq"], ["jq"]),
+        ):
+            with self.subTest(code=code), \
+                    patch("common.common_steps.missing_packages", side_effect=[missing, remaining]), \
+                    patch("common.common_steps.run", return_value=MagicMock(returncode=code)), \
+                    self.assertRaisesRegex(RuntimeError, "CLI tool installation failed:") as raised:
+                install_cli_tools(config)
+            self.assertTrue(str(raised.exception).endswith(", ".join(remaining or missing)))
+
+    def test_installed_bundles_and_previews_do_not_run_apt(self):
+        config = SetupConfig(host="testhost", username="agent", system_type="agent_vm")
+        for preview in (False, True):
+            with self.subTest(preview=preview), \
+                    patch("common.common_steps.is_dry_run", return_value=preview), \
+                    patch("common.common_steps.missing_packages", return_value=[]) as probe, \
+                    patch("common.common_steps.run") as run:
+                install_cli_tools(config)
+                run.assert_not_called()
+                self.assertEqual(probe.call_count, int(not preview))
 
 
 class TestUserCommandEnvironment(unittest.TestCase):

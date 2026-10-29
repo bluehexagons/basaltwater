@@ -193,8 +193,10 @@ class TestNodeSetup(unittest.TestCase):
             common_steps.install_node(config)
 
         commands = [args[0] for args, _ in mock_run.call_args_list]
-        self.assertIn("chown -R user:user /home/user/.nvm", commands)
-        self.assertIn("chown -R user:user /home/user/.npm", commands)
+        self.assertEqual(commands.count("chown -R user:user /home/user/.nvm"), 1)
+        self.assertEqual(commands.count("chown -R user:user /home/user/.npm"), 1)
+        self.assertEqual(commands[:2], ["chown -R user:user /home/user/.nvm",
+                                        "chown -R user:user /home/user/.npm"])
         self.assertTrue(any("HOME=/home/user USER=user LOGNAME=user" in command and "nvm --version" in command for command in commands))
         self.assertFalse(any("apt-get install" in command for command in commands))
         shell_env.assert_called_once_with("user", "/home/user")

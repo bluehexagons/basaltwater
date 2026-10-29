@@ -80,6 +80,12 @@ add up to two five-second grace periods. Keyboard interruption also terminates
 the isolated group before cancellation propagates. A detached process that
 creates its own session needs caller-specific supervision.
 
+Use `lib.remote_utils.missing_packages()` for Debian package bundles. It validates
+the names and observes the bundle with one bounded `dpkg-query`, preserving
+unknown-state errors. Query again after installation; package observations must
+not be cached across mutations. Shared development bundles use
+`common.common_steps._install_tool_packages()` for that before/after contract.
+
 Inventory direct calls without running setup code:
 
 ```bash

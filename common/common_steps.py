@@ -11,7 +11,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
-from typing import Optional
+from typing import Optional, Sequence
 
 from lib.atomic_io import write_text_atomic
 from lib.maintenance_systemd import configure_maintenance_timer
@@ -28,6 +28,7 @@ from lib.remote_utils import (
     install_package,
     is_dry_run,
     is_package_installed,
+    missing_packages,
     get_user_home,
     run,
 )
@@ -590,28 +591,30 @@ def configure_time_sync(config: SetupConfig) -> None:
     print(f"  ✓ Time synchronization configured (chrony, timezone: {tz})")
 
 
-def install_cli_tools(config: SetupConfig) -> None:
-    """Install the small command-line baseline shared by development profiles."""
-
-    del config
-    missing = [
-        package for package in CLI_TOOL_PACKAGES if not is_package_installed(package)
-    ]
+def _install_tool_packages(packages: Sequence[str], label: str) -> None:
+    """Share bundle installation while observing fresh state on each side of APT."""
+    if is_dry_run():
+        print(f"  [DRY-RUN] Would install {label} tools: {', '.join(packages)}")
+        return
+    missing = missing_packages(packages)
     if not missing:
-        print("  ✓ CLI tools already installed")
+        print(f"  ✓ {label} tools already installed")
         return
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     package_args = " ".join(shlex.quote(package) for package in missing)
     result = run(f"{_APT_GET} install -y -qq {package_args}", check=False)
-    remaining = [
-        package for package in missing if not is_package_installed(package)
-    ]
+    remaining = missing_packages(missing)
     if result.returncode != 0 or remaining:
         failed = ", ".join(remaining or missing)
-        raise RuntimeError(f"CLI tool installation failed: {failed}")
+        raise RuntimeError(f"{label} tool installation failed: {failed}")
 
-    print(f"  ✓ Installed CLI tools: {', '.join(missing)}")
+    print(f"  ✓ Installed {label} tools: {', '.join(missing)}")
+
+
+def install_cli_tools(config: SetupConfig) -> None:
+    """Install the small command-line baseline shared by development profiles."""
+    _install_tool_packages(CLI_TOOL_PACKAGES, "CLI")
 
 
 def ensure_python_alias(config: SetupConfig) -> str | None:
@@ -656,72 +659,17 @@ def ensure_python_alias(config: SetupConfig) -> str | None:
 
 def install_data_analysis_tools(config: SetupConfig) -> None:
     """Install the opt-in Python data-analysis and notebook bundle."""
-
-    del config
-    missing = [
-        package
-        for package in DATA_ANALYSIS_PACKAGES
-        if not is_package_installed(package)
-    ]
-    if not missing:
-        print("  ✓ Data-analysis tools already installed")
-        return
-
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    package_args = " ".join(shlex.quote(package) for package in missing)
-    result = run(f"{_APT_GET} install -y -qq {package_args}", check=False)
-    remaining = [
-        package for package in missing if not is_package_installed(package)
-    ]
-    if result.returncode != 0 or remaining:
-        failed = ", ".join(remaining or missing)
-        raise RuntimeError(f"Data-analysis tool installation failed: {failed}")
-
-    print(f"  ✓ Installed data-analysis tools: {', '.join(missing)}")
+    _install_tool_packages(DATA_ANALYSIS_PACKAGES, "Data-analysis")
 
 
 def install_av_tools(config: SetupConfig) -> None:
     """Install the opt-in image, audio, and video processing bundle."""
-
-    del config
-    missing = [
-        package for package in AV_TOOL_PACKAGES if not is_package_installed(package)
-    ]
-    if not missing:
-        print("  ✓ AV tools already installed")
-        return
-
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    package_args = " ".join(shlex.quote(package) for package in missing)
-    result = run(f"{_APT_GET} install -y -qq {package_args}", check=False)
-    remaining = [package for package in missing if not is_package_installed(package)]
-    if result.returncode != 0 or remaining:
-        failed = ", ".join(remaining or missing)
-        raise RuntimeError(f"AV tool installation failed: {failed}")
-
-    print(f"  ✓ Installed AV tools: {', '.join(missing)}")
+    _install_tool_packages(AV_TOOL_PACKAGES, "AV")
 
 
 def install_gl_tools(config: SetupConfig) -> None:
     """Install the opt-in OpenGL inspection and debugging bundle."""
-
-    del config
-    missing = [
-        package for package in GL_TOOL_PACKAGES if not is_package_installed(package)
-    ]
-    if not missing:
-        print("  ✓ OpenGL tools already installed")
-        return
-
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    package_args = " ".join(shlex.quote(package) for package in missing)
-    result = run(f"{_APT_GET} install -y -qq {package_args}", check=False)
-    remaining = [package for package in missing if not is_package_installed(package)]
-    if result.returncode != 0 or remaining:
-        failed = ", ".join(remaining or missing)
-        raise RuntimeError(f"OpenGL tool installation failed: {failed}")
-
-    print(f"  ✓ Installed OpenGL tools: {', '.join(missing)}")
+    _install_tool_packages(GL_TOOL_PACKAGES, "OpenGL")
 
 
 CONTROL_PLANE_PACKAGES = (
@@ -759,35 +707,7 @@ CONTROL_PLANE_PACKAGES = (
 
 def install_control_plane_tools(config: SetupConfig) -> None:
     """Install common Debian administrator and Linux control-plane tools."""
-    if is_dry_run():
-        print(
-            "  [DRY-RUN] Would install control-plane tools: "
-            f"{', '.join(CONTROL_PLANE_PACKAGES)}"
-        )
-        return
-
-    missing = [
-        package
-        for package in CONTROL_PLANE_PACKAGES
-        if not is_package_installed(package)
-    ]
-    if not missing:
-        print("  ✓ Control-plane administrator tools already installed")
-        return
-
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    package_args = " ".join(shlex.quote(package) for package in missing)
-    result = run(f"{_APT_GET} install -y -qq {package_args}", check=False)
-    remaining = [
-        package
-        for package in missing
-        if not is_package_installed(package)
-    ]
-    if result.returncode != 0 or remaining:
-        failed = ", ".join(remaining or missing)
-        raise RuntimeError(f"Control-plane tool installation failed: {failed}")
-
-    print(f"  ✓ Installed control-plane tools: {', '.join(missing)}")
+    _install_tool_packages(CONTROL_PLANE_PACKAGES, "Control-plane")
 
 
 def check_restart_required(config: SetupConfig) -> None:
@@ -1109,7 +1029,6 @@ def install_node_for_user(
             f"{nvm_env} && nvm --version",
             check=False,
         )
-        _chown_existing_paths(username, _user_tool_paths(user_home))
         if verify_result.returncode == 0:
             print("  ✓ nvm already installed")
         else:

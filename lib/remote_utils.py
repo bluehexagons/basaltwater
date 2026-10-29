@@ -489,6 +489,34 @@ def is_package_installed(package: str) -> bool:
     return result.returncode == 0 and "install ok installed" in result.stdout
 
 
+def missing_packages(packages: Sequence[str]) -> list[str]:
+    """Observe a package bundle in one query, without caching across mutations."""
+    requested = list(dict.fromkeys(validate_package_name(package) for package in packages))
+    if not requested:
+        return []
+    result = _probe(["dpkg-query", "-W", "-f=${Package}\t${Status}\\n", "--", *requested])
+    observed: set[str] = set()
+    installed: set[str] = set()
+    requested_names = set(requested)
+    for line in result.stdout.splitlines():
+        package, separator, status = line.partition("\t")
+        if not separator or package not in requested_names or not re.fullmatch(
+            r"(?:unknown|install|hold|deinstall|purge) (?:ok|reinstreq) "
+            r"(?:not-installed|config-files|half-installed|unpacked|half-configured|"
+            r"triggers-awaited|triggers-pending|installed)", status,
+        ):
+            raise ProbeError("System state is unknown: dpkg-query returned malformed package status")
+        observed.add(package)
+        # ${Package} omits architecture qualifiers. A multiarch package can
+        # have multiple records; preserve the single-package probe's any-match
+        # behavior when at least one architecture is fully installed.
+        if status == "install ok installed":
+            installed.add(package)
+    if result.returncode == 0 and observed != requested_names:
+        raise ProbeError("System state is unknown: dpkg-query returned incomplete package status")
+    return [package for package in requested if package not in installed]
+
+
 def install_with_verify(
     name: str,
     install_cmd: Command,

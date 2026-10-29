@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from lib.build_protocol import DEFAULT_LIMITS, parse_build_request
 from lib.project_manifest import Manifest, artifact_paths
-from lib.project_build_tools import RUNTIME_MARKERS, source_has_marker
+from lib.project_build_tools import source_runtimes
 
 
 DEBIAN_PLATFORM = {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"}
@@ -47,8 +47,7 @@ def required_tools(manifest: Manifest, *, source_path: str | None = None) -> lis
         if any(item.build for item in manifest.components):
             if source_path is None:
                 raise ValueError("Runtime inference requires pinned source_path or explicit build_runtimes")
-            return [name for name, markers in RUNTIME_MARKERS.items()
-                    if source_has_marker(source_path, markers)]
+            return source_runtimes(source_path)
         return []
     tools = manifest.build_runtimes
     if (not isinstance(tools, list) or len(tools) > 3
