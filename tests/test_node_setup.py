@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -50,7 +51,7 @@ class TestNodeSetup(unittest.TestCase):
         baseline_versions = iter(("v22.23.4", "v24.22.1"))
 
         def command(_username, _home, script, **kwargs):
-            version = next(baseline_versions) if "pnpm --version" in script else ""
+            version = next(baseline_versions) if "subprocess.run" in script else ""
             return SimpleNamespace(returncode=0, stdout=version, stderr="")
 
         with patch.object(common_steps.os.path, "exists", return_value=True), \
@@ -65,6 +66,36 @@ class TestNodeSetup(unittest.TestCase):
         self.resolve.assert_called_once_with("lts/*")
         self.assertIn("libstdc++6 libatomic1", host_run.call_args.args[0])
         self.assertFalse(any("nvm uninstall" in command or "rm " in command for command in commands))
+
+    def test_baseline_rejects_pnpm_shell_fallback_that_processes_cannot_execute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            bin_dir = home / "bin"
+            bin_dir.mkdir()
+            nvm = home / "nvm.sh"
+            nvm.write_text(
+                "nvm() { :; }\nnode() { echo v24.22.1; }\nnpm() { :; }\n"
+            )
+            pnpm = bin_dir / "pnpm"
+
+            def execute(_username, _home, command, **options):
+                return subprocess.run(
+                    ["/bin/bash", "--noprofile", "--norc", "-c", command],
+                    env={"HOME": directory, "PATH": str(bin_dir) + os.pathsep + os.defpath},
+                    cwd=directory, text=True, capture_output=True, timeout=10,
+                    check=options.get("check", True),
+                )
+
+            with patch.object(common_steps, "_run_as_login_user", side_effect=execute):
+                for header, status, accepted in (
+                    ("", 0, False), ("#!/bin/sh\n", 0, True), ("#!/bin/sh\n", 1, False),
+                ):
+                    with self.subTest(header=header, status=status):
+                        pnpm.write_text(header + f"echo 12.14.0\nexit {status}\n")
+                        pnpm.chmod(0o755)
+                        self.assertEqual(common_steps._node_baseline_is_usable(
+                            "user", directory, ". " + shlex.quote(str(nvm)),
+                        ), accepted)
 
     def test_t3_node_directory_checks_the_selected_executable_version(self):
         from common import t3code_steps
@@ -133,6 +164,8 @@ class TestNodeSetup(unittest.TestCase):
         npm_commands = [command for command in commands if "npm install -g" in command]
         self.assertEqual(len(npm_commands), 2)
         self.assertTrue(all("--before=" in command for command in npm_commands))
+        pnpm_command = next(command for command in npm_commands if "npm install -g pnpm" in command)
+        self.assertIn("--ignore-scripts=false --allow-scripts=pnpm", pnpm_command)
         self.assertTrue(all("HOME=/home/user USER=user LOGNAME=user" in command for command in npm_commands))
         self.assertTrue(any("vendor_installer.py nvm --accept-vendor-channel" in command for command in commands))
         shell_env.assert_called_once_with("user", "/home/user")
@@ -187,7 +220,7 @@ class TestNodeSetup(unittest.TestCase):
         baseline_checks = {"count": 0}
 
         def run_command(command: str, *args, **kwargs):
-            if "pnpm --version" in command:
+            if "subprocess.run" in command:
                 baseline_checks["count"] += 1
                 return SimpleNamespace(
                     returncode=1 if baseline_checks["count"] == 1 else 0,
@@ -210,7 +243,10 @@ class TestNodeSetup(unittest.TestCase):
 
         commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertTrue(any("nvm install v24.22.1" in command for command in commands))
-        self.assertTrue(any("npm install -g pnpm" in command for command in commands))
+        self.assertTrue(any(
+            "npm install -g pnpm --ignore-scripts=false --allow-scripts=pnpm" in command
+            for command in commands
+        ))
         self.assertEqual(baseline_checks["count"], 2)
         self.assertFalse(any("command -v pnpm" in command for command in commands))
 
@@ -233,7 +269,7 @@ class TestNodeSetup(unittest.TestCase):
 
         def run_command(command: str, *args, **kwargs):
             return SimpleNamespace(
-                returncode=1 if "pnpm --version" in command else 0,
+                returncode=1 if "subprocess.run" in command else 0,
                 stdout="",
                 stderr="",
             )
@@ -252,6 +288,10 @@ class TestNodeSetup(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "could not verify the refreshed"),
         ):
             common_steps.install_node(config)
+        self.assertTrue(any(
+            "npm install -g pnpm --ignore-scripts=false --allow-scripts=pnpm" in call.args[0]
+            for call in mock_run.call_args_list
+        ))
 
     @patch("common.common_steps.open", new_callable=mock_open, read_data='export NVM_DIR="$HOME/.nvm"\n')
     @patch("common.common_steps.os.path.exists")

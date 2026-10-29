@@ -17,6 +17,10 @@ independently. An unselected toolchain is informational; a broken baseline is
 unhealthy. `node_pnpm_missing` means the promised `--node` baseline is broken,
 not that pnpm is optional. Rerun the saved setup to repair and verify Node,
 npm, and pnpm together; do not install a separate package manager ad hoc.
+For pnpm 12, a skipped native installer can leave a shell fallback that prints
+a version in Bash but fails direct process launches with `Exec format error`.
+Setup allows only pnpm's own install scripts and verifies direct execution;
+update Basaltwater before rerunning setup to repair that state.
 
 Debian `--game-dev` selects compilers, build/debug tools, and native dependency
 headers without installing a desktop or distro SDL. The `native` inventory

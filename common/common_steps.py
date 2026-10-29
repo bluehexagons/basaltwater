@@ -65,6 +65,9 @@ _USER_TOOL_SHELL_ENV_RELATIVE_PATH = (
 )
 _USER_TOOL_SHELL_MARKER = "# basaltwater user tool environment"
 _PYTHON_ALIAS_PATH = "/usr/local/bin/python"
+# pnpm 12 replaces a shell fallback with its native executable during install.
+# npm 12 requires explicit approval of that package's lifecycle scripts.
+_PNPM_INSTALL_COMMAND = "npm install -g pnpm --ignore-scripts=false --allow-scripts=pnpm"
 _USER_TOOL_SHELL_ENV = '''# Managed by basaltwater for interactive and agent shells.
 case ":$PATH:" in
     *":$HOME/.opencode/bin:"*) ;;
@@ -1060,13 +1063,17 @@ def _node_baseline_is_usable(
     user_home: str,
     nvm_env: str,
 ) -> bool:
-    """Require a maintained nvm default and working npm/pnpm commands."""
+    """Require a maintained nvm default and directly executable npm/pnpm."""
     nvm_default_env = f"{nvm_env} && nvm use default >/dev/null"
+    pnpm_probe = shlex.quote(
+        "import subprocess; subprocess.run(['pnpm', '--version'], check=True)"
+    )
     result = _run_as_login_user(
         username,
         user_home,
         f"{nvm_default_env} && node --version && "
-        "npm --version >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1",
+        "npm --version >/dev/null 2>&1 && "
+        f"python3 -c {pnpm_probe} >/dev/null 2>&1",
         check=False,
         capture_output=True,
     )
@@ -1127,7 +1134,7 @@ def install_node_for_user(
             _run_as_login_user(
                 username,
                 user_home,
-                f"{nvm_target_env} && npm install -g pnpm{npm_freshness_suffix}",
+                f"{nvm_target_env} && {_PNPM_INSTALL_COMMAND}{npm_freshness_suffix}",
             )
             _chown_existing_paths(username, _user_tool_paths(user_home))
             if not _node_baseline_is_usable(username, user_home, nvm_env):
@@ -1156,7 +1163,7 @@ def install_node_for_user(
         _run_as_login_user(
             username,
             user_home,
-            f"{nvm_target_env} && npm install -g pnpm{npm_freshness_suffix}",
+            f"{nvm_target_env} && {_PNPM_INSTALL_COMMAND}{npm_freshness_suffix}",
         )
         _chown_existing_paths(username, _user_tool_paths(user_home))
         if not _node_baseline_is_usable(username, user_home, nvm_env):
@@ -1204,7 +1211,7 @@ def install_node_for_user(
     _run_as_login_user(
         username,
         user_home,
-        f"{nvm_target_env} && npm install -g pnpm{npm_freshness_suffix}",
+        f"{nvm_target_env} && {_PNPM_INSTALL_COMMAND}{npm_freshness_suffix}",
     )
     
     _ensure_nvm_shell_init(username, user_home)

@@ -130,6 +130,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_install*.py",
         "tests/test_legacy_deployment.py",
         "tests/test_manifest_deploy.py",
+        "tests/test_node_setup.py",
         "tests/test_orchestrator_bootstrap.py",
         "tests/test_python_setup.py",
         "tests/test_release_management.py",
