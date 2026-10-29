@@ -17,12 +17,16 @@ class ResourceBusyError(RuntimeError):
     """Raised when another process owns a requested controller resource."""
 
 
+class ResourceLockSafetyError(RuntimeError):
+    """Raised when a controller lock path has unsafe ownership or file type."""
+
+
 def _lock_root() -> str:
     path = os.path.join(tempfile.gettempdir(), f"basaltwater-locks-{os.getuid()}")
     os.makedirs(path, mode=0o700, exist_ok=True)
     info = os.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise RuntimeError(f"Unsafe basaltwater lock directory: {path}")
+        raise ResourceLockSafetyError(f"Unsafe basaltwater lock directory: {path}")
     return path
 
 
@@ -57,7 +61,7 @@ def resource_lock(
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            raise RuntimeError(f"Unsafe basaltwater lock file: {path}")
+            raise ResourceLockSafetyError(f"Unsafe basaltwater lock file: {path}")
         operation = fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB)
         try:
             fcntl.flock(descriptor, operation)

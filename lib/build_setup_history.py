@@ -16,7 +16,7 @@ from typing import Any
 
 from lib.atomic_io import rename_path_durable, write_json_atomic
 from lib.build_protocol import encode_document
-from lib.concurrency import ResourceBusyError, resource_lock
+from lib.concurrency import ResourceBusyError, ResourceLockSafetyError, resource_lock
 from lib.build_setup_recovery import (
     BuildSetupInspectionError, MAX_PREPARED_BYTES, MAX_REPORT_BYTES, MAX_STATE_BYTES,
     _APP_PHASES, _Evidence, _applications, _fields, _hex, _identity, _operation,
@@ -164,7 +164,17 @@ def maintain_completed_setup(journal_path: str | os.PathLike[str], attempt_id: s
                 return report
             if report["revision"] != expected_revision:
                 raise BuildSetupHistoryError("revision_changed")
-            stack.enter_context(resource_lock("setup-target", state["host_name"]))
+            host_name = state["host_name"]
+            # Discover the resource without reversing public setup's lock
+            # order. Then reacquire resource -> setup -> delivery and recheck
+            # all evidence before the first mutation.
+            stack.close()
+            stack.enter_context(resource_lock("setup-target", host_name.lower().rstrip(".")))
+            evidence = _Evidence(stack)
+            report, state = _inspect(evidence, journal_path, attempt_id)
+            evidence.verify()
+            if report["revision"] != expected_revision or state["host_name"] != host_name:
+                raise BuildSetupHistoryError("revision_changed")
             host, attempt = state["host"], state["attempt"]
             archived_name = ARCHIVE_PREFIX + attempt_id
             if state["legacy"]:
@@ -195,6 +205,8 @@ def maintain_completed_setup(journal_path: str | os.PathLike[str], attempt_id: s
         raise
     except ResourceBusyError:
         raise BuildSetupHistoryError("busy") from None
+    except ResourceLockSafetyError:
+        raise BuildSetupHistoryError() from None
     except BuildSetupInspectionError as error:
         raise BuildSetupHistoryError(error.code) from None
     except OSError:

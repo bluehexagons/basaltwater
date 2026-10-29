@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
 import fcntl
 import hashlib
@@ -16,7 +17,7 @@ from unittest.mock import patch
 
 from lib import build_setup_history as history
 from lib.build_protocol import encode_document
-from lib.concurrency import resource_lock
+from lib.concurrency import resource_lock, resource_lock_path
 from lib.operation_state import OperationStateStore
 from tests.test_build_delivery import BuildDeliveryFixture
 
@@ -34,9 +35,7 @@ class BuildSetupHistoryTests(BuildDeliveryFixture, unittest.TestCase):
         self.attempt = self.host_root / ("a" * 32)
         self.attempt.mkdir(mode=0o700)
         self.journal = self.host_root / "setup.json"
-        locks = self.root / "locks"
-        locks.mkdir(mode=0o700)
-        self.enterContext(patch("lib.concurrency._lock_root", return_value=str(locks)))
+        self.enterContext(patch("lib.concurrency.tempfile.gettempdir", return_value=str(self.root)))
         prepared = {"schema": 1, "plans": [dict(asdict(plan), source_path=str(plan.source_path)) for plan in self.plans]}
         self.write(self.attempt / "prepared.json", prepared)
         context = {"schema": 1, "host": self.host, "builder": "builder.example", "attempt": str(self.attempt),
@@ -108,6 +107,52 @@ class BuildSetupHistoryTests(BuildDeliveryFixture, unittest.TestCase):
         self.assert_refused("revision_changed", "f" * 64)
         with resource_lock("setup-target", self.host):
             self.assert_refused("busy", report["revision"])
+        self.assertTrue(self.attempt.is_dir())
+        self.assertFalse(self.archived.exists())
+
+    def test_resource_lock_precedes_setup_ownership_and_metadata_is_rechecked(self):
+        report = self.maintain()
+
+        @contextmanager
+        def resource(namespace, host):
+            self.assertEqual((namespace, host), ("setup-target", self.host))
+            # Public setup owns this resource before its setup/delivery locks.
+            with Path(str(self.journal) + ".lock").open("rb") as descriptor:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            path = self.attempt / history.COMPLETION_FILE
+            proof = json.loads(path.read_bytes())
+            proof["operation"]["context"]["profile_sha256"] = "f" * 64
+            self.write(path, proof)
+            yield
+
+        with patch.object(history, "resource_lock", side_effect=resource):
+            self.assert_refused("revision_changed", report["revision"])
+        self.assertTrue(self.attempt.is_dir())
+        self.assertFalse(self.archived.exists())
+
+    def test_host_case_and_trailing_dot_use_the_public_setup_lock(self):
+        path = self.attempt / history.COMPLETION_FILE
+        original = json.loads(path.read_bytes())
+        for host in ("TARGET.EXAMPLE", "target.example.", "TARGET.EXAMPLE."):
+            with self.subTest(host=host):
+                proof = json.loads(json.dumps(original))
+                proof["operation"]["context"]["host"] = host
+                proof["operation"]["resource"] = host
+                self.write(path, proof)
+                report = self.maintain()
+                with resource_lock("setup-target", self.host):
+                    self.assert_refused("busy", report["revision"])
+                self.assertFalse(self.archived.exists())
+
+    def test_unsafe_resource_lock_file_and_directory_have_fixed_refusals(self):
+        report = self.maintain()
+        path = Path(resource_lock_path("setup-target", self.host))
+        os.mkfifo(path, 0o600)
+        self.assert_refused("invalid_evidence", report["revision"])
+        path.unlink()
+        path.parent.chmod(0o755)
+        self.assert_refused("invalid_evidence", report["revision"])
+        path.parent.chmod(0o700)
         self.assertTrue(self.attempt.is_dir())
         self.assertFalse(self.archived.exists())
 

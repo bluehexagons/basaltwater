@@ -30,8 +30,10 @@ python3 -B -m lib.build_setup_history \
 
 The startup `-B` flag prevents import-time bytecode writes. Inspection creates
 no files, locks or directories. Read access may update atime. Both operations
-require existing private evidence and idle setup/delivery locks. Archive also
-takes the controller's setup-target resource lock. Any unfinished setup guard,
+require existing private evidence and idle setup/delivery locks. Archive discovers
+the normalized controller resource (case-insensitive host without a final dot),
+then revalidates under resource, setup and delivery
+ownership in that order before mutation. Any unfinished setup guard,
 even for another attempt, or unfinished delivery guard refuses maintenance.
 Missing locks, unsafe ancestry, links, foreign ownership, non-private metadata,
 conflicting destination state, malformed or inconsistent evidence, and stale
