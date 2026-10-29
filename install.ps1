@@ -689,7 +689,8 @@ try {
         $setupError.Exception.Data['Basaltwater.WindowsRestartRequired']) {
         $state.Phase = 'restart-required'
         Save-State $state
-        if (Invoke-NativeWindowsRestart -State $state -Required -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
+        $installerReason = [string]$setupError.Exception.Data['Basaltwater.WindowsRestartReason']
+        if (Invoke-NativeWindowsRestart -State $state -Required -InstallerReason $installerReason -NoReboot:$NoReboot -NoRestartT3:$NoRestartT3) { return }
     }
     Write-Error $setupError
     exit 1

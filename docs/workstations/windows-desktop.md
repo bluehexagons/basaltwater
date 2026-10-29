@@ -171,8 +171,11 @@ It starts a new job without replaying the abandoned one; `--status` returns
 nonzero for failed, interrupted or uncertain jobs.
 `--dry-run` remains read-only and foreground. Refresh logs are capped at 16 MiB.
 Active or uncertain development tasks block setup/reboot; wait for them or cancel
-and confirm cleanup. Reboots remain automatic when required, with the existing
-grace period and `--no-reboot` opt-out.
+and confirm cleanup. Explicit installer, Windows Update or component servicing
+requirements queue a visible desktop dialog showing the reason and a 60-second
+countdown with Restart now and Later buttons. Pending file operations alone do
+not trigger reboot. `--no-reboot` defers reboot for this run; see
+[restart conditions and status](windows.md) for details.
 
 The workstation doctor checks stable PowerShell 7 and, when T3 is selected,
 desktop readiness. Neither installed GPU drivers, an accessible desktop nor a

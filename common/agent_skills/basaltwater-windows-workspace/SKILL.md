@@ -32,12 +32,17 @@ T3 starts or gracefully restarts after successful setup by default. For one run,
 while still updating tools; `-NoRestartT3` / `refresh --no-restart-t3` skips the
 completion start/restart, retaining login startup. A vendor upgrade can still
 close T3 independently.
-Native setup also reboots Windows when an installer or completion checks require
-it, with a 30-second helper grace period and no forced app closure. Use
+Native setup also reboots Windows when an installer explicitly requires it or
+Windows Update/component servicing reports a requirement. Pending file renames
+or deletions alone are advisory and never trigger automatic reboot. A visible
+desktop dialog shows the reason, restart time and a 60-second countdown with
+Restart now and Later buttons; closing it also defers. A locked/unavailable
+desktop or notification failure defers reboot. Apps are not forced closed. Use
 `-NoReboot` / `refresh --no-reboot` to defer that for one run. Interrupted setup
 continues once after a real boot and account login using saved source/selections;
 that continuation defers any further reboot to prevent a loop. Inspect
-`%LOCALAPPDATA%\Basaltwater\windows-restart.json` and rerun setup if recovery
+`%LOCALAPPDATA%\Basaltwater\windows-restart.json` for reasons, queued/countdown
+timestamps and outcome, and rerun setup if recovery
 requires manual attention. WSL retains its manual Windows-reboot flow.
 Use `basaltw doctor --json` for read-only checks of saved selections and actual
 tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK

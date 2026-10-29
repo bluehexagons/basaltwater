@@ -183,6 +183,7 @@ try {
         $rebootFailure = $null
         try { Ensure-WingetPackage Git.Git 'Git install' } catch { $rebootFailure = $_ }
         Assert-True ([bool]$rebootFailure.Exception.Data['Basaltwater.WindowsRestartRequired']) 'Installer restart lost its structured recovery signal'
+        Assert-True ($rebootFailure.Exception.Data['Basaltwater.WindowsRestartReason'] -eq 'Git.Git (installer exit code 3010)') 'Installer restart lost its package/exit-code evidence'
         $script:InstallExit = -1978334966
         Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'restart'
         $script:InstallExit = 17
@@ -279,8 +280,9 @@ function Invoke-NativeSetupCompletion {
             Set-Content -LiteralPath (Join-Path $pinned 'windows\WindowsRestart.Common.ps1') -Value @'
 function Clear-NativeWindowsRestart { }
 function Invoke-NativeWindowsRestart {
-    param($State, [switch]$Required, [switch]$NoReboot, [switch]$NoRestartT3)
-    $global:AgentInstallerTestRestartCalls += [pscustomobject]@{ Phase = $State.Phase; Required = [bool]$Required; NoReboot = [bool]$NoReboot }
+    param($State, [switch]$Required, [switch]$NoReboot, [switch]$NoRestartT3, $InstallerReason)
+    $global:AgentInstallerTestRestartCalls += [pscustomobject]@{ Phase = $State.Phase; Required = [bool]$Required;
+        NoReboot = [bool]$NoReboot; InstallerReason = $InstallerReason }
     return (-not $NoReboot)
 }
 '@
@@ -297,6 +299,7 @@ function Invoke-NativeAgentSetup {
     if ($global:AgentInstallerTestRebootRequired) {
         $failure = New-Object InvalidOperationException('simulated package restart required')
         $failure.Data['Basaltwater.WindowsRestartRequired'] = $true
+        $failure.Data['Basaltwater.WindowsRestartReason'] = 'fixture package (installer exit code 3010)'
         throw $failure
     }
 }
@@ -353,6 +356,7 @@ function Invoke-NativeAgentSetup {
         Assert-True ((Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json).Phase -eq 'restart-required' -and
             $global:AgentInstallerTestRestartCalls[-1].Required -and
             $global:AgentInstallerTestCompletions.Count -eq $beforeRestart) 'Package reboot did not preserve interrupted setup before queuing Windows restart'
+        Assert-True ($global:AgentInstallerTestRestartCalls[-1].InstallerReason -eq 'fixture package (installer exit code 3010)') 'Installer entrypoint dropped the package restart evidence'
         Assert-Throws { & (Join-Path $repo 'install.ps1') -Profile agent_windows -NoReboot } 'package restart required'
         Assert-True ($global:AgentInstallerTestRestartCalls[-1].NoReboot) 'Package restart ignored the reboot opt-out across source handoff'
         $global:AgentInstallerTestRebootRequired = $false

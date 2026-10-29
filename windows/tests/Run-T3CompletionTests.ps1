@@ -62,8 +62,17 @@ try {
         Assert-True (Get-NativeRebootStatus).Required 'Component servicing reboot was missed'
         $script:PendingKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
         Assert-True (Get-NativeRebootStatus).Required 'Windows Update registry reboot was missed'
-        $script:PendingKey = ''; $script:PendingRenames = @('', '\??\C:\fixture')
-        Assert-True (Get-NativeRebootStatus).Required 'Pending file replacement reboot was missed'
+        $script:PendingKey = ''
+        foreach ($pending in @(@('\??\C:\fixture', ''), @('\??\C:\old', '\??\C:\new'),
+                               @('*1\??\C:\Windows\System32\gamingservicesproxy_16.dll.0', ''))) {
+            $script:PendingRenames = $pending
+            $status = Get-NativeRebootStatus
+            Assert-True (-not $status.Required -and $status.Reasons.Count -eq 0 -and
+                $status.Advisories.Count -eq 1) 'Routine pending file operations required an automatic reboot'
+        }
+        $script:UpdatePending = $true
+        Assert-True (Get-NativeRebootStatus).Required 'Advisory file operations hid an explicit update requirement'
+        $script:UpdatePending = $false
         $script:PendingRenames = @(); $script:ProbeFailure = $true
         $status = Get-NativeRebootStatus
         Assert-True ($status.Unknown -and -not $status.Required) 'Unreadable update probe claimed clear'

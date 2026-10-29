@@ -141,10 +141,23 @@ use `basaltw refresh --sunshine`; it uses the vendor service and is saved for
 subsequent refreshes. `basaltw doctor` checks the selected service without
 starting it. Pairing and streaming qualification remain manual.
 
-Native setup checks Windows restart indicators from Windows Update, component
-servicing and pending file replacements at completion. A detected requirement
-queues a hidden, limited current-account worker. After setup releases its lock,
-the worker allows 30 seconds to save work and requests a Windows restart.
+Native setup automatically reboots only when a package installer explicitly
+returns a restart-required code (1641, 3010 or WinGet's corresponding mapped
+codes), or Windows Update/component servicing reports a required reboot.
+Pending file renames/deletions alone are advisory: installers and other apps can
+queue routine cleanup for the next natural boot. This queue does not establish
+that the development system needs to restart, and setup leaves it untouched.
+See Microsoft's [delayed file operation reference](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
+
+A requirement queues a hidden, limited current-account worker. After setup releases
+its lock, a visible desktop dialog explains the reason and restart time, counts
+down 60 seconds, and offers **Restart now** and **Later**. Closing the dialog or
+pressing Escape also defers the restart. The warning appears even for detached
+refresh, whose terminal output is otherwise only in its log. A locked, disconnected
+or secure desktop, a notification failure, or a suspended countdown defers reboot
+instead of restarting unseen. Setup rechecks Windows' requirement before and
+after the countdown; a requirement that has cleared does not reboot the PC.
+An explicit installer requirement remains authoritative until Windows boots.
 Windows can ask you to close apps or block the restart; setup never forces apps
 closed. The delay runs in the helper because a positive `shutdown.exe` timeout
 implicitly forces closure; see Microsoft's [shutdown reference](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown/).
@@ -166,7 +179,22 @@ without queuing a reboot.
 
 Use `-NoReboot` or `basaltw refresh --no-reboot` to defer a reboot for one run.
 T3 still starts/restarts unless separately disabled. Restart/recovery status is
-saved in `%LOCALAPPDATA%\Basaltwater\windows-restart.json`; scheduler or shutdown
+saved in `%LOCALAPPDATA%\Basaltwater\windows-restart.json`, including the triggering
+reasons (package identity and exit code for installer requirements), queued/update
+times and countdown deadline. `queued` means the worker is waiting for setup;
+`countdown` means the desktop warning is active; `restart-deferred` means Later,
+dialog closure or an unavailable desktop prevented reboot; `no-longer-required`
+means the requirement cleared. `restart-requested` records a submitted OS request,
+not proof that Windows finished rebooting. The OS shutdown event also retains
+the reason after later setup runs replace the request. Inspect the request with:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\Basaltwater\windows-restart.json" -Raw | ConvertFrom-Json
+```
+
+Choosing Later keeps the interrupted setup's one-time login continuation for a
+later manual reboot. If setup was already complete, T3 login startup runs at the
+next login; reopen T3 manually if you defer that reboot. Scheduler or shutdown
 failures require a manual restart/retry. A later setup run clears prior queued
 restart work before applying changes. The WSL profile retains its existing
 manual Windows-reboot flow.
@@ -410,6 +438,8 @@ graceful close failures do not force termination or launch a duplicate desktop.
 Restart tests mock Windows shutdown and Scheduler operations; they cover default
 reboot selection, opt-outs, installer interruption, one-time boot/login recovery,
 stale request rejection and dispatch failures. No live reboot was performed.
+The desktop warning is compiled, while countdown decisions are mocked; offline
+tests do not qualify live dialog interaction, locking or display scaling.
 Sunshine tests mock package and service operations; they do not install it.
 The [manual Windows workflow](../../.github/workflows/windows-manual.yml) also
 runs them with the existing native/WSL bootstrap tests and Python output-capture

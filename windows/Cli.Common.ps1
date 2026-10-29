@@ -78,8 +78,10 @@ Refresh options:
 
 Refresh installs available updates for selected host tools and preserves provider
 logins. Successful setup queues a graceful T3 Code start/restart.
-Required Windows reboots are automatic, with a 30-second grace period and no
-forced app closure. Interrupted setup continues once after boot and login.
+Explicit installer, Windows Update or servicing reboot requirements queue a
+visible 60-second desktop countdown with a Later button and no forced app closure.
+Pending file operations alone do not trigger reboot. Interrupted setup continues
+once after boot and login. --no-reboot defers reboot for this run.
 Other open terminals need to be reopened after setup changes PATH.
 Desktop handoff: open PATH [--reveal], terminal --project PATH [--msvc],
 notify --title TEXT --message TEXT. Other desktop commands list their own help.

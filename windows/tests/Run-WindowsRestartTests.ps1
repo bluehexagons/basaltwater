@@ -27,7 +27,8 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
 '@
     function Get-NativeCompletionOwner { return [pscustomobject]@{ User = [pscustomobject]@{ Value = 'owner' } } }
     function Get-NativeWindowsBoot { return $script:Boot }
-    function Get-NativeRebootStatus { return [pscustomobject]@{ Required = $script:Required; Unknown = $script:Unknown } }
+    function Get-NativeRebootStatus { return [pscustomobject]@{ Required = $script:Required; Unknown = $script:Unknown;
+        Reasons = @('Windows Update' | Where-Object { $script:Required }); Advisories = @() } }
     function New-ScheduledTaskAction($Execute, $Argument) { return @{ Execute = $Execute; Argument = $Argument } }
     function New-ScheduledTaskPrincipal($UserId, $LogonType, $RunLevel) { return @{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel } }
     function New-ScheduledTaskSettingsSet($ExecutionTimeLimit, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) { return @{ Limit = $ExecutionTimeLimit } }
@@ -43,9 +44,17 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
         if ($script:DispatchFailure) { throw 'fixture scheduler failure' }
         $script:Started += $TaskName
     }
-    function Start-Sleep($Seconds) { $script:Grace = $Seconds }
-    function Request-NativeWindowsRestart {
+    function Show-NativeWindowsRestartPrompt($Request) {
+        $script:Prompts++
+        $script:Grace = ([datetime]::Parse($Request.RestartAtUtc).ToUniversalTime() - [datetime]::UtcNow).TotalSeconds
+        Assert-True ($Request.Status -eq 'countdown' -and $Request.Reasons.Count -gt 0) 'Countdown omitted its status or reason'
+        if ($script:PromptFailure) { throw 'fixture notification failure' }
+        if ($script:ClearDuringPrompt) { $script:Required = $false }
+        return $script:RestartAccepted
+    }
+    function Request-NativeWindowsRestart($Reasons) {
         $script:Shutdowns++
+        Assert-True ($Reasons.Count -gt 0) 'Shutdown event omitted its reboot reason'
         $otherLock = $null; $blocked = $false
         try { $otherLock = [IO.File]::Open((Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock'), 'Open', 'ReadWrite', 'None') }
         catch [IO.IOException] { $blocked = $true }
@@ -58,6 +67,7 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     $script:Tasks = @{}; $script:Started = @(); $script:Removed = @(); $script:Shutdowns = 0
     $script:Grace = 0; $script:DispatchFailure = $false
     $script:ShutdownFailure = $false
+    $script:Prompts = 0; $script:RestartAccepted = $true; $script:ClearDuringPrompt = $false; $script:PromptFailure = $false
     $global:BasaltwaterRestartTestRecovery = $null; $global:BasaltwaterRestartTestRemoved = $false
     $state = [pscustomobject]@{ Version = 1; Profile = 'agent_windows'; OwnerSid = 'owner';
         Revision = 'a' * 40; Source = $source; Phase = 'complete' }
@@ -72,6 +82,8 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     $requestPath = Get-NativeWindowsRestartPath
     [IO.File]::WriteAllText($requestPath, [IO.File]::ReadAllText($requestPath), [Text.UTF8Encoding]::new($false))
     $request = Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($request.Reasons[0] -eq 'Windows Update' -and $request.QueuedUtc -and $request.UpdatedUtc -and
+        -not $request.RestartAtUtc) 'Queued restart omitted trigger/timestamps or claimed a countdown before setup exited'
     Assert-True (-not $request.Resume -and $script:Tasks.Count -eq 1) 'Completed setup scheduled unnecessary recovery'
     $task = $script:Tasks['Basaltwater-Windows-Restart-owner']
     Assert-True ($task.Principal.UserId -eq 'owner' -and $task.Principal.LogonType -eq 'Interactive' -and
@@ -79,16 +91,40 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($task.Action.Argument -split ' ')[-1]))
     Assert-True ($command.Contains("quote''s") -and $command.Contains($request.Id)) 'Worker command lost literal paths or request identity'
     Invoke-NativeWindowsRestartWorker Restart $request.Id
-    Assert-True ($script:Shutdowns -eq 1 -and $script:Grace -eq 30 -and $script:Tasks.Count -eq 0) 'Reboot worker skipped grace/shutdown or retained its task'
+    Assert-True ($script:Shutdowns -eq 1 -and $script:Grace -gt 55 -and $script:Grace -le 60 -and $script:Tasks.Count -eq 0) 'Reboot worker skipped the visible countdown/shutdown or retained its task'
     Assert-True ((Read-NativeWindowsRestartRequest $request.Id).Status -eq 'restart-requested') 'Reboot status was not persisted'
+
+    foreach ($scenario in @('cleared-before', 'cleared-during', 'later', 'notification-failed')) {
+        $script:Required = $true
+        $script:ClearDuringPrompt = $scenario -eq 'cleared-during'
+        $script:RestartAccepted = $scenario -ne 'later'
+        $script:PromptFailure = $scenario -eq 'notification-failed'
+        Invoke-NativeWindowsRestart $state | Out-Null
+        $request = Get-Content -LiteralPath $requestPath -Raw | ConvertFrom-Json
+        if ($scenario -eq 'cleared-before') { $script:Required = $false }
+        $beforePrompts = $script:Prompts
+        Invoke-NativeWindowsRestartWorker Restart $request.Id
+        $expected = switch ($scenario) {
+            'later' { 'restart-deferred' }
+            'notification-failed' { 'manual-restart-required' }
+            default { 'no-longer-required' }
+        }
+        Assert-True ($script:Shutdowns -eq 1 -and $script:Tasks.Count -eq 0 -and
+            (Read-NativeWindowsRestartRequest $request.Id).Status -eq $expected) "Unexpected reboot or missing outcome: $scenario"
+        if ($scenario -eq 'cleared-before') { Assert-True ($beforePrompts -eq $script:Prompts) 'Cleared requirement still showed a countdown' }
+    }
+    $script:ClearDuringPrompt = $false; $script:RestartAccepted = $true; $script:PromptFailure = $false
 
     $state.Phase = 'restart-required'
     $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding UTF8
     $script:Required = $false
-    Assert-True (Invoke-NativeWindowsRestart $state -Required -NoRestartT3) 'Installer reboot was ignored when registry indicators were clear'
+    Assert-True (Invoke-NativeWindowsRestart $state -Required -NoRestartT3 -InstallerReason 'Git.Git (installer exit code 3010)') 'Installer reboot was ignored when registry indicators were clear'
     $request = Read-NativeWindowsRestartRequest ((Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw | ConvertFrom-Json).Id)
+    Assert-True ($request.InstallerRequired -and $request.Reasons -contains 'Git.Git (installer exit code 3010)') 'Installer identity/exit code was not retained'
     Assert-True ($request.Resume -and $script:Tasks.Count -eq 2 -and
         $script:Tasks['Basaltwater-Windows-Resume-owner'].Trigger.User -eq 'owner') 'Interrupted setup has no account-specific continuation'
+    Invoke-NativeWindowsRestartWorker Restart $request.Id
+    Assert-True ($script:Shutdowns -eq 2) 'Clear OS probes discarded the installer restart requirement'
     Invoke-NativeWindowsRestartWorker Resume $request.Id
     Assert-True ($null -eq $global:BasaltwaterRestartTestRecovery -and $script:Tasks.ContainsKey('Basaltwater-Windows-Resume-owner')) 'A login without a reboot consumed recovery'
     $script:Boot = '200'
@@ -144,6 +180,12 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
         Assert-True ($script:Tasks['Basaltwater-Windows-Restart-owner'].Replacement) 'Old cleanup deleted a replacement after releasing setup.lock'
     }
 
+    # Compile the notification implementation without showing UI or rebooting.
+    if ($PSVersionTable.PSVersion.Major -eq 5) {
+        Add-Type -Path (Join-Path $windows 'WindowsRestart.Dialog.cs') -ReferencedAssemblies System.dll, System.Drawing.dll, System.Windows.Forms.dll
+        Assert-True ($null -ne ('Basaltwater.WindowsRestart.Dialog' -as [type])) 'Restart notification failed to compile'
+    }
+
     # Inspect the real shutdown boundary with a fake command; never invoke the OS.
     & {
         $tokens = $null; $errors = $null
@@ -153,9 +195,9 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
         function Join-Path($Path, $ChildPath) { return 'Mock-Shutdown' }
         function Mock-Shutdown { $script:ShutdownArguments = @($args); $global:LASTEXITCODE = $script:ShutdownExit }
         $script:ShutdownExit = 0
-        Request-NativeWindowsRestart
+        Request-NativeWindowsRestart -Reasons @('Windows Update')
         Assert-True (($script:ShutdownArguments -join ' ') -match '/r /t 0 /d p:4:2' -and
-            $script:ShutdownArguments -notcontains '/f') 'Shutdown can force apps closed'
+            $script:ShutdownArguments -notcontains '/f' -and $script:ShutdownArguments[-1] -match 'Reason: Windows Update') 'Shutdown can force apps closed or omit the reason from the Windows event log'
         $script:ShutdownExit = 5
         Assert-Throws { Request-NativeWindowsRestart } 'exit code 5'
     }

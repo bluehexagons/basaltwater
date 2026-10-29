@@ -11,6 +11,7 @@ function Get-NativeWindowsUpdateReboot {
 
 function Get-NativeRebootStatus {
     $reasons = @()
+    $advisories = @()
     $unknown = $false
     try { if (Get-NativeWindowsUpdateReboot) { $reasons += 'Windows Update' } }
     catch { $unknown = $true }
@@ -26,20 +27,30 @@ function Get-NativeRebootStatus {
         $session = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction Stop
         if ($session.PSObject.Properties['PendingFileRenameOperations'] -and
             @($session.PendingFileRenameOperations | Where-Object { $_ }).Count) {
-            $reasons += 'pending file replacements'
+            # MoveFileEx also queues routine deletions for the next natural
+            # boot. This queue alone does not establish a required reboot.
+            $advisories += 'pending file renames or deletions'
         }
     } catch { $unknown = $true }
-    return [pscustomobject]@{ Required = ($reasons.Count -gt 0); Unknown = $unknown; Reasons = $reasons }
+    return [pscustomobject]@{ Required = ($reasons.Count -gt 0); Unknown = $unknown;
+        Reasons = $reasons; Advisories = $advisories }
+}
+
+function Show-NativeRebootAdvisories($Status) {
+    if ($Status.Advisories.Count) {
+        Write-Host ('Windows has ' + ($Status.Advisories -join ', ') + '. This alone does not require an automatic reboot; operations can wait until your next Windows restart.')
+    }
 }
 
 function Show-NativeRebootNotice {
     $status = Get-NativeRebootStatus
+    Show-NativeRebootAdvisories $status
     if ($status.Required) {
         Write-Warning ('Windows reports a pending restart (' + ($status.Reasons -join ', ') + '). Save your work and restart Windows when convenient; Basaltwater will not restart it.')
     } elseif ($status.Unknown) {
         Write-Warning 'Windows restart status could not be fully checked. Check Windows Update for a restart request; Basaltwater will not restart Windows.'
     } else {
-        Write-Host 'No pending Windows restart was detected by the available update, servicing and file-replacement checks.'
+        Write-Host 'No required Windows restart was detected by the available update and servicing checks.'
     }
 }
 
