@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import os
 from pathlib import Path
 import signal
@@ -13,6 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from lib import build_setup_sources as sources
+from lib import build_source_credentials as credentials
 from lib.build_source import SourceLimits, unpack_source_snapshot
 from tests.test_build_source import FakeGit
 
@@ -139,6 +141,223 @@ class BuildSetupSourcesTests(unittest.TestCase):
             self.assertIn("--detach", command)
             self.assertIn("--no-recurse-submodules", command)
             self.assertRegex(command[-1], r"^[a-f0-9]{40}$")
+
+    def test_anonymous_success_never_looks_up_credentials(self):
+        helper = Mock(side_effect=AssertionError("No credential lookup expected"))
+        self.prepare(credential_runner=helper)
+        helper.assert_not_called()
+
+    def test_fake_failure_does_not_query_controller_credentials(self):
+        with patch.object(sources, "controller_https_credentials") as helper:
+            with self.assertRaisesRegex(ValueError, "controller global Git credential helper"):
+                self.prepare(runner=Mock(side_effect=ValueError("private diagnostics")))
+        helper.assert_not_called()
+
+    def test_private_fallback_is_clone_only_and_never_enters_snapshot(self):
+        secret = "test-private-credential"
+        encoded = base64.b64encode(("user:" + secret).encode()).decode()
+        helper = Mock(return_value=(
+            f"protocol=https\nhost=example.com\npath=project.git\nusername=user\npassword={secret}\n\n"
+        ).encode())
+        files = []
+        attempts = []
+
+        def runner(command, **kwargs):
+            config = kwargs["env"]["GIT_CONFIG_GLOBAL"]
+            if "clone" in command:
+                attempts.append(config)
+                if len(attempts) == 1:
+                    self.assertEqual(config, os.devnull)
+                    # Model a failed clone leaving some metadata behind.
+                    partial = Path(kwargs["cwd"]) / ".git"
+                    partial.mkdir()
+                    (partial / "incomplete").write_text("partial")
+                    raise ValueError("private diagnostics")
+                path = Path(config)
+                files.append(path)
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                self.assertEqual(path.read_text(),
+                                 f'[http "{URL}"]\n\textraHeader = Authorization: Basic {encoded}\n')
+                self.assertFalse((Path(kwargs["cwd"]) / ".git").exists())
+            else:
+                self.assertEqual(config, os.devnull)
+                self.assertTrue(all(not path.exists() for path in files))
+            self.assertNotIn(secret, repr((command, kwargs)))
+            self.assertNotIn(encoded, repr((command, kwargs)))
+            self.assertNotIn("GH_TOKEN", kwargs["env"])
+            return self.git(command, **kwargs)
+
+        with patch.dict(os.environ, {"GH_TOKEN": secret}):
+            result = self.prepare(runner=runner, credential_runner=helper)
+        self.assertEqual(len(attempts), 2)
+        helper.assert_called_once()
+        self.assertTrue(all(not path.exists() for path in files))
+        for path in self.destination.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(secret.encode(), path.read_bytes())
+                self.assertNotIn(encoded.encode(), path.read_bytes())
+        self.assertNotIn(secret, repr(result))
+
+    def test_failed_authenticated_clone_cleans_secret_and_suppresses_diagnostics(self):
+        helper = Mock(return_value=b"protocol=https\nhost=example.com\npath=project.git\n"
+                                   b"username=user\npassword=secret\n\n")
+        files = []
+
+        def runner(command, **kwargs):
+            config = kwargs["env"]["GIT_CONFIG_GLOBAL"]
+            if config != os.devnull:
+                files.append(Path(config))
+                self.assertTrue(files[-1].exists())
+            raise ValueError("secret diagnostics")
+
+        with self.assertRaisesRegex(ValueError, "controller global Git credential helper") as raised:
+            self.prepare(runner=runner, credential_runner=helper)
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertEqual(len(files), 1)
+        self.assertFalse(files[0].exists())
+
+    def test_native_fallback_uses_same_preparation_and_sanitizes_helper_failure(self):
+        def native(command, storage, **kwargs):
+            if "clone" in command:
+                raise ValueError("anonymous failure")
+            return self.git(command, **kwargs)
+
+        with patch.object(sources, "_run", side_effect=native), \
+                patch.object(credentials, "_capture", side_effect=RuntimeError("secret")) as helper:
+            with self.assertRaisesRegex(ValueError, "controller global Git credential helper") as raised:
+                sources.prepare_setup_sources([["example.com", URL]], str(self.destination))
+        helper.assert_called_once()
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertFalse(list(self.destination.rglob(".clone-credentials-*")))
+
+    def test_native_fallback_success_uses_controller_helper(self):
+        attempts = []
+
+        def native(command, storage, **kwargs):
+            if "clone" in command:
+                attempts.append(kwargs["env"]["GIT_CONFIG_GLOBAL"])
+                self.assertEqual(kwargs["max_output_bytes"], 0)
+                if len(attempts) == 1:
+                    raise ValueError("anonymous failure")
+                self.assertTrue(Path(attempts[-1]).exists())
+            return self.git(command, **kwargs)
+
+        response = b"protocol=https\nhost=example.com\npath=project.git\nusername=user\npassword=secret\n"
+        with patch.object(sources, "_run", side_effect=native), \
+                patch.object(credentials, "_capture", return_value=response) as helper:
+            prepared = sources.prepare_setup_sources([["example.com", URL]], str(self.destination))
+        helper.assert_called_once()
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(attempts[0], os.devnull)
+        self.assertEqual(len(attempts), 2)
+        self.assertFalse(Path(attempts[-1]).exists())
+
+    def test_helper_uses_requested_origin_path_and_only_trusted_controller_environment(self):
+        url = "https://example.com:8443/owner/repo.git"
+        response = (b"protocol=https\nhost=example.com:8443\npath=owner/repo.git\n"
+                    b"username=user\npassword=secret\n\n")
+        helper = Mock(return_value=response)
+        hostile = {"HOME": "/hostile", "GIT_CONFIG_GLOBAL": "/hostile/config",
+                   "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_PARAMETERS": "execute-me",
+                   "GIT_DIR": "/hostile/repo", "GIT_EXEC_PATH": "/hostile/bin",
+                   "HTTPS_PROXY": "secret", "GH_CONFIG_DIR": "/controller/gh"}
+        with patch.dict(os.environ, hostile), \
+                patch.object(credentials.pwd, "getpwuid", return_value=Mock(pw_dir="/controller")):
+            with credentials.controller_https_credentials(
+                url, str(self.destination), timeout=120, runner=helper,
+            ) as filename:
+                self.assertIn(f'[http "{url}"]', Path(filename).read_text())
+        command = helper.call_args.args[0]
+        kwargs = helper.call_args.kwargs
+        self.assertEqual(kwargs["input_data"],
+                         b"protocol=https\nhost=example.com:8443\npath=owner/repo.git\n\n")
+        self.assertIn("credential.useHttpPath=true", command)
+        self.assertEqual(command[-2:], ["credential", "fill"])
+        self.assertEqual(kwargs["env"]["HOME"], "/controller")
+        self.assertEqual(kwargs["env"]["GH_CONFIG_DIR"], "/controller/gh")
+        self.assertFalse(set(hostile).difference({"HOME", "GH_CONFIG_DIR"}) & set(kwargs["env"]))
+        self.assertEqual(kwargs["env"]["GIT_CEILING_DIRECTORIES"], str(self.destination))
+        self.assertFalse(Path(kwargs["cwd"]).exists())
+        self.assertLessEqual(kwargs["timeout"], 30)
+        self.assertFalse(Path(filename).exists())
+
+    def test_helper_refuses_wrong_scope_malformed_or_oversized_credentials(self):
+        good = b"protocol=https\nhost=example.com\npath=project.git\nusername=user\npassword=secret\n\n"
+        for response in (good.replace(b"example.com", b"other.example"),
+                         good.replace(b"project.git", b"sibling.git"),
+                         good.replace(b"https", b"http"), good + b"password=other\n",
+                         b"secret", b"x" * (credentials.MAX_CREDENTIAL_BYTES + 1)):
+            with self.subTest(response=response[:30]), self.assertRaisesRegex(
+                ValueError, "unavailable or returned invalid",
+            ):
+                with credentials.controller_https_credentials(
+                    URL, str(self.destination), timeout=1, runner=Mock(return_value=response),
+                ):
+                    self.fail("Invalid credential accepted")
+            self.assertEqual(list(self.destination.iterdir()), [])
+
+    def test_secret_file_is_removed_on_interruption(self):
+        response = b"protocol=https\nhost=example.com\npath=project.git\nusername=user\npassword=secret\n"
+        with self.assertRaises(KeyboardInterrupt):
+            with credentials.controller_https_credentials(
+                URL, str(self.destination), timeout=1, runner=Mock(return_value=response),
+            ) as filename:
+                self.assertTrue(Path(filename).exists())
+                raise KeyboardInterrupt()
+        self.assertFalse(Path(filename).exists())
+
+    def test_credential_capture_bounds_memory_and_closes_process_group(self):
+        process = Mock(pid=123)
+        process.wait.return_value = 0
+        selector = Mock()
+        selector.get_map.side_effect = [True, True, True, False]
+        selector.select.side_effect = [
+            [(Mock(fileobj=process.stdin), None)],
+            [(Mock(fileobj=process.stdout), None)],
+            [(Mock(fileobj=process.stdout), None)],
+        ]
+        with patch.object(credentials.subprocess, "Popen", return_value=process) as spawn, \
+                patch.object(credentials.selectors, "DefaultSelector") as factory, \
+                patch.object(credentials.os, "write", return_value=4) as write, \
+                patch.object(credentials.os, "set_blocking"), \
+                patch.object(credentials.os, "read", side_effect=[b"secret", b""]) as read, \
+                patch.object(credentials.os, "killpg") as kill:
+            factory.return_value.__enter__.return_value = selector
+            output = credentials._capture(["git", "credential", "fill"], cwd="/private",
+                                          env={}, input_data=b"url\n", timeout=1,
+                                          max_output_bytes=8)
+        self.assertEqual(output, b"secret")
+        self.assertEqual(read.call_args_list[0].args[1], 9)
+        self.assertEqual(read.call_args_list[1].args[1], 3)
+        write.assert_called_once()
+        kill.assert_called_once_with(123, signal.SIGKILL)
+        process.stdin.close.assert_called()
+        process.stdout.close.assert_called_once()
+        self.assertEqual(spawn.call_args.kwargs["stderr"], subprocess.DEVNULL)
+        self.assertEqual(spawn.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertTrue(spawn.call_args.kwargs["start_new_session"])
+        self.assertEqual(spawn.call_args.kwargs["umask"], 0o077)
+
+    def test_credential_capture_timeout_and_oversize_never_echo_output(self):
+        process = Mock(pid=123)
+        for oversized in (False, True):
+            with self.subTest(oversized=oversized):
+                selector = Mock()
+                selector.get_map.return_value = True
+                selector.select.return_value = [(Mock(fileobj=process.stdout), None)]
+                ticks = [0, 0] if oversized else [0, 2]
+                with patch.object(credentials.subprocess, "Popen", return_value=process), \
+                        patch.object(credentials.selectors, "DefaultSelector") as factory, \
+                        patch.object(credentials.time, "monotonic", side_effect=ticks), \
+                        patch.object(credentials.os, "read", return_value=b"secret-output"), \
+                        patch.object(credentials.os, "set_blocking"), \
+                        patch.object(credentials.os, "killpg") as kill:
+                    factory.return_value.__enter__.return_value = selector
+                    with self.assertRaises(ValueError) as raised:
+                        credentials._capture(["git"], cwd="/private", env={},
+                                             input_data=b"url\n", timeout=1, max_output_bytes=8)
+                self.assertNotIn("secret-output", str(raised.exception))
+                kill.assert_called_once_with(123, signal.SIGKILL)
 
     def test_different_urls_with_the_same_basename_have_separate_clones(self):
         result = self.prepare([["a.example", URL], ["b.example", "https://other.example/project.git"]])

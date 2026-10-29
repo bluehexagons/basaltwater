@@ -1,4 +1,4 @@
-"""Prepare public, pinned setup sources without running repository code."""
+"""Prepare pinned HTTPS setup sources without running repository code."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from lib.cicd_deploy_policy import validate_nginx_path
 from lib.deploy_utils import parse_deploy_spec, parse_repository_source
 from lib.project_manifest import MANIFEST_FILENAME, Manifest, parse_manifest
 from lib.build_manifest import required_tools
+from lib.build_source_credentials import controller_https_credentials
 from lib.setup_directories import directory_fd
 from lib.validation import validate_deploy_specs, validate_filesystem_path
 from lib.validators import validate_host
@@ -76,10 +77,10 @@ def _plans(deploy_specs: list[list[str]]) -> list[tuple[str, str, str | None]]:
                 or not validate_host(parsed.hostname) or parsed.username is not None
                 or parsed.password is not None or parsed.query or parsed.fragment
                 or not parsed.path or parsed.path == "/"):
-            raise ValueError("Build setup sources require public HTTPS repositories without credentials")
+            raise ValueError("Build setup sources require HTTPS repositories without embedded credentials")
         # Also reject malformed/out-of-range ports before starting any process.
         if parsed.port is not None and not 1 <= parsed.port <= 65535:
-            raise ValueError("Invalid public HTTPS repository port")
+            raise ValueError("Invalid HTTPS repository port")
         for raw in destinations.split(","):
             destination = raw.strip()
             domain, path = parse_deploy_spec(destination)
@@ -264,12 +265,15 @@ def prepare_setup_sources(
     deploy_specs: list[list[str]], destination: str, *,
     limits: SourceLimits = DEFAULT_SOURCE_LIMITS,
     runner: CommandRunner | None = None,
+    credential_runner: CommandRunner | None = None,
 ) -> list[PreparedSource]:
-    """Prepare 1..16 public HTTPS plans under an existing empty owned 0700 root.
+    """Prepare 1..16 HTTPS plans under an existing empty owned 0700 root.
 
     The caller owns this directory's lifecycle on success and failure. No build,
-    cache, credential lookup, SSH, LFS or submodule operation is performed.
+    cache, SSH, LFS or submodule operation is performed. Clone anonymously first,
+    then try the controller's global credential helper on failure.
     ``runner`` has the source-snapshot runner contract and is for mocked tests.
+    With a mocked runner, credential lookup requires an explicit credential_runner.
     """
     if not isinstance(limits, SourceLimits):
         raise ValueError("Source limits must use SourceLimits")
@@ -294,6 +298,7 @@ def prepare_setup_sources(
     os.mkdir(template, 0o700)
     environment = _environment(home)
     deadline = time.monotonic() + limits.command_timeout_seconds * (1 + len(plans))
+    clone_credentials: str | None = None
 
     def bounded_runner(command, *, cwd, env, input_data, timeout,
                        max_output_bytes, file_size_limit=None):
@@ -309,6 +314,8 @@ def prepare_setup_sources(
                         "-c", "protocol.https.allow=always", "-c", "http.followRedirects=false",
                         "-c", "gc.auto=0", "-c", "maintenance.auto=false", *command[1:]]
         safe_env = dict(environment)
+        if clone_credentials is not None and "clone" in command:
+            safe_env["GIT_CONFIG_GLOBAL"] = clone_credentials
         # The backend uses this validated pinned attribute source for built-in conversions.
         if "GIT_ATTR_SOURCE" in env:
             safe_env["GIT_ATTR_SOURCE"] = env["GIT_ATTR_SOURCE"]
@@ -341,15 +348,37 @@ def prepare_setup_sources(
                 storage.check(limits.max_history_bytes + limits.max_source_bytes)
                 repository = os.path.join(root, f"repository-{len(repositories)}")
                 os.mkdir(repository, 0o700)
+                # Bare clone retains exact refs/heads and refs/tags, including
+                # a literal branch named HEAD; no ambiguous remote alias lookup.
+                clone = ["clone", "--bare", "--no-checkout", "--no-recurse-submodules",
+                         f"--template={template}", "--", url, os.path.join(repository, ".git")]
                 try:
-                    # Bare clone retains exact refs/heads and refs/tags, including
-                    # a literal branch named HEAD; no ambiguous remote alias lookup.
-                    git(repository, ["clone", "--bare", "--no-checkout",
-                                     "--no-recurse-submodules", f"--template={template}",
-                                     "--", url, os.path.join(repository, ".git")])
-                except ValueError as exc:
-                    raise ValueError("Public HTTPS clone failed; private repositories and credentials "
-                                     f"are unsupported for build setup ({exc})") from None
+                    git(repository, clone, 0)
+                except ValueError:
+                    try:
+                        if runner is not None and credential_runner is None:
+                            raise ValueError("Mocked clone has no credential runner")
+                        storage.check(limits.max_history_bytes + limits.max_source_bytes)
+                        remaining = command_timeout(min(limits.command_timeout_seconds,
+                                                        deadline - time.monotonic()))
+                        with controller_https_credentials(
+                            url, home, timeout=remaining, runner=credential_runner,
+                        ) as credential_file:
+                            # A failed clone can leave a partial destination.
+                            partial = os.path.join(repository, ".git")
+                            if os.path.exists(partial):
+                                shutil.rmtree(partial)
+                            clone_credentials = credential_file
+                            try:
+                                git(repository, clone, 0)
+                            finally:
+                                clone_credentials = None
+                    except Exception:
+                        raise ValueError(
+                            "HTTPS clone failed; configure a noninteractive controller global Git "
+                            "credential helper with access to this repository. Credentials remain "
+                            "on the controller; SSH, URL-embedded credentials and redirects are unsupported."
+                        ) from None
                 git(repository, ["config", "--local", "core.bare", "false"])
                 repositories[url] = repository
                 # Freeze every selection before any detached checkout changes HEAD.
