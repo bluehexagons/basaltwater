@@ -14,7 +14,7 @@ worker. The public [controller setup flow](build-setup.md) connects explicit
 `--build-on` selection, managed enrollment, pinned sources, artifact delivery and
 guarded final profile application within its bounded static/native-service scope. Ordinary
 deployments without a selected builder retain build-on-target behavior. The
-[coverage map](../../plans/testing-coverage.md) records selected native static/Go
+[coverage map](../../plans/testing-coverage.md) records selected native static/Node/service
 public-flow checks and remaining qualification gaps separately from these
 contracts and dry runs.
 The [shared build-host

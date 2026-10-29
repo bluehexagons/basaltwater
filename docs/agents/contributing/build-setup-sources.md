@@ -49,6 +49,9 @@ caller must keep the directory private and prevent concurrent mutation. On any
 failure the directory can contain partial results; there is no automatic retry,
 replacement or cleanup. A second call requires a fresh empty directory. Dry-run
 planning can use this exact function inside a temporary-directory context.
+The setup dry run and policy draft CLI place their disposable directories under
+the configured controller workspace. This keeps source headroom checks on that
+filesystem instead of a potentially smaller RAM-backed `/tmp`.
 
 ## Pinning and manifest identity
 

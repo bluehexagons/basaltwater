@@ -63,7 +63,8 @@ project selects the builder grant.
 
 All manifests, source identities, application grants, tools, limits and aggregate
 retained artifact storage are checked before target bootstrap. Dry runs prepare
-sources in a disposable local directory and perform read-only SSH probes; they
+sources in a disposable private directory under the configured controller
+workspace and perform read-only SSH probes; they
 never enroll, reserve, build, stage, activate or save setup state.
 
 Non-dry setup stores private attempts under the controller workspace's

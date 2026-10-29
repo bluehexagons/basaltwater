@@ -81,3 +81,10 @@ Use a separate target policy and saved setup for production. Do not point two
 active tunnels at the same public hostname unintentionally. For later updates,
 the saved controller setup retains the builder selection; target-local refresh
 uses retained artifacts and does not contact the builder.
+
+The six unchanged manifests have been built and served on disposable Debian 13
+VMs with a 2 GiB builder and 1 GiB target. Checks cover verified HTTPS, service
+health, the additional foodguide route, SQLite backups and real UDP STUN. The
+target's route to the builder was prohibited throughout. A separate retained
+routing check verified Cloudflare/SSL HTTP origins; public Tunnel authentication
+and public ACME issuance were not exercised in the lab.
