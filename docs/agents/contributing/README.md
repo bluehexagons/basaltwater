@@ -133,6 +133,9 @@ the permission and file-type checks being tested.
 Set required fixture directory modes explicitly rather than relying on the
 runner's umask. An unsafe ancestor can otherwise prevent a negative test from
 reaching the file or failure it intends to exercise.
+`Path.mkdir(parents=True, mode=...)` applies the requested mode only to the
+leaf; set required ancestor modes explicitly too, and use `chmod` when a
+restrictive umask would remove required access.
 When running those tests from a CachyOS workstation, fixtures must mock the
 target distribution, package-manager discovery, and account privileges. A
 Debian test must not accidentally enter the local CachyOS setup path or inspect

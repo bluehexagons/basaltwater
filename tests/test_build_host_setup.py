@@ -954,6 +954,8 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
         stack.enter_context(patch("security.security_steps._SSHD_DROPIN_FILE", str(self.base / "ssh-hardening.conf")))
         Path(setup.SERVICE_UNIT).parent.mkdir(parents=True, mode=0o755)
         Path(setup.SUDOERS_DIR).mkdir(mode=0o755)
+        for directory in (self.base / "etc", Path(setup.SERVICE_UNIT).parent, Path(setup.SUDOERS_DIR)):
+            directory.chmod(0o755)
         # The production helper refuses writable shared ancestors. Bound its
         # recursive creation to this simulated root, outside sticky /tmp.
         ensure_parents = setup._ensure_parent_chain
@@ -1343,6 +1345,9 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
     def test_private_state_enrollment_refresh_and_disable_preserve_data_and_identities(self) -> None:
         private = Path(setup.DATA_ROOT).parent
         private.mkdir(parents=True, mode=0o700)
+        for directory in (self.base / "var", private.parent):
+            directory.chmod(0o755)
+        private.chmod(0o700)
         evidence = private / "private-evidence"
         evidence.write_bytes(b"retain")
         setup.configure_build_host(setup_config())
@@ -1375,6 +1380,8 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
     def test_unsafe_or_blocked_ancestors_refuse_before_any_mutation(self) -> None:
         parent = Path(setup.SSH_ROOT).parent
         parent.mkdir(parents=True, mode=0o755)
+        (self.base / "var").chmod(0o755)
+        parent.chmod(0o755)
         real_lstat = Path.lstat
         for mode, uid, gid in ((stat.S_IFDIR | 0o700, 0, 0), (stat.S_IFDIR | 0o775, 0, 0),
                                (stat.S_IFDIR | 0o755, 1234, 0), (stat.S_IFDIR | 0o701, 0, 2001),
@@ -1409,6 +1416,9 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
     def test_legacy_root_or_marker_refuses_enable_and_disable_without_changes(self) -> None:
         legacy = Path(setup._LEGACY_SSH_ROOT)
         legacy.mkdir(parents=True, mode=0o711)
+        for directory in (self.base / "var", legacy.parent.parent, legacy.parent):
+            directory.chmod(0o755)
+        legacy.chmod(0o711)
         (legacy / "evidence").write_bytes(b"retain")
         for disable in (False, True):
             before = self.snapshot()

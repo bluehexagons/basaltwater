@@ -287,6 +287,8 @@ class BuildTargetSetupTests(unittest.TestCase):
     def test_install_permissions_exact_grants_rotation_retirement_disable_and_reenable(self) -> None:
         private = Path(setup.DATA_ROOT).parent
         private.mkdir(parents=True, mode=0o700)
+        private.parent.chmod(0o755)
+        private.chmod(0o700)
         private_evidence = private / "private-evidence"
         private_evidence.write_bytes(b"retain")
         setup.configure_build_target(configuration(build_target_enrollment=enrollment(("alice", "bob"))))
@@ -412,6 +414,8 @@ class BuildTargetSetupTests(unittest.TestCase):
     def test_safe_existing_deployment_parent_keeps_mode_inode_and_contents(self) -> None:
         parent = self.base / "deploy/apps"
         parent.mkdir(parents=True, mode=0o750)
+        parent.parent.chmod(0o755)
+        parent.chmod(0o750)
         evidence = parent / "operator-evidence"
         evidence.write_bytes(b"retain")
         before = parent.stat()
@@ -466,6 +470,8 @@ class BuildTargetSetupTests(unittest.TestCase):
     def test_unsafe_deployment_parent_ancestors_refuse_before_any_mutation(self) -> None:
         ancestor = self.base / "deploy/apps"
         ancestor.mkdir(parents=True, mode=0o755)
+        ancestor.parent.chmod(0o755)
+        ancestor.chmod(0o755)
         real_lstat = Path.lstat
         for mode, uid in ((stat.S_IFDIR | 0o775, 0), (stat.S_IFDIR | 0o1777, 0),
                           (stat.S_IFDIR | 0o755, 1234), (stat.S_IFLNK | 0o755, 0),
@@ -552,6 +558,7 @@ class BuildTargetSetupTests(unittest.TestCase):
     def test_unsafe_ancestors_refuse_before_bootstrap_or_grants(self) -> None:
         parent = Path(setup.SSH_ROOT).parent
         parent.mkdir(parents=True, mode=0o755)
+        parent.chmod(0o755)
         real_lstat = Path.lstat
         for mode, uid, gid in ((stat.S_IFDIR | 0o775, 0, 0), (stat.S_IFDIR | 0o755, 1234, 0),
                                (stat.S_IFDIR | 0o701, 0, 2001), (stat.S_IFLNK | 0o755, 0, 0)):
@@ -577,6 +584,9 @@ class BuildTargetSetupTests(unittest.TestCase):
     def test_legacy_root_or_marker_refuses_enable_and_disable_without_changes(self) -> None:
         legacy = Path(setup._LEGACY_SSH_ROOT)
         legacy.mkdir(parents=True, mode=0o711)
+        for directory in (legacy.parent.parent, legacy.parent):
+            directory.chmod(0o755)
+        legacy.chmod(0o711)
         evidence = legacy / "evidence"
         evidence.write_bytes(b"retain")
         for disable in (False, True):
@@ -749,6 +759,8 @@ class BuildTargetSetupTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
 
     def test_unmarked_modified_and_unsafe_resources_fail_closed(self) -> None:
+        (self.base / "data").mkdir(mode=0o755)
+        (self.base / "data").chmod(0o755)
         for resource in (setup.DATA_ROOT, setup.SSH_ROOT, setup.ETC_DIR):
             path = Path(resource)
             path.mkdir(parents=True, mode=0o700)
