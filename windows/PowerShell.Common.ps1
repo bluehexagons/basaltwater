@@ -60,6 +60,16 @@ function Ensure-NativePowerShell7 {
     return $shell
 }
 
+function Get-NativeInteractivePowerShell7 {
+    $shell = Get-NativePowerShell7
+    if (-not $shell) { return $null }
+    # MSIX package directories contain a version and disappear on update. UI
+    # shortcuts should follow the registered stable alias when it is usable.
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
+    if (Test-NativePowerShellExecutable $alias) { return $alias }
+    return $shell
+}
+
 function Invoke-NativePowerShell7Installer([string]$Shell, [string]$Installer, [Collections.IDictionary]$Options) {
     $forward = @{}
     foreach ($key in $Options.Keys) {

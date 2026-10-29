@@ -133,6 +133,7 @@ function Request-NativeWindowsRestart {
 function Invoke-NativeWindowsRestartWorker([ValidateSet('Restart', 'Resume')][string]$Mode, [string]$Id) {
     $setupLock = $null
     $request = $null
+    $restartTaskRemoved = $false
     try {
         $setupLock = Wait-NativeSetupCompletion (Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock')
         $request = Read-NativeWindowsRestartRequest $Id
@@ -144,6 +145,10 @@ function Invoke-NativeWindowsRestartWorker([ValidateSet('Restart', 'Resume')][st
             $request = Read-NativeWindowsRestartRequest $Id
             $request.Status = 'restart-requested'
             Write-NativeWindowsRestartRequest $request
+            # Shutdown can terminate us before finally. Remove only our task,
+            # while setup.lock still excludes registration of its replacement.
+            Unregister-ScheduledTask -TaskName (Get-NativeWindowsRestartTask Restart) -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
+            $restartTaskRemoved = $true
             Request-NativeWindowsRestart
         } else {
             if (-not $request.Resume -or $request.Status -in @('resuming', 'resumed')) { return }
@@ -173,9 +178,11 @@ function Invoke-NativeWindowsRestartWorker([ValidateSet('Restart', 'Resume')][st
         }
         Write-Warning 'Windows restart/recovery could not complete. Inspect the saved setup and rerun the standard installer.'
     } finally {
-        if ($setupLock) { $setupLock.Dispose() }
-        if ($Mode -eq 'Restart' -and $request) {
-            Unregister-ScheduledTask -TaskName (Get-NativeWindowsRestartTask Restart) -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
-        }
+        try {
+            if ($Mode -eq 'Restart' -and $request -and $setupLock -and -not $restartTaskRemoved -and
+                (Test-NativeWindowsRestartIdentity $request)) {
+                Unregister-ScheduledTask -TaskName (Get-NativeWindowsRestartTask Restart) -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
+            }
+        } finally { if ($setupLock) { $setupLock.Dispose() } }
     }
 }

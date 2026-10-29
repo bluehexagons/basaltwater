@@ -30,7 +30,7 @@ function Install-NativeShellIntegration([string]$Source, [string]$StorageRoot = 
     Assert-NativeSkillPath $fragment; Assert-NativeSkillPath $shortcut
     Write-Host 'Windows integration: PowerShell 7 development profile in Terminal and Start Menu'
     if ($Plan) { return }
-    $shell = Get-NativePowerShell7
+    $shell = Get-NativeInteractivePowerShell7
     if (-not $shell) { throw 'Stable PowerShell 7 is required for the development shell' }
     if (-not (Get-NativeCommand wt)) {
         Ensure-WingetPackage Microsoft.WindowsTerminal 'Windows Terminal installation'
@@ -62,7 +62,7 @@ function Open-NativeDevelopmentTerminal([string]$Source, [string]$Project, [swit
     $terminal = Get-NativeCommand wt
     if (-not $terminal) { throw 'Windows Terminal is unavailable; reapply setup' }
     $entry = Join-Path $Source 'windows\Enter-DevelopmentShell.ps1'
-    $shell = Get-NativePowerShell7
+    $shell = Get-NativeInteractivePowerShell7
     if (-not $shell) { throw 'Stable PowerShell 7 is unavailable; reapply setup' }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
         "& '" + $entry.Replace("'", "''") + "' -Project '" + $directory.Replace("'", "''") + "' -Msvc:`$" + ([bool]$Msvc).ToString().ToLowerInvariant()))

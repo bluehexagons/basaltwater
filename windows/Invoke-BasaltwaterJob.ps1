@@ -98,6 +98,7 @@ try {
     $startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
     $startInfo.WorkingDirectory = $source
     $startInfo.UseShellExecute = $false
+    $startInfo.EnvironmentVariables.Remove('PSModulePath')
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true

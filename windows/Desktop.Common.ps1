@@ -156,6 +156,8 @@ catch { `$result = @{ error = `$_.Exception.Message } }
         $start.FileName = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $start.Arguments = '-NoLogo -NoProfile -NonInteractive -Sta -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($entry))
         $start.UseShellExecute = $false; $start.CreateNoWindow = $true; $start.WindowStyle = 'Hidden'
+        # .NET process launches do not apply pwsh's Windows PowerShell path filtering.
+        $start.EnvironmentVariables.Remove('PSModulePath')
         $process = [Diagnostics.Process]::Start($start)
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $process.Kill(); if (-not $process.WaitForExit(2000)) { throw 'Owned worker cleanup unconfirmed' }

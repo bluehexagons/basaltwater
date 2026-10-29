@@ -51,6 +51,7 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
         catch [IO.IOException] { $blocked = $true }
         finally { if ($otherLock) { $otherLock.Dispose() } }
         Assert-True $blocked 'Reboot request did not retain the setup lock'
+        Assert-True (-not $script:Tasks.ContainsKey('Basaltwater-Windows-Restart-owner')) 'Shutdown could interrupt removal of the restart task'
         if ($script:ShutdownFailure) { throw 'fixture shutdown failure' }
     }
     $script:Required = $false; $script:Unknown = $false; $script:Boot = '100'
@@ -122,6 +123,26 @@ $global:BasaltwaterRestartTestRecovery = [pscustomobject]@{ Resume = [bool]$Resu
     $request = Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw | ConvertFrom-Json
     Invoke-NativeWindowsRestartWorker Restart $request.Id
     Assert-True ((Read-NativeWindowsRestartRequest $request.Id).Status -eq 'manual-restart-required') 'Shutdown failure retained a successful reboot status'
+
+    # A replacement registered as setup.lock is released must survive the old
+    # worker's finally block. Never invoke a real scheduler or Windows shutdown.
+    & {
+        function Wait-NativeSetupCompletion($LockPath) {
+            $stream = [IO.File]::Open($LockPath, 'OpenOrCreate', 'ReadWrite', 'None')
+            $wrapper = [pscustomobject]@{ Lease = $stream }
+            $wrapper | Add-Member ScriptMethod Dispose {
+                $this.Lease.Dispose()
+                $script:Tasks['Basaltwater-Windows-Restart-owner'] = @{ Replacement = $true }
+            }
+            return $wrapper
+        }
+        Invoke-NativeWindowsRestart $state -Required | Out-Null
+        $owned = Get-Content -LiteralPath (Get-NativeWindowsRestartPath) -Raw -Encoding UTF8 | ConvertFrom-Json
+        # Boot changed before worker startup: exercise its early-return cleanup.
+        $script:Boot = '300'
+        Invoke-NativeWindowsRestartWorker Restart $owned.Id
+        Assert-True ($script:Tasks['Basaltwater-Windows-Restart-owner'].Replacement) 'Old cleanup deleted a replacement after releasing setup.lock'
+    }
 
     # Inspect the real shutdown boundary with a fake command; never invoke the OS.
     & {

@@ -18,6 +18,7 @@ function Invoke-NativeHealthProbe {
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
         $info.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $info.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
+        $info.EnvironmentVariables.Remove('PSModulePath')
     }
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true

@@ -17,6 +17,11 @@ Development** Start Menu shortcut. These open PowerShell 7 with current account
 PATH settings. The Terminal profile is a managed JSON fragment; setup does not
 replace personal Terminal settings or select a new default profile. Reapplying
 setup refreshes the Basaltwater fragment and shortcut.
+MSIX installations use the verified stable app execution alias so the profile
+and shortcut continue working when PowerShell's versioned package is replaced.
+The batch CLI and bounded Windows PowerShell worker rebuild their own module
+paths, avoiding incompatible PowerShell 7 modules inherited through intermediaries;
+see [Microsoft's module-path guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
 
 ```powershell
 basaltw desktop open 'F:\builds\package.zip' --reveal
@@ -141,6 +146,12 @@ to close/restart the desktop without killing setup. Use `refresh --status ID`
 and `refresh --logs ID` for progress; `--wait` runs in the invoking terminal.
 `refresh --cancel ID` can cancel a queued job before setup starts; an applying
 package installer must finish before another attempt.
+Status reports `cleanup-uncertain` when a running job loses its worker in the
+current boot. An installer may have survived, so inspect its logs and reboot
+before another detached refresh. After reboot, the next refresh marks abandoned
+queued/running jobs `interrupted` while holding their claim and setup locks.
+It starts a new job without replaying the abandoned one; `--status` returns
+nonzero for failed, interrupted or uncertain jobs.
 `--dry-run` remains read-only and foreground. Refresh logs are capped at 16 MiB.
 Active or uncertain development tasks block setup/reboot; wait for them or cancel
 and confirm cleanup. Reboots remain automatic when required, with the existing

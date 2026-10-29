@@ -78,6 +78,26 @@ exit 1
         @{ Source = $doctorSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath
         $doctor = & $launcher doctor --json | Out-String
         Assert-True ($LASTEXITCODE -eq 1 -and -not ($doctor | ConvertFrom-Json).Healthy) 'Installed doctor lost JSON or failure status'
+        # Model a pwsh -> cmd -> Windows PowerShell launch with an incompatible
+        # security module first on inherited PSModulePath. Never touch real modules.
+        $moduleRoot = Join-Path $temporary 'incompatible modules'
+        $module = Join-Path $moduleRoot 'Microsoft.PowerShell.Security'
+        New-Item -ItemType Directory -Path $module -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $module 'Microsoft.PowerShell.Security.psd1') -Value "@{ ModuleVersion='99.0'; RootModule='wrong.psm1'; PowerShellVersion='99.0' }"
+        Set-Content -LiteralPath (Join-Path $module 'wrong.psm1') -Value "throw 'Incompatible module was loaded'"
+        Set-Content -LiteralPath (Join-Path $doctorSource 'windows\Test-AgentWorkstation.ps1') -Value @'
+param([switch]$Json)
+$ErrorActionPreference = 'Stop'
+Get-Acl -LiteralPath $PSScriptRoot | Out-Null
+'{"Healthy":true}'
+'@
+        $savedModules = $env:PSModulePath
+        try {
+            $env:PSModulePath = $moduleRoot + ';' + $savedModules
+            $doctor = & $launcher doctor --json | Out-String
+            Assert-True ($LASTEXITCODE -eq 0 -and ($doctor | ConvertFrom-Json).Healthy) 'Batch launcher inherited incompatible PowerShell modules'
+            Assert-True ($env:PSModulePath -ceq ($moduleRoot + ';' + $savedModules)) 'Batch launcher changed its parent module environment'
+        } finally { $env:PSModulePath = $savedModules }
     } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }
     $source = Join-Path $temporary ('pinned source with spaces ' + [char]0x03bb)
     New-Item -ItemType Directory -Path $source | Out-Null

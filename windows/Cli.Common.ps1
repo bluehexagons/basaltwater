@@ -178,7 +178,7 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
             Write-Host ((Stop-NativeQueuedRefresh $options[1]) | ConvertTo-Json)
             return 0
         }
-        $receipt = Read-NativeRefreshReceipt $options[1]
+        $receipt = Get-NativeRefreshStatus $options[1]
         if ($options[0] -eq '--logs') {
             $log = Join-Path (Get-NativeRefreshDirectory $receipt.Id) 'setup.log'
             Assert-NativeSkillPath $log
@@ -186,7 +186,7 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
         } else {
             Write-Host ($receipt | Select-Object Id,Status,StartedUtc,CompletedUtc,Log | ConvertTo-Json)
         }
-        if ($options[0] -eq '--status' -and $receipt.Status -in @('failed','dispatch-failed')) { return 1 }
+        if ($options[0] -eq '--status' -and $receipt.Status -in @('failed','dispatch-failed','interrupted','cleanup-uncertain')) { return 1 }
         return 0
     }
     $wait = $options -contains '--wait'

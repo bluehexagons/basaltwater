@@ -32,6 +32,14 @@ try {
         function Test-NativePowerShellExecutable($Path) { return $Path -like '*\stable\*' }
         Assert-True ((Get-NativePowerShell7) -eq 'C:\stable\pwsh.exe') 'Discovery selected an unverified/preview executable'
     }
+    & {
+        function Get-NativePowerShell7 { return 'C:\Program Files\WindowsApps\Microsoft.PowerShell_7.fixture\pwsh.exe' }
+        function Test-NativePowerShellExecutable($Path) { return $script:AliasAvailable }
+        $script:AliasAvailable = $true
+        Assert-True ((Get-NativeInteractivePowerShell7) -eq (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe')) 'Interactive shell retained an expiring MSIX package path'
+        $script:AliasAvailable = $false
+        Assert-True ((Get-NativeInteractivePowerShell7) -eq (Get-NativePowerShell7)) 'Disabled alias hid a verified executable'
+    }
     $fixture = Join-Path $temporary "installer & quote's.ps1"
     $env:BASALTWATER_SHELL_CAPTURE = Join-Path $temporary 'capture.json'
     Set-Content -LiteralPath $fixture -Encoding UTF8 -Value @'

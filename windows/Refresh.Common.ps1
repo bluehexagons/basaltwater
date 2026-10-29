@@ -18,12 +18,66 @@ function Read-NativeRefreshReceipt([string]$Id) {
     $path = Join-Path (Get-NativeRefreshDirectory $Id) 'receipt.json'
     Assert-NativeSkillPath $path
     if ((Get-Item -LiteralPath $path -ErrorAction Stop).Length -gt 131072) { throw 'Refresh receipt exceeds its limit' }
-    $receipt = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    $options = @{}
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $options.DateKind = 'String' }
+    $receipt = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json @options
     if ($receipt.Version -ne 1 -or $receipt.Id -ne $Id -or
         $receipt.OwnerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) {
         throw 'Refresh receipt does not belong to this account/job'
     }
     return $receipt
+}
+
+function Get-NativeRefreshBoot {
+    return (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString()
+}
+
+function Test-NativeRefreshPreviousBoot($Receipt) {
+    $boot = Get-NativeRefreshBoot
+    if ($Receipt.PSObject.Properties['Boot'] -and $Receipt.Boot) { return $Receipt.Boot -ne $boot }
+    # Older receipts have no boot identity. A receipt last written before this
+    # boot cannot describe a surviving worker; claim/setup locks still arbitrate.
+    $path = Join-Path (Get-NativeRefreshDirectory $Receipt.Id) 'receipt.json'
+    return (Get-Item -LiteralPath $path).LastWriteTimeUtc.Ticks -lt [long]$boot
+}
+
+function Get-NativeRefreshStatus([string]$Id) {
+    $receipt = Read-NativeRefreshReceipt $Id
+    if ($receipt.Status -notin @('queued','running')) { return $receipt }
+    if (Test-NativeRefreshPreviousBoot $receipt) {
+        $receipt.Status = 'interrupted'
+    } elseif ($receipt.Status -eq 'running') {
+        $alive = $false
+        if ($receipt.PSObject.Properties['WorkerPid'] -and $receipt.WorkerPid) {
+            $process = Get-Process -Id $receipt.WorkerPid -ErrorAction SilentlyContinue
+            if ($process) {
+                try { $alive = $process.StartTime.ToUniversalTime().ToString('o') -eq $receipt.WorkerStartedUtc }
+                finally { $process.Dispose() }
+            }
+        }
+        if (-not $alive) { $receipt.Status = 'cleanup-uncertain' }
+    }
+    return $receipt
+}
+
+function Complete-NativeInterruptedRefresh([string]$Id) {
+    $directory = Get-NativeRefreshDirectory $Id
+    Assert-NativeSkillPath $directory
+    $lease = $null; $setup = $null
+    try {
+        $lease = [IO.File]::Open((Join-Path $directory 'claim.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+        # A boot proves the old installer tree is gone; also exclude recovery
+        # or another setup currently applying changes. Never replay the old job.
+        $setup = [IO.File]::Open((Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+        $receipt = Read-NativeRefreshReceipt $Id
+        if ($receipt.Status -notin @('queued','running') -or -not (Test-NativeRefreshPreviousBoot $receipt)) { throw 'Refresh is not from a previous Windows boot' }
+        $receipt.Status = 'interrupted'; $receipt.CompletedUtc = [datetime]::UtcNow.ToString('o')
+        Write-NativeRefreshReceipt $receipt
+        Unregister-ScheduledTask -TaskName ('Basaltwater-Refresh-' + $Id) -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
+    } finally {
+        if ($setup) { $setup.Dispose() }
+        if ($lease) { $lease.Dispose() }
+    }
 }
 
 function ConvertTo-NativeRefreshOptions([string[]]$Arguments) {
@@ -57,7 +111,11 @@ function Start-NativeRefresh($Saved, [string]$Source, [string[]]$Arguments) {
     try {
         foreach ($directory in Get-ChildItem -LiteralPath $root -Directory) {
             if ($directory.Name -notmatch '\A[0-9a-f]{32}\z') { continue }
-            $existing = Read-NativeRefreshReceipt $directory.Name
+            $existing = Get-NativeRefreshStatus $directory.Name
+            if ($existing.Status -eq 'interrupted' -and -not $existing.CompletedUtc) {
+                Complete-NativeInterruptedRefresh $existing.Id
+            }
+            if ($existing.Status -eq 'cleanup-uncertain') { throw "Refresh $($existing.Id) lost its worker. An installer may still be running; inspect its logs and reboot Windows before starting another detached refresh." }
             if ($existing.Status -in @('queued','running')) { throw "Refresh $($existing.Id) is still pending; inspect it before starting another" }
         }
         $id = [guid]::NewGuid().ToString('N')
@@ -65,6 +123,7 @@ function Start-NativeRefresh($Saved, [string]$Source, [string[]]$Arguments) {
         New-Item -ItemType Directory -Path $directory | Out-Null
         $receipt = [pscustomobject]@{ Version = 1; Id = $id; OwnerSid = $Saved.OwnerSid;
             Source = $Saved.Source; Status = 'queued'; StartedUtc = $null; CompletedUtc = $null;
+            Boot = (Get-NativeRefreshBoot); WorkerPid = 0; WorkerStartedUtc = '';
             Options = $options; Log = (Join-Path $directory 'setup.log'); LogTruncated = $false }
         Write-NativeRefreshReceipt $receipt
         $task = 'Basaltwater-Refresh-' + $id
@@ -78,10 +137,20 @@ function Start-NativeRefresh($Saved, [string]$Source, [string[]]$Arguments) {
             Register-ScheduledTask -TaskName $task -TaskPath '\' -Action $action -Principal $principal -Settings $settings -Force | Out-Null
             Start-ScheduledTask -TaskName $task -TaskPath '\'
         } catch {
-            $receipt.Status = 'dispatch-failed'; $receipt.CompletedUtc = [datetime]::UtcNow.ToString('o')
-            Write-NativeRefreshReceipt $receipt
-            Unregister-ScheduledTask -TaskName $task -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
-            throw
+            $dispatchError = $_; $claim = $null
+            try {
+                # Scheduler may have started the worker before reporting a
+                # transport error. Never overwrite its running/completed receipt.
+                $claim = [IO.File]::Open((Join-Path $directory 'claim.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+                $receipt = Read-NativeRefreshReceipt $id
+                if ($receipt.Status -eq 'queued') {
+                    $receipt.Status = 'dispatch-failed'; $receipt.CompletedUtc = [datetime]::UtcNow.ToString('o')
+                    Write-NativeRefreshReceipt $receipt
+                    Unregister-ScheduledTask -TaskName $task -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
+                }
+            } catch [IO.IOException] { } # A claimed worker retains authority over its receipt.
+            finally { if ($claim) { $claim.Dispose() } }
+            throw $dispatchError
         }
         return [pscustomobject]@{ Id = $id; Status = $receipt.Status; Log = $receipt.Log;
             StatusCommand = "basaltw refresh --status $id"; LogsCommand = "basaltw refresh --logs $id" }
@@ -93,6 +162,14 @@ function Invoke-NativeRefreshWorker([string]$Id) {
     try {
     $receipt = Read-NativeRefreshReceipt $Id
     if ($receipt.Status -ne 'queued') { throw 'Refresh job was already consumed; do not replay it' }
+    if (Test-NativeRefreshPreviousBoot $receipt) { throw 'Refresh was queued before reboot; start a new refresh instead of replaying it' }
+    $self = Get-Process -Id $PID
+    try {
+        $receipt | Add-Member NoteProperty WorkerPid $PID -Force
+        $receipt | Add-Member NoteProperty WorkerStartedUtc $self.StartTime.ToUniversalTime().ToString('o') -Force
+        $receipt | Add-Member NoteProperty Boot (Get-NativeRefreshBoot) -Force
+    }
+    finally { $self.Dispose() }
     $receipt.Status = 'running'; $receipt.StartedUtc = [datetime]::UtcNow.ToString('o')
     Write-NativeRefreshReceipt $receipt
     try {
