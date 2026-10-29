@@ -21,10 +21,9 @@ if (-not (Test-Path 'Function:\Show-NativeDesktopNotification')) {
 }
 $directory = Get-DevelopmentDirectory $TaskId
 $record = Get-DevelopmentRecord $TaskId
-Assert-DevelopmentPath (Join-Path $directory 'request.json')
-$request = Read-DevelopmentJson (Join-Path $directory 'request.json')
 if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'Development workers require verified PowerShell 7. Run native doctor and repair PowerShell.' }
 if ($Child) {
+    $request = Read-DevelopmentJson (Join-Path $directory 'request.json')
     Set-Location -LiteralPath $request.Project
     if ($request.Msvc) {
         . (Join-Path $PSScriptRoot 'GameDevelopment.Common.ps1')
@@ -56,11 +55,14 @@ if ($record.CompletedUtc -or $record.WorkerPid) {
 $process = $null; $job = $null; $gateHandle = $null; $started = $false; $awake = $false
 $copies = @(); $cleanupError = $null; $desired = 'failed'
 try {
+    if (Test-DevelopmentPreviousBoot $record) { $desired = 'interrupted'; return }
     $self = Get-Process -Id $PID
     $record.WorkerPid = $PID; $record.WorkerStartedUtc = $self.StartTime.ToUniversalTime().ToString('o')
     $self.Dispose()
+    $record | Add-Member NoteProperty Boot (Get-DevelopmentBoot) -Force
     $record.State = 'starting'
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+    $request = Read-DevelopmentJson (Join-Path $directory 'request.json')
     . (Join-Path $PSScriptRoot 'GitHubRunner.Common.ps1')
     . (Join-Path $PSScriptRoot 'Development.Process.ps1')
     Import-RunnerJobType
@@ -74,7 +76,7 @@ try {
     $info.UseShellExecute = $false; $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
     $info.WorkingDirectory = $request.Project
-    foreach ($arg in @('-NoProfile','-NonInteractive','-File', $PSCommandPath, '-TaskId', $TaskId, '-Child', '-Gate', $gateName, '-JobName', $jobName)) { $info.ArgumentList.Add($arg) }
+    foreach ($arg in @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File', $PSCommandPath, '-TaskId', $TaskId, '-Child', '-Gate', $gateName, '-JobName', $jobName)) { $info.ArgumentList.Add($arg) }
     $info.Environment.Clear()
     foreach ($property in $request.Environment.PSObject.Properties) { $info.Environment[$property.Name] = [string]$property.Value }
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $info
@@ -113,10 +115,16 @@ finally {
     if ($cleanupError) { $record.State = 'cleanup-uncertain'; $record.Message = $cleanupError }
     else { $record.State = $desired; $record.CompletedUtc = [DateTime]::UtcNow.ToString('o') }
     try {
+        if ($record.CompletedUtc) {
+            try { Remove-DevelopmentRequest $directory }
+            catch {
+                $record.State = 'cleanup-uncertain'; $record.CompletedUtc = $null
+                $record.Message = 'Private environment cleanup could not be confirmed; inspect the task before maintenance.'
+            }
+        }
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         # Environment snapshots may contain provider credentials; retain only task receipts/logs.
         if ($record.CompletedUtc) {
-            Remove-Item -LiteralPath (Join-Path $directory 'request.json') -Force
             Unregister-ScheduledTask -TaskName $record.TaskName -Confirm:$false -ErrorAction SilentlyContinue
             try {
                 Show-NativeDesktopNotification 'Basaltwater task' ("Task " + $record.State + '. Use develop status/logs ' + $record.Id)

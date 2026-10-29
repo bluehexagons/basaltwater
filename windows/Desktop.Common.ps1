@@ -13,9 +13,22 @@ $script:NativeDesktopSource = $PSScriptRoot
 
 function Get-NativeDesktopContext {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $logon = @($identity.Groups | Where-Object { $_.Value -like 'S-1-5-5-*' })
-    if ($logon.Count -ne 1) { throw 'Cannot establish interactive logon identity' }
-    return @{ Sid = $identity.User.Value; Session = "$([Diagnostics.Process]::GetCurrentProcess().SessionId):$($logon[0].Value)" }
+    try {
+        $logon = Get-NativeDesktopAuthenticationId $identity.Token
+        $boot = Get-NativeDesktopBoot
+        return @{ Sid = $identity.User.Value; Session = "$([Diagnostics.Process]::GetCurrentProcess().SessionId):${logon}:$boot" }
+    } finally { $identity.Dispose() }
+}
+
+function Get-NativeDesktopAuthenticationId([IntPtr]$Token) {
+    if (-not ('Basaltwater.Desktop.Session' -as [type])) {
+        Add-Type -Path (Join-Path $script:NativeDesktopSource 'Desktop.Session.cs') -ErrorAction Stop
+    }
+    return [Basaltwater.Desktop.Session]::AuthenticationId($Token)
+}
+
+function Get-NativeDesktopBoot {
+    return (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString()
 }
 
 function Get-NativeDesktopStatePath { return Join-Path $env:LOCALAPPDATA 'Basaltwater\desktop\state.json' }
@@ -177,8 +190,15 @@ catch { `$result = @{ error = `$_.Exception.Message } }
 }
 
 function Get-NativeDesktopReadiness {
-    try { return Invoke-NativeDesktopWorker @{ command = 'ready' } }
+    $lock = $null
+    try {
+        $context = Get-NativeDesktopContext
+        $lock = Enter-NativeDesktopLock $context
+        $null = Read-NativeDesktopState $context
+        return Invoke-NativeDesktopWorker @{ command = 'ready' }
+    }
     catch { return @{ healthy = $false; capture_performed = $false; error = $_.Exception.Message } }
+    finally { if ($lock) { Exit-NativeDesktopLock $lock } }
 }
 
 function ConvertTo-NativeDesktopRequest([string[]]$Arguments) {

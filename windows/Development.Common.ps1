@@ -62,13 +62,58 @@ function Test-DevelopmentProcess([int]$ProcessId, [string]$StartedUtc) {
     try { return $process.StartTime.ToUniversalTime().ToString('o') -eq $StartedUtc }
     catch { return $false } finally { $process.Dispose() }
 }
+function Get-DevelopmentBoot {
+    return (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().Ticks.ToString()
+}
+function Test-DevelopmentPreviousBoot($Record) {
+    $boot = Get-DevelopmentBoot
+    if ($Record.PSObject.Properties['Boot'] -and $Record.Boot) { return $Record.Boot -ne $boot }
+    return ([DateTime]$Record.CreatedUtc).ToUniversalTime().Ticks -lt [long]$boot
+}
+function Remove-DevelopmentScheduledTask($Record) {
+    $tasks = @(Get-ScheduledTask -TaskPath '\' -ErrorAction Stop | Where-Object TaskName -eq $Record.TaskName)
+    if ($tasks.Count) { Unregister-ScheduledTask -TaskName $Record.TaskName -TaskPath '\' -Confirm:$false -ErrorAction Stop }
+    if (@(Get-ScheduledTask -TaskPath '\' -ErrorAction Stop | Where-Object TaskName -eq $Record.TaskName).Count) {
+        throw 'Development task registration could not be retired; inspect Task Scheduler before retrying.'
+    }
+}
+function Remove-DevelopmentRequest([string]$Directory) {
+    $request = Join-Path $Directory 'request.json'
+    Assert-DevelopmentPath $request
+    if (Test-Path -LiteralPath $request) { Remove-Item -LiteralPath $request -Force }
+}
+function Complete-AbandonedDevelopmentTask([string]$Id, [IO.FileStream]$GuardianLease = $null) {
+    # Caller holds setup.lock. The guardian lock excludes startup/publication;
+    # retired receipts prevent an already-dispatched worker from executing later.
+    $directory = Get-DevelopmentDirectory $Id
+    $lease = $GuardianLease
+    if (-not $lease) { $lease = [IO.File]::Open((Join-Path $directory 'guardian.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+    try {
+        $record = Get-DevelopmentRecord $Id
+        if ($record.CompletedUtc) { return $record }
+        $previousBoot = Test-DevelopmentPreviousBoot $record
+        if (-not $previousBoot -and ($record.WorkerPid -or $record.State -notin @('queued','launch-uncertain'))) {
+            throw 'Development cleanup cannot be confirmed during this boot. Inspect the task and reboot Windows before maintenance.'
+        }
+        Remove-DevelopmentScheduledTask $record
+        $record.State = if ($previousBoot) { 'interrupted' } else { 'cancelled' }
+        $record.CompletedUtc = [DateTime]::UtcNow.ToString('o')
+        $record.Message = 'Registration retired without replaying project code.'
+        Remove-DevelopmentRequest $directory
+        Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+        return $record
+    } finally { if (-not $GuardianLease) { $lease.Dispose() } }
+}
 function Get-DevelopmentStatus([string]$Id) {
     $record = Get-DevelopmentRecord $Id
-    if (-not $record.CompletedUtc -and $record.WorkerPid -and
+    if (-not $record.CompletedUtc -and (Test-DevelopmentPreviousBoot $record)) {
+        $record.State = 'interrupted'
+        $record.Message = 'Work belongs to an earlier Windows boot. Cancel or run setup to retire it without replay.'
+    } elseif (-not $record.CompletedUtc -and $record.WorkerPid -and
         -not (Test-DevelopmentProcess $record.WorkerPid $record.WorkerStartedUtc)) {
         $record.State = 'cleanup-uncertain'
         $record.Message = 'Guardian exited without confirming cleanup. Inspect owned process identities and logs before setup/reboot or retry.'
-    } elseif ($record.State -eq 'queued' -and [DateTime]::UtcNow -gt ([DateTime]$record.CreatedUtc).AddSeconds(60)) {
+    } elseif ($record.State -eq 'queued' -and [DateTime]::UtcNow -gt ([DateTime]$record.CreatedUtc).ToUniversalTime().AddSeconds(60)) {
         $record.State = 'launch-uncertain'
         $record.Message = 'Worker did not acknowledge launch. Inspect Task Scheduler and use develop cancel TASKID; do not blindly relaunch.'
     }
@@ -80,6 +125,9 @@ function Assert-NativeDevelopmentIdle {
     foreach ($directory in Get-ChildItem -LiteralPath $root -Directory) {
         if ($directory.Name -notmatch '^[a-f0-9]{32}$') { throw 'Unexpected development state directory; inspect before setup/reboot.' }
         $record = Get-DevelopmentStatus $directory.Name
+        if (-not $record.CompletedUtc -and $record.State -eq 'interrupted') {
+            $record = Complete-AbandonedDevelopmentTask $record.Id
+        }
         if (-not $record.CompletedUtc) { throw "Development task $($record.Id) is $($record.State). Use basaltw desktop develop status/logs/cancel $($record.Id); cleanup must settle before setup/reboot." }
     }
 }
@@ -195,7 +243,7 @@ function Start-DevelopmentScheduledTask($Record, [string]$PowerShell) {
     $worker = Join-Path $PSScriptRoot 'Invoke-DevelopmentTask.ps1'
     $code = "& '" + $worker.Replace("'", "''") + "' -TaskId '" + $Record.Id + "'"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
-    $action = New-ScheduledTaskAction -Execute $PowerShell -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ' + $encoded)
+    $action = New-ScheduledTaskAction -Execute $PowerShell -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
     $principal = New-ScheduledTaskPrincipal -UserId $Record.OwnerSid -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $Record.TaskName -Action $action -Principal $principal -Settings $settings | Out-Null
@@ -208,8 +256,19 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         $directory = Get-DevelopmentDirectory $id
         if ($Arguments[0] -eq 'status') { return $record }
         if ($Arguments[0] -eq 'cancel') {
-            if (-not $record.CompletedUtc) { [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel') }
-            return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = (-not $record.CompletedUtc); Message = 'Cancellation is cooperative with the guardian; use status to confirm cleanup. Uncertain tasks block setup/reboot.' }
+            if ($record.CompletedUtc) { return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = $false } }
+            [IO.File]::WriteAllText((Join-Path $directory 'cancel'), 'cancel')
+            $probe = $null
+            $admission = [IO.File]::Open((Join-Path $env:LOCALAPPDATA 'Basaltwater\setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+            try {
+                try { $probe = [IO.File]::Open((Join-Path $directory 'guardian.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+                catch [IO.IOException] { } # The active guardian will consume the marker.
+                if ($probe) { $record = Complete-AbandonedDevelopmentTask $id $probe }
+            } finally {
+                if ($probe) { $probe.Dispose() }
+                $admission.Dispose()
+            }
+            return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = $true; Message = 'Use status to confirm cleanup. Uncertain tasks block setup/reboot.' }
         }
         $logs = @{}
         foreach ($name in @('stdout','stderr')) {
@@ -248,7 +307,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     $record = [pscustomobject]@{ Id = $id; OwnerSid = (Get-DevelopmentSid); SessionId = $provider.SessionId;
         ProviderPid = $PID; ProviderStartedUtc = $provider.StartTime.ToUniversalTime().ToString('o');
         WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = '';
-        CreatedUtc = [DateTime]::UtcNow.ToString('o'); CompletedUtc = $null; State = 'queued'; ExitCode = $null;
+        CreatedUtc = [DateTime]::UtcNow.ToString('o'); Boot = (Get-DevelopmentBoot); CompletedUtc = $null; State = 'queued'; ExitCode = $null;
         TaskName = ('Basaltwater Development ' + $id); Message = 'Use develop status/logs/cancel TASKID.' }
     $provider.Dispose()
     $snapshot = @{}; foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $snapshot[$entry.Key] = $entry.Value }
@@ -259,10 +318,9 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
     try { Start-DevelopmentScheduledTask $record $powershell }
     catch {
-        # Start may have reached Scheduler before transport failed. Never claim cleanup.
-        $record.State = 'launch-uncertain'; $record.Message = "Worker launch failed: $($_.Exception.Message). Inspect Task Scheduler; use status/logs/cancel $id."
-        Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
-        throw $record.Message
+        # The guardian may already own or have completed the receipt. A stale
+        # dispatcher snapshot must never overwrite its identity or completion.
+        throw "Worker launch could not be confirmed. Inspect Task Scheduler; use status/logs/cancel $id before retrying."
     }
     return $record
     } finally { $admission.Dispose() }

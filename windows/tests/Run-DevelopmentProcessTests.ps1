@@ -41,7 +41,7 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash'):
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','timeout','cancel','orphan','crash')) {
+    foreach ($mode in @('success','fail','timeout','cancel','orphan','cleanup-fail','crash')) {
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
@@ -62,6 +62,15 @@ sys.exit(23 if mode == 'fail' else 0)
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         $workerPath = (Join-Path $fixtureSource 'Invoke-DevelopmentTask.ps1').Replace("'", "''")
         $code = "function Unregister-ScheduledTask { }; function Show-NativeDesktopNotification { }; & '$workerPath' -TaskId '$id'"
+        if ($mode -eq 'cleanup-fail') {
+            $code = @'
+function Remove-Item {
+    [CmdletBinding()] param([string]$LiteralPath, [switch]$Force)
+    if ($LiteralPath -like '*\request.json') { throw 'fixture request deletion failure' }
+    Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
+};
+'@ + $code
+        }
         $start = New-Object Diagnostics.ProcessStartInfo
         $start.FileName = $shell; $start.UseShellExecute = $false; $start.CreateNoWindow = $true
         $start.Arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
@@ -80,6 +89,12 @@ sys.exit(23 if mode == 'fail' else 0)
             }
         }
         $guardian.Dispose(); $guardian = $null
+        if ($mode -eq 'cleanup-fail') {
+            $uncertain = Get-DevelopmentRecord $id
+            Assert-True ($uncertain.State -eq 'cleanup-uncertain' -and -not $uncertain.CompletedUtc -and
+                $uncertain.Message -match 'Private environment cleanup' -and (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Environment deletion failure was hidden by a terminal receipt'
+            continue
+        }
         if ($mode -eq 'crash') {
             Assert-True ($null -ne $descendant -and $descendant.WaitForExit(10000)) 'Guardian crash leaked a native descendant'
             $descendant.Dispose()
@@ -94,6 +109,19 @@ sys.exit(23 if mode == 'fail' else 0)
         $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
         Assert-True ($result.State -eq $expected -and $result.CompletedUtc) "Expected $expected after process cleanup; got $($result.State): $($result.Message)"
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Terminal task retained its environment snapshot'
+        if ($mode -eq 'success') {
+            # Retired tasks refuse late scheduler starts before reading the
+            # removed environment or running any project code again.
+            $start.RedirectStandardError = $true; $start.RedirectStandardOutput = $true
+            $replay = [Diagnostics.Process]::Start($start)
+            try {
+                $errors = $replay.StandardError.ReadToEndAsync()
+                $outputDrain = $replay.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
+                Assert-True ($replay.WaitForExit(10000)) 'Retired task replay was not bounded'
+                Assert-True ($errors.Wait(1000) -and $outputDrain.Wait(1000) -and $replay.ExitCode -ne 0 -and
+                    $errors.Result -match 'refusing replay') 'Retired task did not reject replay before reading its environment'
+            } finally { if (-not $replay.HasExited) { $replay.Kill(); $replay.WaitForExit() }; $replay.Dispose() }
+        }
         if ($mode -in @('success','fail')) {
             $output = Get-Content -LiteralPath (Join-Path $directory 'stdout.log') -Raw -Encoding UTF8 | ConvertFrom-Json
             Assert-True (($output.argv -join '|') -ceq ($literal -join '|') -and $output.date -ceq $environment.TASK_LITERAL_DATE) 'Worker changed Unicode/empty argv or ISO-looking environment values'

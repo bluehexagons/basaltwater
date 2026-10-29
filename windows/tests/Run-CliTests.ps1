@@ -99,6 +99,27 @@ Get-Acl -LiteralPath $PSScriptRoot | Out-Null
             Assert-True ($env:PSModulePath -ceq ($moduleRoot + ';' + $savedModules)) 'Batch launcher changed its parent module environment'
         } finally { $env:PSModulePath = $savedModules }
     } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }
+    $developmentSource = Join-Path $temporary 'development CLI fixture'
+    New-Item -ItemType Directory -Path (Join-Path $developmentSource 'windows') -Force | Out-Null
+    foreach ($name in @('AgentWorkstation.Common.ps1','Desktop.Common.ps1')) {
+        [IO.File]::WriteAllText((Join-Path $developmentSource ('windows\' + $name)), '# fixture: no system operations')
+    }
+    [IO.File]::WriteAllText((Join-Path $developmentSource 'windows\Development.Common.ps1'), @'
+function Invoke-NativeDevelopmentCli($Arguments) { return [pscustomobject]@{ State = $env:BASALTWATER_TEST_TASK_STATE; ExitCode = 23 } }
+'@)
+    $savedTaskState = $env:BASALTWATER_TEST_TASK_STATE
+    try {
+        @{ Source = $developmentSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
+        foreach ($state in @('failed','timed-out','cancelled','cleanup-uncertain','launch-uncertain','interrupted','queued','running','complete')) {
+            $env:BASALTWATER_TEST_TASK_STATE = $state
+            $response = & $launcher desktop develop status fixture-id | Out-String
+            $expected = if ($state -in @('queued','running','complete')) { 0 } else { 1 }
+            Assert-True ($LASTEXITCODE -eq $expected -and ($response | ConvertFrom-Json).State -eq $state) "Development CLI lost status or exit meaning: $state"
+        }
+    } finally {
+        $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState
+        Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8
+    }
     $source = Join-Path $temporary ('pinned source with spaces ' + [char]0x03bb)
     New-Item -ItemType Directory -Path $source | Out-Null
     Set-Content -LiteralPath (Join-Path $source 'install.ps1') -Encoding UTF8 -Value @'

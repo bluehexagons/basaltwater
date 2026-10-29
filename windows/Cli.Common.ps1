@@ -118,6 +118,11 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
         if ($options.Count -and $options[0] -eq 'develop') {
             . (Join-Path $source 'windows\Development.Common.ps1')
             $result = Invoke-NativeDevelopmentCli @($options | Select-Object -Skip 1)
+            if ($null -ne $result -and $options.Count -ge 2 -and $options[1] -eq 'status' -and
+                $result.State -in @('failed','timed-out','cancelled','cleanup-uncertain','launch-uncertain','interrupted')) {
+                Write-Host ($result | ConvertTo-Json -Depth 12)
+                return 1
+            }
         } elseif ($options.Count -and $options[0] -in @('open','terminal','notify')) {
             $result = Invoke-NativeDesktopHandoff -Source $source -Arguments $options
         } else { $result = Invoke-NativeDesktopCli $options }

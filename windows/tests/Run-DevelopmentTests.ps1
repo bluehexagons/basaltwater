@@ -26,6 +26,7 @@ try {
         function Register-ScheduledTask($TaskName, $Action, $Principal, $Settings) {
             Assert-True ($Principal.LogonType -eq 'Interactive' -and $Principal.RunLevel -eq 'Limited') 'Worker requested elevated/noninteractive account'
             Assert-True ($Action.Execute -eq $shell -and $Action.Argument -match '-WindowStyle Hidden') 'Worker was not hidden or used an unverified executable'
+            Assert-True ($Action.Argument -match '-ExecutionPolicy Bypass') 'Scheduled helper depends on the account script execution policy'
             Assert-True ($Settings.Limit -eq [timespan]::Zero) 'Scheduler could terminate guardian before cleanup'
         }
         function Start-ScheduledTask($TaskName) { $script:schedulerStarted = $TaskName }
@@ -34,10 +35,26 @@ try {
     }
     function Get-NativePowerShell7 { return $shell }
     function Get-DevelopmentSid { return 'S-1-5-21-fixture' }
+    function Get-DevelopmentBoot { return $script:FixtureBoot }
     function Initialize-DevelopmentDirectory([string]$Directory) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
     $script:launchFailure = $false; $script:launched = $null
+    $script:FixtureBoot = '639200000000000000'; $script:PublishedState = ''; $script:TaskNames = @{}
+    $script:RetireFailure = $false
+    function Get-ScheduledTask($TaskPath) { foreach ($name in $script:TaskNames.Keys) { [pscustomobject]@{ TaskName = $name } } }
+    function Unregister-ScheduledTask($TaskName, $TaskPath, [switch]$Confirm) {
+        if ($script:RetireFailure) { throw 'mock retirement failure' }
+        $script:TaskNames.Remove($TaskName)
+    }
     function Start-DevelopmentScheduledTask($Record, [string]$PowerShell) {
         $script:launched = $Record
+        $script:TaskNames[$Record.TaskName] = $true
+        if ($script:PublishedState) {
+            $owned = Get-DevelopmentRecord $Record.Id
+            $owned.State = $script:PublishedState; $owned.WorkerPid = 12345; $owned.WorkerStartedUtc = 'fixture worker'
+            if ($owned.State -eq 'complete') { $owned.CompletedUtc = [DateTime]::UtcNow.ToString('o'); $owned.ExitCode = 0 }
+            Write-DevelopmentJson (Join-Path (Get-DevelopmentDirectory $Record.Id) 'receipt.json') $owned
+            throw 'mock dispatch failure after worker publication'
+        }
         if ($script:launchFailure) { throw 'mock Scheduler unavailable' }
     }
     $unicode = [string][char]0x96ea + ' space'
@@ -58,13 +75,16 @@ try {
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--what','--',$shell) } 'Unexpected option'
     $record = Invoke-NativeDevelopmentCli (@('exec','--project',$project,'--env','TASK_ONLY=child value','--msvc','--',$shell) + $literal)
     $directory = Get-DevelopmentDirectory $record.Id
+    Assert-True ((Get-DevelopmentStatus $record.Id).State -eq 'queued') 'Fresh UTC task appeared stale in the local time zone'
     $request = Get-Content -LiteralPath (Join-Path $directory 'request.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($request.Environment.BASALTWATER_PROVIDER_FIXTURE -eq 'provider shell value') 'Provider environment lost'
     Assert-True ($request.Environment.TASK_ONLY -eq 'child value' -and $request.Msvc) 'Task options lost'
     Assert-True ($request.Project -eq $project) 'Task cwd changed'
     Assert-True ($request.Argv[1] -ceq $unicode) 'Stored Unicode argv changed'
     Assert-Throws { Assert-NativeDevelopmentIdle } 'before setup/reboot'
-    $cancel = Invoke-NativeDevelopmentCli @('cancel',$record.Id)
+    $guardian = [IO.File]::Open((Join-Path $directory 'guardian.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    try { $cancel = Invoke-NativeDevelopmentCli @('cancel',$record.Id) }
+    finally { $guardian.Dispose() }
     Assert-True ($cancel.CancelRequested -and (Test-Path -LiteralPath (Join-Path $directory 'cancel'))) 'Cancel request lost'
     Assert-True (-not (Get-DevelopmentRecord $record.Id).CompletedUtc) 'Cancel claimed cleanup before guardian settlement'
     [IO.File]::WriteAllText((Join-Path $directory 'stdout.log'), ('x' * 100000))
@@ -78,10 +98,35 @@ try {
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
     Assert-NativeDevelopmentIdle
     $script:launchFailure = $true
-    Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'Worker launch failed.*mock Scheduler'
+    Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'Worker launch could not be confirmed'
     $failed = Get-DevelopmentRecord $script:launched.Id
-    Assert-True ($failed.State -eq 'launch-uncertain' -and -not $failed.CompletedUtc) 'Launch failure falsely claimed running or settled'
-    Assert-Throws { Assert-NativeDevelopmentIdle } 'launch-uncertain'
+    Assert-True ($failed.State -eq 'queued' -and -not $failed.CompletedUtc) 'Launch failure falsely claimed running or settled'
+    Assert-Throws { Assert-NativeDevelopmentIdle } 'queued'
+    $script:RetireFailure = $true
+    Assert-Throws { Invoke-NativeDevelopmentCli @('cancel',$failed.Id) } 'mock retirement failure'
+    Assert-True (-not (Get-DevelopmentRecord $failed.Id).CompletedUtc) 'Failed retirement published terminal cleanup'
+    $script:RetireFailure = $false
+    $cancelled = Invoke-NativeDevelopmentCli @('cancel',$failed.Id)
+    Assert-True ($cancelled.State -eq 'cancelled' -and (Get-DevelopmentRecord $failed.Id).CompletedUtc -and
+        -not (Test-Path -LiteralPath (Join-Path (Get-DevelopmentDirectory $failed.Id) 'request.json'))) 'Unstarted task could not be safely cancelled'
+    Assert-NativeDevelopmentIdle
+    $script:launchFailure = $false
+    foreach ($state in @('running','complete')) {
+        $script:PublishedState = $state
+        Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'Worker launch could not be confirmed'
+        $owned = Get-DevelopmentRecord $script:launched.Id
+        Assert-True ($owned.State -eq $state -and $owned.WorkerPid -eq 12345 -and $owned.WorkerStartedUtc -eq 'fixture worker') 'Dispatcher overwrote worker-owned state'
+        if ($state -eq 'running') {
+            Assert-Throws { Invoke-NativeDevelopmentCli @('cancel',$owned.Id) } 'reboot Windows'
+            Assert-Throws { Assert-NativeDevelopmentIdle } 'cleanup-uncertain'
+            $script:FixtureBoot = '639210000000000000'
+            Assert-NativeDevelopmentIdle
+            $settled = Get-DevelopmentRecord $owned.Id
+            Assert-True ($settled.State -eq 'interrupted' -and $settled.CompletedUtc -and
+                -not (Test-Path -LiteralPath (Join-Path (Get-DevelopmentDirectory $owned.Id) 'request.json'))) 'Boot recovery did not retire abandoned work and private environment'
+        } else { Assert-True ($owned.CompletedUtc -and $owned.ExitCode -eq 0) 'Dispatcher erased worker completion' }
+    }
+    $script:PublishedState = ''
     Assert-Throws { Invoke-NativeDevelopmentCli @('logs','..') } 'task ID'
     # Only installed fnm trees are eligible; no system Node fallback or global runtime selection.
     Set-Content -LiteralPath (Join-Path $project '.node-version') -Value '22.9.0'

@@ -45,8 +45,12 @@ basaltw desktop windows
 basaltw desktop inspect --pid 1234
 ```
 
-These are native Windows commands. Doctor tests interactive desktop/API access
-without screenshots, input or application launch. Status also reports human
+These are native Windows commands. Doctor tests interactive desktop/API access,
+token logon identity and readable control state without screenshots, input or
+application launch. It uses the token's AuthenticationId plus Windows boot and
+session identity; it does not assume a logon SID appears in the .NET group list.
+See [Microsoft's token statistics](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_statistics).
+Status also reports human
 control state. Window discovery returns current-account/session windows with
 decimal handles, identities, physical geometry and monitor device IDs. It can
 omit inaccessible windows. UI Automation inspection returns bounded controls
@@ -115,9 +119,22 @@ basaltw desktop develop cancel TASK_ID
 
 Tasks return IDs and run through limited interactive Scheduled Task guardians,
 independently of the invoking T3 terminal. Project code starts only after its
-process has entered an owned Windows Job Object. Cancellation and timeout settle
+process has entered an owned Windows Job Object. Basaltwater helper shells use
+process-local execution-policy bypass without changing account or machine policy.
+Cancellation and timeout settle
 the process tree before a terminal receipt is published. Interrupted or uncertain
 cleanup blocks setup/reboot; inspect the task rather than blindly replaying it.
+Failed dispatch never replaces a running or completed guardian receipt.
+`develop status` exits nonzero for failure, timeout, cancellation, interrupted
+work or uncertain cleanup; queued/running/complete queries exit zero.
+
+Cancellation retires an unstarted task under the setup and guardian locks,
+removes its registration and private environment, and prevents late execution.
+A running guardian receives a cancellation request; confirm its terminal status.
+If that guardian is gone during the same boot, inspect the task and reboot
+Windows to establish cleanup. After a real boot, cancellation or setup retires
+abandoned work as `interrupted` without replaying it. Scheduler or environment
+cleanup failures remain visible and block maintenance.
 
 `exec` accepts a real executable followed by literal arguments after `--`.
 For a script, use `pwsh.exe -File script.ps1`; batch files require an explicit

@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '..\Desktop.Common.ps1')
 $realWorker = (Get-Command Invoke-NativeDesktopWorker).ScriptBlock
+$realContext = (Get-Command Get-NativeDesktopContext).ScriptBlock
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Assert-Failure($Result, [string]$Pattern) {
     Assert-True (-not $Result.ok -and $Result.error -match $Pattern) "Expected $Pattern; received $($Result | ConvertTo-Json -Depth 5 -Compress)"
@@ -39,6 +40,23 @@ function Window-Action([string]$Generation, [string]$Identity = '42:birth:class:
 }
 New-NativeDesktopPrivateDirectory $temporary
 try {
+    & {
+        # Identity comes from the token's AuthenticationId, never group-list
+        # heuristics. A new boot must invalidate stale observation identities.
+        function Get-NativeDesktopAuthenticationId($Token) { return '0000000012345678' }
+        function Get-NativeDesktopBoot { return $script:ContextTestBoot }
+        $script:ContextTestBoot = '100'
+        $first = & $realContext
+        $script:ContextTestBoot = '200'
+        $second = & $realContext
+        Assert-True ($first.Sid -eq $second.Sid -and $first.Session -like '*:0000000012345678:100' -and
+            $first.Session -ne $second.Session) 'Token logon/boot identity is not stable or isolated'
+    }
+    & {
+        function Get-NativeDesktopContext { throw 'fixture logon identity unavailable' }
+        $ready = Get-NativeDesktopReadiness
+        Assert-True (-not $ready.healthy -and $ready.error -match 'identity unavailable') 'Doctor ignored the same identity failure that blocks status/windows'
+    }
     # Parse/compile only: not a single user32, capture, UIA or input call.
     Initialize-NativeDesktopTypes
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })
@@ -84,6 +102,8 @@ try {
     Assert-True (Invoke-NativeDesktopCli @('windows')).ok 'Disabled state blocked observation'
     $status = Invoke-NativeDesktopCli @('status')
     Assert-True ($status.agent_control -eq 'disabled') 'Disabled state did not persist'
+    Assert-True (Get-NativeDesktopReadiness).healthy 'Doctor cannot inspect an intentionally disabled desktop'
+    Assert-True ((Read-NativeDesktopState (Get-NativeDesktopContext)).mode -eq 'disabled') 'Doctor changed human control state'
     $override = Invoke-NativeDesktopCli @('control','human-override','--human-approved','--seconds','60')
     Assert-True ($override.ok -and $override.override_until -eq 10060) 'Override deadline not absolute'
     $script:DesktopTestNow = 10059L
@@ -145,6 +165,7 @@ try {
     Assert-Failure (Invoke-NativeDesktopCli @('windows')) 'Invalid desktop control state'
     [IO.File]::WriteAllText($script:DesktopTestPath, '{broken')
     Assert-True (-not (Invoke-NativeDesktopCli @('status')).ok) 'Corrupt state silently enabled control'
+    Assert-True (-not (Get-NativeDesktopReadiness).healthy) 'Doctor hid unreadable control state'
     Write-Host 'Native desktop offline contract tests passed (no live desktop calls).'
 } finally {
     $resolved = [IO.Path]::GetFullPath($temporary)
