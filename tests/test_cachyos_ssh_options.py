@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 import io
 import json
@@ -43,6 +43,9 @@ class CachyOSSSHOptionsTests(unittest.TestCase):
             "commit": "a" * 40, "channel": "dev",
         }))
         self.execute = stack.enter_context(patch.object(refresh.os, "execv"))
+        lock_file = stack.enter_context(tempfile.TemporaryFile())
+        stack.enter_context(patch("common.cachyos_t3.setup_completion_lock",
+            side_effect=lambda config: nullcontext(lock_file.fileno())))
         stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
         self.parser, _, _ = basaltwater.create_basaltwater_parser()
         self.record = self.home / ".local/state/basaltwater/cachyos/last-setup.json"

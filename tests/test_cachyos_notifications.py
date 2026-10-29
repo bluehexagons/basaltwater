@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import io
 import json
 from pathlib import Path
@@ -43,6 +43,10 @@ class CachyOSNotificationTests(unittest.TestCase):
             "commit": "abcdef0123456789", "channel": "dev",
         }))
         self.execute = stack.enter_context(patch.object(refresh.os, "execv"))
+        lock_file = stack.enter_context(tempfile.TemporaryFile())
+        stack.enter_context(patch("common.cachyos_t3.setup_completion_lock",
+            side_effect=lambda config: nullcontext(lock_file.fileno())))
+        stack.enter_context(patch("common.cachyos_reboot.report_reboot_notice"))
         self.preflight = stack.enter_context(patch("lib.cachyos.preflight_cachyos"))
         self.doctor = stack.enter_context(patch("lib.cachyos_doctor.collect_cachyos_doctor", return_value={"capabilities": []}))
         stack.enter_context(patch("lib.cachyos_health.source_metadata", return_value={"commit": "fixture"}))

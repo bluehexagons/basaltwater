@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import os
 import io
 import shlex
@@ -146,7 +147,9 @@ class CachyOSSetupTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_apply_rejects_non_cachyos_before_steps(self):
-        with patch("lib.cachyos.is_cachyos", return_value=False), patch.object(steps, "run") as run:
+        with patch("lib.cachyos.is_cachyos", return_value=False), \
+                patch("common.cachyos_t3.setup_completion_lock", side_effect=lambda config: nullcontext()), \
+                patch.object(steps, "run") as run:
             with self.assertRaisesRegex(ValueError, "requires CachyOS"):
                 remote_setup.run_cachyos_setup(self.config())
         run.assert_not_called()

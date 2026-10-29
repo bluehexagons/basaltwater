@@ -130,6 +130,8 @@ setup-plan validation; never run a test against a real target.
 Debian CI runs as root inside its container. When a fixture mocks a desktop
 user's UID, model ownership of its temporary files consistently while retaining
 the permission and file-type checks being tested.
+Mock user-runtime locks in setup/refresh tests that do not exercise locking;
+use a temporary file descriptor when refresh needs an exec handoff.
 Set required fixture directory modes explicitly rather than relying on the
 runner's umask. An unsafe ancestor can otherwise prevent a negative test from
 reaching the file or failure it intends to exercise.
