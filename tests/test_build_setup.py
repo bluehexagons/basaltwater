@@ -116,6 +116,30 @@ class BuildSetupTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob("build-setups/*/setup.json")), [])
         result = json.loads(next(self.root.glob("build-setups/*/setup.json.last.json")).read_text())
         self.assertEqual(result["outcome"], "succeeded")
+        completion = next(self.root.glob("build-setups/*/*/profile-success.json"))
+        self.assertEqual(completion.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(completion.read_bytes()), {"schema": 1, "operation": result["operation"]})
+
+    def test_profile_success_receipt_failure_retains_guard_and_completed_delivery(self):
+        with patch.object(build_setup, "record_setup_success", side_effect=OSError("receipt unavailable")):
+            with self.assertRaises(build_setup.BuildSetupRecoveryRequired) as caught:
+                build_setup.run_build_setup(self.config, apply_setup=self.apply)
+        marker = OperationStateStore(caught.exception.journal_path).load()
+        self.assertEqual(marker.status, "recovery_required")
+        self.assertEqual(marker.context["delivery_receipt"], "/retained/delivery/receipt.json")
+        self.assertEqual(self.apply.call_count, 2)
+
+    def test_archived_history_no_longer_blocks_the_active_attempt_limit(self):
+        with patch.object(build_setup, "MAX_RETAINED_ATTEMPTS", 1):
+            self.assertEqual(build_setup.run_build_setup(self.config, apply_setup=self.apply), 0)
+            self.apply.reset_mock()
+            with self.assertRaisesRegex(ValueError, "retention is full"):
+                build_setup.run_build_setup(self.config, apply_setup=self.apply)
+            self.apply.assert_not_called()
+            attempt = next(self.root.glob("build-setups/*/*/profile-success.json")).parent
+            attempt.rename(attempt.with_name("archived-" + attempt.name))
+            self.assertEqual(build_setup.run_build_setup(self.config, apply_setup=self.apply), 0)
+            self.assertEqual(self.apply.call_count, 2)
 
     def test_bootstrap_freezes_inferred_lan_sources_without_network_mutation_options(self):
         self.config.host = "192.168.0.52"

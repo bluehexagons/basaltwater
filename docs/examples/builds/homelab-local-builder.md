@@ -60,8 +60,10 @@ after roughly fifteen unsettled jobs, even with free disk space. Inspect and
 settle terminal reservations using the [maintenance commands](../../services/build-systems.md#inspect-capacity-and-retain-evidence)
 to reclaim unused charges while preserving payloads. Settlement does not free
 record slots. The policies also default to 128 records, and the controller retains
-at most 32 attempts per target; these bounded histories need operator planning.
-There is no automatic collection or history retirement.
+at most 32 active attempts per target. Use [completed-history archival](../../agents/contributing/build-setup-history.md)
+to free controller slots without deleting evidence. Builder and target record
+limits still need operator planning. There is no automatic collection or remote
+history retirement; archived controller data still consumes disk space.
 
 The target command keeps the original deployment and serving options and adds
 the saved builder, target policy and trusted controller SSH source:

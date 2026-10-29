@@ -22,6 +22,7 @@ from lib.build_delivery import BuildDeliveryController, MAX_PLANS, _check_worksp
 from lib.build_protocol import encode_document
 from lib.build_selection import SSHEndpoint, resolve_saved_builder, resolve_target_endpoint
 from lib.build_setup_plan import prepare_delivery_plan
+from lib.build_setup_history import count_retained_attempts, record_setup_success
 from lib.build_target_client import BuildTargetClient
 from lib.config import SetupConfig
 from lib.operation_state import OperationStateStore
@@ -228,10 +229,12 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
         with OperationStateStore(journal).ownership() as store:
             if store.load() is not None:
                 raise BuildSetupRecoveryRequired(journal)
-            with os.scandir(host_root) as entries:
-                attempts = sum(entry.is_dir(follow_symlinks=False) for entry in entries)
+            attempts = count_retained_attempts(host_root)
             if attempts >= MAX_RETAINED_ATTEMPTS:
-                raise ValueError("Build-on setup retention is full; reconcile retained attempts before continuing")
+                raise ValueError(
+                    "Build-on setup retention is full; inspect and explicitly archive completed attempts "
+                    "with python3 -B -m lib.build_setup_history before continuing"
+                )
             attempt = os.path.join(host_root, uuid.uuid4().hex)
             _private_directory(attempt)
             source_root = os.path.join(attempt, "sources")
@@ -270,7 +273,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                     "application", "operation_id", "generation", "artifact_sha256",
                 )} for item in delivery.applications]
                 context.update(delivery_receipt=delivery.receipt_path, expected_releases=expected)
-                store.transition(operation.operation_id, "profile_applying", context=context)
+                profile_operation = store.transition(operation.operation_id, "profile_applying", context=context)
                 with strict_ssh_transport(
                     endpoint.host, identity_file=endpoint.identity_file,
                     known_hosts_path=endpoint.known_hosts_file, port=endpoint.port,
@@ -278,6 +281,7 @@ def run_build_setup(config: SetupConfig, *, apply_setup: Callable[..., int]) -> 
                     profile_result = apply_setup(_profile_config(config), expected_releases=expected)
                 if profile_result != 0:
                     raise RuntimeError("Final artifact profile setup did not finish")
+                record_setup_success(attempt, profile_operation)
                 store.complete(operation.operation_id)
                 print(f"  Remote-build setup complete; retained evidence: {attempt}")
                 return 0

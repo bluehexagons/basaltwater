@@ -79,11 +79,15 @@ workspace and perform read-only SSH probes; they
 never enroll, reserve, build, stage, activate or save setup state.
 
 Non-dry setup stores private attempts under the controller workspace's
-`build-setups/HOST-HASH`. There are at most 32 retained attempts per host, with
-no automatic garbage collection. `prepared.json` retains exact build requests,
+`build-setups/HOST-HASH`. There are at most 32 active retained attempts per host,
+with no automatic garbage collection. [Explicit completed-history archival](build-setup-history.md)
+frees active slots while preserving evidence and disk usage. `prepared.json` retains exact build requests,
 serving projections, pinned snapshot paths and idempotency keys. The durable
 `setup.json` guard precedes bootstrap and records phases through final profile
 application. Delivery uses its own separate empty directory and receipt.
+After acknowledged final profile success, a private per-attempt
+`profile-success.json` preserves the exact completed intent before the host
+guard clears. Receipt persistence failure keeps the guard authoritative.
 New directory entries are synced through their parents before bootstrap can
 start, so a crash cannot discard the hierarchy containing acknowledged intent.
 

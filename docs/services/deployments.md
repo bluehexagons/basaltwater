@@ -228,7 +228,10 @@ Dry runs clone and pin sources in disposable local storage and perform read-only
 SSH capability/platform probes using existing trust. They never bootstrap,
 reserve, submit builds, stage, activate or save setup state. Non-dry attempts
 retain private inputs under `<workspace>/build-setups/HOST-HASH`, with at most 32
-attempts per host and no automatic garbage collection. On failure or an uncertain
+active attempts per host and no automatic garbage collection. Explicit
+[completed-history archival](../agents/contributing/build-setup-history.md)
+frees controller attempt slots while retaining all payloads and identities;
+it does not free disk space or builder/target slots. On failure or an uncertain
 response, preserve the durable guard, pinned sources, prepared inputs, delivery
 receipts and exact request/operation IDs. Inspect actual target/enrollment state
 before explicit operator reconciliation. There are no automatic retries,
