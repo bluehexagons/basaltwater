@@ -23,6 +23,19 @@ cross-provider work. Top-level conversations need an
 explicit user request for separate threads. Each independent delegated review
 round is a fresh task with its own ID and explicit prior findings.
 
+Stable T3 0.1.4 adds an opt-in linked-environment beta, enabled on both machines
+under **Settings → Labs**. Discover peers through `t3_environment_links` and
+their model catalog through `orchestrator_capabilities` with `environmentId`.
+Remote delegation uses `target.environmentId` and optionally `target.projectId`;
+otherwise exactly one peer project must match the repository. It runs in the
+peer's project checkout and rejects worktree isolation. Keep editing work
+isolated locally, or use an explicitly authorized remote top-level launch with
+its own worktree binding. Remote results can lack a local `childThreadId`;
+retain `taskId` and follow its completion/cancellation tools. Link access and
+caller modes both limit remote work. See the reference for setup-script,
+attachment, retry, and revocation boundaries. Use returned thread `link` values
+verbatim; current links identify both the owning environment and thread.
+
 Select T3 worktree isolation before starting a T3-owned editor. T3 owns that
 checkout's binding and cleanup; the Basaltwater commands below apply to
 Basaltwater-owned worktrees. A shell directory change does not rebind a T3

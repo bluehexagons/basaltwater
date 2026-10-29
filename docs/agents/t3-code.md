@@ -39,7 +39,7 @@ Generate a one-time URL from the control system:
 basaltw agent web pair vm.example agent
 ```
 
-T3 Code sessions can expose collaborative preview tools. Stable 0.1.3's server
+T3 Code sessions can expose collaborative preview tools. Stable 0.1.4's server
 tools automate tabs marked `runtime: "server"`; listed tabs with desktop or
 missing runtime belong to the user's local app. Report that those tabs
 are inaccessible to server automation and open a server tab without passing
@@ -121,33 +121,36 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-10-27**, GitHub's latest stable release and npm's `t3@latest`
-are **0.1.3**, released October 27. It retains the stable Orchestrator V2
+As checked on **2026-10-29**, GitHub's latest stable release and npm's `t3@latest`
+are **0.1.4**, released October 29. It retains the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.3)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.4)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
-The release's minimum provider versions are Codex **0.159+**, Claude Code
-**2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **0.80.5+**
-(1.0 recommended). Inspect **Settings → Providers** for the selected account,
+The release's recommended provider versions are Codex **0.159+**, Claude Code
+**2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/provider/model-manifest.json)
+also marks Codex 0.156+ and Pi 0.80.5+ supported; distinguish recommended
+versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
 providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
 do not imply that Basaltwater installed, authenticated, or qualified them.
 
-The 0.1.3 integration review corrected managed browser skills that could send
-desktop tab IDs to server-only preview tools and misdiagnose the rejection as
-a presentation or network failure. It also verified the unchanged protocol and
-runtime layout and exercised the checksum-verified Linux x64 archive in isolated
-homes: setup and doctor runtime selection, managed wrapper execution, embedded native-module
-loading, fresh HTTP startup, and issuance of all 16 administrative pairing
-scopes with bootstrap-session revocation. An isolated 0.1.2-to-0.1.3 smoke
-retained seeded project metadata and passed database integrity, post-upgrade
-pairing, host-side thread listing, and Basaltwater's activity queries. The
-database advanced from 67 to 69 SQL migrations. No runtime compatibility fix
-was required for these contracts.
-These checks do not qualify provider turns, desktop/mobile clients, Connect,
-or the complete live matrix below.
+The 0.1.4 integration review verified the unchanged protocol, runtime layout,
+and administrative permission contract against tagged source. Checksum-verified
+Linux x64 archives passed isolated-home checks for setup and doctor runtime
+selection, managed wrapper execution, embedded native-module loading, filtered
+HTTP startup, and all 16 administrative pairing scopes with bootstrap-session
+revocation. An isolated 0.1.3-to-0.1.4 upgrade retained seeded project metadata
+and passed database integrity, post-upgrade pairing, host-side thread listing,
+and Basaltwater's idle activity query. The database advanced from 69 to 72 SQL
+migrations. A separate fresh 0.1.4 home passed the same runtime, HTTP, pairing,
+integrity, and idle-query checks. No runtime compatibility fix was required.
+These checks do not qualify systemd installation/reboot, authenticated provider
+turns, linked-environment execution, desktop/mobile clients, Connect, or the
+complete live matrix below. The earlier server-versus-desktop tab guidance
+continues to apply.
 
 Stable 0.1.3 defaults a background service without an explicit host to a
 private-network listener. Basaltwater supplies `T3CODE_HOST` in its Debian
@@ -157,6 +160,20 @@ distinction keeps the older ticket endpoint compatible; the managed HTTPS
 gateway forwards paths, queries, and WebSocket upgrades without rewriting
 those tickets. Connect's pinned relay client advances to cloudflared
 2026.10.4; T3 owns that download and verification.
+
+Stable 0.1.4 adds the opt-in **Linked environments** beta, remote delegation,
+environment-scoped thread links, and retry keys for top-level launch. Enable
+the beta on both machines only for a requested connection; Basaltwater setup
+does not enroll peers or change the owner's Labs settings. Below full access,
+a link can modify only its own threads and skips project setup scripts. Remote
+delegation uses the peer project checkout and rejects worktree isolation.
+See [link operations](../../common/agent_skills/basaltwater-t3code/references/operations.md#linked-environments)
+and the [delegation contract](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md#linked-environments).
+
+On Linux, 0.1.4 adds `Delegate=yes` to T3's agent scopes so rootless containers
+can manage nested cgroups. T3 owns this scope configuration; it does not require
+a new Basaltwater service override or container installation. See the
+[tagged scope implementation](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/process/agentScope.ts).
 
 OpenCode 2 uses the separate `@opencode/cli` package and converts OpenCode's
 shared database on first run. Do not install/run 1.x and 2.x side by side or
@@ -173,10 +190,11 @@ The shared installed skills now route T3 agents to its native orchestration:
 | Work | Integration |
 | --- | --- |
 | Delegated children | Discover provider/model IDs through `orchestrator_capabilities`; use native same-provider workers only when they support the chosen model and no options are requested/inherited, otherwise `delegate_task`. Retain task IDs, pass explicit context, and collect asynchronous results. Each independent review round is a fresh task. Read current questions/approvals through their appropriate flow; cancelling an old task also stops later work in its child thread. |
+| Linked environments | Opt in on both machines under Labs. Discover with `t3_environment_links`; query the peer's catalog with `environmentId`. Remote `delegate_task` uses `target.environmentId` and optional `target.projectId`, runs in the peer checkout, and rejects worktree isolation. Retain `taskId` when no local `childThreadId` exists. Respect both caller and link ceilings. |
 | Editing isolation | Select `delegate_task` worktree isolation or an explicit top-level thread workspace before starting work. T3 owns its worktree binding and cleanup; Basaltwater commands manage their own ownership records. A shell `cd` does not rebind a thread. |
 | Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches can carry command output, filenames, and plans as budgeted historical text; native tool state, reasoning, and attachments are not replayed. Read omitted history in bounded pages. |
 | Queues and recovery | Choose queue versus steering explicitly and inspect pending messages before retrying. Persistent queues wait for user resume after restart; interrupted-turn auto-continuation and usage-reset resume have separate controls. |
-| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. In 0.1.3, `schedule_task` updates by ID. Bound runs follow current thread settings; fresh-thread MCP tasks use remote `main` worktrees. Inspect stored model/workspace settings in the task UI. Filter/deduplicate webhooks before provider work. Use one scheduler per job. |
+| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. `schedule_task` updates by ID. 0.1.4 also exposes `run_scheduled_task_now` with `taskId` for authorized immediate runs; dispatch is not completion. Bound runs follow current thread settings; fresh-thread MCP tasks use remote `main` worktrees. Inspect stored model/workspace settings in the task UI. Filter/deduplicate webhooks before provider work. Use one scheduler per job. |
 | Pull requests | Register PRs through `link_pull_request`. For requested monitoring, watch once, yield for wakeups, then unwatch before handoff. Watches persist across wakes. Read existing guides without starting a model run; generation is optional and uses project guide settings. Check head SHA/staleness alongside diff review and checks. |
 | Project actions | Reuse canonical project commands through imported `t3.json` actions. Set worktree setup `async: false` when it must finish before the agent starts. Preserve project/environment overrides and inspect settle actions before cleanup. |
 | Visual results | Use `html_preview` then `html_render` for useful interactive charts, diagrams, comparisons, or mockups. T3 embeds local images and publishes a sandboxed thread artifact; it does not deploy the project or verify its behavior. |
@@ -196,7 +214,12 @@ provides the project-action and visual-reply routes. For deliberate outside-agen
 access, use T3's OAuth `/mcp` integration described in the
 [operations reference](../../common/agent_skills/basaltwater-t3code/references/operations.md#outside-agents).
 It does not automatically connect independent Basaltwater tasks or give them a
-thread's tools. Optional device-local completion/input/approval alerts live in
+thread's tools. Outside OAuth grants default to read only; `T3-Mode-Limit` may
+narrow their modes, never widen them. Use returned thread `link` values verbatim:
+current native links include environment and thread IDs, while outside OAuth
+clients receive browser URLs. Stable 0.1.4's `t3_thread_launch` accepts a stable
+`clientRequestId` for retries of one launch. Optional device-local
+completion/input/approval alerts live in
 **Settings → General → Notifications** and require an open client.
 
 Inspect project overrides and environment settings before relying on tracked
@@ -216,11 +239,12 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.3 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.4 setup, 0.1.3-to-0.1.4 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
+| Linked environments | On deliberately linked disposable peers, verify beta gates on both sides, server reachability/trust, read-only and narrower-mode denials, repository matching, missing/ambiguous project selection, remote result/restart/cancel, rejected worktree isolation/attachments, thread links, launch retry deduplication, expiry and peer revocation. Confirm forgetting a link does not claim to stop remote edits. |
 | Workspace/context | Child worktree starts from committed local base; blocking setup completes before the first turn, while async setup is checked before dependent work. Uncommitted edits stay in parent. Explicit launch/handoff binding works, historical context stays distinguishable from native tool state, and cleanup/settle actions preserve unrelated work. |
 | Queues and limits | Queue order and attachments survive restart, queue awaits user resume, steering reaches the intended turn, auto-continuation is controlled, and usage-limit/reset recovery does not duplicate edits. |
-| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, unified update/pause/resume/delete, UI run-now result, and restart recovery. Confirm bound runs follow current thread settings and MCP-created fresh runs use remote `main` plus stored task settings. For webhooks, signature rejection, private secret entry, filters, replay/coalescing and missing keys, stale deliveries, and caller/Connect URL eligibility. |
+| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, unified update/pause/resume/delete, UI and MCP run-now results/permission denials, and restart recovery. Confirm bound runs follow current thread settings and MCP-created fresh runs use remote `main` plus stored task settings. For webhooks, signature rejection, private secret entry, filters, replay/coalescing and missing keys, stale deliveries, and caller/Connect URL eligibility. |
 | PR workflow | Link all stack layers, receive checks/comment/conflict wakeups without polling, unwatch on handoff, and read review-guide results/staleness. Do not merge as a side effect of monitoring. |
 | Client and gateway | Update/reboot readiness, direct/private and Connect access, gateway TLS, preview attachment and recording transfer, and optional offline webhook storage only when deliberately selected. |
 | Visual and outside-agent workflows | T3 Chrome cold-start/host diagnostics, narrow/light/dark HTML preview and local image embedding, readable text, private file secret delivery/expiry, deliberate OAuth grant/revocation, and opt-in device alerts. Record any browser validation gap separately from successful HTML publication. |
@@ -649,9 +673,11 @@ Basaltwater does not provision their SDKs, emulators, or simulator hosts and
 does not enable agent device access during setup. Existing `--device-pairing`
 enrolls T3 clients; it does not grant simulator control. See the
 [mobile support plan](../plans/mobile-agent-support.md) and the
-[upstream device workflow](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/devices.md)
-for ownership and prerequisites. Responsive browser presets remain browser
-coverage rather than native-device verification.
+[upstream device workflow](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/devices.md)
+for ownership and prerequisites. The new Simlock pool integration is an opt-in
+alpha; Basaltwater does not install its gateway/workers, create leases, or
+provision agent tokens. Returning a lease wipes its device. Responsive browser
+presets remain browser coverage rather than native-device verification.
 
 ### Server-side Git checks
 

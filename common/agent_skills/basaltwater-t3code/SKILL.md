@@ -38,6 +38,9 @@ Read only the route needed:
   Startup migration can take 30 minutes; inspect before interrupting/retrying.
 - **Delegation/worktrees:** `basaltwater-subagents`. Use T3 workspace binding
   before starting editors; shell `cd` does not rebind a thread.
+- **Linked environments:** [operations](references/operations.md#linked-environments)
+  covers the opt-in beta, peer grants, reachability, and revocation. Remote
+  delegation has different workspace constraints; use the subagent reference.
 - **Scheduled work:** `basaltwater-agent-tasks` chooses T3 recurring work versus
   independent Codex tasks. Use one scheduler per job; independent runs do not
   inherit this thread's tools/browser.

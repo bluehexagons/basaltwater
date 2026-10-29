@@ -315,8 +315,13 @@ Install from device storage > CA certificate**.
 
 Close and reopen T3 Code or the browser before retrying the URL. Android 7 and
 newer do not make user-installed CAs available to every app by default; the app
-must opt into user trust or provide its own CA configuration. If a normal
-browser trusts the URL but a specific app or embedded preview does not, report
+must opt into user trust or provide its own CA configuration. T3's Android
+mobile build from the 0.1.4 source explicitly trusts both system and
+user-installed CAs; update the mobile app as well as the server to receive
+that change. This preserves certificate and hostname validation and does not
+enroll a CA automatically. See T3's
+[Android trust configuration](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/mobile/plugins/withAndroidNetworkSecurityConfig.cjs).
+If a normal browser trusts the URL but a specific app or embedded preview does not, report
 that as a client-app trust limitation. Do not root the device or disable
 certificate validation to work around it. See Android's
 [network security configuration](https://developer.android.com/privacy-and-security/security-config)

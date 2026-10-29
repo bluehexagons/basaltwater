@@ -74,7 +74,7 @@ switch. Browser system alerts need HTTPS and notification permission, or the
 desktop app. These are attention aids, not task wakeups, retained receipts, or
 a guarantee of background push delivery. Do not change the owner's notification
 preferences as a side effect of scheduling. See the
-[notification controls](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/web/src/components/settings/NotificationSettings.tsx).
+[notification controls](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/web/src/components/settings/NotificationSettings.tsx).
 
 ## Pairing and browser sessions
 
@@ -110,12 +110,43 @@ Use HTTPS or host-local loopback for sign-in; a cloud-hosted agent needs an
 internet-reachable route such as T3 Connect. A private LAN/tailnet URL alone does
 not supply that reachability. Revoke an unused grant through **Sharing & access**.
 
+Outside OAuth access defaults to **Read only**. Supervised through full access
+also permits starting, messaging, and stopping threads subject to the granted
+mode ceiling. `T3-Mode-Limit: <runtimeMode>/<interactionMode>` can narrow an
+OAuth request further; it cannot expand the grant and is ignored for injected
+provider-session callers. See the
+[mode-limit contract](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/McpInvocationContext.ts).
+
 This is separate from T3's injected thread tools and Basaltwater's task MCP.
 Installation does not connect terminal/panel agents automatically. External
 access does not make them delegated children of this thread or transfer its
 browser attachment. Do not register an outside agent or enable public access as
-an incidental repair. Use the [tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/user/outside-agents.md)
+an incidental repair. Use the [tagged outside-agent guide](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/outside-agents.md)
 when that integration is requested.
+
+## Linked environments
+
+Stable 0.1.4 adds an opt-in **Linked environments** beta in **Settings → Labs**
+on both machines. For a requested connection, use **Settings → Environments →
+Linked environments → Link**, or the `t3_environment_link` approval card for a
+machine the user named. Approve only the initiated link and needed access;
+never copy pairing codes into chat. Basaltwater setup does not enable the beta
+or create links. Keep existing TLS and source allowlists in place.
+
+The initiating environment stores the peer credential in its secret store and
+calls the peer's `/mcp` endpoint. The server must reach and trust that URL;
+reachability from the viewing desktop alone is insufficient. Link access and
+the calling agent's modes both bound remote operations. Below full access,
+links can change only threads they started and skip project setup scripts.
+Discovery, remote delegation, and workspace constraints are in the subagent
+skill's [T3 reference](../../basaltwater-subagents/references/t3-orchestration.md#linked-environments).
+
+Links last 30 days; renew by linking again. **Forget** removes the local link
+and credential, while revocation on the peer's **Settings → Sharing & access**
+ends its grant there. Turning the beta off pauses link use, including result
+delivery from that peer, without stopping work already running. Do not treat
+a forgotten link or unavailable result as proof that remote edits stopped.
+See the [tagged link guide](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/remote-access.md#link-another-environment).
 
 ## Server-side Git
 

@@ -1,7 +1,7 @@
 # T3 Code scheduling
 
 Use this reference when authorized deferred or recurring work should run through
-T3 Code. This reference follows stable 0.1.3; inspect the connected
+T3 Code. This reference follows stable 0.1.4; inspect the connected
 environment's live tools before acting. No scheduler grants additional scope,
 publication authority, or permission to exceed the user's cost limits.
 
@@ -46,14 +46,14 @@ By default, runs bind to the current thread when the selected project matches.
 This suits orchestration: each trigger returns here for deduplication and child
 delegation. Set `bindToCurrentThread: false` only when the user wants a fresh
 top-level thread for each run. Inspect the resulting project and thread binding.
-In 0.1.3, a bound run follows the thread's current provider, model, options, and
+In 0.1.4, a bound run follows the thread's current provider, model, options, and
 runtime/interaction modes when dispatched. The task's stored settings seed
 fresh threads only; they do not pin a bound thread's execution settings.
 Inspect both the binding and the current thread settings. Before changing that
 thread to fast service, `max`, `ultra`, or broader permission modes, pause its
 unattended schedules or ensure the change stays within the user's authorization.
 Creation inherits the caller's model selection; updates preserve the stored
-selection. The 0.1.3 MCP inputs cannot set model/options or a custom workspace,
+selection. The 0.1.4 MCP inputs cannot set model/options or a custom workspace,
 and task summaries omit those settings. Inspect/edit the task in T3's scheduled
 task settings when those details matter; do not claim MCP verified them.
 
@@ -64,7 +64,7 @@ task settings surface for another base. Inspect the resulting workspace before
 dependent work, especially when rebinding an existing task.
 
 Use `list_scheduled_tasks` to verify ID, enabled state, cadence, next run, and
-project/thread binding. In 0.1.3, `schedule_task` also updates an existing task
+project/thread binding. In 0.1.4, `schedule_task` also updates an existing task
 when passed `scheduledTaskId`; omitted fields stay unchanged. For example,
 pause with:
 
@@ -74,10 +74,15 @@ pause with:
 
 Resume with the same ID and `enabled: true`. Older sessions may expose a separate
 `update_scheduled_task`; follow the live schema. Use `delete_scheduled_task`
-when removal is requested. The 0.1.3 MCP toolkit has no run-now tool; the task
-settings UI can run interval/fixed-time tasks immediately. Where an older
-session exposes `run_scheduled_task_now`, its response confirms dispatch, not
-completed provider work; inspect the target thread result. Deletion does not
+when removal is requested. Stable 0.1.4 exposes `run_scheduled_task_now` with
+`taskId` (not `scheduledTaskId`) and optional `environmentId` for interval or
+fixed-time tasks; webhook tasks require a delivery. It requires full-access
+runtime and default interaction mode, and the peer's access ceiling still applies.
+Use it only for an authorized immediate run; a scheduling-only request does
+not authorize running the prompt now. A non-null `threadId` confirms dispatch,
+not completed provider work; follow the returned link and inspect the thread
+result. A null thread means no run started. Older sessions without this tool
+can use the task settings UI when an immediate run is requested. Deletion does not
 undo edits or external work. Report the ID, cadence, next run with timezone,
 and purpose. During a scheduled run, perform its prompt rather than listing
 tasks just to rediscover its own ID.
@@ -145,8 +150,9 @@ storage is a separate Connect choice with its own data-retention implications;
 do not enable it incidentally. Inspect and remove authorized external hooks
 when retiring a workflow, rather than leaving senders targeting a deleted task.
 
-Upstream baseline: [0.1.3 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.3),
-[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
-[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/OrchestratorMcpService.ts),
-and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/user/project-settings.md#webhook-automations).
+Upstream baseline: [0.1.4 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.4),
+[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
+[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/thread/tools.ts),
+[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/OrchestratorMcpService.ts),
+and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/project-settings.md#webhook-automations).
 The active T3 tool schemas govern available schedule and signature fields.
