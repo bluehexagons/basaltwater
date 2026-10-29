@@ -89,9 +89,9 @@ test-verbose:
 # Check all Python files compile
 compile:
 	@echo "Checking Python compilation..."
-	@find . -name "*.py" -not -path "./.git/*" -not -path "*/__pycache__/*" \
-		-not -path "./build/*" -not -path "./dist/*" -not -path "./.venv/*" \
-		-not -path "*.egg-info/*" -print0 | xargs -0 python3 -m py_compile
+	@find . \( -path "./.git" -o -path "./build" -o -path "./dist" -o -path "./.venv" \
+		-o -name "__pycache__" -o -name "*.egg-info" \) -prune \
+		-o -name "*.py" -print0 | xargs -0 python3 -m py_compile
 	@echo "All Python files compile successfully"
 
 # Clean Python cache files
