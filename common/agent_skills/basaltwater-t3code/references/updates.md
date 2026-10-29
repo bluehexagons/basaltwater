@@ -2,10 +2,12 @@
 
 Basaltwater targets stable T3 releases. When T3 Code is selected, a setup
 rerun checks npm's `t3@latest` stable channel and updates the upstream service
-when a newer stable release is available. An explicit setup refresh restarts
-the healthy service even when runtime and managed configuration are unchanged;
-if the updater already started a fresh service, setup does not restart it again.
-Internal non-refresh service checks reuse a healthy running service. Prefer the
+when a newer stable release is available. Successful setup queues a final
+service start/reload after providers, skills, saved state and notifications,
+even when runtime and managed configuration are unchanged. The independent
+completion worker waits for the setup process to exit and checks stable HTTP
+readiness afterward. Internal non-refresh service checks reuse a healthy running
+service. Prefer the
 connected client's explicit **Update server** action when an update should be
 performed outside setup. For a host-side update, set `T3_RELEASE` to the exact
 stable version required by the stable client, or `latest` when both should
@@ -86,3 +88,26 @@ normal doctor checks remain quick.
 If an older Basaltwater setup timed out, inspect the boot log and service state
 first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.
+
+## Refresh from a T3 terminal
+
+On Debian with systemd service management, `sudo basaltw refresh` queues a root-owned system service before
+upgrading source or applying setup. It survives closure of a local T3 terminal
+or an SSH connection from another T3 environment. Exit 0 confirms dispatch,
+not successful refresh. The command prints its private log under
+`/var/log/basaltwater-refresh/` and a `systemctl show` command for the final
+`Result` and `ExecMainStatus`. The final T3 reload is a separate completion
+unit whose identity appears in that log; inspect its result too, then run
+`basaltw agent doctor --capability t3code`. Dry runs and OCI refresh without
+service management stay in the foreground; OCI does not host managed T3.
+
+CachyOS retains interactive package/sudo prompts and defers disruptive T3
+activation until all steps, saved state and notifications finish. Its queued
+worker starts the selected web service, or gracefully reloads/starts desktop
+when a graphical session is available. Check the printed user journal unit;
+otherwise desktop startup waits until KDE login. Native Windows queues a
+same-session Task Scheduler worker after successful setup receipts, uses only
+graceful window closure, and writes a constant completion status under
+`%LOCALAPPDATA%\Basaltwater\t3-completion`. If the app cannot close safely or
+the login session differs, reopen it manually. Neither platform automatically
+restarts the OS; completion notices report pending reboot signals separately.

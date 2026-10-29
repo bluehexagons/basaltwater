@@ -524,7 +524,9 @@ try {
             -Python:$state.Python -Go:$state.Go -T3CodeDesktop:$state.T3CodeDesktop @nativeOptions
         $state.Phase = 'complete'
         Save-State $state
-        Write-Host 'Basaltwater native Windows coding setup complete. Restart T3 Code to load the updated PATH and skills.'
+        Write-Host 'Basaltwater native Windows coding setup complete.'
+        . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
+        Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop
         return
     }
     if ($state.GitHubRunner) {
@@ -569,7 +571,9 @@ try {
         Ensure-WingetPackage 'Git.Git' 'Git for Windows installation'
     }
     if ($state.T3CodeDesktop) {
-        Ensure-WingetPackage 'T3Tools.T3Code' 'T3 Code desktop installation'
+        # Upgrading a running desktop here could kill the setup's own terminal.
+        # Its deliberate updater owns upgrades; reconcile and relaunch at completion.
+        Ensure-WingetPackage 'T3Tools.T3Code' 'T3 Code desktop installation' -NoUpgrade
     }
     Ensure-WorkerTask
     $state.Phase = "complete"
@@ -592,6 +596,9 @@ try {
     }
     Write-Host "Basaltwater Ubuntu WSL setup complete. Authenticate selected agents in Ubuntu as $($state.LinuxUser)."
     if ($state.T3CodeDesktop) { Write-Host "In T3 Code Settings > Connections, select $($state.Distro)." }
+    . (Join-Path $state.Source 'windows\AgentWorkstation.Common.ps1')
+    . (Join-Path $state.Source 'windows\T3Completion.Common.ps1')
+    Invoke-NativeSetupCompletion -Source $state.Source -T3CodeDesktop:$state.T3CodeDesktop
 } catch {
     Write-Error $_
     exit 1

@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 from common import cachyos_t3_desktop as desktop
+from common import cachyos_t3 as t3
 from common.service_tools import cachyos_t3_refresh as refresh
 
 
@@ -170,7 +171,7 @@ class DesktopRefreshTests(unittest.TestCase):
             path.unlink()
         (self.proc / "100").rmdir()
         self.process(200, started_seconds=12)
-        self.assertIsNone(refresh._running_desktop(self.QUEUED_BEFORE_NS + 1_000_000_000))
+        self.assertFalse(refresh._running_desktop(self.QUEUED_BEFORE_NS + 1_000_000_000).refresh_needed)
         # A later setup can still refresh the newly running app.
         self.assertEqual(refresh._running_desktop(15_000_000_000).descriptor, 1200)
 
@@ -185,7 +186,7 @@ class DesktopRefreshTests(unittest.TestCase):
         # exec retains the worker's earlier start time, while the launch stamp
         # records that this app loaded settings after the second request.
         self.process(100, environment=(f"{refresh.REOPENED_AT_ENV}=12000000000",), started_seconds=9)
-        self.assertIsNone(refresh._running_desktop(11_000_000_000))
+        self.assertFalse(refresh._running_desktop(11_000_000_000).refresh_needed)
         self.assertEqual(refresh._running_desktop(15_000_000_000).descriptor, 1100)
 
     def runtime_mocks(self, *, running=True, owner="t3code-bin", polls=None):
@@ -219,13 +220,36 @@ class DesktopRefreshTests(unittest.TestCase):
         self.chdir.assert_called_once_with(app.directory)
         self.close.assert_called_once_with(app.descriptor)
 
-    def test_stopped_or_already_exited_app_stays_stopped(self):
+    def test_stopped_app_starts_in_active_graphical_session(self):
         self.runtime_mocks(running=False)
-        self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
+        with patch.dict(os.environ, {"DISPLAY": ":1", "ELECTRON_RUN_AS_NODE": "1"}):
+            self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
+        self.assertEqual(self.package.call_args_list[0].args[0][-1], "graphical-session.target")
+        self.assertEqual(self.package.call_args_list[1].args[0],
+                         ["/usr/bin/pacman", "-Qqo", "--", refresh.APP_EXECUTABLE])
+        self.assertEqual(self.execute.call_args.args[:2], (refresh.APP_EXECUTABLE, [refresh.APP_EXECUTABLE]))
+        self.assertNotIn("ELECTRON_RUN_AS_NODE", self.execute.call_args.args[2])
+        self.terminate.assert_not_called()
+        self.close.assert_not_called()
+
+    def test_stopped_app_defers_without_active_graphical_session(self):
+        self.runtime_mocks(running=False)
+        for environment, status in (({}, 0), ({"DISPLAY": ":1"}, 3)):
+            with self.subTest(environment=environment, status=status), \
+                    patch.dict(os.environ, environment, clear=True):
+                self.package.return_value = subprocess.CompletedProcess([], status, "", "")
+                self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
+        self.execute.assert_not_called()
+        self.terminate.assert_not_called()
+
+    def test_fresh_running_app_is_not_duplicated_or_restarted(self):
+        app = self.runtime_mocks()
+        app.refresh_needed = False
+        self.assertFalse(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS, self.home))
         self.package.assert_not_called()
         self.execute.assert_not_called()
         self.terminate.assert_not_called()
-        self.close.assert_not_called()
+        self.close.assert_called_once_with(app.descriptor)
 
     def test_exited_process_handle_does_not_reopen_app(self):
         self.runtime_mocks(polls=[[(1100, 1)]])
@@ -269,20 +293,23 @@ class DesktopRefreshTests(unittest.TestCase):
         self.close.assert_called_once_with(1100)
 
     def test_queue_runs_independently_and_dry_run_does_not_schedule(self):
-        config = SimpleNamespace(dry_run=False, username="fixture", machine_type="vm")
+        config = SimpleNamespace(dry_run=False, username="fixture", machine_type="vm",
+                                 t3code_desktop=True, _cachyos_t3_completion_request="a" * 32)
         with patch("lib.remote_utils.is_dry_run", return_value=False), \
                 patch("lib.machine_state.can_manage_system_services", return_value=True), \
                 patch.object(desktop.os, "getuid", return_value=1000), \
                 patch.object(desktop.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
+                patch("common.cachyos_steps._home", return_value=self.home), \
                 patch.object(desktop.time, "clock_gettime_ns", return_value=self.QUEUED_BEFORE_NS), \
                 patch("lib.remote_utils.run") as run:
             desktop.queue_refresh(config)
             argv = run.call_args.args[0]
             self.assertEqual(argv[:3], ["/usr/bin/systemd-run", "--user", "--collect"])
             self.assertIn("--on-active=5s", argv)
-            self.assertEqual(argv[-4:-2], ["/usr/bin/python3", "-I"])
-            self.assertTrue(argv[-2].endswith("/common/service_tools/cachyos_t3_refresh.py"))
-            self.assertEqual(argv[-1], str(self.QUEUED_BEFORE_NS))
+            self.assertEqual(argv[-8:-6], ["/usr/bin/python3", "-I"])
+            self.assertTrue(argv[-6].endswith("/common/service_tools/cachyos_t3_refresh.py"))
+            self.assertEqual(argv[-5:], [str(self.QUEUED_BEFORE_NS), "desktop", str(self.home),
+                                        str(self.home / ".config"), "a" * 32])
             config.dry_run = True
             run.reset_mock()
             desktop.queue_refresh(config)
@@ -294,17 +321,23 @@ class DesktopRefreshTests(unittest.TestCase):
                 patch.object(refresh.os, "open", return_value=2000) as open_lock, \
                 patch.object(refresh.os, "fstat") as file_info, \
                 patch.object(refresh.fcntl, "flock") as lock, \
-                patch.object(refresh, "restart_running_desktop") as restart:
+                patch.object(refresh, "restart_running_desktop") as restart, \
+                patch("common.cachyos_t3.complete_setup", return_value=True) as complete, \
+                patch.object(refresh, "validate_filesystem_path"), \
+                patch.dict(os.environ):
             runtime_info = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=1000)
             path.return_value.lstat.return_value = runtime_info
+            path.return_value.is_absolute.return_value = True
             lock_info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=1000, st_nlink=1)
             file_info.return_value = lock_info
             events = []
             lock.side_effect = lambda *args: events.append("lock")
             restart.side_effect = lambda *args: events.append("discover")
-            self.assertEqual(refresh.main(self.QUEUED_BEFORE_NS), 0)
+            self.assertEqual(refresh.main(self.QUEUED_BEFORE_NS, "desktop", self.home,
+                                          self.home / ".config", "a" * 32), 0)
             self.assertEqual(events, ["lock", "discover"])
-            restart.assert_called_once_with(self.QUEUED_BEFORE_NS)
+            complete.assert_called_once_with(self.home, "desktop", "a" * 32)
+            restart.assert_called_once_with(self.QUEUED_BEFORE_NS, self.home)
             self.assertTrue(open_lock.call_args.args[1] & os.O_CLOEXEC)
             self.close.assert_called_once_with(2000)
             for field, value in (("st_mode", stat.S_IFREG | 0o666), ("st_uid", 2000), ("st_nlink", 2)):
@@ -314,17 +347,19 @@ class DesktopRefreshTests(unittest.TestCase):
                     restart.reset_mock()
                     lock.reset_mock()
                     with self.assertRaisesRegex(RuntimeError, "Unsafe T3 desktop refresh lock"):
-                        refresh.main(self.QUEUED_BEFORE_NS)
+                        refresh.main(self.QUEUED_BEFORE_NS, "desktop", self.home,
+                                     self.home / ".config", "a" * 32)
                     restart.assert_not_called()
                     lock.assert_not_called()
                     setattr(lock_info, field, previous)
             runtime_info.st_mode = stat.S_IFDIR | 0o777
             open_lock.reset_mock()
             with self.assertRaisesRegex(RuntimeError, "private user runtime directory"):
-                refresh.main(self.QUEUED_BEFORE_NS)
+                refresh.main(self.QUEUED_BEFORE_NS, "desktop", self.home,
+                             self.home / ".config", "a" * 32)
             open_lock.assert_not_called()
 
-    def test_refresh_is_last_and_skills_precede_provider_startup(self):
+    def test_plugin_saves_last_and_leaves_disruptive_completion_to_runner(self):
         import basaltwater
         from common import cachyos_steps
         from lib.cachyos import cachyos_config_from_args
@@ -339,10 +374,60 @@ class DesktopRefreshTests(unittest.TestCase):
                 install = (cachyos_steps.install_cachyos_t3_desktop if config.t3code_desktop
                            else cachyos_steps.install_cachyos_t3)
                 self.assertLess(functions.index(cachyos_steps.install_cachyos_skills), functions.index(install))
-                if config.t3code_desktop:
-                    self.assertEqual(functions[-2:], [cachyos_steps.save_cachyos_setup, desktop.queue_refresh])
-                else:
-                    self.assertNotIn(desktop.queue_refresh, functions)
+                self.assertEqual(functions[-1], cachyos_steps.save_cachyos_setup)
+                self.assertNotIn(desktop.queue_refresh, functions)
+
+
+class CompletionLockTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stack.enter_context(patch.dict(os.environ, {}, clear=True))
+        self.stack.enter_context(patch.object(t3.os, "getuid", return_value=1000))
+        path = self.stack.enter_context(patch.object(t3, "Path"))
+        path.return_value.lstat.return_value = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=1000)
+        self.stack.enter_context(patch.object(t3.os, "open", return_value=2000))
+        self.info = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=1000, st_nlink=1,
+                                    st_dev=1, st_ino=2)
+        self.file_info = self.stack.enter_context(patch.object(t3.os, "fstat", return_value=self.info))
+        self.close = self.stack.enter_context(patch.object(t3.os, "close"))
+        self.inheritable = self.stack.enter_context(patch.object(t3.os, "set_inheritable"))
+        self.lock = self.stack.enter_context(patch.object(t3.fcntl, "flock"))
+        self.stack.enter_context(patch.object(t3, "is_dry_run", return_value=False))
+        self.config = SimpleNamespace(dry_run=False)
+
+    def test_setup_refuses_a_concurrent_completion_before_running_steps(self):
+        self.lock.side_effect = BlockingIOError()
+        with self.assertRaisesRegex(RuntimeError, "Another CachyOS setup or T3 completion"):
+            with t3.setup_completion_lock(self.config):
+                self.fail("Concurrent setup entered its step body")
+        self.close.assert_called_once_with(2000)
+
+    def test_refresh_handoff_reuses_only_the_same_lock_file_and_clears_inheritance(self):
+        os.environ[t3.COMPLETION_LOCK_FD_ENV] = "3000"
+        with t3.setup_completion_lock(self.config) as descriptor:
+            self.assertEqual(descriptor, 3000)
+            self.assertNotIn(t3.COMPLETION_LOCK_FD_ENV, os.environ)
+            self.inheritable.assert_called_once_with(3000, False)
+            self.lock.assert_called_once_with(3000, t3.fcntl.LOCK_EX | t3.fcntl.LOCK_NB)
+        self.assertEqual([call.args[0] for call in self.close.call_args_list], [2000, 3000])
+
+    def test_foreign_or_standard_stream_descriptor_cannot_bypass_lock(self):
+        for value in ("0", "2", "invalid", "3000"):
+            with self.subTest(value=value):
+                os.environ[t3.COMPLETION_LOCK_FD_ENV] = value
+                self.file_info.side_effect = [self.info, SimpleNamespace(st_dev=2, st_ino=3)]
+                self.lock.reset_mock()
+                with self.assertRaises(ValueError):
+                    with t3.setup_completion_lock(self.config):
+                        self.fail("Invalid inherited descriptor entered its step body")
+                self.lock.assert_not_called()
+
+    def test_dry_run_does_not_open_lock(self):
+        self.config.dry_run = True
+        with t3.setup_completion_lock(self.config) as descriptor:
+            self.assertIsNone(descriptor)
+        t3.os.open.assert_not_called()
 
 
 if __name__ == "__main__":

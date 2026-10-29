@@ -19,10 +19,15 @@ relevant result fields and failing checks before collecting logs. The server
 is the upstream per-user `t3code.service`; inspect it without sudo.
 
 Restarting it interrupts active T3 sessions: arrange the interruption with the
-owner first. Managed setup refresh reloads provider configuration and skills:
-Debian restarts the service unless the updater already started it fresh;
-CachyOS desktop queues a graceful relaunch of a running app and leaves stopped
-apps stopped. Interrupted-turn continuation follows T3's existing setting.
+owner first. Authorized setup/refresh starts or reloads selected T3 after
+provider, skill, saved-state and notification work. Debian `sudo basaltw refresh`
+runs independently of its terminal; exit 0 confirms dispatch, so inspect its
+printed private log and systemd result. CachyOS keeps package/sudo prompts in
+the terminal and queues web activation or graceful desktop relaunch afterward.
+A stopped desktop starts in an available graphical session; otherwise KDE login
+startup remains enabled. Windows uses an independent, same-session task and
+reports when manual reopening is needed. Queue acceptance does not establish
+readiness. Interrupted-turn continuation follows T3's existing setting.
 For changes outside setup, use **Restart agent session** in T3's command palette
 after the current turn to reload one thread without a server restart.
 

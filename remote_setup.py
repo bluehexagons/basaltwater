@@ -62,6 +62,7 @@ REMOTE_DEVICE_PAIRING_PAYLOAD_DIR = "/opt/basaltwater/device_pairing_payload"
 REMOTE_WEB_PANEL_PAYLOAD_DIR = "/opt/basaltwater/web_panel_payload"
 SETUP_OPERATION_FILE = os.path.join(STATE_DIR, "setup-operation.json")
 _active_setup_operation: Optional[tuple[OperationStateStore, OperationRecord]] = None
+_completed_setup_store: Optional[OperationStateStore] = None
 
 
 def _record_security_setup_activity(record: OperationRecord, status: str) -> None:
@@ -153,11 +154,14 @@ def _transition_setup_operation(phase: str, context: dict[str, object]) -> None:
 
 
 def _complete_setup_operation() -> None:
-    global _active_setup_operation
+    global _active_setup_operation, _completed_setup_store
     if _active_setup_operation is None:
         return
     store, record = _active_setup_operation
-    store.complete(record.operation_id)
+    store.complete(record.operation_id, keep_ownership=True)
+    # Clearing the durable marker records successful application, but an older
+    # T3 completion must still be excluded during notifications and cleanup.
+    _completed_setup_store = store
     _active_setup_operation = None
     _record_security_setup_activity(record, "succeeded")
 
@@ -645,7 +649,10 @@ def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
             notification_level=config.notification_level,
             strict_https=config.notification_strict_https,
         )
-    
+
+    from common.t3code_completion import queue_completion
+
+    queue_completion(config)
     return 0
 
 
@@ -671,47 +678,59 @@ def _send_cachyos_setup_notification(config: SetupConfig, *, success: bool, erro
 
 def run_cachyos_setup(config: SetupConfig) -> int:
     """Apply only the local workstation plugin, as the existing desktop user."""
-    from lib.cachyos import preflight_cachyos, validate_cachyos_config
+    from lib.cachyos import validate_cachyos_config
+    from common.cachyos_t3 import setup_completion_lock
 
     previous_dry_run = is_dry_run()
     set_dry_run(config.dry_run)
     try:
-        # Reject invalid/unsupported targets before any notification or setup
-        # action, including for callers that bypass the public CLI parser.
         validate_cachyos_config(config)
-        current_step = "Checking workstation prerequisites"
-        try:
-            preflight_cachyos(config)
-            steps = get_steps_for_system_type(config)
-            if config.dry_run:
-                print("CachyOS local workstation plan (hardware checks deferred until apply)")
-                _print_dry_run_plan(steps)
-                if config.notify_specs:
-                    print("[DRY-RUN] Would send the setup result to configured webhooks, subject to notification level")
-                return 0
-            for name, function in steps:
-                current_step = name
-                print(f"\n{name}", flush=True)
-                function(config)
-        except Exception as exc:
-            if config.notify_specs and not config.dry_run:
-                _send_cachyos_setup_notification(
-                    config, success=False,
-                    # Do not forward arbitrary command output or personal
-                    # paths/credentials in a setup exception to the receiver.
-                    errors=[f"{current_step} failed ({type(exc).__name__}); inspect local setup output."],
-                )
-            raise
-        if config.notify_specs:
-            _send_cachyos_setup_notification(config, success=True)
-        print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
-        return 0
+        with setup_completion_lock(config):
+            return _run_cachyos_setup_locked(config)
     finally:
         set_dry_run(previous_dry_run)
 
 
+def _run_cachyos_setup_locked(config: SetupConfig) -> int:
+    """Retain completion exclusion through the final notifications and queue."""
+    from lib.cachyos import preflight_cachyos
+
+    current_step = "Checking workstation prerequisites"
+    try:
+        preflight_cachyos(config)
+        steps = get_steps_for_system_type(config)
+        if config.dry_run:
+            print("CachyOS local workstation plan (hardware checks deferred until apply)")
+            _print_dry_run_plan(steps)
+            if config.notify_specs:
+                print("[DRY-RUN] Would send the setup result to configured webhooks, subject to notification level")
+            return 0
+        for name, function in steps:
+            current_step = name
+            print(f"\n{name}", flush=True)
+            function(config)
+    except Exception as exc:
+        if config.notify_specs and not config.dry_run:
+            _send_cachyos_setup_notification(
+                config, success=False,
+                # Do not forward arbitrary command output or personal
+                # paths/credentials in a setup exception to the receiver.
+                errors=[f"{current_step} failed ({type(exc).__name__}); inspect local setup output."],
+            )
+        raise
+    if config.notify_specs:
+        _send_cachyos_setup_notification(config, success=True)
+    from common.cachyos_reboot import report_reboot_notice
+    from common.cachyos_t3 import finalize_setup
+
+    report_reboot_notice(config)
+    finalize_setup(config)
+    print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
+    return 0
+
+
 def main() -> int:
-    global _active_setup_operation
+    global _active_setup_operation, _completed_setup_store
     report = SetupReport()
     try:
         with report.activate(), report.capture():
@@ -732,10 +751,15 @@ def main() -> int:
             finally:
                 _remove_secret_payloads()
     finally:
-        if _active_setup_operation is not None:
-            _active_setup_operation[0].close()
-            _active_setup_operation = None
-        report.render()
+        try:
+            report.render()
+        finally:
+            if _active_setup_operation is not None:
+                _active_setup_operation[0].close()
+                _active_setup_operation = None
+            if _completed_setup_store is not None:
+                _completed_setup_store.close()
+                _completed_setup_store = None
     return result
 
 

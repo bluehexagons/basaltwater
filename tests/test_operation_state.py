@@ -15,6 +15,23 @@ from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_completion_can_retain_exclusion_after_clearing_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "operation.json")
+            owner = OperationStateStore(path)
+            self.addCleanup(owner.close)
+            record = owner.begin("setup", "host", "applying")
+            owner.complete(record.operation_id, keep_ownership=True)
+            self.assertIsNone(owner.load())
+            other = OperationStateStore(path)
+            self.addCleanup(other.close)
+            with self.assertRaisesRegex(OperationStateError, "another process"):
+                with other.ownership():
+                    pass
+            owner.close()
+            with other.ownership():
+                self.assertIsNone(other.load())
+
     def test_ownership_without_a_marker_blocks_another_process_until_release(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "operation.json")

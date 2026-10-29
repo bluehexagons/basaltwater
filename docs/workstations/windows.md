@@ -77,8 +77,29 @@ value through `powershell.exe -File`; use its `-Command` form for this opt-out.
 Detected tools are version-checked during application. A broken existing tool
 stops setup with its failure; repair it and rerun. Missing packages use exact
 WinGet identities and preserve installed versions with `--no-upgrade`. Existing
-T3 desktop installations are detected without launching or stopping the app.
+T3 desktop installations are detected without changing their installed version.
 Updates remain deliberate through the tool's updater or package manager.
+
+Successful setup or refresh starts the selected T3 Code desktop if stopped,
+or requests a graceful close and relaunch to load the updated PATH and skills.
+This runs as a separate, limited current-user interactive Scheduled Task after
+the successful setup receipt and setup lock release, so refresh can finish from
+a local or remote T3 terminal before its desktop closes. The task operates in
+its Windows login session and never forcibly terminates T3. Multiple instances,
+a blocked close, unavailable Task Scheduler, or an account without an interactive
+login require a manual close/reopen. A task assigned to a different Windows
+login session also requires a manual restart; it does not touch that session's
+desktop. Completion status is printed as a file
+under `%LOCALAPPDATA%\Basaltwater\t3-completion`; it contains no provider arguments
+or credentials. An app already relaunched after the completion request is kept.
+
+At completion, setup also reports Windows restart indicators from Windows Update,
+component servicing and pending file replacements. An unreadable check produces
+an unknown-status notice, and a detected restart is advisory; setup never reboots
+Windows. These conservative checks do not establish that every possible restart
+requirement is absent. See Microsoft's
+[Windows Update restart property](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-isysteminformation-get_rebootrequired)
+and [pending file replacement limitation](https://learn.microsoft.com/en-us/windows/win32/msi/msisystemrebootpending).
 
 For Antistatic builds, Windows tests and packaging, select `-GameDev`; add
 `-ShaderTools` for shader validation. `-NodeVersions` independently prepares
@@ -190,7 +211,9 @@ available as `BASALTWATER_GODOT_EXE` for Basaltwater's managed launcher.
 
 ## Verify this account
 
-Restart T3 Code and open a new terminal after setup so providers inherit PATH.
+Allow the queued T3 start/restart to finish, then open a new terminal so providers
+inherit PATH. If its completion status says `manual-restart-required`, close and
+reopen T3 Code yourself.
 Select the local Windows connection and open a native repository, for example
 `C:\Users\NAME\repos\PROJECT`. T3 controls separately installed, authenticated
 [provider CLIs](https://github.com/pingdotgg/t3code#installation).
@@ -291,12 +314,16 @@ Run the offline native setup tests without changing this account's tools:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-AgentWorkstationTests.ps1
 ```
 
-These tests use mocked package/provider commands and temporary catalogs.
+These tests use mocked package/provider commands, desktop completion, reboot
+signals and temporary catalogs. They verify completion follows a successful
+receipt and that graceful close failures do not force termination or launch a
+duplicate desktop.
 The [manual Windows workflow](../../.github/workflows/windows-manual.yml) also
 runs them with the existing native/WSL bootstrap tests and Python output-capture
 checks. A real plan on an existing Windows 11 machine verifies discovery, not
 installation on a fresh PC.
 Fresh WinGet repair, UAC, package downloads, reboot recovery, provider login,
+Task Scheduler independence when refreshing inside T3, graceful desktop relaunch,
 and a new T3 coding session still require live qualification before declaring
 this experimental profile production ready.
 

@@ -103,9 +103,10 @@ launcher and prerequisites.
 
 After setup, open a new terminal, complete `codex login` and `gh auth login`,
 then open T3 Code from KDE and verify a Codex thread and terminal. Refresh setup
-queues a detached user worker that, after saving the setup result and a
-five-second delay, gracefully closes and relaunches a running desktop app; if
-it was stopped, it stays stopped and starts at the next KDE login. Check the
+queues a detached user worker only after all steps, saved state and notifications
+finish. After a short delay it gracefully closes and relaunches a running app,
+or starts a stopped app using KDE's graphical environment. If no graphical session
+is available, its journal reports deferred launch until KDE login. Check the
 printed user journal unit if the worker fails.
 Queueing does not prove provider readiness: verify an authenticated thread and
 terminal. If T3 cannot
@@ -405,7 +406,7 @@ unchanged stops setup before disabling the working web service; setup does not
 retry through another helper. Setup checks package metadata and executable
 ownership without launching Electron. Quit/reopen an already-running T3 when
 updating its package directly. Setup/refresh instead queues a graceful reload
-after installing selected skills and saving its result. `cachy-update` may skip AUR
+after all steps, saved state and notifications finish. `cachy-update` may skip AUR
 checks when only Shelly is installed; use `shelly list-updates aur` for routine
 checks. See [desktop updates](cachyos-maintenance.md#t3-desktop-updates) and
 [Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/).
@@ -431,9 +432,11 @@ Desktop setup enables T3 Code at KDE login using a managed
 [freedesktop autostart entry](https://specifications.freedesktop.org/autostart/latest/)
 at `~/.config/autostart/basaltwater-cachyos-t3.desktop` (or under an absolute
 `$XDG_CONFIG_HOME`). It launches the native `/usr/bin/t3code` only after login
-and skips startup if that executable has been uninstalled. Setup leaves a stopped
-app stopped and queues a graceful reload for a running app. A normal quit leaves
-T3 stopped until the next login.
+and skips startup if that executable has been uninstalled. After all setup steps,
+saved state and notifications finish, an independent worker gracefully reloads a
+running app or starts a stopped app using KDE's user-manager environment. Without
+an active graphical session it reports deferred launch until KDE login. A normal
+quit leaves T3 stopped until the next login or explicit setup/refresh.
 Manage startup in KDE's **System Settings → Autostart**; a desktop setup or
 refresh re-enables the managed entry. Custom files or symlinks at its destination
 are preserved and reported before package changes. Switching successfully to
@@ -484,8 +487,13 @@ archive on first use. Setup confines that download to the candidate release,
 checks its native terminal addon with the archive's embedded Node, then points
 the release's CLI directly at that executable. The relative link survives
 activation and keeps later CLI calls independent of the desktop runtime cache.
-Older npm layouts retain the disposable native PTY shell check. Setup also
-validates the generated unit and HTTP UI reachability. Startup allows up to
+Older npm layouts retain the disposable native PTY shell check. Setup validates
+the generated unit without stopping the working service. After all steps, saved
+state and notifications finish, an independent worker activates the staged
+runtime and checks HTTP UI reachability. Queue acceptance alone does not prove
+activation or readiness; inspect the printed worker unit and journal. This
+keeps local or remote T3 terminals usable through package prompts; the final
+reload can disconnect the terminal after setup is complete. Startup allows up to
 30 minutes for database migration and optimization, with progress every 30
 seconds. Readiness requires three consecutive HTTP 200 checks from the same
 systemd invocation; a restart resets the count, and a failed service stops the
@@ -617,8 +625,8 @@ Managed T3 ports cannot overlap the protected RDP/Sunshine TCP ports.
 Inspect `sudo ufw status verbose` and verify access from the intended client.
 
 The service follows the desktop user's session. Setup validates its CLI,
-native terminal dependency, generated unit, and HTTP UI before reporting
-success. Check a real thread and terminal after pairing. For service errors,
+native terminal dependency and generated unit; its completion worker verifies
+the HTTP UI. Check that worker's result, then a real thread and terminal after pairing. For service errors,
 runtime updates, and activation recovery, use the
 [maintenance reference](cachyos-maintenance.md#web-service-updates-and-recovery).
 
@@ -776,6 +784,12 @@ mirrors, retry the service, or verify mirror freshness. See
 Update observations use existing pacman metadata, which may be stale and does not
 cover AUR releases. Setup prints the same host observations before installing
 packages.
+
+Successful setup and refresh also print best-effort system restart advice from
+the booted kernel's modules and core-package installation dates. Unavailable
+evidence is labelled unknown or incomplete, and CachyOS is never rebooted
+automatically. Follow distro and firmware notices too; see
+[restart notices](cachyos-maintenance.md#system-restart-notices).
 
 To check your first setup, record its CachyOS, Plasma, kernel, GPU/driver,
 and tool versions; authenticate an agent; complete a small edit/test task and

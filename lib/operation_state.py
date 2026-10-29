@@ -247,11 +247,12 @@ class OperationStateStore:
         self._write(record)
         return record
 
-    def complete(self, operation_id: str, *, outcome: str = "succeeded") -> None:
+    def complete(self, operation_id: str, *, outcome: str = "succeeded", keep_ownership: bool = False) -> None:
         """Retain the last result privately, then durably clear the guard.
 
         Phase history is bounded to 256 transitions. The result is evidence,
-        not a recovery marker; it does not block the next operation.
+        not a recovery marker. By default this releases ownership; callers with
+        final notification/cleanup work may retain exclusion until close().
         """
         if outcome not in {"succeeded", "rolled_back", "failed"}:
             raise ValueError(f"Unsupported operation outcome: {outcome}")
@@ -269,7 +270,8 @@ class OperationStateStore:
             if not os.path.lexists(self.path):
                 self._write(current)
             raise
-        self.close()
+        if not keep_ownership:
+            self.close()
 
     def _require_current(self, operation_id: str) -> OperationRecord:
         current = self.load()

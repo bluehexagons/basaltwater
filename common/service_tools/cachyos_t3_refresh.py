@@ -1,4 +1,4 @@
-"""Gracefully reopen an existing package-owned T3 desktop, outside its cgroup."""
+"""Complete T3 setup outside the cgroup of any T3-owned setup terminal."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ class RunningDesktop:
     arguments: list[str]
     environment: dict[str, str]
     directory: str
+    refresh_needed: bool = True
 
 
 def _process_data(path: Path) -> list[str]:
@@ -84,8 +85,7 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
                     continue
                 # Coalesce requests queued before a preceding worker reopened
                 # T3. A newly opened app already loads the refreshed settings.
-                if _started_after(path, queued_before_ns):
-                    continue
+                refresh_needed = not _started_after(path, queued_before_ns)
                 arguments = _process_data(path / "cmdline")
                 if not arguments or any(arg == "--type" or arg.startswith("--type=")
                                         for arg in arguments[1:]):
@@ -101,10 +101,10 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
                 except ValueError:
                     reopened_at_ns = 0
                 if reopened_at_ns > queued_before_ns:
-                    continue
+                    refresh_needed = False
                 directory = os.readlink(path / "cwd")
                 validate_filesystem_path(directory, must_exist=True)
-                candidates.append(RunningDesktop(descriptor, arguments, environment, directory))
+                candidates.append(RunningDesktop(descriptor, arguments, environment, directory, refresh_needed))
                 descriptor = None
             except (FileNotFoundError, ProcessLookupError):
                 continue
@@ -119,23 +119,48 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
             os.close(app.descriptor)
 
 
-def restart_running_desktop(queued_before_ns: int) -> bool:
-    """SIGTERM the existing app, wait for shutdown, then replace this worker."""
+def _validate_executable() -> None:
+    validate_filesystem_path(APP_EXECUTABLE, must_exist=True)
+    result = subprocess.run(
+        ["/usr/bin/pacman", "-Qqo", "--", APP_EXECUTABLE],
+        check=True, capture_output=True, text=True, timeout=15,
+    )
+    if result.stdout.strip() != "t3code-bin" or not os.access(APP_EXECUTABLE, os.X_OK):
+        raise RuntimeError("T3 desktop executable must belong to t3code-bin")
+
+
+def _start_stopped_desktop(home: Path) -> bool:
+    # Transient user services inherit the systemd user manager's environment,
+    # rather than an SSH terminal's forwarded display or provider environment.
+    graphical = subprocess.run(
+        ["/usr/bin/systemctl", "--user", "is-active", "--quiet", "graphical-session.target"],
+        check=False, capture_output=True, timeout=15,
+    )
+    if graphical.returncode or not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+        print("T3 desktop launch deferred: no active graphical session; KDE login startup remains enabled", flush=True)
+        return False
+    _validate_executable()
+    validate_filesystem_path(str(home), must_exist=True)
+    os.chdir(home)
+    environment = {**os.environ, REOPENED_AT_ENV: str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))}
+    environment.pop("ELECTRON_RUN_AS_NODE", None)
+    os.execve(APP_EXECUTABLE, [APP_EXECUTABLE], environment)
+    return True
+
+
+def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> bool:
+    """Start a stopped app or gracefully replace one that needs refreshed state."""
     app = _running_desktop(queued_before_ns)
     if app is None:
-        return False
+        return _start_stopped_desktop(home or Path.home())
     try:
+        if not app.refresh_needed:
+            return False
         poller = select.poll()
         poller.register(app.descriptor, select.POLLIN)
         if poller.poll(0):
             return False
-        validate_filesystem_path(APP_EXECUTABLE, must_exist=True)
-        result = subprocess.run(
-            ["/usr/bin/pacman", "-Qqo", "--", APP_EXECUTABLE],
-            check=True, capture_output=True, text=True, timeout=15,
-        )
-        if result.stdout.strip() != "t3code-bin" or not os.access(APP_EXECUTABLE, os.X_OK):
-            raise RuntimeError("T3 desktop executable must belong to t3code-bin")
+        _validate_executable()
         # Resolve a vanished working directory before disturbing the running app.
         os.chdir(app.directory)
         try:
@@ -156,7 +181,7 @@ def restart_running_desktop(queued_before_ns: int) -> bool:
         os.close(app.descriptor)
 
 
-def main(queued_before_ns: int) -> int:
+def main(queued_before_ns: int, mode: str, home: Path, config_root: Path, request: str) -> int:
     """Serialize workers in the user's private runtime directory."""
     if os.getuid() == 0:
         raise RuntimeError("Run T3 desktop refresh as the desktop user, without sudo")
@@ -172,7 +197,15 @@ def main(queued_before_ns: int) -> int:
                 or info.st_nlink != 1 or info.st_mode & 0o077):
             raise RuntimeError("Unsafe T3 desktop refresh lock")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        restart_running_desktop(queued_before_ns)
+        from common.cachyos_t3 import complete_setup
+
+        validate_filesystem_path(str(home), must_exist=True)
+        validate_filesystem_path(str(config_root))
+        if not home.is_absolute() or not config_root.is_absolute() or ".." in home.parts or ".." in config_root.parts:
+            raise ValueError("T3 completion requires absolute home/configuration paths")
+        os.environ["XDG_CONFIG_HOME"] = str(config_root)
+        if complete_setup(home, mode, request) and mode == "desktop":
+            restart_running_desktop(queued_before_ns, home)
         return 0
     finally:
         os.close(descriptor)
@@ -180,9 +213,10 @@ def main(queued_before_ns: int) -> int:
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) != 2:
-            raise ValueError("T3 desktop refresh requires its queue timestamp")
-        sys.exit(main(validate_positive_integer(sys.argv[1], "queue timestamp")))
+        if len(sys.argv) != 6 or sys.argv[2] not in {"web", "desktop"}:
+            raise ValueError("T3 completion requires timestamp, mode, home, configuration root and request")
+        sys.exit(main(validate_positive_integer(sys.argv[1], "queue timestamp"), sys.argv[2],
+                      Path(sys.argv[3]), Path(sys.argv[4]), sys.argv[5]))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         detail = str(error) if isinstance(error, RuntimeError) else type(error).__name__
         # OS/validation errors can contain private process launch state.

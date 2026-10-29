@@ -26,8 +26,13 @@ Use desktop Settings → Connections for desktop pairing/Connect. The web CLI
 operates on separate data. Keep history, credentials and package ownership intact;
 do not start another backend to repair a working desktop.
 
-Finish active work before setup/refresh: desktop setup queues a graceful app
-reload; web setup restarts its service. To switch desktop → web, quit the desktop
+Setup/refresh can run in a local or remote T3 terminal. Package review and sudo
+prompts remain attached; disruptive T3 changes wait until all steps, saved state
+and notifications finish, then run in an independent user worker. Inspect its
+printed status/journal before treating queued completion as readiness. Desktop
+mode reloads a running app or starts a stopped app when KDE is available;
+otherwise startup waits for KDE login. Web mode activates and checks its staged
+runtime there. Save active work before the final interruption. To switch desktop → web, quit the desktop
 to free its port, then use `--web-interface t3code`. To switch back, select
 `--t3code-desktop`. These flags are mutually exclusive. Omitting them leaves the
 mode alone; switching does not migrate data. Successful web activation removes

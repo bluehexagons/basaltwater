@@ -20,7 +20,8 @@ try {
                         'windows\DevelopmentStorage.Common.ps1', 'windows\Invoke-Basaltw.ps1',
                         'windows\Cli.Common.ps1', 'windows\Godot.Common.ps1', 'windows\tests\Run-CliTests.ps1',
                         'windows\Enter-GameDevShell.ps1', 'windows\tests\Run-GameDevelopmentTests.ps1',
-                        'windows\tests\Run-AgentWorkstationTests.ps1')) {
+                        'windows\tests\Run-AgentWorkstationTests.ps1', 'windows\T3Completion.Common.ps1',
+                        'windows\Complete-T3Desktop.ps1', 'windows\tests\Run-T3CompletionTests.ps1')) {
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo $file), [ref]$tokens, [ref]$errors) | Out-Null
         Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in $file`: $errors"
@@ -28,6 +29,7 @@ try {
     & (Join-Path $PSScriptRoot 'Run-GameDevelopmentTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-T3CompletionTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
@@ -204,6 +206,7 @@ try {
     $global:AgentInstallerTestCalls = @()
     $global:AgentInstallerTestRequests = @()
     $global:AgentInstallerTestFailure = $true
+    $global:AgentInstallerTestCompletions = @()
     try {
         $splitPlan = & (Join-Path $repo 'windows\Setup-AgentWorkstation.ps1') -StorageDrive f: -Plan 6>&1 | Out-String
         Assert-True ($splitPlan -match 'F:\\Basaltwater\\cache\\npm') 'Checkout setup did not resolve the drive-based layout'
@@ -225,6 +228,14 @@ throw 'Older pinned installer must not execute with unsupported selections'
                     "throw 'simulated source entry failure'") | Set-Content -LiteralPath $entry -Encoding UTF8
             }
             Set-Content -LiteralPath (Join-Path $pinned 'windows\Bootstrap.Common.ps1') -Value 'function Ensure-Winget { }'
+            Set-Content -LiteralPath (Join-Path $pinned 'windows\T3Completion.Common.ps1') -Value @'
+function Invoke-NativeSetupCompletion {
+    param($Source, [switch]$T3CodeDesktop)
+    $receipt = Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json') -Raw | ConvertFrom-Json
+    if ($receipt.Phase -ne 'complete') { throw 'Desktop completion preceded successful setup receipt' }
+    $global:AgentInstallerTestCompletions += [pscustomobject]@{ Source = $Source; Desktop = [bool]$T3CodeDesktop }
+}
+'@
             Copy-Item -LiteralPath (Join-Path $repo 'windows\DevelopmentStorage.Common.ps1') -Destination (Join-Path $pinned 'windows\DevelopmentStorage.Common.ps1')
             Set-Content -LiteralPath (Join-Path $pinned 'windows\AgentWorkstation.Common.ps1') -Value @'
 function Invoke-NativeAgentSetup {
@@ -260,6 +271,7 @@ function Invoke-NativeAgentSetup {
         $nativeStatePath = Join-Path $env:LOCALAPPDATA 'Basaltwater\windows-setup.json'
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'applying') 'Failed native setup was marked complete'
+        Assert-True ($global:AgentInstallerTestCompletions.Count -eq 0) 'Failed setup queued desktop completion'
         Assert-True ($nativeState.Source -eq (Join-Path $env:LOCALAPPDATA "Basaltwater\source\$($nativeState.Revision)")) 'Downloaded source was not staged at the pinned revision'
         Assert-True ([IO.File]::Exists('\\?\' + $nativeState.Source + '\' + ('long-path\' * 40) + 'proof.txt')) 'Long source archive path was not extracted and moved'
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\wsl-setup.json'))) 'Native installer wrote WSL state'
@@ -270,9 +282,11 @@ function Invoke-NativeAgentSetup {
         Assert-True ($global:AgentInstallerTestCalls[-1].GameDev -and $global:AgentInstallerTestCalls[-1].ShaderTools) 'Resume plan lost game selections'
         Assert-True $global:AgentInstallerTestCalls[-1].Godot 'Resume plan lost Godot selection'
         Assert-True ((Get-FileHash -LiteralPath $nativeStatePath -Algorithm SHA256).Hash -eq $beforePlan) 'Resume plan rewrote setup state'
+        Assert-True ($global:AgentInstallerTestCompletions.Count -eq 0) 'Plan queued desktop completion'
         & (Join-Path $repo 'install.ps1') -Profile agent_windows -Resume
         $nativeState = Get-Content -LiteralPath $nativeStatePath -Raw | ConvertFrom-Json
         Assert-True ($nativeState.Phase -eq 'complete') 'Native resume did not complete'
+        Assert-True ($global:AgentInstallerTestCompletions.Count -eq 1 -and $global:AgentInstallerTestCompletions[-1].Desktop) 'Successful setup did not queue selected desktop completion'
         $held = [IO.File]::Open((Join-Path $lockDirectory 'setup.lock'), [IO.FileMode]::Open,
             [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
         $beforeLocked = (Get-FileHash -LiteralPath $nativeStatePath).Hash

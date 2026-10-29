@@ -74,6 +74,16 @@ commit. `-Version REF` overrides the channel. `-Go`, `-Node`,
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create
 a Basaltwater-managed T3 service in WSL. `-BuildServer` installs Git for
 Windows and starts a WSL keepalive task at login.
+After successful setup, the selected native T3 app is started or gracefully
+restarted through an independent current-user interactive Scheduled Task.
+The worker waits for the completed setup to release its lock and does not force
+termination or relaunch an already replaced instance. A blocked close, multiple
+instances, or no interactive login requires a manual restart; see the printed
+completion status under `%LOCALAPPDATA%\Basaltwater\t3-completion`.
+Setup also prints a Windows restart notice based on available update, servicing
+and pending file replacement indicators. Unreadable checks are reported as
+unknown; Windows is never rebooted automatically. See the
+[native workstation guidance](windows.md#install) for the limitations.
 For native GitHub Actions jobs with WSL access, see
 [Windows GitHub runners](windows-github-runner.md). `-BuildServer` alone does
 not register a GitHub runner.
@@ -159,7 +169,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $state.Source
 
 `refresh` updates WSL, Ubuntu packages, selected
 tools, and selected WinGet packages without changing the pinned Basaltwater
-source. To advance the source deliberately, run a freshly downloaded installer
+source. Existing T3 desktop versions are preserved; use its deliberate updater
+for desktop upgrades. To advance the source deliberately, run a freshly downloaded installer
 with `-Resume -UpdateSource` and optional `-Version REF`; it stages the new
 revision for both Windows and Ubuntu before reapplying setup.
 Fresh setup and resume take the same account-level lock as native workstation

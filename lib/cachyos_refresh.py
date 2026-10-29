@@ -269,15 +269,32 @@ def run_refresh_command(args: argparse.Namespace) -> int:
             from remote_setup import run_cachyos_setup
 
             return run_cachyos_setup(replace(config, dry_run=True))
-        preflight_cachyos(config)
-        info = upgrade_channel(repository)
-        print(f"Basaltwater is at {str(info['commit'])[:12]} on {info['channel']}")
-        print("Repeating the saved setup with the updated code:", flush=True)
-        print(" ".join(redacted_setup_parts(config.to_setup_command())), flush=True)
-        # Never resolve basaltw through PATH: it could select a different copy.
-        # exec preserves the terminal for sudo/AUR prompts and the setup exit code.
-        entry = str(Path(repository) / "basaltwater.py")
-        os.execv(sys.executable, [sys.executable, entry, *arguments])
+        from common.cachyos_t3 import COMPLETION_LOCK_FD_ENV, setup_completion_lock
+
+        # Exclude earlier completion workers across source replacement as well
+        # as setup. Carry the held inode into the freshly exec'd CLI so there
+        # is no unlocked gap in which a worker can close this T3 terminal.
+        with setup_completion_lock(config) as descriptor:
+            preflight_cachyos(config)
+            info = upgrade_channel(repository)
+            print(f"Basaltwater is at {str(info['commit'])[:12]} on {info['channel']}")
+            print("Repeating the saved setup with the updated code:", flush=True)
+            print(" ".join(redacted_setup_parts(config.to_setup_command())), flush=True)
+            # Never resolve basaltw through PATH: it could select a different copy.
+            entry = str(Path(repository) / "basaltwater.py")
+            previous = os.environ.get(COMPLETION_LOCK_FD_ENV)
+            try:
+                os.set_inheritable(descriptor, True)
+                os.environ[COMPLETION_LOCK_FD_ENV] = str(descriptor)
+                os.execv(sys.executable, [sys.executable, entry, *arguments])
+            finally:
+                # Successful exec never returns. Restore on dispatch failure
+                # (and in mocked tests), then let the context release the lock.
+                os.set_inheritable(descriptor, False)
+                if previous is None:
+                    os.environ.pop(COMPLETION_LOCK_FD_ENV, None)
+                else:
+                    os.environ[COMPLETION_LOCK_FD_ENV] = previous
         return 0
     except (ChannelError, OSError, ValueError, RuntimeError) as exc:
         print(f"Error: {exc}")

@@ -254,8 +254,10 @@ The entry is `~/.config/autostart/basaltwater-cachyos-t3.desktop`, or
 override. It uses the package-owned `/usr/bin/t3code` and KDE's normal login
 environment. No user service or restart loop is added for the desktop app;
 quitting it leaves it stopped for that session. Setup/refresh queues a detached
-worker to gracefully close and relaunch a running app after selected skills and
-the setup result are saved. A stopped app stays stopped. Inspect the printed
+worker to gracefully close and relaunch a running app after all setup steps,
+saved state, and notifications finish. It starts a stopped app when KDE's
+graphical session and user-manager environment are available; otherwise its
+journal reports that launch is deferred until KDE login. Inspect the printed
 worker unit with `journalctl --user -u UNIT` on failure, then verify a provider
 turn and terminal; queue acceptance alone does not establish readiness.
 The entry's `TryExec` prevents login launch attempts after package removal.
@@ -518,8 +520,12 @@ basaltw setup agent_cachyos localhost --web-interface t3code
 
 Keep your selected host, port, and workspace options when rerunning. Each T3
 setup stages `t3@latest` in a separate release directory, checks its CLI and
-native terminal dependency, then validates the unit before stopping the old
-service. Activation switches the CLI link and unit and starts the new runtime.
+native terminal dependency, then validates the unit while the old service keeps
+running. After all steps, saved state and notifications finish, an independent
+user worker switches the CLI link and unit, starts the new runtime, and checks
+HTTP readiness. Inspect its printed unit/journal; queue acceptance does not mean
+activation succeeded. This ordering preserves local and remote T3 terminals
+through setup's package-review and sudo prompts.
 Even an unchanged T3 version is rebuilt and restarted so a Node upgrade does
 not leave an incompatible native addon. Do not use `npm install --prefix` on
 the managed root; it bypasses staging and can replace the stable CLI link.
@@ -527,8 +533,8 @@ the managed root; it bypasses staging and can replace the stable CLI link.
 Installation/validation failures leave the old service untouched. Activation
 failures restore the previous runtime, unit permissions, and enabled/running
 state. An interrupted activation leaves private recovery snapshots in
-`~/.local/share/basaltwater/cachyos-t3/.activation`; the next setup retries
-recovery before installing. If recovery is incomplete, retain that directory
+`~/.local/share/basaltwater/cachyos-t3/.activation`; the next successfully staged
+setup retries recovery in its completion worker. If recovery is incomplete, retain that directory
 and both runtimes while resolving the reported service error. Changes or
 removals made to the unit or CLI link outside setup stop recovery and preserve
 the snapshots for manual inspection.
@@ -536,8 +542,8 @@ the snapshots for manual inspection.
 A failed first-install rollback can remove its new unit before a systemd
 reload fails. Preflight recognizes the cached, inactive unit only with an
 owned, valid recovery record proving there was no previous service. Rerun
-setup after resolving the reload error; recovery finishes before installing
-or switching to desktop mode. Keep `.activation` intact, and do not recreate
+setup after resolving the reload error; its completion worker recovers before
+activating web mode or switching to desktop mode. Keep `.activation` intact, and do not recreate
 the removed unit manually.
 
 Rollback covers runtime and service configuration, **not T3 database migrations**.
@@ -618,6 +624,14 @@ setup selection. Version/commit channels remain pinned, just as with
 The dry run displays the saved command and setup plan without fetching source,
 upgrading, installing, or changing the saved selection.
 
+`refresh` may run in a local or remote T3 terminal. CachyOS keeps the interactive
+terminal for package-review and sudo prompts. Selected T3 startup, reload and
+mode changes run independently after every setup step, saved result and
+notification finishes. The printed worker unit provides completion status and
+journal output; a queued job alone does not qualify the app or provider. The
+final reload can disconnect that terminal, so save active work first. Concurrent
+setup or completion work is refused until the current operation finishes.
+
 The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
 The adjacent private `last-report.json` records completion time, source commit
 and channel (when available), selected tool/package versions, and diagnostic
@@ -678,3 +692,21 @@ On CachyOS this repeats only the local `agent_cachyos` profile. It does not
 upgrade CachyOS itself or redeploy saved remote hosts. Debian also supports
 refresh, using its existing target-side record and root setup runner; see
 [refresh on Debian](../reference/command-line.md#refresh-this-machine).
+
+### System restart notices
+
+Successful setup and refresh print best-effort restart advice without rebooting
+the workstation. Checks look for an existing reboot-required marker, missing
+modules for the running kernel, and local package installation times newer than
+this boot for that kernel, `glibc`, and `systemd`. An unused alternative kernel
+alone does not trigger the package check. Install times also cover reinstalls,
+so this is a conservative recommendation rather than proof that rebooting is
+mandatory. Missing or unreadable metadata is reported as unknown or incomplete;
+absence of a detected signal does not override CachyOS or firmware notices.
+No package database refresh, privileged check, or automatic restart is added.
+
+The package dates use the documented
+[ALPM local metadata format](https://man.archlinux.org/man/extra/alpm-db/alpm-db-descv1.5.en).
+CachyOS also provides its own
+[core-package reboot notification hook](https://github.com/CachyOS/cachyos-hooks/blob/master/cachyos-reboot-required.hook);
+continue following its advice after system updates.

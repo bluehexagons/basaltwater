@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -40,6 +41,10 @@ class CachyOSRefreshTests(unittest.TestCase):
             "commit": "abcdef0123456789", "channel": "dev", "updated": True,
         }))
         self.execute = stack.enter_context(patch.object(refresh.os, "execv"))
+        self.lock_file = stack.enter_context(tempfile.TemporaryFile())
+        self.completion_lock = stack.enter_context(patch("common.cachyos_t3.setup_completion_lock",
+            side_effect=lambda config: nullcontext(self.lock_file.fileno())))
+        stack.enter_context(patch("common.cachyos_reboot.report_reboot_notice"))
         stack.enter_context(patch("lib.cachyos_doctor.collect_cachyos_doctor", return_value={"capabilities": []}))
         stack.enter_context(patch("lib.cachyos_health.source_metadata", return_value={"commit": "abc123", "channel": "dev"}))
         self.parser, _, _ = basaltwater.create_basaltwater_parser()
@@ -232,13 +237,30 @@ class CachyOSRefreshTests(unittest.TestCase):
         self.upgrade.side_effect = lambda repo: events.append("upgrade") or {
             "commit": "abcdef", "channel": "dev", "updated": False,
         }
-        self.execute.side_effect = lambda *args: events.append("exec")
+        def execute(*args):
+            from common.cachyos_t3 import COMPLETION_LOCK_FD_ENV
+
+            events.append("exec")
+            self.assertEqual(os.environ[COMPLETION_LOCK_FD_ENV], str(self.lock_file.fileno()))
+            self.assertTrue(os.get_inheritable(self.lock_file.fileno()))
+        self.execute.side_effect = execute
         self.assertEqual(self.run_refresh(), 0)
         self.assertEqual(events, ["upgrade", "exec"])
         self.execute.assert_called_once_with(refresh.sys.executable, [
             refresh.sys.executable, str(self.repository / "basaltwater.py"), *arguments,
         ])
         self.preflight.assert_called_once()
+        self.assertFalse(os.get_inheritable(self.lock_file.fileno()))
+        self.assertNotIn("BASALTW_CACHYOS_COMPLETION_LOCK_FD", os.environ)
+
+    def test_exec_failure_releases_lock_handoff_without_losing_saved_selection(self):
+        refresh.save_successful_setup(self.config("--t3code-desktop"))
+        before = self.record.read_bytes()
+        self.execute.side_effect = OSError("fixture exec failure")
+        self.assertEqual(self.run_refresh(), 1)
+        self.assertFalse(os.get_inheritable(self.lock_file.fileno()))
+        self.assertNotIn("BASALTW_CACHYOS_COMPLETION_LOCK_FD", os.environ)
+        self.assertEqual(self.record.read_bytes(), before)
 
     def test_legacy_desktop_arguments_are_replayed_with_positionals_first(self):
         refresh.save_successful_setup(self.config("--t3code-desktop", "--node"))
@@ -315,11 +337,13 @@ class CachyOSRefreshTests(unittest.TestCase):
 
     def test_successful_runner_records_selection(self):
         with patch("lib.cachyos.preflight_cachyos"), \
+                patch("common.cachyos_t3.finalize_setup") as finalize, \
                 patch.object(remote_setup, "get_steps_for_system_type", return_value=[
                     ("save", cachyos_steps.save_cachyos_setup),
                 ]):
             self.assertEqual(remote_setup.run_cachyos_setup(self.config("--t3code-desktop")), 0)
         self.assertTrue(refresh.load_saved_setup()[1].t3code_desktop)
+        finalize.assert_called_once()
 
     def test_invalid_records_fail_before_upgrade(self):
         refresh.save_successful_setup(self.config())

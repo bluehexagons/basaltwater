@@ -61,7 +61,8 @@ Refresh options:
   --version REF        Select a specific source reference
 
 Refresh preserves installed tool versions and provider logins. Package upgrades
-remain deliberate. Restart T3 Code/terminals after setup changes PATH.
+remain deliberate. Successful setup queues a graceful T3 Code start/restart.
+Other open terminals need to be reopened after setup changes PATH.
 Linux controller, server, desktop and agent commands require a Linux installation.
 '@
 }

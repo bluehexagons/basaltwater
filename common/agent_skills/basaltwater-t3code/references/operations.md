@@ -145,7 +145,7 @@ reachability from the viewing desktop alone is insufficient. Link access and
 the calling agent's modes both bound remote operations. Below full access,
 links can change only threads they started and skip project setup scripts.
 Discovery, remote delegation, and workspace constraints are in the subagent
-skill's [T3 reference](../../basaltwater-subagents/references/t3-orchestration.md#linked-environments).
+skill's [T3 reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-subagents/references/t3-orchestration.md#linked-environments).
 
 Links last 30 days; renew by linking again. **Forget** removes the local link
 and credential, while revocation on the peer's **Settings → Sharing & access**

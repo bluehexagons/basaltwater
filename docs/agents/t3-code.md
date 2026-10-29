@@ -87,18 +87,27 @@ and HTTPS-gateway guidance. See
 Selected Claude Code receives the catalog under `~/.claude/skills`; Codex and
 OpenCode share `~/.agents/skills`. Bundled references ship with the entrypoint,
 so host-side migration instructions remain available outside this repository.
-Setup refreshes provider configuration and installs selected skills before
-refreshing T3. A managed Debian T3 setup explicitly refreshes the shared service
-even when its version and unit are unchanged; it avoids a second restart if the
-updater already started a fresh service. Internal non-refresh service checks reuse
-a healthy running service. On CachyOS desktop, setup queues a detached user
-worker after saving its result. After a short delay the worker gracefully closes
-and relaunches a running app; it leaves a stopped app stopped. Its independent
-user unit survives provider shutdown.
-Queue acceptance does not prove the app or provider is ready. Check its printed
-user journal unit on failure, then verify an authenticated provider turn and
-terminal. On CachyOS managed web, refresh stops and starts the service after
-skills install.
+Successful setup queues selected T3 startup/reload after provider configuration,
+skills, saved state and notifications. Debian's completion worker waits until
+the setup process exits, then starts/reloads the shared service and checks
+stable HTTP readiness. Its upstream updater can also start a newer runtime
+during installation; the final reload picks up providers installed later.
+Internal non-refresh service checks reuse a healthy running service. CachyOS
+stages its web runtime without stopping the terminal's service, then queues
+activation/readiness after setup. Its desktop worker gracefully reloads a
+running app or starts a stopped app when a graphical session is available;
+otherwise KDE login startup remains enabled. Native Windows uses a same-session
+scheduled task after successful setup receipts and reports when manual reopening
+is needed. See [Windows setup](../workstations/windows.md).
+
+Debian `sudo basaltw refresh` runs in an independent system service, including
+when invoked from a local T3 terminal or over SSH from another environment.
+The caller's exit 0 confirms dispatch. Inspect the printed private refresh log,
+refresh unit result and final T3 completion unit result before assuming success.
+CachyOS keeps package and sudo prompts interactive until the completion handoff.
+Queue acceptance does not prove app or provider readiness: inspect the printed
+unit/status, then verify an authenticated provider turn and terminal. See
+[refresh behavior](../reference/command-line.md#refresh-this-machine).
 
 When Codex is selected, root-owned Codex defaults make direct CLI sessions use
 auto-reviewed workspace access. They do not restrict explicit user or client
@@ -348,19 +357,19 @@ systemctl --user restart t3code.service
 Reconnect the client and retry one status/open cycle. Prefer managed Playwright
 when session policy permits fallback, or continue non-browser checks. Restart the service
 before considering a whole-VM reboot so VM-side T3 state is isolated.
-Refresh setup restarts the managed service so refreshed provider configuration
-and skills take effect, including when runtime and unit versions are unchanged.
-The updater's own fresh service start is reused to avoid a duplicate restart.
+Setup queues a final service reload so refreshed provider configuration and
+skills take effect, including when runtime and unit versions are unchanged.
+It first waits for any upstream update's startup/migration to become ready;
+the completion reload follows the remaining setup work.
 Internal non-refresh service checks keep a healthy current service. Desktop and
 standalone provider lifecycle behavior differs by profile; see the corresponding
 setup guide.
 
 Basaltwater targets stable T3 Code releases. When T3 Code is selected, every
 setup run checks npm's `t3@latest` stable channel for a newer release.
-A healthy service is explicitly restarted by a setup refresh, even when runtime
-and managed configuration are unchanged; internal non-refresh service checks
-reuse a healthy session. If the updater already started a fresh service,
-setup reuses it. The T3 client can also offer an explicit
+A healthy service receives a final reload after successful setup, even when
+runtime and managed configuration are unchanged; internal non-refresh service
+checks reuse a healthy session. The T3 client can also offer an explicit
 **Update server** action for this background service; prefer that action after
 active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
@@ -636,7 +645,8 @@ Managed setup refreshes reload selected provider configuration and skills. On
 CachyOS desktop, a detached user worker gracefully sends SIGTERM to a running
 same-user `t3code-bin` app, waits for exit, then relaunches the packaged app
 with its original environment and arguments. It does not force-kill; if the app
-was stopped, it stays stopped and KDE login autostart remains available. Check
+was stopped, it starts when a graphical session is available; otherwise KDE
+login autostart remains available. Check
 the worker's printed `journalctl --user` unit if it fails; queueing is not proof
 of readiness. Verify an authenticated provider turn and terminal.
 

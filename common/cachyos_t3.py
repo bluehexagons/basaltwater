@@ -17,6 +17,7 @@ from typing import Iterator
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from common.cachyos_steps import (
     T3_SERVICE, _MARKER, _directory, _home, _tool_path, _user_run, _user_unit_path, _write_managed,
@@ -28,10 +29,11 @@ from common import cachyos_aur as aur
 from common import cachyos_t3_desktop as desktop
 from lib.remote_utils import is_dry_run, run
 from lib.t3code_runtime import is_t3_service_version, t3_native_probe_command
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 DESKTOP_PACKAGE = "t3code-bin"
+COMPLETION_LOCK_FD_ENV = "BASALTW_CACHYOS_COMPLETION_LOCK_FD"
 # Match upstream's preparation window for database migrations and optimization.
 _T3_READINESS_TIMEOUT = 30 * 60
 _T3_READINESS_PROGRESS_INTERVAL = 30
@@ -115,6 +117,7 @@ def _check_managed_paths(home: Path) -> tuple[Path, Path]:
         not dropins.is_dir() or any(dropins.glob("*.conf"))
     )):
         raise RuntimeError("Unmanaged T3 service drop-ins are present; resolve them before switching or updating T3")
+    _pending_completion(prefix)
     return prefix, unit
 
 
@@ -160,9 +163,9 @@ def preflight(config: SetupConfig) -> None:
 
 
 def install_desktop(config: SetupConfig) -> None:
-    """Retain AUR ownership and retire only the Basaltwater web service."""
+    """Install interactively, leaving disruptive mode changes for completion."""
     if config.dry_run or is_dry_run():
-        print("  Would install/update T3 desktop through your AUR helper, disable the managed web service, and enable KDE login startup")
+        print("  Would install/update T3 desktop through your AUR helper and stage desktop startup for setup completion")
         return
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
@@ -200,22 +203,14 @@ def install_desktop(config: SetupConfig) -> None:
     with _setup_lock(prefix):
         _check_managed_paths(home)
         _check_service_ownership(prefix, unit)
-        _recover_activation(prefix, unit, start_previous=False)
-        if unit.exists():
-            run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
-            active = run(["systemctl", "--user", "is-active", T3_SERVICE], capture_output=True, check=False)
-            if active.returncode != 3 or active.stdout.strip() not in {"inactive", "failed"}:
-                raise RuntimeError("Could not verify that the managed T3 web service stopped; inspect systemctl --user")
-            enabled = run(["systemctl", "--user", "is-enabled", T3_SERVICE], capture_output=True, check=False)
-            if enabled.returncode != 1 or enabled.stdout.strip() != "disabled":
-                raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
+        _activation_state(prefix / ".activation")
         desktop.enable_autostart(home)
-        _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
+        _stage_completion(config, prefix, {"mode": "desktop"})
     print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; checked through your AUR helper")
-    print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
+    print("  Managed web service will be disabled after all setup steps finish; all T3 data retained")
     print("  Default ~/.t3 desktop state is private; existing credential contents retained")
     print("  T3 Code enabled at KDE login; normal quit stays stopped until the next login")
-    print("  Setup queues a graceful reload of a running T3 desktop after saving its result")
+    print("  Setup completion starts or gracefully reloads the selected desktop when a graphical session is available")
     for tool in config.selected_agent_tools():
         if tool != "gh":
             binary = shutil.which(tool, path=_tool_path(home))
@@ -432,10 +427,128 @@ def install(config: SetupConfig) -> None:
     with _setup_lock(prefix):
         _check_managed_paths(home)
         _check_service_ownership(prefix, unit)
-        _recover_activation(prefix, unit)
+        _activation_state(prefix / ".activation")
         _install_locked(config, home, prefix, unit)
-        desktop.disable_autostart(home)
-        (prefix / "desktop-mode").unlink(missing_ok=True)
+
+
+def _pending_completion(prefix: Path) -> dict | None:
+    path = prefix / "pending-completion.json"
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_mode & 0o077 or info.st_nlink != 1):
+        raise ValueError("Unsafe T3 pending completion record")
+    record = read_json_file(str(path), max_bytes=32768)
+    if (not isinstance(record, dict) or record.get("owner") != _MARKER
+            or record.get("mode") not in {"web", "desktop"}
+            or not isinstance(record.get("request"), str)
+            or not re.fullmatch(r"[0-9a-f]{32}", record["request"])):
+        raise ValueError("Invalid T3 pending completion record")
+    expected = {"owner", "request", "mode"}
+    if record["mode"] == "web":
+        expected |= {"candidate", "content", "url"}
+    if set(record) != expected or not all(isinstance(value, str) for value in record.values()):
+        raise ValueError("Invalid T3 pending completion record")
+    return record
+
+
+def _stage_completion(config: SetupConfig, prefix: Path, values: dict) -> None:
+    _pending_completion(prefix)  # Preserve an unsafe or unmanaged destination.
+    request = uuid.uuid4().hex
+    record = {"owner": _MARKER, "request": request, **values}
+    if len((json.dumps(record, indent=2) + "\n").encode("utf-8")) > 32768:
+        raise ValueError("T3 completion configuration exceeds its record limit")
+    write_json_atomic(str(prefix / "pending-completion.json"), record)
+    config._cachyos_t3_completion_request = request
+
+
+def finalize_setup(config: SetupConfig) -> None:
+    """Queue disruptive T3 work only after steps, saved state and notifications."""
+    if config.t3code_desktop or config.web_interfaces:
+        desktop.queue_refresh(config)
+
+
+@contextmanager
+def setup_completion_lock(config: SetupConfig) -> Iterator[int | None]:
+    """Keep queued workers outside the whole interactive setup/refresh run."""
+    if config.dry_run or is_dry_run():
+        yield None
+        return
+    if os.getuid() == 0:
+        raise RuntimeError("Run CachyOS setup as the desktop user, without sudo")
+    runtime = Path(f"/run/user/{os.getuid()}")
+    info = runtime.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("T3 completion requires an owned private user runtime directory")
+    descriptor = os.open(runtime / "basaltwater-t3-desktop-refresh.lock",
+                         os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_nlink != 1 or info.st_mode & 0o077):
+            raise RuntimeError("Unsafe T3 completion lock")
+        inherited_value = os.environ.pop(COMPLETION_LOCK_FD_ENV, None)
+        if inherited_value is not None:
+            inherited = validate_positive_integer(inherited_value, "completion lock descriptor")
+            if inherited <= 2:
+                raise ValueError("Invalid T3 completion lock descriptor")
+            inherited_info = os.fstat(inherited)
+            if (inherited_info.st_dev, inherited_info.st_ino) != (info.st_dev, info.st_ino):
+                raise ValueError("Inherited T3 completion lock does not match its private runtime file")
+            os.close(descriptor)
+            descriptor = inherited
+            os.set_inheritable(descriptor, False)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("Another CachyOS setup or T3 completion is running; retry after it finishes") from error
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def complete_setup(home: Path, mode: str, request: str) -> bool:
+    """Activate exactly the completed setup requested by the detached worker."""
+    prefix, unit = _check_managed_paths(home)
+    _check_service_ownership(prefix, unit)
+    with _setup_lock(prefix):
+        record = _pending_completion(prefix)
+        if record is None or record["request"] != request or record["mode"] != mode:
+            print("T3 completion superseded; no service or desktop was changed", flush=True)
+            return False
+        if mode == "desktop":
+            _recover_activation(prefix, unit, start_previous=False)
+            if unit.exists():
+                run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
+                active = run(["systemctl", "--user", "is-active", T3_SERVICE], capture_output=True, check=False)
+                if active.returncode != 3 or active.stdout.strip() not in {"inactive", "failed"}:
+                    raise RuntimeError("Could not verify that the managed T3 web service stopped; inspect systemctl --user")
+                enabled = run(["systemctl", "--user", "is-enabled", T3_SERVICE], capture_output=True, check=False)
+                if enabled.returncode != 1 or enabled.stdout.strip() != "disabled":
+                    raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
+            _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
+        else:
+            candidate = Path(record["candidate"])
+            validate_filesystem_path(str(candidate), must_exist=True)
+            if (candidate.parent != prefix / "releases" or candidate.is_symlink()
+                    or (candidate / ".basaltwater-release").read_text() != _MARKER
+                    or not record["content"].startswith(_MARKER + "\n")):
+                raise ValueError("Unsafe staged T3 web runtime")
+            _check_binary(candidate / "bin/t3", candidate)
+            _recover_activation(prefix, unit)
+            previous = (prefix / "bin/t3").resolve()
+            _activate(prefix, unit, candidate, record["content"], record["url"])
+            desktop.disable_autostart(home)
+            (prefix / "desktop-mode").unlink(missing_ok=True)
+            keep = {candidate}
+            releases = prefix / "releases"
+            if previous.is_relative_to(releases):
+                keep.add(releases / previous.relative_to(releases).parts[0])
+            _prune_releases(releases, keep)
+        (prefix / "pending-completion.json").unlink()
+    return True
 
 
 def _copy_entry(source: Path, destination: Path) -> None:
@@ -578,9 +691,8 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
     had_binary = binary.exists() or binary.is_symlink()
     if had_binary:
         _check_binary(binary, prefix)
-    previous_target = binary.resolve() if had_binary else None
     candidate = Path(tempfile.mkdtemp(prefix="candidate-", dir=releases))
-    activated = False
+    staged = False
     try:
         # npm never writes into the active prefix, even when the package version
         # is unchanged. Native dependencies may need rebuilding after a Node update.
@@ -619,12 +731,17 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
             f"{_filtered_exec_start(str(candidate / 'bin/t3'), service_arguments)}\n"
             "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
         )
-        _activate(prefix, unit, candidate, content, f"http://{host}:{config.web_interface_port}/")
-        activated = True
-        keep = {candidate}
-        if previous_target is not None and previous_target.is_relative_to(releases):
-            keep.add(releases / previous_target.relative_to(releases).parts[0])
-        _prune_releases(releases, keep)
+        # Validate without replacing the effective unit or stopping its terminal
+        # children. The independent completion worker owns activation/readiness.
+        with tempfile.TemporaryDirectory(prefix=".verify-", dir=prefix) as temporary:
+            proposed = Path(temporary) / T3_SERVICE
+            proposed.write_text(content)
+            run(["systemd-analyze", "--user", "verify", str(proposed)], capture_output=True, timeout=30)
+        _stage_completion(config, prefix, {"mode": "web", "candidate": str(candidate),
+                                         "content": content,
+                                         "url": f"http://{host}:{config.web_interface_port}/"})
+        staged = True
+        print("  T3 web runtime validated and staged; activation/readiness follow all setup steps")
     finally:
-        if not activated and not (prefix / ".activation").exists():
+        if not staged and not (prefix / ".activation").exists():
             shutil.rmtree(candidate)

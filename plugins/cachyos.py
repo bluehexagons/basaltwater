@@ -51,7 +51,6 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from common.cachyos_development import install_cachyos_node_versions
     from common.cachyos_sunshine import configure as configure_sunshine
     from common.cachyos_ssh import configure as configure_ssh
-    from common.cachyos_t3_desktop import queue_refresh as refresh_t3_desktop
 
     validate_cachyos_config(config)
     steps = [
@@ -74,7 +73,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     # Providers discover skills at startup, so refresh these before loading T3.
     steps.append(("Installing CachyOS workstation skills", install_cachyos_skills))
     if config.t3code_desktop:
-        steps.append(("Installing T3 Code desktop and enabling KDE login startup (disables managed web service)", install_cachyos_t3_desktop))
+        steps.append(("Installing T3 Code desktop and staging startup for setup completion", install_cachyos_t3_desktop))
     if config.web_interfaces:
         steps.append(("Installing or updating CachyOS T3 Code user service", install_cachyos_t3))
     if config.install_sunshine:
@@ -87,7 +86,4 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     if config.install_ssh is not None:
         steps.append(("Configuring selected workstation SSH access", configure_ssh))
     steps.append(("Saving successful local setup for basaltw refresh", save_cachyos_setup))
-    if config.t3code_desktop:
-        # Run independently after saving: this app may host the setup's agent.
-        steps.append(("Queuing a graceful reload of the running T3 desktop", refresh_t3_desktop))
     return steps

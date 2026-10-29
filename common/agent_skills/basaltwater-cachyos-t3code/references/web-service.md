@@ -55,9 +55,14 @@ to install a second upstream `t3code.service`. Use `connect unlink` or
 `connect logout` to disable it. The service follows the user session unless the
 user deliberately enables systemd lingering.
 
-Rerunning setup with T3 selected stages the latest runtime, validates its CLI,
-native PTY shell, and unit, then stops and starts the service after selected
-skills install. Saved threads can continue on a new message. Automatic
+Rerunning setup with T3 selected stages the latest runtime and validates its CLI,
+native PTY shell, and unit while the working service and its terminals remain
+available. After all steps, saved state and notifications, a detached user worker
+activates the staged runtime and checks HTTP readiness. Local or remote T3
+terminals can run setup/refresh and answer its package prompts; the final service
+reload can disconnect them once setup is complete. Queue acceptance alone is not
+readiness: inspect the printed completion unit and its journal, then the managed
+service. Saved threads can continue on a new message. Automatic
 continuation of interrupted active turns depends on T3's existing **Continue
 threads after server update** setting; queued turns still need user Resume, and
 approvals may not survive. Finish active work first and retain the chosen host,
@@ -68,7 +73,7 @@ The stable `bin/t3` link remains the entry point for pairing and Connect.
 Failed activation restores the previous runtime and unit, but does not reverse
 application database migrations. Incomplete recovery retains private snapshots
 in the runtime root's `.activation` directory; resolve the service error and
-rerun setup to retry recovery. Preserve that directory until recovery completes.
+rerun setup to retry recovery in the completion worker. Preserve that directory until recovery completes.
 If the unit or CLI link was changed or removed outside setup, recovery stops and
 leaves the snapshots for manual inspection.
 The current and previous managed releases are retained after successful updates.

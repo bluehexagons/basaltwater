@@ -14,12 +14,13 @@ import tempfile
 from urllib.parse import urlsplit
 
 from lib.arg_parser import create_setup_argument_parser
+from lib.admin_status import JOB_ID_ENV, valid_job_id
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.cachyos import is_cachyos
 from lib.channel_manager import get_channel_info, managed_repository_path, switch_channel, upgrade_channel
 from lib.installation_info import INSTALLATION_METADATA_FILENAME, REFRESH_METADATA_FILENAME, write_refresh_source_metadata
 from lib.config import AGENT_TOOLS, SetupConfig
-from lib.machine_state import STATE_DIR, SETUP_CONFIG_FILE, _validate_setup_config
+from lib.machine_state import STATE_DIR, SETUP_CONFIG_FILE, _validate_setup_config, can_manage_system_services
 from lib.maintenance_lock import maintenance_lock
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.remote_utils import read_os_release, run
@@ -367,6 +368,15 @@ def run_refresh_command(args: argparse.Namespace) -> int:
             print(f"Saved local setup: {config.system_type} for {config.username}")
             _print_dry_run_plan(get_steps_for_system_type(config))
             return 0
+        from lib.refresh_job import WORKER_ENV, queue_refresh
+
+        # The worker owns its cgroup and output. A T3 restart or an SSH client
+        # disappearing must not kill source activation or the setup runner.
+        # Panel administration already supplies an independently owned job.
+        if (can_manage_system_services(config.machine_type)
+                and os.environ.get(WORKER_ENV) != "1"
+                and not valid_job_id(os.environ.get(JOB_ID_ENV))):
+            return queue_refresh(repository)
         return _apply_refresh(repository, channel, info, config, arguments)
     except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
         print(f"Error: {exc}")

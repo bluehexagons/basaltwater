@@ -73,12 +73,13 @@ def collect_autostart_health(home: Path) -> tuple[str, str]:
 
 
 def queue_refresh(config: SetupConfig) -> None:
-    """Reopen a running desktop after setup, even when it owns this agent turn."""
+    """Start or reload selected T3 after setup, even when it owns this terminal."""
+    from common.cachyos_steps import _home
     from lib.machine_state import can_manage_system_services
     from lib.remote_utils import is_dry_run, run
 
     if config.dry_run or is_dry_run():
-        print("  Would queue a graceful T3 desktop restart if running; stopped apps stay stopped")
+        print("  Would queue selected T3 startup/reload after all setup steps and notifications")
         return
     if os.getuid() == 0 or pwd.getpwnam(config.username).pw_uid != os.getuid():
         raise ValueError("Queue T3 desktop refresh as the selected desktop user, without sudo")
@@ -86,15 +87,27 @@ def queue_refresh(config: SetupConfig) -> None:
         raise ValueError("This machine cannot manage the T3 desktop refresh worker")
     helper = Path(__file__).resolve().parent / "service_tools/cachyos_t3_refresh.py"
     validate_filesystem_path(str(helper), must_exist=True)
-    unit = "basaltwater-t3-desktop-refresh-" + uuid.uuid4().hex
+    home = _home(config)
+    mode = "desktop" if config.t3code_desktop else "web"
+    request = getattr(config, "_cachyos_t3_completion_request", "")
+    if not re.fullmatch(r"[0-9a-f]{32}", request):
+        raise RuntimeError("T3 setup did not stage a completion request; rerun setup")
+    config_root = str(autostart_path(home).parent.parent)
+    unit = "basaltwater-t3-completion-" + uuid.uuid4().hex
     queued_before_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
     run(["/usr/bin/systemd-run", "--user", "--collect", "--unit=" + unit,
          "--on-active=5s", "--timer-property=AccuracySec=1s",
          "--property=Type=exec", "--property=UMask=0077",
-         "--property=StandardOutput=null", "--property=StandardError=journal",
-         "/usr/bin/python3", "-I", str(helper), str(queued_before_ns)],
+         "--property=StandardOutput=journal", "--property=StandardError=journal",
+         "/usr/bin/python3", "-I", str(helper), str(queued_before_ns), mode,
+         str(home), config_root, request],
         capture_output=True, timeout=15)
-    print("  T3 desktop refresh queued: running app will reopen gracefully; stopped app stays stopped")
+    print(f"  T3 {mode} completion queued independently; setup's terminal may disconnect after completion")
+    if mode == "desktop":
+        print("  Running desktop reopens gracefully; a stopped app starts when KDE's graphical session is available")
+        print("  Without a graphical session, desktop launch waits until KDE login")
+    else:
+        print("  Web runtime activation and HTTP readiness run in the queued worker")
     print(f"  Refresh status: systemctl --user status {unit}.service; journalctl --user -u {unit}.service")
     print("  Saved threads resume on the next message; automatic turn continuation follows T3 settings")
     print("  Verify an authenticated provider thread and terminal after the app reopens")

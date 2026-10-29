@@ -20,6 +20,7 @@ import unittest
 from unittest.mock import patch
 
 from lib import refresh
+from lib.admin_status import JOB_ID_ENV
 from lib.config import AGENT_TOOLS, SetupConfig
 from lib.channel_manager import ChannelError
 from lib.operation_state import OperationStateStore
@@ -31,6 +32,7 @@ class DebianRefreshTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        stack.enter_context(patch.dict(os.environ, {"BASALTWATER_REFRESH_WORKER": "1"}))
         self.state = self.root / "setup.json"
         self.setup_marker = self.root / "setup-operation.json"
         self.state.write_text("{}")
@@ -85,6 +87,36 @@ class DebianRefreshTests(unittest.TestCase):
         self.upgrade.side_effect = ChannelError("dirty worktree")
         self.assertEqual(self.invoke(), 1)
         self.run.assert_not_called()
+
+    def test_terminal_refresh_dispatches_before_source_activation(self):
+        for environment in ({}, {"SSH_CONNECTION": "fixture"}, {"T3CODE_PORT": "3773"}):
+            with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True), \
+                    patch("lib.refresh_job.queue_refresh", return_value=0) as queue:
+                self.assertEqual(self.invoke(), 0)
+                queue.assert_called_once_with(str(self.root))
+        self.upgrade.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_existing_independent_admin_job_does_not_dispatch_a_nested_refresh(self):
+        with patch.dict(os.environ, {JOB_ID_ENV: "a" * 32}, clear=True), \
+                patch("lib.refresh_job.queue_refresh") as queue:
+            self.assertEqual(self.invoke(), 0)
+        queue.assert_not_called()
+        self.upgrade.assert_called_once()
+
+    def test_failed_dispatch_does_not_change_source(self):
+        with patch.dict(os.environ, {}, clear=True), \
+                patch("lib.refresh_job.queue_refresh", side_effect=RuntimeError("Cannot queue")):
+            self.assertEqual(self.invoke(), 1)
+        self.upgrade.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_container_without_service_management_keeps_foreground_refresh(self):
+        self.config.machine_type = "oci"
+        with patch.dict(os.environ, {}, clear=True), patch("lib.refresh_job.queue_refresh") as queue:
+            self.assertEqual(self.invoke(), 0)
+        queue.assert_not_called()
+        self.upgrade.assert_called_once()
 
     def test_managed_upgrade_reconciles_code_modes_before_setup_without_changing_data(self):
         def upgrade(repo):
@@ -654,6 +686,192 @@ class DebianSavedStateTests(unittest.TestCase):
         self.path.chmod(0o600)
         with self.assertRaises(ValueError):
             refresh._debian_setup()
+
+
+class IndependentRefreshJobTests(unittest.TestCase):
+    def test_dispatch_uses_a_private_log_and_service_owned_stdio(self):
+        from lib import refresh_job
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "basaltwater.py").write_text("# fixture\n")
+            logs = root / "logs"
+            with patch.object(refresh_job, "LOG_DIRECTORY", str(logs)), \
+                    patch.object(refresh_job, "run", return_value=SimpleNamespace(returncode=0)) as run, \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(refresh_job.queue_refresh(str(root)), 0)
+            command = run.call_args.args[0]
+            self.assertEqual(command[-4:], [refresh_job.sys.executable, "-I", str(root / "basaltwater.py"), "refresh"])
+            self.assertIn("--property=StandardInput=null", command)
+            self.assertIn("--property=StandardError=inherit", command)
+            log = next(logs.iterdir())
+            self.assertIn("--property=StandardOutput=append:" + str(log), command)
+            self.assertEqual(stat.S_IMODE(logs.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(log.stat().st_mode), 0o600)
+            self.assertIn("dispatch only", output.getvalue())
+
+    def test_dispatch_failure_is_reported_and_unsafe_log_directory_is_preserved(self):
+        from lib import refresh_job
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "basaltwater.py").touch()
+            logs = root / "logs"
+            with patch.object(refresh_job, "LOG_DIRECTORY", str(logs)), \
+                    patch.object(refresh_job, "run", return_value=SimpleNamespace(returncode=1)) as run:
+                with self.assertRaisesRegex(RuntimeError, "no source or setup changes"):
+                    refresh_job.queue_refresh(str(root))
+                logs.chmod(0o755)
+                run.reset_mock()
+                with self.assertRaisesRegex(ValueError, "private directory"):
+                    refresh_job.queue_refresh(str(root))
+                run.assert_not_called()
+                self.assertEqual(stat.S_IMODE(logs.stat().st_mode), 0o755)
+
+
+class DebianT3CompletionTests(unittest.TestCase):
+    def setUp(self):
+        from common import t3code_completion as completion
+
+        self.completion = completion
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        self.request = self.root / "request.json"
+        stack.enter_context(patch.object(completion, "REQUEST_FILE", str(self.request)))
+        stack.enter_context(patch.object(completion, "STATE_DIR", str(self.root)))
+        stack.enter_context(patch.object(completion, "is_dry_run", return_value=False))
+        stack.enter_context(patch.object(completion, "can_manage_system_services", return_value=True))
+        self.run = stack.enter_context(patch.object(completion, "run", return_value=SimpleNamespace(returncode=0)))
+        stack.enter_context(patch.object(completion, "maintenance_lock", side_effect=lambda: nullcontext(True)))
+        self.wait_for_setup = completion._wait_for_setup
+        stack.enter_context(patch.object(completion, "_wait_for_setup"))
+        self.config = SetupConfig(host="localhost", username="human", system_type="server_lite",
+                                  web_interfaces=["t3code"], agent_tools=["codex"])
+        self.service = stack.enter_context(patch("common.t3code_steps._user_systemctl",
+                                               return_value=SimpleNamespace(returncode=0)))
+        self.ready = stack.enter_context(patch("common.t3code_steps._wait_for_t3_service"))
+        stack.enter_context(patch.object(completion.pwd, "getpwnam", return_value=SimpleNamespace(
+            pw_uid=1000, pw_dir="/home/human")))
+
+    def queue(self):
+        with patch("sys.stdout", new_callable=io.StringIO):
+            self.completion.queue_completion(self.config)
+        return json.loads(self.request.read_text())["id"]
+
+    def test_queue_is_independent_and_latest_completed_setup_wins(self):
+        old = self.queue()
+        current = self.queue()
+        self.assertEqual(stat.S_IMODE(self.request.stat().st_mode), 0o600)
+        command = self.run.call_args.args[0]
+        self.assertIn("--property=StandardInput=null", command)
+        self.assertIn("--on-active=5s", command)
+        self.completion.complete(old, 123, "456")
+        self.service.assert_not_called()
+        self.completion.complete(current, 123, "456")
+        self.service.assert_called_once_with("human", 1000, "restart", "t3code")
+        self.ready.assert_called_once_with("human", 1000, "127.0.0.1", 3773, "/home/human")
+
+    def test_unfinished_setup_prevents_restart_and_service_failure_propagates(self):
+        request = self.queue()
+        store = OperationStateStore(str(self.root / "setup-operation.json"))
+        record = store.begin("target_setup", "server_lite", "applying")
+        store.close()
+        with self.assertRaisesRegex(RuntimeError, "Unfinished setup"):
+            self.completion.complete(request, 123, "456")
+        self.service.assert_not_called()
+        store.complete(record.operation_id)
+        self.service.return_value.returncode = 1
+        with self.assertRaisesRegex(RuntimeError, "start/reload failed"):
+            self.completion.complete(request, 123, "456")
+        self.ready.assert_not_called()
+
+    def test_completion_accepts_configured_ipv4_and_ipv6_wildcard_listeners(self):
+        for host in ("0.0.0.0", "::", "::1", "localhost"):
+            with self.subTest(host=host):
+                self.config.web_interface_host = host
+                self.config.web_interface_sources = ["192.168.1.0/24"] if host in {"0.0.0.0", "::"} else []
+                request = self.queue()
+                self.completion.complete(request, 123, "456")
+                self.ready.assert_called_with("human", 1000, host, 3773, "/home/human")
+
+    def test_no_t3_or_dry_run_does_not_queue(self):
+        with patch.object(self.completion, "is_dry_run", return_value=True):
+            self.completion.queue_completion(self.config)
+        self.config.web_interfaces = []
+        self.completion.queue_completion(self.config)
+        self.run.assert_not_called()
+        self.assertFalse(self.request.exists())
+
+    def test_pid_reuse_does_not_wait_on_an_unrelated_process(self):
+        with patch.object(self.completion, "_process_start", return_value="other"), \
+                patch.object(self.completion.os, "pidfd_open") as handle:
+            self.wait_for_setup(123, "456")
+            handle.assert_not_called()
+
+    def test_worker_waits_for_setup_exit_and_refuses_to_interrupt_it_on_timeout(self):
+        with patch.object(self.completion, "_process_start", return_value="456"), \
+                patch.object(self.completion.os, "pidfd_open", return_value=99), \
+                patch.object(self.completion.select, "select", return_value=([], [], [])) as wait, \
+                patch.object(self.completion.os, "close") as close:
+            with self.assertRaisesRegex(RuntimeError, "has not exited"):
+                self.wait_for_setup(123, "456")
+            wait.assert_called_once_with([99], [], [], 600)
+            close.assert_called_once_with(99)
+
+    def test_runner_queues_only_after_all_steps_state_and_notifications(self):
+        import remote_setup
+
+        events = []
+        self.config.notify_specs = [("discord", "https://example.invalid/webhook")]
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(remote_setup, "enable_detected_build_runtimes"))
+            stack.enter_context(patch.object(remote_setup, "print_setup_summary"))
+            stack.enter_context(patch.object(remote_setup, "detect_os", return_value="Debian"))
+            stack.enter_context(patch.object(remote_setup, "get_steps_for_system_type", return_value=[
+                ("Providers and skills", lambda config: events.append("steps")),
+            ]))
+            stack.enter_context(patch("plugins.post_setup.build_post_setup_steps", return_value=[]))
+            stack.enter_context(patch.object(remote_setup, "_save_setup_state", side_effect=lambda config: events.append("state")))
+            stack.enter_context(patch.object(remote_setup, "_begin_setup_operation"))
+            stack.enter_context(patch.object(remote_setup, "_transition_setup_operation"))
+            stack.enter_context(patch.object(remote_setup, "_send_setup_notification", side_effect=lambda **kwargs: events.append("notify")))
+            queue = stack.enter_context(patch.object(self.completion, "queue_completion", side_effect=lambda config: events.append("queue")))
+            stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
+            self.assertEqual(remote_setup._run_configured_setup(self.config, argparse.Namespace(dry_run=False)), 0)
+            self.assertEqual(events, ["steps", "state", "notify", "queue"])
+            queue.reset_mock()
+            self.assertEqual(remote_setup._run_configured_setup(self.config, argparse.Namespace(dry_run=True)), 0)
+            queue.assert_not_called()
+
+    def test_successful_setup_retains_exclusion_through_final_report_and_cleanup(self):
+        import remote_setup
+        from lib.operation_state import OperationStateError
+
+        marker = str(self.root / "setup-operation.json")
+        competing = OperationStateStore(marker)
+        self.addCleanup(competing.close)
+
+        def assert_excluded():
+            self.assertFalse(Path(marker).exists())
+            with self.assertRaisesRegex(OperationStateError, "another process"):
+                with competing.ownership():
+                    pass
+
+        def finish():
+            remote_setup._begin_setup_operation(self.config)
+            remote_setup._complete_setup_operation()
+            assert_excluded()  # Notification and queueing boundary.
+            return 0
+
+        with patch.object(remote_setup, "SETUP_OPERATION_FILE", marker), \
+                patch.object(remote_setup, "record_setup_activity"), \
+                patch.object(remote_setup, "_run_main", side_effect=finish), \
+                patch.object(remote_setup, "_remove_secret_payloads", side_effect=assert_excluded), \
+                patch.object(remote_setup.SetupReport, "render", side_effect=assert_excluded):
+            self.assertEqual(remote_setup.main(), 0)
+        with competing.ownership():
+            self.assertIsNone(competing.load())
 
 
 if __name__ == "__main__":

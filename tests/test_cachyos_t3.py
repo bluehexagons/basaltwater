@@ -45,6 +45,73 @@ class T3InstallTests(unittest.TestCase):
         stack.enter_context(patch.object(aur, "run", self.system_run))
         self.ui = stack.enter_context(patch.object(t3, "_wait_for_ui"))
         self.which = stack.enter_context(patch.object(t3.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name))
+        # Activation/rollback cases exercise staging followed by the independent
+        # worker's completion operation. Separate cases below stop at staging.
+        self.stage_install = t3.install
+        self.stage_desktop = t3.install_desktop
+
+        def install_and_complete(config, stage):
+            stage(config)
+            if not config.dry_run:
+                t3.complete_setup(self.home, "desktop" if config.t3code_desktop else "web",
+                                  config._cachyos_t3_completion_request)
+
+        install = stack.enter_context(patch.object(t3, "install", side_effect=lambda config:
+                                                  install_and_complete(config, self.stage_install)))
+        install.__name__ = "install"
+        install_desktop = stack.enter_context(patch.object(t3, "install_desktop", side_effect=lambda config:
+                                                          install_and_complete(config, self.stage_desktop)))
+        install_desktop.__name__ = "install_desktop"
+
+    def test_web_staging_preserves_running_terminal_until_completion(self):
+        target, content = self.legacy()
+        self.stage_install(self.config)
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertTrue(self.active)
+        self.assertFalse(any("stop" in cmd or "start" in cmd for _, cmd in self.events))
+        self.ui.assert_not_called()
+        pending = self.prefix / "pending-completion.json"
+        self.assertEqual(pending.stat().st_mode & 0o777, 0o600)
+        t3.complete_setup(self.home, "web", self.config._cachyos_t3_completion_request)
+        self.assertNotEqual(self.binary.resolve(), target)
+        self.ui.assert_called_once()
+        self.assertFalse(pending.exists())
+
+    def test_desktop_staging_preserves_web_terminal_until_completion(self):
+        self.legacy()
+        config = self.desktop_config()
+        self.stage_desktop(config)
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertFalse((self.prefix / "desktop-mode").exists())
+        self.assertFalse(any("stop" in cmd or "disable" in cmd for _, cmd in self.events))
+        t3.complete_setup(self.home, "desktop", config._cachyos_t3_completion_request)
+        self.assertFalse(self.active)
+        self.assertFalse(self.enabled)
+
+    def test_superseded_worker_cannot_activate_a_newer_unfinished_setup(self):
+        target, content = self.legacy()
+        self.stage_install(self.config)
+        first_request = self.config._cachyos_t3_completion_request
+        self.stage_install(self.config)
+        self.events.clear()
+        self.assertFalse(t3.complete_setup(self.home, "web", first_request))
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertFalse(any("stop" in cmd or "start" in cmd for _, cmd in self.events))
+        self.assertTrue((self.prefix / "pending-completion.json").exists())
+
+    def test_unsafe_pending_record_is_preserved_without_service_changes(self):
+        target, content = self.legacy()
+        path = self.prefix / "pending-completion.json"
+        path.symlink_to(self.home / "personal")
+        with self.assertRaisesRegex(ValueError, "Unsafe T3 pending"):
+            self.stage_install(self.config)
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertTrue(self.active)
 
     @staticmethod
     def runtime(prefix):
@@ -470,21 +537,27 @@ class T3InstallTests(unittest.TestCase):
         target, content = self.legacy()
         self.ui.side_effect = RuntimeError("UI fixture failure")
         actual_recover = t3._recover_activation
-        def recover(prefix, unit):
+        def recover(prefix, unit, **kwargs):
             if (prefix / ".activation").exists():
                 raise RuntimeError("recovery fixture failure")
-            return actual_recover(prefix, unit)
+            return actual_recover(prefix, unit, **kwargs)
         with patch.object(t3, "_recover_activation", side_effect=recover), \
                 self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
             t3.install(self.config)
         self.assertTrue((self.prefix / ".activation/state.json").exists())
         self.assertTrue(self.binary.resolve().exists())
         self.assertTrue(target.exists())
-        self.failure = "npm"  # Recovery runs before the next candidate is installed.
+        self.failure = "npm"
         with self.assertRaisesRegex(RuntimeError, "npm fixture failure"):
             t3.install(self.config)
-        self.assertEqual(self.binary.resolve(), target)
-        self.assertEqual(self.unit.read_text(), content)
+        # Recovery can stop the owning terminal, so even interrupted recovery
+        # waits for a successfully staged setup's independent completion worker.
+        self.assertTrue((self.prefix / ".activation").exists())
+        self.failure = None
+        self.ui.side_effect = None
+        t3.install(self.config)
+        self.assertTrue(target.exists())
+        self.assertTrue(self.active)
         self.assertFalse((self.prefix / ".activation").exists())
 
     def interrupt_first_rollback_reload(self):
@@ -1033,10 +1106,10 @@ class T3InstallTests(unittest.TestCase):
         self.ui.side_effect = RuntimeError("UI fixture failure")
         actual_recover = t3._recover_activation
 
-        def interrupt_recovery(prefix, unit):
+        def interrupt_recovery(prefix, unit, **kwargs):
             if (prefix / ".activation").exists():
                 raise RuntimeError("interrupted recovery")
-            return actual_recover(prefix, unit)
+            return actual_recover(prefix, unit, **kwargs)
 
         with patch.object(t3, "_recover_activation", side_effect=interrupt_recovery), \
                 self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):

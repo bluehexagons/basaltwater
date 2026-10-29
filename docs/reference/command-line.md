@@ -130,6 +130,8 @@ version, suitable for feedback and support records.
 repeats this machine's last successful setup using the updated code. It supports
 Debian and CachyOS. See [refresh behavior](#refresh-this-machine) below and
 [CachyOS first use](../workstations/cachyos.md#upgrade-and-repeat-your-last-setup).
+The separate [native Windows launcher](../workstations/windows.md#native-basaltw-commands)
+also provides `refresh` for its saved workstation installation.
 
 For the desktop command catalog, including accessibility, window operations,
 waits, and live smoke checks, see [Desktop automation](../workstations/desktop-automation.md).
@@ -176,9 +178,31 @@ sudo basaltw refresh
 
 Refresh reads the successful target configuration from
 `/opt/basaltwater/state/setup.json` (the standard path may link to durable state).
-Existing Debian setups already have this record. It validates the saved options,
-upgrades source on the selected channel, and starts the upgraded target setup
-runner in a fresh process. The target account, packages, services, and other
+Existing Debian setups already have this record. On a Debian target with systemd
+service management, refresh validates the saved options and dispatches a root
+systemd service before upgrading source or starting the upgraded target setup
+runner. The service runs in an independent cgroup, so
+refresh can finish when launched inside a local T3 terminal or through SSH from
+a remote T3 terminal, even when setup restarts T3. An already independent,
+approved administrator job can run refresh directly. OCI targets retain
+synchronous foreground refresh and do not manage or restart a T3 service.
+Dry runs stay synchronous on every target.
+
+For queued Debian refresh, a caller exit code of zero means the job was accepted.
+Read the printed service name and log path to determine completion. The worker's
+upgrade/setup exit code is retained by `basaltwater-refresh-HEX.service` with
+`RemainAfterExit=yes`; inspect its `ActiveState`, `Result` and `ExecMainStatus`:
+
+```bash
+sudo systemctl show basaltwater-refresh-HEX.service -p ActiveState -p Result -p ExecMainStatus
+sudo tail -n 100 /var/log/basaltwater-refresh/HEX.log
+```
+
+Replace `HEX` with the printed job identifier. Logs are mode `0600` in a
+root-owned mode-`0700` directory. Do not treat successful dispatch or loss of a
+T3/SSH terminal as successful setup; inspect the job before retrying.
+
+The target account, packages, services, and other
 saved settings are reused; it does not infer a replacement profile or
 re-provision the machine. The normal selected setup steps still apply, including
 Debian's package updates and service reconciliation. Existing staged deployment
@@ -204,13 +228,18 @@ repeatable repositories/sources add to them, and agent selections override their
 saved exclusions. Only a successful setup saves the combined selection. Upgrade
 an older CLI first with `basaltw upgrade` to obtain these new flags. Debian does
 not accept refresh overrides; use its explicit setup workflow instead.
+CachyOS refresh keeps package-review prompts in the foreground. Disruptive T3
+activation is queued after all setup steps, saved state and final notifications
+finish, allowing refresh to complete from its own T3 terminal.
 
 On both systems, `--dry-run` shows the saved setup plan without fetching or
 changing source or applying setup. `dev` follows `main`, `stable` follows the
 latest release, and version/commit channels stay pinned. Setup runs even when
 source was already current. Upgrade failure stops before setup; setup failure
-returns nonzero and leaves Basaltwater upgraded and the previous successful
-record available for retry. Finish active work before applying a full setup.
+leaves Basaltwater upgraded and the previous successful record available for
+retry. A foreground refresh returns that nonzero result; an independent Debian
+worker records it in the service result and log above. Finish active work before
+applying a full setup.
 
 Debian refresh also accepts controller-installed source snapshots. It downloads
 the official repository and automatically creates a managed checkout, preserving
