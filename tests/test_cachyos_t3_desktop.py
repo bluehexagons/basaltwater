@@ -148,6 +148,20 @@ class DesktopRefreshTests(unittest.TestCase):
         self.assertIsNone(refresh._running_desktop(self.QUEUED_BEFORE_NS))
         self.close.assert_not_called()
 
+    def test_chromium_process_titles_are_excluded_before_reading_sandbox_state(self):
+        self.process(100)
+        for pid, kind in enumerate(("zygote", "gpu-process", "utility", "renderer"), 101):
+            child = self.process(pid)
+            (child / "cmdline").write_bytes(
+                os.fsencode(f"{refresh.APP_EXECUTABLE} --type={kind} --other-option") + b"\0")
+            # Real sandbox children can have an inaccessible or vanished cwd.
+            (child / "cwd").unlink()
+            (child / "environ").unlink()
+        app = refresh._running_desktop(self.QUEUED_BEFORE_NS)
+        self.assertEqual(app.descriptor, 1100)
+        self.assertEqual({call.args[0] for call in self.close.call_args_list},
+                         {1101, 1102, 1103, 1104})
+
     def test_multiple_desktop_profiles_fail_before_shutdown_and_close_handles(self):
         self.process(100)
         self.process(101)

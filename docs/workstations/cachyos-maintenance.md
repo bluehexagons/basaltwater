@@ -260,6 +260,10 @@ graphical session and user-manager environment are available; otherwise its
 journal reports that launch is deferred until KDE login. Inspect the printed
 worker unit with `journalctl --user -u UNIT` on failure, then verify a provider
 turn and terminal; queue acceptance alone does not establish readiness.
+The worker excludes Electron renderer, GPU, utility and zygote children,
+including Chromium's flattened process titles. Older workers could mistake
+these for desktop instances and fail with `T3 desktop refresh failed: ValueError`
+before restarting the app; upgrade Basaltwater and repeat refresh to repair this.
 The entry's `TryExec` prevents login launch attempts after package removal.
 
 Use **System Settings → Autostart** to disable T3 startup. The doctor reports a

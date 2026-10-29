@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import fcntl
 import os
 from pathlib import Path
+import re
 import select
 import signal
 import stat
@@ -87,8 +88,12 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
                 # T3. A newly opened app already loads the refreshed settings.
                 refresh_needed = not _started_after(path, queued_before_ns)
                 arguments = _process_data(path / "cmdline")
-                if not arguments or any(arg == "--type" or arg.startswith("--type=")
-                                        for arg in arguments[1:]):
+                # Chromium can rewrite its process title into argv[0], with
+                # spaces instead of NUL separators. Exclude those children
+                # before reading sandbox cwd/environment or counting profiles.
+                if (not arguments or re.search(r"\s--type(?:=|\s|$)", arguments[0])
+                        or any(arg == "--type" or arg.startswith("--type=")
+                               for arg in arguments[1:])):
                     continue
                 environment = dict(item.split("=", 1) for item in _process_data(path / "environ")
                                    if "=" in item)
