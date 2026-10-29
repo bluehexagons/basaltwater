@@ -241,7 +241,7 @@ def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
     """Reject a source policy that would prevent the setup peer reconnecting."""
     sources = [
         validate_network_ip_or_cidr(source, "SSH source")
-        for source in config.effective_access_sources()
+        for source in config.effective_ssh_sources()
     ]
     connection = os.environ.get("SSH_CONNECTION", "")
     if not sources or not connection:
@@ -261,7 +261,9 @@ def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
         raise RuntimeError(
             f"Refusing firewall changes: current SSH peer {peer} is outside "
             f"the requested access sources ({', '.join(sources)}). "
-            f"Add --access-source {peer}/{peer.max_prefixlen} to the setup command. "
+            f"Use --ssh-access-source {peer}/{peer.max_prefixlen} for SSH only. "
+            f"Add --access-source {peer}/{peer.max_prefixlen} to the setup command "
+            "to cover all managed services. "
             "--lan-access infers the target's LAN; a routed controller needs "
             "an explicit access source."
         )
@@ -272,7 +274,7 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
 
     sources = [
         validate_network_ip_or_cidr(source, "SSH source")
-        for source in config.effective_access_sources()
+        for source in config.effective_ssh_sources()
     ]
     if not sources:
         result = _run_ufw("ufw limit ssh")
@@ -374,7 +376,7 @@ def _configure_mdns_firewall(config: SetupConfig) -> None:
 
 def _source_restricted_firewall_status(config: SetupConfig, *, include_rdp: bool) -> str:
     """Require a filtering default before relying on source-specific allows."""
-    if not (config.effective_access_sources() or (include_rdp and config.effective_rdp_sources())):
+    if not (config.effective_ssh_sources() or (include_rdp and config.effective_rdp_sources())):
         return ""
     result = run("ufw status verbose", check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"})
     stdout = getattr(result, "stdout", None)
@@ -433,7 +435,8 @@ def _prune_enabled_firewall_rules(
     sources = config.effective_access_sources()
     desired = {
         _SSH_RULE_COMMENT_PREFIX: {
-            f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}" for source in sources
+            f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}"
+            for source in config.effective_ssh_sources()
         },
     }
     if web_ports is not None:
@@ -454,8 +457,9 @@ def _verify_source_restricted_firewall(
 ) -> None:
     """Fail setup if an active UFW rule still opens a restricted port globally."""
     restricted_ports: dict[int, str] = {}
-    if config.effective_access_sources():
+    if config.effective_ssh_sources():
         restricted_ports[22] = "SSH"
+    if config.effective_access_sources():
         restricted_ports.update({port: f"web TCP {port}" for port in web_ports})
     if include_rdp and config.effective_rdp_sources():
         restricted_ports[3389] = "RDP"
@@ -523,7 +527,7 @@ def configure_firewall(config: SetupConfig) -> None:
     )
     ssh_policy = (
         "SSH source-restricted"
-        if config.effective_access_sources()
+        if config.effective_ssh_sources()
         else "SSH rate-limited"
     )
     if web_ports:
@@ -1477,7 +1481,7 @@ def configure_firewall_ssh_only(config: SetupConfig) -> None:
     _verify_source_restricted_firewall(config, web_ports=[], include_rdp=False)
     ssh_policy = (
         "SSH source-restricted"
-        if config.effective_access_sources()
+        if config.effective_ssh_sources()
         else "SSH rate-limited"
     )
     print(f"  ✓ Firewall configured ({ssh_policy})")

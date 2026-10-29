@@ -14,7 +14,7 @@ self-tests and hardware stress/endurance tests are excluded.
 ## Surface
 
 The declared surface has **15 setup profiles, 50 top-level commands, 307 command
-paths and 535 distinct long-option spellings**, with aliases collapsed. These
+paths and 537 distinct long-option spellings**, with aliases collapsed. These
 counts describe breadth, not a percentage tested. Regenerate the inventory with:
 
 ```bash

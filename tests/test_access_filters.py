@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,10 +16,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
+from lib.cache import load_setup_command, merge_setup_configs, save_setup_command
 from lib.validation import validate_samba_settings, validate_web_interface_settings
 from plugins.proxmox import build_server_proxmox_steps
 from security.security_steps import (
     configure_firewall,
+    configure_firewall_web,
     configure_proxmox_management_firewall,
 )
 from smb.samba_steps import configure_samba_firewall
@@ -26,6 +29,76 @@ from web.gogs_steps import generate_gogs_app_ini
 
 
 class TestAccessSourceConfig(unittest.TestCase):
+    def test_ssh_sources_cli_saved_remote_and_command_round_trips(self) -> None:
+        parser = create_setup_argument_parser("test")
+        config = SetupConfig.from_args(parser.parse_args([
+            "host.example.test", "--ssh-access-source", "192.0.2.42/24",
+            "--ssh-access-source", "2001:db8::5",
+        ]), "server_web")
+        expected = ["192.0.2.0/24", "2001:db8::5"]
+        self.assertEqual(config.ssh_access_sources, expected)
+        self.assertEqual(config.effective_access_sources(), [])
+        remote_parser = create_setup_argument_parser("remote", for_remote=True)
+        remote_args = remote_parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        remote_args.host = config.host
+        remote_args.username = config.username
+        remote = SetupConfig.from_args(remote_args, config.system_type)
+        self.assertEqual(remote.effective_ssh_sources(), expected)
+        import basaltwater
+        cli, _, _ = basaltwater.create_basaltwater_parser()
+        replay = cli.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:])
+        self.assertEqual(replay.ssh_access_sources, expected)
+        with tempfile.TemporaryDirectory() as directory, patch(
+            "lib.cache.get_setup_cache_dir", return_value=directory,
+        ):
+            save_setup_command(config)
+            saved = load_setup_command(config.host)
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved.ssh_access_sources, expected)
+
+    def test_ssh_patch_replace_clear_and_preserve(self) -> None:
+        def config(**kwargs: object) -> SetupConfig:
+            return SetupConfig(host="host.example.test", username="admin",
+                               system_type="server_web", **kwargs)
+        original = config(access_sources=["10.0.0.0/8"],
+                          ssh_access_sources=["192.0.2.1"])
+        unchanged = merge_setup_configs(original, config())
+        self.assertEqual(unchanged.ssh_access_sources, ["192.0.2.1"])
+        replaced = merge_setup_configs(original, config(ssh_access_sources=["192.0.2.2"]))
+        self.assertEqual(replaced.effective_ssh_sources(), ["10.0.0.0/8", "192.0.2.2"])
+        cleared = merge_setup_configs(replaced, config(clear_ssh_access_sources=True))
+        self.assertIsNone(cleared.ssh_access_sources)
+        self.assertEqual(cleared.effective_ssh_sources(), ["10.0.0.0/8"])
+        self.assertIn("--no-ssh-access-source", cleared.to_remote_args())
+        self.assertIn("--no-ssh-access-source", cleared.to_setup_command())
+        remote_parser = create_setup_argument_parser("remote", for_remote=True)
+        remote_args = remote_parser.parse_args(shlex.split(" ".join(cleared.to_remote_args())))
+        remote_args.host = cleared.host
+        remote_args.username = cleared.username
+        remote = SetupConfig.from_args(remote_args, cleared.system_type)
+        self.assertIsNone(remote.ssh_access_sources)
+        self.assertTrue(remote.clear_ssh_access_sources)
+        saved = SetupConfig.from_dict(cleared.host, cleared.system_type, cleared.to_dict())
+        self.assertIsNone(saved.ssh_access_sources)
+        self.assertTrue(saved.clear_ssh_access_sources)
+        self.assertTrue(merge_setup_configs(cleared, config()).clear_ssh_access_sources)
+        self.assertFalse(merge_setup_configs(cleared, original).clear_ssh_access_sources)
+        preserved = merge_setup_configs(original, config(clear_ssh_access_sources=True),
+                                        preserve_keys={"ssh_access_sources"})
+        self.assertEqual(preserved.ssh_access_sources, original.ssh_access_sources)
+
+    def test_ssh_sources_validate_saved_and_cli_values(self) -> None:
+        for value in (["example.com"], ["192.0.2.1; true"], ["2001:db8::/129"],
+                      "192.0.2.1", [42]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                SetupConfig.from_dict("host.example.test", "server_web",
+                                      {"username": "admin", "ssh_access_sources": value})
+        parser = create_setup_argument_parser("test")
+        with self.assertRaises(ValueError):
+            SetupConfig.from_args(parser.parse_args([
+                "host.example.test", "--ssh-access-source", "not-an-ip",
+            ]), "server_web")
+
     def test_parser_accepts_multiple_values_and_repeated_flags(self) -> None:
         parser = create_setup_argument_parser("test")
 
@@ -58,6 +131,7 @@ class TestAccessSourceConfig(unittest.TestCase):
             web_interface_sources=["172.16.0.0/12", "198.51.100.20"],
             gogs_sources=["192.168.0.0/16", "198.51.100.30"],
             samba_sources=["10.10.0.0/16", "198.51.100.40"],
+            ssh_access_sources=["192.168.1.20/24", "2001:db8::5"],
         )
 
         self.assertEqual(
@@ -76,6 +150,8 @@ class TestAccessSourceConfig(unittest.TestCase):
         self.assertEqual(config.effective_web_interface_sources()[-1], "198.51.100.20")
         self.assertEqual(config.effective_gogs_sources()[-1], "198.51.100.30")
         self.assertEqual(config.effective_samba_sources()[-1], "198.51.100.40")
+        self.assertEqual(config.effective_ssh_sources(),
+                         ["192.168.1.0/24", "203.0.113.10", "2001:db8::5"])
 
     def test_lan_access_covers_common_private_ipv4_blocks(self) -> None:
         for host, expected in (
@@ -305,6 +381,65 @@ class TestAccessSourceConfig(unittest.TestCase):
 
 
 class TestGenericUfwFiltering(unittest.TestCase):
+    @patch.dict(os.environ, {"SSH_CONNECTION": "2001:db8::5 12345 2001:db8::10 22"})
+    @patch("security.security_steps.run")
+    def test_activation_pruning_retains_ssh_only_ipv6_rule(self, mock_run) -> None:
+        def run(command: str, **_kwargs: object) -> SimpleNamespace:
+            if command.startswith("ufw status 2>"):
+                return SimpleNamespace(returncode=1, stdout="")
+            output = "Status: active\n"
+            if command == "ufw status verbose":
+                output += "Default: deny (incoming)\n80/tcp ALLOW IN Anywhere\n"
+            if command == "ufw status numbered":
+                output += ("[ 1] 22/tcp (v6) ALLOW IN 2001:db8::5 "
+                           "# basaltwater SSH trusted source 2001:db8::5\n"
+                           "[ 2] 80/tcp ALLOW IN Anywhere # basaltwater web TCP 80\n")
+            return SimpleNamespace(returncode=0, stdout=output)
+        mock_run.side_effect = run
+        configure_firewall_web(SetupConfig(
+            host="host.example.test", username="admin", system_type="server_web",
+            ssh_access_sources=["2001:db8::5"], web_ports=[80],
+        ))
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        self.assertIn("ufw --force enable", commands)
+        self.assertNotIn("ufw --force delete 1", commands)
+        self.assertNotIn("ufw --force delete 2", commands)
+
+    @patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.5 12345 192.0.2.10 22"})
+    @patch("security.security_steps.run")
+    def test_ssh_only_controller_bypasses_limit_and_keeps_public_web(self, mock_run) -> None:
+        def run(command: str, **_kwargs: object) -> SimpleNamespace:
+            output = "Status: active\n"
+            if command == "ufw status verbose":
+                output += ("Default: deny (incoming)\n"
+                           "80/tcp ALLOW IN Anywhere\n443/tcp ALLOW IN Anywhere\n")
+            return SimpleNamespace(returncode=0, stdout=output)
+        mock_run.side_effect = run
+        config = SetupConfig(host="host.example.test", username="admin",
+                             system_type="server_web", ssh_access_sources=["192.0.2.5"],
+                             web_ports=[80, 443])
+        configure_firewall_web(config)
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        trusted = ("ufw allow from 192.0.2.5 to any port 22 proto tcp "
+                   "comment 'basaltwater SSH trusted source 192.0.2.5'")
+        self.assertIn(trusted, commands)
+        self.assertLess(commands.index(trusted), commands.index("ufw delete limit ssh"))
+        self.assertNotIn("ufw limit ssh", commands)
+        for port in (80, 443):
+            self.assertIn(f"ufw allow {port}/tcp comment 'basaltwater web TCP {port}'", commands)
+            self.assertNotIn(f"ufw delete allow {port}/tcp", commands)
+
+    @patch("security.security_steps.run")
+    def test_ssh_only_policy_refuses_excluded_or_invalid_peer_before_mutation(self, mock_run) -> None:
+        config = SetupConfig(host="host.example.test", username="admin",
+                             system_type="server_web", ssh_access_sources=["192.0.2.5"])
+        for connection in ("198.51.100.5 12345 192.0.2.10 22", "invalid", "bad 1 x 22"):
+            with self.subTest(connection=connection), patch.dict(
+                os.environ, {"SSH_CONNECTION": connection},
+            ), self.assertRaises(RuntimeError):
+                configure_firewall_web(config)
+        mock_run.assert_not_called()
+
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
     def test_generic_source_restricts_ssh_rdp_and_web_ports(self, mock_run, _container) -> None:

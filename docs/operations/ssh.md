@@ -106,20 +106,36 @@ agent avoids both prompts. SSHFS mounts may detach or reconnect after the
 original terminal is gone, so an agent is the reliable choice for a long-lived
 mount.
 
-The managed UFW policy rate-limits SSH only when no inbound access sources are
-declared. When `--lan-access` or `--access-source` identifies trusted management
-networks, those source-restricted SSH rules allow connection bursts used by
+The managed UFW policy rate-limits SSH only when no effective SSH sources are
+declared. When `--lan-access`, `--access-source`, or `--ssh-access-source`
+identifies trusted management networks, those source-restricted SSH rules allow connection bursts used by
 setup, transfers, and host-key enrollment. SSH remains key-only and protected
 by fail2ban. Rerunning setup migrates older source-specific `LIMIT` rules to
 the trusted-source `ALLOW` policy without opening global SSH access.
 
+Use repeatable `--ssh-access-source IP[/PREFIX]` for controller addresses that
+need SSH access without restricting public HTTP/HTTPS. IPv4 and IPv6 addresses
+and CIDRs use the shared network validators. These SSH-only sources merge with
+generic sources for SSH rules and peer protection only; they do not grant web,
+RDP, Samba, or Proxmox management-set access. For example:
+
+```bash
+basaltw patch web-server --ssh-access-source 192.0.2.5/32
+```
+
+The list is saved for later deploys. Supplying sources on a patch replaces the
+saved SSH-only list; omitting the option preserves it. Use
+`--no-ssh-access-source` to clear it. Generic sources still apply after clearing;
+without any effective SSH sources, the normal global SSH rate limit returns.
+This option does not alter SSH authentication or fail2ban policy.
+
 Before changing UFW rules or defaults, setup checks the current connection's
-`SSH_CONNECTION` source against the requested generic access sources. If the
-controller would be excluded, setup stops with an explicit `--access-source`
+`SSH_CONNECTION` source against the combined generic and SSH-only access
+sources. If the controller would be excluded, setup stops with an explicit `--ssh-access-source`
 suggestion and leaves the firewall unchanged. IPv4 and IPv6 peers are checked;
 local setup without an SSH connection has no remote peer to verify.
 `--lan-access` describes the target's adjacent networks. A controller on a
-routed Wi-Fi, VPN or management network needs an additional `--access-source`
+routed Wi-Fi, VPN or management network needs an additional `--ssh-access-source`
 for its observed address or trusted subnet.
 
 On a server with active UFW, source-restricted setup also requires a `deny` or
@@ -287,7 +303,7 @@ qm guest exec 114 -- /usr/bin/fail2ban-client status sshd
 
 Replace `114` with the actual numeric VM ID. If UFW excludes the controller,
 add an SSH-only allow rule for that exact source through the same guest-agent
-interface, then rerun setup with an appropriate `--access-source` so the
+interface, then rerun setup with an appropriate `--ssh-access-source` so the
 intended access is retained. The privilege broker deliberately removes the
 coding account's sudo access; see [privilege approvals](../agents/privilege-approvals.md).
 

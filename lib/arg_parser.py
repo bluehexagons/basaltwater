@@ -322,6 +322,20 @@ def add_setup_arguments(
         action="store_true",
         help="Install common administrator and Linux control-plane tools in addition to the selected profile",
     )
+    ssh_source_group = parser.add_mutually_exclusive_group()
+    ssh_source_group.add_argument(
+        "--ssh-access-source",
+        dest="ssh_access_sources",
+        action="append",
+        metavar="IP_OR_CIDR",
+        help="Allow trusted SSH ingress from this IP or CIDR in addition to generic access sources; repeat as needed",
+    )
+    ssh_source_group.add_argument(
+        "--no-ssh-access-source",
+        dest="clear_ssh_access_sources",
+        action="store_true",
+        help="Clear saved SSH-only access sources",
+    )
     access_source_group = parser.add_mutually_exclusive_group()
     access_source_group.add_argument(
         "--access-source",

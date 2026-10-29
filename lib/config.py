@@ -511,6 +511,8 @@ class SetupConfig:
     tags: Optional[StrList] = None
     access_sources: Optional[StrList] = None
     clear_access_sources: bool = False
+    ssh_access_sources: Optional[StrList] = None
+    clear_ssh_access_sources: bool = False
     lan_access: bool = False
     clear_lan_access: bool = False
     enable_rdp: bool = False
@@ -1000,6 +1002,19 @@ class SetupConfig:
         self.web_interfaces = web_interfaces or None
         if self.clear_access_sources:
             self.access_sources = None
+        if self.clear_ssh_access_sources:
+            self.ssh_access_sources = None
+        if self.ssh_access_sources is not None:
+            from lib.validation import validate_network_ip_or_cidr
+
+            if not isinstance(self.ssh_access_sources, list):
+                raise ValueError("SSH access sources must be a list")
+            if not all(isinstance(source, str) for source in self.ssh_access_sources):
+                raise ValueError("SSH access sources must contain IP or CIDR strings")
+            self.ssh_access_sources = _merge_network_sources([
+                validate_network_ip_or_cidr(source, "SSH access source")
+                for source in self.ssh_access_sources
+            ]) or None
         if self.lan_access:
             self.clear_lan_access = False
         elif self.clear_lan_access:
@@ -1228,6 +1243,12 @@ class SetupConfig:
             list(_resolved_lan_networks(self.host)),
         )
 
+    def effective_ssh_sources(self) -> StrList:
+        """Return generic and SSH-only trusted ingress sources."""
+        return _merge_network_sources(
+            self.effective_access_sources(), self.ssh_access_sources,
+        )
+
     def effective_rdp_sources(self) -> StrList:
         """Return generic sources plus RDP-specific additions."""
 
@@ -1411,6 +1432,10 @@ class SetupConfig:
                 args.append(f"--access-source {shlex.quote(source)}")
         if self.clear_access_sources and not self.lan_access:
             args.append("--no-access-source")
+        if self.clear_ssh_access_sources:
+            args.append("--no-ssh-access-source")
+        for source in self.ssh_access_sources or []:
+            args.append(f"--ssh-access-source {shlex.quote(source)}")
         
         if self.enable_rdp:
             args.append("--rdp")
@@ -1969,6 +1994,10 @@ class SetupConfig:
             cmd_parts.append(f"--access-source {shlex.quote(source)}")
         if self.clear_access_sources:
             cmd_parts.append("--no-access-source")
+        if self.clear_ssh_access_sources:
+            cmd_parts.append("--no-ssh-access-source")
+        for source in self.ssh_access_sources or []:
+            cmd_parts.append(f"--ssh-access-source {shlex.quote(source)}")
         
         # Desktop/workstation flags
         if self.enable_rdp != system_type_defaults.default_enable_rdp:
@@ -3066,6 +3095,8 @@ class SetupConfig:
             tags=tags,
             access_sources=access_sources,
             clear_access_sources=clear_access_sources,
+            ssh_access_sources=getattr(args, 'ssh_access_sources', None),
+            clear_ssh_access_sources=bool(getattr(args, 'clear_ssh_access_sources', False)),
             lan_access=lan_access,
             clear_lan_access=clear_lan_access,
             enable_rdp=enable_rdp,

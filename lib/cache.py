@@ -562,6 +562,9 @@ def merge_setup_configs(
         if key in {"build_on", "clear_build_on", "artifact_deployments"}:
             continue
 
+        if key in {"ssh_access_sources", "clear_ssh_access_sources"}:
+            continue
+
         if key == "disable_build_target" and not new_config.disable_build_target and new_config.build_target_enrollment is None:
             continue
 
@@ -621,6 +624,14 @@ def merge_setup_configs(
                 merged_dict[key] = value
         elif value is not None:
             merged_dict[key] = value
+
+    if not {"ssh_access_sources", "clear_ssh_access_sources"}.intersection(preserve_keys):
+        if new_config.clear_ssh_access_sources:
+            merged_dict["ssh_access_sources"] = None
+            merged_dict["clear_ssh_access_sources"] = True
+        elif new_config.ssh_access_sources is not None:
+            merged_dict["ssh_access_sources"] = new_config.ssh_access_sources
+            merged_dict["clear_ssh_access_sources"] = False
 
     if new_config.system_type == "server_github_runner":
         # These fields form one validated scope; switching away from multiple

@@ -509,6 +509,8 @@ The target-address inference and server-service scope below apply to Debian.
 | `--lan-access` / `--no-lan-access` | Infer or remove target-adjacent LAN access: a private IPv4 target uses its `/24`, a ULA IPv6 target uses `/64`, and an explicit static prefix is honored |
 | `--access-source IP_OR_CIDR [IP_OR_CIDR ...]` | Restrict managed inbound services to one or more sources; accepts multiple values and may be repeated |
 | `--no-access-source` | Clear saved custom generic access sources; use `--no-lan-access` separately to remove inferred LAN access |
+| `--ssh-access-source IP_OR_CIDR` | Add a trusted SSH-only source to generic sources for Debian UFW; repeatable; leaves public web ingress unchanged |
+| `--no-ssh-access-source` | Clear saved SSH-only sources; generic sources still apply |
 | `--rdp` / `--no-rdp` | Enable or disable remote RDP ingress; desktop profiles retain loopback XRDP |
 | `--rdp-existing-password` | Local setup only: reuse an existing non-root desktop account password; a missing profile password is requested securely |
 | `--rdp-bind-address IP` | Bind XRDP to one local IP; defaults to all IPv4 interfaces (`0.0.0.0`) |
@@ -678,7 +680,14 @@ populate Proxmox's standard `management` IP set, which covers the web GUI,
 SSH, VNC, and SPICE. Service-specific `--rdp-source`,
 `--web-interface-source`, and `--gogs-source` values remain available and are
 added to the generic set for that service. `--samba-source` provides the same
-service-only addition for SMB ingress. With Cloudflare Tunnel, generic sources
+service-only addition for SMB ingress. `--ssh-access-source IP[/PREFIX]` adds
+trusted SSH-only ingress without restricting public HTTP/HTTPS. It is repeatable,
+supports IPv4 and IPv6, and combines with generic sources only for SSH firewall
+rules and reconnect protection. Patches replace the saved SSH-only list when
+supplied and preserve it when omitted; `--no-ssh-access-source` clears it.
+Without effective SSH sources, the normal SSH rate limit remains. See
+[SSH firewall policy](../operations/ssh.md#repeated-and-parallel-operations).
+With Cloudflare Tunnel, generic sources
 also retain direct HTTP/HTTPS origin access from those networks. Intentionally
 public Antistatic endpoints retain their own exposure policy.
 
