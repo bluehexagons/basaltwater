@@ -413,6 +413,8 @@ New-Item -ItemType Junction -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 
         if ($LASTEXITCODE -ne 0) { throw 'Native agent output-capture checks failed' }
     } finally { Pop-Location }
 
+    & (Join-Path $PSScriptRoot 'Run-JobProcessTests.ps1')
+    if (-not $?) { throw 'Native job process-tree tests failed' }
     & (Join-Path $PSScriptRoot 'Run-AgentWorkstationTests.ps1')
     if (-not $?) { throw 'Native agent workstation tests failed' }
     & (Join-Path $PSScriptRoot 'Run-GitHubRunnerTests.ps1')

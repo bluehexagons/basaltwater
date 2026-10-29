@@ -27,16 +27,14 @@ function ConvertTo-WingetOverride([string]$value) {
     return $value
 }
 
-function Ensure-WingetPackage([string]$packageId, [string]$label, [switch]$NoUpgrade, [string]$Override = '') {
+function Ensure-WingetPackage([string]$packageId, [string]$label, [string]$Override = '') {
     $arguments = @('install', '--id', $packageId, '--exact', '--source', 'winget',
                    '--accept-source-agreements', '--accept-package-agreements')
-    if ($NoUpgrade) { $arguments += '--no-upgrade' }
     if ($Override) { $arguments += @('--override', (ConvertTo-WingetOverride $Override)) }
     & winget.exe @arguments
     $exitCode = $LASTEXITCODE
     if ($exitCode -eq 0) { return }
-    # An already-current (or deliberately preserved) install still needs evidence.
-    # UPDATE_NOT_APPLICABLE and PACKAGE_ALREADY_INSTALLED (--no-upgrade).
+    # An already-current install still needs evidence.
     if ($exitCode -in @(-1978335189, -1978335135)) {
         & winget.exe list --id $packageId --exact --source winget --accept-source-agreements | Out-Null
         if ($LASTEXITCODE -eq 0) { return }

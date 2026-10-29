@@ -32,12 +32,36 @@ function Set-NativeStorageVariable([string]$name, [string]$path) {
     [Environment]::SetEnvironmentVariable($name, $path, 'Process')
 }
 
-function Set-NativeDevelopmentStorage([string]$StorageRoot, [switch]$Plan) {
-    $root = Resolve-NativeStorageRoot $StorageRoot
-    $variables = [ordered]@{
+function Get-NativeStorageLayout {
+    return [ordered]@{
         FNM_DIR = 'node'; UV_CACHE_DIR = 'cache\uv'; npm_config_cache = 'cache\npm'
         GOMODCACHE = 'cache\go-mod'; GOCACHE = 'cache\go-build'; VCPKG_DEFAULT_BINARY_CACHE = 'cache\vcpkg'
     }
+}
+
+function Get-NativeStorageVariable([string]$name) {
+    return [Environment]::GetEnvironmentVariable($name, 'User')
+}
+
+function Assert-NativeDevelopmentStorage([string]$StorageRoot) {
+    $root = Resolve-NativeStorageRoot $StorageRoot
+    $variables = Get-NativeStorageLayout
+    foreach ($relative in @($variables.Values) + @('repos')) {
+        $path = Resolve-NativeStorageRoot (Join-Path $root $relative)
+        if (-not (Test-Path -LiteralPath $path -PathType Container)) {
+            throw 'A configured storage directory is missing; rerun setup to repair it.'
+        }
+    }
+    foreach ($name in $variables.Keys) {
+        if ((Get-NativeStorageVariable $name) -ne (Join-Path $root $variables[$name])) {
+            throw "Saved storage variable $name differs from the selected layout; rerun setup to repair it."
+        }
+    }
+}
+
+function Set-NativeDevelopmentStorage([string]$StorageRoot, [switch]$Plan) {
+    $root = Resolve-NativeStorageRoot $StorageRoot
+    $variables = Get-NativeStorageLayout
     # Preflight every destination before creating directories or changing environment.
     foreach ($relative in @($variables.Values) + @('repos', 'tools\vs2022')) {
         Resolve-NativeStorageRoot (Join-Path $root $relative) | Out-Null

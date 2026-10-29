@@ -21,7 +21,9 @@ try {
                         'windows\Cli.Common.ps1', 'windows\Godot.Common.ps1', 'windows\tests\Run-CliTests.ps1',
                         'windows\Enter-GameDevShell.ps1', 'windows\tests\Run-GameDevelopmentTests.ps1',
                         'windows\tests\Run-AgentWorkstationTests.ps1', 'windows\T3Completion.Common.ps1',
-                        'windows\Complete-T3Desktop.ps1', 'windows\tests\Run-T3CompletionTests.ps1')) {
+                        'windows\Complete-T3Desktop.ps1', 'windows\Start-T3Desktop.ps1',
+                        'windows\Sunshine.Common.ps1', 'windows\Setup-Sunshine.ps1',
+                        'windows\tests\Run-SunshineTests.ps1', 'windows\tests\Run-T3CompletionTests.ps1')) {
         $tokens = $null; $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $repo $file), [ref]$tokens, [ref]$errors) | Out-Null
         Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in $file`: $errors"
@@ -30,6 +32,7 @@ try {
     & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-T3CompletionTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-SunshineTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
@@ -154,11 +157,11 @@ try {
     }
     try {
         $script:WingetCalls = @(); $script:ListExit = 0; $script:InstallExit = -1978335189
-        Ensure-WingetPackage T3Tools.T3Code 'T3 install' -NoUpgrade
+        Ensure-WingetPackage T3Tools.T3Code 'T3 install'
         Assert-True ($script:WingetCalls.Count -eq 2) 'Already-installed exit was not verified'
-        Assert-True ($script:WingetCalls[0] -contains '--no-upgrade') 'Native setup could upgrade a running desktop'
+        Assert-True ($script:WingetCalls[0] -notcontains '--no-upgrade') 'Native setup blocked package updates'
         $script:InstallExit = -1978335135
-        Ensure-WingetPackage T3Tools.T3Code 'T3 install' -NoUpgrade
+        Ensure-WingetPackage T3Tools.T3Code 'T3 install'
         $script:ListExit = 1
         Assert-Throws { Ensure-WingetPackage T3Tools.T3Code 'T3 install' } 'failed'
         $script:InstallExit = 3010
@@ -169,7 +172,7 @@ try {
         Assert-Throws { Ensure-WingetPackage Git.Git 'Git install' } 'exit code 17'
         $script:InstallExit = 0
         $override = '--wait --installPath "F:\tools with spaces"'
-        Ensure-WingetPackage Microsoft.VisualStudio.2022.BuildTools 'Compiler install' -NoUpgrade -Override $override
+        Ensure-WingetPackage Microsoft.VisualStudio.2022.BuildTools 'Compiler install' -Override $override
         $forwarded = $script:WingetCalls[-1]
         Assert-True ($forwarded[-2] -eq '--override' -and $forwarded[-1] -eq (ConvertTo-WingetOverride $override)) 'Vendor overrides were split or dropped'
     } finally { Remove-Item Function:\winget.exe }
@@ -464,7 +467,7 @@ function Invoke-NativeAgentSetup {
         return $null
     }
     function Get-NativeT3Desktop { if ($script:Desktop) { return 'C:\apps\T3 Code.exe' }; return $null }
-    function Ensure-WingetPackage([string]$packageId, [string]$label, [switch]$NoUpgrade) {
+    function Ensure-WingetPackage([string]$packageId, [string]$label) {
         $script:Packages += $packageId
         if ($script:FailPackage) { throw 'simulated package failure' }
         switch ($packageId) {
@@ -529,7 +532,8 @@ function Invoke-NativeAgentSetup {
     }
     $script:Packages = @(); $script:NpmCalls = @()
     Invoke-NativeAgentSetup -Source $repo -T3CodeDesktop
-    Assert-True ($script:Packages.Count -eq 0 -and $script:NpmCalls.Count -eq 0) 'Rerun reinstalled existing tools'
+    Assert-True ($script:Packages.Count -eq 4 -and $script:NpmCalls.Count -eq 1 -and
+        $script:Packages -contains 'T3Tools.T3Code') 'Rerun skipped selected package/provider updates'
     $script:VersionExit = 9
     Assert-Throws { Invoke-NativeAgentSetup -Source $repo } 'version check failed'
     $script:VersionExit = 0

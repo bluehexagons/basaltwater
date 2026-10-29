@@ -13,8 +13,11 @@ tools and skills for the current Windows account; it does not port Basaltwater's
 Linux controller, `basaltw agent` commands, systemd, or Debian setup profiles.
 The native `basaltw` command supports help, version, saved-installation `info`,
 `doctor` and `refresh`. Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
-to update Basaltwater from main and reapply saved selections; existing tool
-versions and logins are preserved. `basaltw --help` lists Windows options.
+to update Basaltwater from main and reapply saved selections, including available
+WinGet/npm tool updates; provider logins are preserved. `basaltw --help` lists Windows options.
+An updating T3 installer can close its desktop; run refresh from a separate
+PowerShell when that would interrupt the invoking terminal. Successful desktop
+setup configures current-account login startup with a hidden PowerShell helper.
 Checkout-only setup needs a pinned installer run before refresh/info/doctor work.
 Use `basaltw doctor --json` for read-only checks of saved selections and actual
 tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
@@ -56,6 +59,12 @@ and provides `repos` for new checkouts. An unavailable drive fails without
 falling back to C: or replacing saved selections. Inspect saved cache
 environment variables and keep the drive connected. Existing checkouts/build
 trees remain in place; do not assume the configured cache root moved them.
+
+Optional Sunshine hosting is separate: `windows/Setup-Sunshine.ps1 -Plan`
+previews it, application requires an administrator PowerShell, and `-Status`
+checks the vendor service without mutations. It starts at Windows boot and is
+not selected by ordinary refresh. Pairing, display/GPU, sound and input still
+need a Moonlight check. See [Windows Sunshine](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows-sunshine.md).
 
 Use the installed `basaltwater-project-development` skill for repository work,
 `basaltwater-frontend-design` for UI work, and `basaltwater-subagents` for

@@ -10,8 +10,10 @@ runtime requirements, library pins, npm dependencies and build commands.
 `-GameDev` adds Visual Studio 2022 Build Tools with the C++ workload and
 recommended MSVC/Windows SDK components, CMake/CTest, Ninja, LLVM's compiler,
 formatter, analyzer and symbolizer, and 7-Zip. It also selects Python/uv, Go
-and fnm. Existing tools are reused and checked; setup does not silently upgrade
-them. If an existing Visual Studio 2022 installation lacks C++ or its SDK,
+and fnm. Setup and refresh install available updates for selected host packages
+through WinGet, without a separate update check. Existing Visual Studio 2022
+editions are updated using their matching package identity. If an existing
+Visual Studio 2022 installation lacks C++ or its SDK,
 complete it with Visual Studio Installer > Modify, then rerun setup.
 VS 2022 is the provisioning baseline, not a new game compiler pin.
 See Microsoft's [component catalog](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=vs-2022).
@@ -31,7 +33,7 @@ its `.nvmrc` selects major 26 and its build manifest owns the exact packaging
 runtime. Use those project files when versions change.
 
 `-Godot` independently prepares the standard Godot editor and `godot` command
-through `GodotEngine.GodotEngine`. Existing engines are retained and checked
+through `GodotEngine.GodotEngine`. The host engine is updated and checked
 headlessly. The version probe waits for the actual process, including a GUI
 executable, and fails on a nonzero exit or a 30-second timeout.
 When WinGet extracts its portable package without creating an

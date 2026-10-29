@@ -571,9 +571,7 @@ try {
         Ensure-WingetPackage 'Git.Git' 'Git for Windows installation'
     }
     if ($state.T3CodeDesktop) {
-        # Upgrading a running desktop here could kill the setup's own terminal.
-        # Its deliberate updater owns upgrades; reconcile and relaunch at completion.
-        Ensure-WingetPackage 'T3Tools.T3Code' 'T3 Code desktop installation' -NoUpgrade
+        Ensure-WingetPackage 'T3Tools.T3Code' 'T3 Code desktop installation'
     }
     Ensure-WorkerTask
     $state.Phase = "complete"

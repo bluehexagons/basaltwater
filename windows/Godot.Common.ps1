@@ -40,21 +40,16 @@ function Install-NativeGodot([switch]$Plan) {
     $launcher = Join-Path $bin 'godot.cmd'
     $command = Get-NativeCommand godot
     $managed = $command -eq $launcher
-    if ($managed) { $command = $null }
-    if (-not $command) { $command = Get-NativeGodotPackageCommand }
     if ($Plan) {
-        if ($command) { Write-Host "Reuse Godot: $command" }
-        else { Write-Host 'Install standard Godot via WinGet: GodotEngine.GodotEngine' }
+        Write-Host 'Install/update standard Godot via WinGet: GodotEngine.GodotEngine'
         return
     }
-    if (-not $command) {
-        Ensure-WingetPackage GodotEngine.GodotEngine 'Godot installation' -NoUpgrade
-        Update-NativePath
-        $command = Get-NativeCommand godot
-        if ($command -eq $launcher) { $command = $null }
-        if (-not $command) { $command = Get-NativeGodotPackageCommand }
-        if (-not $command) { throw 'Godot is unavailable after installation; repair its WinGet package/PATH and rerun setup.' }
-    }
+    Ensure-WingetPackage GodotEngine.GodotEngine 'Godot installation'
+    Update-NativePath
+    $command = Get-NativeCommand godot
+    if ($command -eq $launcher) { $command = $null }
+    if (-not $command) { $command = Get-NativeGodotPackageCommand }
+    if (-not $command) { throw 'Godot is unavailable after installation; repair its WinGet package/PATH and rerun setup.' }
     Invoke-NativeGodotVersion $command
     if ($managed -or -not (Get-NativeCommand godot)) {
         Assert-NativeSkillPath $launcher

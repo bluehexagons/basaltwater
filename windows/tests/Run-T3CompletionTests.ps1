@@ -123,18 +123,29 @@ try {
         function Get-NativeT3Roots($Desktop, $OwnerSid) { return @() }
         function New-ScheduledTaskAction($Execute, $Argument) { return [pscustomobject]@{ Execute = $Execute; Argument = $Argument } }
         function New-ScheduledTaskPrincipal($UserId, $LogonType, $RunLevel) { return [pscustomobject]@{ UserId = $UserId; LogonType = $LogonType; RunLevel = $RunLevel } }
+        function New-ScheduledTaskTrigger([switch]$AtLogOn, $User) { return [pscustomobject]@{ AtLogOn = [bool]$AtLogOn; User = $User } }
         function New-ScheduledTaskSettingsSet($ExecutionTimeLimit, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) {
             return [pscustomobject]@{ ExecutionTimeLimit = $ExecutionTimeLimit }
         }
-        function Register-ScheduledTask($TaskName, $Action, $Principal, $Settings, [switch]$Force) {
-            $script:Registered = [pscustomobject]@{ Name = $TaskName; Action = $Action; Principal = $Principal; Settings = $Settings }
+        function Register-ScheduledTask($TaskName, $Action, $Principal, $Settings, $Trigger, [switch]$Force) {
+            $script:Registered = [pscustomobject]@{ Name = $TaskName; Action = $Action; Principal = $Principal; Settings = $Settings; Trigger = $Trigger }
         }
         function Start-ScheduledTask($TaskName) { $script:Started = $TaskName }
         function Unregister-ScheduledTask($TaskName, [switch]$Confirm) { }
         $source = Join-Path $temporary "source with spaces & quote's"
         New-Item -ItemType Directory -Path (Join-Path $source 'windows') -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $source 'windows\Complete-T3Desktop.ps1') -Value '# fixture'
+        Set-Content -LiteralPath (Join-Path $source 'windows\Start-T3Desktop.ps1') -Value '# fixture'
+        Set-NativeT3Login $source
+        Assert-True ($script:Registered.Name -eq 'Basaltwater-T3-Login-owner' -and
+            $script:Registered.Trigger.AtLogOn -and $script:Registered.Trigger.User -eq 'owner' -and
+            $script:Registered.Principal.UserId -eq 'owner' -and $script:Registered.Principal.RunLevel -eq 'Limited') 'Login startup crossed account or privilege boundaries'
+        Assert-True ($script:Registered.Action.Argument -match '-WindowStyle Hidden' -and
+            $script:Registered.Settings.ExecutionTimeLimit -eq [timespan]::Zero) 'Login helper can show a console or terminate its desktop later'
+        $loginCommand = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($script:Registered.Action.Argument -split ' ')[-1]))
+        Assert-True ($loginCommand.Contains('Start-T3Desktop.ps1') -and $loginCommand.Contains("quote''s")) 'Login worker did not preserve the source path'
         Queue-NativeT3Completion $source
+        Assert-True ($script:Registered.Action.Argument -match '-WindowStyle Hidden') 'Setup completion helper shows a PowerShell window'
         Assert-True ($script:Started -eq $script:Registered.Name -and $script:Registered.Principal.LogonType -eq 'Interactive' -and
             $script:Registered.Principal.RunLevel -eq 'Limited') 'Completion is not an independent limited interactive task'
         Assert-True ($script:Registered.Settings.ExecutionTimeLimit -eq [timespan]::Zero) 'Scheduler timeout could terminate the desktop child'
@@ -153,6 +164,23 @@ try {
         $statuses = @(Get-ChildItem -LiteralPath (Join-Path $temporary 'Basaltwater\t3-completion') -Filter '*.status.json' |
             ForEach-Object { (Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).Status })
         Assert-True ('manual-restart-required' -in $statuses) 'Failed queue left a successful completion status'
+    }
+    & {
+        function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
+        function Get-NativeCompletionOwner { return [pscustomobject]@{ User = [pscustomobject]@{ Value = 'owner' } } }
+        function Get-Process($Id) { return [pscustomobject]@{ SessionId = 2 } }
+        function Get-NativeT3Roots($Desktop, $OwnerSid) { return $script:LoginRoots }
+        function Start-NativeT3Desktop($Desktop) { $script:LoginStarts++ }
+        function Close-NativeT3Window { throw 'Login tried to close an existing desktop' }
+        $script:LoginStarts = 0; $script:LoginRoots = @()
+        Invoke-NativeT3Login
+        Assert-True ($script:LoginStarts -eq 1) 'Login did not start a stopped desktop'
+        $script:LoginRoots = @([pscustomobject]@{ Session = 2 })
+        Invoke-NativeT3Login
+        Assert-True ($script:LoginStarts -eq 1) 'Login launched a duplicate desktop'
+        $script:LoginRoots = @([pscustomobject]@{ Session = 3 })
+        Invoke-NativeT3Login
+        Assert-True ($script:LoginStarts -eq 2) 'Another session suppressed login startup'
     }
     & {
         function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }

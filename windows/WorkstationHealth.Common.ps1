@@ -106,8 +106,8 @@ function Get-NativeWorkstationHealth {
     }
     if ($Saved.PSObject.Properties['StorageRoot'] -and $Saved.StorageRoot) {
         $storageState = 'ok'; $detail = 'Configured storage volume and managed directory paths are valid.'
-        try { Set-NativeDevelopmentStorage $Saved.StorageRoot -Plan 6>$null }
-        catch { $storageState = 'failed'; $detail = 'Storage is unavailable or unsafe; check the saved root and its mounted NTFS volume.' }
+        try { Assert-NativeDevelopmentStorage $Saved.StorageRoot }
+        catch { $storageState = 'failed'; $detail = 'Storage directories or saved cache variables are missing, changed or unsafe; check the mounted NTFS volume and rerun setup.' }
         $checks.Add([pscustomobject]@{ Name = 'storage'; State = $storageState; Command = $Saved.StorageRoot; Detail = $detail })
     }
     return [pscustomobject]@{ Schema = 1; Platform = 'windows'; Profile = $Saved.Profile;

@@ -12,6 +12,20 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-game-test-' + [g
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     & {
+        $fakeVswhere = Join-Path $temporary 'product-vswhere.cmd'
+        Set-Content -LiteralPath $fakeVswhere -Encoding ASCII -Value '@echo off', 'echo %BASALTWATER_TEST_VS_PRODUCT%', 'exit /b 0'
+        function Join-Path { return $fakeVswhere }
+        $savedProduct = $env:BASALTWATER_TEST_VS_PRODUCT
+        try {
+            foreach ($edition in @('BuildTools', 'Community', 'Professional', 'Enterprise')) {
+                $env:BASALTWATER_TEST_VS_PRODUCT = 'Microsoft.VisualStudio.Product.' + $edition
+                Assert-True ((Get-NativeVisualStudioPackage) -eq ('Microsoft.VisualStudio.2022.' + $edition)) 'VS update selected another edition'
+            }
+            $env:BASALTWATER_TEST_VS_PRODUCT = 'unknown'
+            Assert-Throws { Get-NativeVisualStudioPackage } 'Unrecognized Visual Studio'
+        } finally { $env:BASALTWATER_TEST_VS_PRODUCT = $savedProduct }
+    }
+    & {
         $sdk = Join-Path $temporary 'SDK'
         function Get-ItemProperty { return [pscustomobject]@{ KitsRoot10 = $sdk } }
         Assert-True (-not (Test-NativeWindowsSdk)) 'Missing SDK was accepted'
@@ -56,24 +70,31 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
     }
     & {
         function Get-NativeVisualStudio { return $script:VisualStudio }
+        function Get-NativeVisualStudioPackage { return $script:VisualStudioPackage }
         function Test-NativeWindowsSdk { return $script:Sdk }
         function Test-Path { return $script:Vswhere }
         function Ensure-WingetPackage {
-            param($packageId, $label, [switch]$NoUpgrade, $Override)
+            param($packageId, $label, $Override)
             $script:Installs++
-            Assert-True ($packageId -eq 'Microsoft.VisualStudio.2022.BuildTools' -and $NoUpgrade) 'Wrong compiler package or upgrade policy'
-            Assert-True ($Override -match '--wait' -and $Override -match '--norestart' -and
-                $Override -match '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended') 'Missing compiler/SDK workload or reboot control'
+            Assert-True ($packageId -eq $script:VisualStudioPackage) 'Wrong compiler package'
+            if ($Override) {
+                Assert-True ($Override -match '--wait' -and $Override -match '--norestart' -and
+                    $Override -match '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended') 'Missing compiler/SDK workload or reboot control'
+            }
             if ($script:Reboot) { throw 'restart required' }
             if ($script:CompleteInstall) { $script:VisualStudio = 'C:\VS'; $script:Sdk = $true }
         }
+        $script:VisualStudioPackage = 'Microsoft.VisualStudio.2022.BuildTools'
         $script:VisualStudio = $null; $script:Sdk = $false; $script:Vswhere = $false
         $script:Installs = 0; $script:CompleteInstall = $true; $script:Reboot = $false
         Ensure-NativeCppTools -Plan
         Assert-True ($script:Installs -eq 0) 'Compiler plan installed a workload'
         Ensure-NativeCppTools
         Ensure-NativeCppTools
-        Assert-True ($script:Installs -eq 1) 'Complete compiler/SDK was not reused'
+        Assert-True ($script:Installs -eq 2) 'Complete compiler/SDK skipped its package update'
+        $script:VisualStudioPackage = 'Microsoft.VisualStudio.2022.Community'
+        Ensure-NativeCppTools
+        $script:VisualStudioPackage = 'Microsoft.VisualStudio.2022.BuildTools'
         $script:VisualStudio = $null; $script:Sdk = $false; $script:CompleteInstall = $false
         Assert-Throws { Ensure-NativeCppTools } 'incomplete'
         $script:Reboot = $true
@@ -124,7 +145,7 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         Assert-True (-not (Test-NativeGameToolsPresent -GameDev)) 'Missing SDK bypassed installation space checks'
     }
     & {
-        $script:Command = $null; $script:Installs = 0; $script:Paths = @(); $script:VersionExit = 0
+        $script:Command = $null; $script:Installs = 0; $script:Paths = @(); $script:VersionExit = 0; $script:InstallWorks = $false
         $bin = Join-Path $temporary 'vendor with spaces'
         New-Item -ItemType Directory -Path $bin | Out-Null
         $fakeTool = Join-Path $bin 'fake-tool.cmd'
@@ -151,7 +172,7 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         Assert-Throws { Ensure-NativeGameCommand cmake Kitware.CMake } 'unavailable after'
         $script:InstallWorks = $true
         Ensure-NativeGameCommand cmake Kitware.CMake
-        Assert-True ($script:Installs -eq 2) 'Missing command was not installed and verified'
+        Assert-True ($script:Installs -eq 4) 'Existing/missing commands were not updated and verified'
     }
     & {
         $script:Calls = @(); $script:Cpp = 0
@@ -188,6 +209,16 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
         Assert-True ($script:StorageWrites.Count -eq 6 -and
             $script:StorageWrites.FNM_DIR -eq (Join-Path $root 'node')) 'Storage selection lost runtime/cache paths'
         Assert-True (Test-Path -LiteralPath (Join-Path $root 'repos') -PathType Container) 'New workspace root was not prepared'
+        function Get-NativeStorageVariable($name) { return $script:StorageWrites[$name] }
+        Assert-NativeDevelopmentStorage $root
+        $script:StorageWrites.Remove('GOCACHE')
+        Assert-Throws { Assert-NativeDevelopmentStorage $root } 'storage variable GOCACHE'
+        $script:StorageWrites.GOCACHE = 'C:\wrong-cache'
+        Assert-Throws { Assert-NativeDevelopmentStorage $root } 'storage variable GOCACHE'
+        $script:StorageWrites.GOCACHE = Join-Path $root 'cache\go-build'
+        Remove-Item -LiteralPath (Join-Path $root 'cache\go-build')
+        Assert-Throws { Assert-NativeDevelopmentStorage $root } 'directory is missing'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $root 'cache\go-build'))) 'Storage health repaired a missing directory'
         $linked = Join-Path $root 'linked'
         New-Item -ItemType Junction -Path $linked -Target $temporary | Out-Null
         try { Assert-Throws { Resolve-NativeStorageRoot (Join-Path $linked 'outside') } 'junctions/symlinks' }

@@ -76,7 +76,43 @@ function Start-NativeT3Desktop([string]$Desktop) {
     # PATH from the persisted account settings rather than a T3 terminal's PATH.
     $env:PATH = Merge-NativePath @([Environment]::GetEnvironmentVariable('Path', 'Machine'),
                                  [Environment]::GetEnvironmentVariable('Path', 'User'))
+    . (Join-Path $PSScriptRoot 'DevelopmentStorage.Common.ps1')
+    foreach ($name in @((Get-NativeStorageLayout).Keys) + @('BASALTWATER_GODOT_EXE')) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'User')
+        if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, 'Machine') }
+        [Environment]::SetEnvironmentVariable($name, $value, 'Process')
+    }
     Start-Process -FilePath $Desktop -WorkingDirectory $env:USERPROFILE -ErrorAction Stop | Out-Null
+}
+
+function New-NativeT3TaskAction([string]$Command) {
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
+    return New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+        -Argument ('-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
+}
+
+function Set-NativeT3Login([string]$Source) {
+    $owner = Get-NativeCompletionOwner
+    $worker = Join-Path ([IO.Path]::GetFullPath($Source)) 'windows\Start-T3Desktop.ps1'
+    Assert-NativeSkillPath $worker
+    if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) { throw 'T3 login worker is missing' }
+    $action = New-NativeT3TaskAction ("& '" + $worker.Replace("'", "''") + "'")
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $owner.User.Value
+    $principal = New-ScheduledTaskPrincipal -UserId $owner.User.Value -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([timespan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName ('Basaltwater-T3-Login-' + $owner.User.Value) -Action $action `
+        -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Write-Host 'T3 Code will start at login for this Windows account.'
+}
+
+function Invoke-NativeT3Login {
+    $desktop = Get-NativeT3Desktop
+    if (-not $desktop) { throw 'T3 Code desktop is unavailable; reconcile setup.' }
+    $owner = Get-NativeCompletionOwner
+    $session = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+    # Login only starts a stopped app; it never closes an existing desktop.
+    if (@(Get-NativeT3Roots $desktop $owner.User.Value | Where-Object { $_.Session -eq $session }).Count) { return }
+    Start-NativeT3Desktop $desktop
 }
 
 function Complete-NativeT3Desktop($Request, [int]$Session) {
@@ -176,10 +212,8 @@ function Queue-NativeT3Completion([string]$Source) {
     # EncodedCommand preserves literal spaces/quotes across Windows PS 5.1 argv.
     # Only paths and a generated task name cross this boundary, never setup args.
     $command = "& '" + $worker.Replace("'", "''") + "' -RequestPath '" + $requestPath.Replace("'", "''") + "' -TaskName '" + $taskName + "'"
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     try {
-        $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -Argument ('-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded)
+        $action = New-NativeT3TaskAction $command
         $principal = New-ScheduledTaskPrincipal -UserId $owner.Name -LogonType Interactive -RunLevel Limited
         # Do not let Scheduler's task timeout later terminate the desktop child.
         # The worker itself bounds its setup wait and graceful close separately.
@@ -199,6 +233,8 @@ function Queue-NativeT3Completion([string]$Source) {
 function Invoke-NativeSetupCompletion([string]$Source, [switch]$T3CodeDesktop) {
     Show-NativeRebootNotice
     if ($T3CodeDesktop) {
+        try { Set-NativeT3Login $Source }
+        catch { Write-Warning 'T3 Code login startup could not be configured. Rerun setup to retry Task Scheduler registration.' }
         try { Queue-NativeT3Completion $Source }
         catch { Write-Warning 'T3 Code could not be queued for start/restart. Close and reopen it manually to load the updated PATH and skills.' }
     }

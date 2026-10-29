@@ -57,12 +57,10 @@ function Get-NativeT3Desktop {
 
 function Ensure-NativeTool([string]$name, [string]$packageId, [switch]$Plan) {
     $command = Get-NativeCommand $name
-    if ($command) {
-        Write-Host "Reuse $name`: $command"
-    } elseif ($Plan) {
-        Write-Host "Install $name via WinGet: $packageId"
+    if ($Plan) {
+        Write-Host "Install/update $name via WinGet: $packageId"
     } else {
-        Ensure-WingetPackage $packageId "$name installation" -NoUpgrade
+        Ensure-WingetPackage $packageId "$name installation"
         Update-NativePath
         $command = Get-NativeCommand $name
         if (-not $command) { throw "$name is still unavailable. Open a new PowerShell window and rerun setup." }
@@ -246,28 +244,26 @@ function Invoke-NativeAgentSetup {
     Ensure-NativeTool git Git.Git -Plan:$Plan
     Ensure-NativeGitSettings -Plan:$Plan
     Ensure-NativeTool gh GitHub.cli -Plan:$Plan
-    $npmAgents = @($AgentTool | Where-Object { $_ -in @('codex', 'opencode') -and -not (Get-NativeCommand $_) })
+    $npmAgents = @($AgentTool | Where-Object { $_ -in @('codex', 'opencode') })
     if ($Node -or $npmAgents.Count) { Ensure-NativeTool node OpenJS.NodeJS.LTS -Plan:$Plan }
     foreach ($tool in $AgentTool | Where-Object { $_ -in @('codex', 'opencode') }) {
         $command = Get-NativeCommand $tool
-        if (-not $command) {
-            $package = if ($tool -eq 'codex') { '@openai/codex' } else { 'opencode-ai' }
-            $prefix = Join-Path $env:APPDATA 'npm'
-            Write-Host "Install $tool via npm: $package (current user)"
-            if (-not $Plan) {
-                $npm = Get-NativeCommand npm
-                if (-not $npm) { throw 'npm.cmd is unavailable after Node installation; repair Node.js and rerun setup.' }
-                & $npm install --global --prefix $prefix $package
-                if ($LASTEXITCODE -ne 0) { throw "$tool npm installation failed (exit code $LASTEXITCODE)" }
-                Add-NativeUserPath $prefix
-            }
+        $package = if ($tool -eq 'codex') { '@openai/codex' } else { 'opencode-ai' }
+        $prefix = Join-Path $env:APPDATA 'npm'
+        Write-Host "Install/update $tool via npm: $package (current user)"
+        if (-not $Plan) {
+            $npm = Get-NativeCommand npm
+            if (-not $npm) { throw 'npm.cmd is unavailable after Node installation; repair Node.js and rerun setup.' }
+            & $npm install --global --prefix $prefix $package
+            if ($LASTEXITCODE -ne 0) { throw "$tool npm installation failed (exit code $LASTEXITCODE)" }
+            Add-NativeUserPath $prefix
         }
         if (-not $Plan) {
             $command = Get-NativeCommand $tool
             if (-not $command) { throw "$tool is unavailable after installation" }
             & $command --version
             if ($LASTEXITCODE -ne 0) { throw "$tool version check failed (exit code $LASTEXITCODE)" }
-        } elseif ($command) { Write-Host "Reuse $tool`: $command" }
+        } elseif ($command) { Write-Host "Detected $tool`: $command" }
     }
     if ('claude' -in $AgentTool) { Ensure-NativeTool claude Anthropic.ClaudeCode -Plan:$Plan }
     if ($Python) {
@@ -299,11 +295,10 @@ function Invoke-NativeAgentSetup {
         Install-NativeGodot -Plan:$Plan
     }
     if ($T3CodeDesktop) {
-        $desktop = Get-NativeT3Desktop
-        if ($desktop) { Write-Host "Reuse T3 Code desktop: $desktop" }
-        elseif ($Plan) { Write-Host 'Install T3 Code desktop via WinGet: T3Tools.T3Code' }
+        if ($Plan) { Write-Host 'T3 Code: configure current-user login startup and queue start/restart with a hidden PowerShell helper' }
+        if ($Plan) { Write-Host 'Install/update T3 Code desktop via WinGet: T3Tools.T3Code' }
         else {
-            Ensure-WingetPackage T3Tools.T3Code 'T3 Code desktop installation' -NoUpgrade
+            Ensure-WingetPackage T3Tools.T3Code 'T3 Code desktop installation'
             if (-not (Get-NativeT3Desktop)) { throw 'T3 Code desktop was not detected after installation' }
         }
     }

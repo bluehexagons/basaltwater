@@ -76,10 +76,23 @@ $result = [ordered]@{ Revision = $Revision; Script = $Script; Artifact = $Artifa
 $process = $null
 $stdoutStream = $null
 $stderrStream = $null
+$processJob = $null
+$startGate = $null
 try {
+    . (Join-Path $PSScriptRoot 'GitHubRunner.Common.ps1')
+    Import-RunnerJobType
+    # The child must not execute user code before containment is established.
+    $gateName = 'Local\BasaltwaterJob-' + [guid]::NewGuid().ToString('N')
+    $startGate = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset, $gateName)
+    $literal = $scriptPath.Replace("'", "''")
+    $code = "`$ErrorActionPreference = 'Stop'; " +
+        "`$gate = [Threading.EventWaitHandle]::OpenExisting('$gateName'); " +
+        "if (-not `$gate.WaitOne(30000)) { exit 1 }; `$gate.Dispose(); " +
+        "`$global:LASTEXITCODE = 0; & '$literal'; exit `$LASTEXITCODE"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code))
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $scriptPath + '"'
+    $startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
     $startInfo.WorkingDirectory = $source
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
@@ -90,12 +103,13 @@ try {
     $stdoutStream = [IO.File]::Open($stdout, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
     $stderrStream = [IO.File]::Open($stderr, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
     if (-not $process.Start()) { throw "Could not start native job" }
+    $processJob = New-Object Basaltwater.ProcessJob($process.Handle)
+    $startGate.Set() | Out-Null
     $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
     $stderrCopy = $process.StandardError.BaseStream.CopyToAsync($stderrStream)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not $process.WaitForExit(1000)) {
         if ([DateTime]::UtcNow -ge $deadline) {
-            & taskkill.exe /PID $process.Id /T /F | Out-Null
             $result.State = 'timed-out'
             throw "Native job exceeded $TimeoutSeconds seconds"
         }
@@ -104,12 +118,13 @@ try {
             if (Test-Path -LiteralPath $log) { $logBytes += (Get-Item -LiteralPath $log).Length }
         }
         if ($logBytes -gt 50MB) {
-            & taskkill.exe /PID $process.Id /T /F | Out-Null
             throw "Native job exceeded 50 MiB of logs"
         }
     }
     # Complete redirected output before checking its final size and process status.
     $process.WaitForExit()
+    # A completed entry point cannot leave background workers modifying its checkout.
+    $processJob.Dispose()
     if (-not $stdoutCopy.Wait(30000) -or -not $stderrCopy.Wait(30000)) {
         throw "Native job output streams did not close"
     }
@@ -158,6 +173,12 @@ try {
     if ($result.State -eq 'running') { $result.State = 'failed' }
     throw
 } finally {
+    if ($processJob) { $processJob.Dispose() }
+    elseif ($process -and $process.StartInfo -and $startGate) {
+        # Containment failed before the gate opened: only the blocked child exists.
+        try { if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(5000) | Out-Null } } catch { }
+    }
+    if ($startGate) { $startGate.Dispose() }
     if ($stdoutStream) { $stdoutStream.Dispose() }
     if ($stderrStream) { $stderrStream.Dispose() }
     if ($process) { $process.Dispose() }

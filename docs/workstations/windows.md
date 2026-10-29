@@ -3,7 +3,7 @@
 The experimental `agent_windows` installer profile prepares the current
 x86-64 Windows 11 account for local coding with T3 Code. It installs missing
 Git, GitHub CLI, Codex and a small native `basaltw` command, with T3 Code
-desktop enabled by default. Existing tools, provider logins, Git identity,
+desktop enabled by default. Provider logins, Git identity,
 and T3 settings are preserved. Run as the
 intended Windows account; package installers may ask for UAC. Allow at least
 5 GiB of free space, plus space for your projects and their dependencies.
@@ -74,11 +74,12 @@ When calling a script directly inside PowerShell, `-T3CodeDesktop:$false`
 disables the desktop selection. Windows PowerShell 5.1 cannot pass that switch
 value through `powershell.exe -File`; use its `-Command` form for this opt-out.
 
-Detected tools are version-checked during application. A broken existing tool
-stops setup with its failure; repair it and rerun. Missing packages use exact
-WinGet identities and preserve installed versions with `--no-upgrade`. Existing
-T3 desktop installations are detected without changing their installed version.
-Updates remain deliberate through the tool's updater or package manager.
+Setup and refresh install available updates for selected tools using exact
+WinGet identities, without a separate update-check command. npm providers are
+updated through npm. Tools are rediscovered and version-checked afterward;
+a failed update or broken tool stops setup. T3 Code is updated too, and its
+installer may close the running desktop. If that interrupts a T3 terminal,
+resume from a separate PowerShell window using the saved installation.
 
 Successful setup or refresh starts the selected T3 Code desktop if stopped,
 or requests a graceful close and relaunch to load the updated PATH and skills.
@@ -92,6 +93,19 @@ login session also requires a manual restart; it does not touch that session's
 desktop. Completion status is printed as a file
 under `%LOCALAPPDATA%\Basaltwater\t3-completion`; it contains no provider arguments
 or credentials. An app already relaunched after the completion request is kept.
+
+The PowerShell helpers for setup completion and login run hidden; the T3 desktop
+itself opens normally. Successful desktop setup also registers
+`Basaltwater-T3-Login-<account SID>`, a limited interactive task triggered only
+by that account's login. It starts a stopped desktop and leaves an existing
+instance alone. Quitting T3 keeps it stopped until the next login or setup;
+there is no restart loop. You can disable the task in Task Scheduler to pause
+login startup; applying desktop setup again enables it. No password or automatic
+Windows login is configured.
+
+Optional native desktop streaming is available through the separate
+[Windows Sunshine setup](windows-sunshine.md). It uses Sunshine's vendor service
+and remains independent of coding tools and WSL.
 
 At completion, setup also reports Windows restart indicators from Windows Update,
 component servicing and pending file replacements. An unreadable check produces
@@ -155,7 +169,7 @@ switches update those selections; `-AgentTool` adds providers to the saved list.
 For example, use `-Resume -Go -AgentTool claude` to add Go and Claude while
 retaining existing providers. Add `-Plan` to preview the merged selections
 without writes. Selected bundles continue to supply their dependencies;
-existing installed tools and provider logins are retained.
+selected host tools receive available updates and provider logins are retained.
 The checkout command applies its explicit options directly and does not create
 or update pinned-installer state.
 
@@ -177,8 +191,8 @@ basaltw refresh --godot
 ```
 
 `refresh` resolves current `main` and reapplies the saved native selections,
-including providers, game tools and storage. It preserves installed package
-versions and provider logins; use vendor/package updaters for tool upgrades.
+including providers, game tools and storage. It installs available updates for
+selected host tools and preserves provider logins.
 `--dry-run` previews the currently pinned source without downloads or writes.
 `--channel dev` is currently an alias for `main`; use `--version REF` for a
 specific source reference.
@@ -247,7 +261,9 @@ does not establish current tool health. `doctor` checks that phase and runs
 version probes for Git, GitHub CLI, Codex, and saved optional providers/runtimes,
 including dependencies selected by the game bundle. It checks npm alongside
 selected Node, identifies a failing Microsoft Store Python alias, resolves managed
-Godot to its actual executable, and validates configured storage paths.
+Godot to its actual executable, and validates configured storage paths,
+required directories and the six persisted cache/runtime variables. Storage
+diagnostics do not repair missing directories or variables; rerun setup to repair them.
 Selected Visual Studio/Windows SDK and T3 desktop checks establish discovery;
 they do not compile code or launch the desktop.
 
@@ -316,8 +332,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-Agen
 
 These tests use mocked package/provider commands, desktop completion, reboot
 signals and temporary catalogs. They verify completion follows a successful
-receipt and that graceful close failures do not force termination or launch a
-duplicate desktop.
+receipt, that hidden login tasks stay within the current account, and that
+graceful close failures do not force termination or launch a duplicate desktop.
+Sunshine tests mock package and service operations; they do not install it.
 The [manual Windows workflow](../../.github/workflows/windows-manual.yml) also
 runs them with the existing native/WSL bootstrap tests and Python output-capture
 checks. A real plan on an existing Windows 11 machine verifies discovery, not

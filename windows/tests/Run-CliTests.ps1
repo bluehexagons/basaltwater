@@ -182,8 +182,8 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
             if ($LASTEXITCODE -ne 0) { throw 'Godot version check failed' }
         }
         function Ensure-WingetPackage {
-            param($packageId, $label, [switch]$NoUpgrade)
-            Assert-True ($packageId -eq 'GodotEngine.GodotEngine' -and $NoUpgrade) 'Godot used the wrong package/upgrade policy'
+            param($packageId, $label)
+            Assert-True ($packageId -eq 'GodotEngine.GodotEngine') 'Godot used the wrong package'
             $script:Installs++
             if ($script:InstallWorks) { $script:PackageTool = 'Mock-GodotVersion' }
         }
@@ -196,13 +196,13 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
             $script:GodotWrites.Count -eq 1 -and ($script:VersionArguments -join ' ') -eq '--headless --version') 'Godot portable fallback was not installed and checked headlessly'
         $script:Tool = $godotLauncher
         Install-NativeGodot
-        Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 2) 'Managed Godot launcher was not reconciled against its real executable'
+        Assert-True ($script:Installs -eq 2 -and $script:GodotWrites.Count -eq 2) 'Managed Godot launcher was not updated and reconciled'
         # The old portable package disappeared and a real PATH command replaced
         # it. Project scripts and the retained launcher must follow that tool.
         $script:PackageTool = $null
         $script:Tool = 'Mock-ReplacementGodotVersion'
         Install-NativeGodot
-        Assert-True ($script:Installs -eq 1 -and $script:GodotWrites.Count -eq 3 -and
+        Assert-True ($script:Installs -eq 3 -and $script:GodotWrites.Count -eq 3 -and
             $script:GodotWrites[-1] -eq $script:Tool -and $env:BASALTWATER_GODOT_EXE -eq $script:Tool) 'Godot refresh retained the obsolete portable executable'
         $script:VersionExit = 7
         Assert-Throws { Install-NativeGodot } 'version check failed'

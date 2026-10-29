@@ -77,8 +77,8 @@ public class HealthGuiFixture {
         function Get-NativeVisualStudio { return 'C:\VS2022' }
         function Test-NativeWindowsSdk { return $true }
         function Get-NativeT3Desktop { return 'C:\T3 Code.exe' }
-        function Set-NativeDevelopmentStorage($StorageRoot, [switch]$Plan) {
-            Assert-True $Plan 'Doctor applied storage configuration'
+        function Set-NativeDevelopmentStorage { throw 'Doctor applied storage configuration' }
+        function Assert-NativeDevelopmentStorage($StorageRoot) {
             if ($script:BadStorage) { throw 'unavailable volume' }
         }
         function Invoke-NativeHealthProbe($Command, $Arguments, $TimeoutSeconds) {

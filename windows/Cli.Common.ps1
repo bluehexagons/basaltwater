@@ -60,8 +60,8 @@ Refresh options:
   --channel main|dev   Select the source channel (both currently track main)
   --version REF        Select a specific source reference
 
-Refresh preserves installed tool versions and provider logins. Package upgrades
-remain deliberate. Successful setup queues a graceful T3 Code start/restart.
+Refresh installs available updates for selected host tools and preserves provider
+logins. Successful setup queues a graceful T3 Code start/restart.
 Other open terminals need to be reopened after setup changes PATH.
 Linux controller, server, desktop and agent commands require a Linux installation.
 '@

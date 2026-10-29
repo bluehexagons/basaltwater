@@ -29,10 +29,30 @@ function Test-NativeWindowsSdk {
     return $false
 }
 
+function Get-NativeVisualStudioPackage {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $product = & $vswhere -latest -products '*' -version '[17.0,18.0)' `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property productId
+    if ($LASTEXITCODE -ne 0) { throw 'Visual Studio product discovery failed' }
+    switch ($product) {
+        'Microsoft.VisualStudio.Product.BuildTools' { return 'Microsoft.VisualStudio.2022.BuildTools' }
+        'Microsoft.VisualStudio.Product.Community' { return 'Microsoft.VisualStudio.2022.Community' }
+        'Microsoft.VisualStudio.Product.Professional' { return 'Microsoft.VisualStudio.2022.Professional' }
+        'Microsoft.VisualStudio.Product.Enterprise' { return 'Microsoft.VisualStudio.2022.Enterprise' }
+        default { throw 'Unrecognized Visual Studio 2022 product; update it with Visual Studio Installer.' }
+    }
+}
+
 function Ensure-NativeCppTools([switch]$Plan, [string]$StorageRoot = '') {
     $visualStudio = Get-NativeVisualStudio
     if ($visualStudio -and (Test-NativeWindowsSdk)) {
-        Write-Host "Reuse Visual Studio 2022 C++ tools and Windows SDK: $visualStudio"
+        Write-Host "Update Visual Studio 2022 C++ tools and Windows SDK: $visualStudio"
+        if (-not $Plan) {
+            Ensure-WingetPackage (Get-NativeVisualStudioPackage) 'Visual Studio C++ tools update'
+            if (-not (Get-NativeVisualStudio) -or -not (Test-NativeWindowsSdk)) {
+                throw 'C++ tools/Windows SDK discovery failed after updating Visual Studio'
+            }
+        }
         return
     }
     if ($Plan) {
@@ -49,7 +69,7 @@ function Ensure-NativeCppTools([switch]$Plan, [string]$StorageRoot = '') {
     }
     $override = '--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
     if ($StorageRoot) { $override += ' --installPath "' + (Join-Path $StorageRoot 'tools\vs2022') + '"' }
-    Ensure-WingetPackage Microsoft.VisualStudio.2022.BuildTools 'C++ Build Tools installation' -NoUpgrade -Override $override
+    Ensure-WingetPackage Microsoft.VisualStudio.2022.BuildTools 'C++ Build Tools installation' -Override $override
     if (-not (Get-NativeVisualStudio) -or -not (Test-NativeWindowsSdk)) {
         throw 'C++ tools/Windows SDK are incomplete. Restart if requested; use Visual Studio Installer > Modify to complete Desktop development with C++, then rerun setup.'
     }
@@ -80,16 +100,15 @@ function Get-NativeGameCommand([string]$name, [string[]]$directories = @()) {
 function Ensure-NativeGameCommand([string]$name, [string]$packageId, [string[]]$directories = @(),
                                  [string]$versionArgument = '--version', [switch]$Plan) {
     $command = Get-NativeGameCommand $name $directories
-    if (-not $command -and -not $Plan) {
-        Ensure-WingetPackage $packageId "$name installation" -NoUpgrade
+    if (-not $Plan) {
+        Ensure-WingetPackage $packageId "$name installation"
         Update-NativePath
         if ($packageId -eq 'KhronosGroup.VulkanSDK') { $directories += @(Get-NativeShaderDirectories) }
         $command = Get-NativeGameCommand $name $directories
         if (-not $command) { throw "$name is unavailable after $packageId installation; repair the package/PATH and rerun setup." }
     }
     if ($Plan) {
-        if ($command) { Write-Host "Reuse $name`: $command" }
-        else { Write-Host "Install $name via WinGet: $packageId" }
+        Write-Host "Install/update $name via WinGet: $packageId"
         return
     }
     if (-not (Get-NativeCommand $name)) { Add-NativeUserPath (Split-Path -Parent $command) }
