@@ -7,7 +7,13 @@ metadata:
 
 # Managed T3 Code
 
-Start server investigations with a scoped readiness check:
+The service commands here apply to Debian's upstream `t3code.service`.
+CachyOS uses `basaltwater-cachyos-t3code` for its separate web unit or packaged
+desktop. Native Windows uses the packaged desktop app; follow the
+[Windows workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows.md).
+Do not install a second upstream service to repair either environment.
+
+Start Debian server investigations with a scoped readiness check:
 
 ```bash
 basaltw agent doctor --capability t3code --capability host --json
@@ -38,8 +44,10 @@ Read only the route needed:
   output. Startup filtering does not sanitize every application/provider log.
 - **Update, launcher migration, native-module repair:** [updates](references/updates.md).
   Prefer the connected client's **Update server** action for a deliberate
-  update. Setup reruns reconcile stable T3 and selected providers. Before a
-  first upgrade from pre-0.1.0, also read [thread migration](references/thread-migration.md).
+  update. Setup reruns reconcile stable T3 and selected providers. Fleet-wide
+  **Update track** changes need an explicit channel choice; preserve database
+  compatibility blocks. Before a first upgrade from pre-0.1.0, also read
+  [thread migration](references/thread-migration.md).
   Startup migration can take 30 minutes; inspect before interrupting/retrying.
 - **Delegation/worktrees:** `basaltwater-subagents`. Use T3 workspace binding
   before starting editors; shell `cd` does not rebind a thread.
@@ -60,8 +68,10 @@ Read only the route needed:
   enrollment. Keep TLS intact and use the browser skill's recovery procedure.
 
 **No project** folders under `~/.t3/scratch` are retained user files, not cache.
-Use a real project/worktree for repository changes; do not move T3's data or
-relax Codex policy to enable projectless work.
+Stable 0.1.5's **Turn into project** promotes a folder in place after its
+threads finish or stop; it also moves their scheduled tasks. Initialize Git
+before using branch/worktree controls. Do not move T3's data or relax Codex
+policy to enable projectless work.
 
 When exposed, register every PR created or worked on with `link_pull_request`
 using its full URL, including each stack layer. Follow session instructions for

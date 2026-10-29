@@ -1,5 +1,12 @@
 # Managed T3 service updates
 
+This procedure manages Debian's upstream `t3code.service`. CachyOS web uses
+`basaltwater-cachyos-t3.service` and staged setup activation; use its installed
+`basaltwater-cachyos-t3code` skill. CachyOS desktop and native Windows use their
+AUR and WinGet packages, respectively. On CachyOS, `t3 service install` creates
+a separate service and can select different data. Upstream background services
+are unsupported on native Windows; use its desktop installation workflow.
+
 Basaltwater targets stable T3 releases. When T3 Code is selected, a setup
 rerun checks npm's `t3@latest` stable channel and updates the upstream service
 when a newer stable release is available. Successful setup queues a final
@@ -88,6 +95,28 @@ normal doctor checks remain quick.
 If an older Basaltwater setup timed out, inspect the boot log and service state
 first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.
+
+## Release tracks and archive layout
+
+Stable 0.1.5 adds **Settings → About → Update track** in the desktop app to
+switch connected installations between Stable and Nightly. Ordinary **Update
+all** uses their selected tracks. Basaltwater setup continues to target stable;
+a requested Nightly trial is a separate operation. The switch dialog lists
+machines it skips and blocks a target that cannot support the recorded database
+migrations, including when compatibility cannot be established. Preserve those
+blocks instead of forcing a downgrade or editing migration records. A machine
+can retain its requested track after an incomplete switch; inspect its running
+version as well as the track setting. See the
+[tagged update guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/updating.md#switch-between-stable-and-nightly).
+
+Linux 0.1.5 archives include `lib/libatomic.so.1` beside the executable, with
+`$ORIGIN/lib` RUNPATH. Preserve the complete archive directory during recovery;
+copying only `t3` loses the bundled library. Basaltwater's runtime selection and
+CachyOS staging already preserve this layout. No global `LD_LIBRARY_PATH`
+override is required. The desktop release also updates Electron for its Brotli
+security fix; updating a server does not update a separately installed client.
+See the [archive builder](https://github.com/pingdotgg/t3code/blob/v0.1.5/scripts/build-cli-archive.ts)
+and [desktop release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.5).
 
 ## Refresh from a T3 terminal
 

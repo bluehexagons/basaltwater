@@ -131,35 +131,46 @@ credential contents, use `basaltw agent support-bundle`.
 ## Stable feature baseline
 
 As checked on **2026-10-29**, GitHub's latest stable release and npm's `t3@latest`
-are **0.1.4**, released October 29. It retains the stable Orchestrator V2
+are **0.1.5**, released October 29. It retains the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.4)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.5)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
 **2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/provider/model-manifest.json)
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.5/apps/server/src/provider/model-manifest.json)
 also marks Codex 0.156+ and Pi 0.80.5+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
 providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
 do not imply that Basaltwater installed, authenticated, or qualified them.
+Antigravity now recommends **1.4.1**, with 1.3.0 and 1.1.1 also supported;
+0.1.5 adds Claude/GPT model discovery and thinking controls to that integration.
+This does not qualify it as a Basaltwater-managed provider.
 
-The 0.1.4 integration review verified the unchanged protocol, runtime layout,
-and administrative permission contract against tagged source. Checksum-verified
-Linux x64 archives passed isolated-home checks for setup and doctor runtime
-selection, managed wrapper execution, embedded native-module loading, filtered
-HTTP startup, and all 16 administrative pairing scopes with bootstrap-session
-revocation. An isolated 0.1.3-to-0.1.4 upgrade retained seeded project metadata
-and passed database integrity, post-upgrade pairing, host-side thread listing,
-and Basaltwater's idle activity query. The database advanced from 69 to 72 SQL
-migrations. A separate fresh 0.1.4 home passed the same runtime, HTTP, pairing,
-integrity, and idle-query checks. No runtime compatibility fix was required.
-These checks do not qualify systemd installation/reboot, authenticated provider
-turns, linked-environment execution, desktop/mobile clients, Connect, or the
-complete live matrix below. The earlier server-versus-desktop tab guidance
-continues to apply.
+The 0.1.5 integration review verified the unchanged service protocol, runtime
+layout, and administrative permission contract against tagged source. Its
+checksum-verified Linux x64 archive passed fresh-home and 0.1.4-to-0.1.5 upgrade
+checks for setup/doctor runtime selection, managed wrapper execution, embedded
+native-module loading, filtered HTTP startup, all 16 administrative pairing
+scopes with bootstrap-session revocation, database integrity, host-side thread
+listing, and Basaltwater's idle activity query. Seeded project metadata survived
+the upgrade; both releases record 72 SQL migrations. The new preflight refused
+a fixture with a newer migration without changing its database; see the
+[preflight contract](https://github.com/pingdotgg/t3code/blob/v0.1.5/apps/server/src/cloud/servicePreflight.ts).
+The executable resolved its bundled `lib/libatomic.so.1` through `$ORIGIN/lib`;
+preserve the complete archive during recovery. No runtime compatibility patch
+was needed.
+The earlier 0.1.3-to-0.1.4 check covered the increase from 69 to 72 migrations.
+
+Native Windows/CachyOS source review found compatible installer names,
+executable paths, archive staging, and graceful completion handling. These
+checks do not qualify systemd installation/reboot, authenticated provider turns,
+linked-environment execution, native package installation or desktop/mobile
+clients, Connect, or the complete live matrix below. Update the desktop client
+itself for 0.1.5's Electron/Brotli security fix; a headless server update does not
+patch a separately installed client.
 
 Stable 0.1.3 defaults a background service without an explicit host to a
 private-network listener. Basaltwater supplies `T3CODE_HOST` in its Debian
@@ -191,6 +202,12 @@ Plan that provider migration separately with a private recovery copy. OpenCode
 1.x retains limited V2 support, but pending approvals/questions do not reappear
 after a T3 restart; answer or stop them before updating. Basaltwater does not
 claim OpenCode 2 qualification from installing the existing OpenCode tool.
+
+Stable 0.1.5 also lets users choose rows in the thread details card through its
+context menu or **Settings → Appearance → Thread details**. Enable **Usage**
+there for the selected provider account's limit windows and thread context;
+hidden rows retain their keyboard shortcuts. Setup preserves these UI choices.
+See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/usage.md).
 
 ### Agent workflow integration
 
@@ -248,7 +265,8 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.4 setup, 0.1.3-to-0.1.4 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.5 setup, 0.1.4-to-0.1.5 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Project promotion and release tracks | Promote a stopped No project folder in place; retain its files, all associated threads and schedules, then initialize Git. Exercise a deliberate Stable/Nightly switch on disposable installations, including offline/unsupported machines, incompatible or unreadable databases, and an incomplete switch whose requested track differs from its running version. Preserve database compatibility refusals. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Linked environments | On deliberately linked disposable peers, verify beta gates on both sides, server reachability/trust, read-only and narrower-mode denials, repository matching, missing/ambiguous project selection, remote result/restart/cancel, rejected worktree isolation/attachments, thread links, launch retry deduplication, expiry and peer revocation. Confirm forgetting a link does not claim to stop remote edits. |
 | Workspace/context | Child worktree starts from committed local base; blocking setup completes before the first turn, while async setup is checked before dependent work. Uncommitted edits stay in parent. Explicit launch/handoff binding works, historical context stays distinguishable from native tool state, and cleanup/settle actions preserve unrelated work. |
@@ -660,7 +678,15 @@ without restarting the shared T3 service.
 
 Use the **Update all** control at the bottom of T3's sidebar for a requested
 bulk update across connected environments. It updates outdated providers,
-servers, and the desktop app. For one provider on one VM, use that provider's
+servers, and the desktop app on their selected release tracks. Stable 0.1.5's
+desktop **Settings → About → Update track** separately switches connected
+installations between Stable and Nightly, with per-machine skips and database
+compatibility checks. A requested track can remain recorded after an incomplete
+switch; inspect the running version too. Preserve compatibility blocks rather
+than forcing a downgrade or changing migration records. Basaltwater setup
+continues to target stable. See the
+[track-switch guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/updating.md#switch-between-stable-and-nightly).
+For one provider on one VM, use that provider's
 individual control in **Settings → Providers** or
 `basaltw agent update HOST USER --tool TOOL`. After a T3 provider update, run
 Basaltwater's doctor and record readiness; its updater records and rollback
@@ -673,10 +699,14 @@ for the global update action.
 managed Debian service. Deleting a thread keeps its files. The host doctor
 includes their size as `agent_storage.size_bytes.t3_scratch`; automatic cache
 maintenance preserves them. CachyOS web installations use the `scratch` folder
-under their isolated T3 data directory. For repository changes, choose a
-project and an isolated worktree. T3 hides projectless threads when its data
-directory is inside a Git checkout. See the upstream
-[projectless thread guide](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/thread-sidebar.md#start-without-a-project).
+under their isolated T3 data directory. Stable 0.1.5 adds **Turn into project**
+to a projectless thread's menu. Finish or stop all threads using that folder
+first. Promotion registers the existing folder in place and moves its threads
+and their scheduled tasks into the project; it does not move files or initialize
+Git. Use **Initialize Git** before branch/worktree controls. A promoted folder
+remains user project data even though it is still under `scratch`. T3 hides
+projectless threads when its data directory is inside a Git checkout. See the
+[projectless thread guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/thread-sidebar.md#start-without-a-project).
 
 The managed T3 skill also uses native `link_pull_request` and
 `list_thread_pull_requests` tools when available, so PRs created through `gh`
