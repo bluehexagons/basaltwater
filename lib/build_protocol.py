@@ -236,13 +236,21 @@ def parse_artifact_descriptor(value: object) -> dict[str, Any]:
     components = _components(data["components"], build=False)
     exports = {path for component in components for path in component["artifacts"]}
     ordered_exports = sorted(exports)
+    entries.sort(key=lambda item: item["path"])
+    whole_root = "." in exports
+    covered_directories: set[str] = set()
     for item in entries:
         path = item["path"]
-        parts = path.split("/")
-        parents = ["/".join(parts[:index]) for index in range(1, len(parts))]
-        if any(paths.get(parent, {}).get("kind") != "directory" for parent in parents):
+        parent = path.rpartition("/")[0]
+        # Every entry checks its immediate parent, so the complete inventory
+        # proves the ancestor chain without expanding every prefix per entry.
+        if parent and paths.get(parent, {}).get("kind") != "directory":
             raise ValueError("artifact inventory: missing or invalid parent directory")
-        declared = "." in exports or path in exports or any(parent in exports for parent in parents)
+        # Sorting puts parents before descendants. Track directories inside an
+        # export separately from directories that merely lead to an export.
+        declared = whole_root or path in exports or parent in covered_directories
+        if declared and not whole_root and item["kind"] == "directory":
+            covered_directories.add(path)
         if not declared and item["kind"] == "directory":
             # The first export at/after this prefix proves whether this directory
             # leads to a declared output, without scanning every export per entry.
@@ -266,7 +274,7 @@ def parse_artifact_descriptor(value: object) -> dict[str, Any]:
         "request_sha256": _pattern(data["request_sha256"], _SHA256, "request digest"),
         "source": _source(data["source"]), "platform": _platform(data["platform"]),
         "components": components, "toolchains": tools,
-        "entries": sorted(entries, key=lambda item: item["path"]),
+        "entries": entries,
     }
     encode_document(result, maximum=MAX_DESCRIPTOR_BYTES)
     return result

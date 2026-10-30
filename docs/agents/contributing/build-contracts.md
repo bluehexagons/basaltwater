@@ -71,6 +71,10 @@ lookup for parent directories. It does not compare every inventory entry with
 every export. Directory ancestry, missing exports, root exports and rejection
 of undeclared siblings retain the same validation contract; indexes are private
 to that parse and do not cache authority or source observations.
+The parser sorts the inventory once, then each entry verifies its immediate
+parent; checking every entry proves the entire ancestor chain. A per-parse index
+tracks directories inside exports separately from directories that merely lead
+to an export. It does not materialize every prefix of deeply nested paths.
 
 The uncompressed bundle is `BASALTWATER-ARTIFACT\0\x01\n`, followed by an
 eight-byte unsigned big-endian descriptor length, the UTF-8 JSON descriptor,

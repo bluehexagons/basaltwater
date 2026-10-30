@@ -160,17 +160,36 @@ class BuildJobStoreTests(unittest.TestCase):
         self.assertEqual(accepted["sequence"], 1)
 
     def test_fifo_uses_persisted_sequences_when_wall_clock_moves_backward(self) -> None:
-        first = self.submit("a" * 32)
+        first = self.submit("b" * 32)
         self.clock.value = 900.0
-        second = self.submit("b" * 32)
+        second = self.submit("a" * 32)
         self.assertEqual(first["sequence"], 1)
         self.assertEqual(second["sequence"], 2)
         self.assertEqual(first["created_at"], second["created_at"])
         with self.store.worker() as lease:
             claim = lease.claim()
-            self.assertEqual(claim["request_id"], "a" * 32)
+            self.assertEqual(claim["request_id"], first["request_id"])
             with self.assertRaisesRegex(RuntimeError, "already has an active claim"):
                 lease.claim()
+            lease.finish(first["request_id"], outcome="failed", work_stopped=True)
+            self.assertEqual(lease.claim()["request_id"], second["request_id"])
+
+    def test_duplicate_or_missing_sequences_refuse_status_and_claim_without_repair(self) -> None:
+        first = self.submit("b" * 32)
+        second = self.submit("a" * 32)
+        original = self.path.read_bytes()
+        for sequence in (1, 3):
+            state = json.loads(original)
+            state["jobs"][second["request_id"]]["sequence"] = sequence
+            corrupt = encode_document(state) + b"\n"
+            self.path.write_bytes(corrupt)
+            with self.subTest(sequence=sequence):
+                with self.assertRaisesRegex(ValueError, "submission sequence"):
+                    self.store.status(first["request_id"], owner="controller")
+                with self.store.worker() as lease:
+                    with self.assertRaisesRegex(ValueError, "submission sequence"):
+                        lease.claim()
+                self.assertEqual(self.path.read_bytes(), corrupt)
 
     def test_queue_expiry_is_rechecked_at_claim_and_oldest_live_job_runs(self) -> None:
         store = BuildJobStore(self.path, clock=self.clock, queue_ttl_seconds=10)

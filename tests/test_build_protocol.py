@@ -258,6 +258,37 @@ class BuildProtocolTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "declared output is missing"):
             parse_artifact_descriptor(descriptor)
 
+    def test_deep_unordered_inventory_checks_the_complete_ancestor_chain(self):
+        descriptor = artifact_descriptor()
+        parents = ["/".join(["dir"] * depth) for depth in range(1, 65)]
+        leaf = parents[-1] + "/payload"
+        descriptor["entries"] = [
+            {"path": leaf, "kind": "file", "size": 1, "sha256": "e" * 64, "executable": False},
+        ] + [
+            {"path": path, "kind": "directory", "size": 0, "sha256": "", "executable": False}
+            for path in reversed(parents)
+        ]
+        original_entries = copy.deepcopy(descriptor["entries"])
+        for export in (".", parents[31], leaf):
+            descriptor["components"][0].update(type="static", artifacts=[export])
+            with self.subTest(export=export):
+                self.assertEqual(parse_artifact_descriptor(descriptor)["entries"],
+                                 sorted(descriptor["entries"], key=lambda entry: entry["path"]))
+                self.assertEqual(descriptor["entries"], original_entries)
+
+        descriptor["components"][0]["artifacts"] = ["."]
+        for ancestor in (parents[0], parents[31]):
+            for invalid_kind in ("missing", "file"):
+                changed = copy.deepcopy(descriptor)
+                entry = next(item for item in changed["entries"] if item["path"] == ancestor)
+                if invalid_kind == "missing":
+                    changed["entries"].remove(entry)
+                else:
+                    entry.update(kind="file", sha256="e" * 64)
+                with self.subTest(ancestor=ancestor, invalid_kind=invalid_kind):
+                    with self.assertRaisesRegex(ValueError, "parent directory"):
+                        parse_artifact_descriptor(changed)
+
     def test_descriptor_is_independent_and_cannot_gain_deploy_fields(self):
         descriptor = artifact_descriptor()
         parsed = parse_artifact_descriptor(descriptor)
