@@ -127,7 +127,8 @@ Login startup is still configured. A vendor installer may itself close or
 relaunch T3 during an upgrade, independently of setup's completion step.
 
 The PowerShell helpers for setup completion and login run hidden; the T3 desktop
-itself opens normally. Successful desktop setup also registers
+itself opens normally without allocating a separate output console.
+Successful desktop setup also registers
 `Basaltwater-T3-Login-<account SID>`, a limited interactive task triggered only
 by that account's login. It starts a stopped desktop and leaves an existing
 instance alone. Quitting T3 keeps it stopped until the next login or setup;
@@ -153,7 +154,7 @@ A requirement queues a hidden, limited current-account worker. After setup relea
 its lock, a visible desktop dialog explains the reason and restart time, counts
 down 60 seconds, and offers **Restart now** and **Later**. Closing the dialog or
 pressing Escape also defers the restart. The warning appears even for detached
-refresh, whose terminal output is otherwise only in its log. A locked, disconnected
+refresh. A locked, disconnected
 or secure desktop, a notification failure, or a suspended countdown defers reboot
 instead of restarting unseen. Setup rechecks Windows' requirement before and
 after the countdown; a requirement that has cleared does not reboot the PC.
@@ -276,14 +277,25 @@ basaltw refresh --godot
 basaltw refresh --sunshine
 ```
 
-`refresh` submits a hidden, limited current-account job, resolves current `main`
+`refresh` submits a limited current-account job, resolves current `main`
 and reapplies the saved native selections,
 including providers, game tools and storage. It installs available updates for
 selected host tools and preserves provider logins.
-Its job survives the invoking T3 desktop closing during an upgrade. The returned
-ID supports `refresh --status ID`, `--logs ID` and cancellation while queued with
-`--cancel ID`. Use `--wait` for foreground execution. Inspect the receipt/logs
-for final success; submission success alone does not establish completion.
+Its job survives the invoking T3 desktop closing during an upgrade. By default,
+the terminal follows live output and returns the completed job's exit status.
+A separate desktop progress window shows status, elapsed time and recent setup
+output, and retains a completion/failure summary until closed. It survives T3
+closing; closing the progress window or pressing Ctrl+C in the following terminal
+leaves setup running. Long steps can be quiet while their installer runs; the
+terminal prints a status heartbeat every 15 seconds. No completion percentage
+is estimated. Review setup output for separate T3 restart/reboot notices.
+The job ID supports `refresh --status ID`, `--logs ID`, `--follow ID`, reopening
+the progress window with `--progress ID`, and cancellation while queued with
+`--cancel ID`. Use `--detach` to return immediately after submission, or `--wait`
+to run setup directly in the terminal without an independent worker/window.
+If the progress window cannot open, follow output with `--follow ID`.
+Logs retain up to 16 MiB; truncation is reported. Submission success alone does
+not establish completion.
 `--dry-run` previews the currently pinned source without downloads or writes.
 `--channel dev` is currently an alias for `main`; use `--version REF` for a
 specific source reference.

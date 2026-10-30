@@ -10,17 +10,36 @@ function Write-NativeRefreshReceipt($Receipt) {
     $temporary = $path + '.tmp'
     try {
         $Receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding UTF8
-        Move-Item -LiteralPath $temporary -Destination $path -Force
+        # Our readers allow delete sharing so they retain a complete old snapshot
+        # across replacement. Briefly tolerate older/external Get-Content readers.
+        for ($attempt = 0; ; $attempt++) {
+            try {
+                if ([IO.File]::Exists($path)) { [IO.File]::Replace($temporary, $path, [NullString]::Value) }
+                else { [IO.File]::Move($temporary, $path) }
+                break
+            } catch [IO.IOException] {
+                if ($attempt -ge 19) { throw }
+                Start-Sleep -Milliseconds 50
+            }
+        }
     } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
 }
 
 function Read-NativeRefreshReceipt([string]$Id) {
     $path = Join-Path (Get-NativeRefreshDirectory $Id) 'receipt.json'
     Assert-NativeSkillPath $path
-    if ((Get-Item -LiteralPath $path -ErrorAction Stop).Length -gt 131072) { throw 'Refresh receipt exceeds its limit' }
+    $stream = [IO.File]::Open($path, 'Open', 'Read', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader = $null
+    try {
+        if ($stream.Length -gt 131072) { throw 'Refresh receipt exceeds its limit' }
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+        $json = $reader.ReadToEnd()
+    } finally {
+        if ($reader) { $reader.Dispose() } else { $stream.Dispose() }
+    }
     $options = @{}
     if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $options.DateKind = 'String' }
-    $receipt = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json @options
+    $receipt = $json | ConvertFrom-Json @options
     if ($receipt.Version -ne 1 -or $receipt.Id -ne $Id -or
         $receipt.OwnerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) {
         throw 'Refresh receipt does not belong to this account/job'
@@ -157,6 +176,73 @@ function Start-NativeRefresh($Saved, [string]$Source, [string[]]$Arguments) {
     } finally { $lock.Dispose() }
 }
 
+function Start-NativeRefreshProgress([string]$Id) {
+    $null = Get-NativeRefreshDirectory $Id
+    $worker = Join-Path $PSScriptRoot 'Show-RefreshProgress.ps1'
+    Assert-NativeSkillPath $worker
+    if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) { throw 'Refresh progress helper is missing' }
+    $command = "& '" + $worker.Replace("'", "''") + "' -Id '$Id'"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
+        -WindowStyle Hidden -ArgumentList ('-NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded) -ErrorAction Stop | Out-Null
+}
+
+function Get-NativeRefreshSummary($Receipt) {
+    switch ($Receipt.Status) {
+        'queued' { return 'Waiting for the Windows refresh worker to start.' }
+        'running' { return 'Updating Basaltwater and selected tools. Installers may request UAC; some steps take several minutes.' }
+        'complete' { return 'Setup completed successfully. Review output for T3 start/restart and Windows reboot notices.' }
+        'cancelled' { return 'Refresh was cancelled before setup started. No installer was started for this job.' }
+        'failed' { return 'Refresh failed. Review the setup output and saved installation before retrying.' }
+        'dispatch-failed' { return 'Windows could not start refresh. Check Task Scheduler and the saved installation.' }
+        'interrupted' { return 'Windows restarted before this refresh finished. Check saved setup/recovery before retrying.' }
+        'cleanup-uncertain' { return 'Refresh lost its worker. An installer may still be running. Inspect logs and reboot before retrying.' }
+        default { throw 'Unrecognized refresh status' }
+    }
+}
+
+function Get-NativeRefreshElapsed($Receipt) {
+    if (-not $Receipt.StartedUtc) { return 0 }
+    $end = if ($Receipt.CompletedUtc) { [datetimeoffset]$Receipt.CompletedUtc } else { [datetimeoffset]::UtcNow }
+    return [int][Math]::Max(0, [Math]::Floor(($end - [datetimeoffset]$Receipt.StartedUtc).TotalSeconds))
+}
+
+function Watch-NativeRefresh([string]$Id) {
+    $reader = $null
+    $previousStatus = ''
+    $elapsed = [Diagnostics.Stopwatch]::StartNew()
+    $heartbeat = 0
+    try {
+        while ($true) {
+            $receipt = Get-NativeRefreshStatus $Id
+            if ($receipt.Status -ne $previousStatus) {
+                Write-Host ("Refresh [$($receipt.Status)]: " + (Get-NativeRefreshSummary $receipt))
+                $previousStatus = $receipt.Status
+            }
+            $log = Join-Path (Get-NativeRefreshDirectory $Id) 'setup.log'
+            Assert-NativeSkillPath $log
+            if (-not $reader -and (Test-Path -LiteralPath $log)) {
+                $stream = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
+                $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+            }
+            if ($reader) {
+                $output = $reader.ReadToEnd()
+                if ($output) { Write-Host $output -NoNewline }
+            }
+            if ($receipt.Status -notin @('queued','running')) {
+                if ($receipt.LogTruncated) { Write-Warning 'Setup output exceeded the 16 MiB retained log limit.' }
+                Write-Host ("Refresh $Id [$($receipt.Status)] - elapsed $(Get-NativeRefreshElapsed $receipt)s. Log: $log")
+                return $(if ($receipt.Status -eq 'complete') { 0 } else { 1 })
+            }
+            if ($elapsed.Elapsed.TotalSeconds -ge $heartbeat) {
+                Write-Host ("Refresh [$($receipt.Status)] - elapsed $(Get-NativeRefreshElapsed $receipt)s. Ctrl+C stops following; setup continues independently.")
+                $heartbeat = $elapsed.Elapsed.TotalSeconds + 15
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    } finally { if ($reader) { $reader.Dispose() } }
+}
+
 function Invoke-NativeRefreshWorker([string]$Id) {
     $lease = [IO.File]::Open((Join-Path (Get-NativeRefreshDirectory $Id) 'claim.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
     try {
@@ -173,6 +259,10 @@ function Invoke-NativeRefreshWorker([string]$Id) {
     $receipt.Status = 'running'; $receipt.StartedUtc = [datetime]::UtcNow.ToString('o')
     Write-NativeRefreshReceipt $receipt
     try {
+        # The progress window belongs to Scheduler's independent process tree,
+        # so upgrading/restarting T3 cannot take the user's progress away.
+        try { Start-NativeRefreshProgress $Id }
+        catch { Write-Warning "Progress window could not open. Follow output with basaltw refresh --follow $Id" }
         $saved = Read-NativeCliSetup
         if ($receipt.Source -ne $saved.Source) { throw 'Saved source changed before refresh started; inspect and retry deliberately' }
         $options = @{}
@@ -195,7 +285,7 @@ function Invoke-NativeRefreshWorker([string]$Id) {
                 -Installer (Join-Path $saved.Source 'install.ps1') -Options $options } 6>&1 | ForEach-Object {
                 $bytes = [Text.Encoding]::UTF8.GetBytes("$_" + [Environment]::NewLine)
                 $count = [Math]::Min($remaining, $bytes.Length)
-                if ($count -gt 0) { $stream.Write($bytes, 0, $count); $remaining -= $count }
+                if ($count -gt 0) { $stream.Write($bytes, 0, $count); $stream.Flush(); $remaining -= $count }
                 if ($count -lt $bytes.Length) { $receipt.LogTruncated = $true }
             }
         } finally { $stream.Dispose() }

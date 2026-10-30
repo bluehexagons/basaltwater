@@ -58,7 +58,10 @@ Native Windows commands:
   desktop develop   Supervise project tasks, logs and cancellation
 
 Refresh options:
+  --detach          Return after submission; keep the desktop progress window
   --wait            Run refresh in this terminal instead of a detached job
+  --follow ID       Follow live output and wait for an existing job's result
+  --progress ID     Reopen its desktop progress window
   --status ID       Read a detached refresh receipt
   --logs ID         Read the last 100 lines of its log
   --cancel ID       Cancel a queued refresh before setup starts
@@ -77,7 +80,9 @@ Refresh options:
   --version REF        Select a specific source reference
 
 Refresh installs available updates for selected host tools and preserves provider
-logins. Successful setup queues a graceful T3 Code start/restart.
+logins. By default, live output is followed here and a desktop progress window
+survives T3 closing. Ctrl+C stops following without cancelling setup.
+Successful setup queues a graceful T3 Code start/restart.
 Explicit installer, Windows Update or servicing reboot requirements queue a
 visible 60-second desktop countdown with a Later button and no forced app closure.
 Pending file operations alone do not trigger reboot. Interrupted setup continues
@@ -177,10 +182,16 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
     }
     if ($command -ne 'refresh') { throw "Unsupported Windows command '$command'. Run basaltw --help for available commands." }
     if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
-    if ($options.Count -eq 2 -and $options[0] -in @('--status','--logs','--cancel')) {
+    if ($options.Count -eq 2 -and $options[0] -in @('--status','--logs','--cancel','--follow','--progress')) {
         $source = Get-NativeCliSource
         . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $source 'windows\Refresh.Common.ps1')
+        if ($options[0] -eq '--follow') { return Watch-NativeRefresh $options[1] }
+        if ($options[0] -eq '--progress') {
+            $null = Read-NativeRefreshReceipt $options[1]
+            Start-NativeRefreshProgress $options[1]
+            return 0
+        }
         if ($options[0] -eq '--cancel') {
             Write-Host ((Stop-NativeQueuedRefresh $options[1]) | ConvertTo-Json)
             return 0
@@ -197,7 +208,9 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
         return 0
     }
     $wait = $options -contains '--wait'
-    $options = @($options | Where-Object { $_ -ne '--wait' })
+    $detach = $options -contains '--detach'
+    if ($wait -and $detach) { throw 'Choose --wait or --detach' }
+    $options = @($options | Where-Object { $_ -notin @('--wait','--detach') })
     # Explicit switches also let an installed CLI update an older saved entry
     # point that predates automatic native reruns and source updates.
     $forward = @('-Profile', 'agent_windows', '-Resume', '-UpdateSource')
@@ -246,8 +259,10 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
         . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
         . (Join-Path $source 'windows\Refresh.Common.ps1')
         $job = Start-NativeRefresh -Saved $saved -Source $source -Arguments $forward
-        Write-Host ($job | ConvertTo-Json)
-        return 0
+        Write-Host ("Refresh queued: $($job.Id). A desktop progress window will show setup output and keep the result.")
+        Write-Host ("Status: $($job.StatusCommand)`nLog: $($job.LogsCommand)")
+        if ($detach) { return 0 }
+        return Watch-NativeRefresh $job.Id
     }
     $previousPreference = $ErrorActionPreference
     try {

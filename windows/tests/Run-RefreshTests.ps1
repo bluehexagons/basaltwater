@@ -5,6 +5,7 @@ function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) 
 $source = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $source 'windows\AgentWorkstation.Common.ps1')
 . (Join-Path $source 'windows\Refresh.Common.ps1')
+. (Join-Path $source 'windows\RefreshProgress.Common.ps1')
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-refresh-' + [guid]::NewGuid().ToString('N'))
 $savedLocal = $env:LOCALAPPDATA
 New-Item -ItemType Directory -Path $temporary | Out-Null
@@ -33,10 +34,14 @@ try {
     }
     function Unregister-ScheduledTask($TaskName, $TaskPath, [switch]$Confirm) { }
     function Show-NativeDesktopNotification { }
+    function Start-Process($FilePath, $ArgumentList, $WindowStyle) {
+        $script:ProgressLaunch = @{ File = $FilePath; Arguments = $ArgumentList; WindowStyle = $WindowStyle }
+    }
     function Get-NativeRefreshBoot { return $script:Boot }
     function Invoke-NativePowerShell7Installer($Shell, $Installer, $Options) {
         $script:Received = $Options
         Write-Host 'fixture setup output'
+        Write-Host 'fixture second line'
         if ($script:Failure) { throw 'private fixture failure' }
     }
     $script:DispatchFailure = $false; $script:Failure = $false; $script:Received = $null
@@ -47,21 +52,68 @@ try {
     $job = Start-NativeRefresh $saved $source $argsForRefresh
     Assert-True ($job.Status -eq 'queued' -and $script:Task.Principal.RunLevel -eq 'Limited' -and
         $script:Task.Action.Arguments -match '-WindowStyle Hidden') 'Refresh did not detach as a hidden limited-account task'
+    $window = New-NativeRefreshProgressWindow
+    try {
+        Assert-True (-not (Update-NativeRefreshProgressWindow $window $job.Id)) 'Queued progress falsely settled'
+        Assert-True ($window.Status.Text -match 'queued' -and $window.Summary.Text -match 'Waiting') 'Queued progress did not explain the wait'
+    } finally { $window.Form.Dispose() }
     $blocked = $false
     try { Start-NativeRefresh $saved $source $argsForRefresh | Out-Null } catch { $blocked = $_.Exception.Message -match 'still pending' }
     Assert-True $blocked 'Concurrent refreshes were dispatched'
     # PowerShell 7 state has no BOM; the PowerShell 5.1 dispatcher must read UTF-8.
     $receiptPath = Join-Path (Get-NativeRefreshDirectory $job.Id) 'receipt.json'
     [IO.File]::WriteAllText($receiptPath, [IO.File]::ReadAllText($receiptPath), [Text.UTF8Encoding]::new($false))
+    # Keep a progress reader open across a real NTFS receipt replacement. It
+    # must retain valid old JSON while new readers see the complete new receipt.
+    $snapshot = [IO.File]::Open($receiptPath, 'Open', 'Read', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $snapshotReader = New-Object IO.StreamReader($snapshot, [Text.Encoding]::UTF8)
+    try {
+        $receipt = Read-NativeRefreshReceipt $job.Id
+        $receipt | Add-Member NoteProperty ProgressFixture 'updated'
+        Write-NativeRefreshReceipt $receipt
+        Assert-True (-not ($snapshotReader.ReadToEnd() | ConvertFrom-Json).PSObject.Properties['ProgressFixture'] -and
+            (Read-NativeRefreshReceipt $job.Id).ProgressFixture -eq 'updated') 'Concurrent reader/writer saw partial JSON or blocked receipt replacement'
+    } finally { $snapshotReader.Dispose() }
+    & {
+        # Model an older reader denying delete sharing; release it at the first
+        # retry, without sleeps or timing-dependent overlap.
+        $held = [IO.File]::OpenRead($receiptPath)
+        $script:ReceiptRetry = $false
+        function Start-Sleep($Milliseconds) {
+            Assert-True ($Milliseconds -eq 50) 'Receipt retry was unbounded'
+            $script:ReceiptRetry = $true
+            $held.Dispose()
+        }
+        try { Write-NativeRefreshReceipt (Read-NativeRefreshReceipt $job.Id) }
+        finally { $held.Dispose() }
+        Assert-True $script:ReceiptRetry 'Receipt replacement did not tolerate an overlapping legacy reader'
+    }
     Invoke-NativeRefreshWorker $job.Id
     $receipt = Read-NativeRefreshReceipt $job.Id
     Assert-True ($receipt.Status -eq 'complete' -and $script:Received.NoReboot -and $script:Received.StorageRoot -ceq $storageRoot) 'Refresh worker lost typed options, Unicode storage paths or completion'
     Assert-True ((Get-Content -LiteralPath $receipt.Log -Raw) -match 'fixture setup output') 'Detached refresh omitted output logs'
+    Assert-True ($script:ProgressLaunch.WindowStyle -eq 'Hidden') 'Progress helper opened a console alongside its GUI'
+    $progressCommand = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($script:ProgressLaunch.Arguments -split ' ')[-1]))
+    Assert-True ($progressCommand.Contains('Show-RefreshProgress.ps1') -and $progressCommand.Contains($job.Id)) 'Worker did not open progress for its own job'
+    $window = New-NativeRefreshProgressWindow
+    try {
+        Assert-True (Update-NativeRefreshProgressWindow $window $job.Id) 'Completed progress window did not settle'
+        Assert-True ($window.Status.Text -match 'complete' -and $window.Summary.Text -match 'successfully' -and
+            $window.Output.Text -match 'fixture second line' -and $window.Progress.Text -match 'Elapsed: \d+s') 'Progress omitted output, elapsed time or completion summary'
+        Assert-True ((Get-NativeRefreshElapsed ([pscustomobject]@{ StartedUtc = '2026-10-30T11:00:00Z'; CompletedUtc = '2026-10-30T11:01:07Z' })) -eq 67) 'Reopened progress showed monitor uptime instead of job duration'
+        $follow = Watch-NativeRefresh $job.Id 6>&1
+        Assert-True (@($follow | Where-Object { $_ -is [int] -and $_ -eq 0 }).Count -eq 1 -and
+            ($follow | Out-String) -match 'fixture second line') 'Following a completed job lost output or exit status'
+        $failedView = [pscustomobject]@{ Status = 'cleanup-uncertain' }
+        Assert-True ((Get-NativeRefreshSummary $failedView) -match 'installer may still be running') 'Uncertain progress encouraged a blind retry'
+    } finally { $window.Form.Dispose() }
     $script:Failure = $true
     $job = Start-NativeRefresh $saved $source $argsForRefresh
     Invoke-NativeRefreshWorker $job.Id
     $receipt = Read-NativeRefreshReceipt $job.Id
     Assert-True ($receipt.Status -eq 'failed' -and ($receipt | ConvertTo-Json) -notmatch 'private fixture failure') 'Worker failure was hidden or leaked vendor detail into receipt'
+    $follow = Watch-NativeRefresh $job.Id 6>&1
+    Assert-True (@($follow | Where-Object { $_ -is [int] -and $_ -eq 1 }).Count -eq 1) 'Following failed refresh returned success'
     $script:DispatchFailure = $true
     $failed = $false
     try { Start-NativeRefresh $saved $source $argsForRefresh | Out-Null } catch { $failed = $true }

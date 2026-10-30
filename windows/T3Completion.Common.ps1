@@ -93,7 +93,16 @@ function Start-NativeT3Desktop([string]$Desktop) {
         if (-not $value) { $value = [Environment]::GetEnvironmentVariable($name, 'Machine') }
         [Environment]::SetEnvironmentVariable($name, $value, 'Process')
     }
-    Start-Process -FilePath $Desktop -WorkingDirectory $env:USERPROFILE -ErrorAction Stop | Out-Null
+    # Do not use WindowStyle Hidden: that can hide the application's GUI too.
+    # CREATE_NO_WINDOW suppresses console allocation while GUI windows open normally.
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $Desktop
+    $info.WorkingDirectory = $env:USERPROFILE
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $process = [Diagnostics.Process]::Start($info)
+    if (-not $process) { throw 'Could not start T3 Code desktop' }
+    $process.Dispose()
 }
 
 function Get-NativeT3TaskArguments([string]$Command) {

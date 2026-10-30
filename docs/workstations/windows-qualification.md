@@ -152,3 +152,35 @@ interruption recovery. See the corresponding
 [Antistatic qualification record](https://github.com/bluehexagons/antistatic/blob/main/docs/qa/native.md#verified-windows-local-qualification)
 and [snake2d record](https://github.com/bluehexagons/snake2d/blob/main/docs/manual-testing.md#recorded-windows-automated-qualification--2026-10-28)
 for project-specific boundaries.
+
+## Recorded local run: 2026-10-30
+
+The refreshed Windows 11 Home 10.0.26100 account was inspected before applying
+the accompanying Windows integration changes. Saved setup was complete at
+`007e581c8242f22e61e8576d37854168e7aeb7ae`. Private evidence remains under
+the account's Basaltwater qualification directory.
+
+- Host doctor passed all 27 checks, including T3 login startup, Sunshine and
+  configured storage. GitHub/Codex authentication and Git identity/long-path
+  configuration passed. The system and development volumes reported healthy.
+  No required reboot or current Device Manager error was reported.
+- Both recent detached refresh receipts were complete. The extra visible console
+  was confirmed to contain only T3 processes and hidden without closing T3.
+  The changed launcher passed disposable console/GUI executable fixtures:
+  no console allocation and a visible GUI. An actual T3 relaunch using the new
+  launcher remains a separate check.
+- The complete native offline suite passed. Focused refresh, CLI, desktop launch,
+  provider dependency and drive-root argument checks passed. A native progress
+  window was opened against an existing completed refresh and closed by a
+  disposable smoke fixture; output wrapping and retained job duration were
+  visually checked. This did not apply setup or qualify an upgrade/reboot.
+  Concurrent receipt tests retained an old snapshot across atomic replacement
+  and exercised bounded retry for readers denying delete sharing.
+- Documentation links passed. The Linux CLI documentation checker could not
+  run in native Windows because its controller imports the POSIX `pwd` module.
+- Windows recorded one shutdown-time `0x9F` driver power-state failure on
+  October 28, before the latest refresh. Its first parameter was `0x4`, a
+  Plug-and-Play synchronization timeout. The minidump is present but access
+  requires administrator privileges; no responsible driver was identified or
+  changed. This historical failure remains unresolved. See Microsoft's
+  [bug-check reference](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-0x9f--driver-power-state-failure).

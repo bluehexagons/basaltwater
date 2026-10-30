@@ -19,6 +19,61 @@ try {
     $env:LOCALAPPDATA = $temporary
     if (-not $env:SystemRoot) { $env:SystemRoot = $temporary }
     & {
+        # Run a disposable console-subsystem app through the real launcher.
+        # Its console allocation is observable even when the test has a console.
+        $fixture = Join-Path $temporary 'T3 launch fixture.exe'
+        Add-Type -OutputAssembly $fixture -OutputType ConsoleApplication -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class T3LaunchFixture {
+    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+    public static void Main() {
+        File.WriteAllText(Environment.GetEnvironmentVariable("BASALTWATER_T3_TEST_RESULT"), GetConsoleWindow().ToInt64().ToString());
+        using (var ready = EventWaitHandle.OpenExisting(Environment.GetEnvironmentVariable("BASALTWATER_T3_TEST_EVENT"))) ready.Set();
+    }
+}
+'@
+        $result = Join-Path $temporary 'console.txt'
+        $eventName = 'Local\BasaltwaterT3Test-' + [guid]::NewGuid().ToString('N')
+        $event = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset, $eventName)
+        $beforeResult = $env:BASALTWATER_T3_TEST_RESULT; $beforeEvent = $env:BASALTWATER_T3_TEST_EVENT
+        try {
+            $env:BASALTWATER_T3_TEST_RESULT = $result; $env:BASALTWATER_T3_TEST_EVENT = $eventName
+            Start-NativeT3Desktop $fixture
+            Assert-True ($event.WaitOne(10000)) 'Desktop launch fixture did not finish'
+            Assert-True ((Get-Content -LiteralPath $result -Raw) -eq '0') 'Desktop launcher allocated/inherited an output console'
+            # The same launch flags must leave GUI windows visible.
+            $guiFixture = Join-Path $temporary 'T3 GUI launch fixture.exe'
+            Add-Type -OutputAssembly $guiFixture -OutputType WindowsApplication -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
+using System;
+using System.IO;
+using System.Threading;
+using System.Windows.Forms;
+public static class T3GuiLaunchFixture {
+    [STAThread] public static void Main() {
+        using (var form = new Form()) {
+            form.Shown += (sender, args) => {
+                File.WriteAllText(Environment.GetEnvironmentVariable("BASALTWATER_T3_TEST_RESULT"), form.Visible.ToString());
+                using (var ready = EventWaitHandle.OpenExisting(Environment.GetEnvironmentVariable("BASALTWATER_T3_TEST_EVENT"))) ready.Set();
+                form.Close();
+            };
+            Application.Run(form);
+        }
+    }
+}
+'@
+            $null = $event.Reset()
+            Start-NativeT3Desktop $guiFixture
+            Assert-True ($event.WaitOne(10000)) 'Desktop GUI fixture did not appear'
+            Assert-True ((Get-Content -LiteralPath $result -Raw) -eq 'True') 'Console suppression hid the desktop GUI'
+        } finally {
+            $event.Dispose()
+            $env:BASALTWATER_T3_TEST_RESULT = $beforeResult; $env:BASALTWATER_T3_TEST_EVENT = $beforeEvent
+        }
+    }
+    & {
         function Show-NativeRebootNotice { $script:Notices++ }
         function Set-NativeT3Login($Source) { $script:Logins++ }
         function Queue-NativeT3Completion($Source) { $script:Queues++ }

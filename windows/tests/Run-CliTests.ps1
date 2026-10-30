@@ -58,6 +58,7 @@ try {
     Assert-Throws { Invoke-NativeCli @('refresh', '--storage-root', 'F:\root', '--storage-drive', 'G') } 'Choose one'
     Assert-Throws { Invoke-NativeCli @('refresh', '--storage-drive', 'F', '--storage-root', 'G:\root') } 'Choose one'
     Assert-Throws { Invoke-NativeCli @('refresh', '--channel', 'other') } 'Channel must'
+    Assert-Throws { Invoke-NativeCli @('refresh', '--wait', '--detach') } 'Choose --wait or --detach'
     Assert-Throws { Invoke-NativeCli @('refresh', '--version', "main`n") } 'Invalid release'
     Assert-Throws { Invoke-NativeCli @('agent') } 'Unsupported Windows command'
     Assert-Throws { Invoke-NativeCli @('refresh') } 'No saved native Windows setup'
@@ -164,6 +165,25 @@ exit ([int]$env:BASALTWATER_TEST_EXIT)
     Assert-True ($LASTEXITCODE -eq 0) 'Installed refresh launcher failed'
     $forwarded = Get-Content -LiteralPath $env:BASALTWATER_TEST_CAPTURE -Raw | ConvertFrom-Json
     Assert-True ($forwarded.StorageRoot -eq 'F:\cache with spaces & punctuation') 'Installed launcher split the storage argument'
+    # Test default following and explicit detachment without scheduling anything.
+    $refreshSource = Join-Path $temporary 'refresh CLI fixture'
+    New-Item -ItemType Directory -Path (Join-Path $refreshSource 'windows') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $refreshSource 'windows\AgentWorkstation.Common.ps1') -Value '# fixture'
+    Set-Content -LiteralPath (Join-Path $refreshSource 'windows\Refresh.Common.ps1') -Value @'
+function Start-NativeRefresh($Saved, $Source, $Arguments) {
+    return [pscustomobject]@{ Id = 'fixture'; StatusCommand = 'status fixture'; LogsCommand = 'logs fixture' }
+}
+function Watch-NativeRefresh($Id) { Write-Host 'fixture live setup output'; return 23 }
+'@
+    try {
+        @{ Source = $refreshSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
+        $output = & $launcher refresh | Out-String
+        Assert-True ($LASTEXITCODE -eq 23 -and $output -match 'fixture live setup output') 'Default refresh did not follow output or propagate the result'
+        $output = & $launcher refresh --detach | Out-String
+        Assert-True ($LASTEXITCODE -eq 0 -and $output -notmatch 'fixture live setup output' -and $output -match 'queued') 'Explicit detachment waited or lost submission status'
+        $output = & $launcher refresh --follow fixture | Out-String
+        Assert-True ($LASTEXITCODE -eq 23 -and $output -match 'fixture live setup output') 'Existing-job follow lost output or result'
+    } finally { Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8 }
     foreach ($drive in @('f', 'F:')) {
         & $launcher refresh --storage-drive $drive --dry-run | Out-Null
         Assert-True ($LASTEXITCODE -eq 0) 'Installed drive-based refresh failed'

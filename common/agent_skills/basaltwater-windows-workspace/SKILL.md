@@ -16,10 +16,15 @@ The native `basaltw` command supports help, version, saved-installation `info`,
 Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
 to update Basaltwater from main and reapply saved selections, including available
 WinGet/npm tool updates; provider logins are preserved. `basaltw --help` lists Windows options.
-Refresh returns a detached job ID: inspect `refresh --status ID` and `--logs ID`
-for completion. `--wait` runs in the invoking terminal; `--cancel ID` only cancels
+Refresh follows live output in the terminal by default and opens a desktop
+progress window that keeps its summary and survives T3 closing. Ctrl+C stops
+following without cancelling setup; `--detach` returns after submission.
+Inspect `refresh --status ID` and `--logs ID`, resume terminal output with
+`--follow ID`, or reopen the progress window with `--progress ID`.
+`--wait` runs setup directly in the invoking terminal; `--cancel ID` only cancels
 a queued job. An updating T3 installer can close its desktop. Successful desktop
-setup configures current-account login startup with a hidden PowerShell helper.
+setup configures current-account login startup with a hidden PowerShell helper
+and launches T3 without allocating an output console.
 Windows setup uses the root `install.ps1` with `-Profile agent_windows` and
 optional feature flags; downloaded and checkout entry points save the same
 selections. The documented one-command PowerShell invocation installs a new PC
