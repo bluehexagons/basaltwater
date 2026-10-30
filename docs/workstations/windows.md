@@ -294,8 +294,9 @@ or failure summary and the retained log path. Pressing Ctrl+C stops following
 and leaves setup running. Long steps can be quiet while their installer runs; the
 terminal prints a status heartbeat every 15 seconds. No completion percentage
 is estimated. Review setup output for separate T3 restart/reboot notices.
-The job ID supports `refresh --status ID`, `--logs ID`, `--follow ID`, and cancellation while queued with
-`--cancel ID`. Use `--detach` to return immediately after submission, or `--wait`
+The job ID supports `refresh --status ID`, `--logs ID`, `--follow ID`, and
+cancellation while queued with `--cancel ID`. Use `--detach` to return
+immediately after submission, or `--wait`
 to run setup directly in the terminal without an independent worker.
 If an update closes T3 and its terminal, reconnect from a new PowerShell terminal
 with `--follow ID` to see output and the result.

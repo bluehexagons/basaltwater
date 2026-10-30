@@ -83,7 +83,7 @@ def check_links(repository: Path) -> list[str]:
                     continue  # External URLs and illustrative absolute artifact paths.
                 destination = (base / unquote(parsed.path)).resolve() if parsed.path else source
                 line_number = text.count("\n", 0, match.start()) + 1
-                location = f"{source.relative_to(repository)}:{line_number}"
+                location = f"{source.relative_to(repository).as_posix()}:{line_number}"
                 if not destination.is_relative_to(repository) or not destination.exists():
                     errors.append(f"{location}: missing local path: {match[1] or match[2]}")
                 elif parsed.fragment and destination.is_file() and destination.suffix.lower() in {".md", ".html"}:

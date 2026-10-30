@@ -164,6 +164,8 @@ the account's Basaltwater qualification directory.
   configured storage. GitHub/Codex authentication and Git identity/long-path
   configuration passed. The system and development volumes reported healthy.
   No required reboot or current Device Manager error was reported.
+  The updated checkout doctor passed all 28 checks after adding bundled Git
+  Bash diagnostics; its actual Bash executable also passed a version probe.
 - Both recent detached refresh receipts were complete. The extra visible console
   was confirmed to contain only T3 processes and hidden without closing T3.
   The changed launcher passed disposable console/GUI executable fixtures:
@@ -175,8 +177,11 @@ the account's Basaltwater qualification directory.
   retained job duration, reconnecting, detachment and failure exit status.
   Concurrent receipt tests retained an old snapshot across atomic replacement
   and exercised bounded retry for readers denying delete sharing.
-- Documentation links passed. The Linux CLI documentation checker could not
-  run in native Windows because its controller imports the POSIX `pwd` module.
+- Both documentation checkers passed on native Windows. The CLI checker now
+  reads parser registrations without importing the POSIX controller. Portable
+  regression tests cover imported builders, aliases, nested commands, unsupported
+  patterns, missing docs and stable diagnostic paths. Runtime parser parity
+  remains a POSIX-only check.
 - Windows recorded one shutdown-time `0x9F` driver power-state failure on
   October 28, before the latest refresh. Its first parameter was `0x4`, a
   Plug-and-Play synchronization timeout. The minidump is present but access
