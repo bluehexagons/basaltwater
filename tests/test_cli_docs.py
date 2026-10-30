@@ -111,6 +111,22 @@ class CliDocumentationTests(unittest.TestCase):
         with self.assertRaisesRegex(check_cli_docs.RegistrationError, "recursive parser builder"):
             check_cli_docs.root_commands(self.root)
 
+    def test_shadowed_builder_cannot_hide_undocumented_commands(self) -> None:
+        for shadow in (
+            'def add_more(root):\n    root.add_parser("undocumented")',
+            'add_more = lambda root: root.add_parser("undocumented")',
+            'from lib.other import add_more',
+        ):
+            with self.subTest(shadow=shadow):
+                self.parser(shadow + '\nadd_more(subparsers)', 'from lib.tools import add_more')
+                self.write('lib/tools.py', 'def add_more(root):\n    root.add_parser("documented")\n')
+                self.write('docs/reference/command-line.md', 'basaltw documented\n')
+                output = StringIO()
+                with patch.object(check_cli_docs, 'ROOT', self.root), redirect_stderr(output):
+                    self.assertEqual(check_cli_docs.main(), 1)
+                self.assertIn('basaltwater.py:', output.getvalue())
+                self.assertIn('shadowing or rebinding', output.getvalue())
+
     def test_missing_or_empty_parser_cannot_pass(self) -> None:
         for source in (None, "pass", '"""No registrations yet."""'):
             with self.subTest(source=source):

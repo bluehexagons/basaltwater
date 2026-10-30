@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import re
+import symtable
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -37,13 +38,16 @@ def root_commands(repository: Path) -> set[str]:
         if key in active:
             raise RegistrationError(f"{path}: recursive parser builder {function}")
         active.add(key)
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
         definitions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
         fn = definitions.get(function)
         if fn is None:
             fail(path, tree, f"cannot resolve parser builder {function}")
         if fn.decorator_list:
             fail(path, fn, "decorated parser builders are unsupported")
+        scope = next(child for child in symtable.symtable(source, str(path), "exec").get_children()
+                     if child.get_name() == function and child.get_lineno() == fn.lineno)
         declaration = None
         if parameter is None:
             # This is the root collection, not credentials or other nested commands.
@@ -109,6 +113,12 @@ def root_commands(repository: Path) -> set[str]:
                 if not isinstance(call.func, ast.Name) or len(call.args) != 1 or call.keywords:
                     fail(path, call, "unsupported parser builder call")
                 builder = call.func.id
+                # Python treats bindings anywhere in a function as local,
+                # including nested definitions/imports and conditional writes.
+                # Never mistake such a callable for the module's builder.
+                binding = scope.lookup(builder)
+                if binding.is_local() or binding.is_nonlocal() or binding.is_assigned():
+                    fail(path, call, f"local shadowing or rebinding of parser builder {builder} is unsupported")
                 target = path
                 if builder not in definitions:
                     module, builder = imports.get(builder, (None, builder))
