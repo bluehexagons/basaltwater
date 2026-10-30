@@ -5,6 +5,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import unittest
+from unittest.mock import patch
+
+from lib import build_protocol
 
 from lib.build_protocol import (
     DEFAULT_LIMITS,
@@ -68,6 +71,19 @@ class BuildProtocolTest(unittest.TestCase):
         parsed["source"]["revision"] = "e" * 40
         parsed["limits"]["log_bytes"] = 1
         self.assertEqual(request, build_request())
+
+    def test_parsing_and_hashing_enforce_the_same_encoded_byte_limit(self):
+        request = build_request()
+        request["components"][0]["env"]["LABEL"] = "café"
+        raw = encode_document(request)
+        expected = hashlib.sha256(raw).hexdigest()
+        with patch.object(build_protocol, "MAX_REQUEST_BYTES", len(raw)):
+            self.assertEqual(parse_build_request(request), request)
+            self.assertEqual(request_digest(request), expected)
+        with patch.object(build_protocol, "MAX_REQUEST_BYTES", len(raw) - 1):
+            for operation in (parse_build_request, request_digest):
+                with self.subTest(operation=operation.__name__), self.assertRaisesRegex(ValueError, "byte limit"):
+                    operation(request)
 
     def test_build_payload_cannot_carry_target_or_credential_fields(self):
         for field in ("target", "runtime_env", "env_file", "credentials", "deploy_command"):
@@ -203,6 +219,44 @@ class BuildProtocolTest(unittest.TestCase):
                 request["limits"][field] = limit
                 with self.assertRaises(ValueError):
                     validate_artifact_for_request(artifact_descriptor(request), request)
+
+    def test_nested_exports_allow_parents_and_contents_but_reject_prefix_siblings(self):
+        descriptor = artifact_descriptor()
+        descriptor["components"][0].update(type="static", artifacts=[
+            "dist/assets", "dist/index.html", "site/café/index.html",
+        ])
+        directories = ("dist", "dist/assets", "site", "site/café")
+        files = ("dist/assets/app.js", "dist/index.html", "site/café/index.html")
+        descriptor["entries"] = [
+            {"path": path, "kind": "directory", "size": 0, "sha256": "", "executable": False}
+            for path in directories
+        ] + [
+            {"path": path, "kind": "file", "size": 1, "sha256": "e" * 64, "executable": False}
+            for path in files
+        ]
+        self.assertEqual(parse_artifact_descriptor(descriptor)["entries"],
+                         sorted(descriptor["entries"], key=lambda entry: entry["path"]))
+        for path, kind in (("dist/assets-other", "directory"), ("dist/unlisted", "directory"),
+                           ("dist/index.html.bak", "file"), ("site/caf", "directory"),
+                           ("site/café/other.html", "file")):
+            changed = copy.deepcopy(descriptor)
+            changed["entries"].append({"path": path, "kind": kind, "size": 0,
+                                       "sha256": "e" * 64 if kind == "file" else "",
+                                       "executable": False})
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "undeclared output"):
+                parse_artifact_descriptor(changed)
+
+    def test_root_export_keeps_parent_validation_and_explicit_nested_exports(self):
+        descriptor = artifact_descriptor()
+        descriptor["components"][0].update(type="static", artifacts=["."])
+        self.assertEqual(parse_artifact_descriptor(descriptor), descriptor)
+        descriptor["entries"].pop(0)
+        with self.assertRaisesRegex(ValueError, "parent directory"):
+            parse_artifact_descriptor(descriptor)
+        descriptor = artifact_descriptor()
+        descriptor["components"][0]["artifacts"] = ["bin", "bin/missing"]
+        with self.assertRaisesRegex(ValueError, "declared output is missing"):
+            parse_artifact_descriptor(descriptor)
 
     def test_descriptor_is_independent_and_cannot_gain_deploy_fields(self):
         descriptor = artifact_descriptor()

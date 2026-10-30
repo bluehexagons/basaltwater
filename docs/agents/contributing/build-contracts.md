@@ -52,6 +52,8 @@ The parser imposes upper bounds; admitting
 policy can lower them. Parsing alone does not reserve or enforce resources.
 The request digest covers the normalized complete request, including attempt
 ID, source, commands, environment, exports, platform and limits.
+Parsing and hashing share the same validated canonical encoding and byte limit;
+hashing does not serialize that normalized request a second time.
 
 ## Retained descriptor and bundle
 
@@ -64,6 +66,11 @@ metadata has zero bytes, an empty checksum and no executable flag. Consumers
 normalize directories to `0755`, files to `0644` or `0755`, and the private
 extraction root to `0700`; ownership, set-ID bits and extended metadata are not
 transported.
+Export membership uses indexed exact/ancestor lookups and a sorted prefix
+lookup for parent directories. It does not compare every inventory entry with
+every export. Directory ancestry, missing exports, root exports and rejection
+of undeclared siblings retain the same validation contract; indexes are private
+to that parse and do not cache authority or source observations.
 
 The uncompressed bundle is `BASALTWATER-ARTIFACT\0\x01\n`, followed by an
 eight-byte unsigned big-endian descriptor length, the UTF-8 JSON descriptor,

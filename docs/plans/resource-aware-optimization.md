@@ -1,13 +1,16 @@
 # Resource-aware optimization
 
-Status: selected serial optimizations are implemented: focused CLI parser
+Status: selected efficiency improvements are implemented: focused CLI parser
 construction, deferred root metadata, bounded quiet-test output, artifact
 inventory during snapshot copying, one periodic source-storage scan and less
-CI installer work. A bounded [development benchmark](../../scripts/benchmark_development.py)
+CI installer work. Larger allocations can explicitly overlap independent Make
+checks while the covered suite stays serial. Artifact export validation uses
+indexed lookups, and request hashing reuses its validated canonical encoding.
+A bounded [development benchmark](../../scripts/benchmark_development.py)
 supports comparable checkout and installed-launcher measurements. The
 [coverage map](testing-coverage.md) owns native qualification limits. Shared
 resource admission, test worker pools, new caches and multi-job build capacity
-below remain proposed; they are not enabled by these serial-path changes.
+below remain proposed; these changes do not enable them.
 
 The agreed minimum for basic CLI use, lightweight editing and focused tests is
 **1 vCPU and 1 GiB RAM**. Improve that experience while allowing larger machines
@@ -299,6 +302,14 @@ Start with [`run_tests.py`](../../run_tests.py), the [Makefile](../../Makefile),
 the [Debian wrapper](../../scripts/run_debian_ci.py) and existing
 [branch](../../.github/workflows/tests.yml)/[release](../../.github/workflows/release.yml) workflows.
 
+An implemented smaller step uses native `make -j2 check-ci`: independent
+static/artifact checks overlap with one serial covered suite. The wrapper
+defaults to one job and allows an explicit two-job choice; hosted full/release
+jobs select two. This does not implement module workers, automatic resource
+selection or a shared coordination domain. The outer runner/operator owns the
+allocation and concurrent invocations. See the contributor guide and measured
+follow-up below; retain the phase-1 requirements for managed pools.
+
 - Start opt-in module-level worker processes on one runner. Preserve class and
   module fixture lifetimes; threads cannot isolate process-global mocks. Review
   ports, paths, environment, timers and child processes; mark genuinely exclusive
@@ -453,6 +464,40 @@ stopping or reverting deployment-related changes.
   handoffs and review/retry costs instead of assuming a smaller model always
   reduces total work.
 
+## Larger-allocation follow-up
+
+The follow-up used a shared Debian development allocation with six affinity
+CPUs and an inherited 4.34 GiB memory ceiling (2.90 GiB soft high threshold).
+This is a reference workload measurement, not qualification of the proposed
+8/16/32 GiB fixtures or of full checks on the 1 GiB basic-development fixture.
+OS caches and CPU frequency were uncontrolled; raw logs and samples stay private.
+
+| Workload | Before | After | Evidence |
+| --- | --- | --- | --- |
+| Repository shell-safety scan | 2.61 s median; 307 AST parses | 1.84 s median; 144 parses | Three samples per variant; normalized Unicode keywords still detected, comments/string literals excluded |
+| Artifact descriptor validation, 13,481 entries / 640 exports | 0.774 s median | 0.232 s median | Three samples per variant; identical canonical output; indexed membership avoids the entry/export cross-product |
+| Full checks, first same-source pair | 186.4 s serial | 180.1 s with two Make jobs | 8,799 tests / six local skips; exactly equal executed lines and branch arcs |
+| Full checks, combined protocol changes | 185.8 s serial | 182.8 s with two Make jobs | 8,802 tests / six local skips; full covered suite remains a single execution |
+
+The modest elapsed-time improvement from Make overlap is separate from total
+compute. It does not establish a portable speedup or a reason to add more jobs.
+Both parallel runs stayed below the inherited soft memory threshold with no
+increase in its pressure/OOM counters, sampled every 250 ms. Those observations
+include other work in that cgroup and are not exclusive job or whole-guest peaks.
+Wheel snapshots exclude coverage databases and SQLite side files while retaining
+`.coveragerc`. A native Make graph fixture confirmed actual artifact/coverage
+overlap, exactly-once execution and failure propagation from either branch.
+
+Protocol regressions retain Unicode byte-limit enforcement, root and nested
+exports, required directory ancestry and rejection of prefix siblings. A seeded
+2,000-case comparison against the previous public parser matched 441 accepted
+and 1,559 rejected inventories, in addition to focused behavioral tests.
+Request hashing removes one duplicate serialization; interleaved CPU timings
+varied with host frequency, so no broad runtime speedup is claimed for that change.
+Queue claiming selects the minimum persisted sequence without sorting all queued
+records, and sequence validation constructs its uniqueness set once. Fresh
+ledger validation, cancellation checks and durable ownership remain in place.
+
 ## Next bounded deliverables
 
 Use the existing harness and serial measurements before choosing another
@@ -463,7 +508,11 @@ during the validated copy; retain the [bundle contract](../agents/contributing/b
 unless another measured content pass remains.
 
 Collect CI phase timings across representative runs before preparing an image
-or cache. A two-process test prototype is a separate opt-in experiment: first
+or cache. The first hosted overlap run spent 8 seconds on APT installation in
+the full job but 65 seconds in the Node-only job, while Python dependencies took
+5–6 seconds. Keep registry/APT variability distinct from suite cost before
+introducing a maintained image or dependency cache. A two-process test prototype
+is a separate opt-in experiment: first
 establish the phase-1 budget and descendant-ownership boundary, then compare
 identical tests/outcomes and total compute against serial execution. Do not
 enable pools merely because a machine reports spare CPUs. Runtime compression,

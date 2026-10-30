@@ -8,6 +8,7 @@ and deployment credentials. Returned documents own their nested collections.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 import hashlib
 import json
 import re
@@ -178,8 +179,8 @@ def _components(value: object, *, build: bool) -> list[dict[str, Any]]:
     return components
 
 
-def parse_build_request(value: object) -> dict[str, Any]:
-    """Validate the build-only v1 payload; caller policy may impose lower limits."""
+def _build_request_document(value: object) -> tuple[dict[str, Any], bytes]:
+    """Validate once and retain the bounded canonical encoding for hashing."""
     data = _record(value, {
         "schema", "request_id", "project", "source", "platform", "components", "limits",
     }, "build request")
@@ -191,13 +192,17 @@ def parse_build_request(value: object) -> dict[str, Any]:
         "components": _components(data["components"], build=True),
         "limits": _limits(data["limits"]),
     }
-    encode_document(result, maximum=MAX_REQUEST_BYTES)
-    return result
+    return result, encode_document(result, maximum=MAX_REQUEST_BYTES)
+
+
+def parse_build_request(value: object) -> dict[str, Any]:
+    """Validate the build-only v1 payload; caller policy may impose lower limits."""
+    return _build_request_document(value)[0]
 
 
 def request_digest(value: object) -> str:
     """Bind all build inputs and the attempt identity to a canonical digest."""
-    return hashlib.sha256(encode_document(parse_build_request(value), maximum=MAX_REQUEST_BYTES)).hexdigest()
+    return hashlib.sha256(_build_request_document(value)[1]).hexdigest()
 
 
 def _entry(value: object) -> dict[str, Any]:
@@ -229,16 +234,22 @@ def parse_artifact_descriptor(value: object) -> dict[str, Any]:
     if len(paths) != len(entries) or sum(item["size"] for item in entries) > MAX_ARTIFACT_BYTES:
         raise ValueError("artifact inventory: duplicate paths or excessive size")
     components = _components(data["components"], build=False)
-    exports = [path for component in components for path in component["artifacts"]]
+    exports = {path for component in components for path in component["artifacts"]}
+    ordered_exports = sorted(exports)
     for item in entries:
         path = item["path"]
         parts = path.split("/")
-        if any(paths.get("/".join(parts[:index]), {}).get("kind") != "directory"
-               for index in range(1, len(parts))):
+        parents = ["/".join(parts[:index]) for index in range(1, len(parts))]
+        if any(paths.get(parent, {}).get("kind") != "directory" for parent in parents):
             raise ValueError("artifact inventory: missing or invalid parent directory")
-        if not any(root == "." or path == root or path.startswith(root + "/")
-                   or (item["kind"] == "directory" and root.startswith(path + "/"))
-                   for root in exports):
+        declared = "." in exports or path in exports or any(parent in exports for parent in parents)
+        if not declared and item["kind"] == "directory":
+            # The first export at/after this prefix proves whether this directory
+            # leads to a declared output, without scanning every export per entry.
+            prefix = path + "/"
+            index = bisect_left(ordered_exports, prefix)
+            declared = index < len(ordered_exports) and ordered_exports[index].startswith(prefix)
+        if not declared:
             raise ValueError("artifact inventory: undeclared output")
     for root in exports:
         if root != "." and root not in paths:

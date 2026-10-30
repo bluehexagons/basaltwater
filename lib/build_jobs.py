@@ -240,8 +240,8 @@ def _validate_state(value: object) -> dict[str, Any]:
     if not isinstance(jobs, dict) or len(jobs) > MAX_OPERATIONS:
         raise ValueError("Build store exceeds its operation limit")
     records = {key: _validate_record(key, record) for key, record in jobs.items()}
-    sequences = [record["sequence"] for record in records.values()]
-    if len(set(sequences)) != len(sequences) or set(sequences) != set(range(1, last_sequence + 1)):
+    sequences = {record["sequence"] for record in records.values()}
+    if len(sequences) != len(records) or sequences != set(range(1, last_sequence + 1)):
         raise ValueError("Build store submission sequence is incomplete or duplicated")
     if last_sequence != len(records):
         raise ValueError("Build store sequence does not match retained operations")
@@ -832,13 +832,13 @@ class BuildJobStore:
                     )
                 if state["draining"]:
                     return None
-                queued = sorted(
+                record = min(
                     (record for record in state["jobs"].values() if record["state"] == "queued"),
                     key=lambda record: record["sequence"],
+                    default=None,
                 )
-                if not queued:
+                if record is None:
                     return None
-                record = queued[0]
                 # Expiration was checked after loading the locked state, directly
                 # before this durable running marker is written.
                 if now >= record["expires_at"]:
