@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 from common import agent_task_steps as steps
 from lib.config import SetupConfig
+from lib.operation_state import OperationStateError, OperationStateStore
+from lib.remote_utils import CommandExecutionError
 
 
 class TaskRefreshGuardTests(unittest.TestCase):
@@ -120,6 +122,18 @@ class TaskWorkerSetupTests(unittest.TestCase):
         self.panel_path = Path(self.home) / steps.PANEL_UNIT
         self.panel_path.write_text(steps.PANEL_MARKER + "\n[Service]\nUser=agent\n")
 
+    def _current_definition(self, unit: str) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout=(
+            "LoadState=loaded\n"
+            f"FragmentPath={Path(self.home) / unit}\n"
+            "NeedDaemonReload=no\n"
+        ))
+
+    def _write_worker_definition(self, unit: str, content: str) -> None:
+        path = Path(self.home) / unit
+        path.write_text(content)
+        path.chmod(0o644)
+
     def test_render_keeps_provider_and_workspace_identity_non_root(self) -> None:
         content = steps.render_task_worker(self.account, revision="reviewed")
         self.assertIn("User=agent", content)
@@ -222,14 +236,211 @@ class TaskWorkerSetupTests(unittest.TestCase):
 
     def test_unchanged_active_worker_does_not_interrupt_work(self) -> None:
         content = steps.WORKER_MARKER + "\nunchanged"
-        (Path(self.home) / f"basaltwater-agent-tasks-{self.account.pw_uid}.service").write_text(content)
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+
+        def command(arguments, **_kwargs):
+            if arguments[1] == "show":
+                return self._current_definition(unit)
+            return SimpleNamespace(returncode=0, stdout="enabled\n")
+
         with patch.object(steps, "render_task_worker", return_value=content), patch.object(steps, "_active", return_value=True), patch.object(
             steps, "_worker_busy",
-        ) as busy, patch.object(steps, "replace_units") as replace, patch.object(steps, "run") as run:
+        ) as busy, patch.object(steps, "replace_units") as replace, patch.object(
+            steps, "_refresh_guard",
+        ) as guard, patch.object(steps, "run", side_effect=command) as run:
             steps.configure_agent_task_worker(self.config)
         busy.assert_not_called()
+        guard.assert_not_called()
+        replace.assert_not_called()
+        self.assertEqual([call.args[0][1] for call in run.call_args_list], ["show", "is-enabled"])
+
+    def test_unchanged_busy_worker_repairs_persistent_enablement_without_refresh(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        for initial_state in ("disabled", "enabled-runtime"):
+            with self.subTest(initial_state=initial_state):
+                state = initial_state
+
+                def command(arguments, **_kwargs):
+                    nonlocal state
+                    if arguments[1] == "show":
+                        return self._current_definition(unit)
+                    if arguments == ["systemctl", "enable", unit]:
+                        state = "enabled"
+                    return SimpleNamespace(returncode=int(state == "disabled"), stdout=state + "\n")
+
+                with patch.object(steps, "render_task_worker", return_value=content), patch.object(
+                    steps, "_active", return_value=True,
+                ), patch.object(steps, "_worker_busy", return_value=True) as busy, patch.object(
+                    steps, "_refresh_guard",
+                ) as guard, patch.object(steps, "replace_units") as replace, patch.object(
+                    steps, "run", side_effect=command,
+                ) as run:
+                    steps.configure_agent_task_worker(self.config)
+                self.assertEqual([call.args[0] for call in run.call_args_list[1:]], [
+                    ["systemctl", "is-enabled", unit], ["systemctl", "enable", unit],
+                    ["systemctl", "is-enabled", unit],
+                ])
+                busy.assert_not_called()
+                guard.assert_not_called()
+                replace.assert_not_called()
+
+    def test_unchanged_worker_enablement_failure_is_not_reported_ready(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        for enable_fails in (False, True):
+            with self.subTest(enable_fails=enable_fails):
+                def command(arguments, **_kwargs):
+                    if arguments[1] == "show":
+                        return self._current_definition(unit)
+                    if arguments == ["systemctl", "enable", unit] and enable_fails:
+                        raise CommandExecutionError(" ".join(arguments), 1, "enable refused")
+                    return SimpleNamespace(returncode=0, stdout="enabled-runtime\n")
+
+                with patch.object(steps, "render_task_worker", return_value=content), patch.object(
+                    steps, "_active", return_value=True,
+                ), patch.object(steps, "_refresh_guard") as guard, patch.object(
+                    steps, "replace_units",
+                ) as replace, patch.object(steps, "run", side_effect=command) as run, patch(
+                    "builtins.print",
+                ) as messages, self.assertRaisesRegex(
+                    (RuntimeError, CommandExecutionError), "enable refused|not persistently enabled",
+                ):
+                    steps.configure_agent_task_worker(self.config)
+                self.assertEqual(run.call_count, 3 if enable_fails else 4)
+                guard.assert_not_called()
+                replace.assert_not_called()
+                self.assertFalse(any("worker ready" in call.args[0] for call in messages.call_args_list))
+
+    def test_current_worker_preserves_and_refuses_unfinished_unit_recovery(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        marker = Path(self.home) / ".basaltwater-unit-operation.json"
+        for malformed in (False, True):
+            with self.subTest(malformed=malformed):
+                if malformed:
+                    marker.write_text("invalid marker; preserve\n")
+                else:
+                    store = OperationStateStore(str(marker))
+                    store.begin("systemd-units", unit, "published")
+                    store.close()
+                previous = marker.read_bytes()
+                with patch.object(steps, "render_task_worker", return_value=content), patch.object(
+                    steps, "_active", return_value=True,
+                ) as active, patch.object(steps, "_refresh_guard") as guard, patch.object(
+                    steps, "replace_units",
+                ) as replace, patch.object(steps, "run") as run, self.assertRaisesRegex(
+                    OperationStateError, "transaction-recovery.md",
+                ):
+                    steps.configure_agent_task_worker(self.config)
+                self.assertEqual(marker.read_bytes(), previous)
+                active.assert_not_called()
+                guard.assert_not_called()
+                replace.assert_not_called()
+                run.assert_not_called()
+                marker.unlink()
+
+    def test_current_worker_does_not_bypass_marker_lookup_errors(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        marker = Path(self.home) / ".basaltwater-unit-operation.json"
+        real_lstat = os.lstat
+
+        def lookup(path, *args, **kwargs):
+            if os.fspath(path) == str(marker):
+                raise PermissionError("marker lookup denied")
+            return real_lstat(path, *args, **kwargs)
+
+        with patch.object(steps, "render_task_worker", return_value=content), patch(
+            "lib.operation_state.os.lstat", side_effect=lookup,
+        ), patch.object(steps, "_refresh_guard") as guard, patch.object(
+            steps, "replace_units",
+        ) as replace, patch.object(steps, "run") as run, self.assertRaisesRegex(
+            OperationStateError, "marker lookup failed",
+        ):
+            steps.configure_agent_task_worker(self.config)
+        guard.assert_not_called()
         replace.assert_not_called()
         run.assert_not_called()
+
+    def test_current_worker_does_not_bypass_an_owned_unit_transaction(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        store = OperationStateStore(str(Path(self.home) / ".basaltwater-unit-operation.json"))
+        with store.ownership(), patch.object(
+            steps, "render_task_worker", return_value=content,
+        ), patch.object(steps, "_refresh_guard") as guard, patch.object(
+            steps, "replace_units",
+        ) as replace, patch.object(steps, "run") as run, self.assertRaisesRegex(
+            OperationStateError, "owned by another process",
+        ):
+            steps.configure_agent_task_worker(self.config)
+        guard.assert_not_called()
+        replace.assert_not_called()
+        run.assert_not_called()
+
+    def test_stale_or_unknown_loaded_worker_definition_cannot_restart_busy_work(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        current = self._current_definition(unit).stdout
+        for output in (
+            current.replace("NeedDaemonReload=no", "NeedDaemonReload=yes"),
+            current.replace(str(Path(self.home) / unit), "/another/worker.service"),
+            current.replace("LoadState=loaded", "LoadState=not-found"),
+            "LoadState=loaded\n", "",
+        ):
+            with self.subTest(output=output), patch.object(
+                steps, "render_task_worker", return_value=content,
+            ), patch.object(steps, "_active", return_value=True), patch.object(
+                steps, "_worker_busy", return_value=True,
+            ), patch.object(steps, "replace_units") as replace, patch.object(
+                steps, "run", return_value=SimpleNamespace(returncode=0, stdout=output),
+            ) as run, self.assertRaisesRegex(RuntimeError, "active prompt task"):
+                steps.configure_agent_task_worker(self.config)
+            replace.assert_not_called()
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], ["show"])
+
+    def test_worker_metadata_drift_cannot_bypass_busy_refresh_guard(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        expected = dict(content=content, mode=0o644, uid=os.geteuid(), gid=os.getegid())
+        for field, value in (("mode", 0o666), ("uid", os.geteuid() + 1), ("gid", os.getegid() + 1)):
+            with self.subTest(field=field), patch.object(
+                steps, "render_task_worker", return_value=content,
+            ), patch.object(steps, "snapshot_unit_file", return_value={**expected, field: value}), patch.object(
+                steps, "_active", return_value=True,
+            ), patch.object(steps, "_worker_busy", return_value=True), patch.object(
+                steps, "replace_units",
+            ) as replace, patch.object(steps, "run") as run, self.assertRaisesRegex(
+                RuntimeError, "active prompt task",
+            ):
+                steps.configure_agent_task_worker(self.config)
+            replace.assert_not_called()
+            run.assert_not_called()
+
+    def test_unknown_loaded_worker_definition_falls_back_to_idle_replacement(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        unit = f"basaltwater-agent-tasks-{self.account.pw_uid}.service"
+        self._write_worker_definition(unit, content)
+        for code, output in ((1, ""), (0, "LoadState=loaded\n"), (0, "unreadable output")):
+            with self.subTest(code=code, output=output), patch.object(
+                steps, "render_task_worker", return_value=content,
+            ), patch.object(steps, "_active", return_value=True), patch.object(
+                steps, "_worker_busy", return_value=False,
+            ), patch.object(steps, "_panel_handoff", return_value=nullcontext()), patch.object(
+                steps, "replace_units",
+            ) as replace, patch.object(
+                steps, "run", return_value=SimpleNamespace(returncode=code, stdout=output),
+            ) as run:
+                steps.configure_agent_task_worker(self.config)
+            replace.assert_called_once_with({unit: content}, activate=(unit,), unit_dir=self.home)
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], ["show"])
 
     def _legacy_fixture(self, *, running: bool = False) -> tuple[Path, int]:
         """Use real lifetime and state locks, with all service actions mocked."""

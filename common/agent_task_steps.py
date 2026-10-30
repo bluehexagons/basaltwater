@@ -14,6 +14,7 @@ from lib.agent_task_api import WORKER_MARKER, worker_unit
 from lib.atomic_io import parse_json
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_system_services
+from lib.operation_state import OperationStateError, OperationStateStore, RECOVERY_GUIDANCE
 from lib.remote_utils import is_dry_run, run
 from lib.unit_transaction import replace_units, snapshot_unit_file
 from lib.validation import validate_filesystem_path, validate_no_control_characters
@@ -89,6 +90,53 @@ WantedBy=multi-user.target
 
 def _active(unit: str) -> bool:
     return run(["systemctl", "is-active", "--quiet", unit], check=False, capture_output=True).returncode == 0
+
+
+def _ensure_persistent_enablement(unit: str) -> None:
+    """Repair boot activation without interrupting an active task worker."""
+    def enabled() -> bool:
+        result = run(["systemctl", "is-enabled", unit], check=False, capture_output=True)
+        return result.returncode == 0 and result.stdout.strip() == "enabled"
+
+    if enabled():
+        return
+    run(["systemctl", "enable", unit], timeout=120)
+    if not enabled():
+        raise RuntimeError(f"Task worker is not persistently enabled after repair: {unit}")
+
+
+def _reuse_current_worker(unit: str, content: str) -> bool:
+    """Reuse an active current definition only outside unfinished unit work."""
+    path = os.path.join(UNIT_DIR, unit)
+    store = OperationStateStore(os.path.join(UNIT_DIR, ".basaltwater-unit-operation.json"))
+    with store.ownership():
+        pending = store.load()
+        if pending is not None:
+            raise OperationStateError(
+                f"Unfinished {pending.operation_type} operation {pending.operation_id} "
+                f"is recorded in {store.path} at phase {pending.phase}; {RECOVERY_GUIDANCE}"
+            )
+        current = snapshot_unit_file(path)
+        if current is not None and not current["content"].startswith(WORKER_MARKER + "\n"):
+            raise RuntimeError(f"Refusing an unmanaged task worker: {path}")
+        if current != dict(content=content, mode=0o644, uid=os.geteuid(), gid=os.getegid()):
+            return False
+        loaded = run([
+            "systemctl", "show", unit, "--property=LoadState", "--property=FragmentPath",
+            "--property=NeedDaemonReload",
+        ], check=False, capture_output=True)
+        if loaded.returncode != 0 or not isinstance(loaded.stdout, str):
+            return False
+        try:
+            properties = dict(line.split("=", 1) for line in loaded.stdout.splitlines())
+        except ValueError:
+            return False
+        if properties != {"LoadState": "loaded", "FragmentPath": path, "NeedDaemonReload": "no"}:
+            return False
+        if not _active(unit):
+            return False
+        _ensure_persistent_enablement(unit)
+        return True
 
 
 @contextmanager
@@ -244,7 +292,7 @@ def configure_agent_task_worker(config: SetupConfig) -> None:
     for name in ("agent_tasks.py", "agent_task_context.py", "agent_task_worker.py"):
         digest.update((SOURCE_ROOT / "lib" / name).read_bytes())
     content = render_task_worker(account, revision=digest.hexdigest()[:16])
-    if previous is not None and previous["content"] == content and _active(unit):
+    if previous is not None and previous["content"] == content and _reuse_current_worker(unit, content):
         print(f"  ✓ Independent task worker ready: {unit}")
         return
     with _refresh_guard(account) as parent, ExitStack() as handoff:

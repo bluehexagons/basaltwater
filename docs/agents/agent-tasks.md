@@ -526,6 +526,16 @@ its legacy fallback scheduler only when Codex is installed for its account.
 Shutdown stops new claims and cancels active work. A shutdown during claim
 reservation cannot be cleared by the next invocation; a cancelled claim is
 recorded before the worker exits.
+
+When an unchanged worker is already active, setup verifies persistent boot
+enablement and repairs it without restarting the worker or interrupting a busy
+task. Runtime-only enablement is insufficient; an unsuccessful repair fails setup.
+Reuse also requires the expected unit-file ownership and permissions, and
+systemd must report the managed definition loaded without a pending daemon
+reload. Missing or stale observations use the guarded idle
+refresh, and retained unit-transaction recovery markers block setup until
+[verified recovery](../operations/transaction-recovery.md).
+
 Refreshing a busy worker is refused until its active invocation ends. Setup
 holds the task-state lock through the idle check and service replacement so a
 new claim cannot race that check. For a live legacy schema-1 worker, setup

@@ -606,6 +606,10 @@ declare private source networks:
 --web-interface-source 192.168.1.0/24
 ```
 
+Setup preserves the existing T3 HTTPS forward and its public port when device
+pairing is disabled. It removes only the pairing forward before reconciling the
+T3 endpoint, so rerunning setup does not tear down and recreate that endpoint.
+
 A non-loopback bind is rejected unless UFW is active and a private or
 non-global allowlist is present. Basaltwater reconciles only its own labeled
 UFW rules and refuses conflicting unmanaged rules on the managed ports.

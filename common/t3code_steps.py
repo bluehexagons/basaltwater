@@ -2193,7 +2193,7 @@ def install_t3code_web(config: SetupConfig) -> None:
     else:
         _remove_connect_restart_units(os.path.join(home, ".t3"))
         _remove_device_pairing()
-        _remove_t3_https(config)
+        _remove_t3_https(config, pairing_only=True)
         https_endpoints = _configure_t3_https(config, port, None)
         if https_endpoints:
             t3_https = https_endpoints.get("t3code")

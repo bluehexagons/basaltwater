@@ -433,6 +433,66 @@ class T3CodeWebTest(unittest.TestCase):
         with patch("common.t3code_steps.os.path.isfile", return_value=False):
             self.assertEqual(_configure_t3_https(self._config(), 3773, None), {})
 
+    def test_web_setup_without_pairing_preserves_existing_t3_https_endpoint(self) -> None:
+        for pairing_installed in (False, True):
+            with (
+                self.subTest(pairing_installed=pairing_installed),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                config = self._config(disable_device_pairing=True)
+                account = SimpleNamespace(pw_dir=home, pw_uid=os.getuid(), pw_gid=os.getgid())
+                admin_script = os.path.join(home, "admin-pair.py")
+                with open(admin_script, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# pairing fixture\n")
+                routes = {"t3code": 8448, "another-app": 8449}
+                if pairing_installed:
+                    routes["t3code-pairing"] = 8450
+                removals = []
+                utility = "/usr/local/bin/basaltwater-web"
+                gateway_script = "/opt/basaltwater/common/service_tools/basaltwater_web.py"
+                path_exists, is_file = os.path.exists, os.path.isfile
+
+                def command(command, **_kwargs):
+                    arguments = shlex.split(command)
+                    if arguments[2:4] == ["forward", "list"]:
+                        payload = {"forwards": [{"name": name} for name in routes]}
+                    elif arguments[2:4] == ["forward", "remove"]:
+                        name = arguments[4]
+                        removals.append(name)
+                        routes.pop(name)
+                        payload = {"removed": True}
+                    elif arguments[2:4] == ["forward", "add"]:
+                        name = arguments[4]
+                        # Match the gateway's reuse of an existing auto port.
+                        routes.setdefault(name, 8444)
+                        payload = {"listen": routes[name], "url": f"https://target:{routes[name]}/"}
+                    else:
+                        raise AssertionError(f"Unexpected host command: {command}")
+                    return SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+
+                for name, replacement in (
+                    ("pwd.getpwnam", account), ("os.geteuid", 0), ("is_dry_run", False),
+                ):
+                    stack.enter_context(patch(f"common.t3code_steps.{name}", return_value=replacement))
+                for name in (
+                    "os.chown", "_configure_firewall", "_install_t3_service",
+                    "_ensure_t3_agent_skill", "_remove_connect_restart_units", "_remove_device_pairing",
+                ):
+                    stack.enter_context(patch(f"common.t3code_steps.{name}"))
+                stack.enter_context(patch("common.t3code_steps.T3_ADMIN_PAIR_SCRIPT", admin_script))
+                stack.enter_context(patch("common.t3code_steps.os.path.exists", side_effect=lambda path: path == utility or path_exists(path)))
+                stack.enter_context(patch("common.t3code_steps.os.path.isfile", side_effect=lambda path: path == gateway_script or is_file(path)))
+                stack.enter_context(patch("common.t3code_steps.run", side_effect=command))
+                stack.enter_context(patch("common.godot_web_steps.configure_internal_web_host"))
+                stack.enter_context(patch("common.godot_web_steps.identities_for_config", return_value=["target"]))
+
+                install_t3code_web(config)
+                install_t3code_web(config)
+
+                self.assertEqual(routes, {"t3code": 8448, "another-app": 8449})
+                self.assertEqual(removals, ["t3code-pairing"] if pairing_installed else [])
+
     def test_https_removal_skips_missing_utility(self) -> None:
         with (
             patch("common.t3code_steps.os.path.exists", return_value=False),
