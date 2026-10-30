@@ -54,7 +54,8 @@ def configure_maintenance_timer(
 
     Existing units are replaced atomically and remain enabled while their new
     definitions are staged. This avoids the maintenance gap caused by deleting
-    working units before replacements have been written and loaded.
+    working units before replacements have been written and loaded. Healthy,
+    unchanged loaded groups retain their timer schedule without writes/restarts.
     """
     validate_service_name_uniqueness(service_name, [])
     validate_filesystem_path(script_path, must_exist=False)
@@ -188,7 +189,7 @@ WantedBy=timers.target
     try:
         replace_units(
             {f"{service_name}.service": service_content, f"{service_name}.timer": timer_content},
-            activate=(f"{service_name}.timer",), unit_dir=SYSTEMD_DIR,
+            activate=(f"{service_name}.timer",), unit_dir=SYSTEMD_DIR, preserve_unchanged=True,
         )
     except Exception as exc:
         print(f"  ⚠ {check_name} {purpose} replacement failed: {exc}")

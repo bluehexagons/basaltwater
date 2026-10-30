@@ -107,6 +107,15 @@ reloading states still block changes. If replacement fails, rollback restores
 the old definition and enablement but does not restart a previously broken
 service that it stopped. Removal verifies that automatic retries have stopped
 before deleting service files.
+Recurring maintenance timers can preserve an unchanged group without creating
+a new operation result, rewriting units, reloading systemd or restarting the
+timer. This path holds the same ownership lock and refuses an unfinished marker.
+It requires matching contents, mode and ownership for every unit, matching loaded
+fragment paths with no pending daemon reload, and active, persistently enabled
+activators. Missing observations or drift use the ordinary replacement boundary.
+This opt-in applies only to timer/path activation without preparation callbacks
+or deactivation. Explicit service activation still restarts the service because
+its executable or external configuration can change independently of unit text.
 A rename sync error can occur after the old release was restored: inspect the
 actual paths and service states rather than treating the error as proof that
 the old tree is still at its backup path. Port or marker-completion failures

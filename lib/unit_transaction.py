@@ -63,8 +63,34 @@ def inspect_unit_state(unit: str) -> dict[str, str]:
     return state
 
 
+def _activators_unchanged(units: dict[str, str], activate: tuple[str, ...], unit_dir: str) -> bool:
+    """Recognize a loaded, healthy timer/path group without changing its schedule."""
+    # Abstract templates have no inspectable running instance. Keep their
+    # installation on the ordinary transaction path, which never queries them.
+    if any(name.endswith("@.service") for name in units):
+        return False
+    for name, content in units.items():
+        path = os.path.abspath(os.path.join(unit_dir, name))
+        if snapshot_unit_file(path) != dict(content=content, mode=0o644, uid=os.geteuid(), gid=os.getegid()):
+            return False
+        output = _command(
+            "systemctl", "show", name,
+            "--property=LoadState,ActiveState,UnitFileState,FragmentPath,NeedDaemonReload", "--no-pager",
+        )
+        state = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        # Disk equality alone cannot establish what systemd has loaded. Include
+        # the companion service and drop-in freshness, even while it executes.
+        if (state.get("LoadState") != "loaded" or state.get("FragmentPath") != path
+                or state.get("NeedDaemonReload") != "no"):
+            return False
+        if name in activate and (state.get("ActiveState") != "active" or state.get("UnitFileState") != "enabled"):
+            return False
+    return True
+
+
 def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str,
-                     deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None) -> None:
+                     deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
+                     preserve_unchanged: bool = False) -> None:
     validate_filesystem_path(unit_dir, must_exist=False)
     if (not units and not remove) or not (set(activate) | set(deactivate)) <= units.keys():
         raise ValueError("Activation requires staged units")
@@ -93,6 +119,11 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
     for content in units.values():
         if not isinstance(content, str) or len(content.encode("utf-8")) > 1024 * 1024:
             raise ValueError("Unit content must be text no larger than 1 MiB")
+    if type(preserve_unchanged) is not bool:
+        raise ValueError("Unchanged activator selection must be a boolean")
+    if preserve_unchanged and (not activate or remove or deactivate or prepare is not None
+                               or any(not name.endswith((".timer", ".path")) for name in activate)):
+        raise ValueError("Preserving unchanged units requires timer/path activation without removal or preparation")
     operation = "unit-removal" if remove else "unit-replacement"
     if is_dry_run():
         print(f"  [DRY-RUN] Would {'remove' if remove else 'replace'} units: {', '.join(names)}")
@@ -103,6 +134,13 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
     resolved = False
     record = None
     try:
+        if preserve_unchanged:
+            with store.ownership():
+                # Never let matching files bypass an unfinished operation. If
+                # anything needs repair, begin below rechecks under its lock and
+                # takes fresh snapshots before the ordinary transaction.
+                if store.load() is None and _activators_unchanged(units, activate, unit_dir):
+                    return
         record = store.begin(operation, unit_dir, "staging", context={"units": list(names)})
         modified = False
         touched: list[str] = []
@@ -255,7 +293,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
 
 
 def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir: str = "/etc/systemd/system",
-                  deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None) -> None:
+                  deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
+                  preserve_unchanged: bool = False) -> None:
     """Validate, replace, enable and restart units, restoring on any failure.
 
     Only ``activate`` and ``deactivate`` units change running/enabled state. This lets
@@ -270,9 +309,17 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     publication, under the same lock and rollback boundary. It never runs in
     dry-run mode. Its failures restore unit files and activation state, but its
     filesystem, credential or other side effects are not rolled back.
+
+    ``preserve_unchanged`` is an opt-in for timer/path activation without
+    deactivation or preparation callbacks. Under the recovery lock it requires
+    matching file content/metadata, loaded definitions with no pending daemon
+    reload, and active, persistently enabled activators. A match performs no
+    writes, reload or restart; drift uses the ordinary recoverable transaction.
+    Service activation keeps its explicit restart behavior because external
+    configuration or executables may have changed independently of unit text.
     """
     _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir,
-                     deactivate=deactivate, prepare=prepare)
+                     deactivate=deactivate, prepare=prepare, preserve_unchanged=preserve_unchanged)
 
 
 def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system",

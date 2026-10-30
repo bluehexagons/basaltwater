@@ -47,6 +47,7 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
         self.assertIn("AccuracySec=1min", timer_content)
         self.assertIn("RandomizedDelaySec=30min", timer_content)
         self.assertEqual(mock_run.call_args.kwargs["activate"], ("auto-update-test.timer",))
+        self.assertTrue(mock_run.call_args.kwargs["preserve_unchanged"])
 
     def test_skips_when_prerequisite_is_missing(self):
         with tempfile.TemporaryDirectory() as unit_dir, patch(

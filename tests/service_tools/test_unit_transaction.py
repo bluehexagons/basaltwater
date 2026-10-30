@@ -43,6 +43,7 @@ class TestUnitTransaction(unittest.TestCase):
         output = ""
         if command[:2] == ["systemctl", "show"]:
             output = f"LoadState=loaded\nActiveState={self.active}\nSubState={self.substate}\nUnitFileState={self.enabled}\n"
+            output += f"FragmentPath={self.root / command[2]}\nNeedDaemonReload=no\n"
         elif command[:2] == ["systemctl", "enable"]:
             self.enabled = "enabled-runtime" if "--runtime" in command else "enabled"
         elif command[:2] == ["systemctl", "disable"]:
@@ -61,6 +62,138 @@ class TestUnitTransaction(unittest.TestCase):
         self.assertEqual(self.path.read_text(), "new unit")
         self.assertNotIn(["systemctl", "stop", "demo.timer"], self.commands)
         self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+
+    def test_unchanged_timer_preserves_files_schedule_and_last_recovery_result(self):
+        self.path.chmod(0o644)
+        previous = self.path.stat()
+        last = self.root / ".basaltwater-unit-operation.json.last.json"
+        last.write_text("retained result")
+        with patch.object(units, "write_text_atomic", wraps=units.write_text_atomic) as write, patch.object(
+            units.OperationStateStore, "begin", side_effect=AssertionError("unnecessary transaction"),
+        ):
+            units.replace_units({"demo.timer": "old unit"}, activate=("demo.timer",),
+                                unit_dir=str(self.root), preserve_unchanged=True)
+        write.assert_not_called()
+        self.assertEqual((self.path.stat().st_ino, self.path.stat().st_mtime_ns),
+                         (previous.st_ino, previous.st_mtime_ns))
+        self.assertEqual(last.read_text(), "retained result")
+        self.assertTrue(self.commands)
+        self.assertTrue(all(command[:2] == ["systemctl", "show"] for command in self.commands))
+
+    def test_current_companion_service_can_execute_without_interrupting_it(self):
+        self.path.chmod(0o644)
+        service = self.root / "demo.service"
+        service.write_text("oneshot")
+        service.chmod(0o644)
+        command = self.run_command
+
+        def running(args, **kwargs):
+            result = command(args, **kwargs)
+            if args[:3] == ["systemctl", "show", "demo.service"]:
+                result.stdout = result.stdout.replace("ActiveState=active", "ActiveState=activating")
+            return result
+
+        with patch.object(units, "run", side_effect=running):
+            units.replace_units({"demo.service": "oneshot", "demo.timer": "old unit"},
+                                activate=("demo.timer",), unit_dir=str(self.root), preserve_unchanged=True)
+        self.assertTrue(all(command[:2] == ["systemctl", "show"] for command in self.commands))
+        self.assertEqual({command[2] for command in self.commands}, {"demo.timer", "demo.service"})
+
+    def test_template_companion_falls_back_without_querying_abstract_service(self):
+        self.path.chmod(0o644)
+        template = self.root / "demo@.service"
+        template.write_text("template")
+        template.chmod(0o644)
+        units.replace_units({"demo@.service": "template", "demo.timer": "old unit"},
+                            activate=("demo.timer",), unit_dir=str(self.root), preserve_unchanged=True)
+        self.assertIn(["systemctl", "restart", "demo.timer"], self.commands)
+        self.assertFalse(any(command[0] == "systemctl" and "demo@.service" in command for command in self.commands))
+
+    def test_changed_files_or_unconfirmed_loaded_definition_use_recoverable_replacement(self):
+        command = self.run_command
+        cases = (
+            ("content", None), ("mode", None), ("owner", None), ("inactive", None),
+            ("disabled", None), ("runtime-enabled", None),
+            ("NeedDaemonReload=no", "NeedDaemonReload=yes"),
+            ("NeedDaemonReload=no\n", ""),
+            (f"FragmentPath={self.path}", "FragmentPath=/vendor/demo.timer"),
+            ("LoadState=loaded", "LoadState=not-found"),
+        )
+        for before, after in cases:
+            with self.subTest(drift=before):
+                self.commands.clear()
+                self.path.write_text("old unit")
+                self.path.chmod(0o640 if before == "mode" else 0o644)
+                self.active = "inactive" if before == "inactive" else "active"
+                self.enabled = {"disabled": "disabled", "runtime-enabled": "enabled-runtime"}.get(before, "enabled")
+
+                def run(args, **kwargs):
+                    result = command(args, **kwargs)
+                    if after is not None and "FragmentPath" in args[-2]:
+                        result.stdout = result.stdout.replace(before, after)
+                    return result
+
+                snapshot = units.snapshot_unit_file
+
+                def inspect(path):
+                    result = snapshot(path)
+                    if before == "owner" and result is not None:
+                        result["uid"] += 1
+                    return result
+
+                with patch.object(units, "run", side_effect=run), patch.object(
+                    units, "snapshot_unit_file", side_effect=inspect,
+                ):
+                    units.replace_units({"demo.timer": "new unit" if before == "content" else "old unit"},
+                                        activate=("demo.timer",), unit_dir=str(self.root), preserve_unchanged=True)
+                self.assertIn(["systemctl", "daemon-reload"], self.commands)
+                self.assertIn(["systemctl", "restart", "demo.timer"], self.commands)
+                result = json.loads((self.root / ".basaltwater-unit-operation.json.last.json").read_text())
+                self.assertEqual(result["outcome"], "succeeded")
+
+    def test_stale_companion_definition_requires_reload_even_when_timer_is_current(self):
+        self.path.chmod(0o644)
+        service = self.root / "demo.service"
+        service.write_text("oneshot")
+        service.chmod(0o644)
+        command = self.run_command
+
+        def stale(args, **kwargs):
+            result = command(args, **kwargs)
+            if args[:3] == ["systemctl", "show", "demo.service"]:
+                result.stdout = result.stdout.replace("NeedDaemonReload=no", "NeedDaemonReload=yes")
+            return result
+
+        with patch.object(units, "run", side_effect=stale):
+            units.replace_units({"demo.timer": "old unit", "demo.service": "oneshot"},
+                                activate=("demo.timer",), unit_dir=str(self.root), preserve_unchanged=True)
+        self.assertIn(["systemctl", "daemon-reload"], self.commands)
+        self.assertNotIn(["systemctl", "restart", "demo.service"], self.commands)
+
+    def test_unchanged_units_cannot_bypass_operation_ownership_or_recovery(self):
+        self.path.chmod(0o644)
+        store = units.OperationStateStore(str(self.root / ".basaltwater-unit-operation.json"))
+        with store.ownership():
+            with self.assertRaisesRegex(ValueError, "another process"):
+                units.replace_units({"demo.timer": "old unit"}, activate=("demo.timer",),
+                                    unit_dir=str(self.root), preserve_unchanged=True)
+        record = store.begin("unit-replacement", str(self.root), "staging")
+        store.close()
+        with self.assertRaisesRegex(ValueError, "Unfinished"):
+            units.replace_units({"demo.timer": "old unit"}, activate=("demo.timer",),
+                                unit_dir=str(self.root), preserve_unchanged=True)
+        self.assertEqual(store.load(), record)
+        self.assertEqual(self.commands, [])
+
+    def test_preservation_rejects_service_activation_and_callback_shortcuts(self):
+        for settings in ({"activate": ("demo.service",)}, {"deactivate": ("demo.timer",)},
+                         {"prepare": Mock()}, {"preserve_unchanged": "yes"}):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                units.replace_units({"demo.timer": "old unit", "demo.service": "service"},
+                                    unit_dir=str(self.root), **{
+                                        "activate": ("demo.timer",), "preserve_unchanged": True, **settings,
+                                    })
+        self.assertEqual(self.commands, [])
 
     def test_failed_service_waiting_to_restart_can_be_repaired(self):
         self.active, self.substate = "activating", "auto-restart"
