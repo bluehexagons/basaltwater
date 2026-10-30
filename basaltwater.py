@@ -274,7 +274,7 @@ class _CommandArgumentParser(argparse.ArgumentParser):
         return super().add_argument(*args, **kwargs)
 
 
-def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.ArgumentParser, argparse.ArgumentParser]:
+def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.ArgumentParser, argparse.ArgumentParser, argparse.ArgumentParser]:
     """Create the main argument parser for basaltwater."""
     parser = argparse.ArgumentParser(
         prog=LAUNCHER_NAME,
@@ -311,7 +311,8 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Run 'basaltw setup --help' for full options"
     )
-    add_setup_arguments(setup_parser, allow_steps=True, include_system_type=True)
+    if _command is None or _command in {"setup", "refresh"}:
+        add_setup_arguments(setup_parser, allow_steps=True, include_system_type=True)
     setup_parser.add_argument(
         "--ssh-key", dest="ssh_key", default=argparse.SUPPRESS,
         help="Controller SSH private key path (alias for --key)",
@@ -363,7 +364,8 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         default=None,
         help="Username (defaults to current user)"
     )
-    add_setup_arguments(patch_parser, allow_steps=True, include_host=False)
+    if _command is None or _command == "patch":
+        add_setup_arguments(patch_parser, allow_steps=True, include_host=False)
 
     shares_parser = subparsers.add_parser(
         "shares",
@@ -622,7 +624,8 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     )
     from lib.cachyos_refresh import add_refresh_arguments
 
-    add_refresh_arguments(refresh_parser, setup_parser)
+    if _command is None or _command == "refresh":
+        add_refresh_arguments(refresh_parser, setup_parser)
 
     credentials_parser = subparsers.add_parser(
         "credentials",
@@ -2395,9 +2398,37 @@ def run_shares_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parser_command(argv: list[str]) -> str | None:
+    """Select a tree only when the command position is unambiguous.
+
+    Completion may supply partial words and uses the full parser instead.
+    Unknown root options also fall back to the full parser for argparse errors.
+    """
+    if os.environ.get("_ARGCOMPLETE"):
+        return None
+    index = 0
+    while index < len(argv):
+        word = argv[index]
+        if word == "--workspace":
+            if index + 1 >= len(argv):
+                return None
+            index += 2
+        elif word.startswith("--workspace="):
+            index += 1
+        elif word in {"--help", "-h", "--version"}:
+            return ""
+        elif word.startswith("-"):
+            return None
+        else:
+            return word
+    return ""
+
+
 def main() -> int:
     """Main entry point for basaltw."""
-    parser, _setup_parser, _patch_parser = create_basaltwater_parser()
+    parser, _setup_parser, _patch_parser = create_basaltwater_parser(
+        _command=_parser_command(sys.argv[1:]),
+    )
 
     if argcomplete:
         argcomplete.autocomplete(parser)
