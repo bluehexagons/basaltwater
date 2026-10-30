@@ -91,6 +91,27 @@ Use `make check-ci` for that broad validation or when CI is unavailable.
 
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
+
+The Python documentation checks also run on native Windows with Python 3.11+
+from the repository root (use `python3` instead of `python` where appropriate):
+
+```text
+python scripts/check_cli_docs.py
+python scripts/check_doc_links.py
+python run_tests.py tests.test_cli_docs
+```
+
+These offline checks need only the standard library. The CLI checker reads actual
+root parser registrations without importing the Linux controller. It follows
+imported builders and local helper functions, includes literal names and aliases,
+and ignores nested commands. Nonliteral names/aliases, conditional registration,
+loops or other unsupported uses of root subparsers fail with a source location;
+extend the checker when introducing a new registration pattern. Existing alias
+exemptions remain explicit in the checker. POSIX tests also compare the static
+result with the runtime parser. These commands do not establish native Windows
+support for the Linux controller, full test suite or Make targets; full checks
+still require the documented Debian environment.
+
 CI installs the same `dev` and `completion` extras from `pyproject.toml`, so new
 test dependencies such as Guacamole's aiohttp are included automatically.
 
