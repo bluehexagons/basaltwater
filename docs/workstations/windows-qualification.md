@@ -184,7 +184,9 @@ the account's Basaltwater qualification directory.
   remains a POSIX-only check.
 - Windows recorded one shutdown-time `0x9F` driver power-state failure on
   October 28, before the latest refresh. Its first parameter was `0x4`, a
-  Plug-and-Play synchronization timeout. The minidump is present but access
-  requires administrator privileges; no responsible driver was identified or
-  changed. This historical failure remains unresolved. See Microsoft's
+  Plug-and-Play synchronization timeout. The initial audit did not read the
+  protected minidump. The operator subsequently identified the Xbox controller
+  driver during USB hardware inspection, reported recovery after reboot, and
+  considers the incident resolved for now. No USB fault reproduction was run
+  during the follow-up health checks. See Microsoft's
   [bug-check reference](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-0x9f--driver-power-state-failure).
