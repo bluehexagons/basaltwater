@@ -48,7 +48,7 @@ try {
     $script:Boot = '639200000000000000'
     $script:WorkerStartedBeforeFailure = $false; $script:DispatchClaim = $null
     $storageRoot = "F:\cache & quote's " + [char]0x03bb
-    $argsForRefresh = @('-Profile','agent_windows','-Resume','-UpdateSource','-NoReboot','-StorageRoot',$storageRoot)
+    $argsForRefresh = @('-Profile','agent_windows','-Resume','-UpdateSource','-NoRestartT3','-NoReboot','-StorageRoot',$storageRoot)
     $job = Start-NativeRefresh $saved $source $argsForRefresh
     Assert-True ($job.Status -eq 'queued' -and $script:Task.Principal.RunLevel -eq 'Limited' -and
         $script:Task.Action.Arguments -match '-WindowStyle Hidden') 'Refresh did not detach as a hidden limited-account task'
@@ -90,7 +90,7 @@ try {
     }
     Invoke-NativeRefreshWorker $job.Id
     $receipt = Read-NativeRefreshReceipt $job.Id
-    Assert-True ($receipt.Status -eq 'complete' -and $script:Received.NoReboot -and $script:Received.StorageRoot -ceq $storageRoot) 'Refresh worker lost typed options, Unicode storage paths or completion'
+    Assert-True ($receipt.Status -eq 'complete' -and $script:Received.NoRestartT3 -and $script:Received.NoReboot -and $script:Received.StorageRoot -ceq $storageRoot) 'Refresh worker lost typed options, Unicode storage paths or completion'
     Assert-True ((Get-Content -LiteralPath $receipt.Log -Raw) -match 'fixture setup output') 'Detached refresh omitted output logs'
     Assert-True ($script:ProgressLaunch.WindowStyle -eq 'Hidden') 'Progress helper opened a console alongside its GUI'
     $progressCommand = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($script:ProgressLaunch.Arguments -split ' ')[-1]))

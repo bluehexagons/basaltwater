@@ -105,7 +105,7 @@ function ConvertTo-NativeRefreshOptions([string[]]$Arguments) {
     $options = @{}
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
         $name = $Arguments[$index].TrimStart('-')
-        if ($Arguments[$index] -notmatch '\A-[A-Za-z]+\z' -or $options.ContainsKey($name)) { throw 'Invalid or duplicate refresh argument' }
+        if ($Arguments[$index] -notmatch '\A-[A-Za-z][A-Za-z0-9]*\z' -or $options.ContainsKey($name)) { throw 'Invalid or duplicate refresh argument' }
         if ($name -in $switches) { $options[$name] = $true }
         elseif ($name -in $values) {
             $index++
