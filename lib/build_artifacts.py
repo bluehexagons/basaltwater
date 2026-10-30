@@ -2,7 +2,8 @@
 
 The caller must stop build processes before packaging and keep its private
 artifact parent inaccessible to the build identity. No project archive is
-trusted. Files are copied through no-follow descriptors before inventorying.
+trusted. Files are hashed while copied through no-follow descriptors into
+private storage; bundle emission reads only that snapshot.
 Authentication and platform/runtime authorization belong to the caller.
 """
 
@@ -125,7 +126,7 @@ def _regular(root: int, path: str) -> Iterator[BinaryIO]:
         yield stream
 
 
-def _copy_file(source: int, destination: int, name: str, budget: dict[str, int]) -> None:
+def _copy_file(source: int, destination: int, name: str, budget: dict[str, int]) -> dict[str, Any]:
     descriptor = os.open(name, _READ, dir_fd=source)
     with os.fdopen(descriptor, "rb") as incoming:
         before = os.fstat(incoming.fileno())
@@ -136,12 +137,14 @@ def _copy_file(source: int, destination: int, name: str, budget: dict[str, int])
         output = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                          0o600, dir_fd=destination)
         with os.fdopen(output, "wb") as outgoing:
+            digest = hashlib.sha256()
             remaining = before.st_size
             while remaining:
                 content = incoming.read(min(_CHUNK, remaining))
                 if not content:
                     raise ValueError("Build export changed during snapshot")
                 outgoing.write(content)
+                digest.update(content)
                 remaining -= len(content)
             if incoming.read(1):
                 raise ValueError("Build export grew during snapshot")
@@ -151,11 +154,13 @@ def _copy_file(source: int, destination: int, name: str, budget: dict[str, int])
                 raise ValueError("Build export changed during snapshot")
             os.fchmod(outgoing.fileno(), 0o755 if before.st_mode & 0o111 else 0o644)
         budget["bytes"] -= before.st_size
+        return {"kind": "file", "size": before.st_size,
+                "sha256": digest.hexdigest(), "executable": bool(before.st_mode & 0o111)}
 
 
-def _snapshot(source: int, destination: int, exports: list[str], limits: dict) -> list[str]:
+def _snapshot(source: int, destination: int, exports: list[str], limits: dict) -> list[dict[str, Any]]:
     """Copy selected outputs into private storage; never traverse a job link."""
-    seen: set[str] = set()
+    entries: dict[str, dict[str, Any]] = {}
     budget = {"bytes": limits["artifact_bytes"]}
 
     def copy(parent: int, target: int, name: str, path: str, *, recurse: bool) -> None:
@@ -164,20 +169,21 @@ def _snapshot(source: int, destination: int, exports: list[str], limits: dict) -
         directory = stat.S_ISDIR(info.st_mode)
         if not directory and not stat.S_ISREG(info.st_mode):
             raise ValueError("Build export contains a link or special file")
-        if path not in seen:
-            if len(seen) >= limits["artifact_entries"]:
+        if path not in entries:
+            if len(entries) >= limits["artifact_entries"]:
                 raise ValueError("Build exports exceed the admitted entry limit")
             if directory:
                 os.mkdir(name, mode=0o755, dir_fd=target)
+                entry = {"kind": "directory", "size": 0, "sha256": "", "executable": False}
             else:
-                _copy_file(parent, target, name, budget)
-            seen.add(path)
+                entry = _copy_file(parent, target, name, budget)
+            entries[path] = {"path": path, **entry}
         if directory and recurse:
             child = os.open(name, _DIRECTORY, dir_fd=parent)
             output = os.open(name, _DIRECTORY, dir_fd=target)
             try:
-                with os.scandir(child) as entries:
-                    for entry in entries:
+                with os.scandir(child) as children:
+                    for entry in children:
                         if entry.name.casefold() not in CONTROL_NAMES:
                             copy(child, output, entry.name, path + "/" + entry.name, recurse=True)
             finally:
@@ -186,8 +192,8 @@ def _snapshot(source: int, destination: int, exports: list[str], limits: dict) -
 
     for export in exports:
         if export == ".":
-            with os.scandir(source) as entries:
-                for entry in entries:
+            with os.scandir(source) as children:
+                for entry in children:
                     if entry.name.casefold() not in CONTROL_NAMES:
                         copy(source, destination, entry.name, entry.name, recurse=True)
             continue
@@ -207,25 +213,7 @@ def _snapshot(source: int, destination: int, exports: list[str], limits: dict) -
         finally:
             os.close(parent)
             os.close(target)
-    return sorted(seen)
-
-
-def _inventory(root: int, paths: list[str]) -> list[dict[str, Any]]:
-    entries = []
-    for path in paths:
-        with _relative_parent(root, path) as (parent, name):
-            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
-        directory = stat.S_ISDIR(info.st_mode)
-        digest = hashlib.sha256()
-        if not directory:
-            with _regular(root, path) as stream:
-                while content := stream.read(_CHUNK):
-                    digest.update(content)
-        entries.append({"path": path, "kind": "directory" if directory else "file",
-                        "size": 0 if directory else info.st_size,
-                        "sha256": "" if directory else digest.hexdigest(),
-                        "executable": False if directory else bool(info.st_mode & 0o111)})
-    return entries
+    return [entries[path] for path in sorted(entries)]
 
 
 def _publish_tree(parent: int, source: str, destination: str) -> None:
@@ -256,16 +244,16 @@ def create_artifact(workspace: str, request: object, destination: str, *,
     job = parse_build_request(request)
     with _parent(destination) as (parent, name), _temporary_tree(parent) as (_, snapshot):
         with _directory(workspace) as source:
-            paths = _snapshot(source, snapshot,
-                              [path for item in job["components"] for path in item["artifacts"]],
-                              job["limits"])
+            entries = _snapshot(source, snapshot,
+                                [path for item in job["components"] for path in item["artifacts"]],
+                                job["limits"])
         descriptor = validate_artifact_for_request({
             "schema": 1, "request_id": job["request_id"], "project": job["project"],
             "request_sha256": request_digest(job), "source": job["source"],
             "platform": job["platform"], "components": [
                 {key: item[key] for key in ("name", "type", "artifacts")}
                 for item in job["components"]],
-            "toolchains": toolchains or {}, "entries": _inventory(snapshot, paths),
+            "toolchains": toolchains or {}, "entries": entries,
         }, job)
         encoded = encode_document(descriptor, maximum=MAX_DESCRIPTOR_BYTES)
         temporary = ".bundle-" + secrets.token_hex(16)

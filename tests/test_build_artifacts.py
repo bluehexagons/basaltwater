@@ -86,14 +86,31 @@ class BuildArtifactsTest(unittest.TestCase):
         self.assertFalse((self.destination / ".gitignore").exists())
 
     def test_inventory_comes_from_private_snapshot_after_workspace_changes(self):
-        original = build_artifacts._inventory
-        def change_workspace(root, paths):
+        original = build_artifacts._snapshot
+        def change_workspace(*args):
+            entries = original(*args)
             (self.workspace / "bin/api").write_bytes(b"later-data")
-            return original(root, paths)
-        with patch.object(build_artifacts, "_inventory", side_effect=change_workspace):
+            return entries
+        with patch.object(build_artifacts, "_snapshot", side_effect=change_workspace):
             info = self.package()
         self.unpack(info["sha256"])
         self.assertEqual((self.destination / "bin/api").read_bytes(), b"binary-content")
+
+    def test_empty_and_multichunk_files_have_exact_inventory_and_payloads(self):
+        empty = self.workspace / "bin/empty"
+        empty.write_bytes(b"")
+        payload = b"\x00\xff\n" * 19
+        (self.workspace / "bin/api").write_bytes(payload)
+        self.request["components"][0]["artifacts"] = ["bin"]
+        with patch.object(build_artifacts, "_CHUNK", 7):
+            info = self.package()
+            self.unpack(info["sha256"])
+        entries = {entry["path"]: entry for entry in info["descriptor"]["entries"]}
+        for name, content in (("bin/empty", b""), ("bin/api", payload)):
+            with self.subTest(path=name):
+                self.assertEqual(entries[name]["size"], len(content))
+                self.assertEqual(entries[name]["sha256"], hashlib.sha256(content).hexdigest())
+                self.assertEqual((self.destination / name).read_bytes(), content)
 
     def test_symlinks_at_export_leaf_parent_and_source_root_are_rejected(self):
         for kind in ("leaf", "parent", "root"):

@@ -73,7 +73,9 @@ rejects duplicate keys and non-finite numbers. The descriptor is at most 64 MiB;
 inventory and payload must satisfy both protocol and admitted request limits.
 
 `create_artifact()` copies exports through no-follow file/directory descriptors
-into a private snapshot before calculating inventory or writing the bundle.
+into a private snapshot, collecting bounded inventory and per-file hashes during
+that validated copy. Bundle emission reads only the private snapshot; it does
+not reread job-writable exports or make a separate content pass for inventory.
 The caller must first stop all build work and use a broker-owned parent that
 the build identity cannot access. Symbolic links, hard-linked files and special
 files are rejected. Whole-root static exports omit Git and other control
