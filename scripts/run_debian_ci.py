@@ -53,10 +53,13 @@ def _path(value: str) -> Path:
 
 def run_debian_ci(
     python: str, tool_cache: str, *, node: str, coverage: bool = False, node_only: bool = False,
+    check_jobs: int = 1,
 ) -> int:
     """Try alternate pulls only; never repeat failed checks or setup commands."""
     if coverage and node_only:
         raise ValueError("Node compatibility checks do not run full-suite coverage")
+    if type(check_jobs) is not int or check_jobs not in (1, 2):
+        raise ValueError("CI check jobs must be 1 or 2")
     executable, cache, workspace = _path(python), _path(tool_cache), _path(str(ROOT))
     node_executable = _path(node)
     if not cache.is_dir() or not executable.is_file() or not executable.is_relative_to(cache):
@@ -83,6 +86,8 @@ def run_debian_ci(
     command = "make test SUITE=node TEST_ARGS='--durations 10'" if node_only else (
         "make check-ci" if coverage else "make check"
     )
+    if check_jobs == 2:
+        command = command.replace("make ", "make -j2 ", 1)
     script = CONTAINER_SCRIPT + "ci_phase checks " + command + "\n"
     try:
         result = subprocess.run([
@@ -110,13 +115,16 @@ def main() -> int:
     parser.add_argument("--python", required=True, help="actions/setup-python executable")
     parser.add_argument("--tool-cache", required=True, help="Hosted runner's tool cache")
     parser.add_argument("--node", required=True, help="actions/setup-node executable inside the tool cache")
+    parser.add_argument("--check-jobs", type=int, choices=(1, 2), default=1,
+                        help="Independent Make checks to overlap; the test suite stays serial (default: 1)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--coverage", action="store_true")
     mode.add_argument("--node-only", action="store_true", help="Run the Node compatibility suite only")
     args = parser.parse_args()
     try:
         return run_debian_ci(args.python, args.tool_cache, node=args.node,
-                             coverage=args.coverage, node_only=args.node_only)
+                             coverage=args.coverage, node_only=args.node_only,
+                             check_jobs=args.check_jobs)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
         print(f"Debian CI failed: {exc}", file=sys.stderr)
         return 1

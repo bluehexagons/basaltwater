@@ -65,6 +65,9 @@ REQUIRED_WHEEL_PATHS = (
 SOURCE_COPY_IGNORE = shutil.ignore_patterns(
     ".cache",
     ".codex",
+    ".coverage",
+    ".coverage.*",
+    ".coverage-*",
     ".env",
     ".env.*",
     ".git",

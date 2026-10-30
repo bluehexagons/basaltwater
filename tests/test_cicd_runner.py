@@ -78,6 +78,24 @@ class DebianCITests(unittest.TestCase):
         self.assertEqual([call.args[0][1] for call in run.call_args_list], ["pull", "run", "rm"])
         self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1], "ci_phase checks make check")
 
+    def test_parallel_checks_run_one_make_and_preserve_failure(self):
+        for coverage in (False, True):
+            with self.subTest(coverage=coverage), patch.object(ci.subprocess, "run", side_effect=[
+                    Mock(returncode=0), Mock(returncode=7), Mock(returncode=0)]) as run:
+                self.assertEqual(self.run_ci(coverage=coverage, check_jobs=2), 7)
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], ["pull", "run", "rm"])
+            target = "check-ci" if coverage else "check"
+            self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1],
+                             f"ci_phase checks make -j2 {target}")
+
+    def test_invalid_job_limits_fail_before_any_commands(self):
+        for jobs in (0, -1, 3, True, "2", 1.5):
+            with self.subTest(jobs=jobs), patch.object(ci.subprocess, "run") as run:
+                with self.assertRaisesRegex(ValueError, "CI check jobs"):
+                    self.run_ci(check_jobs=jobs)
+                self.probe.assert_not_called()
+                run.assert_not_called()
+
     def test_timeout_or_interruption_cleans_up_only_the_owned_container(self):
         for error in (subprocess.TimeoutExpired("docker run", 900), KeyboardInterrupt()):
             with self.subTest(error=type(error).__name__), patch.object(ci.subprocess, "run", side_effect=[

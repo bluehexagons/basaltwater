@@ -38,7 +38,7 @@ jobs:
       - name: Run Debian checks
         env:
           BASALTWATER_CI_PYTHON: ${{ steps.python.outputs.python-path }}
-        run: python3 scripts/run_debian_ci.py --python "$BASALTWATER_CI_PYTHON" --tool-cache "$RUNNER_TOOL_CACHE" --node "$(command -v node)"
+        run: python3 scripts/run_debian_ci.py --python "$BASALTWATER_CI_PYTHON" --tool-cache "$RUNNER_TOOL_CACHE" --node "$(command -v node)" --check-jobs 2
 
   release:
     needs: test

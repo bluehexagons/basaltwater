@@ -33,6 +33,7 @@ help:
 	@echo "Examples:"
 	@echo "  make check-fast              # Quick edit/test loop; no wheel build"
 	@echo "  make check-ci                # Run the same checks as branch CI"
+	@echo "  make -j2 check-ci            # Larger allocation: overlap independent checks"
 	@echo "  make test                    # Concise output, shows summary only"
 	@echo "  make test-verbose            # Full test names and all output"
 	@echo "  make test TEST=test_scrub_par2"

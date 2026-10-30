@@ -98,6 +98,9 @@ class WheelArtifactTest(unittest.TestCase):
             (package / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
             (root / "build").mkdir()
             (root / "build" / "stale.pyc").write_bytes(b"stale")
+            for name in (".coverage", ".coverage.host.123.random", ".coverage-journal", ".coverage-wal"):
+                (root / name).write_bytes(b"changing coverage data")
+            (root / ".coveragerc").write_text("[run]\nbranch = True\n", encoding="utf-8")
             cache = package / "__pycache__"
             cache.mkdir()
             (cache / "module.pyc").write_bytes(b"cache")
@@ -124,6 +127,7 @@ class WheelArtifactTest(unittest.TestCase):
             self.assertTrue((observed_source / "common" / "module.py").is_file())
             self.assertFalse((observed_source / "build").exists())
             self.assertFalse((observed_source / "common" / "__pycache__").exists())
+            self.assertEqual(list(observed_source.glob(".coverage*")), [observed_source / ".coveragerc"])
             self.assertNotEqual(os.path.realpath(observed_source), os.path.realpath(root))
 
 

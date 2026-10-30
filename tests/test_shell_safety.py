@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import unicodedata
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -26,7 +27,37 @@ def _python_sources(repo_root: Path) -> Iterator[Path]:
                 yield Path(directory) / name
 
 
+def _shell_true_lines(source: str, filename: str) -> list[int]:
+    """Parse only sources that can contain a normalized shell keyword."""
+    if "shell" not in source and "shell" not in unicodedata.normalize("NFKC", source):
+        return []
+    tree = ast.parse(source, filename=filename)
+    return [
+        node.lineno for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and any(
+            keyword.arg == "shell"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+    ]
+
+
 class TestShellSafety(unittest.TestCase):
+    def test_shell_detection_preserves_normalized_keywords_and_ignores_text(self):
+        sources = (
+            ("run(command, shell=True)", [1]),
+            ("run(command, sℎell=True)", [1]),
+            ("run(command, ｓｈｅｌｌ=True)", [1]),
+            ("run(command, shell=False)", []),
+            ("# shell=True\nmessage = 'shell=True'", []),
+            ("message = '✓'\nrun(command, café=True)", []),
+            ("run(command)\nrun(other, shell=True)", [2]),
+        )
+        for source, expected in sources:
+            with self.subTest(source=source):
+                self.assertEqual(_shell_true_lines(source, "example.py"), expected)
+
     def test_generated_and_private_trees_are_pruned_but_nested_source_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -47,24 +78,11 @@ class TestShellSafety(unittest.TestCase):
             if path.name == "test_shell_safety.py":
                 continue
             source = path.read_text(encoding="utf-8")
-            # Non-ASCII identifiers can normalize to "shell" during parsing.
-            if "shell" not in source and source.isascii():
-                continue
             try:
-                tree = ast.parse(source, filename=str(path))
+                lines = _shell_true_lines(source, str(path))
             except SyntaxError as exc:
                 self.fail(f"Failed to parse {path.relative_to(repo_root)}: {exc}")
-
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                if any(
-                    keyword.arg == "shell"
-                    and isinstance(keyword.value, ast.Constant)
-                    and keyword.value.value is True
-                    for keyword in node.keywords
-                ):
-                    offenders.append(f"{path.relative_to(repo_root)}:{node.lineno}")
+            offenders.extend(f"{path.relative_to(repo_root)}:{line}" for line in lines)
 
         self.assertEqual(offenders, [], msg=f"Found shell=True call sites: {offenders}")
 

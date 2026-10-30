@@ -127,6 +127,16 @@ suite once with branch coverage, matching branch CI. Do not also run
 the full suite. `make check` remains available for full verification without
 coverage, and `make coverage` produces a standalone full-suite report. Fast
 selections do not narrow `check-ci` or `coverage`.
+On a larger allocation, `make -j2 check-ci` overlaps independent static/artifact
+checks with the single serial coverage run. Plain `make check-ci` stays serial.
+The Debian wrapper exposes `--check-jobs 1|2` (default `1`); hosted full and
+release checks select `2`, while Node compatibility stays at `1`. This is a
+native Make job limit within one invocation, not automatic test workers or
+shared admission across invocations. The operator/outer runner owns the
+allocation and concurrent runs. Use serial checks on constrained machines;
+full validation is separate from the 1 GiB basic-development workload.
+Wheel snapshots exclude live coverage databases and their SQLite side files,
+but retain `.coveragerc`, so concurrent coverage cannot race their source copy.
 Branch CI runs the complete covered suite and all static/artifact checks once
 on Node 24. The Node 26 job runs only `make test SUITE=node`: generated OpenCode
 hooks, Guacamole browser behavior, and the certificate-install UI. Keep this
@@ -218,6 +228,10 @@ responsiveness and whole-guest peak/headroom still require separate native
 qualification under the [optimization plan](../../plans/resource-aware-optimization.md).
 
 ## Maintaining tests
+
+The shell-safety scan checks normalized keyword spelling before parsing source;
+unrelated Unicode text does not require an AST walk. Keep its positive Unicode
+keyword and negative comment/string cases when changing that prefilter.
 
 Keep tests that exercise an observable contract: parsed arguments, generated
 configuration, state changes, failure propagation, permissions, rollback, or
