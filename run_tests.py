@@ -578,6 +578,7 @@ class _TestOutput(TextIOBase):
         super().__init__()
         self._limit = limit
         self._chunks: deque[str] = deque()
+        self._head_offset = 0
         self._size = 0
         self._omitted = 0
         self._lock = threading.Lock()
@@ -600,23 +601,30 @@ class _TestOutput(TextIOBase):
                 self._omitted += self._size + length - self._limit
                 self._chunks.clear()
                 self._chunks.append(text[-self._limit:])
+                self._head_offset = 0
                 self._size = self._limit
             else:
                 self._chunks.append(text)
                 self._size += length
                 while self._size > self._limit:
-                    oldest = self._chunks.popleft()
-                    excess = min(len(oldest), self._size - self._limit)
+                    available = len(self._chunks[0]) - self._head_offset
+                    excess = min(available, self._size - self._limit)
                     self._size -= excess
                     self._omitted += excess
-                    if excess < len(oldest):
-                        self._chunks.appendleft(oldest[excess:])
+                    if excess == available:
+                        self._chunks.popleft()
+                        self._head_offset = 0
+                    else:
+                        # Advancing into a large chunk must not copy its tail
+                        # again for every subsequent small write.
+                        self._head_offset += excess
         return length
 
     def getvalue(self) -> str:
         with self._lock:
             notice = f"[Earlier test output omitted: {self._omitted} characters]\n" if self._omitted else ""
-            return notice + "".join(self._chunks)
+            chunks = iter(self._chunks)
+            return notice + next(chunks, "")[self._head_offset:] + "".join(chunks)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -226,6 +226,21 @@ class TestRunTestsOutput(unittest.TestCase):
         self.assertIn("first diagnostic\nlast diagnostic\n", stdout.getvalue())
         self.assertNotIn("Earlier test output omitted", stdout.getvalue())
 
+    def test_requested_tail_handles_incremental_writes_then_a_large_replacement(self) -> None:
+        output = run_tests._TestOutput(32)
+        content = "initial diagnostic" * 3
+        output.write(content)
+        for character in "new diagnostics " * 5:
+            output.write(character)
+            content += character
+            self.assertEqual(output.getvalue(),
+                             f"[Earlier test output omitted: {len(content) - 32} characters]\n" + content[-32:])
+        replacement = "replacement diagnostic" * 3
+        output.write(replacement)
+        content += replacement
+        self.assertEqual(output.getvalue(),
+                         f"[Earlier test output omitted: {len(content) - 32} characters]\n" + content[-32:])
+
     def test_discarded_output_does_not_hide_invalid_text_writes(self) -> None:
         class InvalidOutput(unittest.TestCase):
             def test_output(self) -> None:
