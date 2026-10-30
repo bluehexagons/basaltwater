@@ -78,6 +78,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_credentials.py",
         "tests/test_display.py",
         "tests/test_doc_links.py",
+        "tests/test_cli_docs.py",
         "tests/test_expensive_support.py",
         "tests/test_interactive_shell.py",
         "tests/test_logging_utils.py",
