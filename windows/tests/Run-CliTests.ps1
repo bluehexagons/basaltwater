@@ -34,6 +34,27 @@ try {
         $env:PATH = $exeDirectory + ';' + $shimDirectory + ';' + $savedPath
         Assert-True ((Get-NativeCommand 'basaltwater-command-fixture') -eq $executable) 'Discovery ignored executable PATH priority'
     } finally { $env:PATH = $savedPath }
+    & {
+        $gitRoot = Join-Path $temporary 'Git for Windows'
+        New-Item -ItemType Directory -Path (Join-Path $gitRoot 'cmd'), (Join-Path $gitRoot 'bin'), (Join-Path $gitRoot 'mingw64\bin') -Force | Out-Null
+        $bash = Join-Path $gitRoot 'bin\bash.exe'
+        Set-Content -LiteralPath $bash -Value 'discovery fixture'
+        Set-Content -LiteralPath (Join-Path $gitRoot 'git-bash.exe') -Value 'discovery fixture'
+        function Get-NativeCommand($Name) { if ($Name -eq 'git') { return $script:GitFixture } }
+        function Add-NativeUserPath($Directory) { $script:GitBashPaths += $Directory }
+        $script:GitBashPaths = @()
+        foreach ($relative in @('cmd\git.exe', 'bin\git.exe', 'mingw64\bin\git.exe')) {
+            $script:GitFixture = Join-Path $gitRoot $relative
+            Assert-True ((Get-NativeGitBash) -eq $bash) 'Git Bash discovery did not follow the Git for Windows installation'
+        }
+        Enable-NativeGitBash -Plan
+        Assert-True ($script:GitBashPaths.Count -eq 0) 'Git Bash preview changed PATH'
+        Enable-NativeGitBash
+        Assert-True ($script:GitBashPaths.Count -eq 1 -and $script:GitBashPaths[0] -eq $gitRoot) 'Git Bash launcher was not exposed on PATH'
+        Remove-Item -LiteralPath $bash
+        Assert-Throws { Enable-NativeGitBash } 'Git Bash is missing'
+        Assert-True ($script:GitBashPaths.Count -eq 1) 'Missing Git Bash changed PATH'
+    }
     $env:LOCALAPPDATA = Join-Path $temporary ('account with spaces ' + [char]0x03bb)
     $script:Paths = @()
     function Add-NativeUserPath($directory) { $script:Paths += $directory }

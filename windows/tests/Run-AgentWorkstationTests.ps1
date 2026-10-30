@@ -576,6 +576,7 @@ function Invoke-NativeAgentSetup {
         return $null
     }
     function Get-NativeT3Desktop { if ($script:Desktop) { return 'C:\apps\T3 Code.exe' }; return $null }
+    function Get-NativeGitBash { return 'C:\Git\bin\bash.exe' }
     function Ensure-WingetPackage([string]$packageId, [string]$label) {
         $script:Packages += $packageId
         if ($script:FailPackage) { throw 'simulated package failure' }

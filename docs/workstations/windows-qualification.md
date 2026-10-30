@@ -170,10 +170,9 @@ the account's Basaltwater qualification directory.
   no console allocation and a visible GUI. An actual T3 relaunch using the new
   launcher remains a separate check.
 - The complete native offline suite passed. Focused refresh, CLI, desktop launch,
-  provider dependency and drive-root argument checks passed. A native progress
-  window was opened against an existing completed refresh and closed by a
-  disposable smoke fixture; output wrapping and retained job duration were
-  visually checked. This did not apply setup or qualify an upgrade/reboot.
+  provider dependency and drive-root argument checks passed. CLI progress tests
+  cover queued/running/completed status, incremental output without repeats,
+  retained job duration, reconnecting, detachment and failure exit status.
   Concurrent receipt tests retained an old snapshot across atomic replacement
   and exercised bounded retry for readers denying delete sharing.
 - Documentation links passed. The Linux CLI documentation checker could not

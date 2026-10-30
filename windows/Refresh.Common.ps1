@@ -176,17 +176,6 @@ function Start-NativeRefresh($Saved, [string]$Source, [string[]]$Arguments) {
     } finally { $lock.Dispose() }
 }
 
-function Start-NativeRefreshProgress([string]$Id) {
-    $null = Get-NativeRefreshDirectory $Id
-    $worker = Join-Path $PSScriptRoot 'Show-RefreshProgress.ps1'
-    Assert-NativeSkillPath $worker
-    if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) { throw 'Refresh progress helper is missing' }
-    $command = "& '" + $worker.Replace("'", "''") + "' -Id '$Id'"
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-    Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-        -WindowStyle Hidden -ArgumentList ('-NoLogo -NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ' + $encoded) -ErrorAction Stop | Out-Null
-}
-
 function Get-NativeRefreshSummary($Receipt) {
     switch ($Receipt.Status) {
         'queued' { return 'Waiting for the Windows refresh worker to start.' }
@@ -259,10 +248,6 @@ function Invoke-NativeRefreshWorker([string]$Id) {
     $receipt.Status = 'running'; $receipt.StartedUtc = [datetime]::UtcNow.ToString('o')
     Write-NativeRefreshReceipt $receipt
     try {
-        # The progress window belongs to Scheduler's independent process tree,
-        # so upgrading/restarting T3 cannot take the user's progress away.
-        try { Start-NativeRefreshProgress $Id }
-        catch { Write-Warning "Progress window could not open. Follow output with basaltw refresh --follow $Id" }
         $saved = Read-NativeCliSetup
         if ($receipt.Source -ne $saved.Source) { throw 'Saved source changed before refresh started; inspect and retry deliberately' }
         $options = @{}
@@ -293,7 +278,13 @@ function Invoke-NativeRefreshWorker([string]$Id) {
     } catch {
         $receipt.Status = 'failed'
         # Raw provider exceptions can contain sensitive arguments; keep a constant receipt.
-        Add-Content -LiteralPath $receipt.Log -Value 'Refresh failed. Inspect setup output above and saved installation state before retrying.'
+        # Add-Content on Windows PowerShell denies concurrent read handles.
+        # The terminal follower keeps its reader open across installer failure.
+        $failureLog = [IO.File]::Open($receipt.Log, 'Append', 'Write', 'Read')
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes('Refresh failed. Inspect setup output above and saved installation state before retrying.' + [Environment]::NewLine)
+            $failureLog.Write($bytes, 0, $bytes.Length)
+        } finally { $failureLog.Dispose() }
     } finally {
         $receipt.CompletedUtc = [datetime]::UtcNow.ToString('o')
         Write-NativeRefreshReceipt $receipt

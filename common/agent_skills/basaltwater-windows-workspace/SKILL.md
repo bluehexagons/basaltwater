@@ -16,11 +16,11 @@ The native `basaltw` command supports help, version, saved-installation `info`,
 Use `basaltw refresh --dry-run` to preview or `basaltw refresh`
 to update Basaltwater from main and reapply saved selections, including available
 WinGet/npm tool updates; provider logins are preserved. `basaltw --help` lists Windows options.
-Refresh follows live output in the terminal by default and opens a desktop
-progress window that keeps its summary and survives T3 closing. Ctrl+C stops
-following without cancelling setup; `--detach` returns after submission.
-Inspect `refresh --status ID` and `--logs ID`, resume terminal output with
-`--follow ID`, or reopen the progress window with `--progress ID`.
+Refresh follows live output, status, elapsed time and a final summary in the
+invoking terminal by default. Ctrl+C stops following without cancelling setup;
+`--detach` returns after submission. The worker survives T3 closing. Inspect
+`refresh --status ID` and `--logs ID`, or reconnect to output with `--follow ID`
+from a new terminal after an update closes T3.
 `--wait` runs setup directly in the invoking terminal; `--cancel ID` only cancels
 a queued job. An updating T3 installer can close its desktop. Successful desktop
 setup configures current-account login startup with a hidden PowerShell helper
@@ -32,6 +32,10 @@ or updates an existing setup automatically, retaining its selections.
 Native setup installs stable PowerShell 7 if missing and hands off to it before
 applying development tools. It also supplies a managed Windows Terminal profile
 and Start Menu development shell without replacing personal Terminal settings.
+Git for Windows and Git Bash are required. `git-bash` opens the bundled desktop
+shell; doctor probes its actual `bin\bash.exe`. Use that executable for Bash
+scripts because a bare `bash.exe` can select WSL's launcher. Git's Unix utility
+directory is not added to the Windows PATH.
 T3 starts or gracefully restarts after successful setup by default. For one run,
 `-NoUpdateSource` / `refresh --no-update-source` keeps the saved Basaltwater source
 while still updating tools; `-NoRestartT3` / `refresh --no-restart-t3` skips the

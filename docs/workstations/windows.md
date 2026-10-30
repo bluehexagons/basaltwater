@@ -2,8 +2,8 @@
 
 The experimental `agent_windows` installer profile prepares the current
 x86-64 Windows 11 account for local coding with T3 Code. It installs missing
-PowerShell 7, Git, GitHub CLI, Codex and a native `basaltw` command, with T3 Code
-desktop enabled by default. Provider logins, Git identity,
+PowerShell 7, Git with Git Bash, GitHub CLI, Codex and a native `basaltw` command,
+with T3 Code desktop enabled by default. Provider logins, Git identity,
 and T3 settings are preserved. Run as the
 intended Windows account; package installers may ask for UAC. Allow at least
 5 GiB of free space, plus space for your projects and their dependencies.
@@ -214,6 +214,12 @@ are reused and checked with `--headless --version`. Setup waits for console or
 GUI executables to exit successfully, with a 30-second timeout. Export templates,
 .NET/C# and mobile SDKs remain project requirements.
 
+Git for Windows and its bundled Bash are required for every native profile.
+Setup exposes the `git-bash` desktop launcher on the account PATH. For scripts,
+use that installation's `bin\bash.exe`; a bare `bash.exe` can resolve to WSL's
+launcher. Doctor probes the bundled Bash explicitly with `--version`. Setup
+keeps Git's Unix utilities out of the Windows PATH and preserves shell profiles.
+
 Setup enables Git's user-level `core.longpaths` when that setting is absent.
 An explicit existing value is preserved, including `false`; repository-specific
 settings still take precedence. Without long-path support, Git can warn that a
@@ -283,17 +289,16 @@ including providers, game tools and storage. It installs available updates for
 selected host tools and preserves provider logins.
 Its job survives the invoking T3 desktop closing during an upgrade. By default,
 the terminal follows live output and returns the completed job's exit status.
-A separate desktop progress window shows status, elapsed time and recent setup
-output, and retains a completion/failure summary until closed. It survives T3
-closing; closing the progress window or pressing Ctrl+C in the following terminal
-leaves setup running. Long steps can be quiet while their installer runs; the
+The CLI shows status, elapsed time and setup output, then prints a completion
+or failure summary and the retained log path. Pressing Ctrl+C stops following
+and leaves setup running. Long steps can be quiet while their installer runs; the
 terminal prints a status heartbeat every 15 seconds. No completion percentage
 is estimated. Review setup output for separate T3 restart/reboot notices.
-The job ID supports `refresh --status ID`, `--logs ID`, `--follow ID`, reopening
-the progress window with `--progress ID`, and cancellation while queued with
+The job ID supports `refresh --status ID`, `--logs ID`, `--follow ID`, and cancellation while queued with
 `--cancel ID`. Use `--detach` to return immediately after submission, or `--wait`
-to run setup directly in the terminal without an independent worker/window.
-If the progress window cannot open, follow output with `--follow ID`.
+to run setup directly in the terminal without an independent worker.
+If an update closes T3 and its terminal, reconnect from a new PowerShell terminal
+with `--follow ID` to see output and the result.
 Logs retain up to 16 MiB; truncation is reported. Submission success alone does
 not establish completion.
 `--dry-run` previews the currently pinned source without downloads or writes.

@@ -59,6 +59,32 @@ function Get-NativeT3Desktop {
     return $null
 }
 
+function Get-NativeGitBash {
+    $git = Get-NativeCommand git
+    if (-not $git) { return $null }
+    $directory = Split-Path -Parent $git
+    if (-not $directory) { return $null }
+    # Git for Windows exposes git.exe through cmd, bin or mingw64\bin.
+    # Resolve its bundled Bash explicitly; bash.exe on PATH can be WSL's shim.
+    foreach ($relative in @('..', '..\..')) {
+        $root = [IO.Path]::GetFullPath((Join-Path $directory $relative))
+        $bash = Join-Path $root 'bin\bash.exe'
+        if ((Test-Path -LiteralPath $bash -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $root 'git-bash.exe') -PathType Leaf)) { return $bash }
+    }
+    return $null
+}
+
+function Enable-NativeGitBash([switch]$Plan) {
+    Write-Host 'Git Bash: included with required Git for Windows; expose git-bash.exe on the account PATH.'
+    if ($Plan) { return }
+    $bash = Get-NativeGitBash
+    if (-not $bash) { throw 'Git Bash is missing from Git for Windows. Repair the Git.Git installation and rerun setup.' }
+    # The installation root exposes git-bash.exe without adding Unix tools
+    # such as find.exe to the Windows PATH or overriding the user's shell.
+    Add-NativeUserPath (Split-Path -Parent (Split-Path -Parent $bash))
+}
+
 function Ensure-NativeTool([string]$name, [string]$packageId, [switch]$Plan) {
     $command = Get-NativeCommand $name
     if ($Plan) {
@@ -246,6 +272,7 @@ function Invoke-NativeAgentSetup {
     Write-Host 'Native Windows coding account (WSL is not required).'
     if (-not $Plan) { Ensure-Winget; Update-NativePath }
     Ensure-NativeTool git Git.Git -Plan:$Plan
+    Enable-NativeGitBash -Plan:$Plan
     Ensure-NativeGitSettings -Plan:$Plan
     Ensure-NativeTool gh GitHub.cli -Plan:$Plan
     $npmAgents = @($AgentTool | Where-Object { $_ -in @('codex', 'opencode') })
