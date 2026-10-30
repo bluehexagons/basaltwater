@@ -69,6 +69,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_arg_parser_hosted.py",
         "tests/test_development_tool_bundles.py",
         "tests/test_atomic_io.py",
+        "tests/test_benchmark_development.py",
         "tests/test_cache.py",
         "tests/test_channel_manager.py",
         "tests/test_refresh.py",
@@ -582,9 +583,15 @@ class _TestOutput(TextIOBase):
         self._lock = threading.Lock()
 
     def writable(self) -> bool:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
         return True
 
     def write(self, text: str) -> int:
+        if self.closed:
+            raise ValueError("I/O operation on closed file")
+        if not isinstance(text, str):
+            raise TypeError("string argument expected")
         length = len(text)
         if not length or not self._limit:
             return length

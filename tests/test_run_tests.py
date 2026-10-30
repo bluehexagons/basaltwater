@@ -226,6 +226,20 @@ class TestRunTestsOutput(unittest.TestCase):
         self.assertIn("first diagnostic\nlast diagnostic\n", stdout.getvalue())
         self.assertNotIn("Earlier test output omitted", stdout.getvalue())
 
+    def test_discarded_output_does_not_hide_invalid_text_writes(self) -> None:
+        class InvalidOutput(unittest.TestCase):
+            def test_output(self) -> None:
+                sys.stdout.write(b"invalid text output")
+
+        stdout = io.StringIO()
+        with patch.object(
+            run_tests, "_build_suite",
+            return_value=unittest.TestSuite([InvalidOutput("test_output")]),
+        ), contextlib.redirect_stdout(stdout):
+            rc = run_tests.main([])
+        self.assertEqual(rc, 1)
+        self.assertIn("TypeError", stdout.getvalue())
+
 
 class _env_unset:
     def __init__(self, key: str) -> None:
