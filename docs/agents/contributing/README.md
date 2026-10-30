@@ -29,6 +29,10 @@ managed coding VM or workstation, use the sibling
 
 ## Core architecture
 
+Import helpers from their owning `lib.*` module. The package initializer only
+checks the supported Python floor; it does not load configuration or SSH code
+for unrelated helpers.
+
 | Boundary | Responsibility |
 | --- | --- |
 | `basaltw setup` | Parses and validates configuration; stages source for ordinary target builds or coordinates an explicitly selected saved builder through `lib.build_setup` |
@@ -193,6 +197,8 @@ mode-`0600` file and refuses overwrites. Select `--workload help` (repeatable),
 `--samples 20` for short-operation tail latency, or `--cli /absolute/basaltw`
 to measure an installed launcher. Tests always use the checkout. This command
 does not install dependencies, build wheels or configure services.
+Use `--checkout /absolute/other-checkout` to compare revisions with the same
+benchmark implementation; both source and benchmark revisions are recorded.
 
 Defaults are three samples, a 60-second trial deadline and a 300-second total
 workload budget. Counts/deadlines and captured output are bounded; a failed

@@ -72,7 +72,6 @@ from lib.display import (
     print_setup_summary,
 )
 from lib.interactive_shell import run_interactive_shell
-from lib.installation_info import installation_version
 from lib.notifications import validate_notification_args
 from lib.orchestrator_bootstrap import LAUNCHER_NAME, run_orchestrator_bootstrap
 from lib.plugin_registry import (
@@ -274,13 +273,28 @@ class _CommandArgumentParser(argparse.ArgumentParser):
         return super().add_argument(*args, **kwargs)
 
 
+class _RootArgumentParser(argparse.ArgumentParser):
+    def format_help(self) -> str:
+        if self.epilog is None:
+            self.epilog = _build_basaltwater_epilog()
+        return super().format_help()
+
+
+class _VersionAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None) -> None:
+        from lib.installation_info import installation_version
+
+        print(f"{parser.prog} {installation_version(os.path.dirname(os.path.abspath(__file__)))}")
+        parser.exit()
+
+
 def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.ArgumentParser, argparse.ArgumentParser, argparse.ArgumentParser]:
     """Create the main argument parser for basaltwater."""
-    parser = argparse.ArgumentParser(
+    parser = _RootArgumentParser(
         prog=LAUNCHER_NAME,
         description="Basaltwater — infrastructure management, from one machine to your whole network",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_build_basaltwater_epilog()
+        epilog=_build_basaltwater_epilog() if _command is None else None,
     )
     parser.add_argument(
         "--workspace",
@@ -288,10 +302,8 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     )
     parser.add_argument(
         "--version",
-        action="version",
-        version=(
-            f"%(prog)s {installation_version(os.path.dirname(os.path.abspath(__file__)))}"
-        ),
+        action=_VersionAction, nargs=0, dest=argparse.SUPPRESS,
+        default=argparse.SUPPRESS, help="show program's version number and exit",
     )
     
     subparsers = parser.add_subparsers(
@@ -622,9 +634,9 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     refresh_parser.add_argument(
         "--dry-run", action="store_true", help="Show the saved setup without upgrading or applying it",
     )
-    from lib.cachyos_refresh import add_refresh_arguments
-
     if _command is None or _command == "refresh":
+        from lib.cachyos_refresh import add_refresh_arguments
+
         add_refresh_arguments(refresh_parser, setup_parser)
 
     credentials_parser = subparsers.add_parser(

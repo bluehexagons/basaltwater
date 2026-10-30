@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -136,6 +138,25 @@ class TestNetworkCli(unittest.TestCase):
         for words in (["--workspace", "/tmp/ws", "network", "list"],
                       ["network", "--workspace", "/tmp/ws", "list"]):
             self.assertEqual(vars(focused.parse_args(words)), vars(self.parser.parse_args(words)))
+
+    def test_command_parsing_defers_root_metadata_until_requested(self) -> None:
+        with (
+            patch.object(basaltwater, "_build_basaltwater_epilog", return_value="root examples") as epilog,
+            patch("lib.installation_info.installation_version", return_value="1.2.3") as version,
+        ):
+            focused, _, _ = basaltwater.create_basaltwater_parser(_command="network")
+            self.assertEqual(focused.parse_args(["network", "list"]).network_command, "list")
+            epilog.assert_not_called()
+            version.assert_not_called()
+            self.assertIn("root examples", focused.format_help())
+            focused.format_help()
+            epilog.assert_called_once_with()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as stopped:
+                focused.parse_args(["--version"])
+            self.assertEqual(stopped.exception.code, 0)
+            self.assertEqual(output.getvalue(), "basaltw 1.2.3\n")
+            version.assert_called_once()
 
     def test_command_selection_falls_back_for_completion_and_ambiguous_options(self) -> None:
         with patch.dict(os.environ, {"_ARGCOMPLETE": "1"}):

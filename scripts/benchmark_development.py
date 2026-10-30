@@ -43,21 +43,21 @@ def _seconds(value: str) -> float:
     return number
 
 
-def _command(name: str, cli: str | None) -> list[str]:
+def _command(name: str, cli: str | None, *, checkout: Path = ROOT) -> list[str]:
     if name in TEST_WORKLOADS:
-        return [sys.executable, str(ROOT / "run_tests.py"), *WORKLOADS[name]]
-    launcher = [cli] if cli else [sys.executable, str(ROOT / "basaltwater.py")]
+        return [sys.executable, str(checkout / "run_tests.py"), *WORKLOADS[name]]
+    launcher = [cli] if cli else [sys.executable, str(checkout / "basaltwater.py")]
     return [*launcher, *WORKLOADS[name]]
 
 
-def _measure(name: str, cli: str | None, timeout: float) -> dict:
+def _measure(name: str, cli: str | None, timeout: float, *, checkout: Path = ROOT) -> dict:
     """Run in a fresh worker so child CPU/RSS accounting belongs to one trial."""
     before = inspect_workload_limits()
     started = time.perf_counter()
     result: dict = {"status": "completed", "return_code": None}
     try:
-        completed = run_captured(_command(name, cli), timeout=timeout,
-                                 max_bytes=1024 * 1024, cwd=str(ROOT))
+        completed = run_captured(_command(name, cli, checkout=checkout), timeout=timeout,
+                                 max_bytes=1024 * 1024, cwd=str(checkout))
         result.update(return_code=completed.returncode,
                       stdout_bytes=len(completed.stdout.encode("utf-8")),
                       stderr_bytes=len(completed.stderr.encode("utf-8")))
@@ -99,11 +99,11 @@ def _summary(samples: list[dict]) -> dict:
             "p95_seconds": times[math.ceil(0.95 * len(times)) - 1] if len(times) >= 20 else None}
 
 
-def _revision() -> dict:
+def _revision(checkout: Path = ROOT) -> dict:
     try:
-        head = run_captured(["git", "rev-parse", "HEAD"], cwd=str(ROOT), timeout=5, max_bytes=4096)
+        head = run_captured(["git", "rev-parse", "HEAD"], cwd=str(checkout), timeout=5, max_bytes=4096)
         state = run_captured(["git", "status", "--porcelain"],
-                             cwd=str(ROOT), timeout=5, max_bytes=65536)
+                             cwd=str(checkout), timeout=5, max_bytes=65536)
         return {"commit": head.stdout.strip() if head.returncode == 0 else None,
                 "dirty": bool(state.stdout) if state.returncode == 0 else None}
     except (OSError, subprocess.SubprocessError):
@@ -120,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--samples", type=int, default=3)
     parser.add_argument("--timeout", type=_seconds, default=60)
     parser.add_argument("--total-seconds", type=_seconds, default=300)
+    parser.add_argument("--checkout", default=str(ROOT), help="Absolute checkout to measure; use one benchmark revision for before/after runs")
     parser.add_argument("--cli", help="Absolute installed launcher path; tests always use the checkout")
     parser.add_argument("--cache-state", choices=("uncontrolled", "warm", "application-caches-disabled"), default="uncontrolled",
                         help="Label the prepared cache state; this command does not clear caches")
@@ -128,6 +129,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 1 <= args.samples <= 30:
         parser.error("samples must be between 1 and 30")
+    validate_filesystem_path(args.checkout, must_exist=True)
+    checkout = Path(args.checkout)
+    if not checkout.is_absolute() or not checkout.is_dir():
+        parser.error("checkout must be an absolute directory")
     if args.cli:
         validate_filesystem_path(args.cli, must_exist=True)
         if not os.path.isabs(args.cli) or not Path(args.cli).is_file():
@@ -136,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         # Let the shared process supervisor clean up the command on cancellation.
         if os.name == "posix":
             signal.signal(signal.SIGTERM, _cancel)
-        print(json.dumps(_measure(args.worker, args.cli, args.timeout)))
+        print(json.dumps(_measure(args.worker, args.cli, args.timeout, checkout=checkout)))
         return 0
     if not args.output:
         parser.error("output is required")
@@ -151,7 +156,10 @@ def main(argv: list[str] | None = None) -> int:
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         names = list(dict.fromkeys(args.workload or WORKLOADS))
         deadline = time.monotonic() + args.total_seconds
-        report = {"schema": 1, "revision": _revision(), "python": platform.python_version(),
+        revision = _revision(checkout)
+        report = {"schema": 1, "revision": revision, "checkout": str(checkout),
+                  "benchmark_revision": revision if checkout == ROOT else _revision(),
+                  "python": platform.python_version(),
                   "platform": platform.system(), "machine": platform.machine(),
                   "cache_state": args.cache_state, "cli": args.cli or "checkout",
                   "limits": {"samples": args.samples, "timeout_seconds": args.timeout,
@@ -175,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
                         break
                     timeout = min(args.timeout, remaining - 15)
                     command = [sys.executable, str(Path(__file__).resolve()), "--worker", name,
-                               "--timeout", str(timeout)]
+                               "--timeout", str(timeout), "--checkout", str(checkout)]
                     if args.cli:
                         command.extend(["--cli", args.cli])
                     trial = run_captured(command, cwd=str(ROOT), timeout=timeout + 15, max_bytes=128 * 1024)

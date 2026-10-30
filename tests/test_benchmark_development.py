@@ -50,6 +50,17 @@ class DevelopmentBenchmarkTest(unittest.TestCase):
         self.assertNotIn("atomic", report["workloads"])
         self.assertIn("expected failure", report["workloads"]["smoke"]["trials"][0]["output_tail"])
 
+    def test_selected_checkout_is_recorded_and_passed_to_the_worker(self) -> None:
+        sample = {"status": "completed", "return_code": 0, "elapsed_seconds": 0.1}
+        with patch.object(benchmark, "run_captured", return_value=subprocess.CompletedProcess([], 0, json.dumps(sample), "")) as run:
+            result = benchmark.main(["--output", str(self.output), "--workload", "version", "--samples", "1",
+                                     "--checkout", str(self.output.parent)])
+        self.assertEqual(result, 0)
+        report = json.loads(self.output.read_text())
+        self.assertEqual(report["checkout"], str(self.output.parent))
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--checkout") + 1], str(self.output.parent))
+
     def test_budget_exhaustion_does_not_launch_a_trial_or_claim_success(self) -> None:
         with patch.object(benchmark, "run_captured") as run:
             result = benchmark.main(["--output", str(self.output), "--total-seconds", "1"])
