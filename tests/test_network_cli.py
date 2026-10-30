@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import tempfile
@@ -128,6 +129,30 @@ class TestNetworkCli(unittest.TestCase):
             "network [subcommand]        Manage generic network inventory profiles",
             self.parser.epilog,
         )
+
+    def test_focused_parser_preserves_help_and_workspace(self) -> None:
+        focused, _, _ = basaltwater.create_basaltwater_parser(_command="network")
+        self.assertEqual(focused.format_help(), self.parser.format_help())
+        for words in (["--workspace", "/tmp/ws", "network", "list"],
+                      ["network", "--workspace", "/tmp/ws", "list"]):
+            self.assertEqual(vars(focused.parse_args(words)), vars(self.parser.parse_args(words)))
+
+    def test_command_selection_falls_back_for_completion_and_ambiguous_options(self) -> None:
+        with patch.dict(os.environ, {"_ARGCOMPLETE": "1"}):
+            self.assertIsNone(basaltwater._parser_command(["network"]))
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertIsNone(basaltwater._parser_command(["--unknown", "network"]))
+            self.assertEqual(basaltwater._parser_command(["--workspace", "/tmp/ws", "network"]), "network")
+
+    def test_selected_setup_patch_and_refresh_help_match_full_parser(self) -> None:
+        def command_help(parser, command):
+            subparsers = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+            return subparsers.choices[command].format_help()
+
+        for command in ("setup", "patch", "refresh", "network"):
+            with self.subTest(command=command):
+                focused, _, _ = basaltwater.create_basaltwater_parser(_command=command)
+                self.assertEqual(command_help(focused, command), command_help(self.parser, command))
 
     def test_init_and_add_host_through_main(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
