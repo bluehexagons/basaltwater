@@ -5,8 +5,9 @@ These small projects work with ordinary manifest deployment and the bounded
 separate repository root; deploying the Basaltwater repository itself does not
 select a nested example.
 
-For the six existing homelab repositories, use the
-[LAN builder migration commands](homelab-local-builder.md).
+Start with the [single-site LAN test](homelab-build-test.md) to provision a
+builder and a separate web VM without changing public DNS. For the six existing
+homelab repositories, use the [LAN builder migration commands](homelab-local-builder.md).
 
 | Directory | Manifest output | Builder requirements | Template application / destination |
 | --- | --- | --- | --- |

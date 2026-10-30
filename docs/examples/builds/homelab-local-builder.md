@@ -1,5 +1,8 @@
 # Move the six homelab deployments to a LAN builder
 
+For an initial trial on separate VMs without changing public DNS, start with the
+[single-site LAN test](homelab-build-test.md).
+
 Run these commands from the controller's Basaltwater checkout. The controller
 must reach the builder and target over SSH. It relays artifacts, so this also
 works with a production VPS that cannot reach the LAN builder.

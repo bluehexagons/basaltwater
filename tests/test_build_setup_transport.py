@@ -110,6 +110,91 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
     def patch_args(self, *options):
         return self.parser.parse_args(["patch", "target.example", "agent", *options])
 
+    def test_public_setup_provisions_builder_then_web_vm_using_saved_selection(self):
+        target_policy = enrollment()
+        builder_policy = builder_enrollment()
+        builder_policy["keys"] = target_policy["keys"]
+        grant = copy.deepcopy(builder_policy["policy"]["principals"]["alice"]["projects"]["site"])
+        grant["runtimes"] = ["go", "node", "python"]
+        builder_policy["policy"]["principals"] = {
+            "alice": {"projects": {"approved-source": grant}},
+        }
+        for name, policy in (("builder", builder_policy), ("target", target_policy)):
+            path = self.root / f"{name}.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            path.chmod(0o600)
+        key = self.root / "controller-key"
+        key.write_text("opaque fixture; no real private key", encoding="utf-8")
+        key.chmod(0o600)
+        public_key = Path(str(key) + ".pub")
+        public_key.write_text(target_policy["keys"]["alice"] + "\n", encoding="utf-8")
+        public_key.chmod(0o644)
+        provisioning = [
+            "--machine", "vm", "--provision-on", "192.0.2.10",
+            "--image-storage", "images", "--storage", "root", "local-lvm", "80G",
+            "--disk-ssd", "root", "--password", "fixture", "--key", str(key),
+        ]
+        events = []
+        with patch("lib.proxmox_vm.provision_vm", side_effect=lambda config, **_:
+                   events.append(("provision", config.host))) as provision, \
+             patch.object(basaltwater, "ensure_guest_ipv4_route"), \
+             patch.object(basaltwater, "register_proxmox_setup_host"):
+            args = self.parser.parse_args([
+                "setup", "server_lite", "192.0.2.53", "agent", *provisioning,
+                "--name", "fresh-builds", "--memory", "4G", "--cores", "4",
+                "--build-server", "--build-host-policy", str(self.root / "builder.json"),
+                "--go", "--node",
+            ])
+            self.assertEqual(basaltwater.run_setup_command(args), 0, sys.stdout.getvalue())
+            self.apply.assert_called_once()
+            builder = load_setup_command("fresh-builds")
+            self.assertEqual(builder.host, "192.0.2.53")
+            self.assertTrue(builder.is_build_server)
+            self.assertTrue(builder.install_go)
+            self.assertTrue(builder.install_node)
+            self.assertEqual(builder.build_host_enrollment, builder_policy)
+            self.builder.assert_not_called()
+            self.apply.reset_mock()
+
+            def apply(config, **_):
+                events.append(("apply", config.custom_steps))
+                return 0
+
+            self.apply.side_effect = apply
+            web_provisioning = ["20G" if token == "80G" else token for token in provisioning]
+            args = self.parser.parse_args([
+                "setup", "server_web", "192.0.2.54", "agent", *web_provisioning,
+                "--name", "fresh-web", "--memory", "1G", "--cores", "2",
+                "--ssh-access-source", "192.0.2.10/32", "--build-on", "fresh-builds",
+                "--build-target-policy", str(self.root / "target.json"),
+                "--deploy", "example.com", self.old,
+            ])
+            self.assertEqual(basaltwater.run_setup_command(args), 0, sys.stdout.getvalue())
+        self.assertEqual(events, [
+            ("provision", "192.0.2.53"), ("provision", "192.0.2.54"),
+            ("apply", "bootstrap_build_target"), ("apply", None),
+        ])
+        self.assertEqual([call.args[0].machine_type for call in provision.call_args_list], ["vm", "vm"])
+        self.assertEqual(self.builder.call_args.kwargs["host"], "192.0.2.53")
+        self.sources.assert_called_once()
+        self.delivery.return_value.deliver.assert_called_once()
+        saved = load_setup_command("fresh-web")
+        self.assertEqual(saved.build_on, "fresh-builds")
+        self.assertEqual(saved.build_target_enrollment, target_policy)
+        self.assertFalse(saved.install_go)
+        self.assertFalse(saved.install_node)
+        profile = self.apply.call_args.args[0]
+        self.assertIsNone(profile.build_on)
+        self.assertIsNone(profile.build_target_enrollment)
+        self.assertTrue(profile.artifact_deployments)
+        self.assertEqual(self.apply.call_args.kwargs["expected_releases"], [
+            {"application": "site", "operation_id": "1" * 32,
+             "generation": 1, "artifact_sha256": "d" * 64},
+        ])
+        journal = next(self.root.glob("build-setups/*/setup.json.last.json"))
+        self.assertEqual(json.loads(journal.read_text())["outcome"], "succeeded")
+        self.assertIsNone(OperationStateStore(str(journal).removesuffix(".last.json")).load())
+
     def test_public_patch_then_reloaded_saved_deploy_delivers_only_updated_source(self):
         self.assertEqual(basaltwater.run_patch_command(self.patch_args(
             "--deploy", "example.com, EXAMPLE.COM./", self.updated,
