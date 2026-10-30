@@ -30,11 +30,13 @@ will be loaded directly.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import os
 import sys
+import threading
 import time
 import unittest
-from io import StringIO
+from io import StringIO, TextIOBase
 from pathlib import Path
 
 # Make `tests/` importable when running from the repo root.
@@ -286,7 +288,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--show-output",
         action="store_true",
-        help="Include captured test stdout/stderr when a test fails.",
+        help="Include the last 256 Ki characters of test stdout/stderr on failure.",
     )
     parser.add_argument(
         "--expensive",
@@ -568,6 +570,48 @@ def _print_durations(result: unittest.TestResult, count: int) -> None:
         print(f"  {elapsed:8.3f}s  {test_id}")
 
 
+class _TestOutput(TextIOBase):
+    """Discard quiet output, or retain a bounded tail when explicitly requested."""
+
+    def __init__(self, limit: int = 0) -> None:
+        super().__init__()
+        self._limit = limit
+        self._chunks: deque[str] = deque()
+        self._size = 0
+        self._omitted = 0
+        self._lock = threading.Lock()
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, text: str) -> int:
+        length = len(text)
+        if not length or not self._limit:
+            return length
+        with self._lock:
+            if length >= self._limit:
+                self._omitted += self._size + length - self._limit
+                self._chunks.clear()
+                self._chunks.append(text[-self._limit:])
+                self._size = self._limit
+            else:
+                self._chunks.append(text)
+                self._size += length
+                while self._size > self._limit:
+                    oldest = self._chunks.popleft()
+                    excess = min(len(oldest), self._size - self._limit)
+                    self._size -= excess
+                    self._omitted += excess
+                    if excess < len(oldest):
+                        self._chunks.appendleft(oldest[excess:])
+        return length
+
+    def getvalue(self) -> str:
+        with self._lock:
+            notice = f"[Earlier test output omitted: {self._omitted} characters]\n" if self._omitted else ""
+            return notice + "".join(self._chunks)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -606,7 +650,9 @@ def main(argv: list[str] | None = None) -> int:
         runner = unittest.TextTestRunner(verbosity=2, resultclass=TimedTextTestResult)
         result = runner.run(suite)
     else:
-        test_output = StringIO()
+        # A character bound also bounds Unicode storage (at most four bytes
+        # per character); no temporary filesystem or warm cache is required.
+        test_output = _TestOutput(256 * 1024 if args.show_output else 0)
         result_output = StringIO()
         old_stdout, old_stderr = sys.stdout, sys.stderr
         sys.stdout = test_output

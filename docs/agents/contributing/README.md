@@ -71,6 +71,10 @@ package metadata checks plus the smoke suite. Select relevant tests with
 `make check-fast SUITE=web`, `make test SUITE="web network"`, or
 `make test TEST=tests.test_gogs_steps.TestGogsNginx`. `TEST_ARGS="--durations 20"`
 reports slow tests. Suite and explicit test selections combine without repeats.
+Quiet runs discard test stdout/stderr by default. `TEST_ARGS="--show-output"`
+retains the last 256 Ki characters and prints that tail on failure, with an
+omission notice when truncated. Failure tracebacks are still reported normally;
+use `make test-verbose` for live, complete test output.
 The fast target omits the generated brand export and wheel build/install checks;
 run affected checks before committing and let GitHub CI perform full validation.
 `make artifact-check` suppresses successful build/install chatter and reports

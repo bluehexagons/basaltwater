@@ -185,6 +185,47 @@ class TestRunTestsOutput(unittest.TestCase):
         self.assertIn("expected failure", stdout.getvalue())
         self.assertNotIn("large task log", stdout.getvalue())
 
+    def test_requested_output_keeps_recent_unicode_diagnostics_with_a_bound(self) -> None:
+        class NoisyFailure(unittest.TestCase):
+            def test_failure(self) -> None:
+                print("old diagnostic")
+                print("\U0001f30a" * (256 * 1024))
+                sys.stderr.write("recent diagnostic\n")
+                self.fail("expected failure")
+
+        stdout = io.StringIO()
+        with patch.object(
+            run_tests, "_build_suite",
+            return_value=unittest.TestSuite([NoisyFailure("test_failure")]),
+        ), contextlib.redirect_stdout(stdout):
+            rc = run_tests.main(["--show-output"])
+
+        output = stdout.getvalue()
+        self.assertEqual(rc, 1)
+        self.assertIn("expected failure", output)
+        self.assertIn("Earlier test output omitted", output)
+        self.assertIn("recent diagnostic", output)
+        self.assertNotIn("old diagnostic", output)
+        self.assertLess(len(output), 256 * 1024 + 4096)
+
+    def test_requested_small_output_remains_complete(self) -> None:
+        class Failure(unittest.TestCase):
+            def test_failure(self) -> None:
+                print("first diagnostic")
+                sys.stderr.write("last diagnostic\n")
+                self.fail("expected failure")
+
+        stdout = io.StringIO()
+        with patch.object(
+            run_tests, "_build_suite",
+            return_value=unittest.TestSuite([Failure("test_failure")]),
+        ), contextlib.redirect_stdout(stdout):
+            rc = run_tests.main(["--show-output"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("first diagnostic\nlast diagnostic\n", stdout.getvalue())
+        self.assertNotIn("Earlier test output omitted", stdout.getvalue())
+
 
 class _env_unset:
     def __init__(self, key: str) -> None:
