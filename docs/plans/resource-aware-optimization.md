@@ -27,7 +27,7 @@ operator policy to choose execution behavior.
 | 1 vCPU / 1 GiB RAM | CLI/help/completion, lightweight editing and representative focused tests work without OOM or sustained swap thrashing. Default to serial work and bounded output. A lightweight editor is included; a full desktop, local T3 service and browser/build workloads need separate qualification. |
 | 2 vCPU / 4 GiB RAM | Exercise the normal development loop, full serial checks where they fit, and small worker pools only when measured headroom permits. |
 | 8 vCPU / 16 GiB RAM | Demonstrate useful test and build-command parallelism without multiplying nested pools or exceeding shared budgets. |
-| 16+ vCPU / 32+ GiB RAM | Exercise scheduling overhead, queue fairness and cache contention; throughput should scale only while CPU, memory and storage permit. |
+| 16+ vCPU / 32+ GiB RAM | Exercise scheduling overhead, cache contention and the shared coordinator's queue fairness when implemented; throughput should scale only while CPU, memory and storage permit. |
 | Large host with a small container/VM allocation | Honor inherited quotas, affinity and actual available memory rather than physical host specifications. Include fractional CPU quotas, ballooned memory, slow storage and unavailable observations. |
 
 The 1 GiB floor is a requirement to qualify, not a completed test result. It
@@ -44,6 +44,32 @@ Start native capacity qualification on supported Debian x86-64 guests. Cover
 CachyOS development paths separately. WSL, native Windows and additional build
 architectures keep their existing support/qualification boundaries; a portable
 resource-policy fallback does not qualify a new build platform.
+
+### Basic-development qualification workload
+
+Prepare the supported OS, Bash, nano, Git, Python and an isolated environment
+with the project's development/completion extras before measuring the offline
+loop. Record their versions and the exact revision. First-time OS/dependency
+installation and downloads are separate workloads; application caches may be
+empty or disabled. Qualify CLI behavior through both a checkout and its installed
+wheel; run the focused tests from the checkout and label that evidence separately.
+
+The required small-machine selection is version, root/setup/network help and
+installed Bash completion; the runner's existing `smoke` selection; and separate
+focused runs of `tests.test_validation`, `tests.test_network_setup` and
+`tests.test_atomic_io`. Edit, search and save a roughly 10 KiB text file in nano
+while one focused run executes. Keep this selection pinned in the benchmark
+manifest; report its test identities and any skips rather than substituting
+cheaper tests. It needs no browser, desktop, local T3 service or remote builder.
+
+Phase 0 must assign numeric budgets for CLI/completion tail latency, editor
+interaction latency, smoke/focused-run elapsed time, minimum memory headroom,
+scratch/output, and swap/pressure rate and duration. Fix these before candidate
+comparisons or defaults, recording the measurement method and unavailable
+signals. A failing baseline is a finding to fix, not a reason to relax the floor.
+Full-suite, build, browser and initial-install budgets belong to their separately
+qualified fixtures; a workload that does not fit 1 GiB is recorded as such without
+making it part of this basic-development requirement.
 
 ## Common design rules
 
@@ -88,18 +114,36 @@ performance hints; they must never confer authorization or bypass a host lease.
 Expose the chosen limits and reasons, plus validated overrides that can request
 less concurrency. Requests for more cannot exceed administrator or parent grants.
 
-For cooperating local test invocations, begin with one admitted run per user
-and machine across checkouts, using a bounded-wait ownership lock and existing
-process-cleanup patterns rather than a queue service. Reuse the safe locking
-patterns in [`lib.concurrency`](../../lib/concurrency.py); define a common lock
-scope that does not change with repository path or temporary-directory settings.
-Retain ownership until worker/child cleanup is confirmed, with an inspectable
-blocking outcome after uncertain cleanup. A CI/build parent may instead grant
-explicit disjoint allocations. If shared ownership cannot be established,
-disable automatic parallel pools; allow basic serial work only within an explicit
-budget or report the missing admission capability. Scope aggregate guarantees to
-cooperating work within the granted allocation; unrelated processes and other
-users still require current headroom checks and administrator enforcement.
+For cooperating local test invocations, begin with one admitted run per shared
+coordination domain across checkouts. Define that domain by the user, validated
+allocation/namespace scope and a common owner-controlled state root independent
+of repository path and temporary-directory settings. An accessible lock path
+alone does not prove visibility across containers or mount namespaces. Explicitly
+disjoint, enforced parent allocations may use independent domains and run at
+the same time. Scope aggregate guarantees to cooperating processes within the
+visible domain; unrelated users/processes still need headroom and administrator
+enforcement. Local waiting is bounded, then returns an explicit busy/retry result;
+an advisory lock provides no FIFO or starvation guarantee.
+
+Reuse the safe file/locking patterns in [`lib.concurrency`](../../lib/concurrency.py),
+but a lock released on parent death is insufficient ownership for a worker pool.
+Serialize admission against a private durable ownership record, registered
+before workers can execute. Record the grant and verified process-containment
+identity, including boot and process-start identity rather than a bare PID.
+After a runner dies, inspect or stop only verified owned descendants and reclaim
+only after confirmed cleanup, or a verified reboot in the same kernel scope.
+An absent parent PID is not evidence that children stopped. Preserve uncertain
+records with an inspectable recovery action and block conflicting admissions.
+If a platform cannot support verified containment/recovery, leave managed pools
+unavailable there rather than claiming equivalent ownership from a file lock.
+
+Basic serial tests must remain usable through a built-in conservative policy
+without Linux telemetry, a daemon or a manually supplied budget. When available,
+they cooperate with admission and obey parent limits. Absence of optional
+coordination permits this serial path with an explicit lack of aggregate
+guarantees; it must not bypass a known live or unresolved claim in an established
+domain. Distinguish unsupported coordination from a busy or damaged domain.
+Unknown capacity never enables automatic pools or unbounded output/storage.
 
 ### Give cached work a defined lifetime
 
@@ -130,24 +174,30 @@ Owner: benchmark/test tooling, with runtime owners supplying representative case
 - Build an opt-in, bounded benchmark command that records revision, toolchain,
   effective allocation, storage type, background load, cold/warm cache state,
   elapsed/CPU time, peak workload memory, swap/OOM/pressure, bytes/entries and
-  subprocess/scan counts. Report unavailable metrics explicitly. Keep raw
-  evidence private and machine-readable; publish only sanitized summaries.
+  subprocess/scan counts. Include transport round trips, content passes, durable
+  state writes and service reload/restart counts where relevant. Report
+  unavailable metrics explicitly. Keep raw evidence private and machine-readable;
+  publish only sanitized summaries.
   Label RSS versus cgroup-accounted memory, sampled versus kernel-recorded
   peaks, and file-cache inclusion; do not compare unlike memory measurements.
 - Reuse existing test selections and timing reports. Use generated small/large
   directory fixtures and trusted representative builds rather than repeatedly
   cloning arbitrary projects or generating huge files. Set a run/time/disk
   budget for the benchmark itself.
-- Pin explicit latency, memory, scratch and output budgets for each required
-  workload after baseline measurement. Use one paired run for triage, then
+- Pin explicit latency, memory, scratch and output budgets for each workload
+  on its required fixture after baseline measurement, including the numeric
+  basic-development thresholds above. Use one paired run for triage, then
   repeated comparisons for promising changes; report sample count and variance.
   Use enough short-operation samples for tail latency; use medians/ranges for
   a small number of expensive runs. Do not make noisy timing assertions unit tests.
 
-**Exit:** reproducible baseline and accepted per-workload budgets exist on the
-1 GiB fixture and a larger reference host. Separate cold-start/network variability
-from steady-state gains. Verify the proposed 4/16/32+ GiB fixtures during staged
-qualification rather than running every workload on every tier at every change.
+**Exit:** reproducible baselines and accepted per-workload budgets exist for the
+basic loop on the 1 GiB fixture and heavier workloads on a larger reference host.
+Record baseline failures and prioritize their fixes; phases 1/2 may proceed to
+resolve them without claiming the floor is qualified. Separate cold-start/network
+variability from steady-state gains. Verify the proposed 4/16/32+ GiB fixtures
+during staged qualification rather than running every workload on every tier
+at every change.
 
 ### 1. Define shared resource policy and preserve a small serial path
 
@@ -167,18 +217,23 @@ Owner: resource observation/policy and existing execution owners.
   slot. Do not enable multiple build claims before its lease, cancellation,
   draining and recovery contracts support them.
 - Implement the local test-run ownership boundary before automatic pools.
-  Cover simultaneous admissions from separate checkouts, parent death,
-  surviving children and unavailable coordination. Prove the explicit scope of
-  reservations instead of treating two independent observations as two grants.
+  Cover separate checkouts, changed temporary roots, shared and isolated
+  namespaces, disjoint parent grants, parent death with surviving children,
+  stale/reused PIDs, reboot recovery and unavailable/damaged coordination.
+  Prove the startup registration and cleanup boundary with a native case;
+  two independent observations are not two grants. Verify unsupported-platform
+  serial fallback separately from busy/unconfirmed ownership handling.
 - Add concise diagnostics showing requested/granted resources and a bounded
   reason for waiting, serial fallback or refusal. Keep operator controls small;
   automatic selection and an explicit serial override are the initial needs.
 
 **Exit:** deterministic mocked boundary tests prevent over-admission within
 the owned allocation, unknown capacity never becomes unlimited, nested budgets
-stay within the parent grant, and simultaneous local runs cannot each obtain
-the same grant. The basic 1 GiB loop works with automatic and explicit serial
-execution; a native concurrent-run case confirms the ownership behavior.
+stay within the parent grant, and simultaneous managed runs cannot each obtain
+the same grant. Serial work remains usable without optional observations or
+coordination, and native concurrent-run/parent-death cases confirm the claimed
+domain and ownership behavior. Carry unresolved baseline performance failures
+into phase 2; final rollout still requires the complete 1 GiB qualification.
 
 ### 2. Reduce startup and memory work before increasing concurrency
 
@@ -193,8 +248,9 @@ changes separately against the common phase-0 measurements.
   parser cache with mutable defaults. Measure installed-wheel and checkout paths.
 - **Bounded output and transport:** profile whole-suite `StringIO` capture and
   in-memory setup archives in [`run_tests.py`](../../run_tests.py) and
-  [`lib.setup_common`](../../lib/setup_common.py). Replace large accumulation/copying with bounded
-  spools or streaming where useful, including child output and cancellation.
+  [`lib.setup_common`](../../lib/setup_common.py). Replace large accumulation
+  and copying with bounded spools or streaming where useful, including child
+  output and cancellation.
   Spools must use the intended disk filesystem, not silently consume RAM-backed
   `/tmp`; include their bytes, permissions and cleanup in the operation budget.
   Preserve archive framing, integrity, size checks and private payload handling.
@@ -287,6 +343,61 @@ the correct sources and private payloads after cache hits/misses and reruns.
 Demonstrate reduced repeated work without unbounded disk growth or weaker
 integrity checks. More host throughput never weakens lease/recovery ownership.
 
+## Additional routes to rank from measurements
+
+These are candidates, not prerequisites for the first batch. Rank them by
+measured end-to-end cost, small-machine benefit, implementation/recovery risk
+and maintenance burden. Prefer removing passes or writes before introducing
+another cache, protocol or state store. Give each selected route its own bounded
+prototype and acceptance evidence within the owning phase.
+
+- **Avoid unnecessary setup writes and restarts (phase 2).**
+  [`lib.unit_transaction`](../../lib/unit_transaction.py) stages/verifies units,
+  rewrites them and reloads/restarts services on ordinary reconciliation.
+  Compare a healthy same-configuration rerun with drift and repair cases.
+  Evaluate operation-specific no-op detection using all relevant configuration,
+  ownership/modes, drop-ins, external inputs and callback effects. Equal unit
+  text alone is insufficient. Keep fresh health/authority checks, required
+  repair, explicit restart behavior and transaction/recovery evidence. Measure
+  writes, reloads/restarts, elapsed time and service interruption.
+- **Remove extra artifact content passes (phase 2/4).**
+  [`lib.build_artifacts`](../../lib/build_artifacts.py) copies exports into a
+  private snapshot, reads that snapshot for per-file hashes, then reads it again
+  to emit the bundle. Trial collecting bounded inventory/hashes during the
+  validated snapshot copy. Preserve source-change/link defenses, exact file and
+  bundle digests, ordering and atomic publication. The descriptor precedes
+  payload bytes, so a single streaming pass is not available for free; retain
+  the existing format unless measured gains justify a separate migration.
+- **Tune compression within bounded transport (phase 2/4).**
+  Setup archives in [`lib.setup_common`](../../lib/setup_common.py) use gzip.
+  Measure compression levels and chunk/spool sizing across constrained CPU,
+  slow/fast links and target decompression, including small and large payloads.
+  Choose by total CPU, memory and delivery time, not archive size alone.
+  Preserve receiver framing, extraction limits and private-payload separation;
+  a new codec or threaded compressor needs separate compatibility and budget
+  evidence.
+- **Reduce state and observation amplification (phase 2).**
+  [`lib.build_jobs`](../../lib/build_jobs.py) loads/validates a bounded JSON
+  ledger; mutations can validate/encode it again. Similar serialization costs
+  exist in [`lib.agent_memory`](../../lib/agent_memory.py). Measure bytes,
+  CPU and lock duration as retained history grows; first remove redundant
+  encoding within one validated transaction. In
+  [`lib.build_delivery`](../../lib/build_delivery.py), also measure repeated
+  status transport and journal writes. Trial read-only batching or a bounded
+  status wait only if it pays for its protocol/compatibility cost. Preserve
+  current credential/host checks, deadlines and recovery writes; do not blindly
+  enable SSH connection sharing, reuse stale authority, or coalesce/retry
+  mutations. Indexes or a transactional-store migration require a separate
+  measured growth case and recovery plan, without automatic history deletion.
+- **Reduce source-preparation I/O (phase 4).**
+  Instrument Git commands, tree/blob/history bytes and bundle verification in
+  [`lib.build_source`](../../lib/build_source.py). Compare large histories with
+  large worktrees before choosing snapshot or pinned-source reuse. Tie any reuse
+  to exact content/revision, tags and relevant conversion state. Preserve
+  pre/post-mutation cleanliness, bundle identity and checksum checks; repeated
+  validation around a mutable boundary is not redundant merely because it
+  invokes the same command.
+
 ## Integrated qualification and rollout
 
 Use the disposable test Proxmox server for actual 1 GiB and larger guest
@@ -297,10 +408,10 @@ basic-development floor. Do not put machine access details in repository docs.
 
 | Boundary | Required evidence |
 | --- | --- |
-| Constrained development | Clean checkout and installed wheel: help/completion, lightweight editing, smoke and representative focused suites on a real 1 vCPU / 1 GiB guest; record aggregate peaks, available headroom and responsiveness. |
-| Scaled execution | Serial/automatic/explicit limits on larger fixtures; uneven modules, nested workers/toolchains, simultaneous local admissions across checkouts, concurrent CLI use, slow I/O and dynamic pressure; no over-admission within the owned allocation or starvation. |
+| Constrained development | Prepared offline checkout and installed wheel: the pinned basic-development workload on a real 1 vCPU / 1 GiB guest, including empty/disabled application caches and missing optional telemetry/coordination; meet numeric latency, memory and pressure budgets. |
+| Scaled execution | Serial/automatic/explicit limits on larger fixtures; uneven modules, nested workers/toolchains, simultaneous admissions across checkouts/domains, concurrent CLI use, slow I/O and dynamic pressure; no over-admission within the owned allocation. Local waiting ends with bounded admission or busy; fairness/starvation qualification belongs to the shared coordinator. |
 | Cache/stream correctness | Cold/warm/disabled/corrupt caches; changed/deleted/mode-changed sources; concurrent publication; full disk, interrupted transfer and bounded spools; fresh arguments/credentials and exact source identities. |
-| Resource enforcement | Missing/partial/stale observations, quota changes, exhausted process/descriptor limits, cancellations, OOM/worker death and surviving children; fail or defer with retained recovery evidence. |
+| Resource enforcement | Missing/partial/stale observations, quota changes, exhausted process/descriptor limits, cancellations, OOM/worker/parent death, surviving children, PID reuse and reboot; preserve conservative serial fallback where supported, and block conflicting managed admissions with retained recovery evidence after uncertain cleanup. |
 | CI and supported paths | Full tests/coverage and artifact checks, supported Python/Node gates, affected Debian/CachyOS paths and selected native setup/build qualification. Keep mocked and native evidence distinct in the [coverage map](testing-coverage.md). |
 
 Ship focused, reversible batches. Start with opt-in behavior, compare it with
@@ -311,7 +422,7 @@ focused checks during editing and one broad validation at integration points,
 avoiding repeated full-suite runs on unchanged source.
 
 Accept a structural optimization only when representative gains exceed observed
-noise and justify its operational complexity. Meet every phase-0 absolute budget,
+noise and justify its operational complexity. Meet every applicable phase-0 budget,
 preserve behavioral coverage, and investigate any constrained-path latency or
 memory regression beyond measurement variation before enabling it by default.
 Choose the smallest worker count near the measured throughput plateau. If a
@@ -337,8 +448,11 @@ stopping or reverting deployment-related changes.
 
 Deliver phase 0's bounded benchmark harness and hardware fixtures, the phase-1
 budget decision contract with mocked boundaries, and a measured serial baseline
-on the 1 GiB guest. Then prototype lazy CLI imports and a two-process test runner
-independently. Enable neither by default until its acceptance gates pass.
+on the 1 GiB guest, recording any initial failures. Then prototype lazy CLI
+imports and a two-process test runner independently. The worker prototype needs
+the ownership/recovery boundary before shared use; startup/I/O fixes can proceed
+without waiting for all scheduling infrastructure. Enable neither by default
+until its acceptance gates pass.
 Use those results to choose the next cache/stream/monitor package, with one
 owner per coupled boundary. This keeps the large pass evidence-driven while
 establishing the resource contract needed by all later work.
