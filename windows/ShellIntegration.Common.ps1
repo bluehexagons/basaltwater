@@ -66,7 +66,10 @@ function Open-NativeDevelopmentTerminal([string]$Source, [string]$Project, [swit
     if (-not $shell) { throw 'Stable PowerShell 7 is unavailable; reapply setup' }
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
         "& '" + $entry.Replace("'", "''") + "' -Project '" + $directory.Replace("'", "''") + "' -Msvc:`$" + ([bool]$Msvc).ToString().ToLowerInvariant()))
-    $arguments = '-w new -d "' + $directory + '" "' + $shell + '" -NoLogo -NoProfile -NoExit -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
+    # Windows argv parsing doubles trailing backslashes before a closing quote.
+    # A drive root otherwise consumes the quote and the shell/options after it.
+    $quotedDirectory = '"' + [regex]::Replace($directory, '(\\+)$', '$1$1') + '"'
+    $arguments = '-w new -d ' + $quotedDirectory + ' "' + $shell + '" -NoLogo -NoProfile -NoExit -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
     Start-Process -FilePath $terminal -ArgumentList $arguments -ErrorAction Stop | Out-Null
     return [pscustomobject]@{ Project = $directory; Requested = $true; Msvc = [bool]$Msvc }
 }

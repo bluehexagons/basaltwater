@@ -65,6 +65,7 @@ public class HealthGuiFixture {
         function Add-NativeUserPath { throw 'Doctor tried to change PATH' }
         function Set-NativeGodotExecutable { throw 'Doctor tried to persist Godot discovery' }
         function Get-NativeCommand($Name) {
+            if ($Name -eq 'npm' -and $script:MissingNpm) { return $null }
             if ($Name -eq 'go' -and $script:MissingGo) { return $null }
             if ($Name -eq 'python' -and $script:StorePython) { return 'C:\Users\fixture\AppData\Local\Microsoft\WindowsApps\python.exe' }
             if ($Name -eq 'godot') { return Join-Path $env:LOCALAPPDATA 'Basaltwater\bin\godot.cmd' }
@@ -99,7 +100,7 @@ public class HealthGuiFixture {
         $saved = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'a' * 40; Phase = 'complete'; Source = 'C:\source';
             AgentTool = @('gh', 'codex', 'claude', 'opencode'); Node = $true; GameDev = $true;
             ShaderTools = $true; Godot = $true; Sunshine = $true; T3CodeDesktop = $true; StorageRoot = 'F:\coding'; Secret = 'never-publish' }
-        $script:Probes = @(); $script:MissingGo = $false; $script:StorePython = $false
+        $script:Probes = @(); $script:MissingGo = $false; $script:StorePython = $false; $script:MissingNpm = $false
         $script:BadStorage = $false; $script:BrokenCodex = $false
         $script:BrokenPython = $false; $script:BadLogin = $false; $script:BadSunshine = $false
         $script:MissingPowerShell = $false; $script:LockedDesktop = $false
@@ -132,7 +133,12 @@ public class HealthGuiFixture {
         $minimal = [pscustomobject]@{ Profile = 'agent_windows'; Revision = 'b' * 40; Phase = 'complete' }
         $script:Probes = @(); $script:BrokenCodex = $false
         Assert-True (Get-NativeWorkstationHealth $minimal).Healthy 'Legacy state without optional selections failed'
-        Assert-True ($script:Probes.Count -eq 4) 'Unselected runtimes were required'
+        Assert-True ($script:Probes.Count -eq 6) 'Default provider runtime dependencies were omitted or optional runtimes required'
+        $minimal | Add-Member NoteProperty Node $false
+        $minimal | Add-Member NoteProperty AgentTool @('gh', 'codex')
+        $script:MissingNpm = $true
+        $report = Get-NativeWorkstationHealth $minimal
+        Assert-True (-not $report.Healthy -and @($report.Checks | Where-Object { $_.Name -eq 'npm' -and $_.State -eq 'missing' }).Count -eq 1) 'Implicit npm dependency failure was reported healthy'
     }
     Write-Host 'Native workstation doctor tests passed.'
 } finally {

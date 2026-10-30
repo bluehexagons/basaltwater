@@ -35,6 +35,31 @@ try {
     $encoded = ($script:Launch.Arguments -split ' ')[-1]
     $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
     Assert-True ($command.Contains("quote''s") -and $command.Contains('-Msvc:$true')) 'Terminal handoff lost project quoting or MSVC selection'
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class TerminalArgvFixture {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern IntPtr CommandLineToArgvW(string command, out int count);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);
+    public static string[] Parse(string command) {
+        int count;
+        IntPtr argv = CommandLineToArgvW(command, out count);
+        if (argv == IntPtr.Zero) throw new Exception("Could not parse argv");
+        try {
+            var result = new string[count];
+            for (int i = 0; i < count; i++) result[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size));
+            return result;
+        } finally { LocalFree(argv); }
+    }
+}
+'@
+    foreach ($directory in @($project, [IO.Path]::GetPathRoot($temporary))) {
+        Open-NativeDevelopmentTerminal (Split-Path -Parent $windows) $directory | Out-Null
+        $parsed = [TerminalArgvFixture]::Parse('wt.exe ' + $script:Launch.Arguments)
+        Assert-True ($parsed[4] -ceq $directory -and $parsed[5] -eq 'C:\PowerShell 7\pwsh.exe' -and
+            $parsed[6] -eq '-NoLogo') 'Terminal argv merged a trailing directory separator with shell options'
+    }
     $failed = $false
     try { Get-NativeLocalItem 'https://example.com' | Out-Null } catch { $failed = $true }
     Assert-True $failed 'Artifact handoff accepted a non-file URL'

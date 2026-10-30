@@ -356,9 +356,10 @@ be available in a fresh terminal. Setup does not collect or copy credentials.
 `info` describes saved selections and the last installer phase; `complete`
 does not establish current tool health. `doctor` checks that phase and runs
 version probes for Git, GitHub CLI, Codex, and saved optional providers/runtimes,
-including dependencies selected by the game bundle. It checks npm alongside
-selected Node, identifies a failing Microsoft Store Python alias, resolves managed
-Godot to its actual executable, and validates configured storage paths,
+including dependencies selected by providers and the game bundle. It checks
+Node/npm for Codex and OpenCode even without explicit `-Node`, identifies a
+failing Microsoft Store Python alias, resolves managed Godot to its actual
+executable, and validates configured storage paths,
 required directories and the six persisted cache/runtime variables. Storage
 diagnostics do not repair missing directories or variables; rerun setup to repair them.
 Selected Visual Studio/Windows SDK and T3 desktop checks establish discovery;

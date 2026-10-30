@@ -64,7 +64,9 @@ function Get-NativeWorkstationHealth {
             $tools += $tool
         }
     }
-    if (& $selected 'Node') { $tools += @('node', 'npm') }
+    # Codex is part of every native profile and setup installs npm providers
+    # even when the explicit Node selection is false or absent in older state.
+    if ((& $selected 'Node') -or 'codex' -in $tools -or 'opencode' -in $tools) { $tools += @('node', 'npm') }
     if ((& $selected 'Python') -or (& $selected 'GameDev')) { $tools += @('uv', 'python') }
     if ((& $selected 'Go') -or (& $selected 'GameDev')) { $tools += 'go' }
     if ((& $selected 'NodeVersions') -or (& $selected 'GameDev')) { $tools += 'fnm' }
