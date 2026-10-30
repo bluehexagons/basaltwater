@@ -1,8 +1,13 @@
 # Resource-aware optimization
 
-Status: proposed implementation plan. The initial optimization pass removed
-selected repeated parser, package-observation, filesystem-discovery and CI work.
-The larger changes below are not implemented or qualified by that pass.
+Status: selected serial optimizations are implemented: focused CLI parser
+construction, deferred root metadata, bounded quiet-test output, artifact
+inventory during snapshot copying, one periodic source-storage scan and less
+CI installer work. A bounded [development benchmark](../../scripts/benchmark_development.py)
+supports comparable checkout and installed-launcher measurements. The
+[coverage map](testing-coverage.md) owns native qualification limits. Shared
+resource admission, test worker pools, new caches and multi-job build capacity
+below remain proposed; they are not enabled by these serial-path changes.
 
 The agreed minimum for basic CLI use, lightweight editing and focused tests is
 **1 vCPU and 1 GiB RAM**. Improve that experience while allowing larger machines
@@ -30,7 +35,8 @@ operator policy to choose execution behavior.
 | 16+ vCPU / 32+ GiB RAM | Exercise scheduling overhead, cache contention and the shared coordinator's queue fairness when implemented; throughput should scale only while CPU, memory and storage permit. |
 | Large host with a small container/VM allocation | Honor inherited quotas, affinity and actual available memory rather than physical host specifications. Include fractional CPU quotas, ballooned memory, slow storage and unavailable observations. |
 
-The 1 GiB floor is a requirement to qualify, not a completed test result. It
+The pinned basic-development workload has selected native Debian qualification;
+see the [coverage map](testing-coverage.md) for its scope and gaps. This
 does not make every repository build or browser workload fit. Keep existing
 recommendations for T3 Code with browser/build workloads distinct. A constrained
 machine should still offer useful CLI and test selections, explain why heavier
@@ -62,11 +68,22 @@ while one focused run executes. Keep this selection pinned in the benchmark
 manifest; report its test identities and any skips rather than substituting
 cheaper tests. It needs no browser, desktop, local T3 service or remote builder.
 
-Phase 0 must assign numeric budgets for CLI/completion tail latency, editor
-interaction latency, smoke/focused-run elapsed time, minimum memory headroom,
-scratch/output, and swap/pressure rate and duration. Fix these before candidate
-comparisons or defaults, recording the measurement method and unavailable
-signals. A failing baseline is a finding to fix, not a reason to relax the floor.
+Use these initial basic-development qualification budgets, fixed before the
+candidate comparison. They are native qualification thresholds, not timing
+assertions in ordinary CI:
+
+| Signal | Budget and method |
+| --- | --- |
+| CLI and installed Bash completion | p95 at most 2 seconds, at least 20 samples per operation |
+| Nano search/edit/save interactions | Each measured interaction at most 1 second; verify the exact saved text while a focused test runs |
+| Smoke / individual focused runs | At most 15 / 5 seconds per run; three samples and explicit test identities/skips |
+| Guest memory headroom | At least 256 MiB `MemAvailable`, sampled every 50 ms; distinguish this from child RSS |
+| Swap / OOM | No swap-in/out or OOM-kill counter increase; no-swap guest required |
+| Memory pressure | Full-stall rate above 10% must not persist for more than 2 seconds, measured from sampled PSI total deltas |
+| Qualification output and scratch growth | At most 64 MiB; bounded capture plus sampled filesystem usage, excluding prepared dependencies/checkouts |
+
+Record measurement limits and unavailable signals. A failing baseline is a
+finding to fix, not a reason to relax the floor.
 Full-suite, build, browser and initial-install budgets belong to their separately
 qualified fixtures; a workload that does not fit 1 GiB is recorded as such without
 making it part of this basic-development requirement.
@@ -360,14 +377,6 @@ prototype and acceptance evidence within the owning phase.
   text alone is insufficient. Keep fresh health/authority checks, required
   repair, explicit restart behavior and transaction/recovery evidence. Measure
   writes, reloads/restarts, elapsed time and service interruption.
-- **Remove extra artifact content passes (phase 2/4).**
-  [`lib.build_artifacts`](../../lib/build_artifacts.py) copies exports into a
-  private snapshot, reads that snapshot for per-file hashes, then reads it again
-  to emit the bundle. Trial collecting bounded inventory/hashes during the
-  validated snapshot copy. Preserve source-change/link defenses, exact file and
-  bundle digests, ordering and atomic publication. The descriptor precedes
-  payload bytes, so a single streaming pass is not available for free; retain
-  the existing format unless measured gains justify a separate migration.
 - **Tune compression within bounded transport (phase 2/4).**
   Setup archives in [`lib.setup_common`](../../lib/setup_common.py) use gzip.
   Measure compression levels and chunk/spool sizing across constrained CPU,
@@ -444,15 +453,19 @@ stopping or reverting deployment-related changes.
   handoffs and review/retry costs instead of assuming a smaller model always
   reduces total work.
 
-## First implementation batch
+## Next bounded deliverables
 
-Deliver phase 0's bounded benchmark harness and hardware fixtures, the phase-1
-budget decision contract with mocked boundaries, and a measured serial baseline
-on the 1 GiB guest, recording any initial failures. Then prototype lazy CLI
-imports and a two-process test runner independently. The worker prototype needs
-the ownership/recovery boundary before shared use; startup/I/O fixes can proceed
-without waiting for all scheduling infrastructure. Enable neither by default
-until its acceptance gates pass.
-Use those results to choose the next cache/stream/monitor package, with one
-owner per coupled boundary. This keeps the large pass evidence-driven while
-establishing the resource contract needed by all later work.
+Use the existing harness and serial measurements before choosing another
+structural change. Further CLI savings require separating command registration
+from runtime modules; the remaining import costs alone do not justify duplicating
+registration or adding lazy-module machinery. Artifact hashing already occurs
+during the validated copy; retain the [bundle contract](../agents/contributing/build-contracts.md)
+unless another measured content pass remains.
+
+Collect CI phase timings across representative runs before preparing an image
+or cache. A two-process test prototype is a separate opt-in experiment: first
+establish the phase-1 budget and descendant-ownership boundary, then compare
+identical tests/outcomes and total compute against serial execution. Do not
+enable pools merely because a machine reports spare CPUs. Runtime compression,
+no-op service reconciliation and source reuse need their own representative
+measurements and recovery acceptance before adding state or changing mutations.
