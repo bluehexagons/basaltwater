@@ -143,10 +143,14 @@ a later plan even when each individual source fits its own snapshot limits.
 Before clone, checkout and snapshot preparation, both aggregate remaining space
 and current filesystem free space must cover their respective headroom:
 source plus history, source alone, or snapshot plus history. Free-space checks
-also retain the margin. Checks run between commands, during native Git command
-polling, and in a periodic monitor throughout preparation (including Python
-snapshot writes). The monitor latches failures, preventing subsequent commands
-and successful return. An active Git process group is terminated by its runner.
+also retain the margin. Fresh checks run at command and preparation boundaries.
+One periodic monitor scans throughout preparation (including Python snapshot
+writes); native Git polling observes its latched failure without starting
+another tree walk. Boundary and periodic scans serialize to avoid competing
+metadata reads. The monitor waits 100 ms after each scan, so detection latency
+includes the scan duration, and Git polling can add another 100 ms before
+termination. A latched failure prevents subsequent commands and successful
+return. An active Git process group is terminated by its runner.
 Clones and other Git-created files are additionally subject to the history-file
 limit; the snapshot backend supplies its history bundle limit explicitly.
 

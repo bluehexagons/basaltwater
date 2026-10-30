@@ -609,7 +609,7 @@ class BuildSetupSourcesTests(unittest.TestCase):
         process.communicate.side_effect = [subprocess.TimeoutExpired("git", 0.1), (None, None)]
         with patch.object(sources.subprocess, "Popen", return_value=process) as popen, \
                 patch.object(sources.tempfile, "NamedTemporaryFile") as spool, \
-                patch.object(storage, "check") as check:
+                patch.object(storage, "check", side_effect=AssertionError("Monitor owns periodic scans")):
             spool.return_value.__enter__.return_value.tell.side_effect = AssertionError(
                 "Discarded stdout must not be inspected"
             )
@@ -621,7 +621,6 @@ class BuildSetupSourcesTests(unittest.TestCase):
         self.assertEqual(result, b"")
         self.assertEqual(popen.call_args.kwargs["stdout"], subprocess.DEVNULL)
         spool.assert_not_called()
-        self.assertEqual(check.call_count, 2)
         self.assertEqual(process.communicate.call_count, 2)
         launch = popen.call_args.args[0]
         self.assertEqual(launch[launch.index(sources._LIMIT_EXEC) + 1], "100")
@@ -629,9 +628,13 @@ class BuildSetupSourcesTests(unittest.TestCase):
     def test_native_runner_kills_process_group_on_periodic_storage_failure(self):
         storage = sources._Storage(str(self.destination), SourceLimits())
         process = Mock(pid=123, returncode=0)
-        process.communicate.side_effect = subprocess.TimeoutExpired("git", 0.1)
-        with patch.object(storage, "check", side_effect=[None, ValueError("aggregate limit")]), \
-                patch.object(sources.subprocess, "Popen", return_value=process), \
+
+        def monitor_failed(**kwargs):
+            storage.failure = ValueError("aggregate limit")
+            raise subprocess.TimeoutExpired("git", 0.1)
+
+        process.communicate.side_effect = monitor_failed
+        with patch.object(sources.subprocess, "Popen", return_value=process), \
                 patch.object(sources.os, "killpg") as kill:
             with self.assertRaisesRegex(ValueError, "aggregate limit"):
                 sources._run(["git"], cwd=str(self.destination), env={}, input_data=b"input",

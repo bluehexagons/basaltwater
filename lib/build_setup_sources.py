@@ -104,6 +104,7 @@ class _Storage:
         self.reserve = limits.max_metadata_bytes
         self.failure: Exception | None = None
         self.stopped = threading.Event()
+        self._scan_lock = threading.Lock()
 
     def _scan(self, descriptor: int) -> Iterator[os.stat_result]:
         with os.scandir(descriptor) as entries:
@@ -126,20 +127,27 @@ class _Storage:
                 elif not stat.S_ISREG(info.st_mode):
                     raise ValueError("Setup source storage contains a link or special file")
 
-    def check(self, headroom: int = 0) -> None:
+    def raise_if_failed(self) -> None:
+        """Observe the monitor's latched failure without rescanning storage."""
         if self.failure is not None:
             raise self.failure
-        size = count = 0
-        with directory_fd(self.root) as descriptor:
-            for info in self._scan(descriptor):
-                count += 1
-                size += max(info.st_size, info.st_blocks * 512)
-                if size > self.maximum or count > self.entries:
-                    raise ValueError("Aggregate setup source storage exceeds its limit")
-        if size + headroom > self.maximum:
-            raise ValueError("Aggregate setup source storage has insufficient headroom")
-        if shutil.disk_usage(self.root).free < headroom + self.reserve:
-            raise ValueError("Insufficient controller disk headroom for setup sources")
+
+    def check(self, headroom: int = 0) -> None:
+        # Boundary checks need a fresh scan, but must not compete with the
+        # periodic monitor for the same tree and filesystem metadata.
+        with self._scan_lock:
+            self.raise_if_failed()
+            size = count = 0
+            with directory_fd(self.root) as descriptor:
+                for info in self._scan(descriptor):
+                    count += 1
+                    size += max(info.st_size, info.st_blocks * 512)
+                    if size > self.maximum or count > self.entries:
+                        raise ValueError("Aggregate setup source storage exceeds its limit")
+            if size + headroom > self.maximum:
+                raise ValueError("Aggregate setup source storage has insufficient headroom")
+            if shutil.disk_usage(self.root).free < headroom + self.reserve:
+                raise ValueError("Insufficient controller disk headroom for setup sources")
 
     def _watch(self) -> None:
         while not self.stopped.wait(_POLL_SECONDS):
@@ -182,7 +190,7 @@ def _run(
     input_data: bytes | None, timeout: float, max_output_bytes: int,
     file_size_limit: int | None, storage: _Storage,
 ) -> bytes:
-    """Bound Git time/output/files, checking aggregate disk while it runs."""
+    """Bound Git time/output/files under the caller's active storage monitor."""
     if os.name != "posix" or not sys.executable:
         raise NotImplementedError("Bounded setup source preparation requires POSIX Python")
     selected = max(file_size_limit or 0, max_output_bytes, 1)
@@ -205,7 +213,7 @@ def _run(
         try:
             first = True
             while True:
-                storage.check()
+                storage.raise_if_failed()
                 if output is not None and output.tell() > max_output_bytes:
                     raise ValueError("Git setup source output exceeds its limit")
                 remaining = deadline - time.monotonic()
