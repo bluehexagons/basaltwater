@@ -116,6 +116,11 @@ container venv; checks still run in Debian. Branch CI covers Node 24.22.1 and
 failed package installation, checks and coverage are never replayed. Cleanup
 removes only that invocation's named container. An all-registry failure means
 checks did not start. Inspect the failed step before changing application code.
+The wrapper reports elapsed seconds and exit status for APT update/install,
+venv creation, Python dependencies and checks. It uses the selected interpreter's
+bundled pip and disables pip update notifications, avoiding a separate pip
+upgrade/download before installing the declared dependencies. These timings
+separate environment preparation from validation before considering caches.
 `make check-ci` runs all static, brand and wheel checks and executes the full
 suite once with branch coverage, matching branch CI. Do not also run
 `make check` and `make coverage` for the same unchanged source: that repeats

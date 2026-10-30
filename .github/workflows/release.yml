@@ -55,8 +55,7 @@ jobs:
 
       - name: Build wheel
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install build
+          python3 -m pip install --disable-pip-version-check build
           python3 -m build --wheel --outdir dist
 
       - name: Smoke-test installed wheel

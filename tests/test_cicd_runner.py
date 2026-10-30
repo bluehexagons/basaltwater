@@ -42,7 +42,7 @@ class DebianCITests(unittest.TestCase):
             self.assertNotIn("nodejs", script_words)
             self.assertIn("libstdc++6", script_words)
             self.assertIn("libatomic1", script_words)
-            self.assertEqual(argv[-1].splitlines()[-1], "make check-ci")
+            self.assertEqual(argv[-1].splitlines()[-1], "ci_phase checks make check-ci")
             self.assertNotIn("make check\n", argv[-1])
             self.assertNotIn("make coverage\n", argv[-1])
             self.assertNotIn("GITHUB_TOKEN", " ".join(argv))
@@ -63,7 +63,7 @@ class DebianCITests(unittest.TestCase):
             self.assertEqual(self.run_ci(node_only=True), 7)
         self.assertEqual([call.args[0][1] for call in run.call_args_list], ["pull", "run", "rm"])
         self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1],
-                         "make test SUITE=node TEST_ARGS='--durations 10'")
+                         "ci_phase checks make test SUITE=node TEST_ARGS='--durations 10'")
 
     def test_incompatible_check_modes_fail_before_any_commands(self):
         with patch.object(ci.subprocess, "run") as run, self.assertRaises(ValueError):
@@ -76,7 +76,7 @@ class DebianCITests(unittest.TestCase):
                 Mock(returncode=0), Mock(returncode=7), Mock(returncode=0)]) as run:
             self.assertEqual(self.run_ci(), 7)
         self.assertEqual([call.args[0][1] for call in run.call_args_list], ["pull", "run", "rm"])
-        self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1], "make check")
+        self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1], "ci_phase checks make check")
 
     def test_timeout_or_interruption_cleans_up_only_the_owned_container(self):
         for error in (subprocess.TimeoutExpired("docker run", 900), KeyboardInterrupt()):

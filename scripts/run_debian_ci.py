@@ -22,16 +22,23 @@ IMAGES = (
     "docker.io/library/debian:trixie",
 )
 CONTAINER_SCRIPT = """
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\
+ci_phase() {
+  local phase="$1" started=$SECONDS result=0
+  shift
+  "$@" || result=$?
+  printf 'CI phase %s: %ss (exit %s)\\n' "$phase" "$((SECONDS - started))" "$result"
+  return "$result"
+}
+ci_phase apt-update apt-get update
+ci_phase apt-install env DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\
   ca-certificates fish git make python3-venv libsqlite3-0 libffi8 libstdc++6 libatomic1
 git config --global --add safe.directory /workspace
-"$BASALTWATER_CI_PYTHON" -m venv /opt/basaltwater-ci-python
+ci_phase python-venv "$BASALTWATER_CI_PYTHON" -m venv /opt/basaltwater-ci-python
 export PATH=/opt/basaltwater-ci-python/bin:"$BASALTWATER_CI_NODE_DIR":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 python3 --version
 node --version
-python3 -m pip install --upgrade pip
-python3 -m pip install '.[dev,completion]'
+ci_phase python-dependencies python3 -m pip install '.[dev,completion]'
 """
 
 
@@ -76,7 +83,7 @@ def run_debian_ci(
     command = "make test SUITE=node TEST_ARGS='--durations 10'" if node_only else (
         "make check-ci" if coverage else "make check"
     )
-    script = CONTAINER_SCRIPT + command + "\n"
+    script = CONTAINER_SCRIPT + "ci_phase checks " + command + "\n"
     try:
         result = subprocess.run([
             "docker", "run", "--rm", "--name", name,
