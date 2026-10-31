@@ -6,6 +6,14 @@ and a dedicated user unit, `basaltwater-cachyos-t3.service`. It binds to
 and port. It runs with the user session; setup does not enable lingering.
 Firewall management requires an explicit access flag; see the workstation skill.
 
+The managed unit follows upstream 0.1.6's server priorities: CPU/IO weights
+1000, `MemoryLow=1536M`, `OOMScoreAdjust=100`, and OOM-avoid preference.
+T3 manages its own lower-priority agent slices and aggregate memory/task limits.
+Memory-low needs ancestor cgroup grants and IO weights need controller
+delegation; these settings do not reserve capacity. Upstream `t3 service protect`
+targets its separate `t3code.service`, so do not run it to configure this unit
+or the packaged desktop. Setup does not change system-wide protection settings.
+
 Inspect service state and recent logs as the user:
 
 ```fish
