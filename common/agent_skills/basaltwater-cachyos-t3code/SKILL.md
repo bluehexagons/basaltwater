@@ -40,6 +40,14 @@ managed desktop autostart; failed activation preserves it.
 
 ## Agent and browser workflows
 
+Stable 0.1.6 adds side chats (`/side` or `/btw`), project pin/archive,
+local commit review in the Diff pane, and optional 1Password secret providers.
+Use the shared [workflow reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/operations.md#016-conversation-project-and-credential-workflows).
+Side chats share the main thread's folder; archiving preserves project data.
+Setup preserves these choices and does not enroll a secret provider.
+The Secrets UI depends on the upstream build-time `T3CODE_FEATURE_SECRETS`
+flag; setting a desktop/service environment variable does not enable it.
+
 Follow live session orchestration instructions. Use `basaltwater-subagents` for
 provider/model selection, child tasks, worktree binding and native schedules.
 A shell directory change does not rebind T3. This profile does not provision

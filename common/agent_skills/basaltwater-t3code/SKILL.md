@@ -42,6 +42,9 @@ Read only the route needed:
 - **Service/logs, pairing, or Git:** [operations](references/operations.md).
   Pairing credentials, cookies, and GitHub tokens must stay out of shared
   output. Startup filtering does not sanitize every application/provider log.
+- **Side chats, project pin/archive, commit review, or 1Password:**
+  [0.1.6 workflows](references/operations.md#016-conversation-project-and-credential-workflows).
+  Side chats share the thread's folder; use bound worktrees for concurrent edits.
 - **Update, launcher migration, native-module repair:** [updates](references/updates.md).
   Prefer the connected client's **Update server** action for a deliberate
   update. Setup reruns reconcile stable T3 and selected providers. Fleet-wide

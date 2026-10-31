@@ -98,6 +98,19 @@ Basaltwater and rerun the saved setup command to apply the readiness fix.
 
 ## Release tracks and archive layout
 
+Stable 0.1.6 keeps service-state protocol 3 and the standalone archive layout.
+It adds lower-priority agent slices with memory/task bounds and server resource
+priorities. Debian uses the upstream unit; CachyOS's managed web unit follows
+those server priorities, while the packaged desktop manages its own runtime.
+For an explicitly requested Debian pressure-tuning operation, `t3 service protect`
+previews privileged settings and asks for confirmation/sudo. It can also protect
+SSH/Tailscale. `t3 service status` reports protection and
+`t3 service protect --undo` removes it. Memory protection applies immediately;
+the server OOM score takes effect after an arranged service restart. It targets
+the upstream service, not CachyOS's separate web unit or desktop. Basaltwater
+does not run it automatically. See the
+[tagged protection guide](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/background-service.md#keep-the-server-responsive-when-agents-use-all-memory).
+
 Stable 0.1.5 adds **Settings → About → Update track** in the desktop app to
 switch connected installations between Stable and Nightly. Ordinary **Update
 all** uses their selected tracks. Basaltwater setup continues to target stable;

@@ -70,6 +70,37 @@ basaltw agent doctor --tool codex --capability t3code --capability host --record
 Basaltwater's readiness/rollback history belongs to updates through
 Basaltwater; T3 updates do not create these records automatically.
 
+## 0.1.6 conversation, project, and credential workflows
+
+Use `/side` or `/btw` for an owner's side question, or **Side chat** in the right
+panel's **+** menu. It carries the main thread's context and shares its folder
+while that thread continues working. Its first reply asks before commands or
+edits; later replies follow its composer permission mode. Keep concurrent edits
+in explicitly bound worktrees. **Bring back** includes the discussion with the
+next main-thread message while the main thread is idle. Side chats are not
+delegated task receipts or a replacement for `delegate_task`.
+
+Pin projects from a picker or **Settings → Projects**. Archive/unarchive in
+that settings list; archiving retains files, settings, and threads and hides
+the project from pickers. All of a project's checkouts must be connected.
+Inspect running work and schedules separately before retiring a project.
+For local commit review, select **Commits** in the Diff pane source picker;
+it lists the newest 100 commits in the branch comparison and compares merges
+against their first parent.
+
+**Settings → Secrets** adds 1Password accounts as sources for provider variables
+and source-control credentials in builds enabling `T3CODE_FEATURE_SECRETS` at
+build time. An absent screen is not repaired by setting a service environment
+variable. The environment host needs a working `op` CLI
+and account access. Do not install/enroll it or replace existing authentication
+incidentally. This configuration is separate from `request_secret`, which
+remains the private agent input route with one-use references/file delivery.
+
+Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/thread-sidebar.md#side-chats),
+[project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
+[commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md),
+and [1Password driver](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
+
 ## Attention alerts
 
 For long-running work, the owner can opt into **Thread notifications** and

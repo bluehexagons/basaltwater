@@ -130,16 +130,17 @@ credential contents, use `basaltw agent support-bundle`.
 
 ## Stable feature baseline
 
-As checked on **2026-10-29**, GitHub's latest stable release and npm's `t3@latest`
-are **0.1.5**, released October 29. It retains the stable Orchestrator V2
+As checked on **2026-10-31**, GitHub's latest stable release and the local
+CachyOS `t3code-bin` package are **0.1.6** (package `0.1.6-1`). It retains
+the stable Orchestrator V2
 introduced in 0.1.0 and service-state protocol 3. Keep the
 server and every connected desktop client on compatible V2 releases; mobile
-requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.5)
+requires the 2.0 app. See the [upstream release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6)
 and [V2 migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 The release's recommended provider versions are Codex **0.159+**, Claude Code
 **2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **1.0+**.
-The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.5/apps/server/src/provider/model-manifest.json)
+The [provider compatibility manifest](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/provider/model-manifest.json)
 also marks Codex 0.156+ and Pi 0.80.5+ supported; distinguish recommended
 versions from minimum support. Inspect **Settings → Providers** for the selected account,
 binary, version, and readiness. Setup manages only selected Basaltwater
@@ -149,7 +150,7 @@ Antigravity now recommends **1.4.1**, with 1.3.0 and 1.1.1 also supported;
 0.1.5 adds Claude/GPT model discovery and thinking controls to that integration.
 This does not qualify it as a Basaltwater-managed provider.
 
-The 0.1.5 integration review verified the unchanged service protocol, runtime
+The earlier 0.1.5 integration review verified the unchanged service protocol, runtime
 layout, and administrative permission contract against tagged source. Its
 checksum-verified Linux x64 archive passed fresh-home and 0.1.4-to-0.1.5 upgrade
 checks for setup/doctor runtime selection, managed wrapper execution, embedded
@@ -211,6 +212,64 @@ See the [usage guide](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/
 
 ### Agent workflow integration
 
+Stable 0.1.6 adds these workflows to the existing integration:
+
+- **Side chats:** `/side` or `/btw`, or **Side chat** in the right panel's **+**
+  menu, asks a question with the thread's context while its work continues.
+  It shares the thread's folder; it is not an isolated editing worktree.
+  The first reply asks before commands or edits; later replies use the chosen
+  composer permission mode. **Bring back** transfers the discussion with the
+  next main-thread message while that thread is idle.
+- **Project organization:** pin projects in pickers or **Settings → Projects**.
+  Archive there to hide a project from pickers while retaining files, threads,
+  and settings; unarchive from the same list. All checkouts must be connected
+  for a project spanning multiple machines. Archiving does not establish that
+  its running work or schedules stopped.
+- **Local review:** choose **Commits** in the Diff pane source picker to inspect
+  the newest 100 commits in the branch comparison. Merge diffs use the first
+  parent. This complements the existing turn and branch review routes.
+- **Secret providers:** **Settings → Secrets** can configure a 1Password account
+  for provider environment variables and source-control credentials in builds
+  enabling `T3CODE_FEATURE_SECRETS` at build time. If the screen is absent,
+  changing a running service's environment does not enable compiled UI features.
+  The server
+  needs a working `op` CLI and account access. Basaltwater does not install or
+  enroll 1Password as part of a T3 update. Preserve the owner's existing login
+  choices; agent-requested secrets still use `request_secret` and its one-use
+  reference or file delivery.
+
+See the tagged [side-chat guide](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/thread-sidebar.md#side-chats),
+[project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
+[commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md#review-turn-changes),
+and [secret-provider implementation](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
+
+The 0.1.6 source review retains service-state protocol 3, the standalone
+archive layout, administrative scopes, and provider compatibility recommendations
+above. Authentication changes redact tickets and OAuth fields internally;
+the administrative permission set is unchanged. Thread organization now rejects
+unknown arguments strictly. No pairing or scheduling adapter change was needed.
+The GitHub-digest-verified Linux x64 archive passed version, embedded native-PTY
+probe, disposable fresh-home HTTP startup, and SQLite integrity checks on
+CachyOS. The generated managed web unit passed native `systemd-analyze --user
+verify`; activation and pressure behavior were not exercised on the live host.
+These checks do not establish a 0.1.5 upgrade or the live feature matrix below.
+Upstream now lowers agent slice priorities and bounds their aggregate memory/tasks;
+Basaltwater leaves those slices under T3's ownership. The managed CachyOS web
+unit now matches upstream's server CPU/IO weights, memory-low request and OOM
+preferences. These are relative protections, not reserved capacity: ancestor
+cgroup grants and delegated controllers determine their effect. Debian's
+upstream unit and the packaged desktop obtain their settings from T3 itself.
+See [upstream agent scopes](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/process/agentScope.ts)
+and [service priorities](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/cloud/bootService.ts).
+
+For deliberate Debian service pressure tuning, 0.1.6 adds `t3 service protect`
+and `--undo`. It previews privileged changes and prompts for confirmation/sudo;
+`t3 service status` reports protection. Memory protection applies immediately,
+but the server's OOM score needs a service restart. This command targets the
+upstream service, not Basaltwater's separate CachyOS web unit or desktop.
+Setup does not run it automatically. See the
+[protection guide](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/background-service.md#keep-the-server-responsive-when-agents-use-all-memory).
+
 The shared installed skills now route T3 agents to its native orchestration:
 
 | Work | Integration |
@@ -265,7 +324,8 @@ blocked step. Mocked tests and service HTTP readiness cannot qualify these paths
 
 | Case | Required evidence |
 | --- | --- |
-| Providers and migration | Fresh 0.1.5 setup, 0.1.4-to-0.1.5 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Providers and migration | Fresh 0.1.6 setup, 0.1.5-to-0.1.6 upgrade, and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| 0.1.6 workflows | Side-chat permission modes and idle Bring back, project pin/archive/unarchive across connected checkouts, local/merge commit review, optional 1Password resolution with missing/locked CLI failures, and server/agent priorities under pressure. Test service protection/undo separately on a disposable Debian host. |
 | Project promotion and release tracks | Promote a stopped No project folder in place; retain its files, all associated threads and schedules, then initialize Git. Exercise a deliberate Stable/Nightly switch on disposable installations, including offline/unsupported machines, incompatible or unreadable databases, and an incomplete switch whose requested track differs from its running version. Preserve database compatibility refusals. |
 | Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
 | Linked environments | On deliberately linked disposable peers, verify beta gates on both sides, server reachability/trust, read-only and narrower-mode denials, repository matching, missing/ambiguous project selection, remote result/restart/cancel, rejected worktree isolation/attachments, thread links, launch retry deduplication, expiry and peer revocation. Confirm forgetting a link does not claim to stop remote edits. |
