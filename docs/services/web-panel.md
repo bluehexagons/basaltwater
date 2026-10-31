@@ -774,6 +774,25 @@ the API contract, see the [web panel reference](web-panel-reference.md#notificat
 See [Notifications](notifications.md) for event meaning, delivery levels, and
 retries.
 
+## Remove the panel
+
+```bash
+basaltw patch 192.168.1.50 agent --no-web-panel
+```
+
+Removal first validates the managed configuration, then stops the installed
+audit timer, audit exporter and panel service before deleting units, credentials,
+events or the Nginx route. A failed stop aborts removal and preserves those
+files. Units already stopped or disabled remain in that state; inspect the
+reported systemd failure, repair it and retry removal, or rerun the enabled
+panel setup to restore service. For a partial installation, setup inspects
+systemd before skipping a missing unit file: the unit must be explicitly absent,
+inactive and not enabled. Inspection errors abort removal.
+
+Successful removal retains shared packages and independent agent tasks. Pause
+those tasks separately if they should stop. Managed audit and storage snapshots
+are removed; unrecognized files and their containing directories are preserved.
+
 ## Troubleshooting
 
 Run these checks on the panel host:

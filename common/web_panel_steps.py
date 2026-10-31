@@ -1059,6 +1059,7 @@ def _preflight_web_panel_removal() -> tuple[str | None, bool]:
     for path in (
         WEB_PANEL_INGEST_TOKEN,
         WEB_PANEL_AUDIT_SNAPSHOT,
+        os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json"),
         WEB_PANEL_NOTIFICATION_LOG,
     ):
         if os.path.lexists(path) and (
@@ -1096,6 +1097,23 @@ def _remove_nginx_site(nginx_content: str | None, link_exists: bool) -> None:
         raise
 
 
+def _missing_panel_unit_needs_stop(unit: str) -> bool:
+    """Distinguish an absent unit from a live unit whose file was unlinked."""
+    result = run(
+        ["systemctl", "show", unit,
+         "--property=LoadState,ActiveState,UnitFileState", "--no-pager"],
+        check=True, capture_output=True,
+    )
+    state = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+    if (not {"LoadState", "ActiveState", "UnitFileState"} <= state.keys()
+            or state["LoadState"] not in {"loaded", "not-found"}
+            or not state["ActiveState"]):
+        raise RuntimeError(f"Cannot inspect web panel unit before removal: {unit}")
+    return not (state["LoadState"] == "not-found"
+                and state["ActiveState"] == "inactive"
+                and state["UnitFileState"] == "")
+
+
 def remove_web_panel() -> None:
     """Remove the panel, authentication data, and public Nginx listener."""
 
@@ -1107,6 +1125,26 @@ def remove_web_panel() -> None:
     from web.github_runner_registration_steps import preflight_registration_units, remove_registration_service
 
     preflight_registration_units()
+    # Stop activators before their writer, and retain every unit and data file
+    # until all panel-owned stops succeed. A refused stop must not turn a live
+    # service into an installation with missing configuration or event storage.
+    audit_present = any(os.path.exists(path) for path in (
+        WEB_PANEL_AUDIT_TIMER_FILE, WEB_PANEL_AUDIT_SERVICE_FILE,
+        WEB_PANEL_AUDIT_SNAPSHOT, os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json"),
+    ))
+    panel_present = any(os.path.exists(path) for path in (
+        WEB_PANEL_SERVICE_FILE, WEB_PANEL_MANIFEST, WEB_PANEL_AUTH_FILE,
+    ))
+    for present, path, unit, command in (
+        (audit_present, WEB_PANEL_AUDIT_TIMER_FILE, f"{WEB_PANEL_AUDIT_SERVICE_NAME}.timer",
+         f"systemctl disable --now {WEB_PANEL_AUDIT_SERVICE_NAME}.timer"),
+        (audit_present, WEB_PANEL_AUDIT_SERVICE_FILE, f"{WEB_PANEL_AUDIT_SERVICE_NAME}.service",
+         f"systemctl stop {WEB_PANEL_AUDIT_SERVICE_NAME}.service"),
+        (panel_present, WEB_PANEL_SERVICE_FILE, f"{WEB_PANEL_SERVICE_NAME}.service",
+         f"systemctl disable --now {WEB_PANEL_SERVICE_NAME}.service"),
+    ):
+        if present and (os.path.exists(path) or _missing_panel_unit_needs_stop(unit)):
+            run(command, check=True)
     _remove_nginx_site(nginx_content, link_exists)
     from common.proxmox_web_panel_steps import remove_proxmox_snapshot
 
@@ -1114,24 +1152,8 @@ def remove_web_panel() -> None:
     remove_guacamole()
     remove_registration_service()
     units_changed = False
-    if os.path.exists(WEB_PANEL_SERVICE_FILE):
-        run(f"systemctl disable --now {WEB_PANEL_SERVICE_NAME}.service", check=False)
-        os.remove(WEB_PANEL_SERVICE_FILE)
-        units_changed = True
-    audit_units_exist = any(
-        os.path.exists(path)
-        for path in (WEB_PANEL_AUDIT_SERVICE_FILE, WEB_PANEL_AUDIT_TIMER_FILE)
-    )
-    if audit_units_exist:
-        run(
-            f"systemctl disable --now {WEB_PANEL_AUDIT_SERVICE_NAME}.timer",
-            check=False,
-        )
-        run(
-            f"systemctl stop {WEB_PANEL_AUDIT_SERVICE_NAME}.service",
-            check=False,
-        )
-    for path in (WEB_PANEL_AUDIT_SERVICE_FILE, WEB_PANEL_AUDIT_TIMER_FILE):
+    for path in (WEB_PANEL_SERVICE_FILE, WEB_PANEL_AUDIT_SERVICE_FILE,
+                 WEB_PANEL_AUDIT_TIMER_FILE):
         try:
             os.remove(path)
             units_changed = True
@@ -1151,7 +1173,9 @@ def remove_web_panel() -> None:
             os.rmdir(WEB_PANEL_CONFIG_DIR)
         except OSError:
             pass
-    for path in (WEB_PANEL_AUDIT_SNAPSHOT, WEB_PANEL_NOTIFICATION_LOG):
+    for path in (WEB_PANEL_AUDIT_SNAPSHOT,
+                 os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json"),
+                 WEB_PANEL_NOTIFICATION_LOG):
         try:
             os.remove(path)
         except FileNotFoundError:
