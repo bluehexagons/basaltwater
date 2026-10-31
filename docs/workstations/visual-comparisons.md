@@ -62,8 +62,10 @@ The child inherits the caller's environment, including `SDL_VIDEODRIVER`.
 `BASALTWATER_VISUAL_EVIDENCE` points to the new evidence directory and
 `BASALTWATER_VISUAL_SETTINGS` points to its private, read-only settings copy
 (an empty JSON object when `--settings` is omitted). Project scripts can use
-these paths for PNGs, observed settings and renderer logs. Changing the settings
-copy fails the check. Requested settings and inherited environment are context;
+these paths for PNGs, observed settings and renderer logs. Changing settings
+values or types fails the check, including replacing `1` with `true` or `1.0`.
+Whitespace and object-key ordering do not affect this comparison.
+Requested settings and inherited environment are context;
 the project must record the actual backend, GPU/software renderer, runtime,
 dimensions and settings used by its rendering process, including child workers.
 
@@ -146,8 +148,9 @@ without shell evaluation. Use a stable external harness path when the harness
 does not exist at both revisions. The caller's active toolchain and environment
 are inherited; the harness owns dependency installation, building, resource
 imports, deterministic input, scene/camera selection, and rendering.
-The shared settings copy is read-only. A command that changes its contents
-stops the pair rather than generating a comparison with inconsistent settings.
+The shared settings copy is read-only. A command that changes its values or
+types stops the pair rather than generating a comparison with inconsistent
+settings, using the same comparison rules as project checks above.
 
 For example, a game harness might consume:
 

@@ -61,6 +61,16 @@ def _settings(path: str | None) -> dict:
     return value
 
 
+def _settings_unchanged(path: str, expected: dict) -> bool:
+    """Compare JSON values and types, ignoring whitespace and object ordering."""
+    actual = read_json_file(path, max_bytes=512 * 1024)
+    # Python equality equates True with 1 and 1 with 1.0, including in nested
+    # containers. Serialized JSON preserves those meaningful setting changes.
+    return json.dumps(actual, sort_keys=True, allow_nan=False) == json.dumps(
+        expected, sort_keys=True, allow_nan=False,
+    )
+
+
 def _image(path: str, metadata: dict) -> dict:
     resolved = os.path.abspath(os.path.expanduser(path))
     validate_filesystem_path(resolved, must_exist=True)
@@ -174,7 +184,7 @@ def capture_revisions(args: argparse.Namespace) -> dict:
                 record["exit_status"] = completed.returncode
                 if completed.returncode != 0:
                     raise RuntimeError(f"{side} capture failed; inspect {log_path}")
-                if read_json_file(settings_path, max_bytes=512 * 1024) != settings:
+                if not _settings_unchanged(settings_path, settings):
                     raise RuntimeError(f"{side} capture changed the shared settings; refusing an inconsistent comparison")
                 images[side] = _image(output, record)
                 record.update(status="captured", duration_seconds=round(time.monotonic() - started, 3))

@@ -12,8 +12,8 @@ import time
 import uuid
 
 from lib.agent_environment import inspect_environment
-from lib.agent_visuals import _directory, _settings
-from lib.atomic_io import read_json_file, write_json_atomic
+from lib.agent_visuals import _directory, _settings, _settings_unchanged
+from lib.atomic_io import write_json_atomic
 from lib.remote_utils import is_dry_run, run
 from lib.streamed_process import run_streamed
 from lib.validation import validate_filesystem_path
@@ -155,7 +155,7 @@ def check_recipe(args: argparse.Namespace) -> dict:
         report["returncode"] = returncode
         if returncode != 0:
             raise RuntimeError(f"Project recipe exited with status {returncode}; inspect {log_path}")
-        if read_json_file(settings_path, max_bytes=512 * 1024) != settings:
+        if not _settings_unchanged(settings_path, settings):
             raise RuntimeError("Project recipe changed the recorded settings; refusing inconsistent evidence")
         report.update(ok=True, status="passed")
     except TimeoutError:

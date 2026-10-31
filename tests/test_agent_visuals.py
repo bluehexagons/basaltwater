@@ -186,6 +186,23 @@ class TestAgentVisuals(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["captures"]["after"]["settings"], settings)
 
+    def test_boolean_replacing_numeric_settings_stops_before_second_capture(self) -> None:
+        self.settings.write_text('{"seed":1}')
+        _, create, execute = self.mock_capture_system()
+
+        def change_settings(argv, **kwargs):
+            path = Path(argv[argv.index("--settings") + 1])
+            path.chmod(0o600)
+            path.write_text('{"seed":true}')
+            Path(argv[argv.index("--output") + 1]).write_bytes(png_bytes())
+            return subprocess.CompletedProcess(argv, 0)
+
+        execute.side_effect = change_settings
+        result = agent_visuals.capture_revisions(self.capture_args())
+        self.assertFalse(result["ok"])
+        self.assertIn("changed the shared settings", result["error"])
+        self.assertEqual(create.call_count, 1)
+
     def test_invalid_ref_fails_before_artifact_or_worktree_creation(self) -> None:
         validate, create, _ = self.mock_capture_system()
         validate.side_effect = ValueError("Unsafe revision")

@@ -156,6 +156,38 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("changed the recorded settings", result["error"])
 
+    def test_settings_type_changes_cannot_pass_as_equal_python_values(self) -> None:
+        for index, (before, after) in enumerate((
+            ('{"value":1}', '{"value":true}'),
+            ('{"value":0}', '{"value":false}'),
+            ('{"nested":[1,0]}', '{"nested":[true,false]}'),
+            ('{"value":1.0}', '{"value":1}'),
+        )):
+            with self.subTest(after=after):
+                self.settings.write_text(before)
+                def change_settings(argv, **kwargs):
+                    path = Path(kwargs["env"]["BASALTWATER_VISUAL_SETTINGS"])
+                    path.chmod(0o600)
+                    path.write_text(after)
+                    return 0
+                self.execute.side_effect = change_settings
+                args = self.args()
+                args.output = str(self.root / f"types-{index}")
+                result = agent_visual_check.check_recipe(args)
+                self.assertFalse(result["ok"])
+                self.assertIn("changed the recorded settings", result["error"])
+
+    def test_settings_formatting_changes_preserve_values_and_types(self) -> None:
+        def reformat_settings(argv, **kwargs):
+            path = Path(kwargs["env"]["BASALTWATER_VISUAL_SETTINGS"])
+            path.chmod(0o600)
+            path.write_text('{"resolution": [3840, 2160], "frame": 180}\n')
+            return 0
+
+        self.execute.side_effect = reformat_settings
+        result = agent_visual_check.check_recipe(self.args())
+        self.assertTrue(result["ok"])
+
     def test_existing_output_is_preserved(self) -> None:
         self.output.mkdir()
         marker = self.output / "check.json"

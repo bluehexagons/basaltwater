@@ -248,3 +248,30 @@ Remaining separate qualification: first-party browser tests, native Windows
 bundle cache exclusion, Wayland portals, physical GPU/display, EGL/Vulkan,
 audio/controller, HDR, latency/performance, full 1440p/4K image acceptance and
 live XRDP application editing. No such coverage is inferred from the checks above.
+
+## Follow-up audit (2026-10-31)
+
+A second review found a settings-integrity defect missed by the first pass:
+Python equality equates `1`, `1.0` and `true` (and `0` with `false`), including
+nested arrays and objects. Both recipe checks and revision captures could
+therefore report success after a setting's type changed. They now compare
+normalized JSON with type/number distinctions preserved, while allowing
+whitespace and key-order changes. Regression cases reproduced five failures
+before the fix; all 34 visual check/capture tests passed afterward.
+
+The configured live XRDP Geany smoke also passed in 7.038 seconds, exit zero:
+Unicode edit/save, scoped dialog interaction, owned-window close and temporary
+artifact cleanup. This closes the live XRDP editing gap for that fixture only;
+it does not qualify every desktop application. The shared session remains
+running and its Geany child exited successfully. Native Windows delivery already
+contains cache exclusion and tests in its separate PowerShell implementation;
+native Windows execution remains unverified here. The other platform/hardware
+limits above remain separate qualification work.
+
+Final follow-up validation: `make check-ci` passed on the scoped changes in the
+activated Debian venv, exit zero, 208.685 seconds, 9,009 tests/six skips and 82%
+combined coverage, with static/brand/wheel checks. The native type-mutation CLI
+fixture correctly returned exit one in 1.194 seconds. Follow-up raw evidence is
+copied under the same private audit directory (`followup-focused`,
+`followup-desktop`, `followup-native`, `followup-ci`); the checkpoint records the
+delivered commit. No outstanding owned application jobs remain.
