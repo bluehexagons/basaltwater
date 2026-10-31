@@ -448,7 +448,11 @@ class DesktopSession:
             return {**result, "generation": self.generation}
         if action == "windows":
             windows = []
-            ids = window_ids()
+            try:
+                ids = window_ids()
+            except RuntimeError as exc:
+                return {"generation": self.generation, "windows": [], "truncated": True,
+                        "active_window": None, "coverage": "unavailable", "detail": str(exc)}
             deadline = time.monotonic() + 10
             inspected = 0
             incomplete = False

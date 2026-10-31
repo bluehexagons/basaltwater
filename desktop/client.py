@@ -68,6 +68,7 @@ def wait_for_window(generation: str, *, window: str | None = None,
     poll_interval = 0.25
     stable_since = None
     stable_identity = None
+    inventory_detail = None
     while True:
         launch_status = None
         if launch:
@@ -87,6 +88,7 @@ def wait_for_window(generation: str, *, window: str | None = None,
         result = backend.request({"action": "windows", "generation": generation})
         if result["generation"] != generation:
             raise RuntimeError("Desktop session changed while waiting")
+        inventory_detail = result.get("detail") if result.get("coverage") == "unavailable" else None
         matches = [item for item in result["windows"]
                    if (window is None or item["id"] == window)
                    and (title is None or title in item["title"])
@@ -130,7 +132,8 @@ def wait_for_window(generation: str, *, window: str | None = None,
         poll_interval = 0.25 if stable_since is not None else min(1, poll_interval * 2)
         if time.monotonic() >= deadline:
             break
-    raise RuntimeError(f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows")
+    detail = f"; {inventory_detail}" if inventory_detail else ""
+    raise RuntimeError(f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows{detail}")
 
 
 def wait_for_element(generation: str, *, pid: int, name: str | None = None,

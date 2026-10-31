@@ -5,6 +5,8 @@ import argparse
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+from pathlib import Path
+import tempfile
 from unittest.mock import Mock, patch
 import unittest
 
@@ -61,6 +63,14 @@ class WindowReadinessTests(unittest.TestCase):
                                observation(window()), observation(window()), observation(window())],
                               stable_seconds=0.5)
         self.assertEqual(result["windows"], [window()])
+
+    def test_unavailable_metadata_waits_for_visibility_and_cannot_establish_absence(self):
+        unavailable = {**observation(truncated=True), 'coverage': 'unavailable',
+                       'detail': 'Desktop window metadata unavailable'}
+        visible = self.run_wait([unavailable, observation(window())])
+        self.assertEqual(visible['windows'], [window()])
+        absent = self.run_wait([unavailable, observation()], condition='absent')
+        self.assertEqual(absent['windows'], [])
 
     def test_absence_must_stay_absent_and_complete_for_the_interval(self):
         result = self.run_wait([observation(), observation(window()), observation(truncated=True),
@@ -120,6 +130,14 @@ class WaitPollingTests(unittest.TestCase):
         self.assertLessEqual(self.backend.request.call_count, 20)
         self.assertLessEqual(max(self.clock.sleeps), 1)
         self.assertEqual(self.clock.now, 15)
+
+    def test_persistently_unavailable_metadata_times_out_with_unknown_coverage_detail(self):
+        self.backend.request.return_value = {**observation(truncated=True), 'coverage': 'unavailable',
+                                            'detail': 'Desktop window metadata unavailable'}
+        with self.assertRaisesRegex(RuntimeError, 'Timed out.*metadata unavailable'):
+            client.wait_for_window('g', title='MuseScore', condition='absent', timeout=1, backend=self.backend)
+        self.assertEqual(self.clock.now, 1)
+        self.assertEqual(self.backend.request.call_count, 3)
 
     def test_incomplete_element_wait_backs_off_without_claiming_absence(self):
         root = "0:" + "a" * 32
@@ -211,7 +229,7 @@ class WindowWaitCliTests(unittest.TestCase):
                 events.append(payload["action"])
                 if payload["action"] == "exec":
                     self.assertEqual(payload["control_revision"], "r")
-                return {"windows": []} if payload["action"] == "windows" else {"pid": 42, "launch": "token"}
+                return observation() if payload["action"] == "windows" else {"pid": 42, "launch": "token"}
             def wait(*args, **kwargs):
                 self.assertEqual(events, ["windows", "exec"])
                 self.assertEqual(kwargs["exclude_titles"], ["Startup", "Welcome"])
@@ -226,6 +244,112 @@ class WindowWaitCliTests(unittest.TestCase):
                 self.assertEqual(run_desktop_command(self.args([*prefix, "exec", "--wait-window", "MuseScore",
                     "--exclude-title", "Startup", "--exclude-title", "Welcome", "--stable-seconds", "1",
                     "--", "musescore3"])), 0)
+
+    def test_launch_reports_unknown_partial_empty_and_populated_baselines(self):
+        cases = (
+            (runtime, [], RuntimeError('metadata unavailable'), None, False, None),
+            (native_session, ['--native'], RuntimeError('inspection unavailable'), None, False, None),
+            (runtime, [], {**observation(truncated=True), 'coverage': 'unavailable',
+                           'detail': 'metadata unavailable'}, None, False, None),
+            (runtime, [], observation(window(), truncated=True), ['0x123'], False, None),
+            (runtime, [], observation(), [], True, []),
+            (runtime, [], observation(window()), ['0x123'], True, ['0x123']),
+        )
+        for backend, prefix, baseline, ids, complete, existing in cases:
+            with self.subTest(backend=backend.__name__, baseline=baseline), patch.object(
+                backend, 'status', return_value={'state': 'running', 'generation': 'g', 'control_revision': 'r'},
+            ) as status, patch.object(backend, 'request', side_effect=[baseline, {'pid': 42, 'launch': 'token'}]) as request, \
+                    patch.object(client, 'wait_for_window', return_value={
+                        'windows': [window()], 'launch_status': {'returncode': None},
+                    }) as wait, redirect_stdout(StringIO()) as output:
+                self.assertEqual(run_desktop_command(self.args([
+                    *prefix, 'exec', '--wait-window', 'MuseScore', '--', 'musescore3',
+                ])), 0)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result['window_baseline']['complete'], complete)
+                self.assertEqual(result['window_baseline']['observed_window_ids'], ids)
+                self.assertEqual(result['existing_window_ids'], existing)
+                self.assertEqual((result['pid'], result['launch']), (42, 'token'))
+                self.assertIn('inspect PID/class', result['window_association'])
+                if isinstance(baseline, RuntimeError):
+                    self.assertEqual(result['window_baseline']['detail'], str(baseline))
+                self.assertEqual(status.call_count, 2)
+                self.assertEqual([call.args[0]['action'] for call in request.call_args_list], ['windows', 'exec'])
+                self.assertEqual(request.call_args.args[0]['generation'], 'g')
+                self.assertEqual(request.call_args.args[0]['control_revision'], 'r')
+                self.assertEqual(wait.call_args.kwargs['launch'], 'token')
+
+    def test_changed_baseline_session_or_prelaunch_context_blocks_launch(self):
+        current = {'state': 'running', 'generation': 'g', 'control_revision': 'r'}
+        cases = [({**observation(), 'generation': 'replacement'}, current)]
+        for change in ({'generation': 'replacement'}, {'control_revision': 'new'}, {'state': 'stopping'}):
+            cases.append((RuntimeError('inventory unavailable'), {**current, **change}))
+        for baseline, latest in cases:
+            with self.subTest(baseline=baseline, latest=latest), patch.object(
+                runtime, 'status', side_effect=[current, latest],
+            ), patch.object(runtime, 'request', side_effect=[baseline]) as request, \
+                    patch.object(client, 'wait_for_window') as wait, redirect_stdout(StringIO()) as output:
+                self.assertEqual(run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor'])), 1)
+                self.assertIn('changed before application launch', json.loads(output.getvalue())['error'])
+                request.assert_called_once_with({'action': 'windows', 'generation': 'g'})
+                wait.assert_not_called()
+
+    def test_baseline_transport_and_permission_failures_do_not_launch(self):
+        for error in (PermissionError('denied'), ConnectionResetError('reset'), TimeoutError('timeout')):
+            with self.subTest(error=error), patch.object(runtime, 'status', return_value={
+                'state': 'running', 'generation': 'g', 'control_revision': 'r',
+            }), patch.object(runtime, 'request', side_effect=error) as request, \
+                    patch.object(client, 'wait_for_window') as wait, redirect_stdout(StringIO()):
+                self.assertEqual(run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor'])), 1)
+                request.assert_called_once_with({'action': 'windows', 'generation': 'g'})
+                wait.assert_not_called()
+
+    def test_failed_or_unacknowledged_launch_is_never_replayed_or_waited_on(self):
+        for error in (RuntimeError('command missing'), RuntimeError('session changed'),
+                      ConnectionResetError('lost launch reply'), TimeoutError('lost launch reply')):
+            with self.subTest(error=error), patch.object(runtime, 'status', return_value={
+                'state': 'running', 'generation': 'g', 'control_revision': 'r',
+            }), patch.object(runtime, 'request', side_effect=[RuntimeError('metadata unavailable'), error]) as request, \
+                    patch.object(client, 'wait_for_window') as wait, redirect_stdout(StringIO()) as output:
+                self.assertEqual(run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor'])), 1)
+                result = json.loads(output.getvalue())
+                self.assertIn(str(error), result['error'])
+                self.assertNotIn('pid', result)
+                self.assertNotIn('launch', result)
+                self.assertEqual([call.args[0]['action'] for call in request.call_args_list], ['windows', 'exec'])
+                wait.assert_not_called()
+
+    def test_wait_failure_retains_acknowledged_launch_and_unknown_baseline(self):
+        with patch.object(runtime, 'status', return_value={
+            'state': 'running', 'generation': 'g', 'control_revision': 'r',
+        }), patch.object(runtime, 'request', side_effect=[
+            RuntimeError('metadata unavailable'), {'pid': 42, 'launch': 'token'},
+        ]) as request, patch.object(client, 'wait_for_window', side_effect=RuntimeError('Timed out')), \
+                redirect_stdout(StringIO()) as output:
+            self.assertEqual(run_desktop_command(self.args(['exec', '--wait-window', 'Editor', '--', 'editor'])), 1)
+            result = json.loads(output.getvalue())
+            self.assertEqual((result['pid'], result['launch']), (42, 'token'))
+            self.assertIsNone(result['window_baseline']['observed_window_ids'])
+            self.assertFalse(result['window_baseline']['complete'])
+            self.assertEqual(result['error'], 'Timed out')
+            self.assertEqual(request.call_count, 2)
+
+    def test_open_can_launch_with_unknown_baseline_and_keeps_default_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'score.mid'
+            path.touch()
+            with patch.object(runtime, 'status', return_value={
+                'state': 'running', 'generation': 'g', 'control_revision': 'r',
+            }), patch.object(runtime, 'request', side_effect=[
+                RuntimeError('metadata unavailable'), {'pid': 42, 'launch': 'token'},
+            ]) as request, patch.object(client, 'wait_for_window', return_value={
+                'windows': [window()], 'launch_status': {'returncode': None},
+            }), redirect_stdout(StringIO()) as output:
+                self.assertEqual(run_desktop_command(self.args([
+                    'open', str(path), '--wait-window', 'MuseScore',
+                ])), 0)
+                self.assertEqual(request.call_args.args[0]['argv'], ['xdg-open', str(path)])
+                self.assertIsNone(json.loads(output.getvalue())['existing_window_ids'])
 
     def test_wait_remains_read_only_in_each_blocked_mode(self):
         for mode in ("human-override", "disabled"):

@@ -183,7 +183,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             payload = {"action": command, "generation": current["generation"],
                        "control_revision": current["control_revision"]}
             wait_title = getattr(args, "wait_window", None)
-            baseline = []
+            baseline = None
             exclude_titles = getattr(args, "exclude_titles", None)
             stable_seconds = getattr(args, "stable_seconds", 0)
             if command in ("exec", "open", "wait"):
@@ -197,7 +197,23 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     raise ValueError("Window title must be a nonempty string of at most 512 characters")
                 if not 0 < args.timeout <= 120:
                     raise ValueError("Wait timeout must be greater than zero and at most 120 seconds")
-                baseline = backend.request({"action": "windows", "generation": current["generation"]})["windows"]
+                try:
+                    inventory = backend.request({"action": "windows", "generation": current["generation"]})
+                except RuntimeError as exc:
+                    baseline = {"complete": False, "observed_window_ids": None, "detail": str(exc)[:500]}
+                else:
+                    if inventory.get("generation") != current["generation"]:
+                        raise ValueError("Desktop session changed before application launch; inspect status")
+                    unavailable = inventory.get("coverage") == "unavailable"
+                    baseline = {"complete": inventory.get("truncated") is False and not unavailable,
+                                "observed_window_ids": None if unavailable else [item["id"] for item in inventory["windows"]]}
+                    if unavailable:
+                        baseline["detail"] = inventory.get("detail", "Window inventory unavailable")
+                latest = backend.status()
+                if latest.get("state") != "running" or latest.get("generation") != current["generation"]:
+                    raise ValueError("Desktop session changed before application launch; inspect status")
+                if latest.get("control_revision") != current["control_revision"]:
+                    raise ValueError("Desktop control changed before application launch; inspect status")
             if command == "smoke":
                 if backend is not runtime:
                     raise RuntimeError("The Geany XRDP smoke check is Debian-only; use native application edit/save/reopen checks")
@@ -252,6 +268,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                         raise ValueError("Hold duration requires --native")
                 result = client.send_action(payload, backend=backend)
                 if wait_title:
+                    result["window_baseline"] = baseline
                     try:
                         observed = client.wait_for_window(current["generation"], title=wait_title, backend=backend,
                                                           timeout=args.timeout, launch=result["launch"],
@@ -259,9 +276,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                         result["error"] = str(exc)  # Preserve launch identity for inspection after timeout.
                     else:
-                        previous = {item["id"] for item in baseline}
+                        previous = set(baseline["observed_window_ids"]) if baseline["complete"] else None
                         result.update(windows=observed["windows"], launch_status=observed["launch_status"],
-                                      existing_window_ids=[item["id"] for item in observed["windows"] if item["id"] in previous],
+                                      existing_window_ids=([item["id"] for item in observed["windows"] if item["id"] in previous]
+                                                           if previous is not None else None),
                                       window_association="title substring; inspect PID/class before acting")
         exit_code = int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
                         or (result.get("state") == "stopped" and bool(result.get("last_failure"))))

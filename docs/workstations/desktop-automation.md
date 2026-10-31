@@ -148,8 +148,16 @@ The options work on shared XRDP and native desktop backends. They do not establi
 readiness: inspect the actual document and verify its files before acting.
 A launch can reuse an existing window. Check returned PIDs and
 `existing_window_ids`; do not assume the launch PID owns every matching window.
+`window_baseline` records whether the pre-launch inventory was complete and
+which IDs were observed. An unavailable baseline has `observed_window_ids: null`
+and diagnostic detail; it does not prevent the requested launch. For partial or
+unavailable baselines, `existing_window_ids` is `null`, so matching windows cannot
+be classified as new. Session/control changes before launch still stop it.
+On the shared desktop, unavailable client-list metadata is explicitly incomplete;
+visibility polling can wait for the first window, while absence stays unknown.
 Failed launch waits retain the launch token/PID and identify terminating signals
-such as `SIGSEGV (11)`. Inspect launch status before retrying.
+such as `SIGSEGV (11)`. A lost launch reply may leave no receipt even if the app
+started. Inspect launch status and windows before retrying.
 
 For accessible controls:
 

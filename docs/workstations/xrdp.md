@@ -251,13 +251,21 @@ and limited to the latest 128 launches. Launchers can exit successfully after
 delegating to an existing process. `--wait-window` uses a literal title substring,
 reports matching windows and which IDs existed before launch, and never promises
 that a match belongs to the new process or that a document has finished loading.
+`window_baseline` records completeness and observed IDs. An unavailable baseline
+does not block the requested launch; it has `observed_window_ids: null` and a
+diagnostic detail. `existing_window_ids` is `null` when the baseline is incomplete
+or unavailable, so matches cannot be classified as new. Launch still checks the
+same session and control revision. A failed wait retains the launch PID/token;
+an interrupted launch reply may leave no receipt even if the app started.
 Inspect PID/class and the document; do not retry a timed-out launch blindly.
 
 Window inventory adds PID/class where available, an identity fingerprint, and
 the active window ID. It uses the window manager's stacking list, falling back
 to its standard client list when stacking metadata is unavailable. If neither
-list is readable, inventory returns an error rather than an empty complete list;
-an explicitly empty client list remains valid. Title inspection preserves
+list is readable, inventory reports `coverage: unavailable`, `truncated: true`
+and diagnostic detail. This permits bounded polling while the first app starts,
+and cannot establish absence. An explicitly empty client list remains valid.
+Window-targeted mutations still fail when metadata is unavailable. Title inspection preserves
 Unicode filenames and ellipses in an English UTF-8 locale.
 Mutations require current generation and identity;
 title changes invalidate the fingerprint. It reduces stale targeting but cannot prove

@@ -37,7 +37,11 @@ actual document afterward; a stable title does not prove that it loaded.
 
 Launch results include a session-local `launch` token and PID. Only the latest
 128 launches are tracked. A title match can be an existing application window;
-inspect returned PID/class and `existing_window_ids` before acting. A running
+inspect returned PID/class and `existing_window_ids` before acting.
+`window_baseline` reports completeness and observed IDs; an unavailable baseline
+has null IDs and diagnostic detail. Partial or unavailable baselines allow the
+requested launch but return `existing_window_ids: null`, which cannot identify
+new matches. Session/control changes still stop launch. A running
 process or visible window does not prove document readiness. A launcher may exit
 successfully after asking an existing process to open a document. On timeout,
 inspect before retrying; never automatically launch a duplicate application.

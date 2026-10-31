@@ -172,9 +172,14 @@ class DesktopControlTests(unittest.TestCase):
 
     @patch.object(runtime, "run_tool", return_value='_NET_CLIENT_LIST:  not found.')
     def test_missing_metadata_never_satisfies_absence_or_permits_window_mutation(self, tool):
-        with patch.object(runtime, 'request', side_effect=self.session.handle):
+        inventory = self.session.handle({'action': 'windows', 'generation': self.session.generation})
+        self.assertTrue(inventory['truncated'])
+        self.assertEqual(inventory['coverage'], 'unavailable')
+        self.assertEqual(inventory['windows'], [])
+        with patch.object(runtime, 'request', side_effect=self.session.handle), \
+                patch.object(client.time, 'monotonic', side_effect=[0, 1]):
             with self.assertRaisesRegex(RuntimeError, 'window metadata unavailable'):
-                client.wait_for_window(self.session.generation, window='0x123', condition='absent')
+                client.wait_for_window(self.session.generation, window='0x123', condition='absent', timeout=0.1)
         tool.reset_mock()
         with self.assertRaisesRegex(RuntimeError, 'window metadata unavailable'):
             self.session.handle({'action': 'window', **self.mutation_context(),
@@ -1107,7 +1112,7 @@ class DesktopCliTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[0]["control_revision"], "r")
 
     @patch.object(runtime, "status", return_value={"state": "running", "generation": "g", "control_revision": "r"})
-    @patch.object(runtime, "request", side_effect=[{"windows": []},
+    @patch.object(runtime, "request", side_effect=[{"generation": "g", "windows": [], "truncated": False},
                                                  {"pid": 42, "launch": "token", "generation": "g"}])
     @patch.object(client, "wait_for_window", side_effect=RuntimeError("Timed out"))
     def test_launch_wait_failure_preserves_pid_without_relaunching(self, wait, request, status):
