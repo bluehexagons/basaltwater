@@ -37,7 +37,7 @@ PLUGIN = PluginDefinition(
 
 
 def get_security_steps(*, lite: bool) -> list[tuple[str, StepFunc]]:
-    """Return the standard security-hardening steps for a built-in flow."""
+    """Return early hardening; compose authentication jails after desktop setup."""
 
     from security.steps import (
         configure_apparmor,
@@ -45,7 +45,6 @@ def get_security_steps(*, lite: bool) -> list[tuple[str, StepFunc]]:
         configure_auto_restart,
         configure_auto_updates,
         configure_cleanup_maintenance,
-        configure_fail2ban,
         configure_firewall,
         configure_login_banners,
         configure_pam_lockout,
@@ -62,7 +61,6 @@ def get_security_steps(*, lite: bool) -> list[tuple[str, StepFunc]]:
         [
             ("Hardening SSH configuration", harden_ssh),
             ("Hardening kernel parameters", harden_kernel),
-            ("Configuring fail2ban (sshd jail)", configure_fail2ban),
             ("Configuring login banners", configure_login_banners),
             ("Configuring AppArmor policy", configure_apparmor),
             ("Configuring auditd (kernel audit framework)", configure_auditd),
@@ -74,6 +72,13 @@ def get_security_steps(*, lite: bool) -> list[tuple[str, StepFunc]]:
         ]
     )
     return steps
+
+
+def get_fail2ban_steps() -> list[tuple[str, StepFunc]]:
+    """Activate jails after their optional XRDP log sources are installed."""
+    from security.steps import configure_fail2ban
+
+    return [("Configuring fail2ban authentication jails", configure_fail2ban)]
 
 
 def get_web_firewall_steps() -> list[tuple[str, StepFunc]]:

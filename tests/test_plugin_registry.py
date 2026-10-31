@@ -22,6 +22,32 @@ from lib.config import SetupConfig
 
 
 class TestPluginRegistry(unittest.TestCase):
+    def test_fail2ban_activation_follows_xrdp_sources_with_early_ssh_hardening(self):
+        from desktop.steps import install_xrdp, harden_xrdp
+        from security.steps import configure_fail2ban, configure_firewall, harden_ssh
+
+        for profile in ("server_lite", "server_web", "server_dev", "agent_vm", "control_plane",
+                        "workstation_desktop", "pc_dev", "workstation_dev",
+                        "agent_workstation", "agent_code_vm"):
+            with self.subTest(profile=profile):
+                config = SetupConfig(host="192.0.2.10", username="user", system_type=profile,
+                                     machine_type="vm", include_desktop=True, enable_rdp=True,
+                                     include_web_firewall=profile == "server_web")
+                functions = [function for _, function in get_steps_for_system_type(config)]
+                self.assertEqual(functions.count(configure_fail2ban), 1)
+                self.assertLess(functions.index(harden_ssh), functions.index(install_xrdp))
+                self.assertLess(functions.index(configure_firewall), functions.index(install_xrdp))
+                self.assertLess(functions.index(harden_xrdp), functions.index(configure_fail2ban))
+
+    def test_headless_profiles_keep_one_ssh_fail2ban_step(self):
+        from desktop.steps import install_xrdp
+        from security.steps import configure_fail2ban
+
+        config = SetupConfig(host="192.0.2.10", username="user", system_type="server_lite")
+        functions = [function for _, function in get_steps_for_system_type(config)]
+        self.assertEqual(functions.count(configure_fail2ban), 1)
+        self.assertNotIn(install_xrdp, functions)
+
     def test_smb_client_packages_precede_mounts_once_on_headless_and_desktop(self):
         from desktop.desktop_environment_steps import install_smbclient
         from plugins.post_setup import build_post_setup_steps

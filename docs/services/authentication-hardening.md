@@ -28,6 +28,12 @@ shared 300-second APT/dpkg lock wait, allowing normal overlap with distro APT
 jobs. Lock-wait exhaustion or another install failure still stops that setup
 step before configuration continues; setup does not replay the failed install.
 
+Server and workstation plans activate Fail2ban after optional desktop/XRDP
+installation and hardening, so its file-backed XRDP jail has real log sources
+on a fresh machine. Firewall and SSH hardening still precede desktop setup.
+Headless setups retain the SSH jail. Custom step plans must install and start
+XRDP before running `configure_fail2ban` with RDP enabled.
+
 UFW setup skips machines that cannot enforce firewall policy, including
 unprivileged LXC, OCI and WSL. These targets need reachability controls on their
 host or upstream network; skipped UFW setup does not establish source filtering.

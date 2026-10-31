@@ -137,7 +137,7 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         get_common_steps,
         get_final_steps,
     )
-    from plugins.security import get_security_steps, get_web_firewall_steps
+    from plugins.security import get_fail2ban_steps, get_security_steps, get_web_firewall_steps
     from lib.machine_state import can_manage_firewall
     from plugins.desktop import extend_desktop_steps, extend_desktop_browser_and_office_steps
     from plugins.sync import extend_syncthing_steps
@@ -178,6 +178,7 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
 
     steps.extend(get_security_steps(lite=config.system_type in {"server_web", "server_lite"}))
     extend_desktop_steps(config, steps)
+    steps.extend(get_fail2ban_steps())
     extend_desktop_browser_and_office_steps(config, steps)
 
     if config.include_web_server:

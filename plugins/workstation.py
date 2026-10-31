@@ -101,7 +101,7 @@ def build_workstation_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         extend_desktop_browser_and_office_steps,
         extend_desktop_steps,
     )
-    from plugins.security import get_security_steps, get_web_firewall_steps
+    from plugins.security import get_fail2ban_steps, get_security_steps, get_web_firewall_steps
     from plugins.sync import extend_syncthing_steps
     from plugins.server import extend_antistatic_steps, extend_gogs_steps
     from plugins.web import (
@@ -118,6 +118,7 @@ def build_workstation_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
 
     steps.extend(get_security_steps(lite=False))
     extend_desktop_steps(config, steps)
+    steps.extend(get_fail2ban_steps())
 
     if config.include_web_server:
         steps.extend(get_web_server_steps())
