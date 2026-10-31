@@ -453,6 +453,28 @@ class TestConfigureFail2Ban(unittest.TestCase):
         # informational connection lines.
         written = "".join(call.args[0] for call in mock_file().write.call_args_list)
         self.assertIn("AUTHFAIL", written)
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        self.assertLess(commands.index("fail2ban-client -t"), commands.index("systemctl restart fail2ban"))
+
+    @patch("security.security_steps.is_container", return_value=False)
+    @patch("security.security_steps.run")
+    @patch("security.security_steps.os.makedirs")
+    @patch("security.security_steps.open", new_callable=mock_open)
+    def test_missing_log_validation_stops_before_service_activation(self, _file, _md, command, _ic):
+        failure = CommandExecutionError("fail2ban-client -t", 255, "Have not found any log file for xrdp jail")
+
+        def run_command(value, **_kwargs):
+            if value == "fail2ban-client -t":
+                raise failure
+            return SimpleNamespace(returncode=0)
+
+        command.side_effect = run_command
+        config = SetupConfig(username="u", host="h", system_type="server_lite", enable_rdp=True)
+        with patch("builtins.print") as output, self.assertRaises(CommandExecutionError) as raised:
+            configure_fail2ban(config)
+        self.assertIs(raised.exception, failure)
+        self.assertFalse(any(call.args[0].startswith("systemctl ") for call in command.call_args_list))
+        output.assert_not_called()
 
     @patch("security.security_steps.is_container", return_value=True)
     def test_skipped_in_container(self, _ic):

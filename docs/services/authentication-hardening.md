@@ -33,6 +33,10 @@ installation and hardening, so its file-backed XRDP jail has real log sources
 on a fresh machine. Firewall and SSH hardening still precede desktop setup.
 Headless setups retain the SSH jail. Custom step plans must install and start
 XRDP before running `configure_fail2ban` with RDP enabled.
+Setup runs `fail2ban-client -t` before enabling or restarting the service.
+Missing log sources or invalid jail configuration stop that step; a successful
+systemd restart request alone does not establish that asynchronous jail loading
+succeeded. Repair the reported configuration before rerunning setup.
 
 UFW setup skips machines that cannot enforce firewall policy, including
 unprivileged LXC, OCI and WSL. These targets need reachability controls on their

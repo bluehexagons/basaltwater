@@ -619,6 +619,9 @@ findtime = 600
         with open(_FAIL2BAN_XRDP_JAIL, "w") as f:
             f.write(fail2ban_xrdp_jail)
 
+    # systemd can report a successful restart before Fail2ban's asynchronous
+    # configuration fails. Reject missing log sources and invalid jails first.
+    run("fail2ban-client -t")
     run("systemctl enable fail2ban")
     run("systemctl restart fail2ban")
 
