@@ -729,6 +729,8 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
             # slices. MemoryLow is effective only when ancestors grant it.
             "CPUWeight=1000\nIOWeight=1000\nMemoryLow=1536M\n"
             "OOMScoreAdjust=100\nManagedOOMPreference=avoid\n"
+            # An OOM-killed helper must not stop every session in this unit.
+            "OOMPolicy=continue\n"
             f"WorkingDirectory={_unit_working_directory(workspace)}\n"
             f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
             "UnsetEnvironment=T3CODE_STATE_DIR T3CODE_BASE_DIR T3CODE_HOME\n"

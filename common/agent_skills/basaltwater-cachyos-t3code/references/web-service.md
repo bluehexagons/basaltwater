@@ -8,6 +8,11 @@ Firewall management requires an explicit access flag; see the workstation skill.
 
 The managed unit follows upstream 0.1.6's server priorities: CPU/IO weights
 1000, `MemoryLow=1536M`, `OOMScoreAdjust=100`, and OOM-avoid preference.
+It also sets `OOMPolicy=continue`, so an OOM-killed helper does not cause
+systemd to stop the entire service. A server process exit still follows the
+unit's restart policy. Rerun setup to stage the updated unit; the completion
+worker applies it after setup finishes. See the
+[upstream unit](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/cloud/bootService.ts).
 T3 manages its own lower-priority agent slices and aggregate memory/task limits.
 Memory-low needs ancestor cgroup grants and IO weights need controller
 delegation; these settings do not reserve capacity. Upstream `t3 service protect`

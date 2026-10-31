@@ -260,7 +260,8 @@ class T3InstallTests(unittest.TestCase):
         content = self.unit.read_text()
         self.assertIn("UMask=0077", content)
         for directive in ("CPUWeight=1000", "IOWeight=1000", "MemoryLow=1536M",
-                          "OOMScoreAdjust=100", "ManagedOOMPreference=avoid"):
+                          "OOMScoreAdjust=100", "ManagedOOMPreference=avoid",
+                          "OOMPolicy=continue"):
             self.assertIn("\n" + directive + "\n", content)
         self.assertIn("WorkingDirectory=" + str(self.home / "repos"), content)
         self.assertNotIn('WorkingDirectory="', content)
