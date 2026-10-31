@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from lib.agent_environment import add_manifest_parser, run_manifest_command
+from lib.agent_environment import add_manifest_parser, run_manifest_command, load_project_environment, _container_engine_inventory
 from lib.agent_probe import ProbeResult
 from lib.workstation_report import inspect_workstation
 
@@ -69,15 +69,62 @@ class ManifestOutputTests(unittest.TestCase):
         with (patch("lib.agent_environment.inspect_environment", return_value=manifest),
               patch("lib.agent_environment.load_project_environment", return_value={}),
               patch("lib.workstation_report.inspect_workstation", return_value={"status": "observed"}) as report,
+              patch("lib.agent_environment.shutil.which", side_effect={
+                  "podman": "/usr/bin/podman", "docker": None,
+              }.get),
               patch("sys.stdout", new_callable=io.StringIO) as output):
             code = run_manifest_command(parser.parse_args(["manifest", "--capability", "workstation", "--json"]))
         self.assertEqual(code, 0)
         result = json.loads(output.getvalue())
-        self.assertEqual(result["workstation"], {"status": "observed"})
+        self.assertEqual(result["workstation"]["status"], "observed")
+        self.assertIn("container_engines", result["workstation"])
         self.assertEqual(result["basaltwater"], {"commit": "current"})
         self.assertNotIn("desktop_applications", result)
         self.assertNotIn("skills", result)
         report.assert_called_once_with("/project", {})
+
+    def test_workstation_manifest_exposes_engine_argv_and_unavailable_state(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_manifest_parser(parser.add_subparsers())
+        manifest = {**self.manifest(), "workspace": {"repository": "/project"}}
+        with (patch("lib.agent_environment.inspect_environment", return_value=manifest),
+              patch("lib.agent_environment.load_project_environment", return_value={}),
+              patch("lib.workstation_report.inspect_workstation", return_value={"status": "observed"}),
+              patch("lib.agent_environment.shutil.which", side_effect={
+                  "podman": "/usr/bin/podman", "docker": None,
+              }.get) as which,
+              patch("sys.stdout", new_callable=io.StringIO) as output):
+            code = run_manifest_command(parser.parse_args([
+                "manifest", "--capability", "workstation", "--json",
+            ]))
+        self.assertEqual(code, 0)
+        engines = json.loads(output.getvalue())["workstation"]["container_engines"]
+        self.assertEqual(engines, {
+            "podman": {"status": "available", "executable": "/usr/bin/podman",
+                       "argv": ["/usr/bin/podman"]},
+            "docker": {"status": "unavailable", "executable": None, "argv": None},
+        })
+        self.assertEqual(which.call_args_list, [call("podman"), call("docker")])
+
+    def test_declared_wrapper_is_discovered_without_executing_project_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            declaration = {"version": 1, "recipes": {"engine": {
+                "description": "Project wrapper", "argv": ["bash", "scripts/podman.sh"],
+                "requires": ["bash"]}}, "container_engines": {"podman": "engine"}}
+            manifest = root / "basaltwater-agent.json"
+            manifest.write_text(json.dumps(declaration))
+            with patch("lib.agent_environment.shutil.which", return_value=None):
+                project = load_project_environment(temporary)
+                result = _container_engine_inventory(temporary, project)
+            self.assertEqual(result["podman"]["status"], "declared")
+            self.assertEqual(result["podman"]["argv"], ["bash", "scripts/podman.sh"])
+            self.assertEqual(Path(result["podman"]["directory"]), root)
+            self.assertEqual(result["docker"]["status"], "unavailable")
+            for engines in ({"other": "engine"}, {"podman": "missing"}, {"podman": []}):
+                manifest.write_text(json.dumps({**declaration, "container_engines": engines}))
+                with self.subTest(engines=engines), self.assertRaisesRegex(ValueError, "container_engines"):
+                    load_project_environment(temporary)
 
 
 class WorkstationReportTests(unittest.TestCase):

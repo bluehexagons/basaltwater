@@ -24,6 +24,7 @@ from lib.validators import validate_host
 
 
 PROJECT_FILE = "basaltwater-agent.json"
+CONTAINER_ENGINES = ("podman", "docker")
 MUSESCORE_EXECUTABLES = ("musescore4", "mscore4", "musescore3", "mscore3", "musescore", "mscore")
 DESKTOP_APPLICATIONS = {
     "blender": {
@@ -185,6 +186,25 @@ def _text(value: object, label: str) -> str:
     return value
 
 
+def _container_engine_inventory(repository: str, project: dict) -> dict[str, dict[str, object]]:
+    """Report local engine commands without invoking engines or wrappers."""
+    inventory = {}
+    for name in CONTAINER_ENGINES:
+        executable = shutil.which(name)
+        inventory[name] = {
+            "status": "available" if executable else "unavailable",
+            "executable": executable,
+            "argv": [executable] if executable else None,
+        }
+        recipe_name = project.get("container_engines", {}).get(name)
+        if recipe_name is not None:
+            recipe = project["recipes"][recipe_name]
+            inventory[name] = {"status": "declared", "recipe": recipe_name,
+                               "argv": recipe["argv"], "directory": str(Path(repository) / recipe["directory"]),
+                               "readiness": "unverified", "source": project.get("source")}
+    return inventory
+
+
 def _required_tools(value: object) -> list[str]:
     if not isinstance(value, list) or len(value) > 100:
         raise ValueError("required tools must be an array of at most 100 executable names")
@@ -233,11 +253,11 @@ def load_project_environment(repository: str) -> dict[str, object]:
     try:
         data = read_json_file(path, max_bytes=64 * 1024)
     except FileNotFoundError:
-        return {"source": None, "deployments": {}, "artifact_directories": [], "required_tools": [], "recipes": {}}
+        return {"source": None, "deployments": {}, "artifact_directories": [], "required_tools": [], "recipes": {}, "container_engines": {}}
     if (
         not isinstance(data, dict) or type(data.get("version")) is not int
         or data["version"] != 1
-        or set(data) - {"version", "deployments", "artifact_directories", "required_tools", "recipes"}
+        or set(data) - {"version", "deployments", "artifact_directories", "required_tools", "recipes", "container_engines"}
     ):
         raise ValueError(f"{PROJECT_FILE}: expected version 1 and known fields")
     deployments = data.get("deployments", {})
@@ -276,11 +296,16 @@ def load_project_environment(repository: str) -> dict[str, object]:
         if os.path.isabs(path_value) or path_value in (".", "..") or path_value.startswith("../"):
             raise ValueError("Artifact directories must remain below the repository")
         normalized.append(path_value)
+    recipes = _recipes(data.get("recipes", {}), repository)
+    engines = data.get("container_engines", {})
+    if (not isinstance(engines, dict) or set(engines) - set(CONTAINER_ENGINES)
+            or any(not isinstance(name, str) or name not in recipes for name in engines.values())):
+        raise ValueError("container_engines must map podman/docker to declared recipe names")
     return {
         "source": path, "deployments": deployments,
         "artifact_directories": list(dict.fromkeys(normalized)),
         "required_tools": _required_tools(data.get("required_tools", [])),
-        "recipes": _recipes(data.get("recipes", {}), repository),
+        "recipes": recipes, "container_engines": engines,
     }
 
 
@@ -480,7 +505,9 @@ def run_manifest_command(args: argparse.Namespace) -> int:
             from lib.workstation_report import inspect_workstation
 
             repository = result["workspace"]["repository"]
-            result["workstation"] = inspect_workstation(repository, load_project_environment(repository))
+            project = load_project_environment(repository)
+            result["workstation"] = inspect_workstation(repository, project)
+            result["workstation"]["container_engines"] = _container_engine_inventory(repository, project)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
@@ -498,6 +525,9 @@ def run_manifest_command(args: argparse.Namespace) -> int:
             from lib.workstation_report import format_workstation
 
             print(format_workstation(result["workstation"]))
+            for name, engine in result["workstation"]["container_engines"].items():
+                print(f"Container engine {name}: {engine['status']}" +
+                      ("; " + shlex.join(engine["argv"]) if engine["argv"] else ""))
             return 0
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"{key}: {json.dumps(value)}" for key, value in result.items()))
         return 0

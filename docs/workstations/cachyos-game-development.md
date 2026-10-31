@@ -207,6 +207,16 @@ See [native context checks and compiler caching](../agents/project-tooling.md#op
 for shared Debian/CachyOS recipes. Existing container engines can use the
 [storage/preflight commands](../agents/project-tooling.md#container-storage-and-sdk-headroom)
 without adding container provisioning to this workstation profile.
+`agent manifest PATH --capability workstation --json` reports Podman/Docker
+PATH availability and any project-declared `container_engines` recipe wrapper,
+including argv and cwd when the engine itself is not on PATH. Discovery never
+executes wrappers; declarations remain unverified. See the lifecycle reference
+below for the manifest example.
+Keep Podman's `graphroot` and `runroot` outside searchable project trees,
+including `~/repos` and managed worktrees, so image layers and runtime state do
+not inflate repository search/indexing. This is a storage placement convention,
+not a request to migrate or reconfigure an existing workstation store. See the
+[container lifecycle reference](../../common/agent_skills/basaltwater-project-development/references/containers.md).
 
 Choose the backend for the evidence needed, and verify the actual SDL driver
 and GL renderer in the application's logs:

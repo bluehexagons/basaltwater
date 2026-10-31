@@ -142,6 +142,37 @@ runtime; C# defaults to `godot-mono` and also requires a discoverable `dotnet`
 command. SDK installation and compatibility still need project verification.
 Setup still installs the standard repository Godot package only.
 
+For optional read-only export prerequisites, run:
+
+```fish
+basaltw desktop --native develop doctor --project /absolute/project --export-check --json
+```
+
+This opt-in runs only the selected engine's `--version`, from `/` with no
+project arguments, a three-second probe deadline and 4096-byte output cap.
+Probe cleanup can add bounded process termination time. The default doctor
+still executes no engine. `project.engine_version` retains the exact observed
+version; `project.export_check` reports the expected Godot 4 template directory,
+installed version/file inventory, `mismatching_templates`, `missing_templates`
+and `truncated`. The template key includes patch/release status and mono/double
+features, but excludes the build label and commit hash, following
+[Godot's version configuration](https://github.com/godotengine/godot/blob/master/core/version.h).
+
+Inventory covers `$XDG_DATA_HOME/godot/export_templates` (default
+`~/.local/share/godot/export_templates`), or `editor_data/export_templates`
+beside a self-contained engine with `_sc_`/`._sc_`. It examines at most 1024
+entries total across version directories and their immediate children, without
+following child symlinks or reading template binaries. A missing, empty, or
+metadata-only matching directory fails the diagnostic; other installed versions
+are reported as mismatching and do not satisfy it. Additional old versions do
+not fail an otherwise matching installation. Truncation and unsupported version
+formats fail conservatively. Custom template paths, nested payloads, preset
+requirements, template contents and build provenance remain unverified; a
+matching directory with a nonempty template file establishes presence only.
+No templates are downloaded, no export runs, and no project/cache/state is
+written. `export_readiness` remains `unverified`; use the project's reviewed
+export checks on its build system for actual compatibility.
+
 Use `develop import` to prepare the selected project's assets explicitly. It
 runs `--headless --import`, waits for imports, then exits; Godot can execute
 project editor plugins and write its `.godot` cache during this operation.
@@ -176,6 +207,8 @@ unacknowledged launch or failed initial unit inspection retains the task ID as
 ```fish
 basaltw desktop --native develop list --project /absolute/project --json
 basaltw desktop --native develop status TASK_ID --json
+# Use the returned task ID; wait does not stop it on timeout:
+basaltw desktop --native develop wait TASK_ID --timeout 120 --json
 # Save task-owned editor changes first:
 basaltw desktop --native develop stop TASK_ID --dry-run --json
 basaltw desktop --native develop stop TASK_ID --json
@@ -219,6 +252,17 @@ them privately and remove only an exact finished task directory when no longer
 needed. Finished successful supervisor units are unloaded automatically after
 their process group exits; saved records still provide status and exit evidence.
 There is no log/record cleanup timer.
+
+`wait TASK_ID --timeout SECONDS --json` repeatedly reads the same verified
+status, at most twice per second. The timeout is an integer from 1 through
+3600 seconds (default 600). It emits one final JSON status with the existing
+log/report paths and `wait_timed_out`. Exit zero requires verified `completed`
+state and a successful recorded exit. Failed, stopped, unavailable or unverified
+tasks return nonzero immediately. Deadline expiry also returns nonzero, retaining
+the observed state; it never stops or relaunches the task. Each status probe has
+its existing three-second deadline plus bounded process cleanup, so an in-flight
+probe can delay return beyond the wait deadline. An uncertain/expired wait needs
+inspection of the same task handle before further dependent work.
 
 Status includes a `report` path to `result.json`. New completion reports retain
 `started_at`, `finished_at` and monotonic `elapsed_seconds` for the supervised
@@ -297,6 +341,18 @@ explicitly inside the harness when necessary.
 Use headless checks for the assertions they actually
 exercise; verify rendering, audio, focus, and controller behavior on the real
 desktop/GPU. Separate game frame times from streaming/encoding/client latency.
+
+Measure GPU tasks sequentially: finish asset imports, launch one measured
+recipe/run, then use `develop wait TASK_ID --timeout SECONDS --json` and inspect
+its project-owned assertions, logs and report before launching the next sample.
+Do not overlap imports, shader warmup, measured runs or exports; concurrent GPU
+work makes timing comparisons ambiguous. Retain each sample's revision, exact
+engine, renderer/device, scene/settings/seed, warmup/cache state and project
+frame-time measurements. Worker `elapsed_seconds` includes startup/output
+collection/shutdown and is not frame time. A zero wait exit establishes process
+completion only; it does not replace project assertions or visual acceptance.
+If wait expires or returns uncertain evidence, inspect that same task and finish
+or explicitly stop it before measuring another sample.
 
 For Electron, launch one declared package script using the project's committed
 Node/package-manager requirements and preserve its sandbox policy:

@@ -16,6 +16,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.cachyos import is_cachyos
@@ -57,6 +58,8 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
         action.add_argument("--json", action="store_true")
         if name != "exec":
             action.add_argument("--engine", help="Godot executable name or absolute path; defaults to godot or godot-mono for C#")
+        if name == "doctor":
+            action.add_argument("--export-check", action="store_true", help="Probe the exact Godot version and installed templates without exporting")
         if name != "doctor":
             action.add_argument("--dry-run", action="store_true", help="Validate and show the task without creating state or launching")
         if name in ("editor", "run"):
@@ -81,12 +84,14 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
         else:
             action.add_argument("--settings", help="Existing non-secret JSON settings to record and pass to the recipe")
             action.add_argument("--timeout", type=int, default=600, help="Recipe process-group deadline in seconds (1–3600)")
-    for name in ("status", "stop"):
+    for name in ("status", "stop", "wait"):
         action = actions.add_parser(name)
         action.add_argument("task", help="Task ID returned by a development launch")
         action.add_argument("--json", action="store_true")
         if name == "stop":
             action.add_argument("--dry-run", action="store_true", help="Validate the task identity without stopping it")
+        elif name == "wait":
+            action.add_argument("--timeout", type=int, default=600, help="Wait deadline in seconds (1–3600); does not stop the task")
     listing = actions.add_parser("list", help="List private task records; use status for current process state")
     listing.add_argument("--project", help="Filter records to an existing project/worktree")
     listing.add_argument("--json", action="store_true")
@@ -244,11 +249,15 @@ def session_environment(uid: int) -> tuple[dict[str, str], str]:
     return environment, "Owned graphical-session target and Wayland/user-bus sockets are available; live UI readiness is unverified"
 
 
-def doctor(project: str, engine: str | None = None) -> dict:
+def doctor(project: str, engine: str | None = None, *, export_check: bool = False) -> dict:
     uid = _guard()
     info = project_info(_project(project), engine)
+    if export_check:
+        from desktop.development_exports import inspect_exports
+        info["export_check"] = inspect_exports(info)
     environment, reason = session_environment(uid)
-    return {"schema_version": 1, "ok": bool(environment) and not info["missing_tools"],
+    return {"schema_version": 1, "ok": bool(environment) and not info["missing_tools"]
+            and (not export_check or info["export_check"]["ok"]),
             "prerequisites_only": True, "project": info,
             "session": {"state": "available" if environment else "deferred", "reason": reason},
             "gpu_readiness": "unverified", "input_readiness": "unverified"}
@@ -448,6 +457,22 @@ def _honor_agent_control(revision: str | None = None) -> str:
     return current["control_revision"]
 
 
+def wait_task(task_id: str, *, timeout: int = 600) -> dict:
+    """Observe one task to verified completion without changing its lifecycle."""
+    if type(timeout) is not int or not 1 <= timeout <= 3600:
+        raise ValueError("Wait timeout must be from 1 through 3600 seconds")
+    deadline = time.monotonic() + timeout
+    while True:
+        result = task_status(task_id)
+        remaining = deadline - time.monotonic()
+        timed_out = remaining <= 0
+        successful = (result["state"] == "completed" and result["ok"]
+                      and result["returncode"] == 0 and not timed_out)
+        if result["state"] not in ("running", "stopping") or timed_out:
+            return {**result, "ok": successful, "wait_timed_out": timed_out}
+        time.sleep(min(0.5, remaining))
+
+
 def list_tasks(project: str | None = None) -> dict:
     _guard()
     selected = str(_project(project)) if project is not None else None
@@ -592,11 +617,13 @@ def run_development_command(args: argparse.Namespace) -> int:
             raise ValueError("Development tasks require 'desktop --native develop'")
         action = args.development_command
         if action == "doctor":
-            result = doctor(args.project, args.engine)
+            result = doctor(args.project, args.engine, export_check=getattr(args, "export_check", False))
         elif action == "list":
             result = list_tasks(args.project)
         elif action in ("status", "stop"):
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
+        elif action == "wait":
+            result = wait_task(args.task, timeout=args.timeout)
         else:
             result = launch(args.project, action, engine=getattr(args, "engine", None),
                 scene=getattr(args, "scene", None), argv=getattr(args, "argv", None), dry_run=args.dry_run,
