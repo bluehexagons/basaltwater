@@ -31,7 +31,11 @@ the RDP capture path. Sid is added with a low-priority pin. Only `xrdp` and
 `xorgxrdp` explicitly select Sid; ordinary X11 utilities retain normal package
 selection. Package installation disables recommendations,
 so the optional PipeWire XRDP module and its large codec/runtime dependency
-tree are not installed. Setup simulates the transaction first and refuses it
+tree are not installed. Minimal desktop installs can omit the recommended Xorg
+server. Setup installs a missing `xserver-xorg-core` through normal Debian
+package selection before the XRDP transaction; this prerequisite step preserves
+an already installed Xorg server and does not pin it to Sid or bypass normal
+security-update candidates. Setup simulates the XRDP transaction first and refuses it
 if it would remove packages or upgrade core packages such as `libc6`,
 `systemd`, or `xserver-xorg-core`. The install keeps modified configuration
 files without prompting, then reapplies the managed versions after the
@@ -217,7 +221,7 @@ and command guidance for Codex/OpenCode.
 
 ## Native application productivity
 
-Setup installs `wmctrl` and `python3-tk` from the normal package repositories
+Setup installs `wmctrl`, `xdg-utils` (for `xdg-open`) and `python3-tk` from the normal package repositories
 and adds **Shared Desktop Control** to the application menu. Rerun setup to
 install these additions; setup handles managed desktop logout. The control
 window offers **Enable agents**, **Disable agents**, and **Take control** with a

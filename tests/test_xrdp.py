@@ -20,6 +20,7 @@ from desktop.xrdp_steps import (
     install_xrdp,
 )
 from desktop.desktop_environment_steps import configure_xfce_for_rdp, install_desktop
+from desktop.session_steps import install_session_runtime
 from lib.xrdp_certificate import XrdpCertificateHealth
 
 
@@ -350,7 +351,7 @@ class TestInstallXrdp(unittest.TestCase):
         mock_exists.return_value = True
         mock_is_active.return_value = True
         mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-        package_states = iter([False] * 7 + [True] * 7)
+        package_states = iter([False, True] + [False] * 7 + [True] * 7)
 
         with patch('desktop.xrdp_steps.is_package_installed', side_effect=package_states):
             config = SetupConfig(
@@ -364,10 +365,57 @@ class TestInstallXrdp(unittest.TestCase):
 
         install_calls = [c for c in mock_run.call_args_list if 'apt-get install' in str(c)]
         self.assertGreater(len(install_calls), 0)
-        first_install = str(install_calls[0])
-        self.assertIn("xrdp", first_install)
-        self.assertIn("xorgxrdp", first_install)
-        self.assertIn("dbus-x11", first_install)
+        self.assertIn("--no-upgrade xserver-xorg-core", str(install_calls[0]))
+        self.assertIn("xrdp", str(install_calls[1]))
+        self.assertIn("xorgxrdp", str(install_calls[1]))
+        self.assertIn("dbus-x11", str(install_calls[1]))
+
+    @patch("desktop.xrdp_steps._install_xrdp_packages", side_effect=RuntimeError("reached XRDP transaction"))
+    @patch("desktop.xrdp_steps.run")
+    def test_missing_xserver_is_installed_before_the_guarded_transaction(self, mock_run, install):
+        order = []
+        installed = set()
+
+        def prerequisite(*_args, **_kwargs):
+            order.append('prerequisite')
+            installed.add('xserver-xorg-core')
+            return Mock(returncode=0)
+
+        mock_run.side_effect = prerequisite
+
+        def transaction(_packages):
+            order.append('XRDP')
+            raise RuntimeError('reached XRDP transaction')
+
+        install.side_effect = transaction
+        with patch('desktop.xrdp_steps.is_package_installed', side_effect=installed.__contains__):
+            with self.assertRaisesRegex(RuntimeError, 'reached XRDP transaction'):
+                install_xrdp(SetupConfig(host='vm', username='testuser', system_type='workstation_dev'))
+        self.assertEqual(order, ['prerequisite', 'XRDP'])
+        command = mock_run.call_args.args[0]
+        self.assertIn('--no-upgrade xserver-xorg-core', command)
+        self.assertIn('--no-remove', command)
+        self.assertNotIn('/sid', command)
+        self.assertNotIn('-t sid', command)
+
+    @patch("desktop.xrdp_steps._install_xrdp_packages", side_effect=RuntimeError("reached XRDP transaction"))
+    @patch("desktop.xrdp_steps.run")
+    def test_existing_xserver_is_preserved_before_package_refresh(self, mock_run, install):
+        with self.assertRaisesRegex(RuntimeError, 'reached XRDP transaction'):
+            install_xrdp(SetupConfig(host='vm', username='testuser', system_type='workstation_dev', refresh_packages=True))
+        mock_run.assert_not_called()
+        self.assertNotIn('xserver-xorg-core', install.call_args.args[0])
+
+    @patch("desktop.xrdp_steps._install_xrdp_packages")
+    @patch("desktop.xrdp_steps.is_package_installed", return_value=False)
+    @patch("desktop.xrdp_steps.run")
+    def test_failed_or_incomplete_xserver_install_stops_before_sid(self, mock_run, installed, install):
+        for status in (100, 0):
+            with self.subTest(status=status):
+                mock_run.return_value = Mock(returncode=status)
+                with self.assertRaisesRegex(RuntimeError, 'required Xorg server'):
+                    install_xrdp(SetupConfig(host='vm', username='testuser', system_type='workstation_dev'))
+        install.assert_not_called()
 
     @patch("desktop.xrdp_steps.run")
     def test_install_handles_modified_package_conffiles(self, mock_run):
@@ -397,10 +445,18 @@ class TestInstallXrdp(unittest.TestCase):
     @patch("desktop.xrdp_steps._configure_xrdp_package_source", return_value="sid")
     @patch("desktop.xrdp_steps.run")
     def test_core_upgrade_guard_handles_architecture_suffix(self, mock_run, source):
-        mock_run.return_value = Mock(returncode=0, stdout="Inst libc6:amd64 (2.43 Debian:unstable)")
-        with self.assertRaisesRegex(RuntimeError, "core packages: libc6"):
-            _install_xrdp_packages(("xrdp",))
-        self.assertEqual(mock_run.call_count, 1)
+        for package, change in (
+            ('libc6:amd64', '(2.43 Debian:unstable)'),
+            ('xserver-xorg-core', '(2:21.1.16 Debian:stable)'),
+            ('xserver-xorg-core', '[2:21.1.16] (2:21.1.99 Debian:unstable)'),
+            ('linux-image-amd64', '(6.99 Debian:unstable)'),
+        ):
+            with self.subTest(package=package, change=change):
+                mock_run.reset_mock()
+                mock_run.return_value = Mock(returncode=0, stdout=f'Inst {package} {change}')
+                with self.assertRaisesRegex(RuntimeError, 'core packages: ' + package.split(':')[0]):
+                    _install_xrdp_packages(("xrdp",))
+                self.assertEqual(mock_run.call_count, 1)
 
 
     @patch('desktop.xrdp_steps.run')
@@ -662,6 +718,20 @@ class TestInstallXrdp(unittest.TestCase):
 
 
 class TestInstallDesktop(unittest.TestCase):
+    @patch('desktop.session_steps.configure_session_service')
+    @patch('desktop.session_steps.assert_desktop_idle')
+    @patch('desktop.session_steps.pwd.getpwnam', return_value=Mock(pw_uid=1000))
+    @patch('desktop.session_steps.install_package')
+    def test_missing_xdg_utils_blocks_runtime_publication(self, install, _account, _idle, service):
+        install.side_effect = lambda _name, package, _command: package != 'xdg-utils'
+        with self.assertRaisesRegex(RuntimeError, 'require xdg-utils'):
+            install_session_runtime(SetupConfig(host='vm', username='testuser', system_type='workstation_dev'))
+        service.assert_not_called()
+        self.assertIn(
+            ('xdg-utils', 'xdg-utils', ['apt-get', 'install', '-y', '-qq', '--no-install-recommends', 'xdg-utils']),
+            [call.args for call in install.call_args_list],
+        )
+
     @patch("desktop.desktop_environment_steps.install_package", return_value=False)
     @patch("desktop.desktop_environment_steps.is_package_installed", return_value=False)
     def test_fails_when_desktop_package_install_fails(self, _mock_installed, _mock_install):

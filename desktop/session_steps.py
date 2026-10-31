@@ -165,7 +165,7 @@ def install_session_runtime(config: SetupConfig) -> None:
     account = pwd.getpwnam(config.username)
     if account.pw_uid == 0:
         raise ValueError("The desktop cannot run as root")
-    for package in ("wmctrl", "python3-tk", "python3-gi", "gir1.2-atspi-2.0", "at-spi2-core"):
+    for package in ("wmctrl", "xdg-utils", "python3-tk", "python3-gi", "gir1.2-atspi-2.0", "at-spi2-core"):
         if not install_package(package, package, ["apt-get", "install", "-y", "-qq", "--no-install-recommends", package]):
             raise RuntimeError(f"Desktop productivity tools require {package}")
     configure_session_service()

@@ -423,6 +423,19 @@ def install_xrdp(config: SetupConfig) -> None:
     xrdp_config = "/etc/xrdp/xrdp.ini"
     
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+    # Minimal desktop installs omit the recommended X server. Install it from
+    # normal distro candidates before the Sid XRDP transaction; its core-package
+    # guard must still reject any Xserver changes introduced by that transaction.
+    if not is_package_installed("xserver-xorg-core"):
+        prerequisite = run(
+            f"apt-get install -y -qq {_XRDP_DPKG_OPTIONS}"
+            " --no-install-recommends --no-remove --no-upgrade xserver-xorg-core",
+            check=False,
+        )
+        if prerequisite.returncode != 0 or not is_package_installed("xserver-xorg-core"):
+            raise RuntimeError(
+                "xRDP package installation failed; could not install the required Xorg server"
+            )
     required_packages = (
         "xrdp",
         "xorgxrdp",
