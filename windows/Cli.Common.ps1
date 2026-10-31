@@ -52,7 +52,7 @@ Native Windows commands:
   --help, help       Show this help
   --version, version Show the installed Basaltwater version
   info [--json]      Show this account's saved native setup
-  doctor [--json]    Check selected native tools without applying setup
+  doctor [--skills] [--json]  Check selected tools, or compare installed skill bundles
   refresh           Update Basaltwater from main and reapply saved selections
   desktop           Native desktop status, observation, control and handoff
   desktop develop   Supervise project tasks, logs and cancellation
@@ -166,7 +166,8 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
     }
     if ($command -eq 'doctor') {
         if ($options.Count -eq 1 -and $options[0] -in @('--help', '-h')) { Show-NativeCliHelp; return 0 }
-        if ($options.Count -gt 1 -or ($options.Count -eq 1 -and $options[0] -ne '--json')) { throw 'Usage: basaltw doctor [--json]' }
+        if (@($options | Where-Object { $_ -notin @('--json','--skills') }).Count -or
+            @($options | Select-Object -Unique).Count -ne $options.Count) { throw 'Usage: basaltw doctor [--skills] [--json]' }
         # Use this CLI's source, including when saved setup is interrupted at a
         # different revision. The diagnostic itself reads the saved selections.
         $source = Split-Path -Parent $PSScriptRoot
@@ -176,6 +177,7 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
         if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) { throw 'Windows diagnostic source is missing; refresh Basaltwater from a current installer.' }
         $diagnosticOptions = @()
         if ($options -contains '--json') { $diagnosticOptions += '-Json' }
+        if ($options -contains '--skills') { $diagnosticOptions += '-Skills' }
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $entry @diagnosticOptions |
             ForEach-Object { Write-Host $_ }
         return $LASTEXITCODE

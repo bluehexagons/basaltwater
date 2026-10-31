@@ -57,6 +57,11 @@ Use `basaltw doctor --json` for read-only checks of saved selections and actual
 tool versions. Probes time out; failures return a nonzero exit. Desktop/C++ SDK
 checks establish discovery, while logins, project builds, export templates and
 GPU readiness require their own qualification. Doctor does not apply setup.
+Use `basaltw doctor --skills --json` to compare known installed bundles with the
+saved installation source/revision. It reports completion, differences, personal
+edits and unsafe state without catalog writes; absent optional bundles are
+informational. Legacy inventories have unknown completion until setup succeeds.
+Installed freshness does not establish which skill revision this session loaded.
 
 For native application observation, human handoff, or supervised project runs,
 read [Windows desktop and tasks](references/desktop.md). Active or uncertain

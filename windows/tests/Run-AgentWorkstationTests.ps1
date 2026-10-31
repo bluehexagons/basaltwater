@@ -44,6 +44,7 @@ try {
     & (Join-Path $PSScriptRoot 'Run-RefreshTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-DesktopTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-DevelopmentTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-SkillInventoryTests.ps1')
     . (Join-Path $repo 'windows\Bootstrap.Common.ps1')
     . (Join-Path $repo 'windows\AgentWorkstation.Common.ps1')
     # Cross a real native argv boundary: function mocks do not model PS 5.1 quoting.
@@ -547,8 +548,8 @@ function Invoke-NativeAgentSetup {
     Assert-Throws { Install-NativeSkill $source $destination } 'personal or modified'
     Remove-Item -LiteralPath (Join-Path $source 'references\guide.md')
     $script:InventoryWriter = ${function:Write-NativeSkillInventory}
-    function Write-NativeSkillInventory([string]$path, [hashtable]$files) {
-        & $script:InventoryWriter $path $files
+    function Write-NativeSkillInventory([string]$path, [hashtable]$files, [switch]$Complete) {
+        & $script:InventoryWriter $path $files -Complete:$Complete
         throw 'interrupted after inventory checkpoint'
     }
     Assert-Throws { Install-NativeSkill $source $destination } 'interrupted after inventory checkpoint'

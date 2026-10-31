@@ -1,6 +1,7 @@
 <# Native Windows agent tools and catalogs; no Linux runtime imports. #>
 . (Join-Path $PSScriptRoot 'PowerShell.Common.ps1')
 . (Join-Path $PSScriptRoot 'ShellIntegration.Common.ps1')
+. (Join-Path $PSScriptRoot 'SkillInventory.Common.ps1')
 function Merge-NativePath([string[]]$paths) {
     $seen = @{}
     $entries = @(foreach ($path in $paths) {
@@ -122,6 +123,9 @@ function Ensure-NativeGitSettings([switch]$Plan) {
 }
 
 function Assert-NativeSkillPath([string]$path) {
+    if ($path -notmatch '\A[A-Za-z]:[\\/]' -or $path.Substring(2).Contains(':') -or $path -match '[\x00-\x1f]') {
+        throw 'Skill paths require an absolute local drive path without streams'
+    }
     $current = [IO.Path]::GetFullPath($path)
     while ($current) {
         if (Test-Path -LiteralPath $current) {
@@ -134,7 +138,7 @@ function Assert-NativeSkillPath([string]$path) {
 
 function Install-NativeSkill([string]$source, [string]$destination, [switch]$Plan) {
     Assert-NativeSkillPath $source
-    Assert-NativeSkillPath $destination
+    Assert-NativeSkillAccess $destination
     $entrypoint = Join-Path $source 'SKILL.md'
     if (-not (Test-Path -LiteralPath $entrypoint -PathType Leaf) -or
         (Get-Content -LiteralPath $entrypoint -Raw) -notmatch 'managed-by: basaltwater') {
@@ -151,26 +155,13 @@ function Install-NativeSkill([string]$source, [string]$destination, [switch]$Pla
         }
     }
     $inventoryPath = Join-Path $destination '.basaltwater-windows-files.json'
-    Assert-NativeSkillPath $inventoryPath
-    $recorded = @{}
-    if (Test-Path -LiteralPath $inventoryPath) {
-        $inventory = Get-Content -LiteralPath $inventoryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($inventory.Version -ne 1) { throw "Unsupported skill inventory: $inventoryPath" }
-        foreach ($property in $inventory.Files.PSObject.Properties) {
-            if ($property.Name -notmatch '\A[A-Za-z0-9_.\\-]+\z' -or
-                @($property.Name -split '\\' | Where-Object { $_ -in @('', '.', '..') }).Count -or
-                @($property.Value).Count -eq 0 -or
-                @($property.Value | Where-Object { $_ -notmatch '\A[0-9A-Fa-f]{64}\z' }).Count) {
-                throw "Invalid skill inventory: $inventoryPath"
-            }
-            $recorded[$property.Name] = @($property.Value)
-        }
-    }
+    Assert-NativeSkillAccess $inventoryPath
+    $recorded = (Read-NativeSkillInventory $inventoryPath).Files
     # Preflight every source and previously managed destination before any write.
     $pending = @{}
     foreach ($relative in @(@($files.Keys) + @($recorded.Keys) | Select-Object -Unique)) {
         $path = Join-Path $destination $relative
-        Assert-NativeSkillPath $path
+        Assert-NativeSkillAccess $path
         $digest = $null
         if (Test-Path -LiteralPath $path) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Skill file is a directory: $path" }
@@ -208,12 +199,13 @@ function Install-NativeSkill([string]$source, [string]$destination, [switch]$Pla
         }
     }
     Write-NativeSkillInventory $inventoryPath $files
+    Write-NativeSkillInventory $inventoryPath $files -Complete
 }
 
-function Write-NativeSkillInventory([string]$path, [hashtable]$files) {
+function Write-NativeSkillInventory([string]$path, [hashtable]$files, [switch]$Complete) {
     $temporary = $path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     try {
-        @{ Version = 1; Files = $files } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding UTF8
+        @{ Version = 1; Files = $files; Complete = [bool]$Complete } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporary -Encoding UTF8
         Move-Item -LiteralPath $temporary -Destination $path -Force
     } finally {
         if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }

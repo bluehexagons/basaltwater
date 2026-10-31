@@ -90,8 +90,8 @@ try {
     $doctorSource = Join-Path $temporary 'diagnostic source'
     New-Item -ItemType Directory -Path (Join-Path $doctorSource 'windows') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $doctorSource 'windows\Test-AgentWorkstation.ps1') -Value @'
-param([switch]$Json)
-if ($Json) { '{"Healthy":false,"Checks":[{"Name":"fixture","State":"failed"}]}' }
+param([switch]$Json, [switch]$Skills)
+if ($Json) { @{ Healthy = $false; Skills = [bool]$Skills; Checks = @(@{ Name = 'fixture'; State = 'failed' }) } | ConvertTo-Json -Depth 4 }
 exit 1
 '@
     $receiptPath = Join-Path $bin 'cli-source.json'
@@ -100,6 +100,9 @@ exit 1
         @{ Source = $doctorSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath
         $doctor = & $launcher doctor --json | Out-String
         Assert-True ($LASTEXITCODE -eq 1 -and -not ($doctor | ConvertFrom-Json).Healthy) 'Installed doctor lost JSON or failure status'
+        $doctor = & $launcher doctor --skills --json | Out-String
+        Assert-True ($LASTEXITCODE -eq 1 -and ($doctor | ConvertFrom-Json).Skills) 'Installed doctor did not forward skill selection'
+        Assert-Throws { Invoke-NativeCli @('doctor', '--skills', '--skills') } 'Usage: basaltw doctor'
         # Model a pwsh -> cmd -> Windows PowerShell launch with an incompatible
         # security module first on inherited PSModulePath. Never touch real modules.
         $moduleRoot = Join-Path $temporary 'incompatible modules'

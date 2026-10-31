@@ -277,6 +277,7 @@ basaltw --version
 basaltw info --json
 basaltw doctor
 basaltw doctor --json
+basaltw doctor --skills --json
 basaltw refresh --dry-run
 basaltw refresh
 basaltw refresh --godot
@@ -433,6 +434,29 @@ Generated Python caches are excluded when applying a checkout.
 Junctions/symlinks in a skill path
 are refused. No browser payload is installed, and skills do not grant tools
 to sessions that do not expose them.
+
+`doctor --skills [--json]` compares only known Windows bundles in both provider
+catalogs against the **saved installation's source**, reporting that path and
+saved revision. It does not compare against the invoking developer checkout or
+run tool probes. `current` means all known resources match and delivery completed;
+`different` means owned files differ from source; `incomplete` means missing
+resources or unfinished/unknown completion; `personal` identifies unowned or
+edited resources; `unsafe` identifies invalid inventories, paths, reparse points
+or untrusted ownership/write ACLs. Unselected, absent Claude bundles are
+informational. Other noncurrent bundles return exit status one. Arbitrary personal
+skills, provider configuration and credentials are not scanned. `SessionLoaded`
+remains `unknown`: matching installed files does not establish what an agent loaded.
+
+The existing version-1 inventory now records boolean `Complete`. Setup persists
+`false` with old/new digests before file changes, then delivers files, removes
+unchanged stale resources and persists the final hashes before publishing `true`.
+Interrupted delivery remains `incomplete` even with matching bytes; explicit setup
+can safely retry. Older inventories without the marker remain readable but report
+unknown completion until setup succeeds. Malformed/unsupported inventories fail
+closed. Personal files and edited stale bytecode remain preserved.
+
+Before updating an installed CLI, the checkout equivalent is
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Test-AgentWorkstation.ps1 -Skills -Json`.
 
 The installer and repository catalog check share the
 [Windows skill catalog](../../windows/agent-skills.json), keeping the delivered
