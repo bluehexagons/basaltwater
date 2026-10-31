@@ -135,7 +135,8 @@ Native desktop commands (explicit actions use the current account's session):
   control enabled|human-override|disabled --human-approved [--seconds N|--indefinite]
   open PATH [--reveal] | terminal --project PATH [--msvc]
   notify --title TEXT --message TEXT
-  develop doctor|exec|node|editor|run|import|status|logs|cancel ...
+  develop doctor|exec|node|editor|run|import|status|logs|cancel|wait ...
+  develop --help  Task options, npm-script examples and bounded waiting
 Observe windows/inspect before actions. Pixel capture does not prove rendered content or input outcome.
 '@
             return 0
@@ -146,6 +147,13 @@ Observe windows/inspect before actions. Pixel capture does not prove rendered co
         if ($options.Count -and $options[0] -eq 'develop') {
             . (Join-Path $source 'windows\Development.Common.ps1')
             $result = Invoke-NativeDevelopmentCli @($options | Select-Object -Skip 1)
+            if ($null -ne $result -and $options.Count -ge 2 -and $options[1] -eq 'wait' -and
+                $result.PSObject.Properties['WaitState']) {
+                Write-Host ($result | ConvertTo-Json -Depth 12)
+                if ($result.TimedOut) { return 124 }
+                if ($result.WaitState -ne 'completed' -or $result.Receipt.State -ne 'complete') { return 1 }
+                return 0
+            }
             if ($null -ne $result -and $options.Count -ge 2 -and $options[1] -eq 'status' -and
                 $result.State -in @('failed','timed-out','cancelled','cleanup-uncertain','launch-uncertain','interrupted')) {
                 Write-Host ($result | ConvertTo-Json -Depth 12)

@@ -124,6 +124,9 @@ namespace Basaltwater {
         public long RetainedBytes { get; set; }
         public long DiscardedBytes { get; set; }
         public int LimitBytes { get; set; }
+        public string RetentionPolicy { get { return "head-tail"; } }
+        public int HeadBytes { get; set; }
+        public int TailBytes { get; set; }
         public bool Truncated { get { return DiscardedBytes > 0; } }
     }
     public static class DevelopmentStreams {
@@ -133,20 +136,75 @@ namespace Basaltwater {
             if (SetThreadExecutionState(active ? 0x80000001u : 0x80000000u) == 0)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         }
+        static async Task Snapshot(FileStream output, byte[] tail, int cursor, int count, int head) {
+            output.Position = head;
+            int start = (cursor - count + tail.Length) % tail.Length;
+            int first = Math.Min(count, tail.Length - start);
+            if (first > 0) await output.WriteAsync(tail, start, first).ConfigureAwait(false);
+            if (count > first) await output.WriteAsync(tail, 0, count - first).ConfigureAwait(false);
+            output.SetLength(head + count);
+            await output.FlushAsync().ConfigureAwait(false);
+        }
         public static async Task<DevelopmentStreamResult> Drain(Stream source, string path, int limit) {
+            if (limit < 1) throw new ArgumentOutOfRangeException("limit");
             var result = new DevelopmentStreamResult { LimitBytes = limit };
             using (var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite)) {
-                byte[] buffer = new byte[8192]; int total = 0; int count;
-                while ((count = await source.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0) {
-                    int keep = Math.Min(count, limit - total);
-                    if (keep > 0) {
-                        await output.WriteAsync(buffer, 0, keep).ConfigureAwait(false);
-                        await output.FlushAsync().ConfigureAwait(false); total += keep;
+                int headLimit = limit / 2, head = 0, cursor = 0, tailCount = 0;
+                byte[] buffer = new byte[8192], tail = new byte[limit - headLimit];
+                long total = 0, lastSnapshot = 0;
+                bool dirty = false;
+                Task snapshotDue = null;
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                while (true) {
+                    var read = source.ReadAsync(buffer, 0, buffer.Length);
+                    if (dirty) {
+                        if (snapshotDue == null) snapshotDue = Task.Delay((int)Math.Max(1, 250 - (clock.ElapsedMilliseconds - lastSnapshot)));
+                        if (await Task.WhenAny(read, snapshotDue).ConfigureAwait(false) != read) {
+                            await Snapshot(output, tail, cursor, tailCount, head).ConfigureAwait(false);
+                            dirty = false; snapshotDue = null; lastSnapshot = clock.ElapsedMilliseconds;
+                        }
                     }
-                    result.RetainedBytes += keep;
-                    result.DiscardedBytes += count - keep;
-                    // Always drain even after the cap, so a noisy child cannot deadlock.
+                    int count = await read.ConfigureAwait(false);
+                    if (count == 0) break;
+                    total += count;
+                    int prefix = Math.Min(count, headLimit - head);
+                    if (prefix > 0) {
+                        output.Position = head;
+                        await output.WriteAsync(buffer, 0, prefix).ConfigureAwait(false);
+                        head += prefix;
+                        await output.FlushAsync().ConfigureAwait(false);
+                    }
+                    int rest = count - prefix;
+                    if (rest > 0) {
+                        if (rest >= tail.Length) {
+                            Buffer.BlockCopy(buffer, count - tail.Length, tail, 0, tail.Length);
+                            tailCount = tail.Length; cursor = 0;
+                        } else {
+                            int first = Math.Min(rest, tail.Length - cursor);
+                            Buffer.BlockCopy(buffer, prefix, tail, cursor, first);
+                            if (rest > first) Buffer.BlockCopy(buffer, prefix + first, tail, 0, rest - first);
+                            cursor = (cursor + rest) % tail.Length;
+                            tailCount = Math.Min(tail.Length, tailCount + rest);
+                        }
+                        dirty = true;
+                    }
+                    if (dirty && total <= limit) {
+                        // Before overflow, append directly instead of repeatedly
+                        // rewriting a growing tail snapshot.
+                        output.Position = total - rest;
+                        await output.WriteAsync(buffer, prefix, rest).ConfigureAwait(false);
+                        await output.FlushAsync().ConfigureAwait(false);
+                        dirty = false; snapshotDue = null; lastSnapshot = clock.ElapsedMilliseconds;
+                    } else if (dirty && clock.ElapsedMilliseconds - lastSnapshot >= 250) {
+                        await Snapshot(output, tail, cursor, tailCount, head).ConfigureAwait(false);
+                        dirty = false; snapshotDue = null; lastSnapshot = clock.ElapsedMilliseconds;
+                    }
+                    // Drain every byte, retaining a fixed head and rolling suffix.
                 }
+                await Snapshot(output, tail, cursor, tailCount, head).ConfigureAwait(false);
+                result.HeadBytes = head; result.TailBytes = tailCount;
+                result.RetainedBytes = head + tailCount;
+                result.DiscardedBytes = total - result.RetainedBytes;
             }
             return result;
         }

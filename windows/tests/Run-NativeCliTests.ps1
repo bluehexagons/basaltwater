@@ -26,6 +26,8 @@ try {
     $planProbe = Join-Path $temporary 'plan-probe.ps1'
     Set-Content -LiteralPath $planProbe -Encoding UTF8 -Value @'
 param($Launcher, $Project)
+$help = & $Launcher desktop develop --help | Out-String
+if ($LASTEXITCODE -ne 0 -or $help -notmatch 'node NPM_SCRIPT' -or $help -notmatch 'wait TASK_ID') { throw 'Native development namespace help failed' }
 $literal = @('quote"here', '', '%PATH%', '--dry-run')
 $cli = @('desktop','develop','exec','--project',$Project,'--dry-run','--',(Join-Path $PSHOME 'pwsh.exe')) + $literal
 $result = & $Launcher @cli | ConvertFrom-Json

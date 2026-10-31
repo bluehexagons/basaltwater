@@ -119,6 +119,48 @@ function Get-DevelopmentStatus([string]$Id) {
     }
     return $record
 }
+function Wait-DevelopmentTask([string]$Id, [ValidateRange(1,86400)][int]$TimeoutSeconds = 60) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $record = Get-DevelopmentStatus $Id
+        $state = if ($record.CompletedUtc) { 'completed' }
+            elseif ($record.State -in @('cleanup-uncertain','launch-uncertain','interrupted')) { 'attention-required' }
+            elseif ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { 'timed-out' } else { '' }
+        if ($state) {
+            return [pscustomobject]@{ Id = $Id; WaitState = $state; TimedOut = ($state -eq 'timed-out');
+                TimeoutSeconds = $TimeoutSeconds; WaitedSeconds = $clock.Elapsed.TotalSeconds; Receipt = $record }
+        }
+        $remaining = $TimeoutSeconds * 1000 - $clock.Elapsed.TotalMilliseconds
+        Start-Sleep -Milliseconds ([int][Math]::Max(1, [Math]::Min(200, $remaining)))
+    }
+}
+function Show-NativeDevelopmentHelp {
+    Write-Host @'
+Usage: basaltw desktop develop COMMAND [OPTIONS]
+
+  doctor --project PATH                   Discover project tools and checkout state
+  exec --project PATH [OPTIONS] -- EXE ARGV...  Run an explicit executable
+  node NPM_SCRIPT --project PATH [OPTIONS] [-- NPM_ARGS...]
+  editor|run|import --project PATH [OPTIONS]  Use the selected Godot executable
+  status|logs|cancel TASK_ID               Inspect output or request cancellation
+  wait TASK_ID [--timeout SECONDS]         Wait up to 60 seconds by default (1-86400)
+
+Task options: --timeout SECONDS, --env NAME=VALUE, --msvc, --dry-run.
+Node also accepts --runtime VERSION; otherwise .node-version/.nvmrc selects an
+already installed fnm runtime and its npm. NPM_SCRIPT names package.json scripts,
+not a JavaScript file. exec uses its requested executable without selecting Node.
+
+Examples:
+  basaltw desktop develop node build --project F:\Repos\game -- --verbose
+  basaltw desktop develop exec --project F:\Repos\game -- node.exe script.js
+  basaltw desktop develop wait TASK_ID --timeout 120
+
+wait returns JSON with WaitState, TimedOut and the authoritative Receipt.
+Exit: 0 for completed success, 1 for task failure or attention required,
+124 for caller wait timeout. Wait timeout/Ctrl+C does not cancel the task.
+Task timeout remains distinct in Receipt.State. Use logs separately for output.
+'@
+}
 function Assert-NativeDevelopmentIdle {
     $root = Get-DevelopmentRoot
     if (-not (Test-Path -LiteralPath $root)) { return }
@@ -135,7 +177,7 @@ function Resolve-DevelopmentExecutable([string]$Name) {
     $command = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { throw "Executable '$Name' is unavailable in the provider PATH. Install it explicitly and restart the provider shell." }
     if ([IO.Path]::GetExtension($command.Source) -in @('.cmd', '.bat')) {
-        throw 'Batch launchers are not literal executable argv. Use exec -- pwsh.exe -File SCRIPT.ps1, or node SCRIPT for package scripts.'
+        throw 'Batch launchers are not literal executable argv. Use exec -- pwsh.exe -File SCRIPT.ps1, or node NPM_SCRIPT for package scripts.'
     }
     return $command.Source
 }
@@ -257,9 +299,9 @@ function Get-DevelopmentCheckout([string]$Project, [string]$Git) {
     return $result
 }
 function New-DevelopmentPlan([string[]]$Arguments) {
-    if (-not $Arguments.Count) { throw 'Usage: develop doctor|exec|node|editor|run|import --project PATH [--msvc] [--runtime VERSION] [--env NAME=VALUE] [--timeout SECONDS] [--dry-run] -- ARGV; or status|logs|cancel TASKID' }
+    if (-not $Arguments.Count) { throw 'Run basaltw desktop develop --help for commands and examples.' }
     $verb = $Arguments[0]
-    if ($verb -notin @('doctor','exec','node','editor','run','import')) { throw "Unknown development command '$verb'. Use doctor, exec, node, editor, run, import, status, logs, cancel." }
+    if ($verb -notin @('doctor','exec','node','editor','run','import')) { throw "Unknown development command '$verb'. Run basaltw desktop develop --help." }
     $project = ''; $runtime = ''; $msvc = $false; $plan = $false; $timeout = 3600
     $environment = @{}; $literal = @(); $scriptName = ''
     for ($i = 1; $i -lt $Arguments.Count; $i++) {
@@ -345,6 +387,20 @@ function Start-DevelopmentScheduledTask($Record, [string]$PowerShell) {
     Start-ScheduledTask -TaskName $Record.TaskName
 }
 function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
+    if (-not $Arguments.Count -or ($Arguments.Count -eq 1 -and $Arguments[0] -in @('--help','-h','help')) -or
+        ($Arguments.Count -eq 2 -and $Arguments[0] -in @('doctor','exec','node','editor','run','import','status','logs','cancel','wait') -and $Arguments[1] -in @('--help','-h'))) {
+        Show-NativeDevelopmentHelp
+        return
+    }
+    if ($Arguments[0] -eq 'wait') {
+        if ($Arguments.Count -notin @(2,4) -or ($Arguments.Count -eq 4 -and
+            ($Arguments[2] -ne '--timeout' -or $Arguments[3] -notmatch '\A\d{1,5}\z' -or
+             [int]$Arguments[3] -lt 1 -or [int]$Arguments[3] -gt 86400))) {
+            throw 'Usage: develop wait TASK_ID [--timeout SECONDS (1-86400)]'
+        }
+        $timeout = if ($Arguments.Count -eq 4) { [int]$Arguments[3] } else { 60 }
+        return Wait-DevelopmentTask $Arguments[1] $timeout
+    }
     if ($Arguments.Count -and $Arguments[0] -in @('status','logs','cancel')) {
         if ($Arguments.Count -ne 2) { throw 'Usage: develop status|logs|cancel TASKID. Logs return the last 64 KiB of each stream.' }
         $id = $Arguments[1]; $record = Get-DevelopmentStatus $id
@@ -404,7 +460,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         }
         return [pscustomobject]@{ Project = $request.Project; PowerShell = $powershell; Node = $node; NodeDiagnostic = $nodeError;
             Git = $git; Checkout = (Get-DevelopmentCheckout $request.Project $git); Godot = $godot; MissingRequirements = @($missing);
-            GodotOverride = @($env:BASALTWATER_GODOT_EXE, $env:GODOT_BIN); Message = 'Read-only discovery. Use exec -- literal argv; node SCRIPT selects installed fnm/npm. Tasks return IDs for status/logs/cancel. No upload credentials required.' }
+            GodotOverride = @($env:BASALTWATER_GODOT_EXE, $env:GODOT_BIN); Message = 'Read-only discovery. Use exec -- literal argv; node NPM_SCRIPT selects installed fnm/npm. Tasks return IDs for status/logs/wait/cancel. No upload credentials required.' }
     }
     $powershell = Get-NativePowerShell7
     if ($request.Plan) { return $request }

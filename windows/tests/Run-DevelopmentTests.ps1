@@ -34,6 +34,13 @@ try {
         Assert-True ($script:schedulerStarted -eq 'fixture-development') 'Worker was not submitted to Scheduler'
     }
     function Get-NativePowerShell7 { return $shell }
+    & {
+        function Get-NativePowerShell7 { throw 'Help launched a tool probe' }
+        foreach ($helpArgs in @(@(), @('--help'), @('node','--help'), @('wait','--help'))) {
+            $help = Invoke-NativeDevelopmentCli $helpArgs 6>&1 | Out-String
+            Assert-True ($help -match 'node NPM_SCRIPT' -and $help -match 'wait TASK_ID' -and $help -match 'exec uses its requested executable') 'Development help hid npm/runtime/wait semantics'
+        }
+    }
     function Get-DevelopmentSid { return 'S-1-5-21-fixture' }
     function Get-DevelopmentBoot { return $script:FixtureBoot }
     function Initialize-DevelopmentDirectory([string]$Directory) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
@@ -121,6 +128,23 @@ try {
     $record = Invoke-NativeDevelopmentCli (@('exec','--project',$project,'--env','TASK_ONLY=child value','--msvc','--',$shell) + $literal)
     $directory = Get-DevelopmentDirectory $record.Id
     Assert-True ((Get-DevelopmentStatus $record.Id).State -eq 'queued') 'Fresh UTC task appeared stale in the local time zone'
+    $beforeWait = [IO.File]::ReadAllText((Join-Path $directory 'receipt.json'))
+    $waiting = Invoke-NativeDevelopmentCli @('wait',$record.Id,'--timeout','1')
+    Assert-True ($waiting.TimedOut -and $waiting.WaitState -eq 'timed-out' -and $waiting.WaitedSeconds -ge 1 -and
+        $waiting.Receipt.State -eq 'queued' -and [IO.File]::ReadAllText((Join-Path $directory 'receipt.json')) -ceq $beforeWait -and
+        -not (Test-Path -LiteralPath (Join-Path $directory 'cancel'))) 'Wait timeout mutated or cancelled a queued task'
+    foreach ($badWait in @(@('wait'), @('wait',$record.Id,'--timeout','0'), @('wait',$record.Id,'--timeout','999999999999999'), @('wait',$record.Id,'--follow','2'))) {
+        Assert-Throws { Invoke-NativeDevelopmentCli $badWait } 'Usage: develop wait'
+    }
+    & {
+        $script:WaitReads = 0
+        function Get-DevelopmentStatus($Id) {
+            $script:WaitReads++
+            return [pscustomobject]@{ Id=$Id; State='complete'; CompletedUtc=$(if ($script:WaitReads -gt 1) {'settled'} else {$null}) }
+        }
+        $settled = Wait-DevelopmentTask $record.Id 2
+        Assert-True ($script:WaitReads -eq 2 -and $settled.WaitState -eq 'completed' -and $settled.Receipt.CompletedUtc) 'Wait returned terminal before cleanup was published'
+    }
     $request = Get-Content -LiteralPath (Join-Path $directory 'request.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($request.Environment.BASALTWATER_PROVIDER_FIXTURE -eq 'provider shell value') 'Provider environment lost'
     Assert-True ($request.Environment.TASK_ONLY -eq 'child value' -and $request.Msvc) 'Task options lost'
@@ -141,6 +165,8 @@ try {
     $record.WorkerPid = 999999; $record.WorkerStartedUtc = '2000-01-01T00:00:00Z'
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
     Assert-True ((Get-DevelopmentStatus $record.Id).State -eq 'cleanup-uncertain') 'Dead guardian falsely reported running'
+    $attention = Invoke-NativeDevelopmentCli @('wait',$record.Id,'--timeout','1')
+    Assert-True ($attention.WaitState -eq 'attention-required' -and -not $attention.TimedOut -and -not $attention.Receipt.CompletedUtc) 'Wait claimed completion for uncertain cleanup'
     Assert-True ($null -eq (Get-DevelopmentStatus $record.Id).ElapsedSeconds) 'Dead guardian invented elapsed time'
     $record.CompletedUtc = [DateTime]::UtcNow.ToString('o'); $record.State = 'cancelled'
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
@@ -221,13 +247,23 @@ try {
     Assert-True ($script:events[-1] -eq 'blocked settled') 'Containment failure returned before child exit'
     . (Join-Path $PSScriptRoot '..\Development.Process.ps1')
     Import-DevelopmentProcessType
-    $inputStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes(('z' * 10000)))
+    $payload = ('H' * 512) + ('discarded' * 2048) + ('T' * 508) + 'END!'
+    $inputStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($payload))
     $bounded = Join-Path $temporary 'bounded.log'
     try {
         $drain = [Basaltwater.DevelopmentStreams]::Drain($inputStream, $bounded, 1024).GetAwaiter().GetResult()
-        Assert-True ((Get-Item -LiteralPath $bounded).Length -eq 1024 -and $inputStream.Position -eq 10000) 'Stream cap did not drain discarded output'
-        Assert-True ($drain.RetainedBytes -eq 1024 -and $drain.DiscardedBytes -eq 8976 -and $drain.Truncated -and $drain.LimitBytes -eq 1024) 'Drain accounting lost bytes'
+        Assert-True ((Get-Item -LiteralPath $bounded).Length -eq 1024 -and $inputStream.Position -eq $payload.Length) 'Stream cap did not drain discarded output'
+        Assert-True ([IO.File]::ReadAllText($bounded) -ceq (('H' * 512) + ('T' * 508) + 'END!')) 'Head/tail retention lost the beginning or actual end'
+        Assert-True ($drain.RetainedBytes -eq 1024 -and $drain.DiscardedBytes -eq ($payload.Length - 1024) -and $drain.Truncated -and
+            $drain.RetentionPolicy -eq 'head-tail' -and $drain.HeadBytes -eq 512 -and $drain.TailBytes -eq 512) 'Drain accounting lost bytes or policy'
     } finally { $inputStream.Dispose() }
+    foreach ($payload in @('', 'short', ('x' * 512), ('y' * 513), ('z' * 1024))) {
+        $inputStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($payload))
+        try {
+            $drain = [Basaltwater.DevelopmentStreams]::Drain($inputStream, $bounded, 1024).GetAwaiter().GetResult()
+            Assert-True ([IO.File]::ReadAllText($bounded) -ceq $payload -and -not $drain.Truncated) 'Uncapped stream content changed'
+        } finally { $inputStream.Dispose() }
+    }
     foreach ($file in @('Development.Common.ps1','Development.Process.ps1','Invoke-DevelopmentTask.ps1')) {
         $tokens = $null; $errors = $null
         $null = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot ('..\' + $file)), [ref]$tokens, [ref]$errors)

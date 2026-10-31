@@ -43,10 +43,14 @@ must still follow the active session's browser-tool policy.
 optionally with the supported x64 Visual Studio environment only in that child.
 Use these handoff commands when the human needs the output or a project terminal.
 
+Use `desktop develop --help` for task options and examples.
 `desktop develop doctor --project PATH` discovers project tools. `develop exec
 --project PATH -- EXECUTABLE ARGV...` preserves literal arguments. `develop node
-SCRIPT --project PATH` selects an installed fnm numeric pin and matching npm;
+NPM_SCRIPT --project PATH [-- NPM_ARGS...]` runs a named `package.json` script,
+selecting an installed fnm numeric pin and matching npm;
 it rejects unsupported package-manager pins instead of using incompatible tools.
+For a JavaScript file, use `develop exec --project PATH -- node.exe script.js`;
+explicit execution uses that executable without selecting a project runtime.
 Godot `develop editor|run|import --project PATH` honors `GODOT_BIN`, then the managed
 engine. Project pins, templates and build commands remain authoritative.
 
@@ -58,10 +62,20 @@ contain child processes and settle cleanup before recording completion. Private
 environment snapshots are removed afterward. Logs are bounded and require review
 before sharing. No upload/signing credentials are implied by local tasks.
 
+`develop wait ID [--timeout SECONDS]` waits for confirmed completion (default 60,
+range 1–86400), returning JSON with `WaitState`, `TimedOut` and `Receipt`.
+Exit 0 means completed success, 1 means failure or attention required, and 124
+means caller wait timeout. Wait timeout/Ctrl+C leaves the task running; task
+timeout remains separate in `Receipt.State`. Collect output with `logs`.
+
 Status includes UTC execution boundaries and monotonic elapsed seconds from gate
 release preparation through confirmed cleanup, excluding queue time. Unknown or
 legacy timing is not reconstructed. Settled stream counters distinguish the
 4 MiB retention cap from `logs` tail omission at 64 KiB; review both before sharing.
+New logs retain the first 2 MiB plus a rolling last 2 MiB, with `RetentionPolicy`,
+`HeadBytes` and `TailBytes` identifying the policy. Discarded bytes are the missing
+middle; raw logs join head and tail without a gap marker. Older prefix logs stay
+unchanged.
 Project doctor only discovers paths, conventional runtime requirements and Git
 revision/dirty state; it does not execute project shims, GUI tools or
 recipes. Missing Git metadata stays unknown. Use host doctor for version health

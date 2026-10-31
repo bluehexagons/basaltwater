@@ -130,9 +130,17 @@ Get-Acl -LiteralPath $PSScriptRoot | Out-Null
         [IO.File]::WriteAllText((Join-Path $developmentSource ('windows\' + $name)), '# fixture: no system operations')
     }
     [IO.File]::WriteAllText((Join-Path $developmentSource 'windows\Development.Common.ps1'), @'
-function Invoke-NativeDevelopmentCli($Arguments) { return [pscustomobject]@{ State = $env:BASALTWATER_TEST_TASK_STATE; ExitCode = 23 } }
+function Invoke-NativeDevelopmentCli($Arguments) {
+    $receipt = [pscustomobject]@{ State = $env:BASALTWATER_TEST_TASK_STATE; ExitCode = 23 }
+    if ($Arguments[0] -eq 'wait') {
+        return [pscustomobject]@{ WaitState = $env:BASALTWATER_TEST_WAIT_STATE;
+            TimedOut = ($env:BASALTWATER_TEST_WAIT_STATE -eq 'timed-out'); Receipt = $receipt }
+    }
+    return $receipt
+}
 '@)
     $savedTaskState = $env:BASALTWATER_TEST_TASK_STATE
+    $savedWaitState = $env:BASALTWATER_TEST_WAIT_STATE
     try {
         @{ Source = $developmentSource } | ConvertTo-Json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
         foreach ($state in @('failed','timed-out','cancelled','cleanup-uncertain','launch-uncertain','interrupted','queued','running','complete')) {
@@ -141,8 +149,19 @@ function Invoke-NativeDevelopmentCli($Arguments) { return [pscustomobject]@{ Sta
             $expected = if ($state -in @('queued','running','complete')) { 0 } else { 1 }
             Assert-True ($LASTEXITCODE -eq $expected -and ($response | ConvertFrom-Json).State -eq $state) "Development CLI lost status or exit meaning: $state"
         }
+        foreach ($case in @(@('completed','complete',0), @('completed','failed',1),
+            @('timed-out','running',124), @('attention-required','cleanup-uncertain',1))) {
+            $env:BASALTWATER_TEST_WAIT_STATE = $case[0]
+            $env:BASALTWATER_TEST_TASK_STATE = $case[1]
+            $response = & $launcher desktop develop wait fixture-id --timeout 1 | Out-String
+            $code = $LASTEXITCODE
+            $wait = $response | ConvertFrom-Json
+            Assert-True ($code -eq $case[2] -and $wait.WaitState -eq $case[0] -and
+                $wait.Receipt.State -eq $case[1] -and $wait.Receipt.ExitCode -eq 23) "Development wait lost receipt or exit meaning: $($case[0])/$($case[1])"
+        }
     } finally {
         $env:BASALTWATER_TEST_TASK_STATE = $savedTaskState
+        $env:BASALTWATER_TEST_WAIT_STATE = $savedWaitState
         Set-Content -LiteralPath $receiptPath -Value $receiptText -Encoding UTF8
     }
     $source = Join-Path $temporary ('pinned source with spaces ' + [char]0x03bb)

@@ -117,14 +117,17 @@ this backend does not grant permission to substitute another browser.
 ## Supervised project tasks
 
 ```powershell
+basaltw desktop develop --help
 basaltw desktop develop doctor --project 'F:\Repos\game'
 basaltw desktop develop node build --project 'F:\Repos\game' --dry-run
-basaltw desktop develop node build --project 'F:\Repos\game'
+basaltw desktop develop node build --project 'F:\Repos\game' -- --verbose
+basaltw desktop develop exec --project 'F:\Repos\game' -- node.exe script.js
 basaltw desktop develop exec --project 'F:\Repos\native' --msvc -- cl.exe /c main.cpp
 basaltw desktop develop editor --project 'F:\Repos\godot-game'
 basaltw desktop develop run --project 'F:\Repos\godot-game'
 basaltw desktop develop import --project 'F:\Repos\godot-game'
 basaltw desktop develop status TASK_ID
+basaltw desktop develop wait TASK_ID --timeout 120
 basaltw desktop develop logs TASK_ID
 basaltw desktop develop cancel TASK_ID
 ```
@@ -139,6 +142,16 @@ cleanup blocks setup/reboot; inspect the task rather than blindly replaying it.
 Failed dispatch never replaces a running or completed guardian receipt.
 `develop status` exits nonzero for failure, timeout, cancellation, interrupted
 work or uncertain cleanup; queued/running/complete queries exit zero.
+
+`develop wait TASK_ID [--timeout SECONDS]` polls for confirmed completion, with
+a default caller wait of 60 seconds and a range of 1–86400. It returns one JSON
+object containing `WaitState`, `TimedOut`, `TimeoutSeconds`, monotonic
+`WaitedSeconds` and the authoritative `Receipt`. Exit zero means completed
+success; exit one means a completed task failed, was cancelled/timed out, or
+needs attention because launch or cleanup is uncertain. Exit 124 means the
+caller stopped waiting while the task remained active. Wait timeout and Ctrl+C
+do not cancel the task. Task timeout is separate, recorded in `Receipt.State`.
+Use `logs` to collect output, and `cancel` only when you intend to stop the task.
 
 Cancellation retires an unstarted task under the setup and guardian locks,
 removes its registration and private environment, and prevents late execution.
@@ -156,15 +169,25 @@ confirmed cleanup. No artifact-upload credentials are needed. Tasks temporarily
 inhibit idle sleep while active and release that request afterward; they do not
 change the power plan or disable locking.
 
-`node SCRIPT` requires a numeric `.node-version`/`.nvmrc` or explicit
+`node NPM_SCRIPT` names a script in `package.json`, such as `build`; it does not
+accept a JavaScript file path. Arguments after `--` go to that npm script.
+It requires a numeric `.node-version`/`.nvmrc` or explicit
 `--runtime VERSION` and an already installed fnm runtime. It runs that runtime's
 npm and rejects incompatible `packageManager` pins. Other package managers need
 an explicitly provisioned executable through `exec`; system Node is not silently
-substituted. Godot honors `GODOT_BIN`, then the managed engine selection. Engine
+substituted and no runtime is downloaded. To run a JavaScript file, use
+`exec --project PATH -- node.exe script.js`, or give an absolute Node executable.
+`exec` uses the requested executable and does not select a project runtime.
+Godot honors `GODOT_BIN`, then the managed engine selection. Engine
 pins, export templates and renderer requirements remain project-owned.
 
 Default task timeout is one hour; `--timeout SECONDS` accepts 1–86400. Logs retain
-up to 4 MiB per stream; `logs` returns the last 64 KiB. Receipts and logs live in
+up to 4 MiB per stream: the first 2 MiB and a rolling last 2 MiB, preserving late
+errors. Output below the cap is unchanged. The raw log concatenates the retained
+head and tail without an inserted gap marker; discarded bytes belong to the
+missing middle. During execution the rolling tail is published periodically;
+the final snapshot settles before confirmed completion. `logs` returns the last
+64 KiB of retained output. Receipts and logs live in
 `%LOCALAPPDATA%\Basaltwater\development`. Headless commands need no input control;
 GUI interactions remain subject to desktop handoff and readiness rules.
 
@@ -176,7 +199,9 @@ and never uses wall-clock subtraction. Cancellation and timeout include cleanup.
 Unstarted, interrupted or uncertain work has no measured end/duration; legacy
 receipts retain their original fields without reconstructed timing.
 `StreamLimitBytes` is 4194304. Settled `Streams.Stdout`/`Stderr` report `LimitBytes`,
-`RetainedBytes`, `DiscardedBytes` and `Truncated`; unknown accounting is null.
+`RetainedBytes`, `DiscardedBytes` and `Truncated`; new head/tail records also
+include `RetentionPolicy: head-tail`, `HeadBytes` and `TailBytes`. Unknown
+accounting is null, and older prefix-only records are not reconstructed.
 Excess bytes continue to drain, including for failed children. `logs` separately
 reports `Tails` with returned/omitted byte counts and truncation for each stream.
 Tail omission refers to retained bytes, not bytes discarded at the stream cap.

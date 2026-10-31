@@ -37,10 +37,14 @@ try {
 from __future__ import annotations
 import json, os, pathlib, subprocess, sys, time
 mode, child_path = sys.argv[1:3]
-if mode in ('flood', 'failed-flood'):
+if mode in ('flood', 'failed-flood', 'paused-flood'):
     for stream in (sys.stdout.buffer, sys.stderr.buffer):
-        stream.write(b'z' * (4 * 1024 * 1024 + 12345))
+        head, tail = b'BEGIN-OF-PROBE\n', b'\nEND-OF-PROBE\n'
+        stream.write(head + b'z' * (4 * 1024 * 1024 + 12345 - len(head) - len(tail)) + tail)
         stream.flush()
+    if mode == 'paused-flood':
+        while not pathlib.Path(child_path + '.release').exists():
+            time.sleep(0.01)
     sys.exit(23 if mode == 'failed-flood' else 0)
 if mode in ('cancel', 'timeout', 'orphan', 'crash'):
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
@@ -51,7 +55,7 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash'):
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','flood','failed-flood','timeout','cancel','orphan','cleanup-fail','crash')) {
+    foreach ($mode in @('success','fail','flood','failed-flood','paused-flood','timeout','cancel','orphan','cleanup-fail','crash')) {
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
@@ -92,8 +96,16 @@ function Remove-Item {
         $guardian = [Diagnostics.Process]::Start($start)
         $timer = [Diagnostics.Stopwatch]::StartNew()
         $descendant = $null
+        $liveTailSeen = $false
         while (-not $guardian.WaitForExit(100)) {
             if ($timer.Elapsed.TotalSeconds -gt 45) { throw "Owned $mode guardian exceeded qualification deadline" }
+            if ($mode -eq 'paused-flood' -and -not $liveTailSeen -and (Test-Path -LiteralPath (Join-Path $directory 'stderr.log'))) {
+                $live = Invoke-NativeDevelopmentCli @('logs',$id)
+                if ($live.Stdout.EndsWith("`nEND-OF-PROBE`n") -and $live.Stderr.EndsWith("`nEND-OF-PROBE`n")) {
+                    $liveTailSeen = $true
+                    [IO.File]::WriteAllText($childFile + '.release', 'release')
+                }
+            }
             if ($mode -in @('timeout','cancel','orphan','crash') -and -not $descendant -and (Test-Path -LiteralPath $childFile)) {
                 $descendant = Get-Process -Id ([int](Get-Content -LiteralPath $childFile)) -ErrorAction Stop
                 $null = $descendant.Handle
@@ -124,21 +136,27 @@ function Remove-Item {
             continue
         }
         $result = Get-DevelopmentRecord $id
-        $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; flood { 'complete' }; failed-flood { 'failed' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
+        $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; flood { 'complete' }; failed-flood { 'failed' }; paused-flood { 'complete' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
         Assert-True ($result.State -eq $expected -and $result.CompletedUtc) "Expected $expected after process cleanup; got $($result.State): $($result.Message)"
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Terminal task retained its environment snapshot'
         Assert-True ($result.ExecutionStartedUtc.EndsWith('Z') -and $result.ExecutionEndedUtc.EndsWith('Z') -and
             $result.ElapsedSeconds -gt 0 -and $result.ElapsedSeconds -lt 40) "Invalid $mode execution timing"
-        if ($mode -in @('flood','failed-flood')) {
+        if ($mode -in @('flood','failed-flood','paused-flood')) {
+            if ($mode -eq 'paused-flood') { Assert-True $liveTailSeen 'Idle live stream did not publish its latest tail' }
             foreach ($stream in @($result.Streams.Stdout, $result.Streams.Stderr)) {
                 Assert-True ($stream.RetainedBytes -eq 4MB -and $stream.DiscardedBytes -eq 12345 -and $stream.Truncated -and $stream.LimitBytes -eq 4MB) 'Flood retention accounting was incomplete'
+                Assert-True ($stream.RetentionPolicy -eq 'head-tail' -and $stream.HeadBytes -eq 2MB -and $stream.TailBytes -eq 2MB) 'Flood retention policy was not explicit'
             }
             $tail = Invoke-NativeDevelopmentCli @('logs',$id)
             Assert-True ($tail.Tails.stdout.ReturnedBytes -eq 65536 -and $tail.Tails.stdout.OmittedBytes -eq (4MB - 65536) -and $tail.Tails.stdout.Truncated) 'Tail omission confused with cap loss'
+            Assert-True ($tail.Stdout.EndsWith("`nEND-OF-PROBE`n") -and $tail.Stderr.EndsWith("`nEND-OF-PROBE`n")) 'Late output was discarded from a flooded stream'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $directory 'stdout.log') -TotalCount 1) -eq 'BEGIN-OF-PROBE') 'Flood retention lost initial output'
             if ($mode -eq 'failed-flood') { Assert-True ($result.ExitCode -eq 23) 'Flood hid failure exit code' }
             continue
         }
         if ($mode -eq 'success') {
+            $waited = Invoke-NativeDevelopmentCli @('wait',$id,'--timeout','1')
+            Assert-True ($waited.WaitState -eq 'completed' -and $waited.Receipt.State -eq 'complete' -and -not $waited.TimedOut) 'Wait did not return the settled native receipt'
             # Retired tasks refuse late scheduler starts before reading the
             # removed environment or running any project code again.
             $start.RedirectStandardError = $true; $start.RedirectStandardOutput = $true
