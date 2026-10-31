@@ -181,7 +181,7 @@ function Get-DevelopmentPowerShellPresence {
     foreach ($path in $candidates) { if (Test-Path -LiteralPath $path -PathType Leaf) { return $path } }
     return ''
 }
-function Invoke-DevelopmentGit([string]$Git, [string]$Project, [string]$Arguments) {
+function Invoke-DevelopmentGit([string]$Git, [string]$Project, [string]$Arguments, [switch]$AnyOutput) {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Git; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
     $info.WorkingDirectory = $Project
@@ -196,19 +196,30 @@ function Invoke-DevelopmentGit([string]$Git, [string]$Project, [string]$Argument
     $info.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
     $process = [Diagnostics.Process]::Start($info)
     try {
-        # These commands return only a hash, boolean or exit status.
-        $output = $process.StandardOutput.ReadToEndAsync()
-        $errors = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(5000)) { throw 'Git metadata query timed out' }
-        if (-not $output.Wait(1000) -or -not $errors.Wait(1000)) { throw 'Git metadata output did not settle' }
-        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output.Result.Trim() }
+        # Hashes/config keys fit this bound. For untracked discovery, any output
+        # proves dirtiness; stop the owned query without retaining file names.
+        $buffer = New-Object char[] 8192
+        $output = $process.StandardOutput.ReadBlockAsync($buffer, 0, $buffer.Length)
+        $errors = $process.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
+        if (-not $output.Wait(5000)) { throw 'Git metadata query timed out' }
+        $count = $output.Result
+        if ($AnyOutput -and $count -gt 0) {
+            return [pscustomobject]@{ ExitCode = $null; Output = ''; HasOutput = $true }
+        }
+        if ($count -eq $buffer.Length) { throw 'Git metadata output exceeded its bound' }
+        if (-not $process.WaitForExit(1000) -or -not $errors.Wait(1000)) { throw 'Git metadata output did not settle' }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = [string]::new($buffer, 0, $count).Trim(); HasOutput = ($count -gt 0) }
     } finally {
-        if (-not $process.HasExited) { $process.Kill(); $null = $process.WaitForExit(10000) }
+        if (-not $process.HasExited) {
+            $process.Kill()
+            if (-not $process.WaitForExit(10000)) { throw 'Git metadata process cleanup could not be confirmed' }
+        }
         $process.Dispose()
     }
 }
 function Get-DevelopmentCheckout([string]$Project, [string]$Git) {
-    $result = [pscustomobject]@{ State = 'unknown'; Revision = $null; Dirty = $null; DirtyScope = 'tracked files only; untracked files excluded' }
+    $result = [pscustomobject]@{ State = 'unknown'; Revision = $null; Dirty = $null;
+        TrackedDirty = $null; Untracked = $null; DirtyScope = 'tracked and untracked files; submodule contents excluded' }
     if (-not $Git) { return $result }
     try {
         $inside = Invoke-DevelopmentGit $Git $Project 'rev-parse --is-inside-work-tree'
@@ -234,8 +245,13 @@ function Get-DevelopmentCheckout([string]$Project, [string]$Git) {
         }
         $head = Invoke-DevelopmentGit $Git $Project 'rev-parse --verify HEAD'
         $dirty = Invoke-DevelopmentGit $Git $Project ($disable + ' diff --no-ext-diff --no-textconv --ignore-submodules=all --quiet HEAD --')
+        $untracked = Invoke-DevelopmentGit $Git $Project 'ls-files --others --exclude-standard --directory -z' -AnyOutput
         if ($head.ExitCode -eq 0 -and $head.Output -match '\A[0-9a-f]{40,64}\z') { $result.Revision = $head.Output }
-        if ($dirty.ExitCode -in @(0,1)) { $result.Dirty = $dirty.ExitCode -eq 1 }
+        if ($dirty.ExitCode -in @(0,1)) { $result.TrackedDirty = $dirty.ExitCode -eq 1 }
+        if ($untracked.HasOutput) { $result.Untracked = $true }
+        elseif ($untracked.ExitCode -eq 0) { $result.Untracked = $false }
+        if ($result.TrackedDirty -eq $true -or $result.Untracked -eq $true) { $result.Dirty = $true }
+        elseif ($null -ne $result.TrackedDirty -and $null -ne $result.Untracked) { $result.Dirty = $false }
         if ($result.Revision -and $null -ne $result.Dirty) { $result.State = 'available' }
     } catch { } # Discovery is honest about unavailable or unreadable metadata.
     return $result

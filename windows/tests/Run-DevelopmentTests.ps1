@@ -92,6 +92,11 @@ try {
         }
         $checkout = Get-DevelopmentCheckout $gitProject $git
         Assert-True ($checkout.State -eq 'available' -and $checkout.Revision -match '^[0-9a-f]{40,64}$' -and -not $checkout.Dirty) 'Clean checkout discovery failed'
+        $untrackedPath = Join-Path $gitProject 'untracked.txt'
+        [IO.File]::WriteAllText($untrackedPath, 'untracked')
+        $checkout = Get-DevelopmentCheckout $gitProject $git
+        Assert-True ($checkout.Dirty -and $checkout.Untracked -and -not $checkout.TrackedDirty) 'Untracked checkout changes were hidden'
+        Remove-Item -LiteralPath $untrackedPath
         [IO.File]::WriteAllText((Join-Path $gitProject 'tracked.txt'), 'original')
         $null = Invoke-DevelopmentGit $git $gitProject 'add tracked.txt'
         Assert-True ((Get-DevelopmentCheckout $gitProject $git).Dirty) 'Staged dirty checkout was hidden'
@@ -103,6 +108,9 @@ try {
         $null = Invoke-DevelopmentGit $git $gitProject 'config filter.fixture.process "cmd.exe /c echo executed>callback-marker"'
         $null = Invoke-DevelopmentGit $git $gitProject 'config core.fsmonitor "cmd.exe /c echo executed>callback-marker"'
         Assert-True ((Get-DevelopmentCheckout $gitProject $git).Dirty -and -not (Test-Path -LiteralPath (Join-Path $gitProject 'callback-marker'))) 'Working dirty discovery executed project callbacks'
+        # Large local configuration must fail closed, without unbounded capture.
+        $null = Invoke-DevelopmentGit $git $gitProject ('config filter.fixture.clean "' + ('x' * 9000) + '"')
+        Assert-Throws { Invoke-DevelopmentGit $git $gitProject 'config --get filter.fixture.clean' } 'exceeded its bound'
         Assert-True ((Get-DevelopmentCheckout $gitProject '').State -eq 'unknown') 'Unavailable Git invented metadata'
         [IO.File]::WriteAllText((Join-Path $gitProject '.git\HEAD'), 'broken metadata')
         Assert-True ((Get-DevelopmentCheckout $gitProject $git).State -eq 'unknown') 'Corrupt checkout invented revision metadata'

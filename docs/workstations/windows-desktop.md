@@ -186,8 +186,10 @@ PowerShell, pinned fnm Node, applicable Godot and trusted native Git paths, miss
 requirements, and checkout revision/dirty state. It never probes project shims or
 launches GUI tools. Git is selected only from Program Files Git installations,
 with reparse paths rejected; unavailable/corrupt/unborn metadata stays `unknown`,
-and a directory outside a checkout is `nongit`. Dirty state covers tracked files
-(staged and working changes), excluding untracked files and submodule contents.
+and a directory outside a checkout is `nongit`. Dirty state covers staged,
+working and untracked changes, with separate `TrackedDirty` and `Untracked`
+flags; submodule contents are excluded. Git output is bounded to 8192 characters.
+Untracked discovery records presence without retaining a file listing.
 Git queries disable hooks, fsmonitor, external diff/text conversion and declared
 clean/process filters, ignore inherited Git overrides and global/system config,
 and use optional-lock-free bounded queries. No manifest or recipes are read or
