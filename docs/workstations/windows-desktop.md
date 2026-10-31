@@ -168,6 +168,35 @@ up to 4 MiB per stream; `logs` returns the last 64 KiB. Receipts and logs live i
 `%LOCALAPPDATA%\Basaltwater\development`. Headless commands need no input control;
 GUI interactions remain subject to desktop handoff and readiness rules.
 
+New receipts expose `ExecutionStartedUtc`, `ExecutionEndedUtc` and monotonic
+`ElapsedSeconds`. The interval starts immediately before recording/opening the
+contained child's gate and ends after process-tree, output and private-environment
+cleanup. It includes child startup and cleanup, excludes queue/guardian preparation,
+and never uses wall-clock subtraction. Cancellation and timeout include cleanup.
+Unstarted, interrupted or uncertain work has no measured end/duration; legacy
+receipts retain their original fields without reconstructed timing.
+`StreamLimitBytes` is 4194304. Settled `Streams.Stdout`/`Stderr` report `LimitBytes`,
+`RetainedBytes`, `DiscardedBytes` and `Truncated`; unknown accounting is null.
+Excess bytes continue to drain, including for failed children. `logs` separately
+reports `Tails` with returned/omitted byte counts and truncation for each stream.
+Tail omission refers to retained bytes, not bytes discarded at the stream cap.
+
+`develop doctor --project PATH` is presence-only discovery: it reports selected
+PowerShell, pinned fnm Node, applicable Godot and trusted native Git paths, missing
+requirements, and checkout revision/dirty state. It never probes project shims or
+launches GUI tools. Git is selected only from Program Files Git installations,
+with reparse paths rejected; unavailable/corrupt/unborn metadata stays `unknown`,
+and a directory outside a checkout is `nongit`. Dirty state covers tracked files
+(staged and working changes), excluding untracked files and submodule contents.
+Git queries disable hooks, fsmonitor, external diff/text conversion and declared
+clean/process filters, ignore inherited Git overrides and global/system config,
+and use optional-lock-free bounded queries. No manifest or recipes are read or
+executed: runtime pins and conventional package/Godot files define discovery's
+scope. Package-manager version compatibility remains task-plan validation.
+Use workstation doctor separately for host version health and project commands
+for build/render qualification. The recipe adapter remains deferred pending a
+reviewed consuming workflow.
+
 ## Maintenance and qualification
 
 `basaltw refresh` returns a detached refresh ID by default, allowing T3 upgrades

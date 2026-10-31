@@ -58,6 +58,17 @@ contain child processes and settle cleanup before recording completion. Private
 environment snapshots are removed afterward. Logs are bounded and require review
 before sharing. No upload/signing credentials are implied by local tasks.
 
+Status includes UTC execution boundaries and monotonic elapsed seconds from gate
+release preparation through confirmed cleanup, excluding queue time. Unknown or
+legacy timing is not reconstructed. Settled stream counters distinguish the
+4 MiB retention cap from `logs` tail omission at 64 KiB; review both before sharing.
+Project doctor only discovers paths, conventional runtime requirements and Git
+revision/tracked dirty state; it does not execute project shims, GUI tools or
+recipes. Missing Git metadata stays unknown. Use host doctor for version health
+and project-owned commands for verification. Keep one current checkpoint and
+return evidence through the shared
+[checkpoint and handoff guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/handoffs.md).
+
 Active or uncertain tasks block setup/reboot; cancellation is a request, so verify
 terminal status before retrying maintenance. Tasks temporarily prevent idle sleep
 and release the request when finished; they do not change the power plan or lock

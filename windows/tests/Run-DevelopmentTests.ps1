@@ -70,6 +70,43 @@ try {
     $doctor = Invoke-NativeDevelopmentCli @('doctor','--project',$project)
     Assert-True ($doctor.NodeDiagnostic -match 'numeric project pin') 'Doctor hid missing project runtime'
     Assert-True (-not (Test-Path -LiteralPath (Get-DevelopmentRoot))) 'Doctor wrote task state'
+    Assert-True ($doctor.Checkout.State -in @('nongit','unknown')) 'Nongit directory claimed revision metadata'
+    & {
+        function Get-NativePowerShell7 { throw 'Presence discovery executed a version probe' }
+        $savedGodot = $env:GODOT_BIN
+        try {
+            [IO.File]::WriteAllText((Join-Path $project 'project.godot'), '; fixture')
+            $env:GODOT_BIN = Join-Path $project 'gui-shim.cmd'
+            [IO.File]::WriteAllText($env:GODOT_BIN, '@echo executed > should-never-exist')
+            $discovered = Invoke-NativeDevelopmentCli @('doctor','--project',$project)
+            Assert-True ($discovered.MissingRequirements.Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $project 'should-never-exist'))) 'Discovery executed a GUI shim'
+        } finally { $env:GODOT_BIN = $savedGodot }
+    }
+    $git = Get-DevelopmentTrustedGit
+    if ($git) {
+        $gitProject = Join-Path $temporary 'git project'
+        New-Item -ItemType Directory -Path $gitProject | Out-Null
+        foreach ($command in @('init -q','config user.name Fixture','config user.email fixture@example.invalid','commit --allow-empty --no-verify -m fixture')) {
+            $setup = Invoke-DevelopmentGit $git $gitProject $command
+            Assert-True ($setup.ExitCode -eq 0) "Git fixture setup failed: $command"
+        }
+        $checkout = Get-DevelopmentCheckout $gitProject $git
+        Assert-True ($checkout.State -eq 'available' -and $checkout.Revision -match '^[0-9a-f]{40,64}$' -and -not $checkout.Dirty) 'Clean checkout discovery failed'
+        [IO.File]::WriteAllText((Join-Path $gitProject 'tracked.txt'), 'original')
+        $null = Invoke-DevelopmentGit $git $gitProject 'add tracked.txt'
+        Assert-True ((Get-DevelopmentCheckout $gitProject $git).Dirty) 'Staged dirty checkout was hidden'
+        $null = Invoke-DevelopmentGit $git $gitProject 'commit --no-verify -m tracked'
+        [IO.File]::WriteAllText((Join-Path $gitProject 'tracked.txt'), 'changed')
+        # If either project callback runs, the query fails or creates the marker.
+        [IO.File]::WriteAllText((Join-Path $gitProject '.gitattributes'), '*.txt filter=fixture')
+        $null = Invoke-DevelopmentGit $git $gitProject 'config filter.fixture.clean "cmd.exe /c echo executed>callback-marker"'
+        $null = Invoke-DevelopmentGit $git $gitProject 'config filter.fixture.process "cmd.exe /c echo executed>callback-marker"'
+        $null = Invoke-DevelopmentGit $git $gitProject 'config core.fsmonitor "cmd.exe /c echo executed>callback-marker"'
+        Assert-True ((Get-DevelopmentCheckout $gitProject $git).Dirty -and -not (Test-Path -LiteralPath (Join-Path $gitProject 'callback-marker'))) 'Working dirty discovery executed project callbacks'
+        Assert-True ((Get-DevelopmentCheckout $gitProject '').State -eq 'unknown') 'Unavailable Git invented metadata'
+        [IO.File]::WriteAllText((Join-Path $gitProject '.git\HEAD'), 'broken metadata')
+        Assert-True ((Get-DevelopmentCheckout $gitProject $git).State -eq 'unknown') 'Corrupt checkout invented revision metadata'
+    }
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--timeout','0','--',$shell) } '1-86400'
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--env','LOCALAPPDATA=elsewhere','--',$shell) } 'cannot be overridden'
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--what','--',$shell) } 'Unexpected option'
@@ -91,12 +128,28 @@ try {
     [IO.File]::WriteAllText((Join-Path $directory 'stderr.log'), 'failure detail')
     $logs = Invoke-NativeDevelopmentCli @('logs',$record.Id)
     Assert-True ($logs.Stdout.Length -eq 65536 -and $logs.Stderr -eq 'failure detail') 'Log response was not bounded'
+    Assert-True ($logs.Tails.stdout.OmittedBytes -eq 34464 -and $logs.Tails.stdout.Truncated -and
+        $logs.Tails.stderr.OmittedBytes -eq 0 -and -not $logs.Tails.stderr.Truncated -and $null -eq $logs.Streams) 'Tail omission or unknown retention was misreported'
     $record.WorkerPid = 999999; $record.WorkerStartedUtc = '2000-01-01T00:00:00Z'
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
     Assert-True ((Get-DevelopmentStatus $record.Id).State -eq 'cleanup-uncertain') 'Dead guardian falsely reported running'
+    Assert-True ($null -eq (Get-DevelopmentStatus $record.Id).ElapsedSeconds) 'Dead guardian invented elapsed time'
     $record.CompletedUtc = [DateTime]::UtcNow.ToString('o'); $record.State = 'cancelled'
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
     Assert-NativeDevelopmentIdle
+    & {
+        $legacyPath = Join-Path $directory 'receipt.json'
+        $legacy = Get-DevelopmentRecord $record.Id
+        foreach ($name in @('ExecutionStartedUtc','ExecutionEndedUtc','ElapsedSeconds','Streams','StreamLimitBytes')) { $legacy.PSObject.Properties.Remove($name) }
+        Write-DevelopmentJson $legacyPath $legacy
+        $before = [IO.File]::ReadAllText($legacyPath)
+        $old = Get-DevelopmentStatus $record.Id
+        Assert-True (-not $old.PSObject.Properties['ElapsedSeconds'] -and [IO.File]::ReadAllText($legacyPath) -ceq $before) 'Legacy status invented timing or changed stored history'
+        [IO.File]::WriteAllText($legacyPath, '{broken')
+        Assert-Throws { Get-DevelopmentStatus $record.Id } 'JSON|Unexpected|Invalid'
+        Assert-True ([IO.File]::ReadAllText($legacyPath) -eq '{broken') 'Corrupt record was overwritten'
+        Write-DevelopmentJson $legacyPath $record
+    }
     $script:launchFailure = $true
     Assert-Throws { Invoke-NativeDevelopmentCli @('exec','--project',$project,'--',$shell) } 'Worker launch could not be confirmed'
     $failed = Get-DevelopmentRecord $script:launched.Id
@@ -163,8 +216,9 @@ try {
     $inputStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes(('z' * 10000)))
     $bounded = Join-Path $temporary 'bounded.log'
     try {
-        $null = [Basaltwater.DevelopmentStreams]::Drain($inputStream, $bounded, 1024).GetAwaiter().GetResult()
+        $drain = [Basaltwater.DevelopmentStreams]::Drain($inputStream, $bounded, 1024).GetAwaiter().GetResult()
         Assert-True ((Get-Item -LiteralPath $bounded).Length -eq 1024 -and $inputStream.Position -eq 10000) 'Stream cap did not drain discarded output'
+        Assert-True ($drain.RetainedBytes -eq 1024 -and $drain.DiscardedBytes -eq 8976 -and $drain.Truncated -and $drain.LimitBytes -eq 1024) 'Drain accounting lost bytes'
     } finally { $inputStream.Dispose() }
     foreach ($file in @('Development.Common.ps1','Development.Process.ps1','Invoke-DevelopmentTask.ps1')) {
         $tokens = $null; $errors = $null
