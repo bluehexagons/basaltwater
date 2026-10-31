@@ -90,7 +90,7 @@ def _activators_unchanged(units: dict[str, str], activate: tuple[str, ...], unit
 
 def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str,
                      deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
-                     preserve_unchanged: bool = False) -> None:
+                     preserve_unchanged: bool = False, verify: Callable[[], None] | None = None) -> None:
     validate_filesystem_path(unit_dir, must_exist=False)
     if (not units and not remove) or not (set(activate) | set(deactivate)) <= units.keys():
         raise ValueError("Activation requires staged units")
@@ -121,9 +121,12 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             raise ValueError("Unit content must be text no larger than 1 MiB")
     if type(preserve_unchanged) is not bool:
         raise ValueError("Unchanged activator selection must be a boolean")
+    if verify is not None and not callable(verify):
+        raise ValueError("Unit verification must be callable")
     if preserve_unchanged and (not activate or remove or deactivate or prepare is not None
+                               or verify is not None
                                or any(not name.endswith((".timer", ".path")) for name in activate)):
-        raise ValueError("Preserving unchanged units requires timer/path activation without removal or preparation")
+        raise ValueError("Preserving unchanged units requires timer/path activation without removal or callbacks")
     operation = "unit-removal" if remove else "unit-replacement"
     if is_dry_run():
         print(f"  [DRY-RUN] Would {'remove' if remove else 'replace'} units: {', '.join(names)}")
@@ -206,9 +209,11 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 state = inspect_unit_state(name)
                 if state["ActiveState"] != "active" or state["UnitFileState"] != "enabled":
                     raise RuntimeError(f"Unit activation failed verification: {name}")
+            if verify is not None:
+                verify()
             store.complete(record.operation_id)
             resolved = True
-        except BaseException:
+        except BaseException as original_error:
             errors = []
             try:
                 store.transition(record.operation_id, "rolling-back")
@@ -227,24 +232,38 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 # Publication can fail before activation is reached, while an
                 # existing timer/socket/path still references a changed file.
                 rollback_units = list(dict.fromkeys((*touched, *activate)))
+                quiescent = True
                 for name in rollback_units:
                     if (name not in touched and states[name]["LoadState"] == "not-found"
                             and not os.path.lexists(os.path.join(unit_dir, name))):
                         continue
-                    attempt(lambda name=name: _command("systemctl", "stop", name))
+                    if not attempt(lambda name=name: _command("systemctl", "stop", name)):
+                        quiescent = False
                     if name in activate or states[name]["UnitFileState"] in {"enabled", "enabled-runtime"}:
                         flags = ["--runtime"] if name not in activate and states[name]["UnitFileState"] == "enabled-runtime" else []
-                        attempt(lambda name=name, flags=flags: _command("systemctl", "disable", *flags, name))
+                        if not attempt(lambda name=name, flags=flags: _command("systemctl", "disable", *flags, name)):
+                            quiescent = False
+                    def confirm_stopped(name=name):
+                        state = inspect_unit_state(name)
+                        if state["ActiveState"] not in {"inactive", "failed"}:
+                            raise RuntimeError(f"Rollback unit is still running: {name}")
+                    if not attempt(confirm_stopped):
+                        quiescent = False
                 restored = set()
-                for name, previous in snapshots.items():
-                    path = os.path.join(unit_dir, name)
-                    if previous is None:
-                        safe = attempt(lambda path=path: remove_file_durable(path))
-                    else:
-                        safe = attempt(lambda path=path, previous=previous: write_text_atomic(path, **previous))
-                    if safe:
-                        restored.add(name)
-                reloaded = attempt(lambda: _command("systemctl", "daemon-reload"))
+                # Retain both live candidates and private originals when any
+                # stop is refused or uncertain. Do not reload or restart a
+                # group that could still be using its replacement definitions.
+                reloaded = False
+                if quiescent:
+                    for name, previous in snapshots.items():
+                        path = os.path.join(unit_dir, name)
+                        if previous is None:
+                            safe = attempt(lambda path=path: remove_file_durable(path))
+                        else:
+                            safe = attempt(lambda path=path, previous=previous: write_text_atomic(path, **previous))
+                        if safe:
+                            restored.add(name)
+                    reloaded = attempt(lambda: _command("systemctl", "daemon-reload"))
                 # Related activators can start another unit in this group.
                 # Keep the group quiescent if any old definition is unsafe.
                 if reloaded and len(restored) == len(snapshots):
@@ -267,15 +286,15 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                         if state["ActiveState"] == "active":
                             attempt(lambda name=name: _command("systemctl", "restart", name))
                 for name in rollback_units:
-                    def verify(name=name):
+                    def verify_restored_state(name=name):
                         actual = inspect_unit_state(name)
                         previous = states[name]
                         if (actual["ActiveState"] == "active") != (previous["ActiveState"] == "active") or actual["UnitFileState"] != previous["UnitFileState"]:
                             raise RuntimeError("Restored unit state did not match")
-                    attempt(verify)
+                    attempt(verify_restored_state)
             if errors:
                 store.transition(record.operation_id, "rollback-failed", status="recovery_required", context={"backup_dir": backup_dir, "errors": errors})
-                raise UnitRecoveryError(store.path, backup_dir)
+                raise UnitRecoveryError(store.path, backup_dir) from original_error
             store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
             resolved = True
             raise
@@ -294,7 +313,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
 
 def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir: str = "/etc/systemd/system",
                   deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
-                  preserve_unchanged: bool = False) -> None:
+                  preserve_unchanged: bool = False, verify: Callable[[], None] | None = None) -> None:
     """Validate, replace, enable and restart units, restoring on any failure.
 
     Only ``activate`` and ``deactivate`` units change running/enabled state. This lets
@@ -310,6 +329,11 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     dry-run mode. Its failures restore unit files and activation state, but its
     filesystem, credential or other side effects are not rolled back.
 
+    ``verify`` runs after activation and before completion under the same lock.
+    A readiness failure triggers restoration of prior units and activation
+    state. Dry runs skip it; it cannot accompany ``preserve_unchanged``. Callback
+    side effects beyond the managed units are outside rollback.
+
     ``preserve_unchanged`` is an opt-in for timer/path activation without
     deactivation or preparation callbacks. Under the recovery lock it requires
     matching file content/metadata, loaded definitions with no pending daemon
@@ -319,7 +343,8 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     configuration or executables may have changed independently of unit text.
     """
     _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir,
-                     deactivate=deactivate, prepare=prepare, preserve_unchanged=preserve_unchanged)
+                     deactivate=deactivate, prepare=prepare, preserve_unchanged=preserve_unchanged,
+                     verify=verify)
 
 
 def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system",

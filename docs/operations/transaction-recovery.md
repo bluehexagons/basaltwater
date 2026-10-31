@@ -94,7 +94,14 @@ fails. It does not restart a unit whose old file could not be restored; failed
 `daemon-reload` also prevents restarting against cached replacement definitions.
 Within a grouped unit transaction, any failed file restoration prevents
 restarting the group so a restored timer/path cannot activate an unrestored
-service. Removal uses the same lock and snapshot boundary as replacement,
+service. A refused or unconfirmed rollback stop, or a failed disable, retains
+the live candidate files and private original snapshots without restoration,
+reload or restart. Inspect processes and both definitions, repair the stop
+failure and quiesce the group before restoring files. The reported recovery
+error chains the original activation or readiness error. Panel service setup
+checks its HTTP socket before completing this unit transaction; its manifest,
+credentials and earlier setup steps remain outside unit rollback.
+Removal uses the same lock and snapshot boundary as replacement,
 skips absent managed files, and stops all present units before deleting any
 of their files.
 Socket activators are stopped before their service templates. Templates have

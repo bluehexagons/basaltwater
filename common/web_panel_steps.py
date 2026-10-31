@@ -30,6 +30,7 @@ from lib.auth_failure_bans import (
 from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
 from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 from lib.remote_utils import install_package, is_dry_run, is_service_active, run
+from lib.unit_transaction import replace_units
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -766,24 +767,19 @@ def _is_managed_service(content: str) -> bool:
     )
 
 
-def _restore_service(previous: str | None) -> None:
-    if previous is None:
-        run(
-            f"systemctl disable --now {WEB_PANEL_SERVICE_NAME}.service",
-            check=False,
-        )
-        try:
-            os.unlink(WEB_PANEL_SERVICE_FILE)
-        except FileNotFoundError:
-            pass
-    else:
-        write_text_atomic(WEB_PANEL_SERVICE_FILE, previous, mode=0o644)
-    run("systemctl daemon-reload", check=False)
-    if previous is not None:
-        run(
-            f"systemctl restart {WEB_PANEL_SERVICE_NAME}.service",
-            check=False,
-        )
+def _verify_service_socket() -> None:
+    """Keep application readiness inside the unit recovery boundary."""
+    for _attempt in range(25):
+        if os.path.exists(WEB_PANEL_SOCKET) and is_service_active(WEB_PANEL_SERVICE_NAME):
+            return
+        time.sleep(0.2)
+    status = run(
+        f"systemctl status {WEB_PANEL_SERVICE_NAME}.service --no-pager --lines=20",
+        check=False, capture_output=True,
+    )
+    detail = (getattr(status, "stderr", "") or getattr(status, "stdout", "")).strip()
+    message = "The web panel service did not create its HTTP socket"
+    raise RuntimeError(message + (f":\n{detail}" if detail else ""))
 
 
 def _configure_service(config: SetupConfig, home: str) -> bool:
@@ -846,42 +842,18 @@ WantedBy=multi-user.target
     try:
         with open(WEB_PANEL_SERVICE_FILE, encoding="utf-8") as file_obj:
             previous = file_obj.read()
-    except OSError:
+    except FileNotFoundError:
         pass
     if previous is not None and not _is_managed_service(previous):
         raise RuntimeError(
             f"Refusing unmanaged web panel service: {WEB_PANEL_SERVICE_FILE}"
         )
     changed = previous != content
-    try:
-        if changed:
-            write_text_atomic(WEB_PANEL_SERVICE_FILE, content, mode=0o644)
-            run("systemctl daemon-reload", check=True)
-        run(f"systemctl enable {WEB_PANEL_SERVICE_NAME}.service", check=True)
-        # The service reads its manifest only at startup, so restart even when
-        # the unit itself is unchanged.
-        run(f"systemctl restart {WEB_PANEL_SERVICE_NAME}.service", check=True)
-        for _attempt in range(25):
-            if os.path.exists(WEB_PANEL_SOCKET) and is_service_active(
-                WEB_PANEL_SERVICE_NAME
-            ):
-                return changed
-            time.sleep(0.2)
-        status = run(
-            f"systemctl status {WEB_PANEL_SERVICE_NAME}.service "
-            "--no-pager --lines=20",
-            check=False,
-            capture_output=True,
-        )
-        detail = (
-            getattr(status, "stderr", "") or getattr(status, "stdout", "")
-        ).strip()
-        message = "The web panel service did not create its HTTP socket"
-        raise RuntimeError(message + (f":\n{detail}" if detail else ""))
-    except Exception:
-        if changed:
-            _restore_service(previous)
-        raise
+    # Restart even unchanged units: the manifest is read only at startup.
+    name = os.path.basename(WEB_PANEL_SERVICE_FILE)
+    replace_units({name: content}, activate=(name,),
+                  unit_dir=os.path.dirname(WEB_PANEL_SERVICE_FILE), verify=_verify_service_socket)
+    return changed
 
 
 def _configure_audit_exporter(service_gid: int) -> bool:

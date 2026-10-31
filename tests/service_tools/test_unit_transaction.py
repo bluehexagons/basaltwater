@@ -240,8 +240,10 @@ class TestUnitTransaction(unittest.TestCase):
             if args == ["systemctl", "stop", "demo.service"]:
                 return subprocess.CompletedProcess(args, 0, "", "")
             return original(args, **kwargs)
-        with patch.object(units, "run", side_effect=command), self.assertRaisesRegex(RuntimeError, "verification"):
+        with patch.object(units, "run", side_effect=command), self.assertRaises(units.UnitRecoveryError) as error:
             units.remove_units(("demo.service",), unit_dir=str(self.root))
+        self.assertIn("verification", str(error.exception.__cause__))
+        self.assertTrue(Path(error.exception.marker_path).is_file())
         self.assertEqual(service.read_text(), "broken service")
 
     def test_socket_activation_stages_template_without_enabling_it(self):

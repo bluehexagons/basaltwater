@@ -62,6 +62,7 @@ from lib.config import SetupConfig
 from lib.display import print_service_access_summary
 from lib.setup_common import prepare_web_panel_payload
 from plugins.server import build_server_steps
+from tests.unit_fakes import FakeSystemd
 
 
 def _config(**overrides: object) -> SetupConfig:
@@ -292,6 +293,13 @@ class WebPanelLifecycleTest(unittest.TestCase):
         self.enterContext(patch("desktop.guacamole_steps.preflight_units"))
         self.enterContext(patch("desktop.guacamole_steps.preflight_configuration"))
         self.remove_guacamole = self.enterContext(patch("desktop.guacamole_steps.remove_guacamole"))
+        from common import web_panel_steps as steps
+
+        def before(command, **kwargs):
+            steps.run(" ".join(command), check=True)
+
+        self.systemd = FakeSystemd(lambda: os.path.dirname(steps.WEB_PANEL_SERVICE_FILE), before=before)
+        self.enterContext(patch("lib.unit_transaction.run", side_effect=self.systemd))
 
     def test_service_script_loads_when_launched_outside_the_source_tree(self) -> None:
         script = os.path.abspath(
@@ -578,7 +586,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_service_activation_failure_removes_new_unit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            service_file = os.path.join(temporary, "web-panel.service")
+            service_file = os.path.join(temporary, "basaltwater-web-panel.service")
             account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
 
             def run_command(command: str, **_kwargs: object) -> SimpleNamespace:
@@ -607,7 +615,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_service_unit_quotes_home_and_includes_hardening(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            service_file = os.path.join(temporary, "web-panel.service")
+            service_file = os.path.join(temporary, "basaltwater-web-panel.service")
             socket_path = os.path.join(temporary, "http.sock")
             with open(socket_path, "w", encoding="utf-8"):
                 pass
@@ -649,7 +657,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_root_setup_service_does_not_run_as_the_shared_nobody_user(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            service_file = os.path.join(temporary, "web-panel.service")
+            service_file = os.path.join(temporary, "basaltwater-web-panel.service")
             socket_path = os.path.join(temporary, "http.sock")
             with open(socket_path, "w", encoding="utf-8"):
                 pass
@@ -825,7 +833,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_service_socket_timeout_includes_systemd_status(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            service_file = os.path.join(temporary, "web-panel.service")
+            service_file = os.path.join(temporary, "basaltwater-web-panel.service")
             account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
 
             def run_command(command: str, **_kwargs: object) -> SimpleNamespace:

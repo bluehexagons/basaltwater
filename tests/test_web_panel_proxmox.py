@@ -22,6 +22,7 @@ from common.service_tools import web_panel_tls
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
 from plugins.proxmox import build_server_proxmox_steps
+from tests.unit_fakes import FakeSystemd
 
 
 def config(**overrides: object) -> SetupConfig:
@@ -177,7 +178,7 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
     def test_root_service_is_unprivileged_and_hides_proxmox_secrets(self) -> None:
         account = SimpleNamespace(pw_gid=991, pw_uid=991)
         with tempfile.TemporaryDirectory() as temporary:
-            unit = os.path.join(temporary, "panel.service")
+            unit = os.path.join(temporary, "basaltwater-web-panel.service")
             sock = os.path.join(temporary, "http.sock")
             with open(sock, "w", encoding="utf-8"):
                 pass
@@ -186,6 +187,7 @@ class ProxmoxPanelSetupTest(unittest.TestCase):
                 patch.object(steps, "WEB_PANEL_SOCKET", sock),
                 patch.object(steps.pwd, "getpwnam", return_value=account),
                 patch.object(steps, "run"),
+                patch("lib.unit_transaction.run", side_effect=FakeSystemd(temporary)),
                 patch.object(steps, "is_service_active", return_value=True),
             ):
                 steps._configure_service(config(web_panel_port=9443), "/root")

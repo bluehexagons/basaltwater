@@ -25,6 +25,18 @@ Rollback quiesces every requested activation, including activators whose normal
 activation was never reached. If any prior definition cannot be restored, keep
 the group stopped and retain recovery evidence. Services staged only for a
 timer or socket remain outside activation so executing oneshots are left alone.
+If a rollback stop or disable fails, or activity cannot be confirmed stopped,
+the group retains its live candidate files and private originals. It does not
+restore files, reload or restart that group; recovery must reconcile actual
+processes and both definitions before retrying.
+
+`replace_units(..., verify=callback)` checks application readiness after unit
+activation and before completing the operation under its lock. A raised error
+uses the same rollback and retained evidence as an activation failure. Dry runs
+skip it, and `preserve_unchanged` cannot bypass it. The callback should observe
+readiness; effects outside the managed units are not rolled back. The panel
+service uses this boundary for its HTTP socket check, including unchanged-unit
+restarts after manifest changes.
 
 `replace_units(..., prepare=callback)` runs preparation after candidate validation
 and grouped deactivation, before publication and activation, under the same

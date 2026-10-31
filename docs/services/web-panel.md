@@ -229,6 +229,14 @@ a reload failure: a timed-out reload or failed recovery can leave loaded workers
 and files out of sync. This recovery covers the panel route, not earlier setup
 steps, and does not provide a durable Nginx transaction snapshot.
 
+Panel service setup retains unit definitions and activation state through the
+HTTP socket readiness check. A failed check restores the previous unit and its
+enablement/running state. If rollback cannot stop or disable the service, it
+retains the candidate, private originals and a blocking unit operation marker;
+follow [transaction recovery](../operations/transaction-recovery.md) before a
+retry. This unit boundary does not restore the manifest, credentials or earlier
+setup steps. Audit exporter setup rollback remains separate recovery work.
+
 ## Browser desktop
 
 Add `--guacamole` to an HTTPS panel setup to install an embedded browser desktop.
