@@ -51,6 +51,10 @@ A source timeout, oversized record, or failed query leaves the cursor at the
 start of that interval and reports a collection failure. A high-cardinality SSH
 attack still contributes to the failure count even after the source breakdown
 reaches its limit.
+SSH failures require an explicit failed-authentication, invalid-user, PAM-failure
+or excessive-attempt message. Successful, partial and postponed authentication
+records and method references are excluded; an ordinary public-key login must
+not create a failed-login alert.
 
 Fail2ban collection includes the active log and consecutive numeric rotations,
 including gzip archives, using the packaged rename/create rotation policy.

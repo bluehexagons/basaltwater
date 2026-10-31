@@ -539,8 +539,77 @@ type=PATH msg=audit(1766400300.100:2): name=\"/etc/passwd\"
             {source["method"] for source in summary["sources"]},
             {"password", "publickey", "unknown"},
         )
+        self.assertEqual(
+            {source["username"] for source in summary["sources"]},
+            {"root", "deploy", "admin"},
+        )
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 60)
         self.assertIn("--until", mock_run.call_args.args[0])
+
+    @patch.object(security_monitor, 'run_streamed')
+    def test_ssh_method_mentions_without_failure_are_not_counted(self, stream):
+        messages = (
+            'Accepted publickey for deploy from 192.0.2.4 port 22 ssh2: ED25519 SHA256:example',
+            'Accepted keyboard-interactive/pam for deploy from 192.0.2.4 port 22 ssh2',
+            'Accepted password for deploy from 192.0.2.4 port 22 ssh2',
+            'Partial publickey for deploy from 192.0.2.4 port 22 ssh2',
+            'Postponed publickey for deploy from 192.0.2.4 port 22 ssh2 [preauth]',
+            'Postponed keyboard-interactive for deploy from 192.0.2.4 port 22 ssh2 [preauth]',
+            'userauth-request for user deploy service ssh-connection method publickey [preauth]',
+            'Starting authentication attempt for user deploy from 192.0.2.4',
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                stream.side_effect = _stream_output(json.dumps({'MESSAGE': message}))
+                summary, error = security_monitor._check_ssh_failures(
+                    datetime(2026, 8, 22, 12), datetime(2026, 8, 22, 12, 15),
+                )
+                self.assertIsNone(error)
+                self.assertEqual(summary, {'failure_count': 0, 'sources': [], 'lockouts': []})
+
+    @patch.object(security_monitor, 'run_streamed')
+    def test_mixed_ssh_methods_keep_only_explicit_failures(self, stream):
+        messages = (
+            'Accepted publickey for deploy from 192.0.2.4 port 22 ssh2',
+            'Failed publickey for deploy from 192.0.2.4 port 22 ssh2',
+            'Failed keyboard-interactive/pam for invalid user admin from 198.51.100.8 port 22 ssh2',
+            'pam_unix(sshd:auth): authentication failure; user=root rhost=192.0.2.4',
+            'error: maximum authentication attempts exceeded for user root from 192.0.2.4 port 22 ssh2 [preauth]',
+        )
+        stream.side_effect = _stream_output('\n'.join(json.dumps({'MESSAGE': value}) for value in messages))
+        summary, error = security_monitor._check_ssh_failures(
+            datetime(2026, 8, 22, 12), datetime(2026, 8, 22, 12, 15),
+        )
+        self.assertIsNone(error)
+        self.assertEqual(summary['failure_count'], 4)
+        self.assertIn(
+            {'source_ip': '198.51.100.8', 'username': 'admin', 'method': 'keyboard-interactive', 'count': 1},
+            summary['sources'],
+        )
+
+    def test_successful_ssh_logins_do_not_trigger_activity_notification(self):
+        accepted = '\n'.join(json.dumps({'MESSAGE': message}) for message in (
+            *['Accepted publickey for deploy from 192.0.2.4 port 22 ssh2'] * 8,
+            *['Accepted keyboard-interactive/pam for deploy from 192.0.2.4 port 22 ssh2'] * 2,
+        ))
+        with patch.object(
+            security_monitor, 'load_notification_configs_from_state', return_value=['config'],
+        ), patch.object(
+            security_monitor, '_load_state', return_value={},
+        ), patch.object(
+            security_monitor, '_check_fail2ban', return_value=security_monitor.Fail2banScan(),
+        ), patch.object(
+            security_monitor, '_check_auditd', return_value=([], False, []),
+        ), patch.object(
+            security_monitor, 'inspect_xrdp_certificate', return_value=XrdpCertificateHealth('not_configured', '', ''),
+        ), patch.object(
+            security_monitor, 'run_streamed', side_effect=_stream_output(accepted),
+        ), patch.object(security_monitor, '_save_state') as save, patch.object(
+            security_monitor, 'send_notification_safe',
+        ) as notify:
+            self.assertEqual(security_monitor.main(), 0)
+        notify.assert_not_called()
+        save.assert_called_once()
 
     @patch("security.service_tools.security_monitor.run_streamed", side_effect=TimeoutError)
     def test_ssh_journal_timeout_is_a_collection_error(self, _run):

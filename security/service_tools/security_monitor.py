@@ -374,10 +374,10 @@ def _parse_ssh_failure(message: str, timestamp: str | None) -> JSONDict | None:
     failure_markers = (
         'Failed password',
         'Invalid user',
-        'keyboard-interactive',
-        'publickey',
+        'Failed keyboard-interactive',
+        'Failed publickey',
         'authentication failure',
-        'authentication attempt',
+        'maximum authentication attempts exceeded',
     )
     if not any(marker.lower() in message.lower() for marker in failure_markers):
         return None
@@ -385,8 +385,9 @@ def _parse_ssh_failure(message: str, timestamp: str | None) -> JSONDict | None:
     user = 'unknown'
     source_ip = 'unknown'
     method = 'unknown'
-    failed_password = re.search(
-        r'Failed password for (?:invalid user )?(?P<user>\S+) from (?P<source>\S+)',
+    failed_authentication = re.search(
+        r'Failed (?:password|publickey|keyboard-interactive(?:/\S+)?) for '
+        r'(?:invalid user )?(?P<user>\S+) from (?P<source>\S+)',
         message,
         re.IGNORECASE,
     )
@@ -397,7 +398,7 @@ def _parse_ssh_failure(message: str, timestamp: str | None) -> JSONDict | None:
     )
     generic_source = re.search(r'\bfrom (?P<source>\S+)', message, re.IGNORECASE)
     generic_user = re.search(r'\buser[= ](?P<user>\S+)', message, re.IGNORECASE)
-    match = failed_password or invalid_user
+    match = failed_authentication or invalid_user
     if match:
         user = match.group('user')
         source_ip = match.group('source')
