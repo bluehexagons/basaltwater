@@ -277,7 +277,10 @@ class TestScrubRunner(unittest.TestCase):
         pid_file = str(self.root / "worker.pid")
         script = self._worker_script("cancelled_worker.py", [
             "import os, time",
-            f"open({pid_file!r}, 'w', encoding='ascii').write(str(os.getpid()))",
+            # Publish readiness only after the PID is fully written. Otherwise
+            # cancellation can kill the worker between file creation and flush.
+            f"with open({pid_file + '.ready'!r}, 'w', encoding='ascii') as stream: stream.write(str(os.getpid()))",
+            f"os.replace({pid_file + '.ready'!r}, {pid_file!r})",
             "time.sleep(30)",
         ])
 
