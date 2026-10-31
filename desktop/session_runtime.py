@@ -195,9 +195,30 @@ def window_manager_ready() -> bool:
 
 
 def window_ids(property_name: str = "_NET_CLIENT_LIST_STACKING") -> list[str]:
-    value = run_tool(["xprop", "-root", property_name], timeout=3)
-    return [hex(int(value, 16)) for value in re.findall(r"0x[0-9a-fA-F]+", value)
-            if int(value, 16)]
+    """Read typed WM metadata; unavailable properties never prove absence."""
+    properties = (property_name, "_NET_CLIENT_LIST") if property_name == "_NET_CLIENT_LIST_STACKING" else (property_name,)
+    for candidate in properties:
+        try:
+            value = run_tool(["xprop", "-root", candidate], timeout=3)
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            continue
+        match = re.fullmatch(
+            rf"{re.escape(candidate)}\(WINDOW\): window id #(?: (0x[0-9a-fA-F]+(?:, 0x[0-9a-fA-F]+)*))?",
+            value,
+        )
+        if match is None:
+            continue
+        ids = [hex(int(item, 16)) for item in match[1].split(", ")] if match[1] else []
+        if candidate == "_NET_ACTIVE_WINDOW":
+            active = [item for item in ids if item != "0x0"]
+            if not ids or len(active) > 1:
+                continue
+            return active
+        if "0x0" not in ids:
+            return ids
+    raise RuntimeError(
+        f"Desktop window metadata unavailable ({', '.join(properties)}); inspect the window manager"
+    )
 
 
 def window_details(window_id: str) -> dict[str, Any]:

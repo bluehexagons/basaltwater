@@ -254,8 +254,12 @@ that a match belongs to the new process or that a document has finished loading.
 Inspect PID/class and the document; do not retry a timed-out launch blindly.
 
 Window inventory adds PID/class where available, an identity fingerprint, and
-the active window ID. Title inspection preserves Unicode filenames and ellipses
-in an English UTF-8 locale. Mutations require current generation and identity;
+the active window ID. It uses the window manager's stacking list, falling back
+to its standard client list when stacking metadata is unavailable. If neither
+list is readable, inventory returns an error rather than an empty complete list;
+an explicitly empty client list remains valid. Title inspection preserves
+Unicode filenames and ellipses in an English UTF-8 locale.
+Mutations require current generation and identity;
 title changes invalidate the fingerprint. It reduces stale targeting but cannot prove
 an X window ID was never reused. Available operations are focus, move, resize,
 maximize, minimize, restore, and close. Desktop/panel windows are rejected.

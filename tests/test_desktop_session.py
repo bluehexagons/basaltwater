@@ -154,6 +154,33 @@ class DesktopControlTests(unittest.TestCase):
         self.assertTrue(observed["truncated"])
         self.assertEqual(observed["windows"], [])
 
+    @patch.object(runtime, "run_tool")
+    @patch.object(runtime, "window_details")
+    def test_missing_stacking_property_uses_client_list_for_visibility_wait(self, details, tool):
+        window = {"id": "0xe00007", "title": "labdesktop - Thunar", "pid": 42, "visible": True}
+        details.return_value = window
+        outputs = {
+            '_NET_CLIENT_LIST_STACKING': '_NET_CLIENT_LIST_STACKING:  not found.',
+            '_NET_CLIENT_LIST': '_NET_CLIENT_LIST(WINDOW): window id # 0xe00007',
+            '_NET_ACTIVE_WINDOW': '_NET_ACTIVE_WINDOW(WINDOW): window id # 0xe00007',
+        }
+        tool.side_effect = lambda argv, **_kwargs: outputs[argv[-1]]
+        with patch.object(runtime, 'request', side_effect=self.session.handle):
+            result = client.wait_for_window(self.session.generation, title='Thunar')
+        self.assertEqual(result['windows'], [window])
+        details.assert_called_once_with('0xe00007')
+
+    @patch.object(runtime, "run_tool", return_value='_NET_CLIENT_LIST:  not found.')
+    def test_missing_metadata_never_satisfies_absence_or_permits_window_mutation(self, tool):
+        with patch.object(runtime, 'request', side_effect=self.session.handle):
+            with self.assertRaisesRegex(RuntimeError, 'window metadata unavailable'):
+                client.wait_for_window(self.session.generation, window='0x123', condition='absent')
+        tool.reset_mock()
+        with self.assertRaisesRegex(RuntimeError, 'window metadata unavailable'):
+            self.session.handle({'action': 'window', **self.mutation_context(),
+                                 'window': '0x123', 'identity': 'old', 'operation': 'close'})
+        self.assertTrue(all(call.args[0][0] == 'xprop' for call in tool.call_args_list))
+
     @patch.object(runtime.subprocess, "Popen")
     def test_invalid_application_directory_does_not_launch(self, popen):
         context = self.mutation_context()
@@ -1160,6 +1187,67 @@ class DesktopCliTests(unittest.TestCase):
 
 
 class DesktopPrivateRuntimeTests(unittest.TestCase):
+    @patch.object(runtime, 'run_tool')
+    def test_client_list_fallback_preserves_order_and_normalizes_ids(self, tool):
+        for unavailable in (
+            '_NET_CLIENT_LIST_STACKING:  not found.',
+            '_NET_CLIENT_LIST_STACKING:  no such atom on any window.',
+            '_NET_CLIENT_LIST_STACKING(STRING) = "0x123"',
+            '_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x123, broken',
+            '_NET_CLIENT_LIST_STACKING(WINDOW): window id # 0x0',
+            RuntimeError('xprop failed'), OSError('missing xprop'),
+            subprocess.TimeoutExpired('xprop', 3),
+        ):
+            with self.subTest(unavailable=unavailable):
+                tool.reset_mock()
+                tool.side_effect = [unavailable, '_NET_CLIENT_LIST(WINDOW): window id # 0x00AB, 0x123']
+                self.assertEqual(runtime.window_ids(), ['0xab', '0x123'])
+                self.assertEqual([call.args[0][-1] for call in tool.call_args_list],
+                                 ['_NET_CLIENT_LIST_STACKING', '_NET_CLIENT_LIST'])
+
+    @patch.object(runtime, 'run_tool')
+    def test_valid_stacking_metadata_is_authoritative_without_fallback(self, tool):
+        for value, expected in (('', []), (' 0x123, 0x456', ['0x123', '0x456'])):
+            with self.subTest(value=value):
+                tool.reset_mock()
+                tool.return_value = '_NET_CLIENT_LIST_STACKING(WINDOW): window id #' + value
+                self.assertEqual(runtime.window_ids(), expected)
+                tool.assert_called_once()
+        tool.reset_mock()
+        tool.side_effect = ['_NET_CLIENT_LIST_STACKING:  not found.',
+                            '_NET_CLIENT_LIST(WINDOW): window id #']
+        self.assertEqual(runtime.window_ids(), [])
+        self.assertEqual(tool.call_count, 2)
+
+    @patch.object(runtime, 'run_tool')
+    def test_unavailable_or_malformed_metadata_is_not_an_empty_list(self, tool):
+        for value in ('', '_NET_CLIENT_LIST:  not found.',
+                      '_NET_CLIENT_LIST(CARDINAL) = 291',
+                      '_NET_CLIENT_LIST(WINDOW): window id # 0x123, invalid',
+                      '_NET_CLIENT_LIST(WINDOW): window id # 0x0', RuntimeError('unreadable')):
+            with self.subTest(value=value):
+                tool.side_effect = ['_NET_CLIENT_LIST_STACKING:  not found.', value]
+                with self.assertRaisesRegex(RuntimeError, 'window metadata unavailable'):
+                    runtime.window_ids()
+
+    @patch.object(runtime, 'run_tool')
+    def test_active_window_query_never_falls_back_to_client_inventory(self, tool):
+        for value, expected in (('0x00AB', ['0xab']), ('0x00AB, 0x0', ['0xab']), ('0x0', [])):
+            with self.subTest(value=value):
+                tool.reset_mock()
+                tool.return_value = '_NET_ACTIVE_WINDOW(WINDOW): window id # ' + value
+                self.assertEqual(runtime.window_ids('_NET_ACTIVE_WINDOW'), expected)
+                tool.assert_called_once_with(['xprop', '-root', '_NET_ACTIVE_WINDOW'], timeout=3)
+        for value in ('_NET_ACTIVE_WINDOW:  not found.',
+                      '_NET_ACTIVE_WINDOW(WINDOW): window id #',
+                      '_NET_ACTIVE_WINDOW(WINDOW): window id # 0x123, 0x456'):
+            with self.subTest(value=value):
+                tool.reset_mock()
+                tool.return_value = value
+                with self.assertRaisesRegex(RuntimeError, 'window metadata unavailable'):
+                    runtime.window_ids('_NET_ACTIVE_WINDOW')
+                tool.assert_called_once()
+
     def test_unconfigured_desktop_explains_how_to_enable_it(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(runtime, "CONFIG_PATH", Path(directory) / "desktop.json"):
