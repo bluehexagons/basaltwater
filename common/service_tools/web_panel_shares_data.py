@@ -14,6 +14,8 @@ from sync.service_tools.scrub_findings import ADVICE
 from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
 from common.service_tools import web_panel_samba as samba
 from common.service_tools import web_panel_share_actions as shares
+from common.service_tools import web_panel_routine_actions as routines
+from lib.samba_accounts import HEX_REVISION
 from lib.validation import validate_samba_share_name
 
 VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
@@ -49,6 +51,9 @@ STYLE = """
 .share-user input { width:20px; min-height:20px; margin:0; flex:none; }
 .share-comparison { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:20px; }
 .share-comparison dd { margin:0 0 8px; overflow-wrap:anywhere; }
+.routine-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:14px; }
+.routine-action { min-width:0; max-width:100%; }
+.routine-action button { white-space:normal; overflow-wrap:anywhere; max-width:100%; }
 """
 
 
@@ -56,7 +61,7 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
     if len(raw) > 2048:
         raise ValueError("Shares & Data query exceeds its limit")
     values = parse_qs(raw, keep_blank_values=True, max_num_fields=4)
-    if set(values) - {"view", "category", "q", "page", "edit", "form"} or any(len(items) != 1 for items in values.values()):
+    if set(values) - {"view", "category", "q", "page", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
         raise ValueError("Invalid Shares & Data filters")
     result = {key: items[0] for key, items in values.items()}
     if result.get("view", "shares") not in VIEWS:
@@ -71,13 +76,18 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
         raise ValueError("Invalid findings page")
     if result.get("view", "shares") != "scrubs" and set(result) & {"category", "q", "page"}:
         raise ValueError("Finding filters require the scrubs view")
-    if set(result) & {"edit", "form"}:
-        if result.get("view", "shares") != "shares" or "edit" in result and "form" in result:
-            raise ValueError("Choose one share editor on the Samba view")
-        if "form" in result and result["form"] != "add":
-            raise ValueError("Unknown share form")
-        if "edit" in result:
-            validate_samba_share_name(result["edit"])
+    editors = set(result) & {"edit", "form", "routine"}
+    view = result.get("view", "shares")
+    if len(editors) > 1 or editors and set(result) & {"category", "q", "page"}:
+        raise ValueError("Choose one editor without finding filters")
+    if "edit" in result:
+        if view != "shares":
+            raise ValueError("Share editing requires the Samba view")
+        validate_samba_share_name(result["edit"])
+    if "routine" in result and (view == "shares" or not HEX_REVISION.fullmatch(result["routine"])):
+        raise ValueError("Invalid routine editor")
+    if "form" in result and result["form"] not in {"shares": {"add"}, "routines": {"sync", "backup"}, "scrubs": {"scrub"}}[view]:
+        raise ValueError("Unknown form for this view")
     return result
 
 
@@ -148,11 +158,34 @@ def _routines(inventory: dict) -> str:
     return body + '<p><a class="refresh-link" href="/jobs?load=1">Inspect timer and last service result →</a> · <a class="refresh-link" href="/logs?service=storage-ops.service">Open storage job logs →</a></p>'
 
 
+def _managed_routines(control: dict, query: dict, csrf: str, *, controls: bool, review: bool, submitted: dict | None) -> str:
+    scrub = query["view"] == "scrubs"
+    body = render_heading("Scrub tasks" if scrub else "Backups & sync", "data", heading_id="routine-list-heading")
+    body += ('<p class="data-notice">Active scrubs verify and attempt staged repair on their full scan interval, and maintain parity daily. Pausing skips both while retaining mirror safeguards for open findings.</p>' if scrub else
+             '<p class="data-notice">These are recurring rsync mirrors. A backup declaration does not create snapshots or retained versions. Changes and deletions can propagate to the destination.</p>')
+    if controls and not review:
+        body += routines.render_editor(control, query, csrf, submitted)
+    rows = [row for row in control["routines"] if (row["kind"] == "scrub") == scrub]
+    if not rows:
+        body += '<p class="empty">No scrub tasks configured.</p>' if scrub else '<p class="empty">No backup or sync routines configured.</p>'
+    else:
+        body += '<ul class="data-list">'
+        for row in rows:
+            body += f'<li class="event"><div class="event-head"><h3>{html.escape(row["spec"][0])}</h3><span class="badge{" warning" if row["paused"] else ""}">{"Paused" if row["paused"] else "Active"}</span></div>'
+            body += routines.row_facts(row) + routines.render_history(control, row)
+            if controls:
+                body += routines.render_controls(row, control["revision"], csrf)
+            body += '</li>'
+        body += '</ul>'
+    body += '<p class="data-notice">The hourly timer checks due routines. Saved configuration and dispatch do not prove completion or a recoverable backup. History reflects the export time; it does not verify later file changes.</p>'
+    return body + '<p><a class="refresh-link" href="/jobs?load=1">Inspect timer and last service result →</a> · <a class="refresh-link" href="/logs?service=storage-ops.service">Open storage job logs →</a></p>'
+
+
 def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
     body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
     jobs = snapshot["jobs"]
     if not jobs:
-        return body + '<p class="empty">No scrub tasks configured in this snapshot. Add parity protection with the controller’s --scrub option.</p>'
+        return body + '<p class="empty">No scrub integrity reports in this snapshot. Newly saved tasks appear after the next export; active tasks create reports when they run.</p>'
     catalog = load_findings(snapshot, query)
     complete = catalog["available"]
     body += '<p class="data-notice">Recorded file integrity is separate from job execution. Daily parity maintenance does not resolve open findings, and a recorded scan does not verify later changes.</p><ul class="data-list">'
@@ -215,12 +248,12 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     body += '<nav class="data-pagination" aria-label="Findings pages">'
     for label, destination in (("Previous findings", page - 1), ("Next findings", page + 1)):
         if 1 <= destination <= (total + PAGE_SIZE - 1) // PAGE_SIZE:
-            url = "/shares-data?" + urlencode({**query, "view": "scrubs", "page": str(destination)})
+            url = "/shares-data?" + urlencode({"view": "scrubs", **{key: value for key, value in query.items() if key in {"category", "q"}}, "page": str(destination)})
             body += f'<a class="refresh-link" href="{html.escape(url, quote=True)}">{label}</a>'
     return body + '</nav></section>'
 
 
-def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "") -> str:
+def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "", routine_fields: dict | None = None) -> str:
     snapshot = storage.load_storage_snapshot()
     view = query.get("view", "shares")
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Shares &amp; Data</h1>
@@ -247,6 +280,10 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     share_status = share_manager.snapshot() if share_manager is not None and view == "shares" else {}
     if share_manager is not None and view == "shares":
         body += shares.render_status(share_status, csrf)
+    routine_manager = getattr(state, "routines", None)
+    routine_status = routine_manager.snapshot() if routine_manager is not None and view != "shares" else {}
+    if routine_manager is not None and view != "shares":
+        body += routines.render_status(routine_status, csrf)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
     else:
@@ -262,8 +299,20 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
                                           controls=samba_manager is not None and not samba.unavailable_reason(samba_status),
                                           password_controls=getattr(state, "credential_transport_available", lambda: False)())
         elif view == "routines":
-            body += _routines(inventory)
+            control = snapshot.get("routine_management", {})
+            if control.get("available"):
+                body += _managed_routines(control, query, csrf,
+                    controls=routine_manager is not None and not routines.unavailable_reason(routine_status), review=bool(review), submitted=routine_fields)
+            else:
+                body += '<p class="data-notice">Routine editing needs a complete supported export of the configuration and pause controls. Check the exporter and setup recovery state; the older inventory below may be incomplete.</p>'
+                body += _routines(inventory)
         else:
+            control = snapshot.get("routine_management", {})
+            if control.get("available"):
+                body += _managed_routines(control, query, csrf,
+                    controls=routine_manager is not None and not routines.unavailable_reason(routine_status), review=bool(review), submitted=routine_fields)
+            else:
+                body += '<p class="data-notice">Scrub editing needs a complete supported export of the configuration and pause controls. Existing integrity reports remain available below.</p>'
             body += _scrubs(snapshot, query, state.manifest["host"], csrf=csrf,
                             controls=manager is not None and not unavailable_reason(status))
     return render_document(title=f'Shares & Data · {state.manifest["host"]}', style=style + STYLE,

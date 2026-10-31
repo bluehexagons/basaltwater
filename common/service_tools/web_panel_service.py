@@ -41,6 +41,7 @@ from common.service_tools.web_panel_shares_data import parse_shares_data_query, 
 from common.service_tools.web_panel_data_actions import PanelData, render_review as render_data_review, unavailable_reason as data_unavailable
 from common.service_tools.web_panel_samba import PanelSamba, render_review as render_samba_review, unavailable_reason as samba_unavailable
 from common.service_tools.web_panel_share_actions import PanelShares, render_review as render_share_review, unavailable_reason as shares_unavailable
+from common.service_tools import web_panel_routine_actions as routine_actions
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -816,6 +817,7 @@ class WebPanelState:
         self.data = PanelData(self.admin)
         self.samba = PanelSamba(self.admin)
         self.share_actions = PanelShares(self.admin)
+        self.routines = routine_actions.PanelRoutines(self.admin)
         self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home, features=self.features)
         self.storage_diagnostics = StorageDiagnostics(self.agent_tasks.home)
 
@@ -2197,6 +2199,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             "/actions/data/review": "shares-data", "/actions/data/submit": "shares-data", "/actions/data/cancel": "shares-data",
             "/actions/samba/review": "shares-data", "/actions/samba/submit": "shares-data", "/actions/samba/cancel": "shares-data",
             "/actions/shares/review": "shares-data", "/actions/shares/submit": "shares-data", "/actions/shares/cancel": "shares-data",
+            "/actions/routines/review": "shares-data", "/actions/routines/submit": "shares-data", "/actions/routines/cancel": "shares-data",
             "/actions/agent-task": "agent-tools", "/actions/agent-task/save": "agent-tools",
             "/actions/agent-tool/prepare": "agent-tools", "/actions/agent-diagnostics": "agents",
             "/actions/agent-inbox": "agent-inbox", "/actions/maintenance-agent": "maintenance-agent",
@@ -2423,10 +2426,11 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
         samba_paths = {"/actions/samba/review", "/actions/samba/submit", "/actions/samba/cancel"}
         share_paths = {"/actions/shares/review", "/actions/shares/submit", "/actions/shares/cancel"}
+        routine_paths = {"/actions/routines/review", "/actions/routines/submit", "/actions/routines/cancel"}
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
         maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
-        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | credential_paths | publishing_paths | maintenance_paths:
+        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | routine_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2501,6 +2505,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if path in share_paths:
             self._handle_share_action(path, values)
+            return
+        if path in routine_paths:
+            self._handle_routine_action(path, values)
             return
         if path in credential_paths:
             self._handle_credential_action(path, values)
@@ -2657,6 +2664,47 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "The recovery request could not be confirmed. Check recovery activity and approval requests before trying again. Reviews expire after five minutes; repair and restore require CHANGE FILE, and acceptance requires ACCEPT CURRENT CONTENT."), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=scrubs"})
+
+    def _handle_routine_action(self, path: str, values: dict[str, list[str]]) -> None:
+        action = path.rsplit("/", 1)[-1]
+        try:
+            fields = routine_actions.parse_fields(values, action)
+        except ValueError:
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid routine action\n", "text/plain")
+            return
+        query = {"view": routine_actions.view_for(fields["kind"])} if action == "review" else {"view": fields["view"]}
+        csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
+        try:
+            if action == "review":
+                if reason := routine_actions.unavailable_reason(self.state.routines.snapshot()):
+                    raise ValueError(reason)
+                review = routine_actions.render_review(self.state.routines, fields, csrf)
+                self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, query, review=review), "text/html")
+                return
+            if action == "submit":
+                self.state.routines.submit(fields["ticket"], fields["confirmation"])
+            else:
+                self.state.admin.cancel(fields["id"])
+        except (OSError, ValueError, RuntimeError) as exc:
+            review, submitted = "", None
+            message = "The routine request could not be confirmed. Check routine activity and approval requests before trying again; a lost response does not establish whether the request was accepted."
+            if action == "review":
+                message = str(exc) if isinstance(exc, ValueError) else "Routine review is unavailable. Check the snapshot and privilege approval service."
+                if fields["op"] == "save":
+                    query.update({"routine": fields["original"]} if fields["original"] else {"form": fields["kind"]})
+                    submitted = fields
+            elif action == "submit":
+                try:
+                    value = self.state.routines.reviewed(fields["ticket"])
+                    review = routine_actions.render_saved_review(fields["ticket"], value, csrf)
+                    query = {"view": routine_actions.view_for((value["after"] or value["before"])["kind"])}
+                    message = str(exc) if isinstance(exc, ValueError) else message
+                except ValueError:
+                    pass
+            self._send(HTTPStatus.UNPROCESSABLE_ENTITY if action == "review" else HTTPStatus.CONFLICT,
+                       render_shares_data(self.state, _PAGE_STYLE, query, review=review, error=message, routine_fields=submitted), "text/html")
+            return
+        self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=" + query["view"]})
 
     def _handle_share_action(self, path: str, values: dict[str, list[str]]) -> None:
         if path.endswith("/review"):

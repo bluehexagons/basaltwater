@@ -2,10 +2,10 @@
 
 Open **Administration → Shares & Data** to inspect this machine’s managed
 Samba shares, recurring backup and sync declarations, and recorded scrub findings.
-Share editing, account login enable/disable and password reset, and single-file verification and
-recovery have browser controls when the separate privilege approval service is
-configured. Account creation and routine editing still use
-the controller commands described below.
+Share and routine editing, account login enable/disable and password reset, and
+single-file verification and recovery have browser controls when the separate
+privilege approval service is configured. Account creation still uses the
+controller commands described below.
 
 The three views work without JavaScript:
 
@@ -15,11 +15,12 @@ The three views work without JavaScript:
   it does not inspect sessions or filesystem ACLs. Manually configured Samba
   shares are outside the share inventory.
 - **Backups & sync** shows source, destination and interval for each recurring
-  rsync mirror. Backup declarations have the same mirroring behavior as sync;
+  rsync mirror, its active/paused schedule and exported completion/retry history.
+  Backup declarations have the same mirroring behavior as sync;
   they do not provide snapshots or retained versions. Links open timer status and
   storage job logs separately. An inventory entry does not prove job completion
   or that a backup is recoverable.
-- **Scrubs & findings** distinguishes unavailable reports, never-scanned roots,
+- **Scrubs & findings** manages scrub declarations and distinguishes unavailable reports, never-scanned roots,
   incomplete scans, open findings, and completed recorded scans. Filter open
   findings across all configured tasks by category or file path and move between
   pages of twenty. File searches are case-insensitive and treat punctuation
@@ -34,8 +35,10 @@ directories, start storage jobs or read private PAR2 evidence. Exports older tha
 not suppress a valid integrity report. Older exporters need setup/refresh before
 the new configuration views can show their data.
 
-The summary includes at most 64 shares, 64 users per share, 128 backup/sync routines,
-eight scrub tasks and twenty preview findings per task. A separate sanitized local
+The older summary includes at most 64 shares, 64 users per share, 128 backup/sync
+routines, eight scrub tasks and twenty preview findings per task. Routine controls
+use a separate complete inventory of up to 256 routines across all three kinds;
+they do not select tasks from that limited summary. A separate sanitized local
 catalog includes open findings from every configured scrub task, including tasks
 outside that summary. Filters and pagination use this complete catalog. Failed
 mount checks, unreadable reports or unsupported report metadata produce an explicit
@@ -94,6 +97,63 @@ drop-in and saved setup using the
 the guard just to retry. Reviews expire after five minutes, submission consumes
 them once, and lost responses or interrupted operations are never replayed
 automatically. Controller commands remain available for unsupported inventories.
+
+## Manage backup, sync and scrub routines
+
+In **Backups & sync**, choose **Add backup mirror** or **Add sync mirror**. In
+**Scrubs & findings**, choose **Add scrub task**. Enter absolute source/root and
+destination/parity directories, choose the interval and schedule state, and for
+scrubs choose parity redundancy from 1% through 100%. New routines default to
+paused. **Edit routine** changes an existing declaration. The hourly timer checks
+active routines; active scrubs also maintain parity daily. Biweekly is 14 days
+and bimonthly is 60 days.
+
+**Review routine change** shows current and proposed values. Type the confirmation
+shown and create the request, then approve or deny it on the separate approval
+page. Saving changes only configuration and the timer; it does not immediately
+copy files or run PAR2. Activating a mirror allows later replacement and deletion
+at its destination. Both mirror kinds lack retained versions. Mount declarations
+must already exist. Active edits and manual runs require installed rsync/unshare
+for mirrors or PAR2 for scrubs; use controller setup to provision missing tools.
+The editor does not install packages.
+
+**Pause schedule** and **Resume schedule** each require review and approval.
+Pausing a scrub skips verification and parity maintenance but retains mirror
+safeguards based on its open findings. **Remove routine** retains files, parity,
+reports, completion history and logs. Removing a scrub also removes those mirror
+safeguards; pause it when you want to retain them.
+
+**Run once** requests only the selected existing routine, including a paused one.
+It overrides its cadence and retry delay for that run while preserving its pause
+state and all mount/integrity guards. A scrub run performs full verification and
+staged repair, retains originals, updates parity and records findings. A mirror
+run can replace and delete destination files. It does not run unrelated routines.
+
+**Routine activity** separates approval state from the correlated worker result
+and offers cancellation before execution is claimed. Dispatch is not completion.
+Completed runs can report repairs/precautions or unresolved findings; inspect
+logs and browse the updated integrity report. **Inspect routine execution over
+SSH** provides the shared operation-log command; the scheduled service journal
+does not contain the selected worker's output. Correlate times and paths.
+The latest worker record is bounded,
+so older requests can require inspecting history and actual files. The worker
+has a six-hour deadline. Only one routine or file-recovery approval may be
+outstanding, and these workers exclude one another.
+
+Exported history belongs to each configured routine. A mirror completion does not
+prove a recoverable backup or verify later changes. A **scan cadence marker** can
+be an initial deferral; the integrity report establishes the last full scan.
+Parity maintenance is separate from full verification and does not clear open
+findings. Retry delays show the failure count and earliest scheduled retry time;
+paused routines remain paused even after that time.
+
+Reviews expire after five minutes. Validation errors retain entered paths;
+confirmation typos retain the review. Submission consumes it before requesting
+approval, so lost responses are not replayed. A changed saved configuration or
+pause control rejects execution. Interrupted saves retain a setup recovery guard;
+inspect and reconcile it using the [storage operations guide](../storage/storage-operations.md)
+before starting more storage work. A complete supported export is required for
+editing, while valid integrity reports remain available independently.
 
 ## Enable or disable a Samba login
 

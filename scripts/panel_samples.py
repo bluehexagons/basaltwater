@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from lib.shares_data_inventory import configuration_inventory
 from lib.data_actions import finding_revision
+from lib.storage_routines import configured_routines, routine_identity
 from common.service_tools.web_panel_findings import PAGE_SIZE
 
 
@@ -28,7 +29,18 @@ def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict
         {"username": username, "uid": uid, "disabled": disabled, "locked": False,
          "manageable": uid >= 1000, "revision": "a" * 64}
         for username, uid, disabled in (("operator", 1000, False), ("maintainer", 1001, True), ("root", 0, False))]}
+    rows = configured_routines({
+        "backup_specs": [] if empty else [["/srv/projects", "/srv/backups/projects", "daily"]],
+        "sync_specs": [] if empty else [["/srv/archive", "/mnt/replica/archive", "weekly"]],
+        "scrub_specs": [] if empty else [["/srv/archive", "/srv/parity/archive", "10%", "weekly"]],
+    }, {routine_identity("sync", ["/srv/archive", "/mnt/replica/archive"])})
+    history = {routine_identity(row["kind"], row["spec"]): {
+        "cadence_at": None if row["paused"] else 1767258000, "retry": None,
+        "parity_at": 1767258000 if row["kind"] == "scrub" else None, "parity_retry": None,
+    } for row in rows}
     return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "samba": accounts,
+            "routine_management": {"available": False} if scenario == "degraded" else {
+                "available": True, "revision": "d" * 64, "routines": rows, "history": {"available": True, "routines": history}},
             "share_management": {"available": False} if empty or scenario == "degraded" else {"available": True, "revision": "c" * 64}, "omitted_jobs": 0,
             "jobs": [] if empty else [{"directory": "/srv/archive", "database": "/srv/parity/archive",
                 "redundancy": "10%", "interval": "weekly", "last_scan": now,

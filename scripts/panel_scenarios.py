@@ -14,6 +14,7 @@ from common.service_tools import web_panel_admin as admin
 from common.service_tools import web_panel_data_actions as data_actions
 from common.service_tools import web_panel_samba as samba
 from common.service_tools import web_panel_share_actions as share_actions
+from common.service_tools import web_panel_routine_actions as routine_actions
 from lib.samba_shares import share_label, share_name
 from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
@@ -183,6 +184,7 @@ class Scenario:
         self.replace(data_actions, "exchange", side_effect=self.exchange)
         self.replace(samba, "exchange", side_effect=self.exchange)
         self.replace(share_actions, "exchange", side_effect=self.exchange)
+        self.replace(routine_actions, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "load_policy", return_value={"services": {"example.service": "approve"}})
         self.replace(maintenance, "load_policy", side_effect=lambda: copy.deepcopy(self.data["policy"]))
@@ -296,10 +298,13 @@ class Scenario:
                 records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "samba.account"]
                 return {"available": self.name != "degraded", "outstanding": any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("samba.") for row in self.data["requests"]),
                         "requests": [{**copy.deepcopy(row), "parameters": row["plan"]["parameters"]} for row in records[:10]]}
-            if message["action"] == "data-status":
-                records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "data.run"]
-                return {"available": self.name != "degraded", "unit_state": "inactive", "latest": {},
-                        "requests": [{**copy.deepcopy(row), "parameters": row["plan"]["parameters"]} for row in records]}
+            if message["action"] in {"data-status", "routine-status"}:
+                operation = "data.routine" if message["action"] == "routine-status" else "data.run"
+                records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == operation]
+                outstanding = any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("data.") for row in self.data["requests"])
+                return {"available": self.name != "degraded", "unit_state": "inactive", "latest": {}, "blocked": False,
+                        "outstanding": outstanding, "other_active": False,
+                        "requests": [{**copy.deepcopy(row), "parameters": row["plan"]["parameters"]} for row in records[:10]]}
             if message["action"] == "admin-status":
                 records = copy.deepcopy(self.data["requests"])
                 privilege = [{"id": row["id"], "created": row["created"], "expires": row["created"] + 3600,
@@ -310,9 +315,9 @@ class Scenario:
                 return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
-                if message["operation"] in {"service.restart", "command.run", "data.run", "samba.account", "samba.shares"}:
+                if message["operation"] in {"service.restart", "command.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
                     request = {"id": uuid.uuid4().hex, "action": message["operation"],
-                               "state": "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "samba.account", "samba.shares"} else "succeeded", "created": time.time(), "expires": time.time() + 3600,
+                               "state": "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "data.routine", "samba.account", "samba.shares"} else "succeeded", "created": time.time(), "expires": time.time() + 3600,
                                "plan": {"operation": message["operation"], "parameters": message["parameters"]}}
                     request["review_url"] = "https://127.0.0.1/fixture-approvals/" + request["id"]
                     self.data["requests"].insert(0, request)
