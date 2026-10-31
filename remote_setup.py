@@ -454,9 +454,6 @@ def config_from_remote_args(args: argparse.Namespace) -> SetupConfig:
     validate_network_setup_settings(config)
     validate_rdp_settings(config)
     
-    if system_type == "server_proxmox":
-        config.username = "root"
-    
     return config
 
 

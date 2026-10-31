@@ -752,6 +752,11 @@ class SetupConfig:
     _loading_saved_config: InitVar[bool] = field(default=False, kw_only=True)
 
     def __post_init__(self, _loading_saved_config: bool = False) -> None:
+        # Proxmox configures the host's root account; its CLI username is unused.
+        # Normalize before identity-dependent defaults, validation and payloads,
+        # including when reconstructing older saved controller configurations.
+        if self.system_type == "server_proxmox":
+            self.username = "root"
         if type(self.clear_build_on) is not bool:
             raise ValueError("clear_build_on must be a boolean")
         if type(self.artifact_deployments) is not bool:
@@ -2703,7 +2708,11 @@ class SetupConfig:
         if hasattr(args, 'tags') and args.tags:
             tags = [tag.strip() for tag in args.tags.split(',') if tag.strip()]
         
-        username = args.username if args.username else get_current_username()
+        # Approval credentials are generated below, before __post_init__ runs.
+        username = (
+            "root" if system_type == "server_proxmox"
+            else args.username or get_current_username()
+        )
         timezone = args.timezone if args.timezone else get_local_timezone()
         desktop = args.desktop or "xfce"
         
