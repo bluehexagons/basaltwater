@@ -14,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from security.service_tools import security_monitor
+from security.service_tools import security_retention
 from lib.xrdp_certificate import XrdpCertificateHealth
 
 
@@ -27,6 +28,11 @@ def _stream_output(output: str, returncode: int = 0):
 
 
 class TestSecurityMonitor(unittest.TestCase):
+    def setUp(self):
+        self.retention = self.enterContext(patch.object(
+            security_monitor, '_check_retention', return_value=({}, []),
+        ))
+
     @patch(
         "security.service_tools.security_monitor.inspect_xrdp_certificate",
         return_value=XrdpCertificateHealth("not_configured", "", ""),
@@ -300,8 +306,12 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertEqual(saved_state["rdp_certificate_fingerprint"], "aabbcc")
 
     @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
-    @patch("security.service_tools.security_monitor.run_streamed", return_value=1)
+    @patch("security.service_tools.security_monitor.run_streamed")
     def test_ausearch_no_matches_is_not_a_collection_error(self, mock_run, mock_tool):
+        def query(_command, *, on_error, **_kwargs):
+            on_error('<no matches>\n')
+            return 1
+        mock_run.side_effect = query
         since = datetime(2026, 8, 22, 12)
         events, error = security_monitor._ausearch_events(
             "identity", since, since + timedelta(minutes=15)
@@ -311,6 +321,9 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertIsNone(error)
         mock_tool.assert_called_once_with("ausearch")
         self.assertEqual(mock_run.call_args.args[0][0], "/usr/sbin/ausearch")
+        self.assertIn('--input-logs', mock_run.call_args.args[0])
+        self.assertIn('08/22/26', mock_run.call_args.args[0])
+        self.assertEqual(mock_run.call_args.kwargs['env']['LC_ALL'], 'C')
         self.assertIn("--end", mock_run.call_args.args[0])
         self.assertEqual(mock_run.call_args.kwargs["timeout"], 60)
 
@@ -329,6 +342,20 @@ class TestSecurityMonitor(unittest.TestCase):
 
         self.assertEqual(events, [])
         self.assertIn("oversized record", error)
+
+    @patch('security.service_tools.security_monitor._audit_tool', return_value='/usr/sbin/ausearch')
+    @patch('security.service_tools.security_monitor.run_streamed')
+    def test_audit_exit_one_distinguishes_no_matches_from_read_errors(self, mock_run, _tool):
+        since = datetime(2026, 8, 22, 12)
+        for message, failed in (('<no matches>\n', False), ('Error opening audit.log\n', True), ('', True)):
+            def stream(_command, *, on_error, **_kwargs):
+                on_error(message)
+                return 1
+            mock_run.side_effect = stream
+            with self.subTest(message=message):
+                events, error = security_monitor._ausearch_events('identity', since, since)
+                self.assertEqual(events, [])
+                self.assertEqual(error is not None, failed)
 
     @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
     @patch("security.service_tools.security_monitor.run_streamed")
@@ -386,17 +413,14 @@ type=PATH msg=audit(1766400300.100:2): name=\"/etc/passwd\"
         self.assertEqual(events[0]["first_seen"], expected)
 
     def test_interpreted_ausearch_timestamp_is_excluded(self):
-        output = """----
-type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
-"""
-
-        events = security_monitor._parse_audit_events(
-            "identity",
-            output,
-            [(datetime(2026, 8, 22, 11, 59), datetime(2026, 8, 22, 12, 1))],
-        )
-
-        self.assertEqual(events, [])
+        for date in ('08/22/2026', '08/22/26'):
+            output = f'----\ntype=PATH msg=audit({date} 12:00:00.100:1): name="/etc/passwd"\n'
+            with self.subTest(date=date):
+                events = security_monitor._parse_audit_events(
+                    'identity', output,
+                    [(datetime(2026, 8, 22, 11, 59), datetime(2026, 8, 22, 12, 1))],
+                )
+                self.assertEqual(events, [])
 
     def test_audit_notification_explains_meaning_and_gives_specific_action(self):
         since = datetime(2026, 8, 22, 12, 0, 0)
@@ -802,6 +826,191 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
         self.assertEqual(state["rdp_certificate_status"], "warning")
         self.assertEqual(state["rdp_certificate_issue"], "expires soon")
         self.assertEqual(state["rdp_certificate_fingerprint"], "aabbcc")
+
+
+class TestSecurityRetention(unittest.TestCase):
+    @patch.object(security_retention, 'run_captured')
+    @patch.object(security_retention, 'run_streamed')
+    def test_global_oldest_records_use_receipt_time_and_unfiltered_audit_logs(self, stream, capture):
+        stream.side_effect = _stream_output(json.dumps({
+            '__REALTIME_TIMESTAMP': '1766400000999999',
+            '_SOURCE_REALTIME_TIMESTAMP': '1',
+        }))
+        capture.return_value = SimpleNamespace(
+            returncode=0, stderr='',
+            stdout='type=DAEMON_START msg=audit(1766400000.100:1): op=start\n',
+        )
+        floors, errors = security_retention.inspect_retention('/usr/sbin/ausearch')
+        self.assertEqual(errors, [])
+        self.assertEqual(floors, dict.fromkeys(('auditd', 'ssh_journal'), datetime.fromtimestamp(1766400000)))
+        journal_command = stream.call_args.args[0]
+        self.assertIn('--system', journal_command)
+        self.assertIn('--no-tail', journal_command)
+        self.assertNotIn('-u', journal_command)
+        self.assertNotIn('--since', journal_command)
+        self.assertNotIn('--lines=+1', journal_command)  # Also supports Bookworm's systemd.
+        self.assertEqual(capture.call_args.args[0],
+                         ['/usr/sbin/ausearch', '--input-logs', '--raw', '--just-one'])
+        self.assertEqual(capture.call_args.kwargs['max_bytes'], 256 * 1024)
+        self.assertEqual(capture.call_args.kwargs['timeout'], 15)
+        self.assertEqual(stream.call_args.kwargs['timeout'], 15)
+
+    @patch.object(security_retention, 'run_streamed')
+    def test_missing_malformed_and_failed_journal_evidence_is_unknown(self, stream):
+        for output in ('', '{}', '[]', 'not json', '{"__REALTIME_TIMESTAMP":"99999999999999999999"}'):
+            with self.subTest(output=output):
+                stream.side_effect = _stream_output(output)
+                floors, errors = security_retention.inspect_retention(None)
+                self.assertEqual(floors, {})
+                self.assertIn('SSH journal: retention evidence unavailable', errors[0])
+        for failure in (TimeoutError(), OSError('denied')):
+            stream.side_effect = failure
+            self.assertEqual(security_retention.inspect_retention(None)[0], {})
+
+    @patch.object(security_retention, 'run_streamed')
+    def test_journal_warning_does_not_establish_coverage(self, stream):
+        def query(_command, *, on_error, **_kwargs):
+            on_error('Journal file is truncated, ignoring file.\n')
+            return 0
+        stream.side_effect = query
+        self.assertEqual(security_retention.inspect_retention(None)[0], {})
+
+    @patch.object(security_retention, '_oldest_journal', return_value=datetime(2026, 8, 1))
+    @patch.object(security_retention, 'run_captured')
+    def test_empty_failed_or_oversized_audit_metadata_is_unknown(self, capture, _journal):
+        for code, output, error in ((1, '', '<no matches>'), (0, '', ''),
+                                    (0, 'invalid record', ''), (0, '', 'Permission denied')):
+            capture.return_value = SimpleNamespace(returncode=code, stdout=output, stderr=error)
+            floors, errors = security_retention.inspect_retention('/usr/sbin/ausearch')
+            self.assertEqual(set(floors), {'ssh_journal'})
+            self.assertIn('auditd: retention evidence unavailable', errors[0])
+        capture.side_effect = security_retention.CommandOutputLimitError('too large')
+        self.assertEqual(set(security_retention.inspect_retention('/usr/sbin/ausearch')[0]), {'ssh_journal'})
+
+    @patch.object(security_retention, 'run_captured')
+    def test_audit_argument_text_cannot_forge_an_earlier_retention_floor(self, capture):
+        capture.return_value = SimpleNamespace(
+            returncode=0, stderr='', stdout=(
+                'node=fixture type=EXECVE msg=audit(1766400000.100:1): '
+                'a0="echo" a1="msg=audit(0:2):"\n'
+            ),
+        )
+        self.assertEqual(security_retention._oldest_audit('/usr/sbin/ausearch'),
+                         datetime.fromtimestamp(1766400000))
+
+    def test_gap_boundaries_are_exclusive_and_history_is_bounded_and_retained(self):
+        start = datetime(2026, 8, 22, 12)
+        end = start + timedelta(minutes=15, seconds=-1)
+        first = security_retention.window_gaps({'auditd': end + timedelta(hours=1)}, start, end)
+        self.assertEqual(first, [{'source': 'auditd', 'since': start.isoformat(),
+                                  'until': (end + timedelta(seconds=1)).isoformat()}])
+        next_gap = security_retention.window_gaps({'auditd': end + timedelta(hours=1)}, end + timedelta(seconds=1), end + timedelta(minutes=15))
+        history = security_retention.retained_gaps({'retention_gaps': [None, {'source': []}, *first]}, next_gap)
+        self.assertEqual(history[0]['since'], start.isoformat())
+        self.assertEqual(history[0]['until'], (end + timedelta(minutes=15, seconds=1)).isoformat())
+        self.assertEqual(security_retention.retained_gaps({'retention_gaps': history}, []), history)
+        self.assertEqual(security_retention.window_gaps({'auditd': start}, start, end), [])
+
+
+class TestSecurityRetentionLifecycle(unittest.TestCase):
+    def setUp(self):
+        self.start = (datetime.now() - timedelta(minutes=45)).replace(microsecond=0)
+        self.end = self.start + timedelta(minutes=15, seconds=-1)
+        self.state = {'last_run': self.start.isoformat()}
+        self.health = XrdpCertificateHealth('not_configured', '', '')
+        self.enterContext(patch.object(security_monitor, 'load_notification_configs_from_state', return_value=['config']))
+        self.enterContext(patch.object(security_monitor, '_load_state', side_effect=lambda: dict(self.state)))
+        self.save = self.enterContext(patch.object(security_monitor, '_save_state', side_effect=self.persist))
+        self.notify = self.enterContext(patch.object(security_monitor, 'send_notification_safe', return_value=False))
+        self.enterContext(patch.object(security_monitor, 'inspect_xrdp_certificate', return_value=self.health))
+        self.fail2ban = self.enterContext(patch.object(security_monitor, '_check_fail2ban', return_value=security_monitor.Fail2banScan()))
+        self.audit = self.enterContext(patch.object(security_monitor, '_check_auditd', return_value=([], False, [])))
+        self.ssh = self.enterContext(patch.object(security_monitor, '_check_ssh_failures', return_value=(0, None)))
+        self.floors = {'auditd': self.start - timedelta(days=1), 'ssh_journal': self.start - timedelta(days=1)}
+        self.retention = self.enterContext(patch.object(security_monitor, '_check_retention', side_effect=lambda: (dict(self.floors), [])))
+
+    def persist(self, state):
+        self.state.clear()
+        self.state.update(state)
+
+    def test_gap_reports_missing_coverage_and_preserves_healthy_source_findings(self):
+        floor = self.start + timedelta(minutes=10)
+        self.floors['auditd'] = floor
+        self.fail2ban.return_value = security_monitor.Fail2banScan(
+            bans=[{'type': 'fail2ban', 'timestamp': (self.start + timedelta(minutes=1)).isoformat(),
+                   'action': 'ban', 'jail': 'sshd', 'source_ip': '192.0.2.4'}], ban_count=1)
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertEqual(self.state['last_run'], (self.end + timedelta(seconds=1)).isoformat())
+        for check in (self.fail2ban, self.audit, self.ssh):
+            self.assertEqual(check.call_args.args[:2], (self.start, self.end))
+        notification = self.notify.call_args.kwargs
+        self.assertEqual(notification['status'], 'error')
+        self.assertEqual(notification['dedup_key'], 'security_monitor:retention-gap')
+        events = notification['data']['events']
+        gap = next(event for event in events if event['type'] == 'source_retention_gap')
+        self.assertEqual((gap['since'], gap['until']), (self.start.isoformat(), floor.isoformat()))
+        self.assertEqual(notification['data']['counts']['fail2ban_bans'], 1)
+        self.assertIn('not checked as clean', notification['details'])
+        history = self.state['retention_gaps']
+        self.notify.reset_mock()
+        self.fail2ban.return_value = security_monitor.Fail2banScan()
+        self.assertEqual(security_monitor.main(), 0)
+        self.assertEqual(self.state['retention_gaps'], history)
+        self.notify.assert_not_called()  # Historical loss is not announced as recovered.
+
+    def test_empty_but_known_window_advances_only_one_window_and_saves_gap(self):
+        self.floors['auditd'] = self.end + timedelta(days=1)
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertEqual(self.state['last_run'], (self.end + timedelta(seconds=1)).isoformat())
+        self.assertEqual(self.state['retention_gaps'][0]['until'], self.state['last_run'])
+        self.assertNotIn('collection_errors', self.state)
+
+    def test_unknown_retention_freezes_cursor_and_suppresses_identical_error(self):
+        self.retention.side_effect = lambda: ({}, ['SSH journal: retention evidence unavailable; interval coverage is unknown'])
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertEqual(self.state['last_run'], self.start.isoformat())
+        self.assertIn('retention evidence unavailable', self.state['collection_errors'][0])
+        self.notify.reset_mock()
+        self.assertEqual(security_monitor.main(), 1)
+        self.notify.assert_not_called()
+
+    def test_postflight_rotation_reports_new_floor_and_disappearing_source_freezes(self):
+        initial = dict(self.floors)
+        final = {**initial, 'auditd': self.start + timedelta(minutes=5)}
+        self.retention.side_effect = [(initial, []), (final, [])]
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertEqual(self.state['retention_gaps'][0]['until'], final['auditd'].isoformat())
+        retained = dict(self.state)
+        self.retention.side_effect = [(initial, []), ({'ssh_journal': initial['ssh_journal']}, [])]
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertEqual(self.state['last_run'], retained['last_run'])
+        self.assertEqual(self.state['retention_gaps'], retained['retention_gaps'])
+        self.assertIn('changed during collection', self.state['collection_errors'][0])
+
+    def test_first_observation_reports_coverage_without_permanent_stall(self):
+        self.state.clear()
+        self.floors = dict.fromkeys(self.floors, datetime.now().replace(microsecond=0))
+        self.assertEqual(security_monitor.main(), 1)
+        self.assertEqual(len(self.state['retention_gaps']), 2)
+        self.assertGreater(datetime.fromisoformat(self.state['last_run']), datetime.now() - timedelta(seconds=3))
+
+    def test_gap_and_cursor_are_one_atomic_state_write_even_if_notification_fails(self):
+        self.floors['auditd'] = self.start + timedelta(minutes=2)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'state.json')
+            # Use the real atomic writer while notification delivery returns False.
+            from lib.atomic_io import write_json_atomic
+            self.save.side_effect = lambda state: write_json_atomic(path, state, mode=0o600)
+            self.assertEqual(security_monitor.main(), 1)
+            with open(path) as source:
+                saved = json.load(source)
+            self.assertEqual(saved['last_run'], (self.end + timedelta(seconds=1)).isoformat())
+            self.assertEqual(saved['retention_gaps'][0]['since'], self.start.isoformat())
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.save.side_effect = OSError('disk full')
+        with self.assertRaises(OSError):
+            security_monitor.main()
+        self.assertEqual(self.state['last_run'], self.start.isoformat())
 
 
 if __name__ == "__main__":

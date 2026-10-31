@@ -47,6 +47,7 @@ from lib.types import JSONDict
 from lib.validation import validate_filesystem_path, validate_network_ip
 from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
 from common.service_tools.web_panel_audit_export import _audit_health
+from security.service_tools.security_retention import inspect_retention, retained_gaps, window_gaps
 
 logger = get_service_logger('security_monitor', 'security', use_syslog=True)
 
@@ -203,12 +204,14 @@ def _audit_record_timestamp(record: str) -> datetime | None:
         except (OSError, OverflowError, ValueError):
             return None
     interpreted_match = re.search(
-        r'\bmsg=audit\((\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})(?:\.\d+)?:\d+\)',
+        r'\bmsg=audit\((\d{2}/\d{2}/\d{2}(?:\d{2})? \d{2}:\d{2}:\d{2})(?:\.\d+)?:\d+\)',
         record,
     )
     if interpreted_match:
         try:
-            return datetime.strptime(interpreted_match.group(1), '%m/%d/%Y %H:%M:%S')
+            value = interpreted_match.group(1)
+            date_format = '%m/%d/%Y' if len(value) == 19 else '%m/%d/%y'
+            return datetime.strptime(value, date_format + ' %H:%M:%S')
         except ValueError:
             return None
     return None
@@ -310,12 +313,28 @@ def _merge_audit_event(current: JSONDict | None, event: JSONDict) -> JSONDict:
     return current
 
 
-def _stream_source_query(command: list[str], on_output) -> tuple[int | None, str | None]:
+def _stream_source_query(
+    command: list[str], on_output, *, no_matches_ok: bool = False,
+) -> tuple[int | None, str | None]:
     """Process source output with a deadline and bounded callback records."""
+    no_matches_seen = False
+
+    def check_error(line: str) -> None:
+        nonlocal no_matches_seen
+        if no_matches_ok and line.strip() == '<no matches>':
+            no_matches_seen = True
+        elif line.strip():
+            raise ValueError('Source query reported an error')
+
     try:
-        return run_streamed(
-            command, timeout=_SOURCE_TIMEOUT_SECONDS, on_output=on_output
-        ), None
+        returncode = run_streamed(
+            command, timeout=_SOURCE_TIMEOUT_SECONDS, on_output=on_output,
+            on_error=check_error,
+            env=dict(os.environ, LC_ALL='C'),
+        )
+        if returncode == 1 and no_matches_ok and not no_matches_seen:
+            return returncode, 'query exited without no-match evidence'
+        return returncode, None
     except TimeoutError:
         return None, 'query timed out'
     except (OSError, ValueError):
@@ -359,11 +378,14 @@ def _ausearch_events(
 
     returncode, error = _stream_source_query(
         [
-            ausearch, '--start', since.strftime('%m/%d/%Y'),
-            since.strftime('%H:%M:%S'), '--end', until.strftime('%m/%d/%Y'),
+            # ausearch parses dates using LC_TIME. C is always installed and
+            # its date format is MM/DD/YY, regardless of the service locale.
+            ausearch, '--input-logs', '--start', since.strftime('%m/%d/%y'),
+            since.strftime('%H:%M:%S'), '--end', until.strftime('%m/%d/%y'),
             until.strftime('%H:%M:%S'), '-k', key, '-i',
         ],
         consume,
+        no_matches_ok=True,
     )
     if error:
         return [], f'audit key {key}: {error}'
@@ -588,7 +610,7 @@ def _check_ssh_failures(since: datetime, until: datetime) -> tuple[JSONDict, str
                     current['last_seen'] = timestamp
 
     returncode, error = _stream_source_query(
-        ['journalctl', '-u', 'sshd', '-u', 'ssh',
+        ['journalctl', '--system', '-u', 'sshd', '-u', 'ssh',
          '--since', since.strftime('%Y-%m-%d %H:%M:%S'),
          '--until', until.strftime('%Y-%m-%d %H:%M:%S'),
          '--no-pager', '-o', 'json'],
@@ -675,9 +697,16 @@ def _certificate_health_event(
     return None
 
 
-def _next_state(now: datetime, health: XrdpCertificateHealth) -> dict[str, object]:
+def _next_state(
+    now: datetime, health: XrdpCertificateHealth, *,
+    previous: dict[str, object] | None = None,
+    gaps: list[JSONDict] | None = None,
+) -> dict[str, object]:
     """Build persisted collection and certificate state."""
     next_state: dict[str, object] = {"last_run": now.isoformat()}
+    history = retained_gaps(previous or {}, gaps or [])
+    if history:
+        next_state['retention_gaps'] = history
     if health.status != "not_configured":
         next_state["rdp_certificate_status"] = health.status
         next_state["rdp_certificate_issue"] = health.issue or ""
@@ -792,10 +821,13 @@ def _build_security_data(
     audit_events: list[JSONDict] | None = None,
     collection_errors: list[str] | None = None,
     collection_recovered: bool = False,
+    retention_gaps: list[JSONDict] | None = None,
 ) -> JSONDict:
     """Build a stable webhook payload for security-monitor notifications."""
     critical_audit_keys = [key for key in audit_keys if key in _CRITICAL_KEYS]
     events: list[JSONDict] = []
+    events.extend({'type': 'source_retention_gap', 'severity': 'error',
+                   'state': 'coverage_unverified', **gap} for gap in (retention_gaps or []))
     events.extend(dict(event) for event in bans)
     events.extend(dict(event) for event in unbans)
     if audit_events:
@@ -875,6 +907,7 @@ def _build_security_data(
             ) if audit_events else len(audit_keys),
             "ssh_authentication_failures": ssh_failures,
             "account_lockouts": len(lockouts) if isinstance(lockouts, list) else 0,
+            "retention_gaps": len(retention_gaps or []),
             "events": len(events),
         },
         "events": events,
@@ -898,6 +931,7 @@ def _format_security_details(
     audit_events: list[JSONDict] | None = None,
     collection_errors: list[str] | None = None,
     collection_recovered: bool = False,
+    retention_gaps: list[JSONDict] | None = None,
 ) -> str:
     """Format security findings as a compact, operator-friendly report."""
     lines = [
@@ -905,6 +939,10 @@ def _format_security_details(
         f"{now.strftime('%Y-%m-%d %H:%M:%S')} (local time)",
         f"Overall status: {status.upper()}",
     ]
+    if retention_gaps:
+        lines.extend(['', 'Source coverage could not be established:'])
+        lines.extend(f"  - {gap['source']}: [{gap['since']}, {gap['until']})" for gap in retention_gaps)
+        lines.append('These intervals precede retained history; they were not checked as clean.')
     if collection_errors:
         lines.extend([
             "",
@@ -1011,6 +1049,7 @@ def _format_security_details(
         ssh_summary=ssh_summary,
         certificate_event=certificate_event,
         collection_recovered=collection_recovered,
+        retention_gaps=retention_gaps,
     )
     lines.extend(["", "Suggested action:", *[f"  - {action}" for action in actions]])
     return "\n".join(lines)
@@ -1024,9 +1063,12 @@ def _security_actions(
     ssh_summary: JSONDict | None,
     certificate_event: tuple[str, str, str] | None,
     collection_recovered: bool,
+    retention_gaps: list[JSONDict] | None = None,
 ) -> list[str]:
     """Return concise operator actions shared by text and webhook envelopes."""
     actions: list[str] = []
+    if retention_gaps:
+        actions.append('Review the unobserved intervals using archived logs and increase source retention if needed.')
     if bans:
         actions.append("Review the banned source IPs and related authentication logs.")
     lockouts = ssh_summary.get('lockouts', []) if ssh_summary else []
@@ -1054,6 +1096,11 @@ def _security_actions(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def _check_retention() -> tuple[dict[str, datetime], list[str]]:
+    """Probe the same optional audit and system journal sources as collection."""
+    return inspect_retention(_audit_tool('ausearch'))
+
 
 def main() -> int:
     log_event(logger, "Starting security monitor check")
@@ -1092,6 +1139,7 @@ def main() -> int:
         return 0
     next_cursor = now + timedelta(seconds=1)
 
+    initial_floors, initial_retention_errors = _check_retention()
     fail2ban_scan = _check_fail2ban(since, now)
     bans, unbans = fail2ban_scan.bans, fail2ban_scan.unbans
     ban_count, unban_count = fail2ban_scan.ban_count, fail2ban_scan.unban_count
@@ -1113,9 +1161,24 @@ def main() -> int:
     ssh_result, ssh_error = _check_ssh_failures(since, now)
     ssh_summary = _normalise_ssh_summary(ssh_result)
     ssh_failures = int(ssh_summary.get('failure_count', 0))
+    final_floors, final_retention_errors = _check_retention()
+    # A later floor also exposes rotation during collection. Never jump the
+    # shared cursor to it: other sources may still retain the entire window.
+    floors = dict(initial_floors)
+    for source, oldest in final_floors.items():
+        floors[source] = max(oldest, floors.get(source, oldest))
+    for source in sorted(initial_floors.keys() ^ final_floors.keys()):
+        label = 'SSH journal' if source == 'ssh_journal' else source
+        final_retention_errors.append(f'{label}: retention source changed during collection')
+    gaps = window_gaps(floors, since, now)
+    for gap in gaps:
+        log_event(logger, 'Security source interval coverage could not be established',
+                  level=ERROR, source=gap['source'], since=gap['since'],
+                  until_exclusive=gap['until'])
     certificate_health = inspect_xrdp_certificate()
     collection_errors = _normalise_collection_errors(
-        [fail2ban_scan.error, *audit_errors, ssh_error]
+        [fail2ban_scan.error, *audit_errors, ssh_error,
+         *initial_retention_errors, *final_retention_errors]
     )
     previous_collection_errors = _state_collection_errors(state)
     if collection_errors:
@@ -1131,6 +1194,7 @@ def main() -> int:
             ssh_failures=0,
             certificate_event=None,
             collection_errors=collection_errors,
+            retention_gaps=gaps,
         )
         log_event(
             logger,
@@ -1163,6 +1227,7 @@ def main() -> int:
                     ssh_failures=0,
                     certificate_event=None,
                     collection_errors=collection_errors,
+                    retention_gaps=gaps,
                 ),
                 event_type='security.source_health',
                 state='firing',
@@ -1176,7 +1241,7 @@ def main() -> int:
                 level=WARNING,
                 errors='; '.join(collection_errors),
             )
-        next_state = _next_state(since, certificate_health)
+        next_state = _next_state(since, certificate_health, previous=state, gaps=gaps)
         next_state['collection_errors'] = collection_errors
         _save_state(next_state)
         return 1
@@ -1200,6 +1265,7 @@ def main() -> int:
         or has_lockouts
         or certificate_event is not None
         or collection_recovered
+        or gaps
     )
     if not has_noteworthy:
         if certificate_failed:
@@ -1209,17 +1275,17 @@ def main() -> int:
                 level=ERROR,
                 errors=certificate_health.issue or "unknown certificate error",
             )
-            _save_state(_next_state(next_cursor, certificate_health))
+            _save_state(_next_state(next_cursor, certificate_health, previous=state))
             return 1
         log_event(logger, "No noteworthy security events")
-        _save_state(_next_state(next_cursor, certificate_health))
+        _save_state(_next_state(next_cursor, certificate_health, previous=state))
         return 0
 
     # Determine notification severity.
     # Info-only audit keys (e.g. 'privileged') provide context but do not
     # create a notification by themselves because they cover routine sudo.
     certificate_status = certificate_event[0] if certificate_event else "info"
-    if certificate_status == "error":
+    if certificate_status == "error" or gaps:
         status = 'error'
     elif (
         bans
@@ -1234,6 +1300,8 @@ def main() -> int:
 
     # Build subject summary
     summary_parts: list[str] = []
+    if gaps:
+        summary_parts.append(f'{len(gaps)} source retention gap(s)')
     if bans:
         summary_parts.append(
             f"{ban_count} fail2ban ban{'s' if ban_count != 1 else ''}"
@@ -1267,6 +1335,7 @@ def main() -> int:
         ssh_summary=ssh_summary,
         audit_events=audit_events,
         collection_recovered=collection_recovered,
+        retention_gaps=gaps,
     )
     data = _build_security_data(
         since=since,
@@ -1282,6 +1351,7 @@ def main() -> int:
         ssh_summary=ssh_summary,
         audit_events=audit_events,
         collection_recovered=collection_recovered,
+        retention_gaps=gaps,
     )
 
     actionable_events = bool(
@@ -1291,17 +1361,21 @@ def main() -> int:
         or has_lockouts
         or certificate_event
     )
-    if collection_recovered and not actionable_events:
+    if gaps:
         event_type = 'security.source_health'
-        state = 'resolved'
+        notification_state = 'firing'
+        dedup_key = 'security_monitor:retention-gap'
+    elif collection_recovered and not actionable_events:
+        event_type = 'security.source_health'
+        notification_state = 'resolved'
         dedup_key = 'security_monitor:source-health'
     elif certificate_event and not (bans or critical_audit_keys or ssh_failures >= _SSH_FAILURE_THRESHOLD):
         event_type = 'security.certificate'
-        state = 'firing' if certificate_event[0] in ('error', 'warning') else 'resolved'
+        notification_state = 'firing' if certificate_event[0] in ('error', 'warning') else 'resolved'
         dedup_key = 'security_monitor:xrdp-certificate'
     else:
         event_type = 'security.activity'
-        state = 'firing'
+        notification_state = 'firing'
         dedup_key = 'security_monitor:activity'
 
     actions = _security_actions(
@@ -1311,6 +1385,7 @@ def main() -> int:
         ssh_summary=ssh_summary,
         certificate_event=certificate_event,
         collection_recovered=collection_recovered,
+        retention_gaps=gaps,
     )
 
     send_notification_safe(
@@ -1319,7 +1394,7 @@ def main() -> int:
         job="security_monitor",
         status=status,
         message=(
-            f"Security monitor found activity to review since {since_str}. "
+            f"Security monitor found activity or source coverage to review since {since_str}. "
             "The findings are evidence, not by themselves confirmation of a compromise. "
             "Review the summary and suggested actions below."
         ),
@@ -1327,7 +1402,7 @@ def main() -> int:
         logger=logger,
         data=data,
         event_type=event_type,
-        state=state,
+        state=notification_state,
         dedup_key=dedup_key,
         actions=actions,
     )
@@ -1335,8 +1410,8 @@ def main() -> int:
     log_event(logger, "Security monitor check complete",
               status=status, events=', '.join(summary_parts),
               window=f"{since_str} → {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    _save_state(_next_state(next_cursor, certificate_health))
-    return 1 if certificate_failed else 0
+    _save_state(_next_state(next_cursor, certificate_health, previous=state, gaps=gaps))
+    return 1 if certificate_failed or gaps else 0
 
 
 if __name__ == '__main__':

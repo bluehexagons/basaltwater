@@ -52,6 +52,36 @@ start of that interval and reports a collection failure. A high-cardinality SSH
 attack still contributes to the failure count even after the source breakdown
 reaches its limit.
 
+Before and after collection, the monitor probes the oldest retained global
+system-journal entry and unfiltered audit event. It uses the same system journal
+and configured audit logs as the event queries, including audit rotation.
+Empty, unreadable or malformed retention evidence leaves the cursor in place;
+an empty event query alone cannot establish coverage. Audit queries use a fixed
+C locale and its date format, and distinguish genuine no-match results from
+argument or file-read errors that also return exit status 1.
+
+When a known source boundary is later than the cursor, the monitor reports the
+unobserved prefix as a `source_retention_gap`, with an exclusive `until` time.
+It still collects available events from every source over the original window,
+then advances only that window's normal cursor after all queries and probes
+succeed. A gap produces error status and a nonzero service result even though
+this explicit policy advances the cursor. It never jumps the shared cursor to
+one source's boundary or labels the missing interval clean. This also handles
+the first observation of newly created logs without permanently stalling.
+
+The cursor and latest contiguous gap per source are saved atomically in
+`/opt/basaltwater/state/security_monitor_state.json` with mode `0600`. Gap
+intervals are also logged locally and included in notifications; their state
+survives failed delivery, restarts and later clean windows. These two bounded
+records are not a complete gap archive. Review unobserved intervals against
+archived logs and increase source retention when needed. Later readable windows
+do not recover missing history. An oldest entry before the cursor also does
+not prove continuous logging, absence of interior deletions, or kernel audit
+health. These checks cover audit/journal leading boundaries. The fail2ban reader
+currently reads only its active file and can miss events moved to a rotated
+file; [#108](https://github.com/bluehexagons/basaltwater/issues/108) tracks that
+remaining collection defect.
+
 When source filters are configured, setup checks the active UFW rules after
 reconciliation. It fails if SSH, RDP, or a managed web port still has an inbound
 allow or limit rule from anywhere, or if UFW status cannot be verified. Inspect
