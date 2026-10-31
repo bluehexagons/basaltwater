@@ -160,6 +160,16 @@ SDL bootstraps and compiler pins still apply. Add `--container-tools` for
 baseline-compatible packaging through rootless Podman; `--debug-tools` is the
 smaller debugging bundle when the full game bundle is unnecessary. See
 [project tooling](project-tooling.md).
+
+For Electron applications, follow the
+[isolated Electron/Xvfb testing recipe](../../common/agent_skills/basaltwater-project-development/references/electron-testing.md).
+It covers inherited `DISPLAY`, sandboxed test launches, renderer evidence and
+retained logs. An older four-vCPU VM can support development and stress checks;
+allocate more CPU headroom for profiling, avoid concurrent builds during timed
+runs, and run performance acceptance on representative target CPU/GPU hardware.
+Adding vCPUs alone does not reproduce a target CPU's single-thread performance
+or supply GPU acceleration.
+
 `--python` adds uv for isolated Python tools. `--av-tools` and `--gl-tools`
 provide media inspection and OpenGL tracing; these are separate from GPU
 acceleration, which depends on the virtual hardware and graphics driver.

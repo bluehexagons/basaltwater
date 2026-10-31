@@ -28,12 +28,15 @@ file, or export checks with `basaltwater-subagents` when useful.
 | Accessibility inspection, screenshots, or input | [Observe and interact](references/interaction.md) |
 | Window placement or short action sequences | [Window controls](references/windows.md) |
 | Application/tool prerequisites or rendering evidence | [Applications](references/applications.md) |
+| Isolated Debian Electron tests, outside the shared desktop | [Electron/Xvfb testing](../basaltwater-project-development/references/electron-testing.md) |
 | Blender edit/save/reopen | [Blender](references/blender.md) |
 | Vector, raster, audio, or video touch-ups | [Media](references/media.md) |
 
 Use the configured account's managed commands, which supply display and bus
 environment. Never guess a display, copy authority cookies, or start another X
-server. When `status.agent_control` is `enabled`, perform authorized desktop work
+server for shared-desktop work. Isolated project tests use the Electron/Xvfb
+recipe above and do not join or change the shared session.
+When `status.agent_control` is `enabled`, perform authorized desktop work
 without asking to unpause or obtaining a control lease. `human-override` and
 `disabled` block mutations. Only explicit human approval or the human control UI
 authorizes a state change; a desktop task alone does not. A timed override's
