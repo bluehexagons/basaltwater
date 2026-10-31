@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import shlex
 import tempfile
+from types import SimpleNamespace
 import unittest
 from contextlib import ExitStack
 from unittest.mock import MagicMock, call, patch
@@ -16,11 +19,15 @@ from common.swap_steps import (
     _load_state,
     _ownership_union,
     _reconcile_zram,
+    _remove_managed_zswap,
+    _configure_zswap,
     _write_state,
     _zram_configuration,
+    _zram_device_busy,
     configure_swap,
 )
 from lib.config import SetupConfig
+from lib.remote_utils import CommandExecutionError
 from lib.swap_config import SwapDevice, SwapFile, SwapZram
 
 
@@ -471,11 +478,12 @@ class TestSwapRuntimeSafety(unittest.TestCase):
         )
         mock_remove.assert_not_called()
 
+    @patch("common.swap_steps._stop_zram_sources")
     @patch("common.swap_steps._zram_device_busy", return_value=False)
     @patch("common.swap_steps._active_swap_inventory")
     @patch("common.swap_steps.run")
     def test_unchanged_zram_restarts_a_missing_owned_unit(
-        self, mock_run, mock_inventory, _mock_busy
+        self, mock_run, mock_inventory, _mock_busy, _stop
     ):
         area = SwapZram("fast", "1G", 300, "auto")
         old = {
@@ -494,15 +502,16 @@ class TestSwapRuntimeSafety(unittest.TestCase):
             self.assertEqual(_reconcile_zram([area], [old]), [old])
 
         self.assertIn(
-            call("systemctl start systemd-zram-setup@zram0.service"),
+            call("systemctl start dev-zram0.swap"),
             mock_run.call_args_list,
         )
 
+    @patch("common.swap_steps._stop_zram_sources")
     @patch("common.swap_steps._zram_device_busy", return_value=False)
     @patch("common.swap_steps._active_swap_inventory")
     @patch("common.swap_steps.run")
     def test_unchanged_zram_repairs_live_priority_drift(
-        self, mock_run, mock_inventory, _mock_busy
+        self, mock_run, mock_inventory, _mock_busy, stop
     ):
         area = SwapZram("fast", "1G", 300, "auto")
         old = {
@@ -523,12 +532,9 @@ class TestSwapRuntimeSafety(unittest.TestCase):
         ):
             self.assertEqual(_reconcile_zram([area], [old]), [old])
 
+        stop.assert_called_once_with(["/dev/zram0"])
         self.assertIn(
-            call("systemctl stop systemd-zram-setup@zram0.service", check=False),
-            mock_run.call_args_list,
-        )
-        self.assertIn(
-            call("systemctl start systemd-zram-setup@zram0.service"),
+            call("systemctl start dev-zram0.swap"),
             mock_run.call_args_list,
         )
 
@@ -546,6 +552,199 @@ class TestSwapRuntimeSafety(unittest.TestCase):
                     journal_ownership=journal,
                 )
         journal.assert_not_called()
+
+
+class TestCompressedSwapTeardown(unittest.TestCase):
+    def setUp(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.config_path = root / 'zram.conf'
+        self.state_path = root / 'swap.json'
+        self.zswap_path = root / 'zswap.service'
+        self.area = SwapZram('fast', '64M', 300)
+        self.old = dict(name='fast', type='zram', source='/dev/zram0', priority=300, size='64M', algorithm='auto')
+        self.config_path.write_text(_zram_configuration([self.area]))
+        self.old_content = self.config_path.read_text()
+        self.inventory = {'/dev/zram0': 300}
+        self.allocated = {'/dev/zram0'}
+        self.units = {'systemd-zram-setup@zram0.service': dict(LoadState='loaded', ActiveState='active', SubState='exited', UnitFileState='static')}
+        self.events = []
+        self.refuse = None
+        self.uncooperative = False
+        self.fail_start = False
+        self.refuse_recovery = False
+        self.failure = CommandExecutionError('systemctl', 1, 'Stop refused')
+        self.start_failure = CommandExecutionError('systemctl start', 1, 'Activation failed')
+        self.enterContext(patch('common.swap_steps.ZRAM_PATH', str(self.config_path)))
+        self.enterContext(patch('common.swap_steps.SWAP_STATE_FILE', str(self.state_path)))
+        self.enterContext(patch('common.swap_steps.ZSWAP_SERVICE_PATH', str(self.zswap_path)))
+        self.enterContext(patch('common.swap_steps.FSTAB_PATH', str(root/'fstab')))
+        self.enterContext(patch('common.swap_steps.can_manage_swap', return_value=True))
+        self.enterContext(patch('common.swap_steps.is_dry_run', return_value=False))
+        self.enterContext(patch('common.swap_steps._active_swap_inventory', side_effect=lambda: dict(self.inventory)))
+        self.enterContext(patch('common.swap_steps._zram_device_busy', side_effect=lambda index, active: f'/dev/zram{index}' in self.allocated))
+        self.enterContext(patch('common.swap_steps.inspect_unit_state', side_effect=self.inspect))
+        self.enterContext(patch('common.swap_steps.run', side_effect=self.command))
+        _write_state([self.old])
+
+    def inspect(self, unit):
+        return dict(self.units.get(unit, dict(LoadState='not-found', ActiveState='inactive', SubState='dead', UnitFileState='')))
+
+    def command(self, command, **kwargs):
+        argv = shlex.split(command) if isinstance(command, str) else command
+        self.events.append((tuple(argv), self.config_path.read_text() if self.config_path.exists() else None))
+        if argv[0] != 'systemctl' or argv[1] == 'daemon-reload':
+            return SimpleNamespace(returncode=0)
+        action, unit = argv[1], argv[-1]
+        source = ('/dev/' + unit.split('@', 1)[1].removesuffix('.service') if '@' in unit
+                  else '/dev/' + unit.removeprefix('dev-').removesuffix('.swap') if unit.endswith('.swap') else None)
+        if action in {'stop', 'disable'}:
+            if unit == self.refuse:
+                if kwargs.get('check', True):
+                    raise self.failure
+                return SimpleNamespace(returncode=1)
+            if not self.uncooperative:
+                self.units[unit]['ActiveState'] = 'inactive'
+                if action == 'disable':
+                    self.units[unit]['UnitFileState'] = 'disabled'
+                self.inventory.pop(source, None)
+                self.allocated.discard(source)
+        elif action == 'start':
+            loader = f'systemd-zram-setup@{Path(source).name}.service'
+            if self.fail_start:
+                self.fail_start = False
+                if self.refuse_recovery:
+                    self.refuse = loader
+                    self.units[loader]['ActiveState'] = 'active'
+                raise self.start_failure
+            priority = int(next(line.split(' = ')[1] for line in self.config_path.read_text().splitlines() if line.startswith('swap-priority')))
+            self.units.setdefault(loader, dict(LoadState='loaded', UnitFileState='static', SubState='exited'))['ActiveState'] = 'active'
+            self.inventory[source] = priority
+            self.allocated.add(source)
+        return SimpleNamespace(returncode=0)
+
+    def test_refused_zram_removal_preserves_generator_and_ownership(self):
+        self.refuse = 'systemd-zram-setup@zram0.service'
+        for name in ('_configure_resume', '_configure_swappiness', '_configure_zswap'):
+            self.enterContext(patch('common.swap_steps.'+name))
+        with self.assertRaises(CommandExecutionError) as raised:
+            configure_swap(SetupConfig(host='vm', username='agent', system_type='server_lite', swap_mode='none'))
+        self.assertIs(raised.exception, self.failure)
+        self.assertEqual(self.config_path.read_text(), self.old_content)
+        self.assertEqual(_load_state()['areas'], [self.old])
+        self.assertEqual(self.inventory, {'/dev/zram0': 300})
+        self.assertFalse(any(event[0][1] == 'daemon-reload' for event in self.events))
+
+    def test_successful_stop_with_live_zram_does_not_authorize_removal(self):
+        self.uncooperative = True
+        with self.assertRaisesRegex(RuntimeError, 'still active|still allocated'):
+            _reconcile_zram([], [self.old])
+        self.assertEqual(self.config_path.read_text(), self.old_content)
+        self.assertEqual(_load_state()['areas'], [self.old])
+
+    def test_reconfiguration_stops_before_publication_and_repeated_rerun_is_idle(self):
+        changed = SwapZram('fast', '64M', 400)
+        records = _reconcile_zram([changed], [self.old])
+        stop = next(event for event in self.events if event[0][1] == 'stop')
+        self.assertEqual(stop[1], self.old_content)
+        self.assertEqual(self.inventory, {'/dev/zram0': 400})
+        self.events.clear()
+        self.assertEqual(_reconcile_zram([changed], records), records)
+        self.assertEqual(self.events, [])
+
+    def test_failed_activation_restores_previous_configuration_and_active_policy(self):
+        self.fail_start = True
+        with self.assertRaises(CommandExecutionError) as raised:
+            _reconcile_zram([SwapZram('fast', '64M', 400)], [self.old])
+        self.assertIs(raised.exception, self.start_failure)
+        self.assertEqual(self.config_path.read_text(), self.old_content)
+        self.assertEqual(self.inventory, {'/dev/zram0': 300})
+
+    def test_failed_recovery_keeps_candidate_configuration_for_inspection(self):
+        self.fail_start = self.refuse_recovery = True
+        desired = [SwapZram('fast', '64M', 400)]
+        with self.assertRaisesRegex(RuntimeError, 'zram recovery') as raised:
+            _reconcile_zram(desired, [self.old])
+        self.assertIs(raised.exception.__cause__, self.start_failure)
+        self.assertEqual(self.config_path.read_text(), _zram_configuration(desired))
+        self.assertEqual(_load_state()['areas'], [self.old])
+
+    def test_explicitly_absent_sparse_owned_unit_does_not_stop_another_device(self):
+        self.inventory.clear()
+        self.allocated.clear()
+        self.units.clear()
+        self.assertEqual(_reconcile_zram([], [{**self.old, 'source':'/dev/zram3'}]), [])
+        self.assertFalse(any(event[0][1] == 'stop' for event in self.events))
+        self.assertEqual(self.config_path.read_text(), '[zram0]\nzram-size = 0\n\n[zram3]\nzram-size = 0\n')
+
+    def test_removed_device_disablement_survives_new_configuration_and_package_hooks(self):
+        self.config_path.write_text('[zram0]\nzram-size = 0\n\n[zram1]\nzram-size = 0\n')
+        self.inventory.clear()
+        self.allocated.clear()
+        self.units['systemd-zram-setup@zram0.service']['ActiveState'] = 'inactive'
+        records = _reconcile_zram([self.area], [])
+        expected = _zram_configuration([self.area]) + '\n[zram1]\nzram-size = 0\n'
+        self.assertEqual(self.config_path.read_text(), expected)
+        install = next(event for event in self.events if event[0][0] == 'apt-get')
+        self.assertEqual(install[1], expected)
+        self.events.clear()
+        self.assertEqual(_reconcile_zram([self.area], records), records)
+        self.assertEqual(self.events, [])
+
+    def test_all_unit_inspection_precedes_retirement(self):
+        second = {**self.old, 'name':'second', 'source':'/dev/zram1'}
+        def inspect(unit):
+            if '@zram1.' in unit:
+                raise RuntimeError('Cannot inspect second unit')
+            return self.inspect(unit)
+        with patch('common.swap_steps.inspect_unit_state', side_effect=inspect):
+            with self.assertRaisesRegex(RuntimeError, 'Cannot inspect'):
+                _reconcile_zram([], [self.old, second])
+        self.assertEqual(self.events, [])
+        self.assertEqual(self.config_path.read_text(), self.old_content)
+
+    def test_failed_inventory_and_unreadable_device_are_not_inactivity(self):
+        with patch('common.swap_steps.run', return_value=SimpleNamespace(returncode=1, stdout='')):
+            with self.assertRaisesRegex(RuntimeError, 'Could not inspect active swap'):
+                _active_swap_inventory()
+        for error in (PermissionError('unreadable'), ValueError('invalid size')):
+            with self.subTest(error=error), patch('common.swap_steps.Path.read_text', side_effect=error):
+                with self.assertRaisesRegex(RuntimeError, 'Could not inspect zram device'):
+                    _zram_device_busy(0, set())
+
+    def test_zswap_refused_removal_retains_definition_for_both_clear_paths(self):
+        unit = 'basaltwater-zswap.service'
+        self.zswap_path.write_text('retained zswap policy\n')
+        self.units[unit] = dict(LoadState='loaded', ActiveState='active', SubState='exited', UnitFileState='enabled')
+        self.refuse = unit
+        exists = os.path.exists
+        with patch('common.swap_steps.os.path.exists', side_effect=lambda path: False if path == '/sys/module/zswap/parameters/enabled' else exists(path)):
+            for clear in (lambda: _configure_zswap(False, None), _remove_managed_zswap):
+                with self.subTest(clear=clear), self.assertRaises(CommandExecutionError):
+                    clear()
+                self.assertEqual(self.zswap_path.read_text(), 'retained zswap policy\n')
+
+    def test_zswap_unlinked_loaded_unit_still_requires_checked_disable(self):
+        unit = 'basaltwater-zswap.service'
+        self.units[unit] = dict(LoadState='not-found', ActiveState='active', SubState='exited', UnitFileState='')
+        self.refuse = unit
+        with self.assertRaises(CommandExecutionError):
+            _remove_managed_zswap()
+        self.assertEqual(self.units[unit]['ActiveState'], 'active')
+
+    def test_zswap_kernel_postcondition_failure_retains_service(self):
+        unit = 'basaltwater-zswap.service'
+        self.zswap_path.write_text('retained zswap policy\n')
+        self.units[unit] = dict(LoadState='loaded', ActiveState='active', SubState='exited', UnitFileState='enabled')
+        exists, read = os.path.exists, Path.read_text
+        kernel_path = '/sys/module/zswap/parameters/enabled'
+        with (
+            patch('common.swap_steps.os.path.exists', side_effect=lambda path: True if path == kernel_path else exists(path)),
+            patch('common.swap_steps.Path.read_text', autospec=True, side_effect=lambda path, **kwargs: 'Y' if str(path) == kernel_path else read(path, **kwargs)),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'zswap is still enabled'):
+                _remove_managed_zswap()
+        self.assertEqual(self.zswap_path.read_text(), 'retained zswap policy\n')
+        self.assertEqual(self.units[unit]['ActiveState'], 'inactive')
 
 
 if __name__ == "__main__":

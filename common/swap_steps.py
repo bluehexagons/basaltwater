@@ -27,6 +27,7 @@ from lib.atomic_io import (
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_swap
 from lib.remote_utils import is_dry_run, run
+from lib.unit_transaction import inspect_unit_state
 from lib.validation import validate_filesystem_path
 from lib.swap_config import (
     SwapDevice,
@@ -267,7 +268,7 @@ def _active_swap_inventory() -> dict[str, int | None]:
         "swapon --show=NAME,PRIO --noheadings --raw",
         check=False,
     )
-    if result.returncode not in {0, 1}:
+    if result.returncode != 0:
         raise RuntimeError("Could not inspect active swap areas")
     inventory: dict[str, int | None] = {}
     for line in (result.stdout or "").splitlines():
@@ -685,7 +686,7 @@ def _ensure_swap_device(
     return result
 
 
-def _zram_configuration(areas: list[SwapZram]) -> str:
+def _zram_configuration(areas: list[SwapZram], *, disabled_sources: set[str] | None = None) -> str:
     sections: list[str] = []
     for index, area in enumerate(areas):
         lines = [
@@ -696,6 +697,8 @@ def _zram_configuration(areas: list[SwapZram]) -> str:
         if area.algorithm != "auto":
             lines.append(f"compression-algorithm = {area.algorithm}")
         sections.append("\n".join(lines))
+    for source in sorted(disabled_sources or set()):
+        sections.append(f"[{Path(source).name}]\nzram-size = 0")
     return "\n\n".join(sections) + ("\n" if sections else "")
 
 
@@ -709,9 +712,46 @@ def _zram_device_busy(index: int, active: set[str]) -> bool:
             .read_text(encoding="utf-8")
             .strip()
         )
-    except (FileNotFoundError, OSError, ValueError):
+    except FileNotFoundError:
         return False
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Could not inspect zram device {source}") from exc
     return size > 0
+
+
+def _quiesce_swap_units(units: list[str], *, disable: bool = False) -> bool:
+    """Inspect before stopping, and never treat an unknown unit as absent."""
+    states = {unit: inspect_unit_state(unit) for unit in units}
+    present = False
+    for unit, state in states.items():
+        if (state['LoadState'] == 'not-found' and state['ActiveState'] == 'inactive'
+                and state['UnitFileState'] == ''):
+            continue
+        present = True
+        command = ['systemctl', 'disable', '--now'] if disable else ['systemctl', 'stop']
+        if disable and state['UnitFileState'] == 'enabled-runtime':
+            command.append('--runtime')
+        run(shlex.join([*command, unit]))
+    for unit in units:
+        state = inspect_unit_state(unit)
+        if state['ActiveState'] not in {'inactive', 'failed'}:
+            raise RuntimeError(f"Managed swap unit is still active: {unit}")
+        if disable and state['UnitFileState'] not in {'', 'disabled', 'static', 'indirect'}:
+            raise RuntimeError(f"Managed swap unit is still enabled: {unit}")
+    return present
+
+
+def _stop_zram_sources(sources: list[str]) -> None:
+    indices = []
+    for source in sources:
+        if not re.fullmatch(r'/dev/zram(?:0|[1-9][0-9]*)', source):
+            raise RuntimeError(f"Invalid managed zram source: {source}")
+        indices.append(int(source.removeprefix('/dev/zram')))
+    _quiesce_swap_units([f'systemd-zram-setup@zram{index}.service' for index in indices])
+    inventory = _active_swap_inventory()
+    for index in indices:
+        if _zram_device_busy(index, set(inventory)):
+            raise RuntimeError(f"Managed zram is still allocated: /dev/zram{index}")
 
 
 def _reconcile_zram(
@@ -731,7 +771,6 @@ def _reconcile_zram(
         }
         for index, area in enumerate(areas)
     ]
-    desired_content = _zram_configuration(areas)
     try:
         previous_content = Path(ZRAM_PATH).read_text(encoding="utf-8")
         previous_exists = True
@@ -739,6 +778,14 @@ def _reconcile_zram(
         previous_content = ""
         previous_exists = False
     old_sources = {str(area.get("source")) for area in old_areas}
+    previous_sources = {
+        '/dev/' + match[1]
+        for match in re.finditer(r'^\[(zram(?:0|[1-9][0-9]*))\][ \t]*$', previous_content, re.MULTILINE)
+    }
+    desired_sources = {record['source'] for record in records}
+    desired_content = _zram_configuration(
+        areas, disabled_sources=(old_sources | previous_sources) - desired_sources,
+    )
     inventory = _active_swap_inventory()
     active = set(inventory)
     for index in range(len(areas)):
@@ -761,13 +808,9 @@ def _reconcile_zram(
         ]
         if restart:
             run("systemctl daemon-reload")
+            _stop_zram_sources([f"/dev/zram{index}" for index in restart])
             for index in restart:
-                if f"/dev/zram{index}" in active:
-                    run(
-                        f"systemctl stop systemd-zram-setup@zram{index}.service",
-                        check=False,
-                    )
-                run(f"systemctl start systemd-zram-setup@zram{index}.service")
+                run(f"systemctl start dev-zram{index}.swap")
             observed = _active_swap_inventory()
             still_incorrect = [
                 f"/dev/zram{index}"
@@ -782,17 +825,21 @@ def _reconcile_zram(
         return records
     if not areas and not old_areas:
         return []
-    if areas:
-        run("apt-get install -y systemd-zram-generator")
-        write_text_atomic(ZRAM_PATH, _zram_configuration(areas), mode=0o644)
-    else:
-        remove_file_durable(ZRAM_PATH)
+    all_sources = sorted(old_sources | desired_sources)
+    # Keep the previous generator policy loaded until its devices are quiescent.
+    # A refused stop leaves configuration and ownership available for repair.
+    _stop_zram_sources(all_sources)
     try:
-        for index in range(max(len(old_areas), len(areas))):
-            run(f"systemctl stop systemd-zram-setup@zram{index}.service", check=False)
+        # Keep zero-size entries for removed devices: deleting the drop-in can
+        # reactivate a package's vendor defaults at the next generator run.
+        write_text_atomic(ZRAM_PATH, desired_content, mode=0o644)
+        if areas:
+            # Package hooks can activate vendor defaults immediately. Publish
+            # the requested, journaled policy before first installation.
+            run("apt-get install -y systemd-zram-generator")
         run("systemctl daemon-reload")
         for index in range(len(areas)):
-            run(f"systemctl start systemd-zram-setup@zram{index}.service")
+            run(f"systemctl start dev-zram{index}.swap")
         observed = _active_swap_inventory()
         incorrect_sources = [
             record["source"]
@@ -804,22 +851,30 @@ def _reconcile_zram(
                 "Managed zram did not acquire its configured priority: "
                 + ", ".join(incorrect_sources)
             )
-    except Exception:
-        for index in range(max(len(old_areas), len(areas))):
-            run(
-                f"systemctl stop systemd-zram-setup@zram{index}.service",
-                check=False,
-            )
-        if previous_exists:
-            write_text_atomic(ZRAM_PATH, previous_content, mode=0o644)
-        else:
-            remove_file_durable(ZRAM_PATH)
-        run("systemctl daemon-reload", check=False)
-        for index in range(len(old_areas)):
-            run(
-                f"systemctl start systemd-zram-setup@zram{index}.service",
-                check=False,
-            )
+    except Exception as cause:
+        try:
+            # Do not overwrite the candidate policy beneath a device whose
+            # failed start could still be running or whose stop was refused.
+            _stop_zram_sources(all_sources)
+            if previous_exists:
+                write_text_atomic(ZRAM_PATH, previous_content, mode=0o644)
+            else:
+                write_text_atomic(
+                    ZRAM_PATH, _zram_configuration([], disabled_sources=set(all_sources)), mode=0o644,
+                )
+            run("systemctl daemon-reload")
+            restore = [area for area in old_areas if area['source'] in active]
+            for area in restore:
+                device = Path(area['source']).name
+                run(f"systemctl start dev-{device}.swap")
+            observed = _active_swap_inventory()
+            if any(observed.get(area['source']) != area['priority'] for area in restore):
+                raise RuntimeError("Previous zram priorities were not restored")
+        except Exception as recovery:
+            raise RuntimeError(
+                f"Managed zram recovery failed: {recovery}; inspect {ZRAM_PATH} "
+                f"and {SWAP_STATE_FILE}, repair the named units and retry setup"
+            ) from cause
         raise
     return records
 
@@ -847,10 +902,7 @@ def _configure_zswap(enabled: bool | None, pool_percent: int | None) -> None:
     if not os.path.exists("/sys/module/zswap/parameters/enabled"):
         if enabled:
             raise RuntimeError("This kernel does not expose zswap controls")
-        if os.path.exists(ZSWAP_SERVICE_PATH):
-            run("systemctl disable --now basaltwater-zswap.service", check=False)
-            remove_file_durable(ZSWAP_SERVICE_PATH)
-            run("systemctl daemon-reload")
+        _remove_managed_zswap()
         return
     state = "Y" if enabled else "N"
     commands = [
@@ -898,11 +950,14 @@ def _configure_zswap(enabled: bool | None, pool_percent: int | None) -> None:
 
 
 def _remove_managed_zswap() -> None:
-    if not os.path.exists(ZSWAP_SERVICE_PATH):
+    existed = os.path.exists(ZSWAP_SERVICE_PATH)
+    present = _quiesce_swap_units(['basaltwater-zswap.service'], disable=True)
+    if not existed and not present:
         return
     if os.path.exists("/sys/module/zswap/parameters/enabled"):
         run("sh -c 'printf N > /sys/module/zswap/parameters/enabled'")
-    run("systemctl disable --now basaltwater-zswap.service", check=False)
+        if Path('/sys/module/zswap/parameters/enabled').read_text(encoding='utf-8').strip().upper() != 'N':
+            raise RuntimeError("Managed zswap is still enabled; retain its service and retry setup")
     remove_file_durable(ZSWAP_SERVICE_PATH)
     run("systemctl daemon-reload")
 

@@ -181,6 +181,41 @@ from the controller's installed environment, not from a guest. Saved bindings
 are per-file atomic updates rather than one multi-file transaction; resumed
 verification finishes partial updates without reverting unrelated current edits.
 
+## Compressed swap recovery
+
+Zram setup checks the generated services and confirms that owned devices are
+inactive and reset before changing its generator configuration. A failed stop
+retains the previous configuration and ownership; earlier successful stops can
+already have reduced available swap. Inspect the named service and
+`swapon --show` before repairing the cause and rerunning setup.
+A failed setup service can retain an allocated device even after swap is
+inactive: a successful `systemctl stop` alone does not prove its cleanup ran.
+Check the device size, mounts, holders and pending jobs as well. Reset an owned
+device manually only after confirming it is unused; setup refuses to overwrite
+its policy while the allocation remains.
+Removed devices retain zero-size entries in the owned generator dropin so the
+package's vendor defaults cannot reactivate them. Setup retains these entries
+when adding other devices. First installation publishes the requested policy
+before package hooks can activate defaults; activation starts generated swap
+units, which pull in their required setup services.
+
+If activation fails after publication, recovery first quiesces the candidate,
+then restores the previous generator file, reloads systemd and reactivates
+previously active owned devices. Restoration and live priorities are checked.
+If recovery cannot quiesce a candidate, it retains the candidate configuration
+for inspection instead of overwriting it beneath a live device. A later recovery
+failure can leave the previous configuration restored but inactive. Preserve
+`/opt/basaltwater/state/swap.json`, inspect the generator file and units, repair
+the reported cause and rerun the matching setup. Ownership records are not a
+durable phase journal or a backup of the previous generator file across process
+loss; the outer setup guard still controls interrupted-operation recovery.
+
+Zswap removal checks stop/disable and loaded state even if its unit file was
+unlinked. It stops the loader before disabling the kernel cache, verifies that
+cache is disabled, then removes the managed definition. A failed step retains
+the definition and ownership for repair; earlier changes are not rolled back.
+Failed swap inventories and unreadable zram device state never establish absence.
+
 ## Resume-device initramfs recovery
 
 Swap setup persists `/opt/basaltwater/state/swap.json.resume-pending` before
