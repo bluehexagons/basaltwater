@@ -276,3 +276,30 @@ cancellation in the current login session. T3 closure/reconnect during an active
 job, live installer interruption and physical display/audio/input/streaming
 qualification remain separate. Private evidence is retained with this account's
 post-refresh qualification report.
+
+### Antistatic tooling feedback: 2026-10-31
+
+The operator's subsequent refresh installed
+`e16988679945c88820d3ddb76e6268649ae5e122`. Antistatic's local tooling report
+identified prefix-only log retention, missing development namespace help and
+the absence of bounded task waiting. These were confirmed against current source
+and corrected in `322e915ca88b9d38dc966916926313415f0ff0a6`.
+
+- The complete `Run-NativeTests.ps1` suite passed in 203.691 seconds on Windows
+  PowerShell 5.1, with two explicit POSIX-only Python skips. Expected mocked
+  restart/runner warnings and Git line-ending warnings were inspected.
+  PowerShell 7 development contracts and native process fixtures also passed,
+  including live tail publication while a flooded child paused before exit.
+  Disposable CLI tests verified namespace help, literal argv and wait exit codes.
+- A real limited interactive Scheduled Task reproduced Antistatic's 4 MiB plus
+  8 KiB padding probe. `END-OF-PROBE` remained visible while the child paused
+  and after exit 7. Stdout retained 4,194,304 bytes, discarded 8,206 middle bytes
+  and separately reported 4,128,768 bytes omitted from the 65,536-byte API tail.
+- A one-second caller wait returned exit 124 without cancelling that task.
+  After release, wait returned a completed failed receipt with child exit 7
+  and CLI exit 1. The owned child, private request and Scheduler registration
+  were absent afterward. All 27 account development receipts were terminal.
+- Both native documentation checkers and diff checks passed. Private probe
+  sources, receipts and raw test logs remain in the account's qualification
+  evidence. No installed launcher/source or skill bundle was replaced during
+  this pass; the next normal refresh delivers the changes.
