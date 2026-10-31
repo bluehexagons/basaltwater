@@ -1120,49 +1120,62 @@ def configure_login_banners(config: SetupConfig) -> None:
         print("  ✓ Login banners already configured")
 
 
+def _apparmor_kernel_enabled() -> bool:
+    """Distinguish an inactive kernel from unavailable or failed observation."""
+    result = run("aa-enabled -q", check=False)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(
+            f"Could not determine AppArmor kernel status (aa-enabled exit {result.returncode}); "
+            "check privileges and the kernel security filesystem before retrying"
+        )
+    return result.returncode == 0
+
+
 def configure_apparmor(config: SetupConfig) -> None:
+    """Enable the distro loader without overriding package profile modes."""
+    if config.dry_run or is_dry_run():
+        print("  [DRY-RUN] Would configure AppArmor policy")
+        return
     if not (is_vm() or is_hardware()):
         print("  ✓ Skipping AppArmor setup (privileged containers inherit host AppArmor)")
         return
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(f"{_APT_GET} install -y -qq apparmor apparmor-utils")
-    run("systemctl enable apparmor", check=False)
+    run("systemctl enable apparmor")
+    boot_state = run("systemctl is-enabled apparmor", check=False, capture_output=True)
+    if boot_state.returncode != 0 or (boot_state.stdout or "").strip() != "enabled":
+        raise RuntimeError("AppArmor service is not persistently enabled; repair its boot configuration and retry")
 
-    enabled = run("aa-enabled -q", check=False).returncode == 0
+    enabled = _apparmor_kernel_enabled()
+    # Starting is safe and idempotent for the oneshot loader, including when the
+    # kernel is enabled but the service has not loaded its profiles. Never use
+    # restart: AppArmor deliberately does not support stop/start as a reload.
+    run("systemctl start apparmor")
     if not enabled:
-        # Starting is safe for the oneshot AppArmor service. Avoid `restart`,
-        # which systemd normally maps to stop/start and which AppArmor's unit
-        # deliberately does not support as an unload/reload operation.
-        run("systemctl start apparmor", check=False)
-        enabled = run("aa-enabled -q", check=False).returncode == 0
+        enabled = _apparmor_kernel_enabled()
 
     if not enabled:
         print(
-            "  ✓ AppArmor configured for next boot (kernel policy is not "
-            "currently active)"
+            "  ℹ AppArmor service enabled for boot, but kernel policy is inactive; "
+            "review kernel and boot configuration before relying on protection"
         )
         return
 
     # The distro service is the canonical loader. It preserves each source
     # profile's enforce, complain, or unconfined mode and does not rewrite
     # package profiles or child profiles.
-    reload_result = run("systemctl reload apparmor", check=False)
-    if reload_result.returncode != 0:
-        print("  ⚠ One or more AppArmor profiles failed to reload; check the journal")
+    run("systemctl reload apparmor")
 
     if not _ensure_browser_automation_userns_profile():
         raise RuntimeError(
             "AppArmor browser-sandbox compatibility profile failed to load"
         )
 
-    if reload_result.returncode == 0:
-        print(
-            "  ✓ AppArmor enabled (package modes preserved; browser sandbox "
-            "support verified)"
-        )
-    else:
-        print("  ✓ AppArmor enabled (browser sandbox support verified)")
+    print(
+        "  ✓ AppArmor enabled (package modes preserved; browser sandbox "
+        "support verified)"
+    )
 
 
 def configure_auditd(config: SetupConfig) -> None:

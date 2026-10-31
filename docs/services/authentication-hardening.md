@@ -28,6 +28,22 @@ shared 300-second APT/dpkg lock wait, allowing normal overlap with distro APT
 jobs. Lock-wait exhaustion or another install failure still stops that setup
 step before configuration continues; setup does not replay the failed install.
 
+On VMs and hardware, AppArmor setup verifies persistent boot enablement and
+checks the distro loader's start and reload operations before reporting active
+protection. It preserves each package profile's declared mode and does not use
+stop/restart or force profiles into enforce mode. A service failure stops setup;
+inspect `systemctl status apparmor` and `journalctl -u apparmor`, repair the
+reported configuration, then rerun setup. A failed reload can leave some profiles
+updated; setup does not roll back the kernel's loaded policy.
+
+Only `aa-enabled` exit status `1` is treated as an inactive kernel. After a
+successful start request, a still-inactive kernel produces an explicit deferral
+with the service enabled for boot; this does not establish current protection or
+guarantee that reboot will activate it. Review the kernel and boot configuration.
+Unavailable control files, insufficient privileges and other observation errors
+stop setup instead of becoming a deferral; see Debian's
+[`aa-enabled` exit statuses](https://manpages.debian.org/trixie/apparmor/aa-enabled.1.en.html#EXIT_STATUS).
+
 Server and workstation plans activate Fail2ban after optional desktop/XRDP
 installation and hardening, so its file-backed XRDP jail has real log sources
 on a fresh machine. Firewall and SSH hardening still precede desktop setup.

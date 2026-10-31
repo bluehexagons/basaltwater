@@ -75,7 +75,7 @@ class TestAppArmorProfiles(unittest.TestCase):
         mock_userns.return_value = True
 
         def run_side_effect(command, **_kwargs):
-            return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=0, stdout="enabled\n")
 
         mock_run.side_effect = run_side_effect
 
@@ -105,7 +105,7 @@ class TestAppArmorProfiles(unittest.TestCase):
         def run_side_effect(command, **_kwargs):
             if command == "aa-enabled -q":
                 return SimpleNamespace(returncode=next(aa_enabled_results))
-            return SimpleNamespace(returncode=0)
+            return SimpleNamespace(returncode=0, stdout="enabled\n")
 
         mock_run.side_effect = run_side_effect
 
@@ -127,7 +127,7 @@ class TestAppArmorProfiles(unittest.TestCase):
     def test_configure_fails_when_required_browser_sandbox_policy_cannot_load(
         self, mock_run, _vm, _hardware, _mock_userns
     ):
-        mock_run.return_value = SimpleNamespace(returncode=0)
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="enabled\n")
 
         with self.assertRaisesRegex(
             RuntimeError, "browser-sandbox compatibility profile failed"
@@ -137,6 +137,97 @@ class TestAppArmorProfiles(unittest.TestCase):
                     username="u", host="h", system_type="workstation_dev"
                 )
             )
+
+    def test_service_failures_stop_before_reporting_protection(self):
+        for refused in ("systemctl enable apparmor", "systemctl start apparmor", "systemctl reload apparmor"):
+            with (
+                self.subTest(refused=refused),
+                patch.dict(os.environ),
+                patch("security.security_steps.is_vm", return_value=True),
+                patch("security.security_steps.is_dry_run", return_value=False),
+                patch("security.security_steps._ensure_browser_automation_userns_profile", return_value=True) as userns,
+                patch("security.security_steps.run") as run,
+                patch("builtins.print") as output,
+            ):
+                failure = CommandExecutionError(refused, 1, "Service operation refused")
+                def command(argv, **kwargs):
+                    if argv == refused:
+                        if kwargs.get("check", True):
+                            raise failure
+                        return SimpleNamespace(returncode=1, stdout="")
+                    return SimpleNamespace(returncode=0, stdout="enabled\n")
+                run.side_effect = command
+                with self.assertRaises(CommandExecutionError) as raised:
+                    configure_apparmor(SetupConfig(username="u", host="h", system_type="server_lite"))
+                self.assertIs(raised.exception, failure)
+                self.assertEqual(sum(call.args[0] == refused for call in run.call_args_list), 1)
+                userns.assert_not_called()
+                self.assertFalse(any("✓" in str(call) for call in output.call_args_list))
+
+    def test_unknown_kernel_status_never_becomes_a_boot_deferral(self):
+        for status in (2, 3, 4, 10, 64, 127, -15):
+            with (
+                self.subTest(status=status),
+                patch.dict(os.environ),
+                patch("security.security_steps.is_vm", return_value=True),
+                patch("security.security_steps.is_dry_run", return_value=False),
+                patch("security.security_steps._ensure_browser_automation_userns_profile") as userns,
+                patch("security.security_steps.run") as run,
+                patch("builtins.print") as output,
+            ):
+                run.side_effect = lambda command, **kwargs: SimpleNamespace(
+                    returncode=status if command == "aa-enabled -q" else 0, stdout="enabled\n")
+                with self.assertRaisesRegex(RuntimeError, "Could not determine AppArmor kernel status"):
+                    configure_apparmor(SetupConfig(username="u", host="h", system_type="server_lite"))
+                userns.assert_not_called()
+                self.assertFalse(any("next boot" in str(call) or "✓" in str(call) for call in output.call_args_list))
+
+    def test_inactive_kernel_has_explicit_deferral_after_checked_start(self):
+        with (
+            patch.dict(os.environ),
+            patch("security.security_steps.is_vm", return_value=True),
+            patch("security.security_steps.is_dry_run", return_value=False),
+            patch("security.security_steps._ensure_browser_automation_userns_profile") as userns,
+            patch("security.security_steps.run") as run,
+            patch("builtins.print") as output,
+        ):
+            run.side_effect = lambda command, **kwargs: SimpleNamespace(
+                returncode=1 if command == "aa-enabled -q" else 0, stdout="enabled\n")
+            configure_apparmor(SetupConfig(username="u", host="h", system_type="server_lite"))
+            run.assert_any_call("systemctl start apparmor")
+            self.assertFalse(any(call.args[0] == "systemctl reload apparmor" for call in run.call_args_list))
+            userns.assert_not_called()
+            text = " ".join(str(call) for call in output.call_args_list)
+            self.assertIn("kernel policy is inactive", text)
+            self.assertNotIn("✓", text)
+
+    def test_boot_enablement_must_be_persistent_and_verified(self):
+        for status, text in ((1, "disabled\n"), (0, "enabled-runtime\n"), (0, "static\n"), (0, "")):
+            with (
+                self.subTest(status=status, text=text),
+                patch.dict(os.environ),
+                patch("security.security_steps.is_vm", return_value=True),
+                patch("security.security_steps.is_dry_run", return_value=False),
+                patch("security.security_steps.run") as run,
+            ):
+                run.side_effect = lambda command, **kwargs: SimpleNamespace(
+                    returncode=status if command == "systemctl is-enabled apparmor" else 0, stdout=text)
+                with self.assertRaisesRegex(RuntimeError, "AppArmor service is not persistently enabled"):
+                    configure_apparmor(SetupConfig(username="u", host="h", system_type="server_lite"))
+                self.assertFalse(any(call.args[0] in {"aa-enabled -q", "systemctl start apparmor", "systemctl reload apparmor"} for call in run.call_args_list))
+
+    def test_dry_run_and_inherited_kernel_skip_without_mutations(self):
+        for dry_run, global_dry, vm in ((True, False, True), (False, True, True), (False, False, False)):
+            with (
+                self.subTest(dry_run=dry_run, global_dry=global_dry, vm=vm),
+                patch.dict(os.environ),
+                patch("security.security_steps.is_vm", return_value=vm),
+                patch("security.security_steps.is_hardware", return_value=False),
+                patch("security.security_steps.is_dry_run", return_value=global_dry),
+                patch("security.security_steps.run") as run,
+            ):
+                configure_apparmor(SetupConfig(username="u", host="h", system_type="server_lite", dry_run=dry_run))
+                run.assert_not_called()
 
 
 class TestHardenSSH(unittest.TestCase):
