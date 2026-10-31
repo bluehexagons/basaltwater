@@ -1,5 +1,9 @@
 # Native Windows build hosts
 
+For bounded improvements to the existing workstation layer, use the separate
+[Windows workstation feedback handoff](workstation-feedback-windows.md).
+That work does not require implementing this build-host proposal.
+
 Status: proposed scope, after the shared Debian build/CI host. Windows supplies
 native builds and packages for software, games and self-hostable game servers. Replace
 the unused WSL-backed runner paths without migration or compatibility shims.
