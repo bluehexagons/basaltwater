@@ -22,7 +22,7 @@ from lib.kiosk_config import validate_kiosk_settings
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.display import print_setup_summary
 from lib.machine_state import (
-    SETUP_CONFIG_FILE,
+    PERSISTENT_SETUP_CONFIG_FILE as SETUP_CONFIG_FILE,
     STATE_DIR,
     machine_type_context,
     resolve_machine_type,

@@ -21,7 +21,12 @@ from lib.cachyos import is_cachyos
 from lib.channel_manager import get_channel_info, managed_repository_path, switch_channel, upgrade_channel
 from lib.installation_info import INSTALLATION_METADATA_FILENAME, REFRESH_METADATA_FILENAME, write_refresh_source_metadata
 from lib.config import AGENT_TOOLS, SetupConfig
-from lib.machine_state import STATE_DIR, SETUP_CONFIG_FILE, _validate_setup_config, can_manage_system_services
+from lib.machine_state import (
+    PERSISTENT_SETUP_CONFIG_FILE as SETUP_CONFIG_FILE,
+    PERSISTENT_STATE_DIR as STATE_DIR,
+    _validate_setup_config,
+    can_manage_system_services,
+)
 from lib.maintenance_lock import maintenance_lock
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.remote_utils import read_os_release, run
@@ -302,7 +307,7 @@ def _debian_setup() -> SetupConfig:
     path = Path(SETUP_CONFIG_FILE)
     validate_filesystem_path(str(path), must_exist=True)
     info = path.lstat()
-    parent = path.parent.stat()  # The standard state directory may be a managed symlink.
+    parent = path.parent.stat()
     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
             or info.st_mode & 0o077 or parent.st_uid != os.geteuid()
             or parent.st_mode & 0o022):

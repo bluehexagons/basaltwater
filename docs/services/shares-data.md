@@ -65,6 +65,9 @@ Passwords, mount credentials, raw PAR2 output, and recovery copies are not expor
 ## Persist panel changes and controller configuration
 
 Approved share and routine changes update the target's private saved setup.
+Privileged management protects `/var/lib/basaltwater` directly. The installer
+retains `/opt/basaltwater/state` as a convenience symlink to that directory;
+symlinked privileged files or ancestors inside the durable directory are refused.
 Restarting the panel or the machine retains them. Target-side `sudo basaltw refresh`
 replays that saved setup; it rejects a configuration change before source
 activation or during the handoff to the upgraded setup runner. Rerun refresh after

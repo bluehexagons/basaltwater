@@ -16,7 +16,7 @@ if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
 
 from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
-from lib.machine_state import STATE_DIR, can_manage_system_services
+from lib.machine_state import PERSISTENT_STATE_DIR as STATE_DIR, can_manage_system_services
 from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path

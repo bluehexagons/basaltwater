@@ -18,7 +18,7 @@ import tempfile
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
 
-from lib.machine_state import STATE_DIR, load_setup_config
+from lib.machine_state import PERSISTENT_STATE_DIR as STATE_DIR, load_setup_config
 from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path

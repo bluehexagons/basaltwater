@@ -9,7 +9,7 @@ import pwd
 import subprocess
 
 from lib.atomic_io import write_json_atomic
-from lib.machine_state import SETUP_CONFIG_FILE, load_setup_config
+from lib.machine_state import PERSISTENT_SETUP_CONFIG_FILE as SETUP_CONFIG_FILE, load_setup_config
 from lib.privilege_execution import ENVIRONMENT
 from lib.samba_accounts import MAX_ACCOUNTS, validate_lifecycle_snapshot
 from lib.validators import validate_username

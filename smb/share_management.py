@@ -10,7 +10,11 @@ import secrets
 
 from lib.atomic_io import write_json_atomic
 from lib.config import SetupConfig
-from lib.machine_state import SETUP_CONFIG_FILE, STATE_DIR, load_setup_config
+from lib.machine_state import (
+    PERSISTENT_SETUP_CONFIG_FILE as SETUP_CONFIG_FILE,
+    PERSISTENT_STATE_DIR as STATE_DIR,
+    load_setup_config,
+)
 from lib.operation_state import OperationStateStore
 from lib.privilege_policy import protected_path
 from lib.samba_shares import validate_share, validate_share_action

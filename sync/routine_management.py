@@ -11,7 +11,12 @@ import shutil
 from types import SimpleNamespace
 
 from lib.atomic_io import ensure_directory_durable, write_json_atomic
-from lib.machine_state import SETUP_CONFIG_FILE, STATE_DIR, can_manage_system_services, load_setup_config
+from lib.machine_state import (
+    PERSISTENT_SETUP_CONFIG_FILE as SETUP_CONFIG_FILE,
+    PERSISTENT_STATE_DIR as STATE_DIR,
+    can_manage_system_services,
+    load_setup_config,
+)
 from lib.operation_state import OperationStateStore
 from lib.privilege_policy import protected_path
 from lib.runtime_config import RuntimeConfig

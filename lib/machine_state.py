@@ -20,6 +20,10 @@ from lib.validators import validate_username
 
 
 STATE_DIR = "/opt/basaltwater/state"
+# The installer exposes STATE_DIR as a convenience symlink. Privileged
+# management must protect the canonical directory without traversing it.
+PERSISTENT_STATE_DIR = "/var/lib/basaltwater"
+PERSISTENT_SETUP_CONFIG_FILE = os.path.join(PERSISTENT_STATE_DIR, "setup.json")
 
 # Required keys for each state file
 _MACHINE_STATE_REQUIRED_KEYS = ("machine_type", "system_type", "username")
