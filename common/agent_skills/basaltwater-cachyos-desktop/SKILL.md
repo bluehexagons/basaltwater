@@ -12,6 +12,10 @@ only what the task needs: `basaltw agent manifest . --application blender --json
 for Blender, or `--capability development` for Godot/Electron/native project
 recipes. Repeat `--application NAME` for another app. PATH presence is discovery,
 not editing, export, GPU or audio readiness.
+Use `--capability workstation` for a compact installed-tool/backend/GPU report;
+follow the [workflow routes](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workflows.md)
+for commands. Project policy and scripts own project-specific decisions and
+capture recipes; this skill owns native session operation.
 
 Complete requested edits using repeatable application scripts/exports and
 available native UI tools. Save editable task copies, reopen saved results and
@@ -46,10 +50,8 @@ actionable excerpts and paths. Maintain a short current task note with decisions
 unresolved issues, job handles and validation rather than copying full histories.
 Do not relaunch a mutation after timeout without checking its state.
 
-Use `basaltwater-subagents` for independent bounded script, geometry, export or
-test tasks. Luna medium is a provisional starting point; choose effort from
-task complexity and the live catalog. Give each worker files, acceptance checks
-and a short handoff. Only one worker controls the shared desktop.
+Follow project-development and active orchestration guidance for delegation and
+handoffs. Only one worker controls the shared desktop.
 
 ## Native control
 

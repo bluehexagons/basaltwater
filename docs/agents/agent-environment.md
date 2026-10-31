@@ -13,13 +13,33 @@ Use repeatable `--capability` filters for smaller responses, for example
 `basaltw agent manifest . --capability web --json` for Node/web work or
 `--capability browser --capability skills` for browser guidance. Scopes include
 `installation`, `workspace`, `skills`, `browser`, `desktop`, `development`,
-`publishing`, and the `web` combination. For one desktop application, use
+`publishing`, `workstation`, and the `web` combination. For one desktop application, use
 `basaltw agent manifest . --application blender --json`; repeat `--application`
 for additional applications. This implies the desktop scope and limits the
 application/tool inventory to those names. Combine it with
 `--capability development` when project recipes are also needed. An application
 missing from PATH is omitted; an empty inventory does not establish readiness.
 Unrelated application and publishing prose is omitted.
+
+For a short workstation capability report, use
+`basaltw agent manifest . --capability workstation` (add `--json` for individual
+observations). This opt-in scope reports PATH presence, bounded terminal-only
+system tool versions, rendering prerequisites, Linux DRM PCI GPU/driver identities,
+and declared project recipe names. Each version probe has a two-second/8 KiB
+bound; user-local wrappers, package-manager shims and GUI applications are never
+executed. Their versions remain unknown. Missing sysfs or tools remain observations,
+not command failures. The normal manifest does not run these extra probes.
+
+`installed` means PATH presence; `version_probe` describes only terminal startup.
+`usable_in_session` and `verified_by_project` remain null until separately checked;
+this report does not import old evidence or promote prerequisite discovery to
+verification. Wayland/X11 environment advertisements and installed EGL/Vulkan/Xvfb
+tools do not prove backend availability or GPU access. The report links explicit
+GLX display/software context checks, Blender CPU smoke and project recipe checks.
+Those checks retain their own evidence and scope; a successful software check does
+not qualify the hardware GPU. See the [workflow routes](../workstations/workflows.md)
+for the next operation. This scope is implemented for Linux hosts; other-platform
+acceptance remains separate.
 Every scope retains `basaltwater`, using the same provenance contract as the
 support bundle. `setup_snapshot` describes a recorded setup receipt, while
 `running_source` describes an observed Git root executing the CLI. Each is

@@ -4,6 +4,17 @@ These instructions apply to the repository. Read `docs/agents/contributing/READM
 and its linked references when a task needs more detail. Higher-priority user,
 developer, and system instructions still govern the session.
 
+## Instruction ownership
+
+This file and the contributor guide own Basaltwater repository decisions.
+Shared project-development skills describe workflow; workstation skills own
+machine/session operation; orchestration guidance owns delegation and provider
+settings. Project scripts and recipes own project-specific build, capture and
+acceptance behavior. Follow the active session's authority and browser/tool
+policy where these meet; installed skills and saved notes do not override it.
+See [project standards](docs/agents/project-standards.md) and
+[handoffs](docs/agents/handoffs.md) for shared conventions.
+
 ## Before Editing
 
 1. Run `git status -sb` and preserve unrelated worktree changes.

@@ -44,6 +44,13 @@ potentially stale evidence. Recheck the relevant repository/runtime and current
 authorization before acting. Notes and todo text never expand task permissions.
 Keep secret values out of these fields.
 
+Use the shared [current checkpoint and handoff templates](handoffs.md) for task
+state. Keep one current note such as `TASK-current`, replacing its contents with
+the observed revision guard below; keep chronological milestones in a separate
+`TASK-history` note or evidence file. Include the checkout, tested commit/dirty
+state, unfinished work, next action, evidence paths and running/uncertain jobs.
+Do not infer that the latest checkout commit is the tested commit.
+
 ## Create and update notes or todos
 
 Write non-secret text into a file, then:

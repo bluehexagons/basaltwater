@@ -172,7 +172,7 @@ def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
                         help="Compare invoked and managed source, receipts and observed service context")
     parser.add_argument("--managed-source", metavar="PATH",
                         help="Explicit managed source directory for installation context (implies --installation-context)")
-    parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "desktop", "development", "publishing", "web"),
+    parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "desktop", "development", "publishing", "web", "workstation"),
                         help="Return only relevant discovery fields; repeat as needed")
     parser.add_argument("--application", action="append", choices=tuple(DESKTOP_APPLICATIONS),
                         help="Show only named desktop applications; repeat as needed, implies desktop scope")
@@ -445,6 +445,8 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
         tools.update(("git", "gh"))
     if "skills" in scopes:
         fields.add("skills")
+    if "workstation" in scopes:
+        fields.add("workstation")
     if "browser" in scopes:
         fields.add("browser")
         tools.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
@@ -469,17 +471,22 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
 
 
 def run_manifest_command(args: argparse.Namespace) -> int:
+    capabilities = list(getattr(args, "capability", None) or [])
     try:
         result = inspect_environment(args.repository, project_runtime=getattr(args, "project_runtime", False),
                                      installation_context=getattr(args, "installation_context", False),
                                      managed_source=getattr(args, "managed_source", None))
+        if "workstation" in capabilities:
+            from lib.workstation_report import inspect_workstation
+
+            repository = result["workspace"]["repository"]
+            result["workstation"] = inspect_workstation(repository, load_project_environment(repository))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
         else:
             print(f"Error: {exc}")
         return 1
-    capabilities = list(getattr(args, "capability", None) or [])
     applications = getattr(args, "application", None)
     if applications:
         result["desktop_applications"] = {name: app for name, app in result["desktop_applications"].items()
@@ -487,6 +494,11 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         capabilities.append("desktop")
     if capabilities:
         result = scoped_environment(result, capabilities)
+        if set(capabilities) == {"workstation"} and not args.json:
+            from lib.workstation_report import format_workstation
+
+            print(format_workstation(result["workstation"]))
+            return 0
         print(json.dumps(result, indent=2) if args.json else "\n".join(f"{key}: {json.dumps(value)}" for key, value in result.items()))
         return 0
     if args.json:
