@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shlex
 import stat
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -74,6 +75,22 @@ class MultipleConfigurationTests(unittest.TestCase):
             self.assertEqual([call.args[0].ci_repository for call in gh.call_args_list], ["owner/first", "owner/second"])
             self.assertEqual(json.loads((target / "tokens.json").read_text()), {"owner/second": "B" * 40})
             self.assertEqual(stat.S_IMODE((target / "tokens.json").stat().st_mode), 0o600)
+
+    def test_single_saved_repository_list_requests_matching_scope_and_single_token(self) -> None:
+        saved = fixtures.config(ci_repository="", ci_repositories=["owner/first"]).to_dict()
+        configured = SetupConfig.from_dict("localhost", PROFILE, saved)
+        configured.ci_register_with_gh = True
+        with (tempfile.TemporaryDirectory() as temporary,
+              patch.object(credentials.shutil, "which", return_value="/usr/bin/gh"),
+              patch.object(credentials.subprocess, "run", return_value=subprocess.CompletedProcess(
+                  [], 0, b"A" * 40)) as run):
+            target = Path(temporary, "payload")
+            self.assertTrue(credentials.prepare_registration_payload(configured, str(target)))
+            self.assertIn("repos/owner/first/actions/runners/registration-token", run.call_args.args[0])
+            self.assertEqual((target / "token").read_bytes(), b"A" * 40)
+            self.assertFalse((target / "tokens.json").exists())
+            self.assertEqual(configured.ci_repositories, ["owner/first"])
+            self.assertEqual(configured.ci_repository, "")
 
 
 class MultipleInstallationTests(unittest.TestCase):

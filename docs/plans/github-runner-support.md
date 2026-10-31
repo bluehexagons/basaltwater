@@ -1,8 +1,9 @@
 # GitHub Runner on shared build hosts
 
 Status: dedicated Debian runner setup is implemented; composition with webhooks
-and managed on-demand builds is planned. Real GitHub job, runner-group and reboot
-qualification remains open. See [current usage](../services/github-runner.md)
+and managed on-demand builds is planned. Selected native tokenless setup, rerun
+and pending-state reboot checks pass; real GitHub job, runner-group and registered
+reboot qualification remains open. See [current usage](../services/github-runner.md)
 and [operations](../services/github-runner-operations.md).
 
 The immediate goal is the Debian three-role VM in the

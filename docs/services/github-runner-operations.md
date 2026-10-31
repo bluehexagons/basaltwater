@@ -28,9 +28,10 @@ mutation. A target-side dry run also verifies the Debian release and architectur
 Optional `--web-panel PORT` uses the existing authenticated panel installation
 and TLS settings; see [web panel setup](web-panel.md).
 The runner profile rejects other workloads, deployments, tunnels, file sharing,
-storage jobs, privilege brokers and maintenance agents. Enabling its panel
-does not install maintenance-agent services. Configure those workloads on
-separate hosts.
+storage jobs and maintenance agents. Enabling its panel does not install
+maintenance-agent services. Optional privilege approvals belong to the separate
+operator account; see [host administration](github-runner.md#host-administration).
+Configure the other workloads on separate hosts.
 
 ## Job identity and gate
 
@@ -95,6 +96,8 @@ sudo journalctl -u basaltwater-github-runner.service --since today
 
 The `--check` entry point safely validates the local installation without
 running a job hook or submitting a GitHub job. A successful check exits zero.
+It requires an enabled, registered runner: a pending installation is expected
+to fail this readiness check while its service stays inactive and disabled.
 
 After registration, the service is enabled at boot and restarts its listener after failure. Local
 `active` status proves only that the service runs. Confirm **Idle/Online** in
@@ -293,6 +296,8 @@ credentials, verify the rest of setup and requested restart still complete.
    controls. Repeat after the documented upgrade and re-registration procedure.
 
 Offline tests validate identity rules, protected credential staging, service
-configuration and a disposable worker/canary boundary. They do not establish
-GitHub delivery behavior or reboot persistence. Keep the phase's production
-qualification open until these checks have recorded evidence.
+configuration and a disposable worker/canary boundary. Selected native tokenless
+setup/rerun and pending-state reboot checks are recorded in the
+[coverage map](../plans/testing-coverage.md). These do not establish GitHub delivery
+behavior or registered reboot persistence. Keep production qualification open
+until those checks have recorded evidence.

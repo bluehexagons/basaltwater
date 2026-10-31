@@ -96,7 +96,10 @@ def prepare_registration_payload(config: SetupConfig, destination: str) -> bool:
             os.makedirs(destination, mode=0o700)
             write_json_atomic(os.path.join(destination, "tokens.json"), tokens, mode=0o600)
             return True
-        token = _token_from_gh(config)
+        scoped = copy(config)
+        if repositories:
+            scoped.ci_repository, scoped.ci_repositories = repositories[0], None
+        token = _token_from_gh(scoped)
         os.makedirs(destination, mode=0o700)
         write_bytes_atomic(os.path.join(destination, "token"), token, mode=0o600)
     else:

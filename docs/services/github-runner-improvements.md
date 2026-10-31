@@ -1,8 +1,9 @@
 # GitHub runner registration status
 
 Debian pending registration, repository/organization scope and private CLI/panel
-enrollment are implemented. Real GitHub delivery, runner-group selection and
-reboot qualification remain open. Use the [quick start](github-runner.md) and
+enrollment are implemented. Selected native tokenless setup/rerun and
+pending-state reboot checks pass. Real GitHub delivery, runner-group selection
+and registered reboot qualification remain open. Use the [quick start](github-runner.md) and
 [operations reference](github-runner-operations.md) for commands and recovery.
 
 ## Available behavior
@@ -33,5 +34,6 @@ reboot qualification remain open. Use the [quick start](github-runner.md) and
    [shared-host plan](../plans/github-runner-support.md).
 3. Add broader panel controls only after their typed backend operations exist.
 
-Offline lifecycle, policy, registration-channel and unit tests do not establish
-live GitHub behavior. GitHub App-based token minting is a later enhancement.
+The [coverage map](../plans/testing-coverage.md) separates tokenless native checks
+from automated lifecycle, policy, registration-channel and unit tests. Neither
+establishes live GitHub behavior. GitHub App-based token minting is a later enhancement.

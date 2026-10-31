@@ -2,7 +2,9 @@
 
 Use a dedicated Debian 13/Trixie x86-64 VM for trusted jobs from private
 `github.com` repositories. This persistent runner is not a sandbox for hostile
-code. Live VM, reboot and GitHub qualification remain open; see the
+code. Selected native tokenless setup, rerun and pending-state reboot checks
+pass; registration, real GitHub jobs and registered reboot qualification remain
+open. See the [coverage map](../plans/testing-coverage.md) and
 [operations reference](github-runner-operations.md#qualification).
 For native Windows jobs with WSL access, use the
 [Windows runner guide](../workstations/windows-github-runner.md).
