@@ -134,6 +134,18 @@ def _validate_executable() -> None:
         raise RuntimeError("T3 desktop executable must belong to t3code-bin")
 
 
+def _launch_environment(previous: dict[str, str] | None = None) -> dict[str, str]:
+    # Electron can clear the environment visible through /proc. The detached
+    # worker inherits KDE's environment from the user manager; retain it as a
+    # fallback while preserving readable application-specific overrides.
+    environment = {**os.environ, **(previous or {})}
+    environment.pop("ELECTRON_RUN_AS_NODE", None)
+    if not (environment.get("WAYLAND_DISPLAY") or environment.get("DISPLAY")):
+        raise RuntimeError("T3 relaunch has no graphical environment; rerun refresh from the existing KDE session")
+    environment[REOPENED_AT_ENV] = str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))
+    return environment
+
+
 def _start_stopped_desktop(home: Path) -> bool:
     # Transient user services inherit the systemd user manager's environment,
     # rather than an SSH terminal's forwarded display or provider environment.
@@ -147,8 +159,7 @@ def _start_stopped_desktop(home: Path) -> bool:
     _validate_executable()
     validate_filesystem_path(str(home), must_exist=True)
     os.chdir(home)
-    environment = {**os.environ, REOPENED_AT_ENV: str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))}
-    environment.pop("ELECTRON_RUN_AS_NODE", None)
+    environment = _launch_environment()
     os.execve(APP_EXECUTABLE, [APP_EXECUTABLE], environment)
     return True
 
@@ -166,6 +177,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         if poller.poll(0):
             return False
         _validate_executable()
+        environment = _launch_environment(app.environment)
         # Resolve a vanished working directory before disturbing the running app.
         os.chdir(app.directory)
         try:
@@ -178,8 +190,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         # allowing systemd to track it without killing it when a helper exits.
         # exec preserves the worker's process start time. Record the later
         # relaunch too, so requests queued during shutdown also coalesce.
-        environment = {**app.environment,
-                       REOPENED_AT_ENV: str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))}
+        environment[REOPENED_AT_ENV] = str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))
         os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *app.arguments[1:]], environment)
         return True  # Reached only by tests that mock execve.
     finally:

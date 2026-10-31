@@ -15,8 +15,12 @@ refreshing T3. Only after all steps, saved state and notifications finish does
 desktop setup/refresh queue a detached user worker. This keeps local and remote
 T3 terminals available for package-review and sudo prompts until completion.
 The worker disables the managed web service, then gracefully sends SIGTERM to a running same-user `t3code-bin`,
-waits for exit, and relaunches the packaged app with its original environment
-and arguments. It never force-kills. If the app was stopped, the worker starts
+waits for exit, and relaunches the packaged app with its original arguments.
+Readable app environment settings override the worker's inherited KDE user-manager
+environment. Electron can clear `/proc` environment data; the fallback retains
+display, runtime and session-bus settings rather than reopening without a display.
+Missing graphical environment stops refresh before closing the app. The worker
+never force-kills. If the app was stopped, the worker starts
 it using the systemd user manager's graphical environment when KDE's graphical
 session is active; otherwise its journal explicitly defers launch until KDE login.
 KDE login autostart remains enabled. The worker reloads provider configuration

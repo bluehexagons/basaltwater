@@ -230,9 +230,40 @@ class DesktopRefreshTests(unittest.TestCase):
         self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
         self.execute.assert_called_once_with(refresh.APP_EXECUTABLE,
                                              [refresh.APP_EXECUTABLE, *app.arguments[1:]],
-                                             {**app.environment, refresh.REOPENED_AT_ENV: "20000000000"})
+                                             {key: value for key, value in {
+                                                 **os.environ, **app.environment,
+                                                 refresh.REOPENED_AT_ENV: "20000000000",
+                                             }.items() if key != "ELECTRON_RUN_AS_NODE"})
         self.chdir.assert_called_once_with(app.directory)
         self.close.assert_called_once_with(app.descriptor)
+
+    def test_relaunch_restores_graphical_environment_when_electron_clears_proc_environ(self):
+        app = self.runtime_mocks()
+        for previous in ({}, {"DISPLAY": ":2", "TOKEN": "app-private"}):
+            with self.subTest(previous=previous), patch.dict(os.environ, {
+                "DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-1",
+                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+                "XDG_RUNTIME_DIR": "/run/user/1000", "ELECTRON_RUN_AS_NODE": "1",
+            }, clear=True):
+                app.environment = previous
+                self.poller.poll.side_effect = [[], [(1100, 1)]]
+                self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
+                environment = self.execute.call_args.args[2]
+                self.assertEqual(environment["DISPLAY"], previous.get("DISPLAY", ":0"))
+                self.assertEqual(environment["WAYLAND_DISPLAY"], "wayland-1")
+                self.assertEqual(environment["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/run/user/1000/bus")
+                self.assertEqual(environment["XDG_RUNTIME_DIR"], "/run/user/1000")
+                self.assertNotIn("ELECTRON_RUN_AS_NODE", environment)
+                if previous:
+                    self.assertEqual(environment["TOKEN"], "app-private")
+
+    def test_missing_graphical_environment_fails_before_closing_app(self):
+        app = self.runtime_mocks()
+        app.environment = {}
+        with patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(RuntimeError, "no graphical environment"):
+            refresh.restart_running_desktop(self.QUEUED_BEFORE_NS)
+        self.terminate.assert_not_called()
+        self.execute.assert_not_called()
 
     def test_stopped_app_starts_in_active_graphical_session(self):
         self.runtime_mocks(running=False)
