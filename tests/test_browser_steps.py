@@ -16,13 +16,109 @@ from desktop.browser_steps import (
     _browsh_asset_matches,
     _configure_librewolf_apparmor_profile,
     _ensure_extrepo_and_update,
+    _install_via_extrepo,
     _refresh_existing_extrepo_sources,
     install_single_browser,
+    install_browser,
     is_flatpak_app_installed,
 )
 
 
 class TestBrowserSteps(unittest.TestCase):
+    def test_requested_browser_failures_stop_setup(self):
+        for browser, flatpak in (("brave", False), ("firefox", False), ("librewolf", False),
+                                 ("helium", False), ("browsh", False), ("lynx", False),
+                                 ("brave", True), ("firefox", True), ("librewolf", True)):
+            for code in (0, 1):
+                with self.subTest(browser=browser, flatpak=flatpak, code=code), \
+                        patch("desktop.browser_steps.is_package_installed", return_value=False), \
+                        patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False), \
+                        patch("desktop.browser_steps.shutil.which", return_value=None), \
+                        patch("desktop.browser_steps.os.path.exists", return_value=False), \
+                        patch("desktop.browser_steps._install_via_extrepo", return_value=False), \
+                        patch("desktop.browser_steps._resolve_browsh_deb", return_value=("v1.8.2", "https://example.test/browsh.deb")), \
+                        patch("desktop.browser_steps.run", return_value=SimpleNamespace(
+                            returncode=code, stdout="https://example.test/browser.deb\n", stderr="")):
+                    with self.assertRaisesRegex(RuntimeError, "LibreWolf" if browser == "librewolf" else browser.capitalize()):
+                        install_single_browser(browser, use_flatpak=flatpak)
+
+    def test_browsh_requires_firefox_before_resolving_or_downloading_a_release(self):
+        with patch("desktop.browser_steps.is_package_installed", return_value=False), \
+                patch("desktop.browser_steps.shutil.which", return_value=None), \
+                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=0)), \
+                patch("desktop.browser_steps._resolve_browsh_deb") as release:
+            with self.assertRaisesRegex(RuntimeError, "Browsh.*Firefox"):
+                install_single_browser("browsh", use_flatpak=False)
+        release.assert_not_called()
+
+    def test_existing_browsh_repairs_missing_firefox_before_returning(self):
+        installed = {"browsh"}
+
+        def install(command, **kwargs):
+            self.assertEqual(command, "apt-get install -y -qq firefox-esr")
+            installed.add("firefox-esr")
+            return SimpleNamespace(returncode=0)
+
+        with patch("desktop.browser_steps.is_package_installed", side_effect=lambda name: name in installed), \
+                patch("desktop.browser_steps.run", side_effect=install) as run, \
+                patch("desktop.browser_steps._resolve_browsh_deb") as release:
+            install_single_browser("browsh", use_flatpak=False)
+        run.assert_called_once()
+        release.assert_not_called()
+
+    def test_extrepo_install_requires_successful_command_and_present_package(self):
+        for code, installed, expected in ((1, True, False), (0, False, False), (0, True, True)):
+            with self.subTest(code=code, installed=installed), \
+                    patch("desktop.browser_steps._ensure_extrepo_and_update"), \
+                    patch("desktop.browser_steps._update_apt_metadata"), \
+                    patch("desktop.browser_steps.os.path.exists", return_value=True), \
+                    patch("desktop.browser_steps.is_package_installed", return_value=installed), \
+                    patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=code)):
+                self.assertEqual(_install_via_extrepo("Brave", "brave", "brave-browser"), expected)
+
+    def test_failed_first_browser_stops_before_installing_later_selections(self):
+        with patch("desktop.browser_steps.is_package_installed", return_value=False), \
+                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1)) as run:
+            with self.assertRaisesRegex(RuntimeError, "Firefox"):
+                install_browser(SimpleNamespace(use_flatpak=False, browsers=["firefox", "lynx"], browser="firefox", dry_run=False))
+        run.assert_called_once_with("apt-get install -y -qq firefox-esr", check=False)
+
+    def test_brave_flatpak_failure_can_fall_back_to_verified_apt(self):
+        with patch("desktop.browser_steps.is_flatpak_app_installed", return_value=False), \
+                patch("desktop.browser_steps.is_package_installed", return_value=False), \
+                patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1)), \
+                patch("desktop.browser_steps._install_via_extrepo", return_value=True) as apt:
+            install_single_browser("brave", use_flatpak=True)
+        apt.assert_called_once_with("Brave", "brave", "brave-browser")
+
+    def test_browser_dry_run_does_not_probe_or_install_packages(self):
+        with patch("desktop.browser_steps.run") as run, \
+                patch("desktop.browser_steps.is_package_installed") as installed:
+            install_browser(SimpleNamespace(use_flatpak=False, browsers=["firefox", "lynx"], browser="firefox", dry_run=True))
+        run.assert_not_called()
+        installed.assert_not_called()
+
+    def test_failed_package_command_is_fatal_even_when_browser_appears_afterward(self):
+        for browser, flatpak in (("firefox", False), ("lynx", False),
+                                 ("firefox", True), ("librewolf", True)):
+            with self.subTest(browser=browser, flatpak=flatpak), \
+                    patch("desktop.browser_steps.is_package_installed", side_effect=[False, False, True]), \
+                    patch("desktop.browser_steps.is_flatpak_app_installed", side_effect=[False, True]), \
+                    patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1)):
+                with self.assertRaises(RuntimeError):
+                    install_single_browser(browser, use_flatpak=flatpak)
+
+    def test_browsh_resolution_download_and_missing_package_are_fatal(self):
+        for failure in ("resolution", "download", "package"):
+            with self.subTest(failure=failure), \
+                    patch("desktop.browser_steps.is_package_installed", side_effect=lambda name: name == "firefox-esr"), \
+                    patch("desktop.browser_steps.shutil.which", return_value=None), \
+                    patch("desktop.browser_steps._resolve_browsh_deb", return_value=("v1.8.2", "https://example.test/browsh.deb"),
+                          side_effect=RuntimeError("no asset") if failure == "resolution" else None), \
+                    patch("desktop.browser_steps.run", return_value=SimpleNamespace(returncode=1 if failure == "download" else 0)):
+                with self.assertRaisesRegex(RuntimeError, "Browsh installation failed"):
+                    install_single_browser("browsh", use_flatpak=False)
+
     @patch("desktop.browser_steps.run")
     def test_browsh_architecture_maps_debian_armhf(self, mock_run):
         mock_run.return_value = SimpleNamespace(
@@ -53,7 +149,17 @@ class TestBrowserSteps(unittest.TestCase):
     def test_browsh_resolves_current_architectural_release(
         self, mock_run, _resolve, _installed, _which
     ):
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        installed = set()
+        _installed.side_effect = lambda package: package in installed
+
+        def install(command, **kwargs):
+            if command == "apt-get install -y -qq firefox-esr":
+                installed.add("firefox-esr")
+            elif command.startswith("apt-get install -y -qq "):
+                installed.add("browsh")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = install
 
         install_single_browser("browsh", use_flatpak=False)
 

@@ -211,8 +211,8 @@ def _install_via_extrepo(name: str, extrepo_name: str, package_name: str) -> boo
     sources_path = f"/etc/apt/sources.list.d/extrepo_{extrepo_name}.sources"
     if os.path.exists(sources_path):
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run(f"apt-get install -y -qq {package_name}", check=False)
-        if is_package_installed(package_name):
+        result = run(f"apt-get install -y -qq {package_name}", check=False)
+        if result.returncode == 0 and is_package_installed(package_name):
             return True
         print(f"  ✗ Failed to install {name} (package not found after install)")
     else:
@@ -256,10 +256,7 @@ else:
     )
     helium_url = result.stdout.strip() if result.returncode == 0 else ""
     if not helium_url:
-        print("  ✗ Failed to resolve latest Helium package URL")
-        if result.stderr:
-            print(f"    {result.stderr.strip()[:200]}")
-        return
+        raise RuntimeError("Helium installation failed: could not resolve the latest package URL")
 
     with tempfile.TemporaryDirectory(prefix="basaltwater-helium-") as temporary_dir:
         package_path = os.path.join(temporary_dir, "helium.deb")
@@ -269,12 +266,13 @@ else:
             check=False,
         )
         if download_result.returncode != 0:
-            print("  ✗ Failed to download Helium package")
-            return
+            raise RuntimeError("Helium installation failed: package download failed")
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-        run(f"apt-get install -y -qq {shlex.quote(package_path)}", check=False)
-    if is_package_installed("helium-bin") or os.path.exists("/usr/bin/helium"):
+        result = run(f"apt-get install -y -qq {shlex.quote(package_path)}", check=False)
+    if result.returncode == 0 and (is_package_installed("helium-bin") or os.path.exists("/usr/bin/helium")):
         print("  ✓ Helium browser installed")
+        return
+    raise RuntimeError("Helium installation failed: package command failed or browser is missing")
 
 
 def install_single_browser(browser: str, use_flatpak: bool) -> None:
@@ -286,8 +284,8 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
                 print("  ✓ Brave browser already installed")
                 return
             print("  Installing Brave browser...")
-            run(f"flatpak install -y {FLATPAK_REMOTE} com.brave.Browser", check=False)
-            if is_flatpak_app_installed("com.brave.Browser"):
+            result = run(f"flatpak install -y {FLATPAK_REMOTE} com.brave.Browser", check=False)
+            if result.returncode == 0 and is_flatpak_app_installed("com.brave.Browser"):
                 print("  ✓ Brave browser installed")
                 return
             print("  ⚠ Flatpak install failed, falling back to apt...")
@@ -298,6 +296,8 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
         print("  Installing Brave browser...")
         if _install_via_extrepo("Brave", "brave", "brave-browser"):
             print("  ✓ Brave browser installed")
+        else:
+            raise RuntimeError("Brave installation failed")
     
     elif browser == "firefox":
         if use_flatpak:
@@ -305,20 +305,21 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
                 print("  ✓ Firefox already installed")
                 return
             print("  Installing Firefox...")
-            run(f"flatpak install -y {FLATPAK_REMOTE} org.mozilla.firefox", check=False)
-            if is_flatpak_app_installed("org.mozilla.firefox"):
+            result = run(f"flatpak install -y {FLATPAK_REMOTE} org.mozilla.firefox", check=False)
+            if result.returncode == 0 and is_flatpak_app_installed("org.mozilla.firefox"):
                 print("  ✓ Firefox installed")
                 return
+            raise RuntimeError("Firefox Flatpak installation failed")
         else:
             if is_package_installed("firefox") or is_package_installed("firefox-esr"):
                 print("  ✓ Firefox already installed")
                 return
             print("  Installing Firefox...")
-            run("apt-get install -y -qq firefox-esr", check=False)
-            if is_package_installed("firefox") or is_package_installed("firefox-esr"):
+            result = run("apt-get install -y -qq firefox-esr", check=False)
+            if result.returncode == 0 and (is_package_installed("firefox") or is_package_installed("firefox-esr")):
                 print("  ✓ Firefox installed")
             else:
-                return
+                raise RuntimeError("Firefox installation failed")
         
 
     elif browser == "librewolf":
@@ -327,10 +328,11 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
                 print("  ✓ LibreWolf browser already installed")
                 return
             print("  Installing LibreWolf browser...")
-            run(f"flatpak install -y {FLATPAK_REMOTE} io.gitlab.librewolf-community", check=False)
-            if is_flatpak_app_installed("io.gitlab.librewolf-community"):
+            result = run(f"flatpak install -y {FLATPAK_REMOTE} io.gitlab.librewolf-community", check=False)
+            if result.returncode == 0 and is_flatpak_app_installed("io.gitlab.librewolf-community"):
                 print("  ✓ LibreWolf browser installed")
                 return
+            raise RuntimeError("LibreWolf Flatpak installation failed")
         else:
             if is_package_installed("librewolf"):
                 _configure_librewolf_apparmor_profile()
@@ -341,25 +343,28 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
             if _install_via_extrepo("LibreWolf", "librewolf", "librewolf"):
                 _configure_librewolf_apparmor_profile()
                 print("  ✓ LibreWolf browser installed")
+            else:
+                raise RuntimeError("LibreWolf installation failed")
 
     elif browser == "helium":
         _install_helium_browser()
     
     elif browser == "browsh":
+        if not (is_package_installed("firefox") or is_package_installed("firefox-esr")):
+            print("  Installing Firefox (required for Browsh)...")
+            result = run("apt-get install -y -qq firefox-esr", check=False)
+            if result.returncode != 0 or not (is_package_installed("firefox") or is_package_installed("firefox-esr")):
+                raise RuntimeError("Browsh installation failed: Firefox dependency is unavailable")
         if is_package_installed("browsh") or shutil.which("browsh"):
             print("  ✓ Browsh already installed")
             return
 
         print("  Installing Browsh (requires Firefox)...")
-        if not (is_package_installed("firefox") or is_package_installed("firefox-esr")):
-            print("  Installing Firefox (required for Browsh)...")
-            run("apt-get install -y -qq firefox-esr", check=False)
         
         try:
             tag_name, browsh_url = _resolve_browsh_deb()
         except RuntimeError as exc:
-            print(f"  ✗ Failed to resolve current Browsh release: {exc}")
-            return
+            raise RuntimeError(f"Browsh installation failed: could not resolve the current release: {exc}") from exc
         with tempfile.TemporaryDirectory(prefix="basaltwater-browsh-") as temporary_dir:
             package_path = os.path.join(temporary_dir, "browsh.deb")
             download_result = run(
@@ -372,24 +377,32 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
                 ),
             )
             if download_result.returncode != 0:
-                print("  ✗ Failed to download Browsh package")
-                return
-            run(f"apt-get install -y -qq {shlex.quote(package_path)}", check=False)
-        if is_package_installed("browsh") or shutil.which("browsh"):
+                raise RuntimeError("Browsh installation failed: package download failed")
+            result = run(f"apt-get install -y -qq {shlex.quote(package_path)}", check=False)
+        if result.returncode == 0 and (is_package_installed("browsh") or shutil.which("browsh")):
             print("  ✓ Browsh installed")
+        else:
+            raise RuntimeError("Browsh installation failed: package command failed or browser is missing")
     
     elif browser == "lynx":
         if is_package_installed("lynx"):
             print("  ✓ Lynx already installed")
             return
         print("  Installing Lynx...")
-        run("apt-get install -y -qq lynx", check=False)
-        if is_package_installed("lynx"):
+        result = run("apt-get install -y -qq lynx", check=False)
+        if result.returncode == 0 and is_package_installed("lynx"):
             print("  ✓ Lynx installed")
+        else:
+            raise RuntimeError("Lynx installation failed")
+    else:
+        raise ValueError(f"Unsupported browser: {browser}")
 
 
 def install_browser(config: SetupConfig) -> None:
     """Install the specified browser(s)."""
+    if config.dry_run or is_dry_run():
+        print("  [DRY-RUN] Would install the selected browsers and verify installation")
+        return
     # In containers, prefer apt over Flatpak since Flatpak often doesn't work
     use_flatpak = config.use_flatpak
     if use_flatpak and is_container():

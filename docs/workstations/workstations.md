@@ -332,6 +332,14 @@ Supported `--browser` values are `brave`, `firefox`, `librewolf`, `helium`,
 - Lynx installs the Debian terminal browser and does not become a graphical
   default.
 
+A requested browser must finish its package command successfully and pass the
+installed-package or application check. Download, release-resolution and missing
+browser failures stop setup before default-browser configuration or later browser
+selections. Browsh also verifies Firefox before downloading its own package and
+repairs that dependency on rerun. Brave retains its Flatpak-to-APT fallback;
+Firefox and LibreWolf report a failed Flatpak installation directly. Repair the
+reported package or repository problem, then rerun the same desired setup.
+
 For an extrepo-based browser install, setup first refreshes APT normally. If
 that refresh fails, it makes one bounded attempt to refresh existing
 extrepo-managed definitions for Brave, LibreWolf, and legacy VS Code installs,
