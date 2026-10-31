@@ -109,6 +109,19 @@ it does not establish WSL service readiness. Rerun installation from updated
 pinned source to refresh skills; `Manage-Wsl.ps1 refresh` retains the existing
 source revision. See [skill access](../agents/agent-skills.md#access-from-different-sessions).
 
+The shared T3 integration baseline is stable **0.1.6**. The existing
+project-development bundle now includes [client workflows](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
+for side chats, project pin/archive, local commit review, and build-gated
+1Password sources. Updating the Windows desktop alone does not update Ubuntu's
+skills or authenticate its providers. Use the source-refresh flow below for
+Ubuntu guidance and selected tools, then verify the desktop version in About
+and an authenticated provider turn/terminal on the intended Ubuntu connection.
+Provider variables and secret references resolve in that environment; Windows
+`op` presence or login does not qualify Ubuntu access. This profile installs
+no T3 systemd service in Ubuntu, so Debian's `t3 service protect` flow is not
+a WSL refresh step. Native Windows/WSL 0.1.6 interaction remains unqualified
+until exercised on those platforms.
+
 ## Run a native PowerShell job
 
 Native jobs are submitted locally by the logged-in Windows owner. Prepare a

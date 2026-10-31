@@ -2,7 +2,7 @@
 
 Follow T3's injected orchestration instructions and active tool schemas first.
 This reference adds Basaltwater workspace, cost, and context boundaries; use
-only the section needed. The baseline is stable 0.1.4. Terminal agents do not
+only the section needed. The baseline is stable 0.1.6. Terminal agents do not
 gain T3 tools merely because T3 is installed.
 
 ## Discovery and delegation fallback
@@ -142,6 +142,11 @@ When the workflow calls for settlement, `t3_thread_organize` can defer settling
 this thread until its turn ends. Running work, pending user messages, or blocking
 requests can keep it active. Settlement differs from Stop, archive, and Git
 integration; inspect configured settle actions and cleanup before using it.
+In 0.1.6, this tool strictly rejects unknown arguments. Use its exact live
+schema and an explicit action; do not guess fields or infer that a rejected
+call changed thread state. Side chats share a folder and are not editing
+isolation; see the project-development skill's
+[client workflows](../../basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
 
 ## Pull requests and guides
 
@@ -163,11 +168,11 @@ joined; inspect that run before retrying. Check the completed guide against
 `currentHeadSha` and `stale` before citing it. Guides supplement actual diff,
 checks, and unresolved findings.
 
-Upstream: [0.1.4 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.4),
-[tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/orchestration-v2/orchestrator-mcp-server.md),
-[linked environments](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/remote-access.md#link-another-environment),
-[remote delegation](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/peer/RemoteDelegation.ts),
-[launch retry contract](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/project/tools.ts),
-[handoff history](https://github.com/pingdotgg/t3code/blob/v0.1.4/packages/provider-core/src/server/handoffBudget.ts),
-[thread controls](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/thread/tools.ts),
-and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/pullRequests/tools.ts).
+Upstream: [0.1.6 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6),
+[tagged orchestration reference](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/orchestration-v2/orchestrator-mcp-server.md),
+[linked environments](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/remote-access.md#link-another-environment),
+[remote delegation](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/peer/RemoteDelegation.ts),
+[launch retry contract](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/project/tools.ts),
+[handoff history](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/provider-core/src/server/handoffBudget.ts),
+[thread controls](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/thread/tools.ts),
+and [PR tools](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/pullRequests/tools.ts).

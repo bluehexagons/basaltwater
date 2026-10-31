@@ -109,6 +109,17 @@ the catalog versions. If T3 offers a newer stable release, wait for the catalog
 or use T3's [built-in updater](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md).
 Reapplying setup cannot install a release that WinGet has not published yet.
 
+The integration baseline is stable **0.1.6**. Its side chats, project pin/archive,
+local commit review and build-gated 1Password sources are covered by the
+[shared client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows),
+delivered with the existing project-development skill. `basaltw refresh` updates
+that guidance as well as available packages. Check the running version in
+T3's About screen; successful WinGet reconciliation alone does not establish
+0.1.6 availability. Linux agent cgroup priorities and `t3 service protect` do
+not apply to the native Windows desktop. After completion, verify an
+authenticated provider turn and native terminal in the local Windows connection.
+Native 0.1.6 desktop interaction remains a Windows qualification step.
+
 Successful setup or refresh starts the selected T3 Code desktop if stopped,
 or requests a graceful close and relaunch to load the updated PATH and skills.
 This runs as a separate, limited current-user interactive Scheduled Task after

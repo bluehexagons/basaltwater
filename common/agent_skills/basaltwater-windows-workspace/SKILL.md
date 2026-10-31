@@ -132,6 +132,12 @@ T3 owns worktrees it creates. Native Windows and WSL providers have separate
 homes, settings, and skills; choose the local Windows connection for these projects.
 
 T3 browser and orchestration tools exist only when exposed to the active session.
+For stable 0.1.6 side chats, project pin/archive, local commit review, and optional
+1Password sources, read the shared [client workflows](../basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
+Use `basaltw refresh` to deliver updated skills and available WinGet T3 updates;
+WinGet can lag the upstream stable feed. Verify the running version in T3's
+About screen and check a provider turn and terminal after completion.
+Do not run Linux `t3 service protect` for the Windows desktop.
 Follow that session's injected instructions. The installed
 `basaltwater-t3-preview-testing` skill supplies browser guidance without installing
 Playwright or configuring a browser. Authenticate selected providers as this

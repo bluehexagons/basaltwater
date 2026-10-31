@@ -316,6 +316,26 @@ separate from Basaltwater's owned-worktree ancestry checks and cache maintenance
 
 ### Stable feature qualification
 
+The shared [client workflow reference](../../common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
+ships in the existing project-development bundle on Debian, CachyOS, native
+Windows, and Ubuntu WSL. The shared orchestration and scheduling references
+also follow 0.1.6. No additional skill catalog entry is needed.
+
+On Debian, rerun the saved setup or use `sudo basaltw refresh` to reconcile
+stable T3 and deliver updated skills; inspect the independent refresh and
+completion results, then run the T3/host doctor and verify a provider turn and
+terminal. The upstream unit supplies 0.1.6's resource priorities. Service
+protection remains an explicit host-tuning operation, separate from refresh.
+
+Native Windows refresh delivers the same shared workflows through its existing
+bundle catalog; WinGet availability and the running desktop version must be
+checked separately. Ubuntu WSL refresh must advance the pinned Basaltwater
+source to refresh Linux guidance, independently of the Windows client update.
+See [Windows refresh](../workstations/windows.md#review-selections-from-a-checkout)
+and [WSL source refresh](../workstations/windows-wsl.md#manage-and-recover).
+These repository changes do not remotely refresh other machines or establish
+native Windows/WSL or Debian systemd lifecycle qualification.
+
 These are required live checks, **not completed qualification evidence**. Run
 them on disposable systems with the exact candidate commit and compatible stable
 client/server. Record the provider executable/version and model, runtime and

@@ -1,7 +1,7 @@
 # T3 Code scheduling
 
 Use this reference when authorized deferred or recurring work should run through
-T3 Code. This reference follows stable 0.1.4; inspect the connected
+T3 Code. This reference follows stable 0.1.6; inspect the connected
 environment's live tools before acting. No scheduler grants additional scope,
 publication authority, or permission to exceed the user's cost limits.
 
@@ -150,9 +150,9 @@ storage is a separate Connect choice with its own data-retention implications;
 do not enable it incidentally. Inspect and remove authorized external hooks
 when retiring a workflow, rather than leaving senders targeting a deleted task.
 
-Upstream baseline: [0.1.4 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.4),
-[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
-[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/toolkits/thread/tools.ts),
-[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.4/apps/server/src/mcp/OrchestratorMcpService.ts),
-and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.4/docs/user/project-settings.md#webhook-automations).
+Upstream baseline: [0.1.6 release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6),
+[scheduling tools](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
+[run-now tool](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/thread/tools.ts),
+[MCP binding and caller limits](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/OrchestratorMcpService.ts),
+and [webhook settings](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#webhook-automations).
 The active T3 tool schemas govern available schedule and signature fields.

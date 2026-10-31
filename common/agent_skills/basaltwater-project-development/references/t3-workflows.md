@@ -2,7 +2,39 @@
 
 Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
-[stable 0.1.3](https://github.com/pingdotgg/t3code/releases/tag/v0.1.3).
+[stable 0.1.6](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6).
+
+## Shared 0.1.6 client workflows
+
+These workflows apply to compatible web/desktop clients on Debian, CachyOS,
+native Windows, and Ubuntu WSL connections. They use the selected environment's
+repository, provider, credentials, and installed skills.
+
+- Start a side question with `/side` or `/btw`, or **Side chat** in the right
+  panel's **+** menu. It inherits context and shares the thread's folder while
+  the main thread continues. Its first reply asks before commands or edits;
+  later replies use its composer permission mode. Use bound worktrees for
+  concurrent edits. **Bring back** includes the discussion with the next
+  main-thread message while that thread is idle. It does not create a delegated
+  task receipt or merge Git changes.
+- Pin projects in pickers or **Settings → Projects**. Archive/unarchive in
+  that settings list; archive hides a project from pickers and retains its
+  files, settings, and threads. All checkouts must be connected for a project
+  spanning machines. Inspect running work and schedules separately.
+- Choose **Commits** in the Diff pane source picker for the newest 100 commits
+  in the branch comparison. Merge commit diffs use the first parent.
+- Builds enabling `T3CODE_FEATURE_SECRETS` at build time expose **Settings →
+  Secrets** for 1Password-backed provider variables and source-control
+  credentials. The environment running the provider needs a working `op` CLI
+  and account access. A Windows installation/login does not establish Ubuntu
+  access. Setup does not enroll 1Password; setting a service environment
+  variable does not enable the compiled UI. Continue using `request_secret`
+  for private agent input with one-use references or file delivery.
+
+Contracts: [side chats](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/thread-sidebar.md#side-chats),
+[project organization](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md#pin-and-archive-projects),
+[commit review](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/source-control.md),
+and [1Password resolution](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/secret-provider-onepassword/src/server/driver.ts).
 
 ## Project commands and worktree setup
 
@@ -32,8 +64,8 @@ Settling is separate from merging Git changes and may make a worktree eligible
 for configured automatic cleanup. A script's `previewUrl` is a desktop-build
 feature; use the browser skill's server-tab workflow for remote automation.
 
-Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.3/packages/contracts/src/t3ProjectFile.ts)
-and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/user/project-settings.md).
+Contract: [project file schema](https://github.com/pingdotgg/t3code/blob/v0.1.6/packages/contracts/src/t3ProjectFile.ts)
+and [settings and cleanup](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/project-settings.md).
 
 ## Visual replies
 
@@ -59,5 +91,5 @@ automation stack or disable the sandbox to repair an HTML preview. If preview
 is unavailable, report that validation gap; publishing itself does not require
 Chrome. Independent terminal tasks do not inherit these tools or rendered pages.
 
-Contracts: [visual replies](https://github.com/pingdotgg/t3code/blob/v0.1.3/docs/user/html-renders.md)
-and [HTML tools](https://github.com/pingdotgg/t3code/blob/v0.1.3/apps/server/src/mcp/toolkits/html/tools.ts).
+Contracts: [visual replies](https://github.com/pingdotgg/t3code/blob/v0.1.6/docs/user/html-renders.md)
+and [HTML tools](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/mcp/toolkits/html/tools.ts).

@@ -61,6 +61,17 @@ Windows provider has a separate home and does not discover Ubuntu's catalog.
 Use preview tools only when the active T3 session exposes them; another session
 or a desktop installation does not supply tools to a terminal agent.
 
+Stable 0.1.6's [shared client workflows](../basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
+cover side chats, project pin/archive, local commit review, and optional
+1Password sources. A side chat on an Ubuntu connection shares that Linux
+folder. Provider commands and secret-provider resolution need Ubuntu binaries
+and account access; native Windows login does not establish either.
+Refresh the Windows desktop through its installer/WinGet or upstream updater,
+and refresh Ubuntu skills from updated Basaltwater source as described below.
+Verify both the client version and a provider turn/terminal on the selected
+Ubuntu connection. This profile does not install an upstream T3 systemd service;
+do not run `t3 service install` or `t3 service protect` to refresh it.
+
 Logout, sleep, reboot, or WSL shutdown can interrupt work despite the optional
 login keepalive. Do not stop or refresh the distribution during active work.
 Refresh guidance by rerunning Windows setup from an updated pinned Basaltwater
