@@ -23,6 +23,7 @@ see [Storage](../storage/README.md).
 | [Antistatic](antistatic.md) | Lobby server, reports, STUN, and antistatic-db |
 | [Notifications](notifications.md) | Webhook, mailbox, and panel delivery and alert interpretation |
 | [Web panel](web-panel.md) | Install and operate the authenticated machine dashboard |
+| [Shares & Data](shares-data.md) | Browse managed shares, backup/sync routines and recorded scrub findings |
 | [Web panel reference](web-panel-reference.md) | API, data limits, diagnostics, and access boundaries |
 | [Authentication hardening](authentication-hardening.md) | Reachability, rate limits, temporary bans, and verification |
 | [Protected device pairing](device-pairing.md) | One-time provider links, rotation, and removal |

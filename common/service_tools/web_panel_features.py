@@ -40,7 +40,7 @@ class PanelFeatures:
     def pages(self) -> frozenset[str]:
         pages = {"dashboard", "services", "storage", "jobs", "logs"}
         if self.admin_page:
-            pages.add("admin")
+            pages.update(("admin", "shares-data"))
         if self.agents:
             pages.update(("agents", "agent-inbox"))
         if self.prompts:

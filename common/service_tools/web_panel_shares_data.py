@@ -1,0 +1,198 @@
+"""Shares & Data configuration and scrub finding browser."""
+
+from __future__ import annotations
+
+import html
+import shlex
+from urllib.parse import parse_qs, urlencode
+
+from common.service_tools import web_panel_storage as storage
+from common.service_tools.web_panel_templates import render_document, render_heading
+from sync.service_tools.scrub_findings import ADVICE
+
+PAGE_SIZE = 20
+VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
+STATUS_LABELS = {
+    "unavailable": "Report unavailable", "never_scanned": "No full scan recorded",
+    "incomplete": "Last full scan incomplete", "findings": "Unresolved findings",
+    "verified": "Last recorded full scan completed without open findings",
+}
+
+STYLE = """
+.data-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.data-tabs a { display:inline-flex; align-items:center; min-height:44px; padding:8px 14px;
+  border:1px solid var(--line); border-radius:8px; color:var(--accent); text-decoration:none; }
+.data-tabs a[aria-current=page] { color:var(--panel); background:var(--accent); font-weight:700; }
+.data-list { display:grid; gap:10px; list-style:none; padding:0; }
+.data-list h3 { margin:0; font-size:1rem; }
+.data-list .job-facts { margin-bottom:0; }
+.data-notice { margin:12px 0; color:var(--muted); }
+.data-finding { border-left:3px solid var(--warning); }
+.data-finding summary { width:100%; }
+.data-finding p { margin:6px 0; }
+.data-filters input { min-width:0; }
+.data-pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
+.data-list code { white-space:pre-wrap; }
+"""
+
+
+def parse_shares_data_query(raw: str) -> dict[str, str]:
+    if len(raw) > 2048:
+        raise ValueError("Shares & Data query exceeds its limit")
+    values = parse_qs(raw, keep_blank_values=True, max_num_fields=4)
+    if set(values) - {"view", "category", "q", "page"} or any(len(items) != 1 for items in values.values()):
+        raise ValueError("Invalid Shares & Data filters")
+    result = {key: items[0] for key, items in values.items()}
+    if result.get("view", "shares") not in VIEWS:
+        raise ValueError("Unknown Shares & Data view")
+    if result.get("category", "") not in ("", *ADVICE):
+        raise ValueError("Unknown finding category")
+    query = result.get("q", "")
+    if len(query) > 200 or any(ord(character) < 32 or ord(character) == 127 for character in query):
+        raise ValueError("Invalid finding search")
+    page = result.get("page", "1")
+    if not page.isascii() or not page.isdigit() or not 1 <= int(page) <= storage.MAX_JOBS * storage.MAX_FINDINGS:
+        raise ValueError("Invalid findings page")
+    if result.get("view", "shares") != "scrubs" and set(result) & {"category", "q", "page"}:
+        raise ValueError("Finding filters require the scrubs view")
+    return result
+
+
+def _facts(items: list[tuple[str, str]]) -> str:
+    return '<dl class="job-facts">' + ''.join(
+        f'<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>' for label, value in items
+    ) + '</dl>'
+
+
+def _inventory_notice() -> str:
+    return ('<p class="empty">Configuration inventory unavailable. The snapshot exporter may need an update. '
+            'Rerun setup or refresh the saved setup, then allow the next five-minute export to finish.</p>')
+
+
+def _shares(inventory: dict, host: str) -> str:
+    body = render_heading("Samba shares", "access", heading_id="samba-heading")
+    if not inventory.get("available"):
+        return body + _inventory_notice()
+    if not inventory["samba_enabled"]:
+        body += '<p class="empty">Samba is not enabled in the saved setup. Enable Samba with the controller before publishing shares.</p>'
+    elif not inventory["shares"]:
+        body += '<p class="empty">Samba is enabled with no managed shares configured.</p>'
+    if inventory["shares"]:
+        body += '<p class="data-notice">Saved managed shares and access groups. Live Samba accounts, connection status and manually configured shares are not included.</p><ul class="data-list">'
+        for share in inventory["shares"]:
+            name = share["name"] + "_" + share["access"]
+            access = "Read & write" if share["access"] == "write" else "Read only"
+            body += f'<li class="event"><div class="event-head"><h3>{html.escape(name)}</h3><span class="badge">{html.escape(access)}</span></div>'
+            body += _facts([("Directory", share["path"]), ("Users", ", ".join(share["users"])),
+                            ("Connect", f"\\\\{host}\\{name}")])
+            if share["omitted_users"]:
+                body += f'<p class="data-notice">{share["omitted_users"]} additional users omitted from this snapshot.</p>'
+            body += '</li>'
+        body += '</ul>'
+    if inventory["omitted_shares"]:
+        body += f'<p class="data-notice">{inventory["omitted_shares"]} additional shares omitted from this snapshot.</p>'
+    return body + '<p class="data-notice">Share editing and credential resets are not available in this version of the page. Use the controller’s Samba setup and credential commands.</p>'
+
+
+def _routines(inventory: dict) -> str:
+    body = render_heading("Backups & sync", "data", heading_id="routines-heading")
+    if not inventory.get("available"):
+        return body + _inventory_notice()
+    body += '<p class="data-notice">These are recurring rsync mirrors. A backup declaration does not create snapshots or retained versions. Changes and deletions can propagate to the destination.</p>'
+    if not inventory["routines"]:
+        body += '<p class="empty">No backup or sync routines configured in the saved setup.</p>'
+    else:
+        body += '<ul class="data-list">'
+        for routine in inventory["routines"]:
+            kind = "Backup mirror" if routine["kind"] == "backup" else "Sync mirror"
+            body += f'<li class="event"><div class="event-head"><h3>{html.escape(routine["source"])}</h3><span class="badge">{kind}</span></div>'
+            body += _facts([("Destination", routine["destination"]), ("Interval", routine["interval"])]) + '</li>'
+        body += '</ul>'
+    if inventory["omitted_routines"]:
+        body += f'<p class="data-notice">{inventory["omitted_routines"]} additional routines omitted from this snapshot.</p>'
+    body += '<p class="data-notice">The hourly storage timer checks which routines are due. Declared mounts and the storage operation lock guard execution. This inventory does not report completion or prove a recoverable backup.</p>'
+    return body + '<p><a class="refresh-link" href="/jobs?load=1">Inspect timer and last service result →</a> · <a class="refresh-link" href="/logs?service=storage-ops.service">Open storage job logs →</a></p>'
+
+
+def _scrubs(snapshot: dict, query: dict[str, str], host: str) -> str:
+    body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
+    jobs = snapshot["jobs"]
+    if not jobs:
+        return body + '<p class="empty">No scrub tasks configured in this snapshot. Add parity protection with the controller’s --scrub option.</p>'
+    body += '<p class="data-notice">Recorded file integrity is separate from job execution. Daily parity maintenance does not resolve open findings, and a recorded scan does not verify later changes.</p><ul class="data-list">'
+    for job in jobs:
+        tone = "warning" if job["status"] in {"findings", "incomplete"} else "error" if job["status"] == "unavailable" else ""
+        body += f'<li class="event"><h3>{html.escape(job["directory"])}</h3><p><span class="badge {tone}">{STATUS_LABELS[job["status"]]}</span></p>'
+        body += _facts([("Full scan interval", job["interval"]), ("Last full scan", job["last_scan"] or "Not recorded"),
+                        ("Open findings", str(job["open_count"])), ("Parity directory", job.get("database", "Not exported"))])
+        if job["omitted_findings"]:
+            body += f'<p class="data-notice">{job["omitted_findings"]} additional findings for this task are outside this snapshot. Use basaltw scrub status for the complete report.</p>'
+        body += '</li>'
+    body += '</ul>'
+    if snapshot["omitted_jobs"]:
+        body += f'<p class="data-notice">{snapshot["omitted_jobs"]} additional scrub tasks omitted from this snapshot.</p>'
+    category, search = query.get("category", ""), query.get("q", "")
+    options = '<option value="">All categories</option>' + ''.join(
+        f'<option value="{name}"{" selected" if name == category else ""}>{name.replace("_", " ").capitalize()}</option>' for name in ADVICE
+    )
+    body += f'''<section aria-labelledby="findings-heading">{render_heading("Browse findings", "diagnostics", heading_id="findings-heading")}
+<form class="diagnostic-filters data-filters" method="get" action="/shares-data">
+<input type="hidden" name="view" value="scrubs"><div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
+<div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="200" type="search"></div>
+<button>Filter findings</button><a class="refresh-link" href="/shares-data?view=scrubs">Clear filters</a></form>'''
+    findings = [(job, finding) for job in jobs for finding in job["findings"]
+                if (not category or finding["category"] == category) and search.casefold() in finding["path"].casefold()]
+    page = min(int(query.get("page", "1")), max(1, (len(findings) + PAGE_SIZE - 1) // PAGE_SIZE))
+    offset = (page - 1) * PAGE_SIZE
+    if not findings:
+        body += '<p class="empty">No recorded findings match these filters in this snapshot.</p>'
+    else:
+        body += f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, len(findings))} of {len(findings)} matching findings in this snapshot</p><ul class="data-list">'
+        for job, finding in findings[offset:offset + PAGE_SIZE]:
+            command = ["basaltw", "scrub", "inspect", host, "--directory", job["directory"]]
+            if job.get("database"):
+                command += ["--database", job["database"]]
+            command += ["--file", finding["path"]]
+            body += f'''<li class="event data-finding"><h3>{html.escape(finding["path"])}</h3>
+<p><span class="badge warning">{html.escape(finding["category"].replace("_", " "))}</span></p>
+<p>{html.escape(ADVICE.get(finding["category"], "Inspect the recorded evidence before changing data."))}</p>
+<p class="event-meta">First detected: {html.escape(finding["first_seen"])} · Last checked: {html.escape(finding["last_checked"])}</p>
+<details><summary>Inspect evidence and recovery options</summary>
+<p>Run this on the controller to inspect the saved finding, current file identity and parity paths:</p>
+<pre><code>{html.escape(shlex.join(command))}</code></pre>
+<p>Targeted verify, repair, restore and acceptance are available through basaltw scrub. Repair and restore verify a staged candidate and retain originals. Accept establishes the current content as the new baseline; it requires your confirmation that the content is correct.</p>
+<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a></details></li>'''
+        body += '</ul>'
+    body += '<nav class="data-pagination" aria-label="Findings pages">'
+    for label, destination in (("Previous findings", page - 1), ("Next findings", page + 1)):
+        if 1 <= destination <= (len(findings) + PAGE_SIZE - 1) // PAGE_SIZE:
+            url = "/shares-data?" + urlencode({**query, "view": "scrubs", "page": str(destination)})
+            body += f'<a class="refresh-link" href="{html.escape(url, quote=True)}">{label}</a>'
+    return body + '</nav></section>'
+
+
+def render_shares_data(state, style: str, query: dict[str, str]) -> str:
+    snapshot = storage.load_storage_snapshot()
+    view = query.get("view", "shares")
+    header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Shares &amp; Data</h1>
+<p class="lede">Samba access, recurring copies and file integrity on <code>{html.escape(state.manifest["host"])}</code>.</p></div>
+<a class="refresh-link" href="{html.escape('/shares-data?' + urlencode(query), quote=True)}">Refresh snapshot</a></header>'''
+    body = '<nav class="data-tabs" aria-label="Shares and data views">' + ''.join(
+        '<a href="/shares-data?view={}"{}>{}</a>'.format(
+            key, ' aria-current="page"' if key == view else '', html.escape(label),
+        ) for key, label in VIEWS.items()
+    ) + '</nav>'
+    if not snapshot.get("available"):
+        body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
+    else:
+        body += f'<p class="data-notice">Snapshot: {html.escape(snapshot["generated_at"])}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
+        inventory = snapshot.get("inventory", {"available": False})
+        if view == "shares":
+            body += _shares(inventory, state.manifest["host"])
+        elif view == "routines":
+            body += _routines(inventory)
+        else:
+            body += _scrubs(snapshot, query, state.manifest["host"])
+    return render_document(title=f'Shares & Data · {state.manifest["host"]}', style=style + STYLE,
+                           header=header, content=body, navigation=state.navigation("shares-data"),
+                           footer='<footer><a href="/admin">Admin controls</a><span>Configuration and recorded integrity · no automatic refresh</span></footer>')

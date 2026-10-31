@@ -8,10 +8,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from common.service_tools import web_panel_storage as storage, web_panel_jobs as jobs, web_panel_audit_export as exporter
 from sync.service_tools.scrub_findings import Findings
+from lib.shares_data_inventory import configuration_inventory, validate_inventory, MAX_ROUTINES, MAX_SHARES
+from common.service_tools.web_panel_shares_data import render_shares_data, parse_shares_data_query
+from common.service_tools.web_panel_templates import panel_navigation
 
 
 class StorageSnapshotTests(unittest.TestCase):
@@ -89,6 +92,82 @@ class StorageSnapshotTests(unittest.TestCase):
         self.assertNotIn("<img", page)
         self.assertIn("&lt;img", page)
         self.assertIn("Unresolved findings", page)
+
+    def test_configuration_inventory_never_exports_credentials_or_mount_secrets(self):
+        self.config.update(enable_samba=True, samba_shares=[["write", "archive", str(self.data), "alice:INLINE_SECRET,bob"]],
+                           share_credentials=[["bob", "CREDENTIAL_SECRET"]],
+                           smb_mounts=[["/mnt/remote", "192.0.2.1", "MOUNT_SECRET", "share", ""]],
+                           backup_specs=[[str(self.data), str(self.root / "backup"), "daily"]],
+                           sync_specs=[[str(self.db), str(self.root / "replica"), "weekly"]])
+        snapshot = self.collect()
+        inventory = snapshot["inventory"]
+        self.assertEqual(inventory["shares"][0]["users"], ["alice", "bob"])
+        self.assertEqual([item["kind"] for item in inventory["routines"]], ["backup", "sync"])
+        self.assertNotIn("SECRET", json.dumps(snapshot))
+        self.assertTrue(self.load(snapshot)["inventory"]["available"])
+
+    def test_invalid_inventory_cannot_hide_valid_integrity_reports(self):
+        snapshot = self.collect()
+        snapshot["inventory"]["shares"] = [{"password": "PRIVATE"}]
+        loaded = self.load(snapshot)
+        self.assertTrue(loaded["available"])
+        self.assertFalse(loaded["inventory"]["available"])
+        self.assertNotIn("PRIVATE", json.dumps(loaded))
+        del snapshot["inventory"]
+        self.assertFalse(self.load(snapshot)["inventory"]["available"])
+
+    def test_inventory_limits_and_malformed_configuration(self):
+        saved = {"enable_samba": True,
+                 "samba_shares": [["read", f"share{i}", f"/srv/share{i}", "alice"] for i in range(MAX_SHARES + 3)],
+                 "backup_specs": [["/srv/source", f"/srv/backup{i}", "daily"] for i in range(MAX_ROUTINES + 2)]}
+        inventory = configuration_inventory(saved)
+        self.assertEqual(inventory["omitted_shares"], 3)
+        self.assertEqual(inventory["omitted_routines"], 2)
+        self.assertEqual(len(inventory["routines"]), MAX_ROUTINES)
+        for invalid in ({"samba_shares": False}, {"samba_shares": [["write", "bad[section]", "/srv/share", "alice"]]},
+                        {"samba_shares": [["write", "valid", "/srv/share", "bad username:PRIVATE"]]},
+                        {"backup_specs": [["/srv", "/srv/backup", "daily"]]},
+                        {"sync_specs": [["/srv/a", "/srv/b", "invalid"]]}):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(configuration_inventory(invalid), {"available": False})
+        inventory["shares"][0]["password"] = "PRIVATE"
+        with self.assertRaises(ValueError):
+            validate_inventory(inventory)
+
+    def test_page_filters_escapes_and_preserves_snapshot_limits(self):
+        self.report.record("<script>quoted 'file'.bin", {"category": "repairable", "evidence": "SECRET"})
+        self.report.record("other.bin", {"category": "unrepairable"})
+        snapshot = self.collect()
+        state = SimpleNamespace(manifest={"host": "nas.example.test"},
+            navigation=lambda current: panel_navigation(current=current, available=frozenset({"dashboard", "admin", "shares-data"})))
+        query = parse_shares_data_query("view=scrubs&category=repairable&q=quoted")
+        with patch.object(storage, "load_storage_snapshot", return_value=snapshot), patch("subprocess.run") as run:
+            page = render_shares_data(state, "", query)
+        run.assert_not_called()
+        self.assertIn("&lt;script&gt;", page)
+        self.assertNotIn("<script>", page)
+        self.assertNotIn("SECRET", page)
+        self.assertNotIn("other.bin", page)
+        self.assertIn("Showing 1–1 of 1 matching", page)
+        self.assertIn("--database", page)
+        self.assertIn("--file", page)
+        self.assertIn("new baseline", page)
+
+    def test_finding_pagination_keeps_filters_and_unavailable_is_not_empty(self):
+        snapshot = self.collect()
+        job = snapshot["jobs"][0]
+        finding = {"path": "/srv/match.bin", "category": "repairable", "first_seen": "now", "last_checked": "now"}
+        job.update(findings=[finding.copy() for _ in range(20)], open_count=20)
+        snapshot["jobs"].append(dict(job))
+        state = SimpleNamespace(manifest={"host": "nas"}, navigation=Mock(return_value=()))
+        with patch.object(storage, "load_storage_snapshot", return_value=snapshot):
+            page = render_shares_data(state, "", {"view": "scrubs", "category": "repairable", "q": "match", "page": "2"})
+        self.assertIn("Showing 21–40 of 40", page)
+        self.assertIn("category=repairable&amp;q=match&amp;page=1", page)
+        with patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}):
+            page = render_shares_data(state, "", {})
+        self.assertIn("unavailable or stale", page)
+        self.assertNotIn("No backup or sync", page)
 
     def test_jobs_page_load_is_explicit(self):
         with patch.object(jobs, "render_storage", return_value="STORAGE SNAPSHOT") as render, patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot([], [])) as collect:

@@ -70,6 +70,7 @@ NAVIGATION_ICONS = {
     "Web services": "web-services", "Security activity": "security",
     "Notifications": "notifications", "Access": "access", "Admin controls": "admin",
     "Git & credentials": "access",
+    "Shares & Data": "storage",
     "Publishing": "export",
     "Maintenance agent": "maintenance", "Agent inbox": "notifications",
     "Certificate trust": "certificate", "Maintenance": "maintenance",
@@ -86,7 +87,7 @@ ICON_TONES = {
 PAGE_ICONS = {
     "dashboard": "dashboard", "agents": "agents", "agent-tools": "agent-tools",
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
-    "credentials": "access", "storage": "storage",
+    "credentials": "access", "storage": "storage", "shares-data": "storage",
     "publishing": "export",
     "github-runner": "jobs",
     "desktop": "web-services", "console": "diagnostics",
@@ -102,7 +103,7 @@ BRAND_TEXTURES = {
     "mineral": (64, 64, "M8 12l4-4 M40 44l4-4 M48 16h3 M16 48h3"),
 }
 PAGE_TEXTURES = {
-    "github-runner": "facets", "storage": "facets",
+    "github-runner": "facets", "storage": "facets", "shares-data": "facets",
     "agents": "contours", "agent-tools": "contours", "publishing": "contours",
     "admin": "facets", "maintenance-agent": "facets", "jobs": "facets",
     "credentials": "mineral", "agent-inbox": "mineral", "logs": "mineral",
@@ -293,6 +294,7 @@ def panel_navigation(
         ("/credentials", "Git & credentials", "credentials"),
         ("/publishing", "Publishing", "publishing"),
         ("/admin", "Admin controls", "admin"),
+        ("/shares-data", "Shares & Data", "shares-data"),
     ]
     items.extend(
         (

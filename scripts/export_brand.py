@@ -26,11 +26,12 @@ from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_storage as storage
+from common.service_tools import web_panel_shares_data as shares_data
 from common.service_tools import web_panel_host as host
 from common.service_tools import web_panel_maintenance as maintenance
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.maintenance_agent_config import DEFAULTS as MAINTENANCE_DEFAULTS
-from scripts.panel_samples import job_rows
+from scripts.panel_samples import job_rows, shares_data_snapshot
 
 GUIDE_STYLE = """
 .identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
@@ -132,7 +133,8 @@ def export_assets(assets: Path) -> None:
                   ("services.html", "Service artwork specimen", None), ("admin.html", "Administration specimen", None),
                   ("jobs.html", "Scheduled jobs specimen", None), ("logs.html", "Diagnostics specimen", None),
                   ("agents.html", "Agents specimen", None), ("maintenance-agent.html", "Maintenance agent specimen", None),
-                  ("agent-inbox.html", "Agent inbox specimen", None))
+                  ("agent-inbox.html", "Agent inbox specimen", None),
+                  ("shares-data.html", "Shares & Data specimen", None))
     icon_labels = {name: label for label, name in NAVIGATION_ICONS.items()}
     icon_gallery = "".join(
         f'<a class="icon-swatch tone-{ICON_TONES.get(name, "water")}" href="icon-{name}.svg">{render_icon(name)}'
@@ -291,7 +293,8 @@ def export_assets(assets: Path) -> None:
         }),
         patch.object(state.admin, "snapshot", return_value={"blocked": {}, "requests": [], "unit_state": "inactive"}),
         patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)),
-        patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}),
+        patch.object(storage, "load_storage_snapshot", return_value=shares_data_snapshot(
+            "full", timestamp="2026-01-01T09:00:00+00:00")),
         patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": False}),
         patch.object(maintenance, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}),
         patch.object(maintenance, "load_reports", return_value={
@@ -325,6 +328,7 @@ def export_assets(assets: Path) -> None:
             "tools.html": panel.render_tools(state, panel._PAGE_STYLE, {}),
             "services.html": panel.render_service_status(state, False),
             "admin.html": panel.render_admin(state, panel._PAGE_STYLE, {}),
+            "shares-data.html": shares_data.render_shares_data(state, panel._PAGE_STYLE, {"view": "scrubs"}),
             "agents.html": agents.render_agents(state, panel._PAGE_STYLE, {}),
             "maintenance-agent.html": maintenance.render_maintenance(state, panel._PAGE_STYLE),
             "agent-inbox.html": maintenance.render_inbox(state, panel._PAGE_STYLE),
@@ -337,10 +341,12 @@ def export_assets(assets: Path) -> None:
             for route, filename in (("/", "panel.html"), ("/agents", "agents.html"),
                                     ("/maintenance-agent", "maintenance-agent.html"), ("/agent-inbox", "agent-inbox.html"),
                                     ("/agent-tools", "tools.html"), ("/admin", "admin.html"),
+                                    ("/shares-data", "shares-data.html"),
                                     ("/credentials", "credentials.html"),
                                     ("/services", "services.html"), ("/jobs", "jobs.html"), ("/logs", "logs.html")):
                 document = document.replace(f'href="{route}"', f'href="{filename}"')
                 document = document.replace(f'href="{route}#', f'href="{filename}#')
+                document = document.replace(f'href="{route}?', f'href="{filename}?')
             (assets / name).write_text(document + "\n", encoding="utf-8")
 
 

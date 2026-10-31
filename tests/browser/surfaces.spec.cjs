@@ -923,6 +923,69 @@ test.describe('host inspection', () => {
   });
 });
 
+test.describe('Shares & Data', () => {
+  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('inventory, findings filters and recovery guidance work without JavaScript', async ({ page, developmentServer: dev }, info) => {
+    test.setTimeout(90000);
+    await page.goto(dev.url + '/admin');
+    await page.locator('.admin-tools').getByRole('link', { name: 'Shares & Data', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Shares & Data', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'projects_write', exact: true })).toBeVisible();
+    await expect(page.locator('.data-list')).toContainText('operator, maintainer');
+    await expect(page.locator('.data-list')).toContainText('archive_read');
+    const tabs = page.getByRole('navigation', { name: 'Shares and data views', exact: true });
+    await tabs.getByRole('link', { name: 'Backups & sync', exact: true }).click();
+    await expect(page.locator('.data-list')).toContainText('/srv/backups/projects');
+    await expect(page.locator('.data-list')).toContainText('/mnt/replica/archive');
+    await expect(page.locator('.data-list')).toContainText('Backup mirror');
+    await tabs.getByRole('link', { name: 'Scrubs & findings', exact: true }).click();
+    await expect(page.locator('.data-finding')).toHaveCount(3);
+    await page.getByLabel('Category', { exact: true }).selectOption('repairable');
+    await page.getByLabel('File path contains', { exact: true }).fill('holiday');
+    await page.getByRole('button', { name: 'Filter findings', exact: true }).click();
+    await expect(page.locator('.data-finding')).toHaveCount(1);
+    await expect(page.locator('.data-finding')).toContainText('holiday.jpg');
+    await page.getByRole('link', { name: 'Refresh snapshot', exact: true }).click();
+    await expect(page.getByLabel('Category', { exact: true })).toHaveValue('repairable');
+    await expect(page.getByLabel('File path contains', { exact: true })).toHaveValue('holiday');
+    const finding = page.locator('.data-finding');
+    await finding.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(finding.locator('pre')).toContainText('basaltw scrub inspect');
+    await expect(finding.locator('pre')).toContainText('--database /srv/parity/archive');
+    await expect(finding).toContainText('new baseline');
+    await page.screenshot({ path: info.outputPath('shares-data-desktop.png'), fullPage: true });
+
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      for (const view of ['shares', 'routines', 'scrubs']) {
+        await page.goto(dev.url + '/shares-data?view=' + view);
+        for (const width of [1440, 780, 320]) {
+          await page.setViewportSize({ width, height: 900 });
+          await page.evaluate(() => {
+            document.documentElement.style.fontSize = '200%';
+            for (const details of document.querySelectorAll('details')) details.open = true;
+          });
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${colorScheme}, ${view}, ${width}px`).toBe(true);
+          await expect(tabs.getByRole('link', { name: view === 'shares' ? 'Samba shares' : view === 'routines' ? 'Backups & sync' : 'Scrubs & findings', exact: true }))
+            .toHaveAttribute('aria-current', 'page');
+        }
+      }
+    }
+    await page.screenshot({ path: info.outputPath('shares-data-mobile-dark.png'), fullPage: true });
+    const toolbar = page.locator('#panel-development');
+    for (const scenario of ['empty', 'degraded']) {
+      await toolbar.getByLabel('Scenario').selectOption(scenario);
+      await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
+      await page.goto(dev.url + '/shares-data?view=scrubs');
+      if (scenario === 'empty') await expect(page.getByText('No scrub tasks configured in this snapshot.', { exact: false })).toBeVisible();
+      else await expect(page.getByText('Report unavailable', { exact: true })).toBeVisible();
+    }
+    await page.goto('about:blank');
+  });
+});
+
 test.describe('storage dashboard', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
   test('storage diagnostic, alternate views, partial coverage and responsive charts', async ({ page, developmentServer: dev }, info) => {

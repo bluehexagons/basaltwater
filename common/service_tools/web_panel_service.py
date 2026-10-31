@@ -37,6 +37,7 @@ from common.service_tools.web_panel_diagnostics import (
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
+from common.service_tools.web_panel_shares_data import parse_shares_data_query, render_shares_data
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -2186,7 +2187,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             RUNNER_REGISTRATION_ENDPOINT: "github-runner",
             "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
             "/maintenance-agent": "maintenance-agent", "/credentials": "credentials",
-            "/publishing": "publishing", "/admin": "admin",
+            "/publishing": "publishing", "/admin": "admin", "/shares-data": "shares-data",
             "/actions/agent-task": "agent-tools", "/actions/agent-task/save": "agent-tools",
             "/actions/agent-tool/prepare": "agent-tools", "/actions/agent-diagnostics": "agents",
             "/actions/agent-inbox": "agent-inbox", "/actions/maintenance-agent": "maintenance-agent",
@@ -2252,6 +2253,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if not self._feature_available(path):
             self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
+            return
+        if path == "/shares-data":
+            try:
+                query = parse_shares_data_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid Shares & Data view\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, query), "text/html")
             return
         if path == "/storage":
             try:

@@ -95,13 +95,28 @@ class PanelDevelopmentTests(unittest.TestCase):
     def test_every_full_panel_page_renders_without_host_commands(self) -> None:
         self.serve()
         for route in ("/", "/agents", "/agent-tools", "/agent-inbox", "/credentials", "/maintenance-agent",
-                      "/publishing", "/admin", "/jobs?load=1", "/logs?load=1", "/services?load=1", "/github-runner?load=1"):
+                      "/publishing", "/admin", "/shares-data", "/shares-data?view=routines", "/shares-data?view=scrubs",
+                      "/jobs?load=1", "/logs?load=1", "/services?load=1", "/github-runner?load=1"):
             with self.subTest(route=route):
                 status, headers, body = self.request(route)
                 self.assertEqual(status, 200)
                 self.assertIn('id="panel-development"', body)
                 self.assertIn("connect-src 'self'", headers["Content-Security-Policy"])
         self.assertFalse(self.state.credential_transport_available())
+
+    def test_shares_data_filters_and_navigation_use_the_real_http_handler(self) -> None:
+        self.serve()
+        status, _, body = self.request("/shares-data?view=scrubs&category=repairable&q=holiday")
+        self.assertEqual(status, 200)
+        self.assertIn("holiday.jpg", body)
+        self.assertNotIn("notes.txt", body)
+        self.assertIn('href="/shares-data" aria-current="page"', body)
+        self.assertIn('value="repairable" selected', body)
+        self.assertIn('value="holiday"', body)
+        for query in ("view=unknown", "view=scrubs&category=unknown", "view=shares&q=x", "view=scrubs&page=0",
+                      "view=scrubs&q=x&q=y", "view=scrubs&q=%00"):
+            with self.subTest(query=query):
+                self.assertEqual(self.request("/shares-data?" + query)[0], 400)
 
     def test_dev_controls_authentication_host_and_csrf_are_required(self) -> None:
         self.serve()
@@ -156,6 +171,7 @@ class PanelDevelopmentTests(unittest.TestCase):
     def test_minimal_scenario_hides_optional_pages(self) -> None:
         self.serve("minimal")
         self.assertEqual(self.request("/agents")[0], 404)
+        self.assertIn("Samba is not enabled", self.request("/shares-data")[2])
         self.assertNotIn('href="/credentials"', self.request("/")[2])
 
     def test_proxmox_scenario_renders_inventory_without_host_commands(self) -> None:
@@ -168,6 +184,7 @@ class PanelDevelopmentTests(unittest.TestCase):
             self.assertIn(text, body)
         self.assertNotIn('href="/admin"', body)
         self.assertEqual(self.request("/agents")[0], 404)
+        self.assertEqual(self.request("/shares-data")[0], 404)
 
     def test_proxmox_http_filters_preserve_state_and_only_change_guest_rows(self) -> None:
         self.serve("proxmox")

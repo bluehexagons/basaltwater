@@ -160,7 +160,7 @@ the checkout. The generator mocks host discovery; it does not contact a service
 or read private host state. Review [identity](index.html), [README](readme.html),
 [web panel](panel.html), [agent tools](tools.html),
 [Git and credentials](credentials.html), and
-[service artwork](services.html), [administration](admin.html),
+[service artwork](services.html), [administration](admin.html), [Shares & Data](shares-data.html),
 [scheduled jobs](jobs.html), [diagnostics](logs.html) and the
 [agent workbench](agents.html) together,
 for example through a loopback

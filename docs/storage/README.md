@@ -8,6 +8,7 @@ recovery. For applications that store data on a host, see
 | Guide | Use it for |
 | --- | --- |
 | [Storage operations](storage-operations.md) | Rsync mirrors, par2 protection, schedules, and operation locks |
+| [Shares & Data panel](../services/shares-data.md) | Browse managed share access, recurring copies and scrub findings |
 | [Generic path backups](backups.md) | Recurring path mirrors and mounted destinations |
 | [Samba shares](samba-shares.md) | Authenticated shares, access changes, removals, and SMB mounts |
 | [Managed Syncthing](syncthing.md) | Private file exchange, relays, administration, and recovery |

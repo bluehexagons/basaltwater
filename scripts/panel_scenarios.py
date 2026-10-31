@@ -27,7 +27,7 @@ from lib.github_runner_config import VERSION as RUNNER_VERSION, validate_policy 
 from lib.maintenance_agent_config import DEFAULTS, validate_policy
 from lib.proxmox_panel import sanitize_cluster
 from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token, validate_runner_registration_token
-from scripts.panel_samples import job_rows
+from scripts.panel_samples import job_rows, shares_data_snapshot
 from scripts.panel_storage_samples import storage_snapshot
 
 SCENARIOS = ("minimal", "full", "empty", "degraded", "proxmox")
@@ -153,7 +153,7 @@ class Scenario:
         ))
         self.replace(github_runner, "collect_runner_status", side_effect=self.runner_status)
         self.replace(panel, "submit_registration", side_effect=self.register_runner)
-        self.replace(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []})
+        self.replace(storage, "load_storage_snapshot", side_effect=lambda: shares_data_snapshot(self.name))
         self.replace(diagnostics, "collect_diagnostics", side_effect=self.diagnostics)
         self.replace(agents, "_tool_path", side_effect=lambda tool, home: "/fixture/" + tool if tool in self.features.tools else None)
         self.replace(agent_tasks, "_tool_path", side_effect=lambda tool, home: "/fixture/" + tool if tool in self.features.tools else None)

@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 from common.web_panel_events import WEB_PANEL_AUDIT_DIR
 from common.service_tools.web_panel_templates import render_heading
 from lib.atomic_io import read_json_file
+from lib.shares_data_inventory import configuration_inventory, validate_inventory
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
@@ -44,16 +45,19 @@ def collect_storage_snapshot() -> dict:
     from sync.service_tools.storage_ops import resolve_scrub_database_path, validate_mounts_for_operation
 
     result = {"version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
-              "available": False, "omitted_jobs": 0, "jobs": []}
+              "available": False, "omitted_jobs": 0, "jobs": [], "inventory": {"available": False}}
     try:
         saved = load_setup_config()
         if saved is None:
             return result
+        result["inventory"] = configuration_inventory(saved)
         config = RuntimeConfig.from_dict(saved)
         validate_scrub_specs(config.scrub_specs)
         result["omitted_jobs"] = max(0, len(config.scrub_specs) - MAX_JOBS)
         for directory, database, _redundancy, interval in config.scrub_specs[:MAX_JOBS]:
             job = {"directory": _text(directory), "interval": _text(interval),
+                   "database": _text(resolve_scrub_database_path(directory, database)),
+                   "redundancy": _text(_redundancy),
                    "status": "unavailable", "last_scan": "", "open_count": 0,
                    "omitted_findings": 0, "findings": []}
             result["jobs"].append(job)
@@ -112,6 +116,9 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
                 raise ValueError("Invalid job")
             _text(job.get("directory"))
             _text(job.get("interval"))
+            for field in ("database", "redundancy"):
+                if field in job:
+                    _text(job[field])
             if job.get("last_scan") != "":
                 _timestamp(job.get("last_scan"))
             if (not isinstance(job.get("findings"), list) or len(job["findings"]) > MAX_FINDINGS
@@ -127,6 +134,10 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
                 _text(finding.get("category"), 64)
                 _timestamp(finding.get("first_seen"))
                 _timestamp(finding.get("last_checked"))
+        try:
+            data["inventory"] = validate_inventory(data.get("inventory"))
+        except (ValueError, TypeError):
+            data["inventory"] = {"available": False}
         return data
     except (OSError, ValueError, TypeError, OverflowError):
         return {"available": False, "jobs": []}
