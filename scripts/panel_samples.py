@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from lib.shares_data_inventory import configuration_inventory
 from lib.data_actions import finding_revision
 from lib.storage_routines import configured_routines, routine_identity
-from common.service_tools.web_panel_findings import PAGE_SIZE
+from common.service_tools.web_panel_findings import PAGE_SIZE, task_key
 
 
 def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict:
@@ -75,7 +75,8 @@ def finding_catalog_page(snapshot: dict, query: dict[str, str]) -> dict:
     """Model a completed catalog query without opening host storage."""
     category, search = query.get("category", ""), query.get("q", "").casefold()
     findings = [(job, finding) for job in snapshot["jobs"] for finding in job["findings"]
-                if (not category or finding["category"] == category) and search in finding["path"].casefold()]
+                if (not category or finding["category"] == category) and search in finding["path"].casefold()
+                and (not query.get("scope") or task_key(job["directory"], job["database"]) == query["scope"])]
     total = len(findings)
     page = min(int(query.get("page", "1")), max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE))
     jobs = [job for job in snapshot["jobs"] if query.get("task", "").casefold() in job["directory"].casefold()]
@@ -84,4 +85,7 @@ def finding_catalog_page(snapshot: dict, query: dict[str, str]) -> dict:
             "total": total, "page": page, "tasks": len(snapshot["jobs"]),
             "health": {"available": True, "jobs": jobs[(tasks_page - 1) * PAGE_SIZE:tasks_page * PAGE_SIZE],
                        "total": len(jobs), "page": tasks_page},
-            "unavailable_jobs": sum(job["status"] == "unavailable" for job in snapshot["jobs"])}
+            "unavailable_jobs": sum(job["status"] == "unavailable" for job in snapshot["jobs"]),
+            **({"scope": next(({"available": True, "directory": job["directory"], "database": job["database"]}
+                for job in snapshot["jobs"] if task_key(job["directory"], job["database"]) == query["scope"]),
+                {"available": False})} if query.get("scope") else {})}

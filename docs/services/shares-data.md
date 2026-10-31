@@ -137,13 +137,14 @@ not contain selected-worker output. Correlate times and paths. See
 ## Review and resolve one finding
 
 In **Scrubs & findings**, search file paths and categories under **Browse findings**.
-**Task health** has a separate scrub-root search. Each shows twenty rows per page;
-filtering, clearing and pagination preserve the other section's filters. Searches
-accept 200 Unicode characters, match case-insensitively and treat punctuation
-literally.
+**Task health** has a separate scrub-root search. **Browse this task’s findings**
+selects its exact root and parity directory; **All scrub tasks** clears that
+selection. Each list shows twenty rows per page. Filtering, clearing and pagination
+preserve the other section's filters. Searches accept 200 Unicode characters,
+match case-insensitively and treat punctuation literally.
 
-Open **Inspect evidence and recovery options** on a finding. The shell-quoted
-controller command reads its private evidence. Browser actions are:
+Open **Inspect evidence and recovery options** on a finding. Browser actions are
+followed by a controller command for reading its private evidence:
 
 | Action | Effect / confirmation |
 | --- | --- |

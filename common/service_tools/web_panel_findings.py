@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from contextlib import closing
+import hashlib
+import json
 import os
 import sqlite3
 import stat
@@ -14,6 +16,11 @@ CATALOG_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage-findings.sqlite3")
 MAX_CATALOG_BYTES = 128 * 1024 * 1024
 PAGE_SIZE = 20
 MAX_PAGE = 1_000_000
+
+
+def task_key(directory: str, database: str) -> str:
+    """Identify an exported root/parity pair independently of catalog row order."""
+    return hashlib.sha256(json.dumps([directory, database], separators=(",", ":")).encode()).hexdigest()
 
 
 class FindingCatalog:
@@ -31,6 +38,7 @@ class FindingCatalog:
             CREATE TABLE findings (id INTEGER PRIMARY KEY, job INTEGER, path TEXT, search_path TEXT,
                 category TEXT, first_seen TEXT, last_checked TEXT, revision TEXT);
             CREATE INDEX finding_category ON findings(category);
+            CREATE INDEX finding_job ON findings(job);
         """)
         self.connection.execute("INSERT INTO metadata VALUES (2, ?)", (generated_at,))
 
@@ -107,6 +115,18 @@ def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PAT
                 raise ValueError("Catalog generation changed")
             category, search = query.get("category", ""), query.get("q", "").casefold()
             conditions, parameters = [], []
+            scope = query.get("scope", "")
+            selected = {"available": False}
+            if scope:
+                if not isinstance(scope, str) or not HEX_DIGEST.fullmatch(scope):
+                    raise ValueError("Invalid selected scrub task")
+                connection.create_function("task_key", 2, task_key, deterministic=True)
+                pair = connection.execute("SELECT directory,database_path FROM jobs "
+                    "WHERE task_key(directory,database_path)=? LIMIT 1", (scope,)).fetchone()
+                if pair is not None:
+                    selected = {"available": True, "directory": _text(pair[0]), "database": _text(pair[1])}
+                conditions.append("f.job IN (SELECT id FROM jobs WHERE task_key(directory,database_path)=?)")
+                parameters.append(scope)
             if category:
                 conditions.append("f.category=?")
                 parameters.append(category)
@@ -130,7 +150,8 @@ def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PAT
                 {"path": _text(file), "category": category, "first_seen": _timestamp(first),
                  "last_checked": _timestamp(checked), "revision": revision}))
         return {"available": True, "findings": findings, "total": total, "page": page,
-                "unavailable_jobs": unavailable, "tasks": tasks, "health": health}
+                "unavailable_jobs": unavailable, "tasks": tasks, "health": health,
+                **({"scope": selected} if scope else {})}
     except (OSError, ValueError, TypeError, sqlite3.Error, OverflowError):
         return {"available": False, "legacy": False}
     finally:

@@ -87,6 +87,65 @@ class CompleteFindingBrowserTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 page.parse_shares_data_query("view=scrubs&tasks_page=" + invalid)
 
+    def test_selected_task_matches_exact_root_and_parity_and_survives_export_reordering(self):
+        directory, database = self.config["scrub_specs"][0][:2]
+        for root, parity in ((directory, self.root / "other-parity"),
+                             (self.root / "data01", self.root / "prefix-parity"),
+                             (self.root / "Data0", self.root / "case-parity")):
+            Path(root).mkdir(exist_ok=True)
+            Path(parity).mkdir()
+            self.config["scrub_specs"].append([str(root), str(parity), "10%", "weekly"])
+            report = Findings(str(root), str(parity))
+            report.data["files"] = {"other.bin": {
+                "state": "open", "category": "missing_file", "first_seen": "2026-01-01T00:00:00+00:00",
+                "last_checked": "2026-01-02T00:00:00+00:00", "file_identity": None}}
+            report.save()
+        scope = catalog.task_key(directory, database)
+        for reordered in (False, True):
+            if reordered:
+                self.catalog_path.unlink()
+                self.config["scrub_specs"].reverse()
+            snapshot = self.collect()
+            seen = []
+            for number in range(1, 5):
+                result = self.load(snapshot, {"scope": scope, "page": str(number), "task": "no matching root"})
+                self.assertTrue(result["available"])
+                self.assertEqual(result["scope"], {"available": True, "directory": directory, "database": database})
+                self.assertEqual(result["total"], 63)
+                self.assertEqual(result["health"]["total"], 0)
+                for job, finding in result["findings"]:
+                    self.assertEqual(job, {"directory": directory, "database": database})
+                    seen.append(finding["path"])
+            self.assertEqual(len(set(seen)), 63)
+            self.assertEqual(self.load(snapshot, {"scope": scope, "category": "missing_file"})["total"], 0)
+            self.assertEqual(self.load(snapshot, {"scope": scope, "q": "file062"})["total"], 1)
+
+    def test_missing_task_is_unavailable_and_legacy_selection_remains_bounded(self):
+        snapshot = self.collect()
+        directory, database = self.config["scrub_specs"][0][:2]
+        scope = catalog.task_key(directory, database)
+        missing = catalog.task_key(directory, database + "-removed")
+        result = self.load(snapshot, {"scope": missing})
+        self.assertTrue(result["available"])
+        self.assertEqual(result["scope"], {"available": False})
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["health"]["total"], 9)
+        for exported in (snapshot, {key: value for key, value in snapshot.items() if key != "catalog"},
+                         {**snapshot, "jobs": [], "catalog": None}):
+            with self.subTest(complete=bool(exported.get("catalog")), empty=not exported["jobs"]):
+                with patch.object(page, "load_findings", side_effect=lambda snapshot, query: self.load(snapshot, query)):
+                    document = page._scrubs(exported, {"view": "scrubs", "scope": missing}, "nas")
+                self.assertIn("selected task is not available", document)
+                self.assertIn("All scrub tasks", document)
+                self.assertNotIn("No recorded findings match", document)
+        legacy = {key: value for key, value in snapshot.items() if key != "catalog"}
+        with patch.object(page, "load_findings", return_value={"available": False, "legacy": True}):
+            document = page._scrubs(legacy, {"view": "scrubs", "scope": scope}, "nas")
+        self.assertIn('aria-label="Selected scrub task"', document)
+        self.assertIn("Showing 1–20 of 20", document)
+        self.assertIn("43 additional findings", document)
+        self.assertNotIn("data1/", document)
+
     def test_all_task_health_is_paginated_and_root_search_is_independent_of_findings(self):
         for index in range(9, 24):
             directory = self.root / ("Straße-100%_[quoted]" if index == 23 else f"data{index}")
@@ -119,7 +178,8 @@ class CompleteFindingBrowserTests(unittest.TestCase):
         self.assertTrue(health["jobs"][0]["last_scan"])
         self.assertEqual(self.load(snapshot, {"task": "' OR 1=1 --"})["health"]["total"], 0)
         state = SimpleNamespace(manifest={"host": "nas"}, navigation=Mock(return_value=()))
-        query = page.parse_shares_data_query("view=scrubs&category=repairable&q=file&tasks_page=2&task=data&page=2")
+        scope = catalog.task_key(*self.config["scrub_specs"][0][:2])
+        query = page.parse_shares_data_query("view=scrubs&category=repairable&q=file&tasks_page=2&task=data&page=2&scope=" + scope)
         with patch.object(storage, "load_storage_snapshot", return_value=snapshot), patch.object(page, "load_findings", side_effect=lambda snapshot, query: self.load(snapshot, query)):
             document = page.render_shares_data(state, "", query)
         self.assertIn("data22", document)
@@ -132,20 +192,32 @@ class CompleteFindingBrowserTests(unittest.TestCase):
         self.assertIn('action="/shares-data#findings-heading"', document)
         self.assertIn('action="/shares-data#scrub-health"', document)
         for label, expected, anchor in (
-                ("Clear finding filters", {"view": "scrubs", "task": "data", "tasks_page": "2"}, "findings-heading"),
-                ("Clear task filter", {"view": "scrubs", "category": "repairable", "q": "file", "page": "2"}, "scrub-health")):
+                ("Clear finding filters", {"view": "scrubs", "task": "data", "tasks_page": "2", "scope": scope}, "findings-heading"),
+                ("Clear task filter", {"view": "scrubs", "category": "repairable", "q": "file", "page": "2", "scope": scope}, "scrub-health"),
+                ("All scrub tasks", {"view": "scrubs", "category": "repairable", "q": "file", "task": "data", "tasks_page": "2"}, "findings-heading")):
             target = re.search(r'href="([^"]+)">' + label, document).group(1)
             url = urlsplit(html.unescape(target))
             self.assertEqual(page.parse_shares_data_query(url.query), expected)
             self.assertEqual(url.fragment, anchor)
+        target = re.search(r'href="([^"]+)">Browse this task’s findings', document).group(1)
+        url = urlsplit(html.unescape(target))
+        self.assertEqual(page.parse_shares_data_query(url.query), {
+            "view": "scrubs", "task": "data", "tasks_page": "2",
+            "scope": catalog.task_key(*self.config["scrub_specs"][20][:2])})
+        self.assertEqual(url.fragment, "findings-heading")
         for query in ("view=shares&task=data", "view=routines&tasks_page=1", "view=scrubs&form=scrub&task=data",
                       "view=scrubs&task=%00", "view=scrubs&task=" + "x" * 201):
+            with self.subTest(query=query), self.assertRaises(ValueError):
+                page.parse_shares_data_query(query)
+        for query in ("view=shares&scope=" + scope, "view=scrubs&form=scrub&scope=" + scope,
+                      "view=scrubs&scope=", "view=scrubs&scope=" + "A" * 64,
+                      "view=scrubs&scope=" + scope + "&scope=" + scope):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 page.parse_shares_data_query(query)
 
     def test_full_length_unicode_searches_survive_combined_filters_and_pagination(self):
         query = {"view": "scrubs", "q": "\U0001f600" * 200, "task": "界" * 200,
-                 "category": "repairable", "page": "2", "tasks_page": "2"}
+                 "category": "repairable", "page": "2", "tasks_page": "2", "scope": "a" * 64}
         encoded = urlencode(query)
         self.assertGreater(len(encoded), 2048)
         self.assertEqual(page.parse_shares_data_query(encoded), query)
@@ -155,6 +227,7 @@ class CompleteFindingBrowserTests(unittest.TestCase):
                 parsed = page.parse_shares_data_query(urlsplit(html.unescape(target)).query)
                 self.assertEqual(parsed["q"], query["q"])
                 self.assertEqual(parsed["task"], query["task"])
+                self.assertEqual(parsed["scope"], query["scope"])
         for field in ("q", "task"):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 page.parse_shares_data_query(urlencode({**query, field: "界" * 201}))
@@ -188,6 +261,10 @@ class CompleteFindingBrowserTests(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertEqual(result["total"], 71)
         self.assertEqual(result["health"], {"available": False, "legacy": True})
+        selected = self.load(snapshot, {"scope": catalog.task_key(*self.config["scrub_specs"][0][:2])})
+        self.assertTrue(selected["available"])
+        self.assertEqual(selected["total"], 63)
+        self.assertEqual(selected["health"], {"available": False, "legacy": True})
         for reference in ({"version": True, "generated_at": snapshot["generated_at"]},
                           {"version": 2, "generated_at": snapshot["generated_at"]},
                           {"version": 1, "generated_at": snapshot["generated_at"], "extra": "invalid"}):

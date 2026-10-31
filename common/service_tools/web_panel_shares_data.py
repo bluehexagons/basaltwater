@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlencode
 
 from common.service_tools import web_panel_storage as storage
-from common.service_tools.web_panel_findings import MAX_PAGE, PAGE_SIZE, load_findings
+from common.service_tools.web_panel_findings import MAX_PAGE, PAGE_SIZE, load_findings, task_key
 from common.service_tools.web_panel_templates import render_document, render_heading
 from sync.service_tools.scrub_findings import ADVICE
 from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
@@ -64,8 +64,8 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
     # Both 200-character searches can expand to twelve URL bytes per character.
     if len(raw) > 6144:
         raise ValueError("Shares & Data query exceeds its limit")
-    values = parse_qs(raw, keep_blank_values=True, max_num_fields=6)
-    if set(values) - {"view", "category", "q", "page", "task", "tasks_page", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
+    values = parse_qs(raw, keep_blank_values=True, max_num_fields=7)
+    if set(values) - {"view", "category", "q", "page", "task", "tasks_page", "scope", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
         raise ValueError("Invalid Shares & Data filters")
     result = {key: items[0] for key, items in values.items()}
     if result.get("view", "shares") not in VIEWS:
@@ -80,7 +80,9 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
         page = result.get(key, "1")
         if not page.isascii() or not page.isdigit() or len(page) > 7 or not 1 <= int(page) <= MAX_PAGE:
             raise ValueError("Invalid scrub page")
-    filters = {"category", "q", "page", "task", "tasks_page"}
+    if "scope" in result and not HEX_REVISION.fullmatch(result["scope"]):
+        raise ValueError("Invalid selected scrub task")
+    filters = {"category", "q", "page", "task", "tasks_page", "scope"}
     if result.get("view", "shares") != "scrubs" and set(result) & filters:
         raise ValueError("Scrub filters require the scrubs view")
     editors = set(result) & {"edit", "form", "routine"}
@@ -200,7 +202,7 @@ def _pagination(query: dict, page: int, total: int, field: str, label: str) -> s
     for text, destination in (("Previous " + label, page - 1), ("Next " + label, page + 1)):
         if 1 <= destination <= (total + PAGE_SIZE - 1) // PAGE_SIZE:
             values = {"view": "scrubs", **{key: value for key, value in query.items()
-                      if key in {"category", "q", "page", "task", "tasks_page"} - {field}}, field: str(destination)}
+                      if key in {"category", "q", "page", "task", "tasks_page", "scope"} - {field}}, field: str(destination)}
             anchor = "scrub-health" if field == "tasks_page" else "findings-heading"
             body += f'<a class="refresh-link" href="{html.escape("/shares-data?" + urlencode(values), quote=True)}#{anchor}">{text}</a>'
     return body + '</nav>'
@@ -220,9 +222,9 @@ def _task_health(snapshot: dict, catalog: dict, query: dict) -> str:
     if health.get("available"):
         jobs = health["jobs"]
         body += f'''<form class="diagnostic-filters data-filters" method="get" action="/shares-data#scrub-health">
-<input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"category", "q", "page"})}
+<input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"category", "q", "page", "scope"})}
 <div><label for="scrub-task-search">Scrub root contains</label><input id="scrub-task-search" name="task" value="{html.escape(query.get("task", ""), quote=True)}" maxlength="200" type="search"></div>
-<button>Filter tasks</button>{_clear_filters(query, {"category", "q", "page"}, "scrub-health", "Clear task filter")}</form>'''
+<button>Filter tasks</button>{_clear_filters(query, {"category", "q", "page", "scope"}, "scrub-health", "Clear task filter")}</form>'''
         total, page = health["total"], health["page"]
         offset = (page - 1) * PAGE_SIZE
         body += (f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching scrub tasks</p>' if total else
@@ -235,6 +237,10 @@ def _task_health(snapshot: dict, catalog: dict, query: dict) -> str:
         body += f'<li class="event"><h3>{html.escape(job["directory"])}</h3><p><span class="badge {tone}">{STATUS_LABELS[job["status"]]}</span></p>'
         body += _facts([("Full scan interval", job["interval"]), ("Last full scan", _date(job["last_scan"])),
                         ("Open findings", str(job["open_count"])), ("Parity directory", job.get("database", "Not exported"))])
+        if job.get("database"):
+            selected = {"view": "scrubs", "scope": task_key(job["directory"], job["database"]),
+                        **{key: value for key, value in query.items() if key in {"task", "tasks_page"}}}
+            body += f'<p><a class="refresh-link" href="{html.escape("/shares-data?" + urlencode(selected), quote=True)}#findings-heading">Browse this task’s findings →</a></p>'
         if job.get("omitted_findings") and not complete:
             body += f'<p class="data-notice">{job["omitted_findings"]} additional findings for this task are outside this snapshot. Use basaltw scrub status for the complete report.</p>'
         body += '</li>'
@@ -249,7 +255,7 @@ def _task_health(snapshot: dict, catalog: dict, query: dict) -> str:
 def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
     body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
     jobs = snapshot["jobs"]
-    if not jobs:
+    if not jobs and not query.get("scope"):
         return body + '<p class="empty">No scrub integrity reports in this snapshot. Newly saved tasks appear after the next export; active tasks create reports when they run.</p>'
     catalog = load_findings(snapshot, query)
     complete = catalog["available"]
@@ -257,7 +263,8 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     body += '<p class="data-notice">Recorded scans describe integrity at scan time. Daily parity maintenance does not resolve open findings.</p>'
     if complete:
         noun = "task" if catalog["tasks"] == 1 else "tasks"
-        body += f'<p class="data-notice">The finding browser includes all {catalog["tasks"]} configured scrub {noun} in this export.</p>'
+        if not query.get("scope"):
+            body += f'<p class="data-notice">The finding browser includes all {catalog["tasks"]} configured scrub {noun} in this export.</p>'
         if catalog["unavailable_jobs"]:
             body += f'<p class="event" role="status">{catalog["unavailable_jobs"]} scrub reports could not be fully exported. Results may be incomplete. Check their mounts and reports through the controller.</p>'
     elif catalog.get("legacy"):
@@ -266,21 +273,34 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     options = '<option value="">All categories</option>' + ''.join(
         f'<option value="{name}"{" selected" if name == category else ""}>{name.replace("_", " ").capitalize()}</option>' for name in ADVICE
     )
-    body += f'''<section aria-labelledby="findings-heading">{render_heading("Browse findings", "diagnostics", heading_id="findings-heading")}
+    body += '<section aria-labelledby="findings-heading">' + render_heading("Browse findings", "diagnostics", heading_id="findings-heading")
+    selection_available = True
+    if scope := query.get("scope"):
+        selected = (catalog.get("scope", {}) if complete else next((job for job in jobs
+                    if job.get("database") and task_key(job["directory"], job["database"]) == scope), {}))
+        selection_available = bool(selected.get("directory"))
+        if selection_available:
+            body += '<div class="event" role="region" aria-label="Selected scrub task">' + _facts([
+                ("Scrub root", selected["directory"]), ("Parity directory", selected["database"])]) + '</div>'
+        else:
+            body += '<p class="event" role="status">The selected task is not available in this export. Refresh or browse all scrub tasks.</p>'
+        body += '<p>' + _clear_filters(query, {"category", "q", "task", "tasks_page"}, "findings-heading", "All scrub tasks") + '</p>'
+    body += f'''
 <form class="diagnostic-filters data-filters" method="get" action="/shares-data#findings-heading">
-<input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"task", "tasks_page"})}<div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
+<input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"task", "tasks_page", "scope"})}<div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
 <div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="200" type="search"></div>
-<button>Filter findings</button>{_clear_filters(query, {"task", "tasks_page"}, "findings-heading", "Clear finding filters")}</form>'''
+<button>Filter findings</button>{_clear_filters(query, {"task", "tasks_page", "scope"}, "findings-heading", "Clear finding filters")}</form>'''
     if not complete and not catalog.get("legacy"):
         return body + '<p class="empty" role="status">The complete findings catalog is unavailable or changed during export. Refresh after the next export. This does not mean there are no findings.</p></section>' + health
     findings = catalog["findings"] if complete else [(job, finding) for job in jobs for finding in job["findings"]
-                if (not category or finding["category"] == category) and search.casefold() in finding["path"].casefold()]
+                if (not category or finding["category"] == category) and search.casefold() in finding["path"].casefold()
+                and (not query.get("scope") or task_key(job["directory"], job.get("database", "")) == query["scope"])]
     total = catalog["total"] if complete else len(findings)
     page = catalog["page"] if complete else min(int(query.get("page", "1")), max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE))
     offset = (page - 1) * PAGE_SIZE
-    if not findings:
+    if not findings and selection_available:
         body += '<p class="empty">No recorded findings match these filters in this snapshot.</p>'
-    else:
+    elif findings:
         body += f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching findings in this snapshot</p><ul class="data-list">'
         visible = findings if complete else findings[offset:offset + PAGE_SIZE]
         for job, finding in visible:
@@ -294,11 +314,11 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
 <p>{html.escape(ADVICE.get(finding["category"], "Inspect the recorded evidence before changing data."))}</p>
 <p class="event-meta">First detected: {html.escape(_date(finding["first_seen"]))} · Last checked: {html.escape(_date(finding["last_checked"]))}</p>
 <details><summary>Inspect evidence and recovery options</summary>
+{recovery_form(job, finding, csrf) if controls else ''}
 <p>Run this on the controller to inspect the saved finding, current file identity and parity paths:</p>
 <pre><code>{html.escape(shlex.join(command))}</code></pre>
 <p>Targeted verify, repair, restore and acceptance are available through basaltw scrub. Repair and restore verify a staged candidate and retain originals. Accept establishes the current content as the new baseline; it requires your confirmation that the content is correct.</p>
-<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a>
-{recovery_form(job, finding, csrf) if controls else ''}</details></li>'''
+<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a></details></li>'''
         body += '</ul>'
     return body + _pagination(query, page, total, "page", "findings") + '</section>' + health
 
