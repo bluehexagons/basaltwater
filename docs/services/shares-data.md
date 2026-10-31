@@ -18,8 +18,10 @@ The three views work without JavaScript:
   storage job logs separately. An inventory entry does not prove job completion
   or that a backup is recoverable.
 - **Scrubs & findings** distinguishes unavailable reports, never-scanned roots,
-  incomplete scans, open findings, and completed recorded scans. Filter exported
-  findings by category or file path and move between pages. Each finding explains
+  incomplete scans, open findings, and completed recorded scans. Filter open
+  findings across all configured tasks by category or file path and move between
+  pages of twenty. File searches are case-insensitive and treat punctuation
+  literally. Each finding explains
   the category and provides a shell-quoted controller inspection command with
   its configured scrub root and parity directory.
 
@@ -30,10 +32,23 @@ directories, start storage jobs or read private PAR2 evidence. Exports older tha
 not suppress a valid integrity report. Older exporters need setup/refresh before
 the new configuration views can show their data.
 
-Exports include at most 64 shares, 64 users per share, 128 backup/sync routines,
-eight scrub tasks and 20 findings per scrub task. Omitted counts remain visible;
-filters and pagination apply to exported findings only. Use `basaltw scrub status
-HOST` for all recorded open findings, and `--all` to include resolved findings.
+The summary includes at most 64 shares, 64 users per share, 128 backup/sync routines,
+eight scrub tasks and twenty preview findings per task. A separate sanitized local
+catalog includes open findings from every configured scrub task, including tasks
+outside that summary. Filters and pagination use this complete catalog. Failed
+mount checks, unreadable reports or unsupported report metadata produce an explicit
+incomplete-results notice. A missing, corrupt or mismatched catalog is unavailable,
+never an empty or healthy result. Older exporters retain the limited preview and
+show an update notice.
+
+Catalog export shares the storage collector’s twenty-second deadline and has a
+128 MiB file limit. The summary has an 8 MiB transport and read limit to accommodate
+the supported inventory sizes and escaped Unicode paths. Only a completed export
+is published; interruption or exceeding these bounds makes the new export
+unavailable. Queries read an immutable local
+file, return at most twenty rows and have a short execution budget. They never
+read NAS paths. Use `basaltw scrub status HOST` for controller inspection and
+`--all` to include resolved findings.
 Passwords, mount credentials, raw PAR2 output, and recovery copies are not exported.
 
 ## Review and resolve one finding

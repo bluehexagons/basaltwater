@@ -48,6 +48,9 @@ class WebPanelRemovalTest(unittest.TestCase):
         self.storage.write_text("managed storage snapshot\n")
         self.storage.chmod(0o600)
         self.files[self.storage] = (self.storage.read_text(), self.storage.stat().st_ino, self.storage.stat().st_mode)
+        self.catalog = paths["WEB_PANEL_AUDIT_DIR"] / "storage-findings.sqlite3"
+        self.catalog.write_text("managed finding catalog\n")
+        self.files[self.catalog] = (self.catalog.read_text(), self.catalog.stat().st_ino, self.catalog.stat().st_mode)
         self.enterContext(patch.multiple(panel, **{name: str(path) for name, path in paths.items()}))
         for module, names in (
             ("desktop.guacamole_steps", ("preflight_units", "preflight_configuration", "remove_guacamole")),
@@ -186,6 +189,7 @@ class WebPanelRemovalTest(unittest.TestCase):
         with patch.object(panel, "run", return_value=subprocess.CompletedProcess([], 0)):
             panel.remove_web_panel()
         self.assertFalse(self.storage.exists())
+        self.assertFalse(self.catalog.exists())
         self.assertEqual(retained.read_text(), "keep this file\n")
 
     def test_removal_rejects_a_symlinked_storage_snapshot_before_mutation(self) -> None:
@@ -216,6 +220,15 @@ class WebPanelRemovalTest(unittest.TestCase):
                 panel.remove_web_panel()
         self.missing_unit.assert_called_once_with("basaltwater-web-panel-audit.service")
         self.assert_installation_preserved()
+
+    def test_removal_rejects_a_symlinked_finding_catalog_before_mutation(self) -> None:
+        self.catalog.unlink()
+        self.catalog.symlink_to(self.storage)
+        with patch.object(panel, "run") as run, self.assertRaisesRegex(RuntimeError, "unsafe.*event file"):
+            panel.remove_web_panel()
+        run.assert_not_called()
+        self.assertEqual(self.storage.read_text(), "managed storage snapshot\n")
+        self.assertTrue(self.paths["WEB_PANEL_SERVICE_FILE"].is_file())
 
 
 class MissingPanelUnitInspectionTest(unittest.TestCase):

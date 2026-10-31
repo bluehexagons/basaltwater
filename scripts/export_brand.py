@@ -31,7 +31,7 @@ from common.service_tools import web_panel_host as host
 from common.service_tools import web_panel_maintenance as maintenance
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.maintenance_agent_config import DEFAULTS as MAINTENANCE_DEFAULTS
-from scripts.panel_samples import job_rows, shares_data_snapshot
+from scripts.panel_samples import finding_catalog_page, job_rows, shares_data_snapshot
 
 GUIDE_STYLE = """
 .identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
@@ -296,6 +296,7 @@ def export_assets(assets: Path) -> None:
         patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)),
         patch.object(storage, "load_storage_snapshot", return_value=shares_data_snapshot(
             "full", timestamp="2026-01-01T09:00:00+00:00")),
+        patch.object(shares_data, "load_findings", side_effect=finding_catalog_page),
         patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": False}),
         patch.object(maintenance, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}),
         patch.object(maintenance, "load_reports", return_value={

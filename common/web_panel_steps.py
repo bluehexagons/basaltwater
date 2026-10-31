@@ -1008,6 +1008,7 @@ def _preflight_web_panel_removal() -> tuple[str | None, bool]:
         WEB_PANEL_INGEST_TOKEN,
         WEB_PANEL_AUDIT_SNAPSHOT,
         os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json"),
+        os.path.join(WEB_PANEL_AUDIT_DIR, "storage-findings.sqlite3"),
         WEB_PANEL_NOTIFICATION_LOG,
     ):
         if os.path.lexists(path) and (
@@ -1090,6 +1091,7 @@ def _remove_web_panel(owner: UnitOwnership) -> None:
     audit_present = any(os.path.exists(path) for path in (
         WEB_PANEL_AUDIT_TIMER_FILE, WEB_PANEL_AUDIT_SERVICE_FILE,
         WEB_PANEL_AUDIT_SNAPSHOT, os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json"),
+        os.path.join(WEB_PANEL_AUDIT_DIR, "storage-findings.sqlite3"),
     ))
     panel_present = any(os.path.exists(path) for path in (
         WEB_PANEL_SERVICE_FILE, WEB_PANEL_MANIFEST, WEB_PANEL_AUTH_FILE,
@@ -1134,6 +1136,7 @@ def _remove_web_panel(owner: UnitOwnership) -> None:
             pass
     for path in (WEB_PANEL_AUDIT_SNAPSHOT,
                  os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json"),
+                 os.path.join(WEB_PANEL_AUDIT_DIR, "storage-findings.sqlite3"),
                  WEB_PANEL_NOTIFICATION_LOG):
         try:
             os.remove(path)

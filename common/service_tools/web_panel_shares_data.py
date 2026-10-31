@@ -8,11 +8,11 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlencode
 
 from common.service_tools import web_panel_storage as storage
+from common.service_tools.web_panel_findings import MAX_PAGE, PAGE_SIZE, load_findings
 from common.service_tools.web_panel_templates import render_document, render_heading
 from sync.service_tools.scrub_findings import ADVICE
 from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
 
-PAGE_SIZE = 20
 VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
 STATUS_LABELS = {
     "unavailable": "Report unavailable", "never_scanned": "No full scan recorded",
@@ -57,7 +57,7 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
     if len(query) > 200 or any(ord(character) < 32 or ord(character) == 127 for character in query):
         raise ValueError("Invalid finding search")
     page = result.get("page", "1")
-    if not page.isascii() or not page.isdigit() or not 1 <= int(page) <= storage.MAX_JOBS * storage.MAX_FINDINGS:
+    if not page.isascii() or not page.isdigit() or len(page) > 7 or not 1 <= int(page) <= MAX_PAGE:
         raise ValueError("Invalid findings page")
     if result.get("view", "shares") != "scrubs" and set(result) & {"category", "q", "page"}:
         raise ValueError("Finding filters require the scrubs view")
@@ -134,18 +134,27 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     jobs = snapshot["jobs"]
     if not jobs:
         return body + '<p class="empty">No scrub tasks configured in this snapshot. Add parity protection with the controller’s --scrub option.</p>'
+    catalog = load_findings(snapshot, query)
+    complete = catalog["available"]
     body += '<p class="data-notice">Recorded file integrity is separate from job execution. Daily parity maintenance does not resolve open findings, and a recorded scan does not verify later changes.</p><ul class="data-list">'
     for job in jobs:
         tone = "warning" if job["status"] in {"findings", "incomplete"} else "error" if job["status"] == "unavailable" else ""
         body += f'<li class="event"><h3>{html.escape(job["directory"])}</h3><p><span class="badge {tone}">{STATUS_LABELS[job["status"]]}</span></p>'
         body += _facts([("Full scan interval", job["interval"]), ("Last full scan", _date(job["last_scan"])),
                         ("Open findings", str(job["open_count"])), ("Parity directory", job.get("database", "Not exported"))])
-        if job["omitted_findings"]:
+        if job["omitted_findings"] and not complete:
             body += f'<p class="data-notice">{job["omitted_findings"]} additional findings for this task are outside this snapshot. Use basaltw scrub status for the complete report.</p>'
         body += '</li>'
     body += '</ul>'
     if snapshot["omitted_jobs"]:
-        body += f'<p class="data-notice">{snapshot["omitted_jobs"]} additional scrub tasks omitted from this snapshot.</p>'
+        body += f'<p class="data-notice">{snapshot["omitted_jobs"]} additional scrub tasks outside the summary above.</p>'
+    if complete:
+        noun = "task" if catalog["tasks"] == 1 else "tasks"
+        body += f'<p class="data-notice">The finding browser includes all {catalog["tasks"]} configured scrub {noun} in this export.</p>'
+        if catalog["unavailable_jobs"]:
+            body += f'<p class="event" role="status">{catalog["unavailable_jobs"]} scrub reports could not be fully exported. Results may be incomplete. Check their mounts and reports through the controller.</p>'
+    elif catalog.get("legacy"):
+        body += '<p class="data-notice">This older export includes up to twenty findings per task and eight tasks. Update the installed exporter to browse the complete report here.</p>'
     category, search = query.get("category", ""), query.get("q", "")
     options = '<option value="">All categories</option>' + ''.join(
         f'<option value="{name}"{" selected" if name == category else ""}>{name.replace("_", " ").capitalize()}</option>' for name in ADVICE
@@ -155,20 +164,25 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
 <input type="hidden" name="view" value="scrubs"><div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
 <div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="200" type="search"></div>
 <button>Filter findings</button><a class="refresh-link" href="/shares-data?view=scrubs">Clear filters</a></form>'''
-    findings = [(job, finding) for job in jobs for finding in job["findings"]
+    if not complete and not catalog.get("legacy"):
+        return body + '<p class="empty" role="status">The complete findings catalog is unavailable or changed during export. Refresh after the next export. This does not mean there are no findings.</p></section>'
+    findings = catalog["findings"] if complete else [(job, finding) for job in jobs for finding in job["findings"]
                 if (not category or finding["category"] == category) and search.casefold() in finding["path"].casefold()]
-    page = min(int(query.get("page", "1")), max(1, (len(findings) + PAGE_SIZE - 1) // PAGE_SIZE))
+    total = catalog["total"] if complete else len(findings)
+    page = catalog["page"] if complete else min(int(query.get("page", "1")), max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE))
     offset = (page - 1) * PAGE_SIZE
     if not findings:
         body += '<p class="empty">No recorded findings match these filters in this snapshot.</p>'
     else:
-        body += f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, len(findings))} of {len(findings)} matching findings in this snapshot</p><ul class="data-list">'
-        for job, finding in findings[offset:offset + PAGE_SIZE]:
+        body += f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching findings in this snapshot</p><ul class="data-list">'
+        visible = findings if complete else findings[offset:offset + PAGE_SIZE]
+        for job, finding in visible:
             command = ["basaltw", "scrub", "inspect", host, "--directory", job["directory"]]
             if job.get("database"):
                 command += ["--database", job["database"]]
             command += ["--file", finding["path"]]
             body += f'''<li class="event data-finding"><h3>{html.escape(finding["path"])}</h3>
+<p class="event-meta">Scrub root: {html.escape(job["directory"])}</p>
 <p><span class="badge warning">{html.escape(finding["category"].replace("_", " "))}</span></p>
 <p>{html.escape(ADVICE.get(finding["category"], "Inspect the recorded evidence before changing data."))}</p>
 <p class="event-meta">First detected: {html.escape(_date(finding["first_seen"]))} · Last checked: {html.escape(_date(finding["last_checked"]))}</p>
@@ -181,7 +195,7 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
         body += '</ul>'
     body += '<nav class="data-pagination" aria-label="Findings pages">'
     for label, destination in (("Previous findings", page - 1), ("Next findings", page + 1)):
-        if 1 <= destination <= (len(findings) + PAGE_SIZE - 1) // PAGE_SIZE:
+        if 1 <= destination <= (total + PAGE_SIZE - 1) // PAGE_SIZE:
             url = "/shares-data?" + urlencode({**query, "view": "scrubs", "page": str(destination)})
             body += f'<a class="refresh-link" href="{html.escape(url, quote=True)}">{label}</a>'
     return body + '</nav></section>'

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from lib.shares_data_inventory import configuration_inventory
 from lib.data_actions import finding_revision
+from common.service_tools.web_panel_findings import PAGE_SIZE
 
 
 def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict:
@@ -48,3 +49,15 @@ def job_rows() -> list[dict[str, str]]:
             "persistent": "Yes",
         })
     return rows
+
+
+def finding_catalog_page(snapshot: dict, query: dict[str, str]) -> dict:
+    """Model a completed catalog query without opening host storage."""
+    category, search = query.get("category", ""), query.get("q", "").casefold()
+    findings = [(job, finding) for job in snapshot["jobs"] for finding in job["findings"]
+                if (not category or finding["category"] == category) and search in finding["path"].casefold()]
+    total = len(findings)
+    page = min(int(query.get("page", "1")), max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE))
+    return {"available": True, "findings": findings[(page - 1) * PAGE_SIZE:page * PAGE_SIZE],
+            "total": total, "page": page, "tasks": len(snapshot["jobs"]),
+            "unavailable_jobs": sum(job["status"] == "unavailable" for job in snapshot["jobs"])}

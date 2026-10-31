@@ -19,7 +19,7 @@ from lib.data_actions import HEX_DIGEST, finding_revision
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
 MAX_FINDINGS = 20
-MAX_BYTES = 512 * 1024
+MAX_BYTES = 8 * 1024 * 1024
 STATUSES = {"unavailable", "never_scanned", "incomplete", "findings", "verified"}
 
 
@@ -37,16 +37,18 @@ def _timestamp(value: object) -> str:
     return text
 
 
-def collect_storage_snapshot() -> dict:
+def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
     """Read configured reports only; never run PAR2 or change storage state."""
     from lib.machine_state import load_setup_config
     from lib.runtime_config import RuntimeConfig
     from lib.validation import validate_scrub_specs
     from sync.service_tools.scrub_findings import ADVICE, Findings
     from sync.service_tools.storage_ops import resolve_scrub_database_path, validate_mounts_for_operation
+    from common.service_tools.web_panel_findings import FindingCatalog
 
     result = {"version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
               "available": False, "omitted_jobs": 0, "jobs": [], "inventory": {"available": False}}
+    catalog = FindingCatalog(catalog_path, result["generated_at"]) if catalog_path else None
     try:
         saved = load_setup_config()
         if saved is None:
@@ -55,13 +57,16 @@ def collect_storage_snapshot() -> dict:
         config = RuntimeConfig.from_dict(saved)
         validate_scrub_specs(config.scrub_specs)
         result["omitted_jobs"] = max(0, len(config.scrub_specs) - MAX_JOBS)
-        for directory, database, _redundancy, interval in config.scrub_specs[:MAX_JOBS]:
+        specs = config.scrub_specs if catalog else config.scrub_specs[:MAX_JOBS]
+        for directory, database, _redundancy, interval in specs:
             job = {"directory": _text(directory), "interval": _text(interval),
                    "database": _text(resolve_scrub_database_path(directory, database)),
                    "redundancy": _text(_redundancy),
                    "status": "unavailable", "last_scan": "", "open_count": 0,
                    "omitted_findings": 0, "findings": []}
-            result["jobs"].append(job)
+            if len(result["jobs"]) < MAX_JOBS:
+                result["jobs"].append(job)
+            job_id = catalog.add_job(job) if catalog else None
             try:
                 database = resolve_scrub_database_path(directory, database)
                 valid, _error = validate_mounts_for_operation([directory, database], config, "storage snapshot")
@@ -73,30 +78,42 @@ def collect_storage_snapshot() -> dict:
                     if not isinstance(scan, dict) or type(scan.get("completed")) is not bool:
                         raise ValueError("Invalid scan record")
                     job["last_scan"] = _timestamp(scan.get("finished_at"))
+                invalid_findings = False
                 for relative, finding in report.data["files"].items():
                     if finding["state"] != "open":
                         continue
                     job["open_count"] += 1
-                    if len(job["findings"]) == MAX_FINDINGS:
+                    if len(job["findings"]) == MAX_FINDINGS and catalog is None:
                         continue
                     try:
                         path = _text(os.path.join(directory, relative))
                         first = _timestamp(finding.get("first_seen"))
                         checked = _timestamp(finding.get("last_checked"))
                     except ValueError:
+                        invalid_findings = True
                         continue
                     category = finding["category"] if finding["category"] in ADVICE else "tool_error"
-                    job["findings"].append({"path": path, "category": category,
-                                            "first_seen": first, "last_checked": checked,
-                                            "revision": finding_revision(finding)})
-                job["omitted_findings"] = job["open_count"] - len(job["findings"])
-                job["status"] = ("findings" if job["open_count"] else "never_scanned" if scan is None
+                    public = {"path": path, "category": category, "first_seen": first,
+                              "last_checked": checked, "revision": finding_revision(finding)}
+                    if len(job["findings"]) < MAX_FINDINGS:
+                        job["findings"].append(public)
+                    if catalog:
+                        catalog.add_finding(job_id, public)
+                job["status"] = ("unavailable" if invalid_findings else "findings" if job["open_count"] else "never_scanned" if scan is None
                                  else "verified" if scan["completed"] else "incomplete")
             except (OSError, ValueError, RuntimeError):
                 job["status"] = "unavailable"
+            job["omitted_findings"] = job["open_count"] - len(job["findings"])
+            if catalog:
+                catalog.finish_job(job_id, job["status"])
         result["available"] = True
+        if catalog:
+            result["catalog"] = {"version": 1, "generated_at": result["generated_at"]}
     except (OSError, ValueError, RuntimeError):
         pass
+    finally:
+        if catalog:
+            catalog.close()
     return result
 
 
@@ -174,6 +191,15 @@ def render_storage() -> str:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] != ["--export"] or os.geteuid() != 0:
+    import argparse
+    from lib.validation import validate_filesystem_path
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--export", action="store_true")
+    parser.add_argument("--catalog")
+    args = parser.parse_args()
+    if not args.export or os.geteuid() != 0:
         raise SystemExit("Storage export requires root and --export")
-    print(json.dumps(collect_storage_snapshot()))
+    if args.catalog:
+        validate_filesystem_path(args.catalog)
+    print(json.dumps(collect_storage_snapshot(catalog_path=args.catalog)))

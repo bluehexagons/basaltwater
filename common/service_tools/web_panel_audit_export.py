@@ -22,7 +22,7 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.web_panel_events import WEB_PANEL_AUDIT_SNAPSHOT
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import _fsync_directory, write_json_atomic
 from lib.security_activity import managed_setup_audit_windows
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
@@ -50,14 +50,15 @@ def _audit_tool(name: str) -> str | None:
     return shutil.which(name, path=_AUDIT_PATH)
 
 
-def _limit_output_file_size() -> None:
+def _limit_output_file_size(limit: int = _MAX_COMMAND_OUTPUT_BYTES + 1) -> None:
     resource.setrlimit(
         resource.RLIMIT_FSIZE,
-        (_MAX_COMMAND_OUTPUT_BYTES + 1, _MAX_COMMAND_OUTPUT_BYTES + 1),
+        (limit, limit),
     )
 
 
-def _run_bounded(command: list[str], *, timeout: int) -> tuple[int, str] | None:
+def _run_bounded(command: list[str], *, timeout: int, file_size_limit: int = _MAX_COMMAND_OUTPUT_BYTES + 1,
+                 output_size_limit: int = _MAX_COMMAND_OUTPUT_BYTES) -> tuple[int, str] | None:
     """Run a local audit command without allowing unbounded captured output."""
 
     try:
@@ -68,16 +69,16 @@ def _run_bounded(command: list[str], *, timeout: int) -> tuple[int, str] | None:
                 stdout=output_file,
                 stderr=subprocess.DEVNULL,
                 timeout=timeout,
-                preexec_fn=_limit_output_file_size,
+                preexec_fn=lambda: _limit_output_file_size(file_size_limit),
             )
             output_size = output_file.tell()
             output_file.seek(0)
-            output = output_file.read(_MAX_COMMAND_OUTPUT_BYTES + 1).decode(
+            output = output_file.read(output_size_limit + 1).decode(
                 "utf-8", errors="replace"
             )
     except (OSError, subprocess.SubprocessError):
         return None
-    if output_size > _MAX_COMMAND_OUTPUT_BYTES:
+    if output_size > output_size_limit:
         return None
     return result.returncode, output
 
@@ -315,17 +316,33 @@ def main() -> int:
     validate_filesystem_path(args.output, must_exist=False)
     # Isolate mount/report reads from the audit collector with a deadline and
     # output cap. Failure replaces an old healthy snapshot with unavailable.
-    storage = _run_bounded([
-        sys.executable, os.path.join(SOURCE_ROOT, "common/service_tools/web_panel_storage.py"),
-        "--export",
-    ], timeout=20)
+    from common.service_tools.web_panel_findings import MAX_CATALOG_BYTES
+    from common.service_tools.web_panel_storage import MAX_BYTES
     import json
-    try:
-        storage_snapshot = json.loads(storage[1]) if storage and storage[0] == 0 else {"available": False}
-    except ValueError:
-        storage_snapshot = {"available": False}
-    write_json_atomic(os.path.join(os.path.dirname(args.output), "storage.json"),
-                      storage_snapshot, mode=0o640)
+    output_dir = os.path.dirname(args.output) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".storage-export-", dir=output_dir) as temporary:
+        catalog_path = os.path.join(temporary, "findings.sqlite3")
+        storage = _run_bounded([
+            sys.executable, os.path.join(SOURCE_ROOT, "common/service_tools/web_panel_storage.py"),
+            "--export", "--catalog", catalog_path,
+        ], timeout=20, file_size_limit=MAX_CATALOG_BYTES, output_size_limit=MAX_BYTES)
+        try:
+            storage_snapshot = json.loads(storage[1]) if storage and storage[0] == 0 else {"available": False}
+            if not isinstance(storage_snapshot, dict):
+                raise ValueError("Invalid storage export")
+            if storage_snapshot.get("catalog"):
+                # Publish the immutable catalog first. Readers reject mismatched
+                # generations during this short window or after interruption.
+                os.chmod(catalog_path, 0o640)
+                os.chown(catalog_path, -1, os.stat(output_dir).st_gid)
+                with open(catalog_path, "rb") as stream:
+                    os.fsync(stream.fileno())
+                os.replace(catalog_path, os.path.join(output_dir, "storage-findings.sqlite3"))
+                _fsync_directory(output_dir)
+        except (OSError, ValueError):
+            storage_snapshot = {"available": False}
+        write_json_atomic(os.path.join(output_dir, "storage.json"), storage_snapshot, mode=0o640)
     write_json_atomic(
         args.output,
         collect_audit_snapshot(),
