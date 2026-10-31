@@ -55,9 +55,13 @@ status inventory. Define a bounded deliverable before starting:
   [#87: preferences](https://github.com/bluehexagons/basaltwater/issues/87) and
   [#100: Akaunting](https://github.com/bluehexagons/basaltwater/issues/100):
   establish scope and an operation/recovery owner.
-- [#111: Arch certificates](https://github.com/bluehexagons/basaltwater/issues/111)
-  and [#112: unavailable tools](https://github.com/bluehexagons/basaltwater/issues/112):
-  obtain a reproducible case and clear acceptance.
+
+The reported [Arch certificate script failure](https://github.com/bluehexagons/basaltwater/issues/111)
+and [unavailable-tool controls](https://github.com/bluehexagons/basaltwater/issues/112)
+are resolved. Native Arch userland checks cover generated POSIX/fish enrollment
+commands; automated panel checks cover installation-aware navigation, diagnostics
+and action guards. Full CachyOS desktop and client-browser trust qualification
+remain separate; see the [coverage map](testing-coverage.md).
 
 ## Keeping plans useful
 
