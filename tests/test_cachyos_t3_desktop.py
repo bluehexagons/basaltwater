@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -111,6 +113,10 @@ class DesktopRefreshTests(unittest.TestCase):
         self.proc = self.home / "proc"
         self.proc.mkdir()
         stack.enter_context(patch.object(refresh, "PROC", self.proc))
+        self.runtime_directory = refresh._runtime_directory
+        stack.enter_context(patch.object(refresh, "_runtime_directory", return_value=self.home))
+        # Retain receipt validation while keeping all discovery off the host.
+        self.receipt = self.home / "basaltwater-t3-desktop-reopened.json"
         self.pidfd = stack.enter_context(patch.object(refresh.os, "pidfd_open", side_effect=lambda pid: pid + 1000))
         self.close = stack.enter_context(patch.object(refresh.os, "close"))
 
@@ -197,11 +203,35 @@ class DesktopRefreshTests(unittest.TestCase):
             refresh._process_data(path)
 
     def test_request_queued_during_slow_shutdown_does_not_restart_reopened_app(self):
-        # exec retains the worker's earlier start time, while the launch stamp
-        # records that this app loaded settings after the second request.
-        self.process(100, environment=(f"{refresh.REOPENED_AT_ENV}=12000000000",), started_seconds=9)
+        # exec retains the worker's earlier start time, and Electron clears its
+        # exposed environment. The receipt must survive both circumstances.
+        self.process(100, started_seconds=9)
+        self.receipt.write_text(json.dumps({"pid": 100, "started_ticks": 9 * os.sysconf("SC_CLK_TCK"),
+                                            "reopened_at_ns": 12_000_000_000}))
+        self.receipt.chmod(0o600)
         self.assertFalse(refresh._running_desktop(11_000_000_000).refresh_needed)
-        self.assertEqual(refresh._running_desktop(15_000_000_000).descriptor, 1100)
+        self.assertTrue(refresh._running_desktop(15_000_000_000).refresh_needed)
+        for pid, ticks in ((101, 9), (100, 8)):
+            with self.subTest(pid=pid, started_seconds=ticks):
+                self.receipt.write_text(json.dumps({"pid": pid, "started_ticks": ticks * os.sysconf("SC_CLK_TCK"),
+                                                    "reopened_at_ns": 12_000_000_000}))
+                self.assertTrue(refresh._running_desktop(11_000_000_000).refresh_needed)
+
+    def test_unsafe_or_corrupt_receipt_blocks_discovery_before_shutdown(self):
+        self.process(100)
+        for content in ("{", "{}", '{"pid": true, "started_ticks": 1, "reopened_at_ns": 2}'):
+            with self.subTest(content=content):
+                self.receipt.write_text(content)
+                self.receipt.chmod(0o600)
+                with self.assertRaises((RuntimeError, ValueError)):
+                    refresh._running_desktop(self.QUEUED_BEFORE_NS)
+        self.receipt.chmod(0o644)
+        with self.assertRaisesRegex(RuntimeError, "Unsafe T3 desktop relaunch receipt"):
+            refresh._running_desktop(self.QUEUED_BEFORE_NS)
+        self.receipt.unlink()
+        self.receipt.symlink_to(self.home / "unrelated")
+        with self.assertRaisesRegex(RuntimeError, "Unsafe T3 desktop relaunch receipt"):
+            refresh._running_desktop(self.QUEUED_BEFORE_NS)
 
     def runtime_mocks(self, *, running=True, owner="t3code-bin", polls=None):
         app = refresh.RunningDesktop(1100, ["old-path", "--user-data-dir=/private/profile"],
@@ -214,6 +244,7 @@ class DesktopRefreshTests(unittest.TestCase):
             refresh.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, owner + "\n", "")))
         self.terminate = self.stack.enter_context(patch.object(refresh.signal, "pidfd_send_signal"))
         self.execute = self.stack.enter_context(patch.object(refresh.os, "execve"))
+        self.record_relaunch = self.stack.enter_context(patch.object(refresh, "_record_relaunch"))
         self.stack.enter_context(patch.object(refresh.time, "clock_gettime_ns", return_value=20_000_000_000))
         self.poller = self.stack.enter_context(patch.object(refresh.select, "poll")).return_value
         self.poller.poll.side_effect = polls if polls is not None else [[], [(1100, 1)]]
@@ -225,17 +256,26 @@ class DesktopRefreshTests(unittest.TestCase):
         self.terminate.side_effect = lambda *args: events.append("terminate")
         self.poller.poll.side_effect = lambda timeout: [] if timeout == 0 else events.append("exited") or [(1100, 1)]
         self.execute.side_effect = lambda *args: events.append("launch")
+        self.record_relaunch.side_effect = lambda: events.append("receipt")
         self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
-        self.assertEqual(events, ["terminate", "exited", "launch"])
+        self.assertEqual(events, ["terminate", "exited", "receipt", "launch"])
         self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
         self.execute.assert_called_once_with(refresh.APP_EXECUTABLE,
                                              [refresh.APP_EXECUTABLE, *app.arguments[1:]],
                                              {key: value for key, value in {
                                                  **os.environ, **app.environment,
-                                                 refresh.REOPENED_AT_ENV: "20000000000",
                                              }.items() if key != "ELECTRON_RUN_AS_NODE"})
         self.chdir.assert_called_once_with(app.directory)
         self.close.assert_called_once_with(app.descriptor)
+
+    def test_receipt_failure_does_not_leave_the_closed_app_stopped(self):
+        self.runtime_mocks()
+        self.record_relaunch.side_effect = OSError("private path must not appear in diagnostics")
+        with patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
+        self.assertIn("overlapping refresh requests", output.getvalue())
+        self.assertNotIn("private path", output.getvalue())
+        self.execute.assert_called_once()
 
     def test_relaunch_restores_graphical_environment_when_electron_clears_proc_environ(self):
         app = self.runtime_mocks()
@@ -361,7 +401,8 @@ class DesktopRefreshTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_worker_serializes_before_discovery_and_rejects_unsafe_locks(self):
-        with patch.object(refresh.os, "getuid", return_value=1000), \
+        with patch.object(refresh, "_runtime_directory", self.runtime_directory), \
+                patch.object(refresh.os, "getuid", return_value=1000), \
                 patch.object(refresh, "Path") as path, \
                 patch.object(refresh.os, "open", return_value=2000) as open_lock, \
                 patch.object(refresh.os, "fstat") as file_info, \
@@ -421,6 +462,28 @@ class DesktopRefreshTests(unittest.TestCase):
                 self.assertLess(functions.index(cachyos_steps.install_cachyos_skills), functions.index(install))
                 self.assertEqual(functions[-1], cachyos_steps.save_cachyos_setup)
                 self.assertNotIn(desktop.queue_refresh, functions)
+
+
+class RelaunchReceiptTests(unittest.TestCase):
+    def test_written_receipt_binds_relaunch_to_process_identity_without_environment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            runtime = Path(folder)
+            process = runtime / "123"
+            process.mkdir()
+            started_ticks = 9 * os.sysconf("SC_CLK_TCK")
+            (process / "stat").write_text("123 (T3 (desktop)) S " + "0 " * 18 + str(started_ticks) + "\n")
+            with patch.object(refresh, "PROC", runtime), \
+                    patch.object(refresh, "_runtime_directory", return_value=runtime), \
+                    patch.object(refresh.os, "getpid", return_value=123), \
+                    patch.object(refresh.time, "clock_gettime_ns", return_value=12_000_000_000):
+                refresh._record_relaunch()
+                receipt = refresh._relaunch_receipt_path()
+                self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(set(json.loads(receipt.read_text())), {"pid", "started_ticks", "reopened_at_ns"})
+                self.assertTrue(refresh._reopened_after(process, started_ticks, 11_000_000_000))
+                self.assertFalse(refresh._reopened_after(process, started_ticks + 1, 11_000_000_000))
+                self.assertFalse(refresh._reopened_after(runtime / "124", started_ticks, 11_000_000_000))
+                self.assertFalse(refresh._reopened_after(process, started_ticks, 13_000_000_000))
 
 
 class CompletionLockTests(unittest.TestCase):

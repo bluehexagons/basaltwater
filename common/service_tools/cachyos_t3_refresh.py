@@ -17,13 +17,13 @@ import time
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 APP_EXECUTABLE = "/opt/t3code-bin/t3code"
 PROC = Path("/proc")
 MAX_PROCESS_DATA = 4 * 1024 * 1024
-REOPENED_AT_ENV = "BASALTW_T3_DESKTOP_REOPENED_NS"
 
 
 @dataclass
@@ -51,7 +51,7 @@ def _is_app(path: Path) -> bool:
             and os.readlink(path / "exe").removesuffix(" (deleted)") == APP_EXECUTABLE)
 
 
-def _started_after(path: Path, queued_before_ns: int) -> bool:
+def _start_ticks(path: Path) -> int:
     # /proc starttime and CLOCK_BOOTTIME include time spent suspended. The
     # process name can contain spaces and parentheses, so split after its end.
     with (path / "stat").open("rb") as stream:
@@ -60,7 +60,61 @@ def _started_after(path: Path, queued_before_ns: int) -> bool:
         start_ticks = int(fields[19])
     except (IndexError, ValueError) as error:
         raise RuntimeError("Cannot read T3 desktop start time") from error
-    return start_ticks * 1_000_000_000 > queued_before_ns * os.sysconf("SC_CLK_TCK")
+    if start_ticks <= 0:
+        raise RuntimeError("Cannot read T3 desktop start time")
+    return start_ticks
+
+
+def _runtime_directory() -> Path:
+    runtime = Path(f"/run/user/{os.getuid()}")
+    info = runtime.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("T3 refresh requires an owned private user runtime directory")
+    return runtime
+
+
+def _relaunch_receipt_path() -> Path:
+    path = _runtime_directory() / "basaltwater-t3-desktop-reopened.json"
+    validate_filesystem_path(str(path))
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return path
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_nlink != 1 or info.st_mode & 0o077):
+        raise RuntimeError("Unsafe T3 desktop relaunch receipt; inspect the user runtime directory")
+    return path
+
+
+def _reopened_after(path: Path, started_ticks: int, queued_before_ns: int) -> bool:
+    receipt = _relaunch_receipt_path()
+    try:
+        data = read_json_file(str(receipt), max_bytes=4096)
+    except FileNotFoundError:
+        return False
+    if (not isinstance(data, dict) or set(data) != {"pid", "started_ticks", "reopened_at_ns"}
+            or any(type(value) is not int or value <= 0 for value in data.values())):
+        raise RuntimeError("Invalid T3 desktop relaunch receipt; inspect the user runtime directory")
+    return (data["pid"] == int(path.name) and data["started_ticks"] == started_ticks
+            and data["reopened_at_ns"] > queued_before_ns)
+
+
+def _record_relaunch() -> None:
+    # exec preserves PID/starttime, while Electron can erase /proc/environ.
+    # Bind the later timestamp to both identities so PID reuse cannot coalesce
+    # a refresh for a different process. /run removes the receipt on reboot.
+    data = {"pid": os.getpid(), "started_ticks": _start_ticks(PROC / str(os.getpid())),
+            "reopened_at_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME)}
+    write_json_atomic(str(_relaunch_receipt_path()), data, mode=0o600)
+
+
+def _exec_desktop(arguments: list[str], environment: dict[str, str]) -> None:
+    try:
+        _record_relaunch()
+    except (OSError, ValueError, RuntimeError):
+        # A bookkeeping failure after graceful shutdown must not leave T3 shut.
+        print("T3 relaunch receipt unavailable; overlapping refresh requests may reload again", file=sys.stderr, flush=True)
+    os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *arguments], environment)
 
 
 def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
@@ -86,7 +140,8 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
                     continue
                 # Coalesce requests queued before a preceding worker reopened
                 # T3. A newly opened app already loads the refreshed settings.
-                refresh_needed = not _started_after(path, queued_before_ns)
+                started_ticks = _start_ticks(path)
+                refresh_needed = started_ticks * 1_000_000_000 <= queued_before_ns * os.sysconf("SC_CLK_TCK")
                 arguments = _process_data(path / "cmdline")
                 # Chromium can rewrite its process title into argv[0], with
                 # spaces instead of NUL separators. Exclude those children
@@ -99,13 +154,7 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
                                    if "=" in item)
                 if environment.get("ELECTRON_RUN_AS_NODE") == "1":
                     continue
-                try:
-                    reopened_at_ns = validate_positive_integer(
-                        environment.get(REOPENED_AT_ENV, "0"), "desktop relaunch timestamp",
-                    )
-                except ValueError:
-                    reopened_at_ns = 0
-                if reopened_at_ns > queued_before_ns:
+                if refresh_needed and _reopened_after(path, started_ticks, queued_before_ns):
                     refresh_needed = False
                 directory = os.readlink(path / "cwd")
                 validate_filesystem_path(directory, must_exist=True)
@@ -142,7 +191,6 @@ def _launch_environment(previous: dict[str, str] | None = None) -> dict[str, str
     environment.pop("ELECTRON_RUN_AS_NODE", None)
     if not (environment.get("WAYLAND_DISPLAY") or environment.get("DISPLAY")):
         raise RuntimeError("T3 relaunch has no graphical environment; rerun refresh from the existing KDE session")
-    environment[REOPENED_AT_ENV] = str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))
     return environment
 
 
@@ -160,7 +208,7 @@ def _start_stopped_desktop(home: Path) -> bool:
     validate_filesystem_path(str(home), must_exist=True)
     os.chdir(home)
     environment = _launch_environment()
-    os.execve(APP_EXECUTABLE, [APP_EXECUTABLE], environment)
+    _exec_desktop([], environment)
     return True
 
 
@@ -188,10 +236,7 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
             raise RuntimeError("T3 desktop did not quit within 60 seconds; no forced kill or duplicate launch")
         # Credentials/environment stay in memory. The worker becomes the app,
         # allowing systemd to track it without killing it when a helper exits.
-        # exec preserves the worker's process start time. Record the later
-        # relaunch too, so requests queued during shutdown also coalesce.
-        environment[REOPENED_AT_ENV] = str(time.clock_gettime_ns(time.CLOCK_BOOTTIME))
-        os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *app.arguments[1:]], environment)
+        _exec_desktop(app.arguments[1:], environment)
         return True  # Reached only by tests that mock execve.
     finally:
         os.close(app.descriptor)
@@ -201,10 +246,7 @@ def main(queued_before_ns: int, mode: str, home: Path, config_root: Path, reques
     """Serialize workers in the user's private runtime directory."""
     if os.getuid() == 0:
         raise RuntimeError("Run T3 desktop refresh as the desktop user, without sudo")
-    runtime = Path(f"/run/user/{os.getuid()}")
-    info = runtime.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise RuntimeError("T3 refresh requires an owned private user runtime directory")
+    runtime = _runtime_directory()
     descriptor = os.open(runtime / "basaltwater-t3-desktop-refresh.lock",
                          os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:

@@ -20,7 +20,15 @@ Readable app environment settings override the worker's inherited KDE user-manag
 environment. Electron can clear `/proc` environment data; the fallback retains
 display, runtime and session-bus settings rather than reopening without a display.
 Missing graphical environment stops refresh before closing the app. The worker
-never force-kills. If the app was stopped, the worker starts
+coalesces overlapping requests using a private, process-bound timestamp receipt
+at `/run/user/UID/basaltwater-t3-desktop-reopened.json` (0600). Matching both PID
+and kernel start time prevents a stale receipt from suppressing refresh after
+PID reuse; the receipt survives Electron clearing its exposed environment and
+is discarded with the user runtime directory. Corrupt or unsafe receipts stop
+discovery before shutdown and require local inspection. If writing a receipt
+fails after shutdown, the worker warns and still relaunches the app; overlapping
+requests may then reload it again.
+The worker never force-kills. If the app was stopped, the worker starts
 it using the systemd user manager's graphical environment when KDE's graphical
 session is active; otherwise its journal explicitly defers launch until KDE login.
 KDE login autostart remains enabled. The worker reloads provider configuration
