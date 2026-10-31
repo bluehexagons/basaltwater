@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import ipaddress
+import pwd
 import shlex
 import re
 import stat
@@ -187,8 +188,12 @@ def configure_samba_firewall(config: SetupConfig) -> None:
 
 def parse_share_spec(
     share_spec: Optional[list[str]],
-    credentials: Optional[dict[str, str]] = None
+    credentials: Optional[dict[str, str]] = None,
+    *,
+    require_passwords: bool = True,
 ) -> dict[str, Any]:
+    if not require_passwords and credentials:
+        raise ValueError("Access-only share changes must not include credentials")
     if not share_spec or len(share_spec) < 4:
         raise ValueError("Share spec requires: access_type share_name paths users")
     
@@ -209,7 +214,11 @@ def parse_share_spec(
         user_spec = user_spec.strip()
         if not user_spec:
             continue
-        if ':' in user_spec:
+        if not require_passwords:
+            if ':' in user_spec:
+                raise ValueError("Access-only share changes require usernames without passwords")
+            username, password = user_spec, ""
+        elif ':' in user_spec:
             username, password = user_spec.split(':', 1)
         elif credentials and user_spec in credentials:
             username = user_spec
@@ -316,6 +325,8 @@ def _get_veto_dirs_for_share(share_path: str, config: SetupConfig) -> list[str]:
 def _prepare_samba_share(
     config: SetupConfig,
     share_config: dict[str, Any],
+    *,
+    provision_users: bool = True,
 ) -> tuple[str, str]:
     """Provision one share's users, group, path, and return its config section."""
 
@@ -342,11 +353,9 @@ def _prepare_samba_share(
         run(f"groupadd {safe_group}")
         print(f"  Created group: {group_name}")
 
-    for user_info in users:
-        username = user_info['username']
-        password = user_info['password']
-
-        create_samba_user(username, password)
+    if provision_users:
+        for user_info in users:
+            create_samba_user(user_info['username'], user_info['password'])
 
     member_list = ",".join(user_info["username"] for user_info in users)
     run(f"gpasswd -M {shlex.quote(member_list)} {safe_group}")
@@ -454,13 +463,43 @@ def _remove_managed_share_sections(content: str) -> tuple[str, set[str]]:
     return section_pattern.sub(remove_legacy, content).rstrip(), managed_groups
 
 
-def reconcile_samba_shares(config: SetupConfig, **_: Any) -> None:
-    """Make managed Samba shares exactly match ``config.samba_shares``."""
+def _require_existing_samba_users(share_configs: list[dict[str, Any]]) -> None:
+    """Check every account before an access-only edit changes any share."""
+    usernames = sorted({user["username"] for share in share_configs for user in share["users"]})
+    for username in usernames:
+        try:
+            account = pwd.getpwnam(username)
+        except KeyError as exc:
+            raise ValueError(f"Share user has no Unix account: {username}") from exc
+        result = run(
+            f"pdbedit -L -u {shlex.quote(username)}", check=False, capture_output=True,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+        # pdbedit may succeed with no matching record. Match both name and UID,
+        # without requesting the password-hash listing (-w).
+        if (result.returncode != 0 or not isinstance(result.stdout, str)
+                or not any(line.split(":", 2)[:2] == [username, str(account.pw_uid)]
+                           for line in result.stdout.splitlines())):
+            raise ValueError(f"Share user has no matching Samba account: {username}")
 
-    validate_samba_share_specs(config.samba_shares, config.share_credentials)
+
+def reconcile_samba_shares(
+    config: SetupConfig, *, preserve_accounts: bool = False, **_: Any,
+) -> None:
+    """Reconcile shares; access-only edits preserve passwords and account flags.
+
+    The default setup path provisions accounts from resolved credentials.
+    ``preserve_accounts`` instead accepts only bare, already provisioned users.
+    Its account and mount preflight finishes before any share is changed.
+    """
+
+    if preserve_accounts:
+        validate_samba_share_specs(config.samba_shares, config.share_credentials, require_passwords=False)
+    else:
+        validate_samba_share_specs(config.samba_shares, config.share_credentials)
     credentials = parse_share_credentials(config.share_credentials)
     share_configs = [
-        parse_share_spec(share_spec, credentials)
+        parse_share_spec(share_spec, credentials, require_passwords=not preserve_accounts)
         for share_spec in config.samba_shares or []
     ]
 
@@ -476,8 +515,10 @@ def reconcile_samba_shares(config: SetupConfig, **_: Any) -> None:
             if os.path.realpath(share_path) != os.path.abspath(share_path):
                 raise RuntimeError(f"Refusing symlinked Samba share path: {share_path}")
             assert_declared_storage_mount(config, share_path)
+    if preserve_accounts:
+        _require_existing_samba_users(share_configs)
     for share_config in share_configs:
-        group_name, section = _prepare_samba_share(config, share_config)
+        group_name, section = _prepare_samba_share(config, share_config, provision_users=not preserve_accounts)
         desired_groups.add(group_name)
         sections.append(section)
 

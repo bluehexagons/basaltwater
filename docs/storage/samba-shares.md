@@ -138,6 +138,15 @@ Passwords are omitted from saved setup state and reconstructed commands. Samba
 password changes are supplied to `smbpasswd` over standard input rather than
 embedded in a shell command.
 
+The internal `reconcile_samba_shares(..., preserve_accounts=True)` entrypoint is
+for access-only management: it accepts bare usernames and rejects credentials,
+checks every selected Unix/Samba account before changing any share, and never
+creates accounts, resets passwords, or changes enabled/disabled account flags.
+This does not change the credential-provisioning behavior of the setup or
+`basaltw shares` commands. Access-only reconciliation still replaces group
+membership and recursively applies the declared share permissions; it requires
+the same mount checks and candidate configuration validation as setup.
+
 ## Access modes and permissions
 
 Read shares set `read only = yes` and grant users read/traverse permissions.

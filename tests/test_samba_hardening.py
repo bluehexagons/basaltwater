@@ -565,6 +565,78 @@ class TestVetoFilesPattern(unittest.TestCase):
 
 
 class TestReconcileSambaShares(unittest.TestCase):
+    def test_access_only_validation_accepts_users_but_rejects_any_credentials(self) -> None:
+        shares = [["read", "docs", "/srv/docs", "alice,bob"]]
+        validate_samba_share_specs(shares, require_passwords=False)
+        with self.assertRaisesRegex(ValueError, "Missing credential"):
+            validate_samba_share_specs(shares)
+        for shares, credentials in ((shares, [["alice", "secret"]]),
+                                    ([["read", "docs", "/srv/docs", "alice:secret"]], None),
+                                    ([], [["alice", "secret"]])):
+            with self.subTest(shares=shares), self.assertRaisesRegex(ValueError, "Access-only"):
+                validate_samba_share_specs(shares, credentials, require_passwords=False)
+
+    def test_access_only_membership_change_preserves_accounts_and_passwords(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            conf = Path(directory) / "smb.conf"
+            conf.write_text("[global]\n")
+            config = _make_config(samba_shares=[["write", "docs", "/srv/docs", "alice,bob"],
+                                               ["read", "archive", "/srv/archive", "alice"]])
+            calls: list[str] = []
+
+            def run_command(command, **kwargs):
+                calls.append(command)
+                self.assertNotIn("input_data", kwargs)
+                username = shlex.split(command)[-1]
+                return MagicMock(returncode=0, stdout=f"{username}:1000:An existing account\n", stderr="")
+
+            with patch.object(samba_steps, "SMB_CONF_PATH", str(conf)), \
+                 patch.object(samba_steps, "run", side_effect=run_command), \
+                 patch.object(samba_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=1000)), \
+                 patch.object(samba_steps.os, "fchown"), \
+                 patch.object(samba_steps.os, "makedirs"), \
+                 patch.object(samba_steps, "assert_declared_storage_mount"), \
+                 patch.object(samba_steps, "create_samba_user") as create:
+                samba_steps.reconcile_samba_shares(config, preserve_accounts=True)
+            create.assert_not_called()
+            self.assertEqual(calls[:2], ["pdbedit -L -u alice", "pdbedit -L -u bob"])
+            self.assertIn("gpasswd -M alice,bob smb_docs_write", calls)
+            self.assertIn("gpasswd -M alice smb_archive_read", calls)
+            self.assertFalse(any(command.startswith(("smbpasswd", "useradd")) for command in calls))
+            self.assertIn("[docs_write]", conf.read_text())
+
+    def test_all_access_only_accounts_are_checked_before_any_mutation(self) -> None:
+        for missing in ("unix", "samba", "uid", "empty", "failure"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                conf = Path(directory) / "smb.conf"
+                conf.write_text("[global]\n")
+                config = _make_config(samba_shares=[["read", "docs", "/srv/docs", "alice"],
+                                                   ["write", "archive", "/srv/archive", "bob"]])
+
+                def get_user(username):
+                    if username == "bob" and missing == "unix":
+                        raise KeyError(username)
+                    return MagicMock(pw_uid=1000)
+
+                def run_command(command, **_kwargs):
+                    username = shlex.split(command)[-1]
+                    output = f"{username}:1000:Existing\n"
+                    if username == "bob":
+                        output = {"samba": "bobby:1000:Other\n", "uid": "bob:1001:Other\n",
+                                  "empty": ""}.get(missing, output)
+                    return MagicMock(returncode=int(username == "bob" and missing == "failure"), stdout=output)
+
+                with patch.object(samba_steps, "SMB_CONF_PATH", str(conf)), \
+                     patch.object(samba_steps.pwd, "getpwnam", side_effect=get_user), \
+                     patch.object(samba_steps, "run", side_effect=run_command) as run, \
+                     patch.object(samba_steps, "assert_declared_storage_mount"), \
+                     patch.object(samba_steps, "_prepare_samba_share") as prepare, \
+                     self.assertRaisesRegex(ValueError, "Share user has no"):
+                    samba_steps.reconcile_samba_shares(config, preserve_accounts=True)
+                prepare.assert_not_called()
+                self.assertTrue(all(call.args[0].startswith("pdbedit -L -u ") for call in run.call_args_list))
+                self.assertEqual(conf.read_text(), "[global]\n")
+
     def test_non_normalized_root_cannot_bypass_missing_declared_storage(self) -> None:
         for path in ("/srv/other/../data/docs", "/srv/data/./docs", "//srv/data/docs", "/srv/data/docs/"):
             with self.subTest(path=path), tempfile.TemporaryDirectory() as directory:

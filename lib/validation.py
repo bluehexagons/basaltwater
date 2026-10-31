@@ -1102,8 +1102,13 @@ def validate_smb_mount_specs(smb_mounts: Optional[list[list[str]]]) -> None:
 def validate_samba_share_specs(
     samba_shares: Optional[list[list[str]]],
     share_credentials: Optional[list[list[str]]] = None,
+    *,
+    require_passwords: bool = True,
 ) -> None:
-    """Validate Samba share specs before setup or patch execution."""
+    """Validate setup shares or credential-free access changes."""
+
+    if not require_passwords and share_credentials:
+        raise ValueError("Access-only share changes must not include credentials")
 
     if not samba_shares:
         return
@@ -1113,7 +1118,7 @@ def validate_samba_share_specs(
         _resolve_plugin_validator("parse_share_credentials"),
     )
     parse_share_spec = cast(
-        Callable[[Optional[list[str]], Optional[dict[str, str]]], dict[str, Any]],
+        Callable[..., dict[str, Any]],
         _resolve_plugin_validator("parse_share_spec"),
     )
 
@@ -1122,7 +1127,8 @@ def validate_samba_share_specs(
     share_names: set[str] = set()
     share_roots: list[str] = []
     for share_spec in samba_shares:
-        share_config = parse_share_spec(share_spec, credentials)
+        share_config = (parse_share_spec(share_spec, credentials) if require_passwords else
+                        parse_share_spec(share_spec, credentials, require_passwords=False))
         share_name = share_config["share_name"]
         validate_samba_share_name(share_name)
         if share_name in share_names:
@@ -1162,7 +1168,7 @@ def validate_samba_share_specs(
             password = user["password"]
             if not validate_username(username):
                 raise ValueError(f"Invalid Samba username: {username}")
-            if not password:
+            if require_passwords and not password:
                 raise ValueError(f"Samba password must not be empty for user: {username}")
             validate_no_control_characters(username, "Samba username")
             validate_no_control_characters(password, "Samba password")
