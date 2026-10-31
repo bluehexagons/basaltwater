@@ -31,17 +31,65 @@ from sync.service_tools.storage_ops import (
 )
 
 
+def setUpModule():
+    for name, value in (("load_paused", set()), ("require_no_setup_recovery", None)):
+        guard = patch("sync.service_tools.storage_ops." + name, return_value=value)
+        guard.start()
+        unittest.addModuleCleanup(guard.stop)
+
+
 class TestOperationLock(unittest.TestCase):
-    @patch("sync.service_tools.storage_ops.os.makedirs")
     @patch("sync.service_tools.storage_ops.fcntl.flock", side_effect=OSError("busy"))
-    @patch("sync.service_tools.storage_ops.open", new_callable=mock_open)
-    def test_nonblocking_acquire_failure_closes_file(self, mock_file_open, _flock, _makedirs):
-        lock = OperationLock("/run/lock/storage-ops.lock")
-        acquired = lock.acquire(blocking=False)
-        self.assertFalse(acquired)
-        mock_file_open.assert_called_once_with("/run/lock/storage-ops.lock", "a+")
-        mock_file_open.return_value.close.assert_called_once()
-        self.assertIsNone(lock.lock_file)
+    def test_nonblocking_acquire_failure_closes_file(self, _flock):
+        opened = []
+        fdopen = os.fdopen
+        def remember(descriptor, mode):
+            stream = fdopen(descriptor, mode)
+            opened.append(stream)
+            return stream
+        with tempfile.TemporaryDirectory() as root, patch("sync.service_tools.storage_ops.os.fdopen", side_effect=remember):
+            lock = OperationLock(os.path.join(root, "storage.lock"))
+            self.assertFalse(lock.acquire(blocking=False))
+            self.assertTrue(opened[0].closed)
+            self.assertIsNone(lock.lock_file)
+
+    def test_rejects_symlinks_special_files_and_writable_or_foreign_inodes(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, "target")
+            with open(target, "w") as stream:
+                stream.write("keep")
+            path = os.path.join(root, "storage.lock")
+            os.symlink(target, path)
+            with self.assertRaises(OSError):
+                OperationLock(path).acquire()
+            with open(target) as stream:
+                self.assertEqual(stream.read(), "keep")
+            os.unlink(path)
+            os.mkfifo(path, 0o600)
+            with self.assertRaises(ValueError):
+                OperationLock(path).acquire()
+            os.unlink(path)
+            with open(path, "w"):
+                pass
+            os.chmod(path, 0o666)
+            with self.assertRaises(ValueError):
+                OperationLock(path).acquire()
+            os.chmod(path, 0o600)
+            with patch("sync.service_tools.storage_ops.os.geteuid", return_value=os.geteuid() + 1):
+                with self.assertRaises(ValueError):
+                    OperationLock(path).acquire()
+
+    def test_competing_owners_share_a_stable_private_inode(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "storage.lock")
+            with OperationLock(path) as first, OperationLock(path) as second:
+                self.assertTrue(first.acquire())
+                inode = os.stat(path).st_ino
+                self.assertFalse(second.acquire())
+                first.release()
+                self.assertTrue(second.acquire())
+            self.assertEqual(os.stat(path).st_ino, inode)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
     @patch("sync.service_tools.storage_ops.os.unlink")
     @patch("sync.service_tools.storage_ops.fcntl.flock")

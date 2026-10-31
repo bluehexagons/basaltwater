@@ -50,7 +50,7 @@ class DataActionContractTests(unittest.TestCase):
         self.assertEqual(plan["argv"][-1], value["job_id"])
         self.assertNotIn(value["file"], plan["argv"])
         self.assertIn("retain originals", plan["effect"])
-        with patch.object(privilege_broker, "protected_path"), patch.object(privilege_broker, "stage_data_job") as stage, patch.object(privilege_broker, "data_job_status", return_value=status()), patch.object(privilege_broker.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+        with patch.object(privilege_broker, "protected_path"), patch.object(privilege_broker, "stage_data_job") as stage, patch.object(privilege_broker, "data_job_status", return_value=status()), patch.object(privilege_broker, "routine_job_status", return_value=status()), patch.object(privilege_broker.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
             self.assertEqual(privilege_broker.execute(plan), ExecutionResult("dispatched", exit_code=0))
             self.assertEqual(run.call_args.args[0], plan["argv"])
             stage.assert_called_once_with(value)
@@ -72,7 +72,7 @@ class DataActionContractTests(unittest.TestCase):
             self.assertFalse(broker.execute_next())
             with self.assertRaises(ValueError):
                 broker.request(1000, "data.run", {**parameters(), "job_id": "c" * 32}, "Second repair")
-            with patch.object(privilege_broker, "data_job_status", return_value=status()):
+            with patch.object(privilege_broker, "data_job_status", return_value=status()), patch.object(privilege_broker, "routine_job_status", return_value=status()):
                 result = broker.dispatch({"action": "data-status"}, 1000)
                 self.assertEqual(result["requests"][0]["parameters"], parameters())
                 with self.assertRaises(PermissionError):
@@ -141,12 +141,22 @@ class DataRecoveryTests(unittest.TestCase):
             protected_path=Mock(), can_manage_system_services=Mock(return_value=True),
             load_setup_config=Mock(return_value=self.saved), recover=recover or Mock(return_value=({"category": "healthy", "evidence": "PRIVATE EVIDENCE"}, 0))))
 
+    def run_root_job(self, value):
+        # Model root-owned temporary lock inodes as well as the root worker's
+        # effective UID, while keeping actual writes inside the fixture.
+        fstat = os.fstat
+        def root_owned(descriptor):
+            fields = list(fstat(descriptor))
+            fields[4] = 0
+            return os.stat_result(fields)
+        with patch.object(data_job.os, "geteuid", return_value=0), patch.object(data_job.os, "fstat", side_effect=root_owned):
+            return data_job.run_action(value)
+
     def test_job_retains_only_safe_results_and_rejects_replay(self):
         self.run_job()
-        with patch.object(data_job.os, "geteuid", return_value=0):
-            self.assertEqual(data_job.run_action(self.value), 0)
-            with self.assertRaisesRegex(ValueError, "already claimed"):
-                data_job.run_action(self.value)
+        self.assertEqual(self.run_root_job(self.value), 0)
+        with self.assertRaisesRegex(ValueError, "already claimed"):
+            self.run_root_job(self.value)
         raw = (self.root / "job.json").read_text()
         self.assertNotIn("PRIVATE EVIDENCE", raw)
         self.assertEqual(os.stat(self.root / "job.json").st_mode & 0o777, 0o600)
@@ -156,14 +166,12 @@ class DataRecoveryTests(unittest.TestCase):
     def test_failure_is_redacted_and_storage_lock_blocks_effects(self):
         recover = Mock(side_effect=ValueError("PRIVATE EVIDENCE"))
         self.run_job(recover=recover)
-        with patch.object(data_job.os, "geteuid", return_value=0):
-            self.assertEqual(data_job.run_action(self.value), 1)
+        self.assertEqual(self.run_root_job(self.value), 1)
         self.assertNotIn("PRIVATE EVIDENCE", (self.root / "job.json").read_text())
         recover.reset_mock()
         with data_job.OperationLock(data_job.LOCK_FILE) as lock:
             self.assertTrue(lock.acquire())
-            with patch.object(data_job.os, "geteuid", return_value=0):
-                self.assertEqual(data_job.run_action({**self.value, "job_id": "d" * 32}), 1)
+            self.assertEqual(self.run_root_job({**self.value, "job_id": "d" * 32}), 1)
         recover.assert_not_called()
         self.assertEqual(json.loads((self.root / "job.json").read_text())["failure"], "storage_busy")
 
@@ -216,7 +224,8 @@ class DataReviewTests(unittest.TestCase):
 
     def test_busy_unavailable_and_expired_reviews_cannot_request_recovery(self):
         for snapshot in ({**status(), "unit_state": "active"}, {**status(), "available": False},
-                         {**status(), "requests": [{"state": "pending"}]}):
+                         {**status(), "requests": [{"state": "pending"}]}, {**status(), "outstanding": True},
+                         {**status(), "other_active": True}):
             ticket, _ = self.manager.prepare(self.fields())
             with patch.object(actions, "exchange", return_value=snapshot) as exchange, self.assertRaises(ValueError):
                 self.manager.submit(ticket, "CHANGE FILE")

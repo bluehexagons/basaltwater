@@ -84,8 +84,10 @@ def unavailable_reason(status: dict) -> str:
         return "The recovery worker is unavailable. Check its service and installed source."
     if status.get("unit_state") not in {"inactive", "failed"}:
         return "A recovery job is running. Refresh status after it finishes."
-    if any(row.get("state") in {"pending", "approved", "executing"} for row in status.get("requests", [])):
-        return "Review or cancel the outstanding recovery request before submitting another."
+    if status.get("other_active"):
+        return "A storage routine job is running. Refresh its status in Backups & sync after it finishes."
+    if status.get("outstanding") or any(row.get("state") in {"pending", "approved", "executing"} for row in status.get("requests", [])):
+        return "Review or cancel the outstanding storage request before submitting another."
     return ""
 
 

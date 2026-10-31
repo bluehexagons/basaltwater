@@ -17,6 +17,7 @@ import os
 import io
 import fcntl
 import math
+import stat
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,6 +43,8 @@ from lib.task_utils import (
 )
 from lib.runtime_config import RuntimeConfig
 from lib.state_read import StateReadError, read_state_object
+from lib.storage_controls import load_paused, require_no_setup_recovery, scheduled_specs
+from lib.storage_routines import SPEC_FIELDS, configured_routines, routine_identity, validate_routine
 from lib.validation import validate_filesystem_path
 from sync.service_tools.sync_rsync import SyncPrecautions
 from sync.service_tools.scrub_runner import run_scrub_supervised
@@ -76,8 +79,17 @@ class OperationLock:
         # Ensure parent directory exists
         os.makedirs(os.path.dirname(self.lock_path), exist_ok=True)
         
-        # Open without truncation so a failed lock attempt doesn't modify the file.
-        self.lock_file = open(self.lock_path, 'a+')
+        # /run/lock can be shared and sticky. Do not follow a precreated link or
+        # trust another user's inode; retain a regular, private lock across runs.
+        descriptor = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+                raise ValueError("Unsafe storage operation lock")
+            self.lock_file = os.fdopen(descriptor, 'a+')
+        except BaseException:
+            os.close(descriptor)
+            raise
         try:
             if blocking:
                 start_time = time.time()
@@ -417,6 +429,7 @@ def validate_sync_integrity(
 def run_scrub(
     directory: str, database: str, redundancy: str, verify: bool, logger, *,
     config: RuntimeConfig | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[bool, str, bool]:
     """Return success, message, and completion independently of integrity findings."""
     mode = "full verify+repair" if verify else "parity update only"
@@ -442,9 +455,11 @@ def run_scrub(
         unrepairable_count = scrub_result.get("files_unrepairable_count", 0)
         unrepairable = scrub_result.get("files_unrepairable", [])
         failed_count = scrub_result.get("files_failed_count", 0)
+        repaired_count = scrub_result.get("files_repaired", 0)
         report_error = scrub_result.get("error")
         if type(unrepairable_count) is not int or unrepairable_count < 0 \
                 or type(failed_count) is not int or failed_count < 0 \
+                or type(repaired_count) is not int or repaired_count < 0 \
                 or not isinstance(unrepairable, list) \
                 or len(unrepairable) > 5 \
                 or any(not isinstance(path, str) or not path for path in unrepairable) \
@@ -458,6 +473,11 @@ def run_scrub(
                 or (completed and report_error is not None) \
                 or (not completed and scrub_result["ok"]):
             return False, f"Scrub returned invalid finding details for {directory}", False
+        if repaired_count:
+            warning = f"Repaired {repaired_count} file(s); original data and parity retained for inspection"
+            log_event(logger, "Scrub repaired files", level=WARNING, files_repaired=repaired_count)
+            if warnings is not None:
+                warnings.append(warning)
         if unrepairable_count:
             sample = ", ".join(unrepairable[:5])
             extra = f" (and {unrepairable_count - len(unrepairable)} more)" if unrepairable_count > len(unrepairable) else ""
@@ -474,8 +494,12 @@ def run_scrub(
         return False, str(e), False
 
 
-def execute_storage_operations() -> dict:
-    """Main orchestrator function."""
+def execute_storage_operations(*, selection: dict | None = None) -> dict:
+    """Run scheduled work, or one explicitly reviewed routine irrespective of cadence.
+
+    The caller owns the storage lock. Selection never removes scrub declarations
+    from the RuntimeConfig passed to mirror integrity guards.
+    """
     # Use console output only (not syslog) since systemd captures stdout/stderr to journal
     # Using both would create duplicate log entries
     logger = get_service_logger('storage-ops', 'operations', use_syslog=False, console_output=True)
@@ -520,10 +544,23 @@ def execute_storage_operations() -> dict:
         results["end_time"] = datetime.now().isoformat()
         return results
     
-    # Load last run state
+    # Pause/recovery and cadence state must all be valid before effects. A pause
+    # does not remove scrub reports from the configuration used to guard mirrors.
     try:
+        require_no_setup_recovery()
+        paused = load_paused()
+        sync_specs, scrub_specs = scheduled_specs(config, paused)
+        if selection is not None:
+            selection = validate_routine(selection)
+            if selection not in configured_routines(config_dict, paused):
+                raise ValueError("The selected storage routine changed")
+            kind = selection["kind"]
+            identifier = routine_identity(kind, selection["spec"])
+            spec = next(spec for spec in getattr(config, SPEC_FIELDS[kind])
+                        if routine_identity(kind, spec) == identifier)
+            sync_specs, scrub_specs = ([], [spec]) if kind == "scrub" else ([spec], [])
         last_run = load_last_run()
-    except StateReadError as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         results['success'] = False
         results['error'] = str(exc)
         results['end_time'] = datetime.now().isoformat()
@@ -535,18 +572,18 @@ def execute_storage_operations() -> dict:
     new_state = last_run.copy()
     baseline_time = time.time()
     full_scrubs_attempted: set[tuple[str, str]] = set()
-    for spec in config.scrub_specs:
+    for spec in scrub_specs:
         if len(spec) == 4:
             scrub_op_id = get_scrub_op_id(spec[0], spec[1])
             if scrub_op_id not in last_run:
                 new_state[scrub_op_id] = baseline_time
     
     # Calculate total operations for progress tracking
-    total_syncs = sum(1 for spec in sync_specs if len(spec) == 3 and is_operation_due(last_run, get_sync_op_id(spec[0], spec[1]), spec[2]))
-    total_scrubs = sum(1 for spec in config.scrub_specs if len(spec) == 4 and is_operation_due(last_run, get_scrub_op_id(spec[0], spec[1]), spec[3], first_run_default=False))
+    total_syncs = sum(1 for spec in sync_specs if len(spec) == 3 and (selection is not None or is_operation_due(last_run, get_sync_op_id(spec[0], spec[1]), spec[2])))
+    total_scrubs = sum(1 for spec in scrub_specs if len(spec) == 4 and (selection is not None or is_operation_due(last_run, get_scrub_op_id(spec[0], spec[1]), spec[3], first_run_default=False)))
     total_parity = sum(
         1
-        for spec in config.scrub_specs
+        for spec in scrub_specs
         if len(spec) == 4 and is_operation_due(last_run, get_parity_op_id(spec[0], spec[1]), "daily")
     )
     
@@ -574,7 +611,7 @@ def execute_storage_operations() -> dict:
         source, destination, interval = spec
         op_id = get_sync_op_id(source, destination)
         
-        if not is_operation_due(last_run, op_id, interval):
+        if selection is None and not is_operation_due(last_run, op_id, interval):
             # Not due yet - log for visibility
             last_time = last_run.get(op_id)
             if last_time:
@@ -630,7 +667,7 @@ def execute_storage_operations() -> dict:
     
     # Execute full scrubs if due.  Long-running progress remains in the local
     # journal; the final summary contains the actionable result.
-    for spec in config.scrub_specs:
+    for spec in scrub_specs:
         if len(spec) != 4:
             log_event(logger, "Invalid scrub spec", level=ERROR, spec=spec)
             results["scrubs"].append({"spec": spec, "success": False, "error": "Invalid spec"})
@@ -641,7 +678,7 @@ def execute_storage_operations() -> dict:
         op_id = get_scrub_op_id(directory, database)
         resolved_database = resolve_scrub_database_path(directory, database)
         
-        if not is_operation_due(last_run, op_id, interval, first_run_default=False):
+        if selection is None and not is_operation_due(last_run, op_id, interval, first_run_default=False):
             # Not due yet - log for visibility
             last_time = last_run.get(op_id)
             if last_time:
@@ -670,14 +707,17 @@ def execute_storage_operations() -> dict:
             continue
         
         full_scrubs_attempted.add((directory, resolved_database))
+        warnings = []
         success, message, completed = run_scrub(
             directory, resolved_database, redundancy, verify=True, logger=logger, config=config,
+            warnings=warnings,
         )
         results["scrubs"].append({
             "directory": directory,
             "database": resolved_database,
             "success": success,
             "message": message,
+            "warning": "; ".join(warnings),
             "completed": completed,
             "full": True,
         })
@@ -694,7 +734,7 @@ def execute_storage_operations() -> dict:
             results["success"] = False
     
     # Execute parity updates daily for scrub specs (no start notification - fast operation)
-    for spec in config.scrub_specs:
+    for spec in scrub_specs:
         if len(spec) != 4:
             continue
         
@@ -734,14 +774,17 @@ def execute_storage_operations() -> dict:
             results["success"] = False
             continue
         
+        warnings = []
         success, message, completed = run_scrub(
             directory, resolved_database, redundancy, verify=False, logger=logger, config=config,
+            warnings=warnings,
         )
         results["parity_updates"].append({
             "directory": directory,
             "database": resolved_database,
             "success": success,
             "message": message,
+            "warning": "; ".join(warnings),
             "completed": completed,
         })
         
@@ -784,7 +827,7 @@ def send_operation_notification(results: dict, notification_configs: list, logge
     name_prefix = f"[{friendly_name}] " if friendly_name else ""
     
     if results["success"]:
-        has_warnings = any(op.get("warning") for op in results["syncs"])
+        has_warnings = any(op.get("warning") for op in (*results["syncs"], *results["scrubs"], *results["parity_updates"]))
         status = "warning" if has_warnings else "good"
         subject = f"{name_prefix}Storage operations completed" + (" with warnings" if has_warnings else "")
     else:

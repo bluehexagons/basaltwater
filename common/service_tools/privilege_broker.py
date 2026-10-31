@@ -35,6 +35,8 @@ from lib.samba_shares import SHARE_HELPER, share_label, share_name
 from smb.share_job import job_status as share_job_status, stage_share_job
 from smb.password_staging import discard_password, prune_passwords, require_password, stage_password
 from common.service_tools.data_job import job_status as data_job_status, stage_data_job
+from lib.storage_routines import ROUTINE_HELPER
+from sync.routine_job import job_status as routine_job_status, stage_routine_job
 from lib.privilege_execution import (
     COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
 )
@@ -58,9 +60,17 @@ def execute(plan: dict) -> ExecutionResult:
         if plan["operation"] == "data.run":
             protected_path(DATA_HELPER)
             status = data_job_status()
-            if not status["available"] or status["unit_state"] not in {"inactive", "failed"}:
+            if (not status["available"] or status["unit_state"] not in {"inactive", "failed"}
+                    or routine_job_status().get("unit_state") in {"active", "activating", "deactivating"}):
                 return ExecutionResult("failed", failure="action_unavailable")
             stage_data_job(plan["parameters"])
+        if plan["operation"] == "data.routine":
+            protected_path(ROUTINE_HELPER)
+            status = routine_job_status()
+            if (not status["available"] or status["blocked"] or status["unit_state"] not in {"inactive", "failed"}
+                    or data_job_status().get("unit_state") in {"active", "activating", "deactivating"}):
+                return ExecutionResult("failed", failure="action_unavailable")
+            stage_routine_job(plan["parameters"])
         if plan["operation"] == "samba.account":
             protected_path(SAMBA_ACCOUNT_HELPER)
         if plan["operation"] == "samba.shares":
@@ -88,7 +98,7 @@ def execute(plan: dict) -> ExecutionResult:
         return ExecutionResult("uncertain", exit_code=result.returncode, failure="executor_signal")
     if result.returncode:
         return ExecutionResult("failed", exit_code=result.returncode, failure="nonzero_exit")
-    dispatched = plan["operation"] in {"system.reboot", "data.run", "samba.shares"} or (
+    dispatched = plan["operation"] in {"system.reboot", "data.run", "data.routine", "samba.shares"} or (
         plan["operation"] == "admin.run" and plan["parameters"]["action"] != "cancel-shutdown"
     )
     return ExecutionResult("dispatched" if dispatched else "succeeded", exit_code=0)
@@ -170,10 +180,11 @@ class Broker:
                                        (plan["parameters"]["job_id"],)).fetchone():
                         raise ValueError("This password reset identity was already used")
                     require_password(plan["parameters"], uid)
-                if operation in {"admin.run", "data.run", "samba.account", "samba.shares"}:
+                if operation in {"admin.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
                     for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
                         existing = json.loads(row["plan"])["operation"]
-                        if existing == operation or existing.startswith("samba.") and operation.startswith("samba."):
+                        if (existing == operation or existing.startswith("samba.") and operation.startswith("samba.")
+                                or existing.startswith("data.") and operation.startswith("data.")):
                             raise ValueError("An administration request is already outstanding; review or cancel it first")
                 # Persistent quotas bound pending requests and repeated automatic actions.
                 count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
@@ -279,6 +290,27 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if not approval and action == "routine-status" and set(message) == {"action"}:
+            policy = self.policy_loader()
+            if uid != policy["requester_uid"]:
+                raise PermissionError("Account is not authorized")
+            result = routine_job_status()
+            result["other_active"] = data_job_status().get("unit_state") in {"active", "activating", "deactivating"}
+            try:
+                protected_path(ROUTINE_HELPER)
+            except (OSError, ValueError):
+                result["available"] = False
+            with self.lock, self.db:
+                self._expire()
+                rows = self.db.execute("SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? AND json_extract(plan,'$.operation')='data.routine' ORDER BY created DESC LIMIT 10", (uid,)).fetchall()
+                result["requests"] = [{"id": row["id"], "created": row["created"], "expires": row["expires"], "state": row["state"],
+                    "parameters": json.loads(row["plan"])["parameters"],
+                    "execution": json.loads(row["execution"]) if row["execution"] else None,
+                    "review_url": policy["origin"] + "/requests/" + row["id"]} for row in rows]
+                result["outstanding"] = self.db.execute("SELECT 1 FROM requests WHERE state IN ('pending','approved','executing') AND json_extract(plan,'$.operation') IN ('data.run','data.routine') LIMIT 1").fetchone() is not None
+                while result["requests"] and len(canonical({"ok": True, "result": result}).encode()) > MAX_MESSAGE:
+                    result["requests"].pop()
+            return result
         if not approval and action == "samba-discard-password" and set(message) == {"action", "job_id"}:
             with self.lock:
                 policy = self.policy_loader()
@@ -342,8 +374,10 @@ class Broker:
             if uid != policy["requester_uid"]:
                 raise PermissionError("Account is not authorized")
             result = data_job_status()
+            result["other_active"] = routine_job_status().get("unit_state") in {"active", "activating", "deactivating"}
             with self.lock, self.db:
                 self._expire()
+                result["outstanding"] = self.db.execute("SELECT 1 FROM requests WHERE state IN ('pending','approved','executing') AND json_extract(plan,'$.operation') IN ('data.run','data.routine') LIMIT 1").fetchone() is not None
                 rows = self.db.execute("SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? AND json_extract(plan,'$.operation')='data.run' ORDER BY created DESC LIMIT 10", (uid,)).fetchall()
                 result["requests"] = [{"id": row["id"], "created": row["created"], "expires": row["expires"], "state": row["state"],
                     "parameters": json.loads(row["plan"])["parameters"],

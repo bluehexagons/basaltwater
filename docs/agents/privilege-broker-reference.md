@@ -251,7 +251,8 @@ absolute `directory`, `database`, `file`, restore-only `backup` (otherwise empty
 the exported `finding` revision and a fresh `job_id`. All paths are bounded to
 1,024 characters. Every request requires individual approval and uses the
 existing expiry, policy-digest revalidation, claim and quota rules. At most one
-recovery request may be pending, approved or executing at once.
+storage request (`data.run` or `data.routine`) may be pending, approved or
+executing at once.
 
 After claiming execution, the broker writes the approved public parameters to
 a root-only `data-payload-JOB_ID.json` under its state directory. The fixed
@@ -283,6 +284,63 @@ interrupted; raced or unsafe history becomes unavailable. A broker `dispatched`
 receipt does not establish completion. The worker and its storage lock continue
 independently of panel or broker restart; cancelling a request cannot stop an
 already dispatched worker. Root SSH remains the inspection and stop path.
+
+## Storage routine operations
+
+`data.routine` always requires individual approval. Its exact public fields are
+`action` (`change` or `run`), `before`, `after`, the exported configuration/pause
+`revision`, and a fresh `job_id`. A routine is exactly `kind` (`sync`, `backup`,
+`scrub`), `spec` (the ordinary three- or four-field storage declaration) and a
+boolean `paused`. Create has no `before`; remove has no `after`; run has one
+existing `before` and no `after`. Edits retain the kind. Both paths are canonical
+absolute directories, limited to 512 characters. The complete manageable
+selection is limited to 256 routines and rejects duplicate or ambiguous cadence
+keys, shared parity directories and mirror destinations overlapping parity.
+Existing relative scrub databases are exported as canonical absolute paths.
+
+The broker stages the claimed public plan in a private
+`routine-payload-JOB_ID.json`. The fixed `sync/routine_job.py` helper consumes it
+once; only the job ID enters systemd argv. The detached
+`basaltwater-storage-routine.service` has a six-hour runtime cap, no restart and
+control-group termination. Broker dispatch is separate from worker completion.
+`routine-status` returns fixed local unit/result metadata and up to ten owned
+requests, trimmed to the transport bound. The latest `storage-routine.json`
+records only job identity, fixed result/failure categories and timestamps.
+Neither status operation reads NAS paths or returns worker output.
+
+The worker holds the shared target-setup owner and storage operation lock,
+rechecks fresh metadata and the exact prior declaration, and preserves unrelated
+saved settings. A change writes only the selected declaration and
+`/var/lib/storage-ops/controls.json`, then reconciles the fixed hourly units.
+It never calls inline setup's initial copy/parity builders or directly starts
+the storage service. Newly active/edited/resumed routines require installed
+`par2`, or `rsync` and `unshare`, before publication. A paused declaration can
+be saved without those tools. Package installation remains ordinary setup work.
+
+A durable `storage_routines` setup marker spans pause/configuration publication
+and timer activation. Failure retains it for explicit reconciliation. Scheduled
+and selected runs refuse any unfinished setup marker or invalid pause state.
+No automatic replay or multi-file rollback is claimed; follow
+[transaction recovery](../operations/transaction-recovery.md) before resolving
+the guard. Removal retains files, parity, findings, cadence/retry history and
+logs. Removing a scrub also removes its mirror integrity safeguards; pausing
+keeps its declaration and those protections while skipping full verification
+and daily parity maintenance.
+
+Run once selects exactly one currently configured routine, including a paused
+one, and ignores its cadence/retry delay for that run only. It keeps the complete
+scrub configuration for mirror safeguards, all mount/worker guards, and normal
+completion/retry recording. A completed scrub with damage reports `findings`;
+an incomplete operation reports failure. A clean completed scan that repaired
+files reports `warnings`, preserving the repaired-file signal from the worker.
+Mirror precautions also report `warnings`. Pause state remains unchanged.
+
+The management export includes scoped cadence/retry history separately from
+configuration availability. Corrupt history does not hide the declarations or
+pretend that work succeeded. A scrub cadence timestamp can be its initial
+deferral reference; the scrub report's full-scan record establishes actual scan
+completion. Only configured routine identities are exported, never retained
+unconfigured history or private error output.
 
 ## Refresh interrupted during source activation
 

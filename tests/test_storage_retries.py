@@ -33,7 +33,7 @@ class StorageRetryTests(unittest.TestCase):
         state = {'scrub:/data:.db': 1.0}
         with patch.object(ops.time, 'time', return_value=1_000_000.0):
             ops.record_attempt(state, 'scrub:/data:.db', False)
-            with patch.object(ops, 'load_setup_config', return_value={'scrub_specs': [['/data', '.db', '10%', 'weekly']]}), patch.object(ops, 'load_last_run', return_value=state), patch.object(ops, 'save_last_run'), patch.object(ops, 'parse_notification_args', return_value=[]), patch.object(ops, 'get_service_logger'), patch.object(ops, 'run_scrub') as scrub:
+            with patch.object(ops, 'load_setup_config', return_value={'scrub_specs': [['/data', '.db', '10%', 'weekly']]}), patch.object(ops, 'load_paused', return_value=set()), patch.object(ops, 'require_no_setup_recovery'), patch.object(ops, 'load_last_run', return_value=state), patch.object(ops, 'save_last_run'), patch.object(ops, 'parse_notification_args', return_value=[]), patch.object(ops, 'get_service_logger'), patch.object(ops, 'run_scrub') as scrub:
                 result = ops.execute_storage_operations()
         scrub.assert_not_called()
         self.assertEqual(result['scrubs'], [])

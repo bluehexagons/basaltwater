@@ -31,7 +31,7 @@ class StorageSnapshotTests(unittest.TestCase):
         self.report = Findings(str(self.data), str(self.db))
 
     def collect(self):
-        with patch("lib.machine_state.load_setup_config", return_value=self.config), patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, "")), patch("smb.account_management.collect_account_snapshot", return_value={"available": False}), patch("smb.share_management.collect_share_snapshot", return_value={"available": False}), patch("subprocess.run") as run:
+        with patch("lib.machine_state.load_setup_config", return_value=self.config), patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, "")), patch("smb.account_management.collect_account_snapshot", return_value={"available": False}), patch("smb.share_management.collect_share_snapshot", return_value={"available": False}), patch("sync.routine_management.collect_routine_snapshot", return_value={"available": False}), patch("subprocess.run") as run:
             result = storage.collect_storage_snapshot()
         run.assert_not_called()
         return result
@@ -115,6 +115,14 @@ class StorageSnapshotTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", json.dumps(loaded))
         del snapshot["inventory"]
         self.assertFalse(self.load(snapshot)["inventory"]["available"])
+
+    def test_invalid_routine_controls_cannot_hide_valid_integrity_reports(self):
+        snapshot = self.collect()
+        snapshot["routine_management"] = {"available": True, "private": "PRIVATE"}
+        loaded = self.load(snapshot)
+        self.assertTrue(loaded["available"])
+        self.assertFalse(loaded["routine_management"]["available"])
+        self.assertNotIn("PRIVATE", json.dumps(loaded))
 
     def test_inventory_limits_and_malformed_configuration(self):
         saved = {"enable_samba": True,

@@ -16,6 +16,7 @@ from lib.admin_actions import action_spec, dispatch_argv
 from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_action
 from lib.samba_accounts import ACCOUNT_ACTIONS, account_dispatch_argv, validate_account_action
 from lib.samba_shares import share_dispatch_argv, share_label, share_name, validate_share_action
+from lib.storage_routines import routine_dispatch_argv, routine_effect, routine_label, validate_routine_action
 
 CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
@@ -150,6 +151,12 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = "approve"
         argv = data_dispatch_argv(parameters)
         effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
+    elif operation == "data.routine":
+        parameters = validate_routine_action(parameters)
+        mode = "approve"
+        argv = routine_dispatch_argv(parameters)
+        effect = routine_label(parameters) + ". " + routine_effect(parameters)
+        effect += " Reject changed configuration or pause state. Use the shared setup and storage locks. Run independently of the panel with a six-hour limit; dispatch does not prove completion."
     elif operation == "samba.shares":
         parameters = validate_share_action(parameters)
         mode = "approve"

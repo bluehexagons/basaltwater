@@ -17,6 +17,7 @@ from lib.shares_data_inventory import configuration_inventory, validate_inventor
 from lib.data_actions import HEX_DIGEST, finding_revision
 from lib.samba_accounts import validate_account_snapshot
 from lib.samba_shares import validate_share_snapshot
+from lib.storage_routines import validate_routine_snapshot
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
@@ -60,6 +61,8 @@ def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
         result["samba"] = collect_account_snapshot(saved)
         from smb.share_management import collect_share_snapshot
         result["share_management"] = collect_share_snapshot(saved)
+        from sync.routine_management import collect_routine_snapshot
+        result["routine_management"] = collect_routine_snapshot(saved)
         config = RuntimeConfig.from_dict(saved)
         validate_scrub_specs(config.scrub_specs)
         result["omitted_jobs"] = max(0, len(config.scrub_specs) - MAX_JOBS)
@@ -173,6 +176,10 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
             data["share_management"] = validate_share_snapshot(data.get("share_management"))
         except (ValueError, TypeError):
             data["share_management"] = {"available": False}
+        try:
+            data["routine_management"] = validate_routine_snapshot(data.get("routine_management"))
+        except (ValueError, TypeError):
+            data["routine_management"] = {"available": False}
         return data
     except (OSError, ValueError, TypeError, OverflowError):
         return {"available": False, "jobs": []}
