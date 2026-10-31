@@ -204,7 +204,11 @@ class ManagedAgentSkillTests(unittest.TestCase):
                         source = Path(AGENT_SKILLS_ROOT) / name
                         for resource in source.rglob("*"):
                             if resource.is_file():
-                                self.assertEqual((root / name / resource.relative_to(source)).read_bytes(), resource.read_bytes())
+                                installed = root / name / resource.relative_to(source)
+                                if "__pycache__" in resource.parts or resource.suffix in {".pyc", ".pyo"}:
+                                    self.assertFalse(installed.exists())
+                                else:
+                                    self.assertEqual(installed.read_bytes(), resource.read_bytes())
                 if tools == ["claude"]:
                     self.assertFalse((Path(home) / ".agents").exists())
 

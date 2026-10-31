@@ -98,10 +98,14 @@ update itself and initialize personal Steam state.
   project's declared browser workflow; this profile does not install managed
   Playwright.
 
-Run `basaltw agent manifest --json` in the project to discover installed
-applications, active executables, workflow instructions, and deployment
-mappings. Presence in PATH is discovery only; it does not prove that a project
-can build, render, capture, or publish.
+Start with `basaltw agent manifest . --capability workstation` for compact
+installed-tool/backend/GPU metadata, or `--application blender --json` for one
+application. Use `--capability development --json` for project recipes and
+`--capability skills --json` to compare installed guidance with the invoking
+source. A source update alone does not refresh installed skill files. See the
+[workflow routes](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workflows.md).
+Presence in PATH is discovery only; it does not prove that a project can build,
+render, capture, or publish.
 
 ## Diagnose and report
 

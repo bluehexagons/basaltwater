@@ -29,6 +29,18 @@ GLX context creation does not verify a project frame. EGL/Vulkan/offscreen check
 belong in the project's harness, recording the actual renderer. See
 [rendering evidence](../../common/agent_skills/basaltwater-cachyos-desktop/references/rendering.md).
 
+The software GLX doctor checks `xvfb-run --help` once and uses atomic `-d`
+allocation when advertised, falling back to `-a` for older wrappers or an
+unavailable help probe. `xvfb_allocation` records that selection. This creates
+only the diagnostic's isolated X server, not a replacement desktop session.
+
+Compare installed guidance with the invoking source using
+`basaltw agent manifest . --capability skills --json`. Source checkout updates
+do not update installed skills or a running agent's already-loaded instructions.
+Use the platform's managed skill installation during setup/refresh, preserving
+personal changes; recheck the catalog afterward. Keep full workstation refresh
+separate from diagnostics because it can update packages and restart services.
+
 Keep reusable capture recipes in the consuming repository. Private settings may
 select task inputs through `--settings PATH`; do not make a private one-off script
 the only documented route. Native Wayland capture/input follows

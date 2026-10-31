@@ -21,7 +21,7 @@ def inspect_graphics_context(context: str, *, require_software: bool = False) ->
               "accelerated": None, "software_renderer": None, "software_required": require_software,
               "rendering_verified": False, "hardware_profiling_qualified": False,
               "physical_display_qualified": False, "hdr_qualified": False, "input_latency_qualified": False,
-              "issues": []}
+              "xvfb_allocation": None, "issues": []}
     glxinfo = shutil.which("glxinfo", path="/usr/local/bin:/usr/bin:/bin")
     if not glxinfo:
         result["issues"].append("glxinfo_missing")
@@ -42,7 +42,14 @@ def inspect_graphics_context(context: str, *, require_software: bool = False) ->
     with configuration as private:
         command = [glxinfo, "-B"]
         if wrapper:
-            command = [wrapper, "-a", "--auth-file", os.path.join(private, "authority"),
+            help_probe = run_probe([wrapper, "--help"], timeout=3, max_bytes=8192,
+                                   env=dict(os.environ, LC_ALL="C"))
+            automatic = help_probe.issue is None and re.search(
+                r"(?m)^\s*-d[ \t,]+--auto-display(?:[ \t]|$)", help_probe.output,
+            ) is not None
+            allocation = "-d" if automatic else "-a"
+            result["xvfb_allocation"] = "auto-display" if automatic else "auto-servernum"
+            command = [wrapper, allocation, "--auth-file", os.path.join(private, "authority"),
                        "--server-args=-screen 0 640x480x24 -nolisten tcp", *command]
         probe = run_probe(command, timeout=15, max_bytes=16384, env=dict(os.environ, LC_ALL="C"))
     result["process_exit_success"] = probe.issue is None if probe.issue in (None, "probe_failed") else None

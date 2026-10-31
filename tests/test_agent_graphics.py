@@ -46,6 +46,21 @@ class GraphicsTests(unittest.TestCase):
         self.assertFalse(result["physical_display_qualified"])
         self.assertEqual(probe.call_args.args[0], ["/usr/bin/glxinfo", "-B"])
 
+    def test_xvfb_prefers_atomic_allocation_and_supports_older_wrappers(self):
+        for help_result, flag, method in (
+            (ProbeResult("Options:\n-d        --auto-display            choose display\n"), "-d", "auto-display"),
+            (ProbeResult("-a --auto-servernum\n"), "-a", "auto-servernum"),
+            (ProbeResult(issue="probe_timeout"), "-a", "auto-servernum"),
+        ):
+            with self.subTest(method=method, issue=help_result.issue), patch.object(graphics, "run_probe", side_effect=[
+                help_result, ProbeResult("OpenGL renderer string: llvmpipe\nOpenGL version string: 4.6 Mesa\n"),
+            ]) as probe:
+                result = graphics.inspect_graphics_context("xvfb", require_software=True)
+            self.assertTrue(result["healthy"])
+            self.assertEqual(result["xvfb_allocation"], method)
+            self.assertEqual(probe.call_args_list[0].args[0], ["/usr/bin/xvfb-run", "--help"])
+            self.assertEqual(probe.call_args_list[1].args[0][:2], ["/usr/bin/xvfb-run", flag])
+
     def test_software_requirement_uses_observed_renderer_not_environment_or_acceleration_alone(self):
         for acceleration, software in (("yes", False), ("no", None), ("", None)):
             with self.subTest(acceleration=acceleration), \

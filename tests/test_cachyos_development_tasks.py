@@ -325,7 +325,7 @@ class TestDevelopmentTasks(unittest.TestCase):
 
     def test_invalid_completion_duration_is_rejected_without_service_mutation(self):
         launched = self.launch()
-        for elapsed in (-1, True, "1", float("inf"), float("nan")):
+        for elapsed in (-1, True, "1", 10**400, float("inf"), float("nan")):
             with self.subTest(elapsed=elapsed):
                 record = Path(launched["directory"]) / "result.json"
                 record.write_text(json.dumps({"returncode": 0, "log_truncated": False, "elapsed_seconds": elapsed}))

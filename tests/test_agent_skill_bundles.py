@@ -81,6 +81,19 @@ class AgentSkillBundleTests(unittest.TestCase):
         self.assertEqual((self.destination / "references/update.md").read_bytes(), b"v2")
         self.assertFalse(self.install())
 
+    def test_generated_python_caches_do_not_change_the_installed_bundle(self) -> None:
+        self.resource("scripts/check.py", b"print('check')\n")
+        cache = self.resource("scripts/__pycache__/check.cpython-314.pyc", b"compiled")
+        self.resource("scripts/check.pyc", b"legacy compiled")
+        self.resource("scripts/check.pyo", b"legacy optimized")
+        self.assertTrue(self.install())
+        self.assertEqual(sorted(path.name for path in (self.destination / "scripts").iterdir()), ["check.py"])
+        inventory = json.loads((self.destination / ".basaltwater-files.json").read_text())
+        self.assertEqual(set(inventory["files"]), {"scripts/check.py"})
+        cache.write_bytes(b"recompiled")
+        self.assertFalse(self.install())
+        self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
+
     def test_interrupted_new_bundle_can_be_retried_without_adopting_personal_files(self) -> None:
         self.resource("references/first.md", b"first")
         self.resource("references/second.md", b"second")

@@ -24,3 +24,7 @@ Validation evidence and unfinished work belong in a local current checkpoint,
 not a running chronological log in this plan. A command exit or prerequisite
 report is not hardware acceptance. Record actual checks, environment and revision
 in each handoff; leave unperformed checks explicitly unverified.
+
+The [Debian continuation handoff](workstation-feedback-debian.md) records the
+CachyOS second-pass findings, observed checks, platform boundaries and next
+validation work for the receiving agent.

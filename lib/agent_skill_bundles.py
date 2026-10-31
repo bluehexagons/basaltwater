@@ -168,6 +168,10 @@ def _source_bundle(source: Path) -> dict[str, tuple[bytes, int]]:
             name = path.relative_to(source).as_posix()
             if path.is_symlink():
                 raise RuntimeError(f"Refusing symlinked managed agent skill source: {path}")
+            # Running helpers or repository compilation must not change the
+            # distributable bundle or make installed guidance look incomplete.
+            if path.name == "__pycache__" or path.suffix in {".pyc", ".pyo"}:
+                continue
             if path.is_dir():
                 if PurePosixPath(name).parts[0] not in _RESOURCE_DIRS:
                     raise RuntimeError(f"Unsupported managed agent skill resource: {path}")

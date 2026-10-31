@@ -31,15 +31,17 @@ executed. Their versions remain unknown. Missing sysfs or tools remain observati
 not command failures. The normal manifest does not run these extra probes.
 
 `installed` means PATH presence; `version_probe` describes only terminal startup.
-`usable_in_session` and `verified_by_project` remain null until separately checked;
-this report does not import old evidence or promote prerequisite discovery to
-verification. Wayland/X11 environment advertisements and installed EGL/Vulkan/Xvfb
+`usable_in_session` and `verified_by_project` always remain null in this inventory;
+separate context/recipe reports carry verification evidence. Rerunning the manifest
+does not import that evidence or promote prerequisites to verification.
+Wayland/X11 environment advertisements and installed EGL/Vulkan/Xvfb
 tools do not prove backend availability or GPU access. The report links explicit
 GLX display/software context checks, Blender CPU smoke and project recipe checks.
 Those checks retain their own evidence and scope; a successful software check does
 not qualify the hardware GPU. See the [workflow routes](../workstations/workflows.md)
 for the next operation. This scope is implemented for Linux hosts; other-platform
 acceptance remains separate.
+
 Every scope retains `basaltwater`, using the same provenance contract as the
 support bundle. `setup_snapshot` describes a recorded setup receipt, while
 `running_source` describes an observed Git root executing the CLI. Each is
@@ -83,6 +85,12 @@ active agent's skill list and enabled settings separately. See
 [skill access by launch context](agent-skills.md#access-from-different-sessions).
 Desktop skill guidance links relevant local entrypoints from either provider
 catalog, including Claude-only installations.
+
+Generated Python `__pycache__` directories and `.pyc`/`.pyo` files are excluded
+from source bundles and catalog comparisons. Running helpers or repository syntax
+checks does not create new skill requirements. Previously recorded bytecode is
+retired on managed reinstall only when its contents still match the owned record;
+personal changes retain the usual preservation checks.
 
 `basaltw agent manifest . --capability skills --json` includes
 `instruction_footprint` per skill, per catalog, and across catalogs. It separates

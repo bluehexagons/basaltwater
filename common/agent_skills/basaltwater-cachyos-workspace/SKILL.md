@@ -31,11 +31,8 @@ Choose branch merges before delegating; cherry-pick and squash leave the source
 commits outside the ancestry required by cleanup. Small, tightly coupled tasks
 often cost more to delegate than they save. Use the installed
 `basaltwater-subagents` skill for the complete local lifecycle and project
-model-selection commands. Use OpenAI Luna for simple classification, Sol for
-coding, and Astra only with a concrete
-cost justification. Use actual session capabilities and reviewed project
-outcomes to adapt to new model releases. Do not autonomously choose fast mode,
-`max`, or `ultra`; explicit user selections govern exceptions.
+model-selection commands when delegation is authorized. Provider/model settings
+belong to the active orchestration guidance, not this workspace skill.
 
 For T3-owned work, first read the installed `basaltwater-subagents` skill's
 native orchestration reference. Select T3 worktree isolation or thread binding

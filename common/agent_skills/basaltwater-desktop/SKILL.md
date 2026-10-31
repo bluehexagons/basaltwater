@@ -11,6 +11,10 @@ One setup-account XRDP/Xorg session is shared with the human and persists throug
 client disconnection. Check `basaltw desktop status` for its current state.
 Discover only the needed application, for example
 `basaltw agent manifest . --application blender --json`; presence is not readiness.
+Use `--capability workstation` for compact Linux tool/backend/GPU prerequisites.
+Follow the shared [workflow routes](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workflows.md)
+and [handoff templates](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/handoffs.md).
+Project scripts own capture/acceptance logic; this skill owns XRDP operation.
 
 Prefer repeatable application scripts/exports for bulk edits, then verify saved
 artifacts and the relevant UI result. Use exact PID/name/role/root filters for

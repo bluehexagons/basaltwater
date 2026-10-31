@@ -416,7 +416,8 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
             raise ValueError("Invalid development completion record")
         if "elapsed_seconds" in completion:
             elapsed = completion["elapsed_seconds"]
-            if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+            if (type(elapsed) not in (int, float) or elapsed < 0
+                    or elapsed > sys.float_info.max or not math.isfinite(elapsed)):
                 raise ValueError("Invalid development completion duration")
         result.update(completion)
         successful = completion["returncode"] == 0 and not completion.get("error")
