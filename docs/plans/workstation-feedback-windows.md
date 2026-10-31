@@ -1,6 +1,9 @@
 # Windows workstation feedback handoff
 
-Status: ready for a native Windows agent; implementation has not started.
+Status: implementation in progress. Native skill freshness and completion were
+delivered on `main` in `bcacaf167b8bb532bd2006e673b9cd51af87f154`; task evidence
+and bounded project discovery are being implemented. Final combined native
+qualification and installed guidance delivery remain pending.
 Prepared on Debian on 2026-10-31 from clean `main` at
 `89762e1f8956e66c8f8cdf604042284c95a122ea`. Start from current `main`, record
 the actual full HEAD and dirty state, and preserve unrelated work.
@@ -161,7 +164,7 @@ Run the affected native entry points while editing, then the complete suite
 once after final implementation. From the checkout, examples are:
 
 ```powershell
-pwsh.exe -NoProfile -File .\windows\tests\Run-AgentWorkstationTests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-AgentWorkstationTests.ps1
 pwsh.exe -NoProfile -File .\windows\tests\Run-WorkstationHealthTests.ps1
 pwsh.exe -NoProfile -File .\windows\tests\Run-DevelopmentTests.ps1
 pwsh.exe -NoProfile -File .\windows\tests\Run-DevelopmentProcessTests.ps1
@@ -176,6 +179,12 @@ and duration, and inspect failures before retries. Check the native tests'
 current prerequisites: the complete suite requires real Python 3.11+ and stable
 PowerShell 7; process fixtures exercise actual owned Windows processes while
 mocking Scheduler/notifications. The examples do not install prerequisites.
+The workstation aggregate and complete suite use Windows PowerShell 5.1 to
+compile .NET Framework executable fixtures with `Add-Type`; PowerShell 7 does
+not support that executable output mode. Run the focused skill, health and
+development entry points in PowerShell 7 as well. When invoking 5.1 from a
+PowerShell 7 host with inherited module paths, rebuild only the child process's
+`PSModulePath` from its Windows machine setting, as the native CLI launcher does.
 Run affected Windows PowerShell 5.1 entry-point contracts too; moving the guardian
 to PowerShell 7 did not remove the 5.1 bootstrap/CLI boundary. Keep full Debian
 Make/coverage validation in Debian CI; Linux-only success is not native proof.

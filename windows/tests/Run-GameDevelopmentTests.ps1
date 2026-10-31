@@ -61,7 +61,10 @@ $env:VCPKG_ROOT = 'C:\VS\bundled-vcpkg'
             foreach ($prior in @($null, 'F:\project vcpkg')) {
                 [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $prior, 'Process')
                 Enter-NativeGameDevEnvironment
-                Assert-True ([Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'Process') -eq $prior) 'Developer environment replaced project vcpkg selection'
+                # Framework and modern .NET expose an unset variable as null or
+                # empty respectively. Both mean no project selection; compare
+                # nonempty selections exactly, including case and spaces.
+                Assert-True ([string][Environment]::GetEnvironmentVariable('VCPKG_ROOT', 'Process') -ceq [string]$prior) 'Developer environment replaced project vcpkg selection'
             }
         } finally {
             [Environment]::SetEnvironmentVariable('VCPKG_ROOT', $savedVcpkg, 'Process')
