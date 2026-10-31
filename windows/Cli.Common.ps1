@@ -1,4 +1,13 @@
 <# Native launcher installation and the basic Windows command surface. #>
+function Build-NativeCli([string]$Source, [string]$Output) {
+    $code = '$env:PSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath", "Machine"); ' +
+        '$ErrorActionPreference = "Stop"; $ProgressPreference = "SilentlyContinue"; Add-Type -Path ''' + $Source.Replace("'", "''") +
+        ''' -OutputAssembly ''' + $Output.Replace("'", "''") + ''' -OutputType ConsoleApplication'
+    $shell = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'
+    & $shell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($code)))
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Output -PathType Leaf)) { throw 'Native CLI compilation failed' }
+}
+
 function Install-NativeCli([string]$Source, [switch]$Plan) {
     $bin = Join-Path $env:LOCALAPPDATA 'Basaltwater\bin'
     $files = @('basaltw.cmd', 'Invoke-Basaltw.ps1', 'Cli.Common.ps1')
@@ -8,6 +17,10 @@ function Install-NativeCli([string]$Source, [switch]$Plan) {
             throw "Native CLI source is incomplete: $file"
         }
     }
+    $launcher = Join-Path $bin 'basaltw.exe'
+    Assert-NativeSkillPath $launcher
+    $launcherSource = Join-Path $Source 'windows\NativeCli.cs'
+    if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) { throw 'Native CLI source is incomplete: NativeCli.cs' }
     Assert-NativeSkillPath (Join-Path $bin 'cli-source.json')
     $metadata = Get-Content -LiteralPath (Join-Path $Source 'pyproject.toml') -Raw
     if ($metadata -notmatch '(?m)^version\s*=\s*"([A-Za-z0-9.+-]+)"\s*$') { throw 'Missing Basaltwater package version' }
@@ -15,6 +28,14 @@ function Install-NativeCli([string]$Source, [switch]$Plan) {
     Write-Host "Native basaltw command: $bin (help, version, info, doctor, refresh)"
     if ($Plan) { return }
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
+    $temporary = Join-Path $bin ('basaltw-' + [guid]::NewGuid().ToString('N') + '.exe')
+    try {
+        Build-NativeCli $launcherSource $temporary
+        # Compile before touching the working launcher. Atomic publication also
+        # permits a refresh to replace its own still-running launcher image.
+        if (Test-Path -LiteralPath $launcher) { [IO.File]::Replace($temporary, $launcher, [NullString]::Value) }
+        else { [IO.File]::Move($temporary, $launcher) }
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
     foreach ($file in $files) {
         Copy-Item -LiteralPath (Join-Path $Source "windows\$file") -Destination (Join-Path $bin $file) -Force
     }

@@ -267,9 +267,14 @@ The downloaded and checkout entry points share the same pinned-installer state.
 
 ## Native basaltw commands
 
-Setup adds `%LOCALAPPDATA%\Basaltwater\bin` to the account PATH. Its `.cmd`
-launcher works from PowerShell and Command Prompt without installing Python or
-changing the account execution policy. Open a new terminal after first setup.
+Setup adds `%LOCALAPPDATA%\Basaltwater\bin` to the account PATH. Its native
+`basaltw.exe` launcher works from PowerShell and Command Prompt without installing
+Python or changing the account execution policy. Setup compiles this small shim
+using Windows' included .NET Framework/PowerShell 5.1. Arguments cross a private
+stdin pipe into the existing PowerShell CLI; no argument files are written.
+CLI commands do not consume user stdin. Compilation finishes before atomic
+launcher replacement, including when refresh's launcher is still running.
+Open a new terminal after first setup.
 
 ```powershell
 basaltw --help
@@ -327,12 +332,15 @@ subcommands remain unavailable on Windows.
 PCs without the launcher can use the same current installer download with
 `-Profile agent_windows`; existing selections are retained automatically.
 
-Windows batch launchers expand literal `%NAME%` text in arguments, even when
-called from PowerShell. For a storage path containing percent expressions,
-invoke the PowerShell entry point directly so the path stays literal:
+Use the prepared PowerShell 7 shell for literal arguments, including embedded
+quotes, empty strings, Unicode and `%NAME%` text. The native executable avoids
+batch parsing and preserves these values into task planning. The retained explicit
+`basaltw.cmd` fallback and Windows PowerShell 5.1's native argument binder have
+legacy quoting/expansion limitations. On an older installation, invoke the
+PowerShell script directly from PowerShell 7 to keep values literal:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Basaltwater\bin\Invoke-Basaltw.ps1" refresh --storage-root 'F:\cache %NAME%' --dry-run
+pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Basaltwater\bin\Invoke-Basaltw.ps1" refresh --storage-root 'F:\cache %NAME%' --dry-run
 ```
 
 The direct installer/checkout scripts also accept literal paths through

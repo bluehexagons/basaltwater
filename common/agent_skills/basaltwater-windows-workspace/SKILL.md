@@ -82,7 +82,9 @@ PowerShell 7 supports `&&`; Windows PowerShell 5.1 does not. Check
 `$LASTEXITCODE` after native executables. Prefer `npm.cmd` to `npm.ps1` when
 script execution policy blocks npm. Quote paths and use `-LiteralPath` for file
 operations. Do not substitute WSL or translate a Linux build command into a
-Windows command without project guidance.
+Windows command without project guidance. Use the native `basaltw.exe` launcher
+from PowerShell 7 for literal argv; the explicit `.cmd` fallback and Windows
+PowerShell 5.1's native binder retain legacy quoting limitations.
 
 The Microsoft Store `python.exe` alias can exist without an installed Python.
 Verify the interpreter or use `uv run`/the project's virtual environment.

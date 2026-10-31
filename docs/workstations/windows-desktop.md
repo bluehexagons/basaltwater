@@ -19,13 +19,13 @@ replace personal Terminal settings or select a new default profile. Reapplying
 setup refreshes the Basaltwater fragment and shortcut.
 MSIX installations use the verified stable app execution alias so the profile
 and shortcut continue working when PowerShell's versioned package is replaced.
-The batch CLI and bounded Windows PowerShell worker rebuild their own module
+The native CLI and bounded Windows PowerShell worker rebuild their own module
 paths, avoiding incompatible PowerShell 7 modules inherited through intermediaries;
 see [Microsoft's module-path guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
 
 `$PSVersionTable.PSVersion` reports the invoking shell. The prepared development
 shell and supervised task guardians use PowerShell 7 (`pwsh.exe`). The public
-`basaltw.cmd` launcher uses Windows PowerShell 5.1 (`powershell.exe`) for its
+`basaltw.exe` launcher transports literal argv to Windows PowerShell 5.1 for its
 compatibility entry point, and desktop observation/control uses a separate,
 hidden worker bounded to eight seconds. Doctor's `worker: WindowsPowerShell-5.1`
 identifies that UI Automation backend, which loads Windows' installed .NET

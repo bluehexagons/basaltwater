@@ -34,6 +34,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'Run-GameDevelopmentTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-CliTests.ps1')
+    & (Join-Path $PSScriptRoot 'Run-NativeCliTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-WorkstationHealthTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-T3CompletionTests.ps1')
     & (Join-Path $PSScriptRoot 'Run-WindowsRestartTests.ps1')
