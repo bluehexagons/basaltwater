@@ -14,10 +14,11 @@ from lib.privilege_client import exchange
 
 FAILURE_LABELS = {
     "storage_busy": "Another storage operation held the lock. No recovery was started.",
+    "setup_recovery_required": "An unfinished setup operation needs administrator recovery before file recovery can continue.",
     "finding_changed": "The finding changed after review. Refresh the findings before reviewing it again.",
     "file_changed": "The file changed after its recorded check. Verify it again before recovery.",
     "identity_unavailable": "This older finding has no file identity. Verify it again before recovery.",
-    "execution_rejected": "Recovery could not complete. Inspect the configured mounts and scrub report through the controller before retrying.",
+    "execution_rejected": "Recovery could not complete. Inspect setup activity, configured mounts and the scrub report through the controller before retrying.",
     "job_interrupted": "The worker stopped without a confirmed result. Inspect the file and report before retrying.",
 }
 DISPATCH_FAILURES = {
@@ -40,7 +41,7 @@ class PanelData:
             return {"error": "Recovery controls require the optional privilege approval service. Configure it for a supported non-root VM operator, or use the controller commands below."}
         try:
             result = exchange({"action": "data-status"})
-            if (type(result.get("available")) is not bool or not isinstance(result.get("requests"), list)
+            if (any(type(result.get(key)) is not bool for key in ("available", "blocked")) or not isinstance(result.get("requests"), list)
                     or not isinstance(result.get("latest"), dict)
                     or result.get("unit_state") not in {"active", "activating", "deactivating", "inactive", "failed", "unavailable"}):
                 raise ValueError("Unsupported recovery status")
@@ -90,6 +91,8 @@ def unavailable_reason(status: dict) -> str:
         return status["error"]
     if not status.get("available") or status.get("unit_state") == "unavailable":
         return "The recovery worker is unavailable. Check its service and installed source."
+    if status.get("blocked"):
+        return "Setup recovery must finish before file recovery. Inspect the setup operation marker through the administrator command line."
     if status.get("unit_state") not in {"inactive", "failed"}:
         return "A recovery job is running. Refresh status after it finishes."
     if status.get("other_active"):

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import fcntl
 import os
 import secrets
@@ -18,7 +20,8 @@ if __name__ == "__main__" and not __package__:
 
 from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
 from lib.data_actions import DATA_STATE, DATA_UNIT, HEX_ID, finding_revision, validate_data_action
-from lib.machine_state import can_manage_system_services, load_setup_config
+from lib.machine_state import PERSISTENT_STATE_DIR as STATE_DIR, can_manage_system_services, load_setup_config
+from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path
 from lib.runtime_config import RuntimeConfig
@@ -27,11 +30,32 @@ from sync.service_tools.scrub_manage import execute, selected_jobs
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock
 
 RESULTS = {"running", "succeeded", "findings", "failed", "interrupted"}
-FAILURES = {"", "storage_busy", "finding_changed", "file_changed", "identity_unavailable", "execution_rejected", "job_interrupted"}
+FAILURES = {"", "storage_busy", "setup_recovery_required", "finding_changed", "file_changed", "identity_unavailable", "execution_rejected", "job_interrupted"}
 
 
 class DataJobRejected(ValueError):
     """A safe, fixed reason for refusing a stale or conflicting operation."""
+
+
+def _setup_blocked() -> bool:
+    try:
+        os.lstat(STATE_DIR + "/setup-operation.json")
+    except FileNotFoundError:
+        return False
+    return True
+
+
+@contextmanager
+def _setup_owner() -> Iterator[None]:
+    protected_path(STATE_DIR, directory=True)
+    marker = STATE_DIR + "/setup-operation.json"
+    for path in (marker, marker + ".lock"):
+        if os.path.lexists(path):
+            protected_path(path)
+    with OperationStateStore(marker).ownership() as owner:
+        if owner.load() is not None:
+            raise DataJobRejected("setup_recovery_required")
+        yield
 
 
 def _payload_path(job_id: str) -> str:
@@ -105,9 +129,10 @@ def job_status() -> dict:
         if after.get("status") == "running" and active in {"inactive", "failed"}:
             after.update(status="interrupted", failure="job_interrupted")
         return {"unit_state": active, "latest": after,
+                "blocked": _setup_blocked(),
                 "available": active != "unavailable" and can_manage_system_services()}
     except (OSError, ValueError, RuntimeError, TypeError):
-        return {"unit_state": "unavailable", "latest": {}, "available": False}
+        return {"unit_state": "unavailable", "latest": {}, "blocked": True, "available": False}
 
 
 def recover(parameters: dict, saved: dict) -> tuple[dict, int]:
@@ -152,13 +177,16 @@ def run_action(parameters: dict) -> int:
                  "finished": None, "category": "", "failure": ""}
         write_json_atomic(DATA_STATE, value, mode=0o600)
         try:
-            with OperationLock(LOCK_FILE) as storage_lock:
-                if not storage_lock.acquire():
-                    raise DataJobRejected("storage_busy")
-                saved = load_setup_config()
-                if saved is None:
-                    raise ValueError("Saved setup unavailable")
-                result, code = recover(parameters, saved)
+            # Match routine edits: setup ownership precedes the storage lock,
+            # and spans fresh configuration loading through the entire recovery.
+            with _setup_owner():
+                with OperationLock(LOCK_FILE) as storage_lock:
+                    if not storage_lock.acquire():
+                        raise DataJobRejected("storage_busy")
+                    saved = load_setup_config()
+                    if saved is None:
+                        raise ValueError("Saved setup unavailable")
+                    result, code = recover(parameters, saved)
             category = result.get("category")
             if category not in {"healthy", *ADVICE}:
                 raise ValueError("Unexpected recovery result")

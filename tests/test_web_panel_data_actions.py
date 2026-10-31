@@ -21,6 +21,7 @@ from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import WebPanelHandler
 from common.service_tools.web_panel_templates import panel_navigation
 from lib.data_actions import DATA_HELPER, DATA_TIMEOUT, finding_revision, validate_data_action
+from lib.operation_state import OperationStateError, OperationStateStore
 from lib.privilege_execution import ExecutionResult
 from lib.privilege_policy import operation_plan
 from sync.service_tools.scrub_findings import Findings, file_identity, remediate
@@ -32,7 +33,7 @@ def parameters() -> dict:
 
 
 def status() -> dict:
-    return {"available": True, "unit_state": "inactive", "latest": {}, "requests": []}
+    return {"available": True, "blocked": False, "unit_state": "inactive", "latest": {}, "requests": []}
 
 
 def policy() -> dict:
@@ -82,12 +83,28 @@ class DataActionContractTests(unittest.TestCase):
             self.assertFalse(broker.execute_next())
             runner.assert_called_once_with(request["plan"])
 
+    def test_setup_recovery_blocks_dispatch_before_staging_or_launch(self):
+        plan = operation_plan(policy(), 1000, "data.run", parameters())
+        for blocked in (True, None):
+            snapshot = {**status(), "blocked": blocked}
+            if blocked is None:
+                snapshot.pop("blocked")
+            with self.subTest(blocked=blocked), \
+                 patch.object(privilege_broker, "protected_path"), \
+                 patch.object(privilege_broker, "data_job_status", return_value=snapshot), \
+                 patch.object(privilege_broker, "stage_data_job") as stage, \
+                 patch.object(privilege_broker.subprocess, "run") as run:
+                self.assertEqual(privilege_broker.execute(plan).failure, "action_unavailable")
+                stage.assert_not_called()
+                run.assert_not_called()
+
 
 class DataRecoveryTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        self.enterContext(patch.object(data_job, "STATE_DIR", str(self.root)))
         self.directory, self.database = self.root / "data", self.root / "parity"
         self.directory.mkdir()
         self.database.mkdir()
@@ -182,6 +199,51 @@ class DataRecoveryTests(unittest.TestCase):
         with patch.object(data_job, "_record", side_effect=[record, {}]), patch.object(data_job, "_unit_state", return_value="inactive"):
             self.assertFalse(data_job.job_status()["available"])
 
+    def test_setup_guard_blocks_recovery_before_configuration_or_storage_reads(self):
+        self.run_job()
+        marker = str(self.root / "setup-operation.json")
+        with OperationStateStore(marker).ownership() as owner:
+            owner.begin("storage_routines", "localhost", "saving")
+        before = Path(marker).read_bytes()
+        self.assertEqual(self.run_root_job(self.value), 1)
+        data_job.recover.assert_not_called()
+        data_job.load_setup_config.assert_not_called()
+        self.assertEqual(Path(marker).read_bytes(), before)
+        with patch.object(data_job, "_unit_state", return_value="inactive"):
+            snapshot = data_job.job_status()
+        self.assertTrue(snapshot["blocked"])
+        self.assertEqual(snapshot["latest"]["failure"], "setup_recovery_required")
+
+    def test_setup_and_recovery_exclude_each_other_for_the_entire_operation(self):
+        self.run_job()
+        marker = str(self.root / "setup-operation.json")
+        with OperationStateStore(marker).ownership():
+            self.assertEqual(self.run_root_job(self.value), 1)
+        data_job.recover.assert_not_called()
+        data_job.load_setup_config.assert_not_called()
+        def recovering(_parameters, saved):
+            self.assertEqual(saved, self.saved)
+            with self.assertRaises(OperationStateError):
+                with OperationStateStore(marker).ownership():
+                    self.fail("Concurrent setup must be excluded during recovery")
+            return {"category": "healthy"}, 0
+        data_job.recover.side_effect = recovering
+        self.assertEqual(self.run_root_job({**self.value, "job_id": "c" * 32}), 0)
+        self.assertFalse(Path(marker).exists())
+
+    def test_unreadable_setup_guard_makes_status_unavailable(self):
+        self.run_job()
+        original = os.lstat
+        def unreadable(path, *args, **kwargs):
+            if path == str(self.root / "setup-operation.json"):
+                raise PermissionError("Unreadable marker")
+            return original(path, *args, **kwargs)
+        with patch.object(data_job.os, "lstat", side_effect=unreadable), \
+             patch.object(data_job, "_unit_state", return_value="inactive"):
+            snapshot = data_job.job_status()
+        self.assertFalse(snapshot["available"])
+        self.assertTrue(snapshot["blocked"])
+
     def test_private_payload_preserves_literal_paths_and_is_consumed_once(self):
         self.run_job()
         value = {**self.value, "file": str(self.directory / "$HOME-%n.bin")}
@@ -226,7 +288,8 @@ class DataReviewTests(unittest.TestCase):
     def test_busy_unavailable_and_expired_reviews_cannot_request_recovery(self):
         for snapshot in ({**status(), "unit_state": "active"}, {**status(), "available": False},
                          {**status(), "requests": [{"state": "pending"}]}, {**status(), "outstanding": True},
-                         {**status(), "other_active": True}):
+                         {**status(), "other_active": True}, {**status(), "blocked": True},
+                         {key: value for key, value in status().items() if key != "blocked"}):
             ticket, _ = self.manager.prepare(self.fields())
             with patch.object(actions, "exchange", return_value=snapshot) as exchange, self.assertRaises(ValueError):
                 self.manager.submit(ticket, "CHANGE FILE")

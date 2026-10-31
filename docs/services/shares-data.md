@@ -48,7 +48,8 @@ they do not select tasks from that limited summary. A separate sanitized local
 catalog includes health and open findings from every configured scrub task,
 including tasks outside that summary. Each browser returns twenty rows per page;
 task and finding filters preserve one another when paging or refreshing. Searches
-are case-insensitive and literal. Filters and pagination use this complete catalog. Failed
+accept up to 200 Unicode characters each and are case-insensitive and literal.
+Filters and pagination use this complete catalog. Failed
 mount checks, unreadable reports or unsupported report metadata produce an explicit
 incomplete-results notice. A missing, corrupt or mismatched catalog is unavailable,
 never an empty or healthy result. Older exporters retain the limited preview and
@@ -188,8 +189,12 @@ Parity maintenance is separate from full verification and does not clear open
 findings. Retry delays show the failure count and earliest scheduled retry time;
 paused routines remain paused even after that time.
 
-Reviews expire after five minutes. Validation errors retain entered paths;
-confirmation typos retain the review. Submission consumes it before requesting
+Reviews expire after five minutes. Validation errors retain entered paths. If
+the snapshot changes, the routine disappears or editing becomes unavailable,
+a copyable unsaved routine draft preserves the paths, interval, schedule and
+redundancy. Refresh and compare the current configuration before editing again;
+the draft is not applied to a newer revision automatically.
+Confirmation typos retain the review. Submission consumes it before requesting
 approval, so lost responses are not replayed. A changed saved configuration or
 pause control rejects execution. Interrupted saves retain a setup recovery guard;
 inspect and reconcile it using the [storage operations guide](../storage/storage-operations.md)
@@ -341,7 +346,12 @@ expires. Once the submission reaches the broker connection, the ticket is consum
 inspect activity after an uncertain response instead of replaying the review.
 The worker runs outside the panel with a six-hour deadline and uses the same
 storage lock, configured-job selection, mount guards and staged recovery as
-the CLI. It refuses a finding that changed since review, and refuses recovery
+the CLI. Browser recovery also holds setup ownership from configuration loading
+through completion, excluding setup, refresh and routine edits. An unfinished
+setup operation blocks recovery controls and dispatch; the worker checks again
+before reading storage or changing a file. Reconcile the setup operation using
+the [transaction recovery guide](../operations/transaction-recovery.md) first.
+It refuses a finding that changed since review, and refuses recovery
 when the file changed since its recorded check. Older findings without a file
 identity must be verified first. A verification that still reports damage is
 shown as **findings**, not successful recovery.

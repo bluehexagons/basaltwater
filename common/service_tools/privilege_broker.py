@@ -60,7 +60,7 @@ def execute(plan: dict) -> ExecutionResult:
         if plan["operation"] == "data.run":
             protected_path(DATA_HELPER)
             status = data_job_status()
-            if (not status["available"] or status["unit_state"] not in {"inactive", "failed"}
+            if (not status["available"] or status.get("blocked") is not False or status["unit_state"] not in {"inactive", "failed"}
                     or routine_job_status().get("unit_state") in {"active", "activating", "deactivating"}):
                 return ExecutionResult("failed", failure="action_unavailable")
             stage_data_job(plan["parameters"])

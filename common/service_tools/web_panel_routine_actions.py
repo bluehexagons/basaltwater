@@ -173,10 +173,29 @@ def row_facts(row: dict) -> str:
     return '<dl class="job-facts">' + ''.join(f'<div><dt>{label}</dt><dd>{html.escape(text)}</dd></div>' for label, text in pairs) + '</dl>'
 
 
+def render_draft(fields: dict) -> str:
+    scrub = fields["kind"] == "scrub"
+    pairs = [("Kind", KINDS[fields["kind"]]), ("Scrub root" if scrub else "Source", fields["first"]),
+             ("Parity directory" if scrub else "Destination", fields["second"]),
+             ("Full scan interval" if scrub else "Interval", fields["interval"]),
+             ("Schedule", {"1": "Paused", "0": "Active"}.get(fields["paused"], fields["paused"]))]
+    if scrub:
+        pairs.append(("Redundancy", fields["redundancy"]))
+    return ('<section class="event" aria-labelledby="routine-draft">'
+            + render_heading("Unsaved routine draft", "data", heading_id="routine-draft")
+            + '<p>Editing is unavailable or the snapshot changed. Copy this draft, refresh and review the current routine before editing again.</p>'
+            + '<dl class="job-facts">' + ''.join(f'<div><dt>{label}</dt><dd>{html.escape(text)}</dd></div>' for label, text in pairs)
+            + '</dl></section>')
+
+
 def render_editor(control: dict, query: dict, csrf: str, submitted: dict | None = None) -> str:
+    if submitted is not None and submitted["revision"] != control["revision"]:
+        return render_draft(submitted)
     rows = control["routines"]
     selected = next((row for row in rows if routine_identity(row["kind"], row["spec"]) == query.get("routine")), None)
     if query.get("routine") and (selected is None or view_for(selected["kind"]) != query.get("view")):
+        if submitted is not None:
+            return render_draft(submitted)
         return '<p class="event" role="alert">That routine is no longer in this view. Refresh the routine list.</p>'
     kind = selected["kind"] if selected else query.get("form")
     if kind not in KINDS:

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import html
 import json
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import urlencode, urlsplit
 
 from common.service_tools import web_panel_audit_export as exporter, web_panel_findings as catalog
 from common.service_tools import web_panel_shares_data as page, web_panel_storage as storage
@@ -130,6 +133,24 @@ class CompleteFindingBrowserTests(unittest.TestCase):
                       "view=scrubs&task=%00", "view=scrubs&task=" + "x" * 201):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 page.parse_shares_data_query(query)
+
+    def test_full_length_unicode_searches_survive_combined_filters_and_pagination(self):
+        query = {"view": "scrubs", "q": "\U0001f600" * 200, "task": "界" * 200,
+                 "category": "repairable", "page": "2", "tasks_page": "2"}
+        encoded = urlencode(query)
+        self.assertGreater(len(encoded), 2048)
+        self.assertEqual(page.parse_shares_data_query(encoded), query)
+        for field in ("page", "tasks_page"):
+            document = page._pagination(query, 2, 60, field, "results")
+            for target in re.findall(r'href="([^"]+)"', document):
+                parsed = page.parse_shares_data_query(urlsplit(html.unescape(target)).query)
+                self.assertEqual(parsed["q"], query["q"])
+                self.assertEqual(parsed["task"], query["task"])
+        for field in ("q", "task"):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                page.parse_shares_data_query(urlencode({**query, field: "界" * 201}))
+        with self.assertRaisesRegex(ValueError, "query exceeds"):
+            page.parse_shares_data_query("q=" + "x" * 6144)
 
     def test_bad_health_never_hides_valid_findings_or_claims_healthy(self):
         snapshot = self.collect()

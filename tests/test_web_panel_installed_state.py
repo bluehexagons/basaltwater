@@ -87,16 +87,26 @@ class InstalledStateTests(unittest.TestCase):
             self.assertNotEqual(first, lifecycle._creation_revision())
 
     def test_job_status_and_refresh_use_durable_state_with_alias_present(self):
-        share = self.module("smb.share_job")
-        with patch.object(share, "_record", return_value={}), \
-             patch.object(share.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="inactive\n")), \
-             patch.object(share, "can_manage_system_services", return_value=True):
-            self.assertEqual(share.job_status(), {"available": True, "unit_state": "inactive",
-                                                 "latest": {}, "blocked": False})
+        for name in ("smb.share_job", "common.service_tools.data_job"):
+            module = self.module(name)
+            with self.subTest(name=name), patch.object(module, "_record", return_value={}), \
+                 patch.object(module.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="inactive\n")), \
+                 patch.object(module, "can_manage_system_services", return_value=True):
+                self.assertEqual(module.job_status(), {"available": True, "unit_state": "inactive",
+                                                      "latest": {}, "blocked": False})
         refresh = self.module("lib.refresh")
         first = refresh.saved_setup_revision()
         self.setup.write_text(json.dumps({**self.saved, "friendly_name": "changed"}))
         self.assertNotEqual(first, refresh.saved_setup_revision())
+
+    def test_recovery_owns_durable_setup_with_runtime_alias_present(self):
+        from lib.operation_state import OperationStateStore
+
+        recovery = self.module("common.service_tools.data_job")
+        with recovery._setup_owner():
+            with self.assertRaisesRegex(ValueError, "owned"):
+                with OperationStateStore(str(self.state / "setup-operation.json")).ownership():
+                    self.fail("Recovery must exclude concurrent setup through the durable path")
 
     def test_observation_works_without_write_opens_and_excludes_mutation(self):
         from lib import operation_state

@@ -58,7 +58,8 @@ STYLE = """
 
 
 def parse_shares_data_query(raw: str) -> dict[str, str]:
-    if len(raw) > 2048:
+    # Both 200-character searches can expand to twelve URL bytes per character.
+    if len(raw) > 6144:
         raise ValueError("Shares & Data query exceeds its limit")
     values = parse_qs(raw, keep_blank_values=True, max_num_fields=6)
     if set(values) - {"view", "category", "q", "page", "task", "tasks_page", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
@@ -168,6 +169,8 @@ def _managed_routines(control: dict, query: dict, csrf: str, *, controls: bool, 
              '<p class="data-notice">These are recurring rsync mirrors. A backup declaration does not create snapshots or retained versions. Changes and deletions can propagate to the destination.</p>')
     if controls and not review:
         body += routines.render_editor(control, query, csrf, submitted)
+    elif submitted is not None:
+        body += routines.render_draft(submitted)
     rows = [row for row in control["routines"] if (row["kind"] == "scrub") == scrub]
     if not rows:
         body += '<p class="empty">No scrub tasks configured.</p>' if scrub else '<p class="empty">No backup or sync routines configured.</p>'
@@ -329,6 +332,9 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     routine_status = routine_manager.snapshot() if routine_manager is not None and view != "shares" else {}
     if routine_manager is not None and view != "shares":
         body += routines.render_status(routine_status, csrf)
+    if routine_fields is not None and (not snapshot.get("available")
+            or not snapshot.get("routine_management", {}).get("available")):
+        body += routines.render_draft(routine_fields)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
         if share_fields is not None:

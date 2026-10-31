@@ -137,6 +137,53 @@ class RoutinePanelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.submit(ticket, "SAVE ROUTINE")
 
+    def test_changed_or_removed_routine_preserves_draft_without_rebasing_inputs(self):
+        for changed in ("revision", "removed"):
+            with self.subTest(changed=changed):
+                self.snapshot = shares_data_snapshot("full")
+                fields = self.fields(first="/srv/unsaved <input>", second="/srv/draft-output")
+                control = self.snapshot["routine_management"]
+                if changed == "revision":
+                    control["revision"] = "e" * 64
+                else:
+                    control["routines"] = [row for row in control["routines"] if row["kind"] != "backup"]
+                handler = self.handler("review", {"csrf": "csrf", **fields})
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], 422)
+                document = handler._send.call_args.args[1]
+                self.assertIn("Unsaved routine draft", document)
+                self.assertIn("/srv/unsaved &lt;input&gt;", document)
+                self.assertIn("/srv/draft-output", document)
+                self.assertNotIn('id="routine-first"', document)
+                self.assertNotIn("Create routine approval request", document)
+                self.assertFalse(self.manager.tickets)
+        self.assertFalse(any(call.args[0]["action"] == "request" for call in self.exchange.call_args_list))
+
+    def test_unavailable_editing_retains_copyable_routine_inputs(self):
+        for kind, unavailable in (("backup", "busy"), ("sync", "configuration"), ("scrub", "snapshot")):
+            with self.subTest(kind=kind, unavailable=unavailable):
+                self.snapshot = shares_data_snapshot("full")
+                fields = self.fields(kind, first="/srv/draft <source>", second="/srv/draft-output")
+                self.exchange.return_value = idle(other_active=unavailable == "busy")
+                if unavailable == "configuration":
+                    self.snapshot["routine_management"] = {"available": False}
+                elif unavailable == "snapshot":
+                    self.snapshot = {"available": False}
+                handler = self.handler("review", {"csrf": "csrf", **fields})
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], 422)
+                document = handler._send.call_args.args[1]
+                self.assertIn("Unsaved routine draft", document)
+                self.assertIn("/srv/draft &lt;source&gt;", document)
+                self.assertIn("/srv/draft-output", document)
+                self.assertIn("monthly", document)
+                self.assertIn("Paused", document)
+                if kind == "scrub":
+                    self.assertIn("15%", document)
+                self.assertNotIn('id="routine-first"', document)
+                self.assertFalse(self.manager.tickets)
+        self.assertFalse(any(call.args[0]["action"] == "request" for call in self.exchange.call_args_list))
+
     def test_cancel_uses_owned_broker_request_and_returns_to_its_view(self):
         with patch.object(self.state.admin, "cancel") as cancel:
             handler = self.handler("cancel", {"csrf": "csrf", "id": "a" * 32, "view": "scrubs"})
