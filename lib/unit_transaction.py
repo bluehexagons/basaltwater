@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import os
 import re
 import shutil
@@ -10,7 +11,7 @@ import stat
 import tempfile
 
 from lib.atomic_io import remove_file_durable, write_json_atomic, write_text_atomic
-from lib.operation_state import OperationStateStore
+from lib.operation_state import OperationStateError, OperationStateStore, RECOVERY_GUIDANCE
 from lib.remote_utils import is_dry_run, run
 from lib.validation import validate_filesystem_path, validate_service_name_uniqueness
 
@@ -22,6 +23,49 @@ class UnitRecoveryError(RuntimeError):
         self.marker_path = marker_path
         self.backup_dir = backup_dir
         super().__init__(f"Systemd rollback needs recovery; inspect {marker_path} and {backup_dir}")
+
+
+class UnitOwnership:
+    """A scoped unit lock that explicit nested removals may borrow."""
+
+    def __init__(self, store: OperationStateStore):
+        self._store = store
+        self._active = False
+
+    @property
+    def unit_dir(self) -> str:
+        return os.path.dirname(self._store.path)
+
+    def _borrow(self, unit_dir: str) -> OperationStateStore:
+        if not self._active or os.path.abspath(unit_dir) != self.unit_dir:
+            raise ValueError("Unit ownership is inactive or belongs to another directory")
+        return self._store
+
+
+@contextmanager
+def unit_ownership(unit_dir: str = "/etc/systemd/system") -> Iterator[UnitOwnership]:
+    """Exclude unit operations and refuse unfinished recovery before teardown.
+
+    Hold this scope across manual mutations. Pass its owner explicitly to nested
+    ``remove_units`` calls; their completion retains the outer lock. This scope
+    adds exclusion, not rollback or a journal for the caller's other effects.
+    """
+    validate_filesystem_path(unit_dir, must_exist=False)
+    unit_dir = os.path.abspath(unit_dir)
+    store = OperationStateStore(os.path.join(unit_dir, ".basaltwater-unit-operation.json"))
+    with store.ownership():
+        record = store.load()
+        if record is not None:
+            raise OperationStateError(
+                f"Unfinished {record.operation_type} operation {record.operation_id} "
+                f"is recorded in {store.path} at phase {record.phase}; {RECOVERY_GUIDANCE}"
+            )
+        owner = UnitOwnership(store)
+        owner._active = True
+        try:
+            yield owner
+        finally:
+            owner._active = False
 
 
 def _command(*args: str) -> str:
@@ -95,7 +139,7 @@ def _activators_unchanged(units: dict[str, str], activate: tuple[str, ...], unit
 def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str,
                      deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
                      preserve_unchanged: bool = False, verify: Callable[[], None] | None = None,
-                     start_once: tuple[str, ...] = ()) -> None:
+                     start_once: tuple[str, ...] = (), owner: UnitOwnership | None = None) -> None:
     validate_filesystem_path(unit_dir, must_exist=False)
     if (not units and not remove) or not (set(activate) | set(deactivate) | set(start_once)) <= units.keys():
         raise ValueError("Activation requires staged units")
@@ -142,7 +186,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
         print(f"  [DRY-RUN] Would {'remove' if remove else 'replace'} units: {', '.join(names)}")
         return
 
-    store = OperationStateStore(os.path.join(unit_dir, ".basaltwater-unit-operation.json"))
+    store = owner._borrow(unit_dir) if owner is not None else OperationStateStore(
+        os.path.join(unit_dir, ".basaltwater-unit-operation.json"))
     backup_dir = ""
     resolved = False
     record = None
@@ -167,7 +212,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             states = {name: inspect_unit_state(name) for name in dict.fromkeys((*activate, *deactivate, *managed_removals))}
             states.update({name: inspect_unit_state(name, allow_oneshot=True) for name in start_once})
             if not units and not removals:
-                store.complete(record.operation_id)
+                store.complete(record.operation_id, keep_ownership=owner is not None)
                 resolved = True
                 return
             backup_dir = tempfile.mkdtemp(prefix=".basaltwater-units-", dir=unit_dir)
@@ -253,7 +298,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                     raise RuntimeError(f"Unit activation failed verification: {name}")
             if verify is not None:
                 verify()
-            store.complete(record.operation_id)
+            store.complete(record.operation_id, keep_ownership=owner is not None)
             resolved = True
         except BaseException as original_error:
             errors = []
@@ -338,7 +383,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 store.transition(record.operation_id, "rollback-failed", status="recovery_required",
                                  context={**context, "backup_dir": backup_dir, "errors": errors})
                 raise UnitRecoveryError(store.path, backup_dir) from original_error
-            store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
+            store.complete(record.operation_id, outcome="rolled_back" if modified else "failed",
+                           keep_ownership=owner is not None)
             resolved = True
             raise
     except Exception as error:
@@ -346,7 +392,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             raise UnitRecoveryError(store.path, backup_dir) from error
         raise
     finally:
-        store.close()
+        if owner is None:
+            store.close()
         if backup_dir and resolved:
             try:
                 shutil.rmtree(backup_dir)
@@ -398,8 +445,8 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                      verify=verify, start_once=start_once)
 
 
-def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system",
-                 prepare: Callable[[], None] | None = None) -> None:
+def remove_units(names: tuple[str, ...], *, unit_dir: str | None = None,
+                 prepare: Callable[[], None] | None = None, owner: UnitOwnership | None = None) -> None:
     """Remove managed units together, restoring files and states on failure.
 
     Pass activators before their service. Missing managed files are skipped;
@@ -409,5 +456,12 @@ def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system
     under the same lock and rollback boundary. Dry runs and removals with no
     managed files skip it. Its failures restore unit files and activation
     state, but its own side effects are not rolled back.
+
+    An explicit ``unit_ownership`` owner lets a nested removal borrow that
+    scope's lock and directory. Completion or failure retains the outer lock.
+    A retained inner marker still blocks further removals. Without an owner,
+    the default directory remains ``/etc/systemd/system``.
     """
-    _reconcile_units({}, activate=(), remove=names, unit_dir=unit_dir, prepare=prepare)
+    if unit_dir is None:
+        unit_dir = owner.unit_dir if owner is not None else "/etc/systemd/system"
+    _reconcile_units({}, activate=(), remove=names, unit_dir=unit_dir, prepare=prepare, owner=owner)

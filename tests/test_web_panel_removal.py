@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from common import web_panel_steps as panel
+from lib.operation_state import OperationStateStore
 
 
 class WebPanelRemovalTest(unittest.TestCase):
@@ -87,6 +88,75 @@ class WebPanelRemovalTest(unittest.TestCase):
                     with self.assertRaises(subprocess.CalledProcessError):
                         panel.remove_web_panel()
                 self.assert_installation_preserved()
+
+    def test_recovery_guard_blocks_removal_before_stops_routes_or_optional_teardown(self) -> None:
+        root = self.paths["WEB_PANEL_SERVICE_FILE"].parent
+        marker = root / ".basaltwater-unit-operation.json"
+        store = OperationStateStore(str(marker))
+        record = store.begin("unit-replacement", str(root), "replacing")
+        for status in ("in_progress", "recovery_required"):
+            store.transition(record.operation_id, "rollback-failed", status=status)
+            store.close()
+            before = marker.read_bytes()
+            with patch.object(panel, "run") as run, self.assertRaisesRegex(ValueError, "Unfinished"):
+                panel.remove_web_panel()
+            run.assert_not_called()
+            self.assertEqual(marker.read_bytes(), before)
+            self.assert_installation_preserved()
+
+    def test_active_owner_without_a_marker_excludes_removal(self) -> None:
+        root = self.paths["WEB_PANEL_SERVICE_FILE"].parent
+        store = OperationStateStore(str(root / ".basaltwater-unit-operation.json"))
+        with store.ownership(), patch.object(panel, "run") as run:
+            with self.assertRaisesRegex(ValueError, "another process"):
+                panel.remove_web_panel()
+        run.assert_not_called()
+        self.assert_installation_preserved()
+
+    def test_corrupt_or_unreadable_marker_never_implies_permission_to_remove(self) -> None:
+        root = self.paths["WEB_PANEL_SERVICE_FILE"].parent
+        marker = root / ".basaltwater-unit-operation.json"
+        for content in ("{", '{"schema_version":999}'):
+            marker.write_text(content)
+            with patch.object(panel, "run") as run, self.assertRaises(ValueError):
+                panel.remove_web_panel()
+            run.assert_not_called()
+            self.assertEqual(marker.read_text(), content)
+            self.assert_installation_preserved()
+        with patch.object(OperationStateStore, "load", side_effect=PermissionError("unreadable")):
+            with patch.object(panel, "run") as run, self.assertRaises(PermissionError):
+                panel.remove_web_panel()
+        run.assert_not_called()
+        self.assert_installation_preserved()
+
+    def test_ownership_covers_nested_components_reload_and_final_cleanup(self) -> None:
+        root = self.paths["WEB_PANEL_SERVICE_FILE"].parent
+        marker = root / ".basaltwater-unit-operation.json"
+        owners = []
+        def assert_owned(*args, **kwargs):
+            other = OperationStateStore(str(marker))
+            with self.assertRaisesRegex(ValueError, "another process"):
+                with other.ownership():
+                    self.fail("Removal released its lock before cleanup")
+            if "unit_owner" in kwargs:
+                owners.append(kwargs["unit_owner"])
+            return subprocess.CompletedProcess([], 0)
+        for name in ("remove_proxmox_snapshot", "remove_guacamole", "remove_registration_service", "remove_ban"):
+            getattr(self, name).side_effect = assert_owned
+        with patch.object(panel, "run", side_effect=assert_owned):
+            panel.remove_web_panel()
+        self.assertEqual(len(owners), 3)
+        self.assertTrue(all(owner is owners[0] for owner in owners))
+        self.assertEqual(owners[0].unit_dir, str(root))
+        lock = root / ".basaltwater-unit-operation.json.lock"
+        inode = lock.stat().st_ino
+        with OperationStateStore(str(marker)).ownership():
+            pass
+        self.assertFalse(marker.exists())
+        self.assertEqual(lock.stat().st_ino, inode)
+        with patch.object(panel, "run", side_effect=assert_owned):
+            panel.remove_web_panel()
+        self.assertEqual(lock.stat().st_ino, inode)
 
     def test_partial_audit_installations_remove_only_the_present_units(self) -> None:
         for missing in ("WEB_PANEL_AUDIT_SERVICE_FILE", "WEB_PANEL_AUDIT_TIMER_FILE"):

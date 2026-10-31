@@ -114,6 +114,14 @@ and ownership changes also remain outside this boundary.
 Removal uses the same lock and snapshot boundary as replacement,
 skips absent managed files, and stops all present units before deleting any
 of their files.
+Explicit panel removal also checks this guard before any service stop, route
+change or optional teardown, and holds the shared unit lock through data cleanup.
+An unresolved marker or a live owner blocks removal even if optional components
+are absent. Nested component transactions retain that outer lock; their failed
+recovery blocks the next removal attempt. The outer scope does not journal or
+roll back all panel teardown: earlier services or routes can already be stopped
+or removed when a later component fails. Reconcile the recorded component and
+actual panel state before retrying; retain its private evidence and stable lock.
 Socket activators are stopped before their service templates. Templates have
 file snapshots but no activation-state entry, since an abstract template cannot
 be queried or started; the owning socket stops concrete login instances through

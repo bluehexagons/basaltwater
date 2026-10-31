@@ -6,10 +6,11 @@ from __future__ import annotations
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 import os
+from pathlib import Path
 import socket
 import sys
 
-sys.path.insert(0, "/opt/basaltwater")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from lib.github_runner_registration import RunnerRegistrationError, peer_uid
 from lib.validation import validate_runner_registration_token

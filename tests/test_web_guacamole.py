@@ -250,6 +250,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_configuration_preflight_happens_before_removing_public_ingress(self):
         with patch.object(panel, "_preflight_web_panel_removal", return_value=(None, False)), \
+                patch.object(panel, "unit_ownership"), \
                 patch.object(setup, "preflight_units"), \
                 patch.object(setup, "preflight_configuration", side_effect=RuntimeError("unsafe")), \
                 patch.object(panel, "_remove_nginx_site") as remove:

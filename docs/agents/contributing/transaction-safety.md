@@ -70,6 +70,17 @@ units before preparation, and disables enabled units even if they are unloaded.
 Callers remain responsible for active units whose managed files are missing,
 because grouped removal skips missing files.
 
+Manual teardown can hold `unit_ownership(unit_dir)` across preflight, service
+stops and file/data cleanup. Entry acquires the shared unit lock and refuses an
+unfinished, corrupt or unreadable operation marker before yielding. Pass the
+yielded owner explicitly as `remove_units(..., owner=owner)` when removing nested
+components. Their transactions retain the outer lock on success, no-op or failure;
+an unresolved inner marker still blocks later removals. Other replacements never
+inherit this permission implicitly. The owner expires when its scope exits and
+cannot be used for another unit directory. This scope adds exclusion, not a
+durable transaction or rollback for manual effects. Panel removal uses it for
+core teardown and its Proxmox, Guacamole and runner registration components.
+
 Recovery decisions made before acquiring operation ownership must pass the
 inspected record as `expected_record` to `OperationStateStore.transition()`.
 Matching only the operation ID can replay a stale checkpoint after another

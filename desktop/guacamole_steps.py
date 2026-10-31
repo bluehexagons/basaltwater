@@ -23,7 +23,7 @@ from lib.guacamole_config import (
 )
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import install_package, is_dry_run, read_os_release, run
-from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, remove_units, replace_units, snapshot_unit_file
+from lib.unit_transaction import UnitOwnership, UnitRecoveryError, inspect_unit_state, remove_units, replace_units, snapshot_unit_file
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -299,13 +299,13 @@ def prepare_ssh_host_key() -> str:
     return "[127.0.0.1]:2222 " + public
 
 
-def remove_guacamole() -> None:
+def remove_guacamole(*, unit_owner: UnitOwnership | None = None) -> None:
     """Remove only managed access services; retain the desktop and release."""
     preflight_units()
     preflight_configuration()
     path = Path(CONFIG)
     if any(Path(f"/etc/systemd/system/{name}").exists() for name in managed_units()):
-        remove_units(managed_units())
+        remove_units(managed_units(), **({"owner": unit_owner} if unit_owner is not None else {}))
     path.unlink(missing_ok=True)
     Path(SSH_CONFIG).unlink(missing_ok=True)
 

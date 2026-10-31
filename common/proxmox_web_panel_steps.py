@@ -9,7 +9,7 @@ from lib.atomic_io import write_text_atomic
 from lib.proxmox_panel import SNAPSHOT, SNAPSHOT_DIR
 from lib.remote_utils import is_service_active, run
 from lib.setup_directories import check_directory_path, directory_fd
-from lib.unit_transaction import remove_units, replace_units, snapshot_unit_file
+from lib.unit_transaction import UnitOwnership, remove_units, replace_units, snapshot_unit_file
 
 
 PROXMOX_PANEL_NGINX_DROPIN = "/etc/systemd/system/nginx.service.d/50-basaltwater-web-panel.conf"
@@ -95,12 +95,12 @@ WantedBy=timers.target
                   deactivate=(SNAPSHOT_TIMER,), start_once=(SNAPSHOT_SERVICE,))
 
 
-def remove_proxmox_snapshot() -> None:
+def remove_proxmox_snapshot(*, unit_owner: UnitOwnership | None = None) -> None:
     if not proxmox_snapshot_present():
         return
     preflight_proxmox_snapshot()
     if any(snapshot_unit_file("/etc/systemd/system/" + unit) is not None for unit in (SNAPSHOT_TIMER, SNAPSHOT_SERVICE)):
-        remove_units((SNAPSHOT_TIMER, SNAPSHOT_SERVICE))
+        remove_units((SNAPSHOT_TIMER, SNAPSHOT_SERVICE), **({"owner": unit_owner} if unit_owner is not None else {}))
     try:
         os.unlink(SNAPSHOT)
     except FileNotFoundError:

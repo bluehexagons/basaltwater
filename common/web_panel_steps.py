@@ -30,7 +30,7 @@ from lib.auth_failure_bans import (
 from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
 from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 from lib.remote_utils import install_package, is_dry_run, is_service_active, run
-from lib.unit_transaction import replace_units
+from lib.unit_transaction import UnitOwnership, replace_units, unit_ownership
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
@@ -1065,6 +1065,17 @@ def _missing_panel_unit_needs_stop(unit: str) -> bool:
 def remove_web_panel() -> None:
     """Remove the panel, authentication data, and public Nginx listener."""
 
+    unit_dir = os.path.dirname(WEB_PANEL_SERVICE_FILE)
+    if any(os.path.dirname(path) != unit_dir for path in (
+        WEB_PANEL_AUDIT_SERVICE_FILE, WEB_PANEL_AUDIT_TIMER_FILE,
+    )):
+        raise ValueError("Panel units must share their recovery directory")
+    with unit_ownership(unit_dir) as owner:
+        _remove_web_panel(owner)
+
+
+def _remove_web_panel(owner: UnitOwnership) -> None:
+    """Keep the unit owner through preflight, nested removals and data cleanup."""
     nginx_content, link_exists = _preflight_web_panel_removal()
     from desktop.guacamole_steps import preflight_configuration, preflight_units, remove_guacamole
 
@@ -1096,9 +1107,9 @@ def remove_web_panel() -> None:
     _remove_nginx_site(nginx_content, link_exists)
     from common.proxmox_web_panel_steps import remove_proxmox_snapshot
 
-    remove_proxmox_snapshot()
-    remove_guacamole()
-    remove_registration_service()
+    remove_proxmox_snapshot(unit_owner=owner)
+    remove_guacamole(unit_owner=owner)
+    remove_registration_service(unit_owner=owner)
     units_changed = False
     for path in (WEB_PANEL_SERVICE_FILE, WEB_PANEL_AUDIT_SERVICE_FILE,
                  WEB_PANEL_AUDIT_TIMER_FILE):

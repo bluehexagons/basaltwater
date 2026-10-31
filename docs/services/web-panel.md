@@ -809,7 +809,13 @@ retries.
 basaltw patch 192.168.1.50 agent --no-web-panel
 ```
 
-Removal first validates the managed configuration, then stops the installed
+Removal first acquires the shared systemd unit lock and refuses any unfinished,
+corrupt or unreadable recovery marker before changing services, routes or data.
+Follow [transaction recovery](../operations/transaction-recovery.md) to reconcile
+that operation; removal cannot bypass it. The lock remains held through optional
+Proxmox, Guacamole and runner registration removal and final cleanup.
+
+Removal validates the managed configuration, then stops the installed
 audit timer, audit exporter and panel service before deleting units, credentials,
 events or the Nginx route. A failed stop aborts removal and preserves those
 files. Units already stopped or disabled remain in that state; inspect the
@@ -817,6 +823,9 @@ reported systemd failure, repair it and retry removal, or rerun the enabled
 panel setup to restore service. For a partial installation, setup inspects
 systemd before skipping a missing unit file: the unit must be explicitly absent,
 inactive and not enabled. Inspection errors abort removal.
+This exclusion does not make all teardown one rollback transaction: a later
+optional component failure can leave earlier services stopped or a route removed.
+Inspect the failure and any retained component recovery marker before retrying.
 
 Successful removal retains shared packages and independent agent tasks. Pause
 those tasks separately if they should stop. Managed audit and storage snapshots
