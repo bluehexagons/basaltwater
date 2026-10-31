@@ -27,6 +27,7 @@ from lib.atomic_io import (
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_swap
 from lib.remote_utils import is_dry_run, run
+from lib.validation import validate_filesystem_path
 from lib.swap_config import (
     SwapDevice,
     SwapFile,
@@ -946,23 +947,38 @@ def _fstab_entry(area: dict[str, Any]) -> str | None:
 
 
 def _configure_resume(name: str | None, areas: list[dict[str, Any]]) -> None:
-    previous = os.path.exists(RESUME_PATH)
-    if not name:
-        if previous:
-            remove_file_durable(RESUME_PATH)
-            run("update-initramfs -u")
-        return
-    area = next((item for item in areas if item["name"] == name), None)
-    if area is None or area["type"] != "device":
-        raise RuntimeError("The configured resume swap device was not reconciled")
-    content = f"RESUME=UUID={area['uuid']}\n"
+    """Keep rebuild intent durable until the current resume policy is applied."""
+    content = None
+    if name:
+        area = next((item for item in areas if item["name"] == name), None)
+        if area is None or area["type"] != "device":
+            raise RuntimeError("The configured resume swap device was not reconciled")
+        content = f"RESUME=UUID={area['uuid']}\n"
     try:
         current = Path(RESUME_PATH).read_text(encoding="utf-8")
     except FileNotFoundError:
-        current = ""
+        current = None
+    pending_path = f"{SWAP_STATE_FILE}.resume-pending"
+    validate_filesystem_path(pending_path)
+    try:
+        pending = os.lstat(pending_path)
+    except FileNotFoundError:
+        pending = None
+    if pending is not None and not stat.S_ISREG(pending.st_mode):
+        raise RuntimeError("Resume rebuild intent must be a regular file")
+    if current == content and pending is None:
+        return
+
+    # Persist intent before changing conf.d, including removal. Keep it outside
+    # conf.d because initramfs-tools sources every file in that directory.
+    write_text_atomic(pending_path, "Resume initramfs rebuild pending\n", mode=0o600)
     if current != content:
-        write_text_atomic(RESUME_PATH, content, mode=0o644)
-        run("update-initramfs -u")
+        if content is None:
+            remove_file_durable(RESUME_PATH)
+        else:
+            write_text_atomic(RESUME_PATH, content, mode=0o644)
+    run("update-initramfs -u")
+    remove_file_durable(pending_path)
 
 
 def _automatic_swap_file() -> SwapFile | None:

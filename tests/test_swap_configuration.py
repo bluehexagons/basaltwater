@@ -7,8 +7,10 @@ import tempfile
 import unittest
 from argparse import Namespace
 from contextlib import ExitStack
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from common import swap_steps
 from common.swap_steps import (
     FSTAB_BEGIN,
     FSTAB_END,
@@ -154,6 +156,7 @@ class TestSwapConfiguration(unittest.TestCase):
                 resume_file.write("RESUME=UUID=old\n")
             with (
                 patch("common.swap_steps.RESUME_PATH", path),
+                patch("common.swap_steps.SWAP_STATE_FILE", os.path.join(directory, "swap.json")),
                 patch("common.swap_steps.run") as mock_run,
             ):
                 _configure_resume("", [])
@@ -287,6 +290,112 @@ class TestSwapConfiguration(unittest.TestCase):
             )
 
         self.assertIn("not yet qualified", mock_print.call_args.args[0])
+
+
+class TestResumeRecovery(unittest.TestCase):
+    def setUp(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.resume = Path(directory) / "resume"
+        self.state = Path(directory) / "state" / "swap.json"
+        self.pending = Path(str(self.state) + ".resume-pending")
+        self.enterContext(patch.object(swap_steps, "RESUME_PATH", str(self.resume)))
+        self.enterContext(patch.object(swap_steps, "SWAP_STATE_FILE", str(self.state)))
+        self.run = self.enterContext(patch.object(swap_steps, "run"))
+        self.areas = [{"name": "disk", "type": "device", "uuid": "new-uuid"}]
+
+    def test_failed_rebuild_retries_add_replace_and_remove_then_stops(self):
+        for operation in ("add", "replace", "remove"):
+            with self.subTest(operation=operation):
+                self.resume.unlink(missing_ok=True)
+                if operation != "add":
+                    self.resume.write_text("RESUME=UUID=old-uuid\n")
+                name = None if operation == "remove" else "disk"
+                self.run.reset_mock()
+                self.run.side_effect = [RuntimeError("rebuild failed"), None]
+                with self.assertRaisesRegex(RuntimeError, "rebuild failed"):
+                    _configure_resume(name, self.areas)
+                self.assertTrue(self.pending.exists())
+                self.assertEqual(self.pending.stat().st_mode & 0o777, 0o600)
+                _configure_resume(name, self.areas)
+                self.assertFalse(self.pending.exists())
+                _configure_resume(name, self.areas)
+                self.assertEqual(self.run.call_count, 2)
+                self.run.assert_called_with("update-initramfs -u")
+                if name:
+                    self.assertEqual(self.resume.read_text(), "RESUME=UUID=new-uuid\n")
+                else:
+                    self.assertFalse(self.resume.exists())
+
+    def test_interruption_before_or_after_resume_change_retains_rebuild_intent(self):
+        real_write = swap_steps.write_text_atomic
+        real_remove = swap_steps.remove_file_durable
+        for operation in ("add", "replace", "remove"):
+            for after in (False, True):
+                with self.subTest(operation=operation, after=after):
+                    self.resume.unlink(missing_ok=True)
+                    if operation != "add":
+                        self.resume.write_text("RESUME=UUID=old-uuid\n")
+                    name = None if operation == "remove" else "disk"
+                    self.run.reset_mock()
+
+                    def interrupt(real, path, *args, **kwargs):
+                        if path != str(self.resume):
+                            return real(path, *args, **kwargs)
+                        if after:
+                            real(path, *args, **kwargs)
+                        raise SystemExit("interrupted")
+
+                    with (
+                        patch.object(swap_steps, "write_text_atomic",
+                                     side_effect=lambda *a, **kw: interrupt(real_write, *a, **kw)),
+                        patch.object(swap_steps, "remove_file_durable",
+                                     side_effect=lambda *a, **kw: interrupt(real_remove, *a, **kw)),
+                    ):
+                        with self.assertRaises(SystemExit):
+                            _configure_resume(name, self.areas)
+                    self.run.assert_not_called()
+                    self.assertTrue(self.pending.exists())
+                    _configure_resume(name, self.areas)
+                    self.run.assert_called_once_with("update-initramfs -u")
+                    self.assertFalse(self.pending.exists())
+
+    def test_failure_to_save_intent_preserves_resume_without_rebuilding(self):
+        self.resume.write_text("RESUME=UUID=old-uuid\n")
+        with patch.object(swap_steps, "write_text_atomic", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                _configure_resume("disk", self.areas)
+        self.assertEqual(self.resume.read_text(), "RESUME=UUID=old-uuid\n")
+        self.run.assert_not_called()
+
+    def test_default_without_resume_or_pending_intent_does_not_rebuild(self):
+        _configure_resume(None, [])
+        self.run.assert_not_called()
+        self.assertFalse(self.pending.exists())
+
+    def test_missing_resume_device_preserves_pending_intent(self):
+        self.pending.parent.mkdir()
+        self.pending.write_text("pending\n")
+        with self.assertRaisesRegex(RuntimeError, "not reconciled"):
+            _configure_resume("missing", self.areas)
+        self.assertEqual(self.pending.read_text(), "pending\n")
+        self.run.assert_not_called()
+
+    def test_pending_lookup_failure_cannot_be_treated_as_absence(self):
+        with patch.object(swap_steps.os, "lstat", side_effect=PermissionError("unreadable intent")):
+            with self.assertRaisesRegex(PermissionError, "unreadable intent"):
+                _configure_resume(None, [])
+        self.run.assert_not_called()
+
+    def test_symlink_pending_intent_is_preserved_and_rejected(self):
+        self.pending.parent.mkdir()
+        target = self.pending.parent / "other"
+        target.write_text("unrelated\n")
+        self.pending.symlink_to(target)
+        with self.assertRaisesRegex(RuntimeError, "regular file"):
+            _configure_resume(None, [])
+        self.assertTrue(self.pending.is_symlink())
+        self.assertEqual(target.read_text(), "unrelated\n")
+        self.run.assert_not_called()
 
 
 class TestCachedSwapConfiguration(unittest.TestCase):

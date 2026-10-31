@@ -155,6 +155,21 @@ from the controller's installed environment, not from a guest. Saved bindings
 are per-file atomic updates rather than one multi-file transaction; resumed
 verification finishes partial updates without reverting unrelated current edits.
 
+## Resume-device initramfs recovery
+
+Swap setup persists `/opt/basaltwater/state/swap.json.resume-pending` before
+adding, replacing or removing its managed resume-device file. It removes this
+intent only after `update-initramfs -u` succeeds. A matching rerun retries the
+rebuild even if the resume file already matches or is already absent. Setup's
+outer operation guard still governs whether that rerun is permitted.
+
+Keep this private intent file after a failure or interruption. Inspect the
+resume policy and initramfs error, repair the cause, then rerun the matching
+setup through the recovery procedure above. Do not delete the intent merely
+to make a rerun skip boot-image reconciliation. Unchanged setups with no
+pending intent do not rebuild initramfs. This rebuild recovery does not qualify
+hibernation, restore a prior boot image or repair unrelated initramfs hooks.
+
 ## Verify before resolving the marker
 
 Verify restored contents, permissions and ownership. Use `systemctl show` to
