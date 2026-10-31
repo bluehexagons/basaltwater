@@ -182,6 +182,8 @@ class LifecycleExecutionTests(unittest.TestCase):
         self.assertIn("--no-create-home", argv)
         self.assertEqual(argv[argv.index("--password") + 1], "!")
         self.assertEqual(argv[argv.index("--shell") + 1], "/usr/sbin/nologin")
+        self.assertEqual([argv[index + 1] for index, argument in enumerate(argv) if argument == "--key"],
+                         ["UID_MIN=1000", "UID_MAX=65533"])
         self.assertNotIn("PRIVATE", str(self.run.call_args))
         self.consume.assert_called_once()
         self.database.create_user.assert_called_once_with("alice", 0x10)

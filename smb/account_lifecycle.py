@@ -139,8 +139,7 @@ def change_lifecycle(value: dict, store, saved: dict, rows: list[dict]) -> None:
     try:
         if action == "create":
             subprocess.run(["/usr/sbin/useradd", "--no-create-home", "--shell", "/usr/sbin/nologin", "--user-group",
-                "--password", "!", "--key", "UID_MIN=1000", "--key", "UID_MAX=65533",
-                "--key", "CREATE_MAIL_SPOOL=no", "--", username],
+                "--password", "!", "--key", "UID_MIN=1000", "--key", "UID_MAX=65533", "--", username],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 env=ENVIRONMENT, timeout=15, check=True)
             identity = _identity(username)

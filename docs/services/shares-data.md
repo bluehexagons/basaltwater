@@ -69,8 +69,8 @@ Privileged management protects `/var/lib/basaltwater` directly. The installer
 retains `/opt/basaltwater/state` as a convenience symlink to that directory;
 symlinked privileged files or ancestors inside the durable directory are refused.
 The audit exporter takes a shared read-only setup lock and inspects private
-disposable copies of Samba's local databases, leaving its filesystem sandbox
-read-only outside the export directory. Each database copy is limited to 16 MiB
+disposable copies of Samba's local databases, retaining read-only access to the
+host's Samba and setup state. Each database copy is limited to 16 MiB
 and removed after inspection; credentials and hashes are never exported.
 Restarting the panel or the machine retains them. Target-side `sudo basaltw refresh`
 replays that saved setup; it rejects a configuration change before source
