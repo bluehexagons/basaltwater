@@ -892,6 +892,7 @@ class NativeReceiptTests(PrivateHomeTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "status.json")
             path.write_text("{}")
+            path.chmod(0o644)
             with patch.object(native, "runtime_directory", return_value=Path(directory)), \
                     patch.object(native, "request", side_effect=FileNotFoundError):
                 with self.assertRaisesRegex(RuntimeError, "Unsafe"):

@@ -860,7 +860,9 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
                 if kind == "symlink":
                     lock.symlink_to(self.control / "settings.json")
                 else:
-                    lock.touch(mode=0o644 if kind == "public" else 0o600)
+                    lock.touch(mode=0o600)
+                    if kind == "public":
+                        lock.chmod(0o644)
                     if kind == "foreign":
                         self.owners[str(lock)] = 999
                     elif kind == "hardlink":

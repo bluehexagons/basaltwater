@@ -28,7 +28,7 @@ file, or export checks with `basaltwater-subagents` when useful.
 | Accessibility inspection, screenshots, or input | [Observe and interact](references/interaction.md) |
 | Window placement or short action sequences | [Window controls](references/windows.md) |
 | Application/tool prerequisites or rendering evidence | [Applications](references/applications.md) |
-| Isolated Debian Electron tests, outside the shared desktop | [Electron/Xvfb testing](../basaltwater-project-development/references/electron-testing.md) |
+| Isolated Debian Electron tests, outside the shared desktop | [Electron/Xvfb testing](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/electron-testing.md) |
 | Blender edit/save/reopen | [Blender](references/blender.md) |
 | Vector, raster, audio, or video touch-ups | [Media](references/media.md) |
 
