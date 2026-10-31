@@ -252,11 +252,26 @@ The GitHub-digest-verified Linux x64 archive passed version, embedded native-PTY
 probe, disposable fresh-home HTTP startup, and SQLite integrity checks on
 CachyOS. The generated managed web unit passed native `systemd-analyze --user
 verify`; activation and pressure behavior were not exercised on the live host.
-These checks do not establish a 0.1.5 upgrade or the live feature matrix below.
+An additional Debian 13 x64 component check at Basaltwater commit `2f01740b`
+passed fresh-home 0.1.6 startup and a disposable 0.1.5-to-0.1.6 upgrade using
+the GitHub-digest-verified 0.1.5 archive and installed 0.1.6 runtime. Both paths
+passed setup/doctor runtime selection, managed wrapper execution, embedded
+native-PTY loading, HTTP startup, administrative pairing, and SQLite integrity.
+Exchanging the pairing credential produced a browser cookie session with all
+16 administrative permissions, and the helper revoked its bootstrap session.
+A project registered through the 0.1.5 host CLI survived the upgrade; host-side
+thread listing still worked, and SQL migrations advanced from 72 to 76.
+The live Debian service/host doctor was healthy with no warnings. These are
+component checks, not fresh setup, updater/systemd lifecycle, client UI, or
+full live feature qualification.
 Upstream now lowers agent slice priorities and bounds their aggregate memory/tasks;
 Basaltwater leaves those slices under T3's ownership. The managed CachyOS web
 unit now matches upstream's server CPU/IO weights, memory-low request and OOM
-preferences. These are relative protections, not reserved capacity: ancestor
+preferences. It also follows upstream's `OOMPolicy=continue` so systemd does
+not stop the entire unit when a helper is OOM-killed; a server exit still uses
+the unit's restart policy. The corrected generated unit passed native systemd
+verification on Debian; OOM behavior under pressure remains unqualified.
+These are relative protections, not reserved capacity: ancestor
 cgroup grants and delegated controllers determine their effect. Debian's
 upstream unit and the packaged desktop obtain their settings from T3 itself.
 See [upstream agent scopes](https://github.com/pingdotgg/t3code/blob/v0.1.6/apps/server/src/process/agentScope.ts)
