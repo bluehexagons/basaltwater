@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import http.client
 import io
 import json
@@ -43,6 +44,9 @@ def policy():
 
 
 class SambaAccountInspectionTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(accounts, "_inspection_database", side_effect=lambda _private: nullcontext("/private-copy")))
+
     def inspect(self, *, listing="alice:1000:PRIVATE FULL NAME\n", details=None, uid=1000):
         details = details if details is not None else "Unix username: alice\nAccount Flags: [U ]\nUser SID: S-1-5-21-1-2-3-1000\nFull Name: PRIVATE\n"
         self.inspection = self.enterContext(patch.object(accounts, "_inspect", side_effect=[

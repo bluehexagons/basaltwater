@@ -20,6 +20,7 @@ class ShareManagementTests(unittest.TestCase):
         directory = self.enterContext(tempfile.TemporaryDirectory())
         self.path = Path(directory) / "setup.json"
         self.marker = str(Path(directory) / "setup-operation.json")
+        Path(self.marker + ".lock").touch(mode=0o600)
         self.saved = {"username": "operator", "system_type": "server_lite", "machine_type": "vm",
                       "enable_samba": True, "samba_shares": [["read", "old", "/srv/old", "alice"]],
                       "samba_metadata_cache": "/srv/samba-cache", "storage_mounts": [["archive", "/srv/archive", "ext4"]],

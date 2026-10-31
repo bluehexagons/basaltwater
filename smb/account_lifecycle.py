@@ -61,7 +61,7 @@ def collect_lifecycle_snapshot(saved: dict, rows: list[dict]) -> dict:
     from smb.share_management import _owner
 
     try:
-        with _owner() as (_store, fresh, _identity):
+        with _owner(observe=True) as (_store, fresh, _identity):
             if fresh != saved:
                 raise ValueError("Saved Samba configuration changed")
             revision = _creation_revision()

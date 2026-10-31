@@ -28,6 +28,7 @@ class InstalledStateTests(unittest.TestCase):
                       "enable_samba": True, "samba_shares": None}
         self.setup.write_text(json.dumps(self.saved))
         self.setup.chmod(0o600)
+        (self.state / "setup-operation.json.lock").touch(mode=0o600)
         for name, value in (
             ("STATE_DIR", str(self.alias)), ("SETUP_CONFIG_FILE", str(self.alias / "setup.json")),
             ("PERSISTENT_STATE_DIR", str(self.state)), ("PERSISTENT_SETUP_CONFIG_FILE", str(self.setup)),
@@ -96,3 +97,58 @@ class InstalledStateTests(unittest.TestCase):
         first = refresh.saved_setup_revision()
         self.setup.write_text(json.dumps({**self.saved, "friendly_name": "changed"}))
         self.assertNotEqual(first, refresh.saved_setup_revision())
+
+    def test_observation_works_without_write_opens_and_excludes_mutation(self):
+        from lib import operation_state
+        marker = str(self.state / "setup-operation.json")
+        original = os.open
+        def read_only(path, flags, *args, **kwargs):
+            self.assertFalse(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT))
+            return original(path, flags, *args, **kwargs)
+        observer = operation_state.OperationStateStore(marker)
+        with patch.object(operation_state.os, "open", side_effect=read_only):
+            with observer.observation():
+                self.assertIsNone(observer.load())
+                with operation_state.OperationStateStore(marker).observation():
+                    pass
+                with patch.object(operation_state.os, "open", original):
+                    with self.assertRaisesRegex(ValueError, "owned"):
+                        operation_state.OperationStateStore(marker).acquire()
+        with operation_state.OperationStateStore(marker).ownership():
+            with self.assertRaisesRegex(ValueError, "owned"):
+                with observer.observation():
+                    pass
+        os.unlink(marker + ".lock")
+        with self.assertRaises(FileNotFoundError):
+            with observer.observation():
+                pass
+        self.assertFalse(Path(marker + ".lock").exists())
+
+    def test_samba_inspection_copies_are_private_bounded_and_removed(self):
+        from smb import account_management as account
+        private = self.state / "samba"
+        private.mkdir(mode=0o700)
+        for name in ("passdb.tdb", "secrets.tdb"):
+            (private / name).write_bytes(b"PRIVATE-DATABASE")
+            (private / name).chmod(0o600)
+        with account._inspection_database(str(private)) as temporary:
+            copy = Path(temporary)
+            self.assertEqual(copy.stat().st_mode & 0o777, 0o700)
+            for name in ("passdb.tdb", "secrets.tdb"):
+                self.assertEqual((copy / name).stat().st_mode & 0o777, 0o600)
+                self.assertEqual((copy / name).read_bytes(), (private / name).read_bytes())
+                (copy / name).write_bytes(b"DISPOSABLE-WRITE")
+        self.assertFalse(copy.exists())
+        self.assertEqual((private / "passdb.tdb").read_bytes(), b"PRIVATE-DATABASE")
+        with patch.object(account, "MAX_DATABASE_BYTES", 8), self.assertRaisesRegex(ValueError, "limit"):
+            with account._inspection_database(str(private)):
+                self.fail("Oversized databases must not reach Samba")
+        with self.assertRaisesRegex(RuntimeError, "tool failed"):
+            with account._inspection_database(str(private)) as temporary:
+                failed_copy = Path(temporary)
+                raise RuntimeError("tool failed")
+        self.assertFalse(failed_copy.exists())
+        with patch.object(account, "_stamp", side_effect=[(1,), (1,), (2,), (1,)]):
+            with self.assertRaisesRegex(ValueError, "changed"):
+                with account._inspection_database(str(private)):
+                    self.fail("Changed databases must not reach Samba")

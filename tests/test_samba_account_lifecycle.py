@@ -89,7 +89,7 @@ class LifecycleExportTests(unittest.TestCase):
     def setUp(self):
         self.saved = {"enable_samba": True, "samba_shares": [["write", "test", "/srv/data", "alice:PRIVATE"]]}
         @contextmanager
-        def owner():
+        def owner(**_kwargs):
             yield None, self.saved, (1,)
         self.enterContext(patch.object(share_management, "_owner", side_effect=owner))
         self.revision = self.enterContext(patch.object(lifecycle, "_creation_revision", return_value="c" * 64))

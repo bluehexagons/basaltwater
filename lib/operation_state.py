@@ -163,6 +163,26 @@ class OperationStateStore:
         finally:
             self.close()
 
+    @contextmanager
+    def observation(self) -> Iterator[OperationStateStore]:
+        """Exclude mutations using the existing lock on a read-only filesystem.
+
+        Successful setup creates this stable lock. Missing or unsafe locks
+        refuse observation; readers never create directories, locks or markers.
+        """
+        lock_path = self.path + '.lock'
+        descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OperationStateError(f'Unsafe operation lock: {lock_path}')
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise OperationStateError(f'Operation is owned by another process: {self.path}') from exc
+            yield self
+        finally:
+            os.close(descriptor)
+
     def load(self) -> Optional[OperationRecord]:
         try:
             info = os.lstat(self.path)

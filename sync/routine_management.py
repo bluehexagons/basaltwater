@@ -45,13 +45,14 @@ def _revision() -> str:
 
 
 @contextmanager
-def _owner():
+def _owner(*, observe: bool = False):
     protected_path(STATE_DIR, directory=True)
     marker = STATE_DIR + "/setup-operation.json"
     for path in (marker, marker + ".lock"):
         if os.path.lexists(path):
             protected_path(path)
-    with OperationStateStore(marker).ownership() as store:
+    store = OperationStateStore(marker)
+    with (store.observation() if observe else store.ownership()):
         if store.load() is not None:
             raise RoutineRejected("setup_recovery_required")
         stamp = _identity(SETUP_CONFIG_FILE)
@@ -64,7 +65,7 @@ def _owner():
 def collect_routine_snapshot(saved: dict) -> dict:
     """Only local config/pause metadata, never NAS paths or private reports."""
     try:
-        with _owner() as (_store, fresh):
+        with _owner(observe=True) as (_store, fresh):
             if fresh != saved:
                 raise RoutineRejected("review_changed")
             revision = _revision()

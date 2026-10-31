@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -27,6 +28,7 @@ from lib.validators import validate_username
 
 SMB_CONF = "/etc/samba/smb.conf"
 MAX_OUTPUT = 2 * 1024 * 1024
+MAX_DATABASE_BYTES = 16 * 1024 * 1024
 
 
 def _inspect(argv: list[str]) -> str:
@@ -48,6 +50,29 @@ def _stamp(path: str) -> tuple[int, ...]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
+@contextmanager
+def _inspection_database(private: str):
+    """Keep Samba's read/write database opens inside a private disposable copy."""
+    paths = [str(Path(private) / name) for name in ("passdb.tdb", "secrets.tdb")]
+    before = [_stamp(path) for path in paths]
+    with tempfile.TemporaryDirectory(prefix="basaltwater-samba-inspection-") as temporary:
+        for path in paths:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as source:
+                raw = source.read(MAX_DATABASE_BYTES + 1)
+            if len(raw) > MAX_DATABASE_BYTES:
+                raise ValueError("Samba inspection database exceeds its limit")
+            destination = str(Path(temporary) / Path(path).name)
+            descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as target:
+                target.write(raw)
+        if before != [_stamp(path) for path in paths]:
+            raise ValueError("Samba databases changed during inspection")
+        yield temporary
+        if before != [_stamp(path) for path in paths]:
+            raise ValueError("Samba databases changed during inspection")
+
+
 def _accounts() -> list[dict]:
     conf_stamp = _stamp(SMB_CONF)
     settings = {}
@@ -57,7 +82,11 @@ def _accounts() -> list[dict]:
         raise ValueError("Account controls require standalone Samba with local tdbsam")
     database = str(Path(settings["private dir"]) / "passdb.tdb")
     database_stamp = _stamp(database)
-    listing = _inspect(["/usr/bin/pdbedit", "-L"])
+    with _inspection_database(settings["private dir"]) as temporary:
+        options = ["-b", "tdbsam:" + str(Path(temporary) / "passdb.tdb"),
+                   "--option=private dir=" + temporary, "--option=panic action="]
+        listing = _inspect(["/usr/bin/pdbedit", "-L", *options])
+        details = _inspect(["/usr/bin/pdbedit", "-L", "-v", *options])
     users = {}
     for line in listing.splitlines():
         name, separator, rest = line.partition(":")
@@ -68,7 +97,7 @@ def _accounts() -> list[dict]:
         users[name] = int(uid)
     flags, identities = {}, {}
     current = None
-    for line in _inspect(["/usr/bin/pdbedit", "-L", "-v"]).splitlines():
+    for line in details.splitlines():
         if line.startswith("Unix username:"):
             current = line.partition(":")[2].strip()
             if current not in users or current in flags:

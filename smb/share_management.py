@@ -30,13 +30,14 @@ def _identity(path: str) -> tuple[int, ...]:
 
 
 @contextmanager
-def _owner():
+def _owner(*, observe: bool = False):
     protected_path(STATE_DIR, directory=True)
     marker = STATE_DIR + "/setup-operation.json"
     for path in (marker, marker + ".lock"):
         if os.path.lexists(path):
             protected_path(path)
-    with OperationStateStore(marker).ownership() as store:
+    store = OperationStateStore(marker)
+    with (store.observation() if observe else store.ownership()):
         if store.load() is not None:
             raise ValueError("An unfinished setup or share change requires recovery before updating shares")
         protected_path(SETUP_CONFIG_FILE)
@@ -127,7 +128,7 @@ def _revision() -> str:
 def collect_share_snapshot(saved: dict) -> dict:
     """Bind an exported form to local config metadata without probing NAS paths."""
     try:
-        with _owner() as (_store, fresh, _identity_value):
+        with _owner(observe=True) as (_store, fresh, _identity_value):
             if fresh != saved:
                 raise ValueError("Saved setup changed during export")
             _rows(saved)

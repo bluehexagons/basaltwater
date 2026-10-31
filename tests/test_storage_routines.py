@@ -103,6 +103,8 @@ class RoutineStateFixture(unittest.TestCase):
         self.setup = os.path.join(self.root, "setup.json")
         self.controls = os.path.join(self.root, "controls.json")
         self.marker = os.path.join(self.root, "setup-operation.json")
+        with open(self.marker + ".lock", "xb"):
+            pass
         self.lock = os.path.join(self.root, "storage.lock")
         self.result_path = os.path.join(self.root, "storage-routine.json")
         self.history = os.path.join(self.root, "last_run.json")
