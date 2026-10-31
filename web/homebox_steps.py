@@ -814,6 +814,9 @@ def _reserve_backend_port(previous: dict, desired: dict) -> None:
     if _active() and previous["port"] == desired["port"]:
         return
     with socket.socket() as listener:
+        # Match the application's listener: recently closed connections may
+        # remain in TIME_WAIT after disable without occupying a live port.
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", desired["port"]))
 
 

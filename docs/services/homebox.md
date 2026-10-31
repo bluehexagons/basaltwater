@@ -3,8 +3,10 @@
 Install one native [HomeBox](https://github.com/sysadminsmedia/homebox) instance
 per Debian server. It uses a dedicated `homebox` system account, systemd,
 SQLite, and local attachments. Initial installations use the verified
-`v0.27.0` release; amd64 hosts are supported. Stable tags before `v0.27.0`
-are unsupported in explicit requests, installed state, and backup metadata.
+`v0.27.1` release; amd64 hosts are supported. This is the upstream
+[security update](https://github.com/sysadminsmedia/homebox/releases/tag/v0.27.1).
+Stable tags before `v0.27.0` are unsupported in explicit requests, installed state,
+and backup metadata.
 
 ## Set up and sign in
 
@@ -142,17 +144,16 @@ the configured HTTPS frontend. When installed, it also reports the updater
 timer and its last check (`pending` before the first run). Failed or incomplete
 systemd inspections and a missing half of the updater service/timer pair make
 health fail. The updater is optional only when both units are explicitly absent.
-SQLite probes run as
-the database owner so they cannot leave root-owned WAL files that prevent a
-restart. Rerun setup to reconcile drift. The HTTPS probe verifies the target
-locally, not public DNS, external firewall reachability, or an authenticated
-session.
+SQLite probes run as the database owner so they cannot leave root-owned WAL
+files that prevent a restart. Rerun setup to reconcile drift. The HTTPS probe
+verifies the target locally, not public DNS, external firewall reachability, or
+an authenticated session.
 
 Select a reviewed stable release explicitly:
 
 ```bash
-basaltw patch inventory-host --homebox-version v0.27.0 --dry-run
-basaltw patch inventory-host --homebox-version v0.27.0
+basaltw patch inventory-host --homebox-version v0.27.1 --dry-run
+basaltw patch inventory-host --homebox-version v0.27.1
 ```
 
 Replace the example tag with the desired newer stable release. Releases are
@@ -258,11 +259,15 @@ HomeBox update timer. If inspecting or disabling that timer fails, setup stops
 before changing the application or its managed state; inspect systemd and retry.
 An explicitly absent timer is allowed. Re-enable by supplying the original
 `--homebox` settings.
+The backend-port preflight permits TCP connections still closing after a stop,
+while rejecting a live listener that already owns the requested port.
 If initial onboarding had not completed before disabling, re-enabling still
 performs the private bootstrap. Shared Nginx/Certbot packages and certificates
 remain installed. Permanent deletion is a separate manual task.
 
 This support excludes Cloudflare, containers, PostgreSQL, Meilisearch, external
-object storage, multiple instances, OIDC, and adoption of unmanaged installs. Complete
-APP-01 in the [release qualification matrix](../release-qualification.md#stable-qualification-matrix)
-before treating live VM recovery as qualified.
+object storage, multiple instances, OIDC, and adoption of unmanaged installs.
+The [coverage map](../plans/testing-coverage.md) records selected native loopback
+and API checks. Complete APP-01 in the
+[release qualification matrix](../release-qualification.md#stable-qualification-matrix)
+before treating the complete application lifecycle as qualified.

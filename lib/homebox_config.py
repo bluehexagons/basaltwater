@@ -12,7 +12,7 @@ from lib.validators import validate_host
 if TYPE_CHECKING:
     from lib.config import SetupConfig
 
-DEFAULT_VERSION = "v0.27.0"
+DEFAULT_VERSION = "v0.27.1"
 DEFAULT_PORT = 7745
 DEFAULT_DATA = "/var/lib/homebox"
 

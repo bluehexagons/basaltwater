@@ -38,7 +38,7 @@ def config(**kwargs):
 
 
 def state(**kwargs):
-    # v0.27.1 is synthetic ordering data for upgrade and rollback coverage.
+    # Release metadata is synthetic; these tests never fetch upstream assets.
     value = {"schema": 1, "version": "v0.27.0", "archive_sha256": "a" * 64,
              "binary_sha256": hashlib.sha256(b"binary").hexdigest(), "domain": "", "port": 7745,
              "public_port": 7745, "data_path": "/srv/homebox", "email": "admin@homebox.local",
@@ -707,6 +707,9 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         shutil.rmtree(self.data)
         self.assertIsNone(h.read_state())
         release = {key: self.value[key] for key in ("version", "archive_sha256", "binary_sha256")}
+        release["version"] = "v0.27.1"
+        h.release_path(release).parent.mkdir(parents=True)
+        h.release_path(release).write_bytes(b"binary")
         with patch.object(h, "_active", return_value=False), patch.object(h, "_reserve_backend_port"), \
                 patch.object(h, "can_manage_firewall", return_value=False), \
                 patch.object(h, "stage_release", return_value=release) as stage, \
@@ -715,12 +718,12 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
                 patch.object(h, "_database", return_value={"users": 1}), \
                 contextlib.redirect_stdout(io.StringIO()):
             h.setup_homebox(cfg)
-        stage.assert_called_once_with("v0.27.0")
+        stage.assert_called_once_with("v0.27.1")
         latest.assert_not_called()
         bootstrap.assert_called_once()
-        self.assertEqual(bootstrap.call_args.args[0]["version"], "v0.27.0")
+        self.assertEqual(bootstrap.call_args.args[0]["version"], "v0.27.1")
         installed = h.read_state()
-        self.assertEqual(installed["version"], "v0.27.0")
+        self.assertEqual(installed["version"], "v0.27.1")
         self.assertEqual(installed["status"], "ready")
 
     def test_failed_activation_restores_full_snapshot_before_clearing_marker(self):
@@ -893,6 +896,30 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
                 h.setup_homebox(cfg)
         activate.assert_not_called()
         self.assertFalse((h.CONFIG / "maintenance").exists())
+
+    def test_backend_port_probe_reuses_closed_connections_and_preserves_live_service(self):
+        for active in (False, True):
+            with self.subTest(active=active), patch.object(h, "_active", return_value=active), \
+                    patch.object(h.socket, "socket") as socket_factory:
+                listener = socket_factory.return_value.__enter__.return_value
+                h._reserve_backend_port(self.value, self.value)
+                if active:
+                    socket_factory.assert_not_called()
+                else:
+                    listener.setsockopt.assert_called_once_with(h.socket.SOL_SOCKET, h.socket.SO_REUSEADDR, 1)
+                    listener.bind.assert_called_once_with(("127.0.0.1", self.value["port"]))
+
+    def test_occupied_backend_port_fails_before_stopping_or_snapshotting(self):
+        cfg = self.fixture_setup()
+        with patch.object(h, "_active", return_value=False), patch.object(h.socket, "socket") as socket_factory, \
+                patch.object(h, "_stop_service") as stop, patch.object(h, "create_backup") as backup:
+            socket_factory.return_value.__enter__.return_value.bind.side_effect = OSError("Address already in use")
+            with self.assertRaisesRegex(OSError, "Address already in use"):
+                h.setup_homebox(cfg)
+        stop.assert_not_called()
+        backup.assert_not_called()
+        self.assertFalse((h.CONFIG / "maintenance").exists())
+        self.assertEqual(h.read_state(), self.value)
 
     def test_backup_marker_failure_restarts_unchanged_service_without_restoring_data(self):
         self.fixture_setup()
