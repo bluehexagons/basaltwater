@@ -282,6 +282,23 @@ class RoutinePanelTests(unittest.TestCase):
         self.assertIn("older inventory below may be incomplete", document)
         self.assertIn("/srv/backups/projects", document)
 
+    def test_activity_is_collapsed_until_requests_results_or_unavailability_need_display(self):
+        document = render_shares_data(self.state, "", {"view": "scrubs"})
+        self.assertIn('<details class="data-activity">', document)
+        self.assertNotIn('<details class="data-activity" open>', document)
+        document = render_shares_data(self.state, "", {"view": "scrubs"}, error="Request could not be confirmed")
+        self.assertIn('<details class="data-activity" open>', document)
+        _, value = self.manager.prepare(self.operation("run", "scrub"))
+        request = {"id": "a" * 32, "parameters": value, "state": "pending", "created": 1}
+        for changes in ({"requests": [request]}, {"available": False}, {"blocked": True},
+                        {"unit_state": "active"}, {"other_active": True}):
+            with self.subTest(changes=changes):
+                self.exchange.return_value = idle(**changes)
+                document = render_shares_data(self.state, "", {"view": "scrubs"})
+                self.assertIn('<details class="data-activity" open>', document)
+                self.assertIn('id="routine-activity"', document)
+                self.assertIn('id="findings-heading"', document)
+
     def test_findings_pagination_leaves_editor_query_without_invalid_combinations(self):
         from common.service_tools import web_panel_shares_data as page
         from urllib.parse import urlsplit

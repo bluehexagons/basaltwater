@@ -1,8 +1,8 @@
-# Minimal web panel
+# Web panel
 
 The optional web panel is a browser dashboard for one managed machine. It
-shows current host state, configured services, audit activity, maintenance,
-notifications, and agent prompt tasks. Agent tasks use the installed Codex CLI
+shows host health, services, shares, storage integrity, maintenance and agent
+tasks. Agent tasks use the installed Codex CLI
 under the panel account; no T3 Code installation is required.
 
 | Need | Open | Result |
@@ -23,6 +23,7 @@ under the panel account; no T3 Code installation is required.
 | Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
 | Prepare system and data tasks | Agents → Agent tools | Contextual checkups, log and job reviews, Debian update and network checks, maintenance plans, and local data work |
 | Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
+| Manage shares and stored data | [Administration → Shares & Data](shares-data.md) | Samba access, backup/sync routines, scrub health and file recovery |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
 
@@ -55,44 +56,27 @@ for the panel account. Host monitoring remains available without either:
 | Console | Its private Guacamole SSH socket unit is installed |
 | Admin controls | Always visible; host actions require the privilege approval service |
 
-Discovery checks the panel's non-secret setup manifest, local executable paths,
-and unit files without running tools, contacting providers, or testing sign-in.
-Leftover executables, user units, and task history cannot enable agent UI on a
-monitoring-only host. This also suppresses agent review links, sign-in guidance,
-T3 controls and diagnostics, and panel prompt scheduling. Git's presence as a
-system dependency does not enable account configuration controls by itself.
-Unavailable optional pages and their actions return HTTP 404, including direct
-links to T3 diagnostics and its update action.
+Discovery reads saved selections, executable paths and unit files without running
+tools or testing sign-in. Leftover binaries/history cannot enable unselected
+agent or Git features. Unavailable optional routes return HTTP 404. Selected,
+installed features stay visible when authentication or service health fails.
+Reload after tool changes; rerun setup/refresh to publish changed selections.
+Older manifests keep agent/Git controls hidden until refreshed.
 
-A selected, installed feature remains visible when authentication or service
-health needs attention. Reload after installing or removing tools. Rerun setup
-or refresh the saved setup to publish changed selections and apply this policy
-to an existing installation. Older manifests without agent/Git selections keep
-those controls hidden until refreshed; they do not infer intent from binaries.
-Selecting `--web-panel` alone does not install agent tools or a task-worker
-service. Without selected and installed Codex or installed publishing tools,
-the panel starts no prompt scheduler or publishing poll. Selected, installed
-Codex enables prompt scheduling;
-Butler/SteamCMD can enable publishing polling independently of Codex.
-Machines with other agent runtimes but no Codex show runtime diagnostics without
-prompt forms. Repository templates and the Git worktree option require selected,
-installed Git; direct form submissions enforce the same worktree requirement.
-Dashboard notifications appear only with ingest enabled; certificate help appears
-when gateway metadata is available. Empty service and access sections are omitted.
+Selecting `--web-panel` alone installs no agents or task worker. Codex enables
+prompt scheduling; Butler/SteamCMD enable publishing polling independently.
+Other agent runtimes expose diagnostics without prompt forms. Repository
+templates and Git worktrees require selected, installed Git. Dashboard
+notifications require ingest; certificate help requires gateway metadata.
+Empty service/access sections are omitted. See [feature discovery](web-panel-reference.md#feature-discovery-and-navigation)
+for the full availability contract.
 
-Agent tools and Admin controls use grouped lists with aligned actions rather
-than large option cards. Category links jump directly to system or data tools,
-and to updates, services, or power controls. Tool rows show permissions and
-suggested repetition/runtime; admin rows retain the full action effects and
-explain unavailable controls. Rows wrap on smaller screens, with touch-sized
-links. Dashboard metrics and service summaries use compact layouts while
-keeping status labels, endpoint URLs, and numeric values visible.
-
-The compact dashboard header shows the host, setup profile, and account.
-Service totals distinguish responding endpoints, endpoints needing attention,
-and endpoints without a readiness check. Audit totals include warning/error
-events while retaining collection warnings. These summaries reuse the displayed
-records; they do not start extra service or log queries.
+Agent tools and Admin controls group actions by task, with section links and
+explicit effects/unavailable reasons. **Shares & Data** separates Samba,
+mirrors and integrity work; see its [operator guide](shares-data.md).
+The dashboard header identifies the host, profile and account. Service and audit
+totals reuse displayed records, distinguish unchecked endpoints and retain
+collection warnings.
 
 **Mounted storage** includes separate `/home`, `/var`, `/boot`, and data
 filesystems rather than assuming all storage belongs to `/`. Each row shows

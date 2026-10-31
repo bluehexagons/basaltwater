@@ -273,7 +273,7 @@ def render_history(control: dict, row: dict) -> str:
     label = "Scan cadence marker" if row["kind"] == "scrub" else "Last completed mirror"
     body = f'<p class="event-meta">{label}: {_timestamp(entry["cadence_at"]) if entry["cadence_at"] is not None else "Not recorded"}</p>'
     if row["kind"] == "scrub":
-        body += '<p class="event-meta">A scan cadence marker can record initial deferral. Use the integrity report below to establish the last full scan.</p>'
+        body += '<p class="event-meta">A scan cadence marker can record initial deferral. Check Task health for the last recorded full scan.</p>'
         body += f'<p class="event-meta">Last completed parity maintenance: {_timestamp(entry["parity_at"]) if entry["parity_at"] is not None else "Not recorded"}</p>'
     for key, label in (("retry", "Full scan" if row["kind"] == "scrub" else "Mirror"), ("parity_retry", "Parity maintenance")):
         if retry := entry[key]:

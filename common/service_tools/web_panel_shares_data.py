@@ -30,6 +30,9 @@ STYLE = """
 .data-tabs a { display:inline-flex; align-items:center; min-height:44px; padding:8px 14px;
   border:1px solid var(--line); border-radius:8px; color:var(--accent); text-decoration:none; }
 .data-tabs a[aria-current=page] { color:var(--panel); background:var(--accent); font-weight:700; }
+.data-header-links { display:flex; flex-wrap:wrap; gap:8px 20px; align-items:center; }
+.data-activity { border:1px solid var(--line); border-radius:8px; padding:0 16px; margin:16px 0; }
+.data-activity > summary { width:100%; font-weight:700; }
 .data-list { display:grid; gap:10px; list-style:none; padding:0; }
 .data-list h3 { margin:0; font-size:1rem; }
 .data-list .job-facts { margin-bottom:0; }
@@ -203,26 +206,27 @@ def _pagination(query: dict, page: int, total: int, field: str, label: str) -> s
     return body + '</nav>'
 
 
-def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
-    body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
+def _clear_filters(query: dict, keep: set[str], anchor: str, label: str) -> str:
+    values = {"view": "scrubs", **{key: value for key, value in query.items() if key in keep}}
+    url = html.escape("/shares-data?" + urlencode(values), quote=True) + "#" + anchor
+    return f'<a class="refresh-link" href="{url}">{label}</a>'
+
+
+def _task_health(snapshot: dict, catalog: dict, query: dict) -> str:
     jobs = snapshot["jobs"]
-    if not jobs:
-        return body + '<p class="empty">No scrub integrity reports in this snapshot. Newly saved tasks appear after the next export; active tasks create reports when they run.</p>'
-    catalog = load_findings(snapshot, query)
     complete = catalog["available"]
     health = catalog.get("health", {})
-    body += '<p class="data-notice">Recorded file integrity is separate from job execution. Daily parity maintenance does not resolve open findings, and a recorded scan does not verify later changes.</p>'
-    body += '<section aria-labelledby="scrub-health">' + render_heading("Task health", "security", heading_id="scrub-health")
+    body = '<section aria-labelledby="scrub-health">' + render_heading("Task health", "security", heading_id="scrub-health")
     if health.get("available"):
         jobs = health["jobs"]
-        body += f'''<form class="diagnostic-filters data-filters" method="get" action="/shares-data">
+        body += f'''<form class="diagnostic-filters data-filters" method="get" action="/shares-data#scrub-health">
 <input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"category", "q", "page"})}
 <div><label for="scrub-task-search">Scrub root contains</label><input id="scrub-task-search" name="task" value="{html.escape(query.get("task", ""), quote=True)}" maxlength="200" type="search"></div>
-<button>Filter tasks</button></form>'''
+<button>Filter tasks</button>{_clear_filters(query, {"category", "q", "page"}, "scrub-health", "Clear task filter")}</form>'''
         total, page = health["total"], health["page"]
         offset = (page - 1) * PAGE_SIZE
         body += (f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching scrub tasks</p>' if total else
-                 '<p class="empty">No scrub tasks match this root filter. Findings below use separate filters.</p>')
+                 '<p class="empty">No scrub tasks match this root filter. Findings use separate filters.</p>')
     elif complete:
         body += '<p class="event" role="status">Complete task health is unavailable in this export; only the bounded summary below is shown. Update or check the exporter. Missing health does not mean a task is healthy.</p>'
     body += '<ul class="data-list">'
@@ -239,7 +243,18 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
         body += _pagination(query, health["page"], health["total"], "tasks_page", "tasks")
     elif snapshot["omitted_jobs"]:
         body += f'<p class="data-notice">{snapshot["omitted_jobs"]} additional scrub tasks outside the summary above.</p>'
-    body += '</section>'
+    return body + '</section>'
+
+
+def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
+    body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
+    jobs = snapshot["jobs"]
+    if not jobs:
+        return body + '<p class="empty">No scrub integrity reports in this snapshot. Newly saved tasks appear after the next export; active tasks create reports when they run.</p>'
+    catalog = load_findings(snapshot, query)
+    complete = catalog["available"]
+    health = _task_health(snapshot, catalog, query)
+    body += '<p class="data-notice">Recorded scans describe integrity at scan time. Daily parity maintenance does not resolve open findings.</p>'
     if complete:
         noun = "task" if catalog["tasks"] == 1 else "tasks"
         body += f'<p class="data-notice">The finding browser includes all {catalog["tasks"]} configured scrub {noun} in this export.</p>'
@@ -252,12 +267,12 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
         f'<option value="{name}"{" selected" if name == category else ""}>{name.replace("_", " ").capitalize()}</option>' for name in ADVICE
     )
     body += f'''<section aria-labelledby="findings-heading">{render_heading("Browse findings", "diagnostics", heading_id="findings-heading")}
-<form class="diagnostic-filters data-filters" method="get" action="/shares-data">
+<form class="diagnostic-filters data-filters" method="get" action="/shares-data#findings-heading">
 <input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"task", "tasks_page"})}<div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
 <div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="200" type="search"></div>
-<button>Filter findings</button><a class="refresh-link" href="/shares-data?view=scrubs">Clear filters</a></form>'''
+<button>Filter findings</button>{_clear_filters(query, {"task", "tasks_page"}, "findings-heading", "Clear finding filters")}</form>'''
     if not complete and not catalog.get("legacy"):
-        return body + '<p class="empty" role="status">The complete findings catalog is unavailable or changed during export. Refresh after the next export. This does not mean there are no findings.</p></section>'
+        return body + '<p class="empty" role="status">The complete findings catalog is unavailable or changed during export. Refresh after the next export. This does not mean there are no findings.</p></section>' + health
     findings = catalog["findings"] if complete else [(job, finding) for job in jobs for finding in job["findings"]
                 if (not category or finding["category"] == category) and search.casefold() in finding["path"].casefold()]
     total = catalog["total"] if complete else len(findings)
@@ -285,7 +300,21 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
 <a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a>
 {recovery_form(job, finding, csrf) if controls else ''}</details></li>'''
         body += '</ul>'
-    return body + _pagination(query, page, total, "page", "findings") + '</section>'
+    return body + _pagination(query, page, total, "page", "findings") + '</section>' + health
+
+
+def _activity(sections: list[tuple[dict, str]], *, expand: bool = False) -> str:
+    if not sections:
+        return ""
+    expanded = expand or any(status.get("error") or status.get("available") is False
+                   or any(status.get(key) for key in ("requests", "latest", "blocked", "outstanding", "other_active"))
+                   or status.get("unit_state") in {"active", "activating", "deactivating", "unavailable"}
+                   for status, _content in sections)
+    content = ''.join(content for _status, content in sections)
+    return ('<details class="data-activity"' + (' open' if expanded else '')
+            + '><summary>Activity &amp; approvals</summary>'
+            + (content or '<p class="data-notice">No recent requests. Review a change to create an approval request.</p>')
+            + '</details>')
 
 
 def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "",
@@ -294,7 +323,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     view = query.get("view", "shares")
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Shares &amp; Data</h1>
 <p class="lede">Samba access, recurring copies and file integrity on <code>{html.escape(state.manifest["host"])}</code>.</p></div>
-<a class="refresh-link" href="{html.escape('/shares-data?' + urlencode(query), quote=True)}">Refresh snapshot</a></header>'''
+<div class="data-header-links"><a class="refresh-link" href="{html.escape('/shares-data?' + urlencode(query), quote=True)}">Refresh snapshot</a>
+<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/services/shares-data.md" target="_blank" rel="noopener noreferrer">Usage guide ↗</a></div></header>'''
     body = '<nav class="data-tabs" aria-label="Shares and data views">' + ''.join(
         '<a href="/shares-data?view={}"{}>{}</a>'.format(
             key, ' aria-current="page"' if key == view else '', html.escape(label),
@@ -318,20 +348,22 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     manager = getattr(state, "data", None)
     status = manager.snapshot() if manager is not None and view == "scrubs" else {}
     csrf = f'<input type="hidden" name="csrf" value="{html.escape(getattr(state, "csrf_token", ""), quote=True)}">'
+    activity = []
     if manager is not None and view == "scrubs":
-        body += render_status(status, csrf)
+        activity.append((status, render_status(status, csrf)))
     samba_manager = getattr(state, "samba", None)
     samba_status = samba_manager.snapshot() if samba_manager is not None and view == "shares" else {}
     if samba_manager is not None and view == "shares":
-        body += samba.render_status(samba_status, csrf)
+        activity.append((samba_status, samba.render_status(samba_status, csrf)))
     share_manager = getattr(state, "share_actions", None)
     share_status = share_manager.snapshot() if share_manager is not None and view == "shares" else {}
     if share_manager is not None and view == "shares":
-        body += shares.render_status(share_status, csrf)
+        activity.append((share_status, shares.render_status(share_status, csrf)))
     routine_manager = getattr(state, "routines", None)
     routine_status = routine_manager.snapshot() if routine_manager is not None and view != "shares" else {}
     if routine_manager is not None and view != "shares":
-        body += routines.render_status(routine_status, csrf)
+        activity.append((routine_status, routines.render_status(routine_status, csrf)))
+    body += _activity(activity, expand=bool(error))
     if routine_fields is not None and (not snapshot.get("available")
             or not snapshot.get("routine_management", {}).get("available")):
         body += routines.render_draft(routine_fields)
@@ -363,13 +395,18 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
                 body += _routines(inventory)
         else:
             control = snapshot.get("routine_management", {})
+            reports = _scrubs(snapshot, query, state.manifest["host"], csrf=csrf,
+                              controls=manager is not None and not unavailable_reason(status))
+            editing = bool(query.get("form") or query.get("routine") or routine_fields)
+            if not editing:
+                body += reports
             if control.get("available"):
                 body += _managed_routines(control, query, csrf,
                     controls=routine_manager is not None and not routines.unavailable_reason(routine_status), review=bool(review), submitted=routine_fields)
             else:
-                body += '<p class="data-notice">Scrub editing needs a complete supported export of the configuration and pause controls. Existing integrity reports remain available below.</p>'
-            body += _scrubs(snapshot, query, state.manifest["host"], csrf=csrf,
-                            controls=manager is not None and not unavailable_reason(status))
+                body += '<p class="data-notice">Scrub editing needs a complete supported export of the configuration and pause controls. Existing integrity reports remain available.</p>'
+            if editing:
+                body += reports
     return render_document(title=f'Shares & Data · {state.manifest["host"]}', style=style + STYLE,
                            header=header, content=body, navigation=state.navigation("shares-data"),
                            footer='<footer><a href="/admin">Admin controls</a><span>Configuration and recorded integrity · no automatic refresh</span></footer>')

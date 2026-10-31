@@ -129,6 +129,15 @@ class CompleteFindingBrowserTests(unittest.TestCase):
         self.assertIn("tasks_page=2", document)
         self.assertIn("task=data", document)
         self.assertNotIn("additional scrub tasks outside", document)
+        self.assertIn('action="/shares-data#findings-heading"', document)
+        self.assertIn('action="/shares-data#scrub-health"', document)
+        for label, expected, anchor in (
+                ("Clear finding filters", {"view": "scrubs", "task": "data", "tasks_page": "2"}, "findings-heading"),
+                ("Clear task filter", {"view": "scrubs", "category": "repairable", "q": "file", "page": "2"}, "scrub-health")):
+            target = re.search(r'href="([^"]+)">' + label, document).group(1)
+            url = urlsplit(html.unescape(target))
+            self.assertEqual(page.parse_shares_data_query(url.query), expected)
+            self.assertEqual(url.fragment, anchor)
         for query in ("view=shares&task=data", "view=routines&tasks_page=1", "view=scrubs&form=scrub&task=data",
                       "view=scrubs&task=%00", "view=scrubs&task=" + "x" * 201):
             with self.subTest(query=query), self.assertRaises(ValueError):
