@@ -6,6 +6,10 @@ Share and routine editing, account creation/removal, login enable/disable and pa
 single-file verification and recovery have browser controls when the separate
 privilege approval service is configured.
 
+Use **On this page** to jump directly to accounts, task health or findings when
+the configuration list is long. Finding and task pagination returns to its own
+section while retaining the filters.
+
 The three views work without JavaScript:
 
 - **Samba shares** shows each saved share’s actual SMB name (including its

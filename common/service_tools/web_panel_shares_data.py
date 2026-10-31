@@ -195,7 +195,8 @@ def _pagination(query: dict, page: int, total: int, field: str, label: str) -> s
         if 1 <= destination <= (total + PAGE_SIZE - 1) // PAGE_SIZE:
             values = {"view": "scrubs", **{key: value for key, value in query.items()
                       if key in {"category", "q", "page", "task", "tasks_page"} - {field}}, field: str(destination)}
-            body += f'<a class="refresh-link" href="{html.escape("/shares-data?" + urlencode(values), quote=True)}">{text}</a>'
+            anchor = "scrub-health" if field == "tasks_page" else "findings-heading"
+            body += f'<a class="refresh-link" href="{html.escape("/shares-data?" + urlencode(values), quote=True)}#{anchor}">{text}</a>'
     return body + '</nav>'
 
 
@@ -296,6 +297,18 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
             key, ' aria-current="page"' if key == view else '', html.escape(label),
         ) for key, label in VIEWS.items()
     ) + '</nav>'
+    if snapshot.get("available"):
+        links = []
+        if view == "shares":
+            links = [("samba-heading", "Shares"), ("samba-accounts", "Accounts and passwords")]
+        elif view == "scrubs":
+            if snapshot.get("jobs"):
+                links = [("findings-heading", "Browse findings"), ("scrub-health", "Task health")]
+            if snapshot.get("routine_management", {}).get("available"):
+                links.append(("routine-list-heading", "Manage scrub tasks"))
+        if links:
+            body += '<nav class="catalog-nav" aria-label="On this page">' + ''.join(
+                f'<a href="#{anchor}">{label}</a>' for anchor, label in links) + '</nav>'
     if error:
         body += f'<p class="event" role="alert">{html.escape(error)}</p>'
     body += review
