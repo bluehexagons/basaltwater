@@ -349,6 +349,8 @@ class ProxmoxSnapshotSetupTests(unittest.TestCase):
         self.assertEqual(self.directory.stat().st_mode & 0o7777, 0o2750)
         units = self.replace.call_args.args[0]
         self.assertEqual(self.replace.call_args.kwargs["activate"], (steps.SNAPSHOT_TIMER,))
+        self.assertEqual(self.replace.call_args.kwargs["deactivate"], (steps.SNAPSHOT_TIMER,))
+        self.assertEqual(self.replace.call_args.kwargs["start_once"], (steps.SNAPSHOT_SERVICE,))
         service = units[steps.SNAPSHOT_SERVICE]
         self.assertIn("User=root\nGroup=991", service)
         self.assertIn("--export\n", service)
@@ -359,7 +361,7 @@ class ProxmoxSnapshotSetupTests(unittest.TestCase):
         self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", service)
         self.assertNotIn("sudo", service)
         self.assertIn("OnUnitInactiveSec=60s", units[steps.SNAPSHOT_TIMER])
-        self.run.assert_called_once_with(["systemctl", "start", steps.SNAPSHOT_SERVICE], check=True, timeout=70)
+        self.run.assert_not_called()
 
     def test_unmanaged_units_and_symlink_storage_fail_before_mutations(self) -> None:
         self.units.return_value = {"content": "[Service]\n# operator"}

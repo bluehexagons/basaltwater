@@ -101,14 +101,16 @@ failure and quiesce the group before restoring files. The reported recovery
 error chains the original activation or readiness error. Panel service setup
 checks its HTTP socket before completing this unit transaction; its manifest,
 credentials and earlier setup steps remain outside unit rollback.
-Audit exporter setup uses the same owner: it quiesces the timer, starts an idle
-oneshot before rearming the timer and preserves a collection already running.
+Audit and Proxmox inventory exporter setup use the same owner: each quiesces its
+timer, starts an idle oneshot before rearming the timer and preserves a collection
+already running.
 Context records `start_once`, `started_jobs` and `preserved_jobs`. A start intent
 can exist without a response or process; inspect actual systemd state. Stop an
 uncertain job started by that operation before removing or restoring its unit.
 Do not stop or restart a preserved collection to reproduce its old activity
 state: it may have finished naturally. Snapshot output already written by any
-collection remains outside unit rollback.
+collection remains outside unit rollback. Proxmox snapshot-directory creation
+and ownership changes also remain outside this boundary.
 Removal uses the same lock and snapshot boundary as replacement,
 skips absent managed files, and stops all present units before deleting any
 of their files.

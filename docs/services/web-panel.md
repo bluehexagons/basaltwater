@@ -237,13 +237,16 @@ follow [transaction recovery](../operations/transaction-recovery.md) before a
 retry. This unit boundary does not restore the manifest, credentials or earlier
 setup steps.
 
-Audit exporter setup uses the same durable unit recovery. It stops the timer
-before publication, refreshes the snapshot through an idle oneshot and rearms
-the timer after that job succeeds. A collection already running is left alone;
-setup does not wait for or restart it. Failures restore previous unit files and
+Audit and Proxmox inventory exporter setup use the same durable unit recovery.
+Each stops its timer before publication, refreshes the snapshot through an idle
+oneshot and rearms the timer after that job succeeds. A collection already
+running is left alone; setup does not wait for or restart it. Failures restore previous unit files and
 timer state where safe. A refused or uncertain required stop retains definitions,
 private snapshots and the recovery guard. Follow transaction recovery before
-retrying; already written audit snapshot data is not rolled back.
+retrying; already written snapshot data and snapshot-directory ownership changes
+are not rolled back. This also applies to the first Proxmox inventory collection:
+its timer is armed only after an idle collector succeeds, while an existing
+collection can finish independently.
 
 ## Browser desktop
 

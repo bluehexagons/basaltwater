@@ -43,9 +43,9 @@ and before arming its timers. Every activated timer must also be deactivated
 before publication. Jobs observed running before or after timer quiescence stay
 outside start/stop/rollback, including jobs that finish naturally during setup.
 The operation records preserved jobs and its own start intents. An uncertain
-start requires checked job quiescence before file restoration. Audit exporter
-setup uses this boundary for initial collection and timer updates; generated
-snapshot data is outside unit rollback.
+start requires checked job quiescence before file restoration. Audit and Proxmox
+inventory exporter setup use this boundary for initial collection and timer
+updates; generated snapshot data is outside unit rollback.
 
 `replace_units(..., prepare=callback)` runs preparation after candidate validation
 and grouped deactivation, before publication and activation, under the same

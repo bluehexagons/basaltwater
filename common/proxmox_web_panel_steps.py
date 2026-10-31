@@ -91,8 +91,8 @@ AccuracySec=5s
 [Install]
 WantedBy=timers.target
 """
-    replace_units({SNAPSHOT_SERVICE: service, SNAPSHOT_TIMER: timer}, activate=(SNAPSHOT_TIMER,))
-    run(["systemctl", "start", SNAPSHOT_SERVICE], check=True, timeout=70)
+    replace_units({SNAPSHOT_SERVICE: service, SNAPSHOT_TIMER: timer}, activate=(SNAPSHOT_TIMER,),
+                  deactivate=(SNAPSHOT_TIMER,), start_once=(SNAPSHOT_SERVICE,))
 
 
 def remove_proxmox_snapshot() -> None:
