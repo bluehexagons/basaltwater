@@ -372,15 +372,18 @@ def _swap_label(name: str) -> str:
 def _assert_safe_swap_parent(path: str) -> None:
     """Reject swap files below directories writable by non-root users."""
 
-    candidate = Path(path)
-    while not candidate.exists():
-        candidate = candidate.parent
-    info = candidate.stat()
-    if info.st_uid != 0 or info.st_mode & 0o022:
-        raise RuntimeError(
-            f"Swap-file parent {candidate} must be root-owned and not writable "
-            "by group or other users"
-        )
+    parent = Path(path)
+    for candidate in (parent, *parent.parents):
+        try:
+            info = candidate.stat()
+        except FileNotFoundError:
+            continue
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or info.st_mode & 0o022):
+            raise RuntimeError(
+                f"Swap-file parent {candidate} must be a root-owned directory "
+                "and not writable by group or other users"
+            )
 
 
 def _stage_swap_file(area: SwapFile, parent: str, size_mib: int) -> str:
@@ -947,6 +950,21 @@ def _configure_zswap(enabled: bool | None, pool_percent: int | None) -> None:
         run("systemctl restart basaltwater-zswap.service")
     else:
         run("systemctl start basaltwater-zswap.service")
+    observed_state = Path("/sys/module/zswap/parameters/enabled").read_text(
+        encoding="utf-8"
+    ).strip().upper()
+    observed_pool = (
+        Path("/sys/module/zswap/parameters/max_pool_percent")
+        .read_text(encoding="utf-8").strip()
+        if pool_percent is not None else None
+    )
+    if observed_state != state or (
+        pool_percent is not None and observed_pool != str(pool_percent)
+    ):
+        raise RuntimeError(
+            "Managed zswap did not acquire its configured kernel policy; "
+            f"inspect {ZSWAP_SERVICE_PATH} and its overrides, then retry setup"
+        )
 
 
 def _remove_managed_zswap() -> None:

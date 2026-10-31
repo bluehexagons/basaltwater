@@ -183,6 +183,10 @@ verification finishes partial updates without reverting unrelated current edits.
 
 ## Compressed swap recovery
 
+Swap files require root-owned directories without group/other write access
+throughout their ancestor chain. A root-owned leaf below a user-controlled
+directory is insufficient: its ancestor can be replaced during setup.
+
 Zram setup checks the generated services and confirms that owned devices are
 inactive and reset before changing its generator configuration. A failed stop
 retains the previous configuration and ownership; earlier successful stops can
@@ -215,6 +219,10 @@ unlinked. It stops the loader before disabling the kernel cache, verifies that
 cache is disabled, then removes the managed definition. A failed step retains
 the definition and ownership for repair; earlier changes are not rolled back.
 Failed swap inventories and unreadable zram device state never establish absence.
+Zswap activation also verifies the requested enabled state and optional pool
+limit after starting its loader. A successful service command with mismatched
+or unreadable kernel state fails setup; the definition remains available for
+inspection and repair. Earlier kernel writes are not automatically rolled back.
 
 ## Resume-device initramfs recovery
 
