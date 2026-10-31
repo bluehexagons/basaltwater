@@ -146,7 +146,7 @@ In 0.1.6, this tool strictly rejects unknown arguments. Use its exact live
 schema and an explicit action; do not guess fields or infer that a rejected
 call changed thread state. Side chats share a folder and are not editing
 isolation; see the project-development skill's
-[client workflows](../../basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
+[client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
 
 ## Pull requests and guides
 

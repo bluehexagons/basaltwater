@@ -133,7 +133,7 @@ homes, settings, and skills; choose the local Windows connection for these proje
 
 T3 browser and orchestration tools exist only when exposed to the active session.
 For stable 0.1.6 side chats, project pin/archive, local commit review, and optional
-1Password sources, read the shared [client workflows](../basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
+1Password sources, read the shared [client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
 Use `basaltw refresh` to deliver updated skills and available WinGet T3 updates;
 WinGet can lag the upstream stable feed. Verify the running version in T3's
 About screen and check a provider turn and terminal after completion.

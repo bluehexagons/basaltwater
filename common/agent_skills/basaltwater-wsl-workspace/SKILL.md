@@ -61,7 +61,7 @@ Windows provider has a separate home and does not discover Ubuntu's catalog.
 Use preview tools only when the active T3 session exposes them; another session
 or a desktop installation does not supply tools to a terminal agent.
 
-Stable 0.1.6's [shared client workflows](../basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
+Stable 0.1.6's [shared client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
 cover side chats, project pin/archive, local commit review, and optional
 1Password sources. A side chat on an Ubuntu connection shares that Linux
 folder. Provider commands and secret-provider resolution need Ubuntu binaries
