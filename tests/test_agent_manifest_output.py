@@ -115,6 +115,18 @@ class WorkstationReportTests(unittest.TestCase):
         self.assertEqual(result["version_probe"], "probe_timeout")
         self.assertIsNone(result["version"])
 
+    def test_ffmpeg_release_tag_is_not_confused_with_linked_library_versions(self) -> None:
+        from lib.workstation_report import _tool
+
+        for banner, expected in (("ffmpeg version n8.1.2 Copyright", "n8.1.2"),
+                                 ("ffmpeg version 8.1.2-3 Copyright", "8.1.2-3"),
+                                 ("unrecognized banner", None)):
+            with (self.subTest(banner=banner),
+                  patch("lib.workstation_report.shutil.which", return_value="/usr/bin/ffmpeg"),
+                  patch("lib.workstation_report.run_probe", return_value=ProbeResult(banner + "\nlibavutil 61.4.100\n")) as probe):
+                self.assertEqual(_tool("ffmpeg")["version"], expected)
+                self.assertEqual(probe.call_args.args[0], ["/usr/bin/ffmpeg", "-version"])
+
     def test_gpu_identity_is_kernel_metadata_without_a_device_probe(self) -> None:
         from lib.workstation_report import _gpus
 

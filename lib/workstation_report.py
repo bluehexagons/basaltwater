@@ -36,8 +36,15 @@ def _tool(name: str) -> dict:
     result["version_probe"] = probe.issue or "passed"
     if probe.issue is None:
         # Retain only a version token, never arbitrary banners or terminal escapes.
-        match = re.search(r"(?<![\w.])\d+\.\d+(?:\.[0-9]+)*(?:[-+][A-Za-z0-9.]+)?", probe.output)
-        result["version"] = match[0][:80] if match else None
+        first_line = next(iter(probe.output.splitlines()), "")
+        if name == "ffmpeg":
+            # Arch uses n-prefixed release tags; later lines describe linked
+            # libraries and must never be mistaken for the executable version.
+            match = re.fullmatch(r"ffmpeg version ([A-Za-z0-9][A-Za-z0-9._+~:-]{0,79})(?:\s.*)?", first_line)
+            result["version"] = match[1] if match else None
+        else:
+            match = re.search(r"(?<![\w.])\d+\.\d+(?:\.[0-9]+)*(?:[-+][A-Za-z0-9.]+)?", first_line)
+            result["version"] = match[0][:80] if match else None
     # A terminal version query does not establish application/session usability.
     return result
 
