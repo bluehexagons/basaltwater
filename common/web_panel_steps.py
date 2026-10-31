@@ -713,34 +713,34 @@ def _write_nginx_site(content: str) -> bool:
             previous = file_obj.read()
         if _NGINX_MARKER not in previous:
             raise RuntimeError(f"Refusing unmanaged web panel Nginx site: {WEB_PANEL_NGINX_SITE}")
-    changed = previous != content
-    if changed:
-        write_text_atomic(WEB_PANEL_NGINX_SITE, content, mode=0o644)
-    link_created = False
-    if os.path.lexists(WEB_PANEL_NGINX_LINK):
+    link_exists = os.path.lexists(WEB_PANEL_NGINX_LINK)
+    if link_exists:
         if not (
             os.path.islink(WEB_PANEL_NGINX_LINK)
             and os.path.realpath(WEB_PANEL_NGINX_LINK) == WEB_PANEL_NGINX_SITE
             and previous is not None
         ):
             raise RuntimeError(f"Refusing unmanaged web panel Nginx link: {WEB_PANEL_NGINX_LINK}")
-    else:
-        os.symlink(WEB_PANEL_NGINX_SITE, WEB_PANEL_NGINX_LINK)
-        changed = True
-        link_created = True
+    site_changed = previous != content
+    changed = site_changed or not link_exists
+    link_created = False
+    reload_attempted = False
     try:
+        if site_changed:
+            write_text_atomic(WEB_PANEL_NGINX_SITE, content, mode=0o644)
+        if not link_exists:
+            os.symlink(WEB_PANEL_NGINX_SITE, WEB_PANEL_NGINX_LINK)
+            link_created = True
         validation = run("nginx -t", check=False, capture_output=True)
-    except Exception:
-        _restore_nginx_site(previous, link_created)
-        raise
-    if validation.returncode != 0:
-        _restore_nginx_site(previous, link_created)
-        raise RuntimeError("Nginx rejected the web panel configuration")
-    if changed:
-        try:
+        if validation.returncode != 0:
+            raise RuntimeError("Nginx rejected the web panel configuration")
+        if changed:
+            reload_attempted = True
             run("systemctl reload nginx", check=True)
-        except Exception:
+    except Exception:
+        if site_changed or link_created:
             _restore_nginx_site(previous, link_created)
+        if reload_attempted:
             try:
                 rollback_validation = run(
                     "nginx -t", check=False, capture_output=True
@@ -749,7 +749,7 @@ def _write_nginx_site(content: str) -> bool:
                     run("systemctl reload nginx", check=False)
             except Exception:
                 pass
-            raise
+        raise
     return changed
 
 

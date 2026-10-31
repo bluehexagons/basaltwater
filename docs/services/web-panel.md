@@ -219,6 +219,16 @@ With `--ssl`, the panel uses a suitable existing certificate or the managed VM
 CA. Enroll that CA on your client when required; see [Client CA trust](client-ca-trust.md).
 Without TLS, Basic Auth crosses the network as plaintext.
 
+Setup checks ownership of both the panel Nginx site and its enabled link before
+replacing the site. An unrelated file, directory or symlink at either managed
+path requires operator reconciliation; setup leaves it in place. Publication,
+link creation and validation failures restore the previous site or remove the
+new site and link created by that attempt. A failed reload also attempts to
+reload the restored configuration. Inspect `nginx -t` and actual routing after
+a reload failure: a timed-out reload or failed recovery can leave loaded workers
+and files out of sync. This recovery covers the panel route, not earlier setup
+steps, and does not provide a durable Nginx transaction snapshot.
+
 ## Browser desktop
 
 Add `--guacamole` to an HTTPS panel setup to install an embedded browser desktop.
