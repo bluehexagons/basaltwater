@@ -13,6 +13,8 @@ from common.service_tools.web_panel_templates import render_document, render_hea
 from sync.service_tools.scrub_findings import ADVICE
 from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
 from common.service_tools import web_panel_samba as samba
+from common.service_tools import web_panel_share_actions as shares
+from lib.validation import validate_samba_share_name
 
 VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
 STATUS_LABELS = {
@@ -40,6 +42,12 @@ STYLE = """
 .data-recovery-form input, .data-recovery-form select { min-width:0; width:100%; min-height:44px;
   padding:10px; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; }
 .data-review { border-left:3px solid var(--warning); margin:16px 0; }
+.share-users { min-width:0; max-height:18rem; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:12px; }
+.share-users legend { max-width:100%; }
+.share-user { display:flex; gap:10px; align-items:center; min-height:44px; overflow-wrap:anywhere; }
+.share-user input { width:20px; min-height:20px; margin:0; flex:none; }
+.share-comparison { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:20px; }
+.share-comparison dd { margin:0 0 8px; overflow-wrap:anywhere; }
 """
 
 
@@ -47,7 +55,7 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
     if len(raw) > 2048:
         raise ValueError("Shares & Data query exceeds its limit")
     values = parse_qs(raw, keep_blank_values=True, max_num_fields=4)
-    if set(values) - {"view", "category", "q", "page"} or any(len(items) != 1 for items in values.values()):
+    if set(values) - {"view", "category", "q", "page", "edit", "form"} or any(len(items) != 1 for items in values.values()):
         raise ValueError("Invalid Shares & Data filters")
     result = {key: items[0] for key, items in values.items()}
     if result.get("view", "shares") not in VIEWS:
@@ -62,6 +70,13 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
         raise ValueError("Invalid findings page")
     if result.get("view", "shares") != "scrubs" and set(result) & {"category", "q", "page"}:
         raise ValueError("Finding filters require the scrubs view")
+    if set(result) & {"edit", "form"}:
+        if result.get("view", "shares") != "shares" or "edit" in result and "form" in result:
+            raise ValueError("Choose one share editor on the Samba view")
+        if "form" in result and result["form"] != "add":
+            raise ValueError("Unknown share form")
+        if "edit" in result:
+            validate_samba_share_name(result["edit"])
     return result
 
 
@@ -85,7 +100,7 @@ def _inventory_notice() -> str:
             'Rerun setup or refresh the saved setup, then allow the next five-minute export to finish.</p>')
 
 
-def _shares(inventory: dict, host: str) -> str:
+def _shares(inventory: dict, host: str, *, controls: bool = False) -> str:
     body = render_heading("Samba shares", "access", heading_id="samba-heading")
     if not inventory.get("available"):
         return body + _inventory_notice()
@@ -103,11 +118,13 @@ def _shares(inventory: dict, host: str) -> str:
                             ("Connect", f"\\\\{host}\\{name}")])
             if share["omitted_users"]:
                 body += f'<p class="data-notice">{share["omitted_users"]} additional users omitted from this snapshot.</p>'
+            if controls:
+                body += f'<p><a class="refresh-link" href="{html.escape(shares.editor_url(share["name"]), quote=True)}">Edit access and users →</a></p>'
             body += '</li>'
         body += '</ul>'
     if inventory["omitted_shares"]:
         body += f'<p class="data-notice">{inventory["omitted_shares"]} additional shares omitted from this snapshot.</p>'
-    return body + '<p class="data-notice">Share editing, account creation and credential resets still use the controller’s Samba setup and credential commands.</p>'
+    return body + '<p class="data-notice">Account creation and credential resets still use the controller’s Samba setup and credential commands.</p>'
 
 
 def _routines(inventory: dict) -> str:
@@ -225,13 +242,21 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     samba_status = samba_manager.snapshot() if samba_manager is not None and view == "shares" else {}
     if samba_manager is not None and view == "shares":
         body += samba.render_status(samba_status, csrf)
+    share_manager = getattr(state, "share_actions", None)
+    share_status = share_manager.snapshot() if share_manager is not None and view == "shares" else {}
+    if share_manager is not None and view == "shares":
+        body += shares.render_status(share_status, csrf)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
     else:
         body += f'<p class="data-notice">Snapshot: {html.escape(_date(snapshot["generated_at"]))}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
         inventory = snapshot.get("inventory", {"available": False})
         if view == "shares":
-            body += _shares(inventory, state.manifest["host"])
+            controls = (share_manager is not None and not shares.unavailable_reason(share_status)
+                        and snapshot.get("share_management", {}).get("available") is True)
+            if controls and not review:
+                body += shares.render_editor(snapshot, query, csrf)
+            body += _shares(inventory, state.manifest["host"], controls=controls)
             body += samba.render_accounts(snapshot.get("samba", {"available": False}), csrf,
                                           controls=samba_manager is not None and not samba.unavailable_reason(samba_status))
         elif view == "routines":

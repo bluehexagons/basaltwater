@@ -40,6 +40,7 @@ from common.service_tools.web_panel_storage_usage import parse_storage_query, pa
 from common.service_tools.web_panel_shares_data import parse_shares_data_query, render_shares_data
 from common.service_tools.web_panel_data_actions import PanelData, render_review as render_data_review, unavailable_reason as data_unavailable
 from common.service_tools.web_panel_samba import PanelSamba, render_review as render_samba_review, unavailable_reason as samba_unavailable
+from common.service_tools.web_panel_share_actions import PanelShares, render_review as render_share_review, unavailable_reason as shares_unavailable
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -814,6 +815,7 @@ class WebPanelState:
         self.admin = PanelAdmin(manifest)
         self.data = PanelData(self.admin)
         self.samba = PanelSamba(self.admin)
+        self.share_actions = PanelShares(self.admin)
         self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home, features=self.features)
         self.storage_diagnostics = StorageDiagnostics(self.agent_tasks.home)
 
@@ -2194,6 +2196,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             "/publishing": "publishing", "/admin": "admin", "/shares-data": "shares-data",
             "/actions/data/review": "shares-data", "/actions/data/submit": "shares-data", "/actions/data/cancel": "shares-data",
             "/actions/samba/review": "shares-data", "/actions/samba/submit": "shares-data", "/actions/samba/cancel": "shares-data",
+            "/actions/shares/review": "shares-data", "/actions/shares/submit": "shares-data", "/actions/shares/cancel": "shares-data",
             "/actions/agent-task": "agent-tools", "/actions/agent-task/save": "agent-tools",
             "/actions/agent-tool/prepare": "agent-tools", "/actions/agent-diagnostics": "agents",
             "/actions/agent-inbox": "agent-inbox", "/actions/maintenance-agent": "maintenance-agent",
@@ -2419,10 +2422,11 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         admin_paths = {"/actions/admin", "/actions/admin/cancel"}
         data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
         samba_paths = {"/actions/samba/review", "/actions/samba/submit", "/actions/samba/cancel"}
+        share_paths = {"/actions/shares/review", "/actions/shares/submit", "/actions/shares/cancel"}
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
         maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
-        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | credential_paths | publishing_paths | maintenance_paths:
+        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | samba_paths | share_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2445,7 +2449,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values = urllib.parse.parse_qs(
                 self.rfile.read(length).decode("utf-8", errors="strict"),
                 keep_blank_values=True,
-                max_num_fields=48 if path == "/actions/agent-task/save" else 18,
+                max_num_fields=72 if path == "/actions/shares/review" else 48 if path == "/actions/agent-task/save" else 18,
             )
         except (UnicodeDecodeError, ValueError):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid request\n", "text/plain")
@@ -2494,6 +2498,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if path in samba_paths:
             self._handle_samba_action(path, values)
+            return
+        if path in share_paths:
+            self._handle_share_action(path, values)
             return
         if path in credential_paths:
             self._handle_credential_action(path, values)
@@ -2650,6 +2657,42 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "The recovery request could not be confirmed. Check recovery activity and approval requests before trying again. Reviews expire after five minutes; repair and restore require CHANGE FILE, and acceptance requires ACCEPT CURRENT CONTENT."), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=scrubs"})
+
+    def _handle_share_action(self, path: str, values: dict[str, list[str]]) -> None:
+        if path.endswith("/review"):
+            kind = values.get("kind", [""])
+            expected = ({"kind", "name", "revision", "original", "path", "access", "users"}
+                        if kind == ["save"] else {"kind", "name", "revision"} if kind == ["remove"] else set())
+            valid = (bool(expected) and set(values) in (expected | {"csrf"}, expected - {"users"} | {"csrf"})
+                     and all(len(entries) == 1 for key, entries in values.items() if key != "users")
+                     and len(values.get("users", [])) <= 64)
+        else:
+            expected = {"ticket", "confirmation"} if path.endswith("/submit") else {"id"}
+            valid = set(values) == expected | {"csrf"} and all(len(entries) == 1 for entries in values.values())
+        if not valid:
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid share action\n", "text/plain")
+            return
+        try:
+            fields = {key: entries if key == "users" else entries[0] for key, entries in values.items() if key != "csrf"}
+            if path.endswith("/review"):
+                if reason := shares_unavailable(self.state.share_actions.snapshot()):
+                    raise ValueError(reason)
+                if fields["kind"] == "save":
+                    fields.setdefault("users", [])
+                csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
+                review = render_share_review(self.state.share_actions, fields, csrf)
+                self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, review=review), "text/html")
+                return
+            if path.endswith("/submit"):
+                self.state.share_actions.submit(fields["ticket"], fields["confirmation"])
+            else:
+                self.state.admin.cancel(fields["id"])
+        except (OSError, ValueError, RuntimeError) as exc:
+            message = (str(exc) if path.endswith("/review") and isinstance(exc, ValueError) else
+                       "The share request could not be confirmed. Check share activity and approval requests before trying again. Reviews expire after five minutes and require the exact share name.")
+            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, error=message), "text/html")
+            return
+        self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=shares"})
 
     def _handle_samba_action(self, path: str, values: dict[str, list[str]]) -> None:
         expected = ({"action", "username", "revision"} if path.endswith("/review")

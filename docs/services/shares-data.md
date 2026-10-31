@@ -2,11 +2,10 @@
 
 Open **Administration → Shares & Data** to inspect this machine’s managed
 Samba shares, recurring backup and sync declarations, and recorded scrub findings.
-Share changes, credential resets and routine editing still use the controller
-commands described below. Single-file verification and recovery also have
-browser controls when the separate privilege approval service is configured.
-The Samba view also shows local account status and provides approved login
-enable/disable controls.
+Share editing, account login enable/disable, and single-file verification and
+recovery have browser controls when the separate privilege approval service is
+configured. Account creation, credential resets and routine editing still use
+the controller commands described below.
 
 The three views work without JavaScript:
 
@@ -53,6 +52,48 @@ file, return at most twenty rows and have a short execution budget. They never
 read NAS paths. Use `basaltw scrub status HOST` for controller inspection and
 `--all` to include resolved findings.
 Passwords, mount credentials, raw PAR2 output, and recovery copies are not exported.
+
+## Create, edit or remove a share
+
+On a supported non-root VM operator installation with privilege approvals,
+choose **Add a share** or a share's **Edit access and users** link. Enter a logical
+share name and target directory, choose read-only or read/write access and check
+the existing Samba users who need access. The editor labels disabled logins;
+membership does not enable them. Changing access changes the actual SMB name's
+`_read`/`_write` suffix. To rename a share, add the replacement and remove the old
+share separately. The removal review is inside **Remove this share**.
+
+**Review share change** shows current and proposed directory, access and users.
+Type the exact logical share name, create the request and approve or deny it on
+the separate approval page. **Share activity** offers pending-request cancellation
+and reports the correlated worker result. A dispatched request does not establish
+completion. A successful worker applied and saved the selection; the inventory
+updates at the next five-minute export. The latest worker record is bounded, so
+older dispatched requests may require inspecting the actual share configuration.
+
+Browser share management requires the complete saved inventory (up to 64 shares,
+64 users per share, paths up to 512 characters) and supported local Samba accounts
+as described below. The worker binds the review to saved-setup, main Samba config
+and mount drop-in metadata, rechecks the exact prior share and existing account
+eligibility, and shares the setup/refresh lock. Changed or unsupported reviews
+fail before effects. Only one Samba approval request may be outstanding.
+
+Reconciliation reapplies group membership and recursive permissions for **all**
+saved managed shares. It validates and reloads Samba, then updates only saved
+share declarations using the target's mount and internal-data guards. Passwords,
+login flags, files, accounts, unrelated settings and manual share sections are
+preserved. Removing a share removes its managed section and access group;
+it does not remove its files or user accounts. Existing SMB sessions may need
+to reconnect after a change.
+
+The supervised job runs outside the panel with a one-hour deadline. A failure
+after mutation begins can leave partial permissions, configuration or saved state
+and retains the setup recovery marker. Inspect live Samba, permissions, mount
+drop-in and saved setup using the
+[transaction recovery guide](../operations/transaction-recovery.md); do not clear
+the guard just to retry. Reviews expire after five minutes, submission consumes
+them once, and lost responses or interrupted operations are never replayed
+automatically. Controller commands remain available for unsupported inventories.
 
 ## Enable or disable a Samba login
 

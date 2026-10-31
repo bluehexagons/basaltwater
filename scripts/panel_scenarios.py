@@ -13,6 +13,8 @@ import uuid
 from common.service_tools import web_panel_admin as admin
 from common.service_tools import web_panel_data_actions as data_actions
 from common.service_tools import web_panel_samba as samba
+from common.service_tools import web_panel_share_actions as share_actions
+from lib.samba_shares import share_label, share_name
 from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_github_runner as github_runner
@@ -180,6 +182,7 @@ class Scenario:
         self.replace(admin, "exchange", side_effect=self.exchange)
         self.replace(data_actions, "exchange", side_effect=self.exchange)
         self.replace(samba, "exchange", side_effect=self.exchange)
+        self.replace(share_actions, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "load_policy", return_value={"services": {"example.service": "approve"}})
         self.replace(maintenance, "load_policy", side_effect=lambda: copy.deepcopy(self.data["policy"]))
@@ -278,9 +281,15 @@ class Scenario:
 
     def exchange(self, message: dict) -> dict:
         with self.lock:
+            if message["action"] == "share-status":
+                records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "samba.shares"]
+                outstanding = any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("samba.") for row in self.data["requests"])
+                return {"available": self.name != "degraded", "unit_state": "inactive", "latest": {}, "blocked": False,
+                        "outstanding": outstanding, "requests": [{**copy.deepcopy(row), "name": share_name(row["plan"]["parameters"]),
+                            "label": share_label(row["plan"]["parameters"]), "job_id": row["plan"]["parameters"]["job_id"]} for row in records[:10]]}
             if message["action"] == "samba-status":
                 records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "samba.account"]
-                return {"available": self.name != "degraded",
+                return {"available": self.name != "degraded", "outstanding": any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("samba.") for row in self.data["requests"]),
                         "requests": [{**copy.deepcopy(row), "parameters": row["plan"]["parameters"]} for row in records[:10]]}
             if message["action"] == "data-status":
                 records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "data.run"]
@@ -296,9 +305,9 @@ class Scenario:
                 return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
-                if message["operation"] in {"service.restart", "command.run", "data.run", "samba.account"}:
+                if message["operation"] in {"service.restart", "command.run", "data.run", "samba.account", "samba.shares"}:
                     request = {"id": uuid.uuid4().hex, "action": message["operation"],
-                               "state": "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "samba.account"} else "succeeded", "created": time.time(), "expires": time.time() + 3600,
+                               "state": "failed" if self.name == "degraded" else "pending" if message["operation"] in {"data.run", "samba.account", "samba.shares"} else "succeeded", "created": time.time(), "expires": time.time() + 3600,
                                "plan": {"operation": message["operation"], "parameters": message["parameters"]}}
                     request["review_url"] = "https://127.0.0.1/fixture-approvals/" + request["id"]
                     self.data["requests"].insert(0, request)

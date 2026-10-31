@@ -165,3 +165,40 @@ class ShareManagementTests(unittest.TestCase):
             self.assertEqual(remote_setup._run_configured_setup(config, SimpleNamespace(dry_run=False)), 0)
             update.assert_called_once_with(config)
             full_setup.assert_not_called()
+
+    def reviewed(self):
+        return {"before": {"name": "old", "access": "read", "path": "/srv/old", "users": ["alice"]},
+                "after": {"name": "old", "access": "write", "path": "/srv/docs", "users": ["alice"]},
+                "revision": "a" * 64, "job_id": "b" * 32}
+
+    def test_reviewed_edit_add_and_remove_use_only_fresh_target_shares(self):
+        with patch.object(management, "_revision", return_value="a" * 64), \
+             patch.object(management, "_accounts", return_value=[{"username": "alice", "manageable": True}]):
+            value = self.reviewed()
+            management.apply_reviewed_share_update(value)
+            self.assertTrue(self.reconcile.call_args.kwargs["preserve_accounts"])
+            self.assertIsNone(self.reconcile.call_args.args[0].share_credentials)
+            other = {**value["after"], "name": "second", "path": "/srv/second"}
+            management.apply_reviewed_share_update({**value, "before": None, "after": other})
+            self.assertEqual(len(json.loads(self.path.read_text())["samba_shares"]), 2)
+            management.apply_reviewed_share_update({**value, "before": value["after"], "after": None})
+            self.assertEqual(json.loads(self.path.read_text())["samba_shares"], [["write", "second", "/srv/second", "alice"]])
+
+    def test_stale_forged_or_privileged_share_reviews_never_reconcile(self):
+        value = self.reviewed()
+        with patch.object(management, "_revision", return_value="c" * 64), self.assertRaises(ValueError):
+            management.apply_reviewed_share_update(value)
+        with patch.object(management, "_revision", return_value="a" * 64):
+            with self.assertRaises(ValueError):
+                management.apply_reviewed_share_update({**value, "before": None})
+            with patch.object(management, "_accounts", return_value=[{"username": "alice", "manageable": False}]), self.assertRaises(ValueError):
+                management.apply_reviewed_share_update(value)
+        self.reconcile.assert_not_called()
+        self.assertFalse(Path(self.marker).exists())
+        self.assertEqual(self.path.read_bytes(), self.before)
+
+    def test_case_collisions_and_incomplete_inventory_disable_share_snapshot(self):
+        self.saved["samba_shares"].append(["read", "OLD", "/srv/other", "alice"])
+        with self.assertRaises(ValueError):
+            management._rows(self.saved)
+        self.assertEqual(management.collect_share_snapshot(self.saved), {"available": False})

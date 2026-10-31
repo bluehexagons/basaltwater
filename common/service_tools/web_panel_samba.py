@@ -18,7 +18,7 @@ def unavailable_reason(status: dict) -> str:
         return status["error"]
     if status.get("available") is not True:
         return "Samba account controls are unavailable. Update or check the privilege approval service."
-    if any(row.get("state") in {"pending", "approved", "executing"} for row in status.get("requests", [])):
+    if status.get("outstanding") or any(row.get("state") in {"pending", "approved", "executing"} for row in status.get("requests", [])):
         return "Review or cancel the outstanding Samba request before creating another."
     return ""
 

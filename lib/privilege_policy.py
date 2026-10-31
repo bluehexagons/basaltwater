@@ -15,6 +15,7 @@ from lib.validators import validate_host
 from lib.admin_actions import action_spec, dispatch_argv
 from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_action
 from lib.samba_accounts import ACCOUNT_ACTIONS, account_dispatch_argv, validate_account_action
+from lib.samba_shares import share_dispatch_argv, share_label, share_name, validate_share_action
 
 CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
@@ -149,6 +150,16 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = "approve"
         argv = data_dispatch_argv(parameters)
         effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
+    elif operation == "samba.shares":
+        parameters = validate_share_action(parameters)
+        mode = "approve"
+        argv = share_dispatch_argv(parameters)
+        effect = (share_label(parameters) + " " + share_name(parameters)
+                  + ". Reconcile all saved managed shares and recursively apply their group permissions; "
+                  "preserve account credentials and login flags. Removal retains files and accounts. "
+                  "Validate and reload Samba, then save only the share declarations. Reject a changed review; "
+                  "an interrupted change can leave partial permissions and a setup recovery guard. "
+                  "Run independently of the panel with a one-hour limit; dispatch does not prove completion.")
     elif operation == "samba.account":
         parameters = validate_account_action(parameters)
         mode = "approve"

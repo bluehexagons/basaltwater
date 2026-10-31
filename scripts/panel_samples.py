@@ -28,7 +28,8 @@ def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict
         {"username": username, "uid": uid, "disabled": disabled, "locked": False,
          "manageable": uid >= 1000, "revision": "a" * 64}
         for username, uid, disabled in (("operator", 1000, False), ("maintainer", 1001, True), ("root", 0, False))]}
-    return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "samba": accounts, "omitted_jobs": 0,
+    return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "samba": accounts,
+            "share_management": {"available": False} if empty or scenario == "degraded" else {"available": True, "revision": "c" * 64}, "omitted_jobs": 0,
             "jobs": [] if empty else [{"directory": "/srv/archive", "database": "/srv/parity/archive",
                 "redundancy": "10%", "interval": "weekly", "last_scan": now,
                 "status": "unavailable" if scenario == "degraded" else "findings",
