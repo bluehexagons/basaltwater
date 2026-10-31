@@ -17,6 +17,13 @@ from lib.config import SetupConfig
 
 
 class T3HostCliTests(unittest.TestCase):
+    def assert_entry_preserved(self, path: Path, original: os.stat_result) -> None:
+        # Executing or inspecting a symlink may update atime without changing it.
+        current = path.lstat()
+        for field in ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_uid', 'st_gid',
+                      'st_size', 'st_mtime_ns', 'st_ctime_ns'):
+            self.assertEqual(getattr(current, field), getattr(original, field), field)
+
     def test_setup_exposes_cli_that_follows_runtime_updates(self):
         with tempfile.TemporaryDirectory(prefix="t3 home ") as directory, ExitStack() as stack:
             home = Path(directory)
@@ -47,6 +54,7 @@ class T3HostCliTests(unittest.TestCase):
             launcher = home / ".local/bin/t3"
             self.assertTrue(launcher.is_symlink())
             link_owner.assert_called_once_with(str(launcher), 1000, 1000)
+            os.utime(launcher, ns=(0, launcher.lstat().st_mtime_ns), follow_symlinks=False)
             original = launcher.lstat()
             runtime = home / ".t3/runtime"
             for version in ("0.1.3", "0.1.4"):
@@ -65,7 +73,7 @@ class T3HostCliTests(unittest.TestCase):
                     version, "thread", "argument with spaces",
                 ])
             t3code_steps.install_t3code_web(config)
-            self.assertEqual(launcher.lstat(), original)
+            self.assert_entry_preserved(launcher, original)
             link_owner.assert_called_once()
 
     def test_existing_commands_and_other_entries_are_preserved(self):
@@ -87,7 +95,7 @@ class T3HostCliTests(unittest.TestCase):
                 original = launcher.lstat()
                 with patch.object(t3code_steps.os, "lchown") as owner:
                     self.assertFalse(t3code_steps._install_t3_cli_launcher(directory, 1000, 1000))
-                self.assertEqual(launcher.lstat(), original)
+                self.assert_entry_preserved(launcher, original)
                 owner.assert_not_called()
                 if kind == "file":
                     self.assertEqual(launcher.read_text(), "user command\n")
