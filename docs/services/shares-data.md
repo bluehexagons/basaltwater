@@ -5,13 +5,16 @@ Samba shares, recurring backup and sync declarations, and recorded scrub finding
 Share changes, credential resets and routine editing still use the controller
 commands described below. Single-file verification and recovery also have
 browser controls when the separate privilege approval service is configured.
+The Samba view also shows local account status and provides approved login
+enable/disable controls.
 
 The three views work without JavaScript:
 
 - **Samba shares** shows each saved share’s actual SMB name (including its
   `_read` or `_write` suffix), directory, access mode, users, and connection path.
-  This is the saved setup, not live account, session or filesystem ACL inspection.
-  Manually configured Samba shares are outside this inventory.
+  The separate account list shows exported login/lockout flags and Unix UIDs;
+  it does not inspect sessions or filesystem ACLs. Manually configured Samba
+  shares are outside the share inventory.
 - **Backups & sync** shows source, destination and interval for each recurring
   rsync mirror. Backup declarations have the same mirroring behavior as sync;
   they do not provide snapshots or retained versions. Links open timer status and
@@ -50,6 +53,32 @@ file, return at most twenty rows and have a short execution budget. They never
 read NAS paths. Use `basaltw scrub status HOST` for controller inspection and
 `--all` to include resolved findings.
 Passwords, mount credentials, raw PAR2 output, and recovery copies are not exported.
+
+## Enable or disable a Samba login
+
+The account list supports standalone Samba with the default local `tdbsam`
+backend, up to 512 accounts. Unsupported backends, inconsistent records, tool
+failures or an oversized export make account inspection unavailable. This does
+not suppress the shares inventory or scrub findings.
+
+Choose **Review disable Samba login** or **Review enable Samba login**, check
+the account, type its exact username and create an approval request. Open the
+separate approval page to approve or deny it. Pending requests can be cancelled
+from **Samba activity**. Only regular password-protected Samba accounts with a
+matching Unix UID from 1000 through 65533 have browser controls. System accounts,
+trust accounts and missing/mismatched Unix accounts require the administrator
+command line.
+
+The operation changes only Samba's disabled flag. It preserves credentials,
+Unix login and share membership; enabling does not clear account lockout.
+Disabling may leave existing SMB sessions connected. The root helper rechecks
+account identity, flags and configuration metadata, rejects stale reviews and excludes concurrent
+setup/refresh. It runs once in a supervised service with a 45-second deadline.
+**Succeeded** means the helper verified the requested flag, while **failed** or
+**uncertain** requires inspecting current account state before trying again.
+The account list follows the next five-minute export; it may still show the
+earlier flag immediately after success. Reviews expire after five minutes and
+are consumed before submission; a lost response is never replayed automatically.
 
 ## Review and resolve one finding
 

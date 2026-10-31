@@ -30,6 +30,7 @@ from lib.privilege_policy import (
 from common.service_tools.admin_job import availability as admin_availability, job_status
 from lib.admin_actions import ADMIN_HELPER
 from lib.data_actions import DATA_HELPER
+from lib.samba_accounts import SAMBA_ACCOUNT_HELPER
 from common.service_tools.data_job import job_status as data_job_status, stage_data_job
 from lib.privilege_execution import (
     COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
@@ -57,6 +58,8 @@ def execute(plan: dict) -> ExecutionResult:
             if not status["available"] or status["unit_state"] not in {"inactive", "failed"}:
                 return ExecutionResult("failed", failure="action_unavailable")
             stage_data_job(plan["parameters"])
+        if plan["operation"] == "samba.account":
+            protected_path(SAMBA_ACCOUNT_HELPER)
         command = plan["operation"] == "command.run"
         if command:
             protected_path(COMMAND_HELPER)
@@ -143,7 +146,7 @@ class Broker:
             try:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, uid, operation, parameters)
-                if operation in {"admin.run", "data.run"}:
+                if operation in {"admin.run", "data.run", "samba.account"}:
                     for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
                         if json.loads(row["plan"])["operation"] == operation:
                             raise ValueError("An administration request is already outstanding; review or cancel it first")
@@ -251,6 +254,23 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if not approval and action == "samba-status" and set(message) == {"action"}:
+            policy = self.policy_loader()
+            if uid != policy["requester_uid"]:
+                raise PermissionError("Account is not authorized")
+            try:
+                protected_path(SAMBA_ACCOUNT_HELPER)
+                available = True
+            except (OSError, ValueError):
+                available = False
+            with self.lock, self.db:
+                self._expire()
+                rows = self.db.execute("SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? AND json_extract(plan,'$.operation')='samba.account' ORDER BY created DESC LIMIT 10", (uid,)).fetchall()
+                result = {"available": available, "requests": [{"id": row["id"], "created": row["created"],
+                    "expires": row["expires"], "state": row["state"], "parameters": json.loads(row["plan"])["parameters"],
+                    "execution": json.loads(row["execution"]) if row["execution"] else None,
+                    "review_url": policy["origin"] + "/requests/" + row["id"]} for row in rows]}
+            return result
         if not approval and action == "data-status" and set(message) == {"action"}:
             policy = self.policy_loader()
             if uid != policy["requester_uid"]:

@@ -24,7 +24,11 @@ def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict
                                        ("media/missing.flac", "missing_file"))]
     for finding in findings:
         finding["revision"] = finding_revision({"state": "open", **finding})
-    return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "omitted_jobs": 0,
+    accounts = {"available": False} if scenario == "degraded" or empty else {"available": True, "accounts": [
+        {"username": username, "uid": uid, "disabled": disabled, "locked": False,
+         "manageable": uid >= 1000, "revision": "a" * 64}
+        for username, uid, disabled in (("operator", 1000, False), ("maintainer", 1001, True), ("root", 0, False))]}
+    return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "samba": accounts, "omitted_jobs": 0,
             "jobs": [] if empty else [{"directory": "/srv/archive", "database": "/srv/parity/archive",
                 "redundancy": "10%", "interval": "weekly", "last_scan": now,
                 "status": "unavailable" if scenario == "degraded" else "findings",

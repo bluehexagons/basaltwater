@@ -31,7 +31,7 @@ class StorageSnapshotTests(unittest.TestCase):
         self.report = Findings(str(self.data), str(self.db))
 
     def collect(self):
-        with patch("lib.machine_state.load_setup_config", return_value=self.config), patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, "")), patch("subprocess.run") as run:
+        with patch("lib.machine_state.load_setup_config", return_value=self.config), patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, "")), patch("smb.account_management.collect_account_snapshot", return_value={"available": False}), patch("subprocess.run") as run:
             result = storage.collect_storage_snapshot()
         run.assert_not_called()
         return result

@@ -12,6 +12,7 @@ from common.service_tools.web_panel_findings import MAX_PAGE, PAGE_SIZE, load_fi
 from common.service_tools.web_panel_templates import render_document, render_heading
 from sync.service_tools.scrub_findings import ADVICE
 from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
+from common.service_tools import web_panel_samba as samba
 
 VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
 STATUS_LABELS = {
@@ -93,7 +94,7 @@ def _shares(inventory: dict, host: str) -> str:
     elif not inventory["shares"]:
         body += '<p class="empty">Samba is enabled with no managed shares configured.</p>'
     if inventory["shares"]:
-        body += '<p class="data-notice">Saved managed shares and access groups. Live Samba accounts, connection status and manually configured shares are not included.</p><ul class="data-list">'
+        body += '<p class="data-notice">Saved managed shares and access groups. Account login status is listed separately below. Manually configured shares and active connections are outside this inventory.</p><ul class="data-list">'
         for share in inventory["shares"]:
             name = share["name"] + "_" + share["access"]
             access = "Read & write" if share["access"] == "write" else "Read only"
@@ -106,7 +107,7 @@ def _shares(inventory: dict, host: str) -> str:
         body += '</ul>'
     if inventory["omitted_shares"]:
         body += f'<p class="data-notice">{inventory["omitted_shares"]} additional shares omitted from this snapshot.</p>'
-    return body + '<p class="data-notice">Share editing and credential resets are not available in this version of the page. Use the controller’s Samba setup and credential commands.</p>'
+    return body + '<p class="data-notice">Share editing, account creation and credential resets still use the controller’s Samba setup and credential commands.</p>'
 
 
 def _routines(inventory: dict) -> str:
@@ -220,6 +221,10 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     csrf = f'<input type="hidden" name="csrf" value="{html.escape(getattr(state, "csrf_token", ""), quote=True)}">'
     if manager is not None and view == "scrubs":
         body += render_status(status, csrf)
+    samba_manager = getattr(state, "samba", None)
+    samba_status = samba_manager.snapshot() if samba_manager is not None and view == "shares" else {}
+    if samba_manager is not None and view == "shares":
+        body += samba.render_status(samba_status, csrf)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
     else:
@@ -227,6 +232,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
         inventory = snapshot.get("inventory", {"available": False})
         if view == "shares":
             body += _shares(inventory, state.manifest["host"])
+            body += samba.render_accounts(snapshot.get("samba", {"available": False}), csrf,
+                                          controls=samba_manager is not None and not samba.unavailable_reason(samba_status))
         elif view == "routines":
             body += _routines(inventory)
         else:

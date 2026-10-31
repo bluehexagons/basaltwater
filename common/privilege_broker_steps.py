@@ -400,7 +400,7 @@ def _configure_privilege_broker(config, begin_changes) -> None:
                   "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
     # Every installed Python dependency is part of the privileged boundary.
-    for directory in ("/opt/basaltwater/lib", "/opt/basaltwater/common", "/opt/basaltwater/plugins", "/opt/basaltwater/sync"):
+    for directory in ("/opt/basaltwater/lib", "/opt/basaltwater/common", "/opt/basaltwater/plugins", "/opt/basaltwater/sync", "/opt/basaltwater/smb"):
         protected_path(directory, directory=True)
         for root, directories, files in os.walk(directory):
             protected_path(root, directory=True)

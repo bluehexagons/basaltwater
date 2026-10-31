@@ -15,6 +15,7 @@ from common.service_tools.web_panel_templates import render_heading
 from lib.atomic_io import read_json_file
 from lib.shares_data_inventory import configuration_inventory, validate_inventory
 from lib.data_actions import HEX_DIGEST, finding_revision
+from lib.samba_accounts import validate_account_snapshot
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
@@ -54,6 +55,8 @@ def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
         if saved is None:
             return result
         result["inventory"] = configuration_inventory(saved)
+        from smb.account_management import collect_account_snapshot
+        result["samba"] = collect_account_snapshot(saved)
         config = RuntimeConfig.from_dict(saved)
         validate_scrub_specs(config.scrub_specs)
         result["omitted_jobs"] = max(0, len(config.scrub_specs) - MAX_JOBS)
@@ -159,6 +162,10 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
             data["inventory"] = validate_inventory(data.get("inventory"))
         except (ValueError, TypeError):
             data["inventory"] = {"available": False}
+        try:
+            data["samba"] = validate_account_snapshot(data.get("samba"))
+        except (ValueError, TypeError):
+            data["samba"] = {"available": False}
         return data
     except (OSError, ValueError, TypeError, OverflowError):
         return {"available": False, "jobs": []}

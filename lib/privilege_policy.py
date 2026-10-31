@@ -14,6 +14,7 @@ from lib.validation import validate_filesystem_path, validate_no_control_charact
 from lib.validators import validate_host
 from lib.admin_actions import action_spec, dispatch_argv
 from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_action
+from lib.samba_accounts import ACCOUNT_ACTIONS, account_dispatch_argv, validate_account_action
 
 CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
@@ -148,6 +149,14 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = "approve"
         argv = data_dispatch_argv(parameters)
         effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
+    elif operation == "samba.account":
+        parameters = validate_account_action(parameters)
+        mode = "approve"
+        argv = account_dispatch_argv(parameters)
+        effect = (ACCOUNT_ACTIONS[parameters["action"]] + " for " + parameters["username"]
+                  + ". Change only the Samba disabled flag; preserve passwords, Unix login and share membership. "
+                  "Existing SMB sessions may continue. Reject changed account/configuration metadata; "
+                  "run once in a supervised root service with a 45-second limit and wait for its result.")
     elif operation == "command.run" and set(parameters) == {"argv"}:
         argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")
