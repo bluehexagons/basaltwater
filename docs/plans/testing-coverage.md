@@ -1,6 +1,6 @@
 # Test coverage and next checks
 
-Updated 2026-10-29. This is a current testing map, not a run log or the
+Updated 2026-10-31. This is a current testing map, not a run log or the
 [release qualification gate](../release-qualification.md). Coverage below is
 partial: selected live workflows passed, with automated or controlled probes
 where stated. CI success does not establish live coverage; repeat affected
@@ -31,6 +31,7 @@ installations; optional combinations need their own checks.
 | Area | Selected coverage | Important gaps |
 | --- | --- | --- |
 | Agent setup and tools | Fresh setup, populated reruns, reboot, separate Codex enrollment, managed skills and selected developer/container tools | Other agent profiles/providers, browser/pairing enrollment and optional combinations |
+| Setup security and resume recovery | Automated firewall capability and desktop/jail ordering checks. Native Debian probes reproduce missing XRDP logs, activate SSH/XRDP jails with real package logs, and reject missing logs before restarting a running service. Real initramfs hook failures cover resume addition/replacement/removal, unchanged published images on failure, matching retries, private pending intent and subsequent no-ops | Full fresh desktop/RDP setup and client behavior, runtime jail failures, process/power-loss recovery of boot images and hibernation remain separate qualification |
 | Agent tasks and goals | Live Luna inspection, workspace edits and conversation/checkpoint continuation, pruning and a token-budget stop. Permission/cancellation/limit guards; controlled synthetic-CLI recurrence, worker restarts and receipt recovery, including interrupted-run review stops; unknown usage, surviving-child exclusion and failure isolation | Longer provider-backed goals, additional crash/claim/publication boundaries and physical write failures. Token budgets are checked between invocations |
 | Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication with synthetic execution and no broker/provider actions; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries, manual reconciliation of uncertain remote outcomes and remaining live follow-up browser flows |
 | Admin jobs | Approved refresh and no-op APT updates preserve tasks; live Chromium approval controls and job status; Chromium/Firefox layouts and rejected power confirmations. Controlled metadata/fetch/status failures and synthetic-source crash/setup-exclusion probes | Package-changing upgrades, executed power actions, power loss and other interruption boundaries |
