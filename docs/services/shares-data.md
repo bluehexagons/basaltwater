@@ -62,6 +62,23 @@ read NAS paths. Use `basaltw scrub status HOST` for controller inspection and
 `--all` to include resolved findings.
 Passwords, mount credentials, raw PAR2 output, and recovery copies are not exported.
 
+## Persist panel changes and controller configuration
+
+Approved share and routine changes update the target's private saved setup.
+Restarting the panel or the machine retains them. Target-side `sudo basaltw refresh`
+replays that saved setup; it rejects a configuration change before source
+activation or during the handoff to the upgraded setup runner. Rerun refresh after
+such a refusal to read the latest saved configuration.
+
+Panel changes do not update a controller's cached configuration. Controller
+`setup`, `patch`, deployment and `shares` commands apply their complete desired
+configuration for the settings they manage. Before using one after panel edits,
+reconcile its share and routine declarations with the target's saved
+`/opt/basaltwater/state/setup.json` using your secure configuration workflow.
+An older controller selection can restore removed shares, routine declarations
+or Samba logins referenced by saved credentials. Inspect both selections before
+reapplying them. Pause controls and retained execution history are target state.
+
 ## Create, edit or remove a share
 
 On a supported non-root VM operator installation with privilege approvals,

@@ -73,6 +73,7 @@ class DebianRefreshTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             arguments = json.loads(path.read_text())
             self.assertIn("--node", arguments)
+            self.assertEqual(arguments[arguments.index("--expected-setup-revision") + 1], refresh.saved_setup_revision())
             self.assertEqual(arguments[arguments.index("--system-type") + 1], "server_lite")
             self.assertTrue(kwargs["interactive"])
             self.assertFalse(kwargs["check"])
@@ -82,6 +83,40 @@ class DebianRefreshTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 19)
         self.assertEqual(events, ["upgrade", "receipt", "setup"])
         self.assertFalse(temporary_paths[0].exists())
+
+    def test_saved_setup_changed_before_ownership_stops_before_source_activation(self):
+        def changed():
+            self.state.write_text('{"panel_change": true}')
+            return self.config
+        self.saved.side_effect = changed
+        self.assertEqual(self.invoke(), 1)
+        self.upgrade.assert_not_called()
+        self.run.assert_not_called()
+        self.assertFalse(self.setup_marker.exists())
+
+    def test_fresh_runner_rechecks_saved_setup_under_ownership_before_any_marker(self):
+        import remote_setup
+
+        def execute(command, **kwargs):
+            arguments = json.loads(Path(command[3]).read_text())
+            revision = arguments[arguments.index("--expected-setup-revision") + 1]
+            self.state.write_text('{"panel_change": true}')
+            with patch.object(remote_setup, "SETUP_CONFIG_FILE", str(self.state)), \
+                    patch.object(remote_setup, "SETUP_OPERATION_FILE", str(self.setup_marker)), \
+                    patch.object(remote_setup, "record_setup_activity") as activity:
+                with self.assertRaisesRegex(ValueError, "changed during refresh"):
+                    remote_setup._begin_setup_operation(self.config, expected_revision=revision)
+                activity.assert_not_called()
+            self.assertFalse(self.setup_marker.exists())
+            self.assertEqual(json.loads(self.state.read_text()), {"panel_change": True})
+            # A rejected handoff releases its claim without a recovery marker.
+            with OperationStateStore(str(self.setup_marker)).ownership():
+                pass
+            return subprocess.CompletedProcess(command, 1)
+
+        self.run.side_effect = execute
+        self.assertEqual(self.invoke(), 1)
+        self.upgrade.assert_called_once()
 
     def test_source_failure_never_runs_setup(self):
         self.upgrade.side_effect = ChannelError("dirty worktree")

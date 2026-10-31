@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import pwd
@@ -34,6 +35,19 @@ _SNAPSHOT_SOURCE_NAMES = {
     "web", "smb", "security", "sync", "common", "deploy", INSTALLATION_METADATA_FILENAME,
     REFRESH_METADATA_FILENAME,
 }
+
+
+def saved_setup_revision(path: str | None = None) -> str:
+    """Bind a refresh replay to protected local setup metadata, without secrets."""
+    from lib.privilege_policy import protected_path
+
+    path = SETUP_CONFIG_FILE if path is None else path
+    validate_filesystem_path(path, must_exist=True)
+    protected_path(path)
+    metadata = os.stat(path, follow_symlinks=False)
+    identity = (metadata.st_dev, metadata.st_ino, metadata.st_size,
+                metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_mode, metadata.st_uid)
+    return hashlib.sha256(repr(identity).encode("ascii")).hexdigest()
 
 
 def _protected_operation_record(path: str) -> OperationRecord | None:
@@ -245,7 +259,7 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
 
 def _apply_refresh(
     repository: str, channel: str, info: dict[str, object],
-    config: SetupConfig, arguments: list[str],
+    config: SetupConfig, arguments: list[str], *, expected_revision: str,
 ) -> int:
     """Hold the setup lock across source activation and target reconciliation."""
     with maintenance_lock() as acquired:
@@ -258,6 +272,8 @@ def _apply_refresh(
         # mutations. Hold that same ownership while changing source, including
         # slow staging, so setup cannot start after our marker check.
         with OperationStateStore(setup_marker).ownership():
+            if saved_setup_revision() != expected_revision:
+                raise ValueError("Saved setup changed before refresh; rerun refresh to use the current configuration")
             _assert_setup_operation_ready(config)
             info = (
                 _upgrade_snapshot(repository, channel)
@@ -273,7 +289,7 @@ def _apply_refresh(
         # Keep saved options private and start the upgraded runner in a fresh process.
         with tempfile.TemporaryDirectory(prefix="basaltwater-refresh-") as temporary:
             argument_file = Path(temporary) / "setup-args.json"
-            write_json_atomic(str(argument_file), arguments, mode=0o600)
+            write_json_atomic(str(argument_file), [*arguments, "--expected-setup-revision", expected_revision], mode=0o600)
             result = run([
                 sys.executable, str(Path(repository) / "remote_setup.py"),
                 "--args-file", str(argument_file),
@@ -348,6 +364,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
             raise ValueError("Debian refresh requires root; run `sudo basaltw refresh` (also for --dry-run)")
         if not Path(SETUP_CONFIG_FILE).exists():
             raise ValueError("No successful local Debian setup is saved; run setup on this machine first")
+        expected_revision = saved_setup_revision()
         config = _debian_setup()
         arguments = shlex.split(" ".join(config.to_remote_args()))
         # A target refresh reuses local provider credentials instead of asking
@@ -377,7 +394,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
                 and os.environ.get(WORKER_ENV) != "1"
                 and not valid_job_id(os.environ.get(JOB_ID_ENV))):
             return queue_refresh(repository)
-        return _apply_refresh(repository, channel, info, config, arguments)
+        return _apply_refresh(repository, channel, info, config, arguments, expected_revision=expected_revision)
     except (OSError, RuntimeError, ValueError, TypeError, KeyError) as exc:
         print(f"Error: {exc}")
         return 1

@@ -22,6 +22,7 @@ from lib.kiosk_config import validate_kiosk_settings
 from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.display import print_setup_summary
 from lib.machine_state import (
+    SETUP_CONFIG_FILE,
     STATE_DIR,
     machine_type_context,
     resolve_machine_type,
@@ -76,7 +77,7 @@ def _record_security_setup_activity(record: OperationRecord, status: str) -> Non
         )
 
 
-def _begin_setup_operation(config: SetupConfig) -> None:
+def _begin_setup_operation(config: SetupConfig, *, expected_revision: str | None = None) -> None:
     global _active_setup_operation
     store = OperationStateStore(SETUP_OPERATION_FILE)
     context = {
@@ -89,6 +90,14 @@ def _begin_setup_operation(config: SetupConfig) -> None:
     if valid_job_id(job_id):
         context["maintenance_job_id"] = job_id
     try:
+        if expected_revision is not None:
+            from lib.refresh import saved_setup_revision
+
+            store.acquire()
+            if not re.fullmatch(r"[a-f0-9]{64}", expected_revision):
+                raise ValueError("Invalid saved setup revision")
+            if saved_setup_revision(SETUP_CONFIG_FILE) != expected_revision:
+                raise ValueError("Saved setup changed during refresh; rerun refresh to use the current configuration")
         existing = store.load()
         matching_recovery = bool(
             existing is not None
@@ -458,6 +467,7 @@ def _run_main() -> int:
         allow_steps=True
     )
     parser.add_argument("--artifact-releases-json", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-setup-revision", help=argparse.SUPPRESS)
     
     args = parser.parse_args(_resolve_cli_args(sys.argv[1:]))
     expected_json = getattr(args, "artifact_releases_json", None)
@@ -491,6 +501,10 @@ def _run_main() -> int:
     
     try:
         config = config_from_remote_args(args)
+        if (expected_revision := getattr(args, "expected_setup_revision", None)) is not None and (
+            config.custom_steps or not re.fullmatch(r"[a-f0-9]{64}", expected_revision)
+        ):
+            raise ValueError("Expected saved setup revision requires a full setup and a valid revision")
     except ValueError as e:
         print(f"Error: {e}")
         return 1
@@ -572,7 +586,10 @@ def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
         print("=" * 60)
         return 0
 
-    _begin_setup_operation(config)
+    if expected_revision := getattr(args, "expected_setup_revision", None):
+        _begin_setup_operation(config, expected_revision=expected_revision)
+    else:
+        _begin_setup_operation(config)
 
     if config.include_desktop:
         from desktop.session_steps import assert_desktop_idle

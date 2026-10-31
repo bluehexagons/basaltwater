@@ -233,7 +233,7 @@ class BuildSetupRecoveryTests(BuildDeliveryFixture, unittest.TestCase):
                          "subprocess.Popen", "subprocess.run", "socket.socket", "socket.getaddrinfo",
                          "lib.build_client.BuildHostClient.__init__", "lib.build_target_client.BuildTargetClient.__init__",
                          "lib.operation_state.OperationStateStore.__init__", "lib.operation_state.OperationStateStore.ownership",
-                         "lib.operation_state.OperationStateStore._acquire"):
+                         "lib.operation_state.OperationStateStore.acquire"):
                 stack.enter_context(patch(name, side_effect=AssertionError("Effect forbidden")))
             first = self.inspect()
             self.assertEqual(self.inspect(), first)

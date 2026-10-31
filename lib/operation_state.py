@@ -125,7 +125,8 @@ class OperationStateStore:
         self.path = os.path.abspath(path)
         self._lock_finalizer: weakref.finalize | None = None
 
-    def _acquire(self) -> None:
+    def acquire(self) -> None:
+        """Claim ownership until close(), including checks before begin()."""
         if self._lock_finalizer is not None and self._lock_finalizer.alive:
             return
         ensure_directory_durable(os.path.dirname(self.path))
@@ -156,7 +157,7 @@ class OperationStateStore:
     @contextmanager
     def ownership(self) -> Iterator[OperationStateStore]:
         """Exclude competing mutations before publishing an operation marker."""
-        self._acquire()
+        self.acquire()
         try:
             yield self
         finally:
@@ -188,7 +189,7 @@ class OperationStateStore:
         _validate_label(operation_type, "Operation type")
         _validate_label(resource, "Operation resource")
         _validate_label(phase, "Operation phase")
-        self._acquire()
+        self.acquire()
         existing = self.load()
         if existing is not None:
             raise OperationStateError(
@@ -228,7 +229,7 @@ class OperationStateStore:
         _validate_label(phase, "Operation phase")
         if status not in {"in_progress", "recovery_required"}:
             raise ValueError(f"Unsupported operation status: {status}")
-        self._acquire()
+        self.acquire()
         current = self._require_current(operation_id)
         if expected_record is not None and current != expected_record:
             raise OperationStateError(f"Operation marker changed before recovery: {self.path}; {RECOVERY_GUIDANCE}")
@@ -256,7 +257,7 @@ class OperationStateStore:
         """
         if outcome not in {"succeeded", "rolled_back", "failed"}:
             raise ValueError(f"Unsupported operation outcome: {outcome}")
-        self._acquire()
+        self.acquire()
         current = self._require_current(operation_id)
         write_json_atomic(self.path + ".last.json", {
             "version": 1, "outcome": outcome, "completed_at": _timestamp(),
