@@ -59,7 +59,8 @@ class TestDevelopmentTasks(unittest.TestCase):
             "LoadState=loaded", f"Transient={self.transient}",
             f"Description={self.description or 'Basaltwater development task ' + task}",
             f"InvocationID={self.invocation}", f"ActiveState={self.state}",
-            f"SubState={self.substate}",
+            f"SubState={self.substate}", "MainPID=1234", "TasksCurrent=7",
+            "ControlGroup=/user.slice/basaltwater-task",
         ))
 
     def launch(self, **kwargs):
@@ -246,6 +247,10 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.assertNotIn("--remain-after-exit", command)
         self.assertNotIn(str(scene), command)  # Project argv is passed through JSON, not systemd expansion.
         self.assertEqual(result["state"], "running")
+        self.assertEqual(result["processes"], {"supervisor_pid": 1234,
+                         "control_group": "/user.slice/basaltwater-task", "tasks_current": 7})
+        self.assertIsNone(result["elapsed_seconds"])
+        self.assertEqual(result["report"], str(directory / "result.json"))
 
     def test_editor_and_explicit_native_command(self):
         editor = development.load_task(Path(self.launch(kind="editor")["directory"]))
@@ -307,7 +312,7 @@ class TestDevelopmentTasks(unittest.TestCase):
     def test_completion_survives_disappearance_of_service_and_project(self):
         launched = self.launch()
         directory = Path(launched["directory"])
-        write_json_atomic(str(directory / "result.json"), {"returncode": 0, "log_truncated": True})
+        write_json_atomic(str(directory / "result.json"), {"returncode": 0, "log_truncated": True, "elapsed_seconds": 2.25})
         self.probe.side_effect = None
         self.probe.return_value = "ok", "LoadState=not-found"
         (self.project / "project.godot").unlink()
@@ -315,6 +320,22 @@ class TestDevelopmentTasks(unittest.TestCase):
         result = development.task_status(launched["task"])
         self.assertEqual(result["state"], "completed")
         self.assertTrue(result["log_truncated"])
+        self.assertEqual(result["elapsed_seconds"], 2.25)
+        self.assertIsNone(result["processes"])
+
+    def test_invalid_completion_duration_is_rejected_without_service_mutation(self):
+        launched = self.launch()
+        for elapsed in (-1, True, "1", float("inf"), float("nan")):
+            with self.subTest(elapsed=elapsed):
+                record = Path(launched["directory"]) / "result.json"
+                record.write_text(json.dumps({"returncode": 0, "log_truncated": False, "elapsed_seconds": elapsed}))
+                record.chmod(0o600)
+                with self.assertRaises(ValueError):
+                    development.task_status(launched["task"])
+
+    def test_missing_or_unset_live_process_fields_remain_unknown(self):
+        self.assertEqual(development._process_metadata({"MainPID": "0", "TasksCurrent": "[not set]", "ControlGroup": ""}),
+                         {"supervisor_pid": None, "tasks_current": None, "control_group": None})
 
     def test_live_descendants_take_precedence_over_wrapper_completion(self):
         launched = self.launch()
@@ -351,6 +372,7 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["state"], "unverified")
         self.assertEqual(result["recorded_state"], "completed")
+        self.assertIsNone(result["processes"])
         self.assertEqual(result["returncode"], 0)
         self.assertEqual(result["log"], str(directory / "output.log"))
         with self.assertRaises(RuntimeError):
@@ -589,6 +611,9 @@ class TestDevelopmentWorker(unittest.TestCase):
             result = json.loads((directory / "result.json").read_text())
             self.assertEqual(result["returncode"], 7)
             self.assertTrue(result["log_truncated"])
+            self.assertGreaterEqual(result["elapsed_seconds"], 0)
+            self.assertIn("started_at", result)
+            self.assertIn("finished_at", result)
             self.assertEqual((directory / "output.log").stat().st_mode & 0o777, 0o600)
             self.assertEqual((directory / "result.json").stat().st_mode & 0o777, 0o600)
             self.assertEqual(popen.call_args.args[0], ["fixture", "literal $HOME"])

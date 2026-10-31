@@ -185,7 +185,11 @@ basaltw desktop --native develop stop TASK_ID --json
 up to 50 records from at most 500 entries and marks incomplete results with
 `truncated`; use `status` for live service/completion evidence. `launch_pid`,
 when present, is the original command's PID and can be historical; it is not a
-window identity. The stop command checks the recorded transient unit and
+window identity. Status also returns a read-only `processes` snapshot with the
+unit's `supervisor_pid`, `control_group` and `tasks_current` (threads as well as
+processes). Missing/unavailable metadata is null. These observations can become
+stale immediately; cleanup always uses the recorded unit/invocation, never a
+historical PID. The stop command checks the recorded transient unit and
 invocation before stopping its process group. A slow/unacknowledged stop needs
 a fresh status check. An acknowledged stop queues shutdown without waiting for
 the full grace period; `stopping` and `stop_requested_at` describe that request.
@@ -197,7 +201,8 @@ KDE, Sunshine, T3, or other tasks.
 If the user manager is unavailable or unit identity cannot be verified, read-only
 status still returns private log paths and saved exit evidence. `state` is
 `unverified`, `recorded_state` describes saved completion evidence, and
-`service_error` explains the failed live check. It does not claim that the process
+`service_error` explains the failed live check. `processes` is null in this case.
+It does not claim that the process
 group has ended. Stop and stop previews require a verified unit response.
 Missing or unsafe Xauthority files are omitted from the task environment;
 unvalidated DISPLAY/XAUTHORITY values from the manager are explicitly removed.
@@ -214,6 +219,12 @@ them privately and remove only an exact finished task directory when no longer
 needed. Finished successful supervisor units are unloaded automatically after
 their process group exits; saved records still provide status and exit evidence.
 There is no log/record cleanup timer.
+
+Status includes a `report` path to `result.json`. New completion reports retain
+`started_at`, `finished_at` and monotonic `elapsed_seconds` for the supervised
+command, including output collection and shutdown. Duration remains null until
+worker completion and for older reports without timing evidence. This measures the worker's
+lifetime, not later surviving descendant activity or gameplay frame timing.
 
 Arguments after `run ... --` are project arguments. A selected scene must be an
 existing `.tscn`/`.scn` within the project, including after symlink resolution.

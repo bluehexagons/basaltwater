@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -340,7 +341,7 @@ def validate_argv(argv: list[str]) -> None:
 
 def _unit(task: dict, uid: int) -> dict[str, str]:
     state, text = _probe(["/usr/bin/systemctl", "--user", "show", task["unit"],
-        "--property=LoadState,Transient,Description,InvocationID,ActiveState,SubState"], uid)
+        "--property=LoadState,Transient,Description,InvocationID,ActiveState,SubState,MainPID,ControlGroup,TasksCurrent"], uid)
     if state != "ok":
         raise RuntimeError("Task service could not be inspected; no service was changed")
     value = _properties(text)
@@ -351,6 +352,20 @@ def _unit(task: dict, uid: int) -> dict[str, str]:
             and value["InvocationID"] != task["invocation_id"]):
         raise RuntimeError("Task service identity changed; refusing to operate on it")
     return value
+
+
+def _process_metadata(unit: dict[str, str]) -> dict:
+    """Return a live unit snapshot, never process identities for signaling."""
+    pid = unit.get("MainPID", "")
+    count = unit.get("TasksCurrent", "")
+    group = unit.get("ControlGroup")
+    if group is not None:
+        validate_no_control_characters(group, "Task control group")
+        if not group.startswith("/") or len(group) > 4096:
+            group = None
+    return {"supervisor_pid": int(pid) if re.fullmatch(r"[0-9]{1,10}", pid) and int(pid) > 0 else None,
+            "control_group": group,
+            "tasks_current": int(count) if re.fullmatch(r"[0-9]{1,10}", count) else None}
 
 
 def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> dict:
@@ -376,7 +391,9 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         unit = _unit(task, uid)
     result = {"schema_version": 1, "ok": True, "task": task_id, "unit": task["unit"],
               "kind": task["kind"], "project": task["project"], "directory": str(directory),
-              "log": str(directory / "output.log"), "state": "unavailable", "returncode": None}
+              "log": str(directory / "output.log"), "report": str(directory / "result.json"),
+              "state": "unavailable", "returncode": None, "elapsed_seconds": None,
+              "processes": None}
     if task["kind"] == "check":
         result.update(recipe=task["recipe"], evidence=str(directory / "check"),
                       check_report=str(directory / "check" / "check.json"))
@@ -394,9 +411,13 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         result["launch_pid"] = started["launch_pid"]  # Initial process only; not current window identity.
     if (directory / "result.json").exists():
         completion = _private_json(directory / "result.json")
-        if (set(completion) - {"returncode", "log_truncated", "finished_at", "error"}
+        if (set(completion) - {"returncode", "log_truncated", "started_at", "finished_at", "elapsed_seconds", "error"}
                 or type(completion.get("returncode")) is not int or type(completion.get("log_truncated")) is not bool):
             raise ValueError("Invalid development completion record")
+        if "elapsed_seconds" in completion:
+            elapsed = completion["elapsed_seconds"]
+            if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+                raise ValueError("Invalid development completion duration")
         result.update(completion)
         successful = completion["returncode"] == 0 and not completion.get("error")
         result["state"] = "completed" if successful else "failed"
@@ -404,6 +425,8 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     if service_error is not None:
         result.update(recorded_state=result["state"], state="unverified", ok=False, service_error=service_error)
         return result
+    if unit.get("LoadState") != "not-found":
+        result["processes"] = _process_metadata(unit)
     if unit.get("ActiveState") in ("active", "activating", "deactivating") and unit.get("SubState") != "exited":
         result.update(state="stopping" if "stop_requested_at" in result or unit["ActiveState"] == "deactivating" else "running", ok=True)
     elif "stop_requested_at" in result or (directory / "stopped.json").exists():

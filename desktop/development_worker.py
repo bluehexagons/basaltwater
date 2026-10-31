@@ -20,7 +20,9 @@ from lib.atomic_io import write_json_atomic
 
 def run_task(directory: Path) -> int:
     task = load_task(directory)
-    result = {"returncode": 1, "log_truncated": False}
+    started = time.monotonic()
+    result = {"returncode": 1, "log_truncated": False,
+              "started_at": datetime.now(timezone.utc).isoformat()}
     process = None
     stop_at = None
     terminate_sent = False
@@ -75,6 +77,7 @@ def run_task(directory: Path) -> int:
             process.kill()
             process.wait(timeout=2)
     finally:
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
         result["finished_at"] = datetime.now(timezone.utc).isoformat()
         write_json_atomic(str(directory / "result.json"), result, mode=0o600)
     # A project test/app failure belongs to the task record, not the host's
