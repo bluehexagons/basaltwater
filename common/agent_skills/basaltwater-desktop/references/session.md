@@ -45,6 +45,17 @@ new matches. Session/control changes still stop launch. A running
 process or visible window does not prove document readiness. A launcher may exit
 successfully after asking an existing process to open a document. On timeout,
 inspect before retrying; never automatically launch a duplicate application.
+
+These receipts belong to the current XRDP supervisor, not durable task jobs.
+`launch-status` reports the immediate child's state and exit code; it does not
+record duration, capture per-launch output, or track a detached application's
+descendants. Output inherits the session's streams. There is no per-launch stop
+command. Do not stop the shared session or its process group to clean up a job.
+Close only an identified owned application through its normal exit/window flow.
+For bounded script/render jobs needing logs, timing and timeout cleanup, use a
+project recipe with `basaltw agent visuals check` from the invoking terminal;
+that command does not attach to XRDP or supply its display environment.
+
 ## Human handoff and logout
 
 The human can open **Shared Desktop Control** from the application menu and

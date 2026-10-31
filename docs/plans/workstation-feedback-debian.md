@@ -1,5 +1,9 @@
 # Debian continuation handoff
 
+Status: Debian qualification completed on 2026-10-31; see the
+[completion record](#debian-completion-record-2026-10-31). The original handoff
+below records the requested scope and earlier CachyOS evidence.
+
 Continue the workstation-feedback work on Debian. Validate the shared changes
 under Debian's actual toolchain and desktop model, fix concrete findings, and
 update the owning documentation/skills. The user requested incremental commits
@@ -159,3 +163,88 @@ separate history. Record all running/uncertain owned jobs and their status and
 cleanup commands, or checked none. Commit and push completed increments when
 authorized; retain failed evidence and do not replace native project commands
 with a second Basaltwater-owned rendering framework.
+
+## Debian completion record (2026-10-31)
+
+Tested `/home/agent/repos/basaltwater`, branch `main`, base
+`de7502b14b55828c1bc8315f215cb7b9c4b3beec`, initially clean. Native checks and
+the full suite used that implementation; subsequent changes only document
+qualification and the XRDP launch contract. The provider account was `agent`
+(UID 1000), on Debian 13.7/Trixie, x86_64, kernel
+`6.12.113+deb13-cloud-amd64`. The existing project venv supplied Python 3.13.5
+and the development dependencies; activation selected `.venv/bin/python3`.
+The user-local `basaltw` shell launcher invokes this checkout. No setup,
+package/service refresh, credential changes or Proxmox guest operations were
+needed.
+
+Observed results:
+
+- Workstation text/JSON, development, skills and installation manifests all
+  exited zero (0.61–0.79 seconds each). Debian compiler/FFmpeg banners parsed;
+  `/usr/bin/cc` alternatives and the venv Python symlink were probed. User-local
+  Node/npm/pnpm, Go, Godot and provider tools remained presence-only, as did GUI
+  applications. No physical DRM GPU was observed and no display was advertised
+  in the invoking shell. Discovery retained null session/project verification.
+- The specified nine-module focused selection passed 162 tests, exit zero,
+  3.524 seconds. CachyOS task execution stayed mocked. Temporary real-filesystem
+  fixtures also passed compiled-source cache exclusion, old inventories lacking
+  a completion flag, unchanged stale bytecode cleanup, edited bytecode retention,
+  executable modes, idempotence and catalog comparison.
+- `make check-ci` passed once in the activated Debian venv, exit zero,
+  206.134 seconds: 9,006 tests, six skips, 82% combined statement/branch coverage,
+  syntax, CLI/link checks, branding, package metadata and wheel build/install.
+  It started on the clean base; only the documentation changes below were made
+  during its coverage phase. Final `make docs-check`, 16 skill/contract tests
+  and `git diff --check` also passed after those edits.
+- Xvfb GLX doctor passed, exit zero, 0.586 seconds, selecting `auto-servernum`
+  (`-a`) for Debian's older wrapper. Renderer: llvmpipe LLVM 19.1.7, Mesa
+  `25.0.7-2+deb13u1`, OpenGL 4.5. The configured XFCE XRDP session was initially
+  stopped and was explicitly started with user authorization at 1600×900.
+  Its separate display GLX check passed with the same software renderer; the
+  recorded launch exited zero. Neither context qualifies physical GPU/display
+  behavior.
+- Blender 4.3.2 completed the bundled 128×128 Cycles CPU smoke, exit zero,
+  4.279 seconds, retaining scene, settings and PNG. A disposable project recipe
+  reopened that scene, asserted Cycles/CPU and resolution, rendered again and
+  decoded all 16,384 pixels. Every pixel was opaque/nonblack and every quadrant
+  had content variation; observed luminance spanned 0.0458–0.8327. This recipe
+  passed in 3.609 seconds. It is a small content smoke, not scene fidelity or
+  full-resolution acceptance.
+- Recipe exit seven propagated as CLI exit one (0.638 seconds); a one-second
+  deadline reported `timed-out` and exit one (1.583 seconds); 17 MiB output was
+  drained with exactly 16 MiB retained and `log_truncated: true` (0.619 seconds);
+  changing settings failed with exit one (0.644 seconds). PNG and assertion
+  artifacts were discoverable in the evidence directory. Debian `dpkg-query`
+  recorded installed multiarch-qualified Mesa/SDL/GL packages; missing optional
+  packages correctly produced a partial observation. The initial disposable
+  fixture lacked a Git HEAD and failed before recipe execution; its error was
+  retained, then an empty baseline commit enabled the checks without replaying
+  the earlier smoke/discovery phases.
+- Installed skills initially reported 13 current and two different bundles.
+  The guarded shared bundle installer refreshed `basaltwater-desktop` and
+  `basaltwater-project-development`, including the clarified XRDP reference.
+  All 15 installed bundles subsequently compared current; the Claude catalog
+  was empty. This does not reload already-read provider instructions.
+
+The desktop audit confirmed that launch tokens are session-local, limited to
+128 receipts, and observe only immediate children. There is no per-launch stop,
+duration or private output contract; output inherits session streams. The owning
+[session reference](../../common/agent_skills/basaltwater-desktop/references/session.md)
+now makes those limits and the bounded recipe alternative explicit. No durable
+CachyOS task/cgroup behavior was ported to Debian. The XFCE session stays running;
+no unrelated application was stopped.
+
+Private native evidence: `/tmp/workstation-debian-jMHCtIhh/` (`commands.json`,
+`continued.json`, manifests, graphics/display reports, Blender artifacts,
+recipe reports/logs/settings/environment, cache fixture and delivered catalog).
+Focused test logs: `/tmp/basaltwater-output-71sng68d/`; full CI logs:
+`/tmp/basaltwater-output-ckve977q/`. A durable private copy, current checkpoint
+and separate history are retained under
+`/home/agent/.local/state/basaltwater/audits/workstation-feedback-debian-2026-10-31/`.
+Raw logs and the
+disposable project are not repository assets or a new shared rendering framework.
+
+Remaining separate qualification: first-party browser tests, native Windows
+bundle cache exclusion, Wayland portals, physical GPU/display, EGL/Vulkan,
+audio/controller, HDR, latency/performance, full 1440p/4K image acceptance and
+live XRDP application editing. No such coverage is inferred from the checks above.
