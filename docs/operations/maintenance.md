@@ -49,7 +49,13 @@ start, or confirm the security-monitor, APT-update, cleanup, user-cache,
 restart, uv-update, or Gogs-update timer stops setup. Missing uv or Gogs
 prerequisites and dry runs still skip unit installation successfully.
 When the replacement APT timer cannot be verified,
-Debian's existing APT timers remain enabled.
+Debian's existing APT timers and legacy unattended-upgrades policy remain
+unchanged. After replacement verification, setup inspects all competing units,
+then stops and disables the distro timers before the unattended-upgrades service.
+Failed inspection, retirement, or final inactive/disabled verification stops
+setup and retains the legacy policy files. Earlier successful stops are not
+rolled back, and the verified replacement remains available. Inspect and repair
+the named unit, then rerun setup; only a verified handoff removes legacy policy.
 `basaltw agent doctor --capability host` also reports installed Node,
 Godot, and Codex authentication timers, while omitting those optional jobs on
 VMs where their tools were not selected.

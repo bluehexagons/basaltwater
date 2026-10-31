@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 from contextlib import nullcontext
+from pathlib import Path
+import shlex
 import sys
 import tempfile
 import unittest
@@ -975,14 +977,58 @@ class TestConfigureFirewall(unittest.TestCase):
 
 
 class TestConfigureAutoUpdates(unittest.TestCase):
-    @patch("security.security_steps.configure_maintenance_timer")
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.os.path.exists", return_value=False)
-    def test_configures_shared_systemd_timer(self, _exists, mock_run, mock_configure):
-        mock_run.return_value = SimpleNamespace(returncode=0)
-        configure_auto_updates(SetupConfig(username="u", host="h", system_type="server_lite"))
+    def setUp(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.files = [root / 'origins.conf', root / 'origins.list']
+        for path in self.files:
+            path.write_text('retained legacy policy\n')
+            path.chmod(0o600)
+        self.enterContext(patch('security.security_steps._LEGACY_UNATTENDED_ORIGINS_FILE', str(self.files[0])))
+        self.enterContext(patch('security.security_steps._LEGACY_MANAGED_ORIGINS_FILE', str(self.files[1])))
+        self.capability = self.enterContext(patch('security.security_steps.can_manage_system_services', return_value=True))
+        self.enterContext(patch('security.security_steps.is_dry_run', return_value=False))
+        self.config = SetupConfig(username='u', host='h', system_type='server_lite')
+        self.units = ('apt-daily.timer', 'apt-daily-upgrade.timer', 'unattended-upgrades.service')
+        self.states = {unit: dict(LoadState='loaded', ActiveState='active', UnitFileState='enabled') for unit in self.units}
+        self.events = []
+        self.verified = True
+        self.refuse = None
+        self.uncooperative = None
+        self.bad_inspection = None
+        self.failure = CommandExecutionError('systemctl disable', 1, 'Stop refused')
+        def replacement(**kwargs):
+            self.events.append('replacement')
+            return self.verified
+        self.replacement = self.enterContext(patch('security.security_steps.configure_maintenance_timer', side_effect=replacement))
+        self.command = self.enterContext(patch('security.security_steps.run', side_effect=self.run_command))
 
-        mock_configure.assert_called_once_with(
+    def run_command(self, command, **kwargs):
+        argv = shlex.split(command) if isinstance(command, str) else command
+        self.events.append(tuple(argv))
+        action, unit = argv[1], argv[-1] if argv[1] != 'show' else argv[2]
+        if action == 'show':
+            if self.bad_inspection is not None:
+                return self.bad_inspection
+            return SimpleNamespace(returncode=0, stdout=''.join(f'{key}={value}\n' for key, value in self.states[unit].items()))
+        if unit == self.refuse:
+            if kwargs.get('check', True):
+                raise self.failure
+            return SimpleNamespace(returncode=1)
+        if unit != self.uncooperative:
+            if action == 'stop' or '--now' in argv:
+                self.states[unit]['ActiveState'] = 'inactive'
+            if action == 'disable' and self.states[unit]['UnitFileState'] not in {'masked', 'masked-runtime'}:
+                self.states[unit]['UnitFileState'] = 'disabled'
+        return SimpleNamespace(returncode=0)
+
+    def assert_legacy_retained(self):
+        for path in self.files:
+            self.assertEqual(path.read_text(), 'retained legacy policy\n')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_configures_shared_systemd_timer(self):
+        configure_auto_updates(self.config)
+        self.replacement.assert_called_once_with(
             service_name="auto-update-apt",
             service_desc="Auto-update APT packages",
             timer_desc="Auto-update APT packages daily",
@@ -992,43 +1038,70 @@ class TestConfigureAutoUpdates(unittest.TestCase):
             purpose="auto-update",
         )
 
-    @patch("security.security_steps.configure_maintenance_timer")
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.os.path.exists", return_value=True)
-    def test_cleans_up_legacy_unattended_upgrades(self, _exists, mock_run, _configure):
-        mock_run.return_value = SimpleNamespace(returncode=0)
-        removed_paths = []
-        with patch("security.security_steps.os.remove", side_effect=lambda p: removed_paths.append(p)):
-            configure_auto_updates(SetupConfig(username="u", host="h", system_type="server_lite"))
-        self.assertIn("/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades", removed_paths)
-        self.assertIn("/etc/basaltwater/unattended_upgrades_origins.list", removed_paths)
+    def test_handoff_verifies_all_units_before_cleaning_legacy_policy(self):
+        original_remove = os.remove
+        def remove(path):
+            self.assertTrue(all(state['ActiveState'] == 'inactive' and state['UnitFileState'] == 'disabled' for state in self.states.values()))
+            self.assertEqual(sum(isinstance(event, tuple) and event[1] == 'show' for event in self.events), 6)
+            original_remove(path)
+        with patch('security.security_steps.os.remove', side_effect=remove):
+            configure_auto_updates(self.config)
+        self.assertEqual(self.events[0], 'replacement')
+        self.assertEqual([event[-1] for event in self.events if isinstance(event, tuple) and event[1] == 'disable'], list(self.units))
+        self.assertFalse(any(path.exists() for path in self.files))
 
-    @patch("security.security_steps.configure_maintenance_timer")
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.os.path.exists", return_value=False)
-    def test_stops_and_disables_competing_apt_timers(self, _exists, mock_run, _configure):
-        mock_run.return_value = SimpleNamespace(returncode=0)
-        configure_auto_updates(SetupConfig(username="u", host="h", system_type="server_lite"))
-
-        run_commands = [args[0] for args, _ in mock_run.call_args_list]
-        for unit in (
-            "unattended-upgrades.service",
-            "apt-daily.timer",
-            "apt-daily-upgrade.timer",
-        ):
-            self.assertIn(f"systemctl stop {unit}", run_commands)
-            self.assertIn(f"systemctl disable {unit}", run_commands)
-
-    @patch("security.security_steps.configure_maintenance_timer", return_value=False)
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.os.path.exists", return_value=False)
-    def test_retains_distro_timers_when_replacement_is_not_verified(
-        self, _exists, mock_run, _configure
-    ):
+    def test_retains_distro_timers_and_legacy_policy_when_replacement_is_not_verified(self):
+        self.verified = False
         with self.assertRaisesRegex(RuntimeError, "APT update timer failed verification"):
-            configure_auto_updates(SetupConfig(username="u", host="h", system_type="server_lite"))
+            configure_auto_updates(self.config)
+        self.command.assert_not_called()
+        self.assert_legacy_retained()
 
-        mock_run.assert_not_called()
+    def test_refused_retirement_aborts_and_keeps_legacy_policy(self):
+        self.refuse = self.units[0]
+        with self.assertRaises(CommandExecutionError) as raised:
+            configure_auto_updates(self.config)
+        self.assertIs(raised.exception, self.failure)
+        self.assert_legacy_retained()
+        self.assertTrue(all(state['ActiveState'] == 'active' for state in self.states.values()))
+
+    def test_incomplete_or_failed_inspection_never_authorizes_retirement(self):
+        for code, text in ((1, ''), (0, ''), (0, 'LoadState=not-found\nActiveState=inactive\n')):
+            with self.subTest(code=code, text=text):
+                self.events.clear()
+                self.bad_inspection = SimpleNamespace(returncode=code, stdout=text)
+                with self.assertRaisesRegex(RuntimeError, 'Could not inspect'):
+                    configure_auto_updates(self.config)
+                self.assertTrue(all(event[1] == 'show' for event in self.events if isinstance(event, tuple)))
+                self.assert_legacy_retained()
+
+    def test_successful_command_with_active_or_enabled_unit_keeps_policy(self):
+        self.uncooperative = self.units[1]
+        with self.assertRaisesRegex(RuntimeError, 'still active or enabled'):
+            configure_auto_updates(self.config)
+        self.assert_legacy_retained()
+
+    def test_absent_masked_and_runtime_units_and_repeated_handoff(self):
+        self.states[self.units[0]] = dict(LoadState='masked', ActiveState='inactive', UnitFileState='masked')
+        self.states[self.units[1]]['UnitFileState'] = 'enabled-runtime'
+        self.states[self.units[2]] = dict(LoadState='not-found', ActiveState='inactive', UnitFileState='')
+        configure_auto_updates(self.config)
+        mutations = [event for event in self.events if isinstance(event, tuple) and event[1] == 'disable']
+        self.assertEqual([event[-1] for event in mutations], list(self.units[:2]))
+        self.assertIn('--runtime', mutations[1])
+        # The replacement check no longer expects files after a completed handoff.
+        self.replacement.side_effect = lambda **kwargs: True
+        configure_auto_updates(self.config)
+
+    def test_dry_run_or_missing_service_capability_preserves_policy(self):
+        for dry_run, capable in ((True, True), (False, False)):
+            with self.subTest(dry_run=dry_run, capable=capable):
+                self.config.dry_run = dry_run
+                self.capability.return_value = capable
+                configure_auto_updates(self.config)
+                self.replacement.assert_not_called()
+                self.command.assert_not_called()
+                self.assert_legacy_retained()
 
 
 class TestConfigureMaintenanceTimers(unittest.TestCase):

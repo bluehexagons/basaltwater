@@ -40,6 +40,9 @@ from lib.validators import validate_ip_address, validate_username
 
 _LEGACY_UNATTENDED_ORIGINS_FILE = "/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades"
 _LEGACY_MANAGED_ORIGINS_FILE = "/etc/basaltwater/unattended_upgrades_origins.list"
+_DISTRO_APT_UPDATE_UNITS = (
+    "apt-daily.timer", "apt-daily-upgrade.timer", "unattended-upgrades.service",
+)
 _JOURNAL_CONF_DIR = "/etc/systemd/journald.conf.d"
 _JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/basaltwater.conf"
 _SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d"
@@ -1366,6 +1369,34 @@ def _cleanup_legacy_unattended_upgrades() -> None:
             os.remove(path)
 
 
+def _apt_update_unit_state(unit: str) -> dict[str, str]:
+    result = run(
+        ["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState"],
+        check=False, capture_output=True,
+    )
+    state = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+    if (result.returncode != 0 or not {"LoadState", "ActiveState", "UnitFileState"} <= state.keys()
+            or state["LoadState"] not in {"loaded", "not-found", "masked"}
+            or state["ActiveState"] not in {"active", "inactive", "failed", "activating", "deactivating", "reloading"}):
+        raise RuntimeError(f"Could not inspect competing APT unit {unit}; repair systemd state and retry")
+    return state
+
+
+def _retire_distro_apt_updates() -> None:
+    """Stop competing activators, preserving legacy policy until verified."""
+    states = {unit: _apt_update_unit_state(unit) for unit in _DISTRO_APT_UPDATE_UNITS}
+    for unit, state in states.items():
+        if state == {"LoadState": "not-found", "ActiveState": "inactive", "UnitFileState": ""}:
+            continue
+        flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
+        run(["systemctl", "disable", "--now", *flags, unit])
+    for unit in _DISTRO_APT_UPDATE_UNITS:
+        state = _apt_update_unit_state(unit)
+        if (state["ActiveState"] not in {"inactive", "failed"}
+                or state["UnitFileState"] not in {"", "disabled", "static", "indirect", "masked", "masked-runtime"}):
+            raise RuntimeError(f"Competing APT unit {unit} is still active or enabled; repair it and retry setup")
+
+
 def configure_auto_updates(config: SetupConfig) -> None:
     """Configure automatic package updates using a custom systemd service.
 
@@ -1375,12 +1406,12 @@ def configure_auto_updates(config: SetupConfig) -> None:
     - Automatically handles all configured repositories
     - Supports dependency additions while refusing automated package removals
     """
-    if is_dry_run():
+    if config.dry_run or is_dry_run():
         print("  [DRY-RUN] Would configure automatic package updates")
         return
-
-    # Remove legacy unattended-upgrades config files from older setups
-    _cleanup_legacy_unattended_upgrades()
+    if not can_manage_system_services(config.machine_type):
+        print("  ✓ Skipping automatic update timer (machine cannot manage system services)")
+        return
 
     configured = configure_maintenance_timer(
         service_name="auto-update-apt",
@@ -1398,13 +1429,8 @@ def configure_auto_updates(config: SetupConfig) -> None:
     # The distro timers can invoke unattended-upgrades even when its service is
     # disabled. Retire those competing activators only after the replacement is
     # active so a failed setup cannot leave the host without automatic updates.
-    for unit in (
-        "unattended-upgrades.service",
-        "apt-daily.timer",
-        "apt-daily-upgrade.timer",
-    ):
-        run(f"systemctl stop {unit}", check=False)
-        run(f"systemctl disable {unit}", check=False)
+    _retire_distro_apt_updates()
+    _cleanup_legacy_unattended_upgrades()
 
 
 def configure_firewall_web(config: SetupConfig) -> None:
