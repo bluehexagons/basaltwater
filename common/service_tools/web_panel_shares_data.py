@@ -38,7 +38,8 @@ STYLE = """
 .data-filters input { min-width:0; }
 .data-pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
 .data-list code { white-space:pre-wrap; }
-.data-recovery-form { display:grid; gap:8px; margin:12px 0; max-width:680px; }
+.data-recovery-form { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:8px; margin:12px 0; max-width:680px; }
+.data-recovery-form button { min-width:0; white-space:normal; overflow-wrap:anywhere; }
 .data-recovery-form input, .data-recovery-form select { min-width:0; width:100%; min-height:44px;
   padding:10px; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; }
 .data-review { border-left:3px solid var(--warning); margin:16px 0; }
@@ -124,7 +125,7 @@ def _shares(inventory: dict, host: str, *, controls: bool = False) -> str:
         body += '</ul>'
     if inventory["omitted_shares"]:
         body += f'<p class="data-notice">{inventory["omitted_shares"]} additional shares omitted from this snapshot.</p>'
-    return body + '<p class="data-notice">Account creation and credential resets still use the controller’s Samba setup and credential commands.</p>'
+    return body + '<p class="data-notice">Account creation still uses the controller’s Samba setup commands.</p>'
 
 
 def _routines(inventory: dict) -> str:
@@ -258,7 +259,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
                 body += shares.render_editor(snapshot, query, csrf)
             body += _shares(inventory, state.manifest["host"], controls=controls)
             body += samba.render_accounts(snapshot.get("samba", {"available": False}), csrf,
-                                          controls=samba_manager is not None and not samba.unavailable_reason(samba_status))
+                                          controls=samba_manager is not None and not samba.unavailable_reason(samba_status),
+                                          password_controls=getattr(state, "credential_transport_available", lambda: False)())
         elif view == "routines":
             body += _routines(inventory)
         else:

@@ -2697,8 +2697,16 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def _handle_samba_action(self, path: str, values: dict[str, list[str]]) -> None:
         expected = ({"action", "username", "revision"} if path.endswith("/review")
                     else {"ticket", "confirmation"} if path.endswith("/submit") else {"id"})
-        if set(values) != expected | {"csrf"} or any(len(entries) != 1 for entries in values.values()):
+        password_fields = {"password", "password_repeat"}
+        allowed = (expected | {"csrf"}, expected | {"csrf"} | password_fields) if path.endswith("/submit") else (expected | {"csrf"},)
+        if set(values) not in allowed or any(len(entries) != 1 for entries in values.values()):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid Samba action\n", "text/plain")
+            return
+        if (password_fields & set(values) or values.get("action") == ["reset-password"]) and (
+            os.geteuid() == 0 or not self.state.credential_transport_available()
+            or self.headers.get("X-Forwarded-Proto", "").lower() != "https"
+        ):
+            self._send(HTTPStatus.FORBIDDEN, "Samba password reset requires the configured HTTPS panel\n", "text/plain")
             return
         try:
             fields = {key: entries[0] for key, entries in values.items() if key != "csrf"}
@@ -2710,12 +2718,13 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, review=review), "text/html")
                 return
             if path.endswith("/submit"):
-                self.state.samba.submit(fields["ticket"], fields["confirmation"])
+                self.state.samba.submit(fields["ticket"], fields["confirmation"],
+                                        **({key: fields[key] for key in password_fields} if password_fields <= fields.keys() else {}))
             else:
                 self.state.admin.cancel(fields["id"])
         except (OSError, ValueError, RuntimeError):
             self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, error=
-                "The Samba request could not be confirmed. Check Samba activity and approval requests before trying again. Reviews expire after five minutes and require the exact username."), "text/html")
+                "The Samba request could not be confirmed. Check Samba activity and approval requests before trying again. Reviews expire after five minutes and require the exact username. Password reset also requires matching new passwords of 12–128 characters; password fields are cleared after submission."), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=shares"})
 

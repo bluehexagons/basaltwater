@@ -446,7 +446,8 @@ footer {
 .data-filters input { min-width:0; }
 .data-pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
 .data-list code { white-space:pre-wrap; }
-.data-recovery-form { display:grid; gap:8px; margin:12px 0; max-width:680px; }
+.data-recovery-form { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; gap:8px; margin:12px 0; max-width:680px; }
+.data-recovery-form button { min-width:0; white-space:normal; overflow-wrap:anywhere; }
 .data-recovery-form input, .data-recovery-form select { min-width:0; width:100%; min-height:44px;
   padding:10px; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; }
 .data-review { border-left:3px solid var(--warning); margin:16px 0; }

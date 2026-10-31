@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import html
+import math
 import secrets
 import threading
 import time
 
 from common.service_tools.web_panel_admin import _https_url, _timestamp
 from common.service_tools.web_panel_templates import render_heading
-from lib.privilege_client import exchange
-from lib.samba_accounts import ACCOUNT_ACTIONS, HEX_ID, validate_account_action
+from lib.privilege_client import PrivilegeBrokerUnavailable, PrivilegeRequestRejected, exchange
+from lib.samba_accounts import ACCOUNT_ACTIONS, HEX_ID, validate_account_action, validate_reset_password
 
 
 def unavailable_reason(status: dict) -> str:
@@ -50,7 +51,8 @@ class PanelSamba:
             self.tickets[ticket] = value, time.monotonic() + 300
         return ticket, value
 
-    def submit(self, ticket: str, confirmation: str) -> None:
+    def submit(self, ticket: str, confirmation: str, *, password: str | None = None,
+               password_repeat: str | None = None) -> None:
         with self.lock:
             saved = self.tickets.pop(ticket, None)
         if saved is None or saved[1] <= time.monotonic():
@@ -60,11 +62,32 @@ class PanelSamba:
             raise ValueError("Type the account username to confirm")
         if reason := unavailable_reason(self.snapshot()):
             raise ValueError(reason)
-        exchange({"action": "request", "operation": "samba.account", "parameters": value,
-                  "reason": "Shares & Data: " + ACCOUNT_ACTIONS[value["action"]]})
+        reset = value["action"] == "reset-password"
+        if reset:
+            validate_reset_password(password)
+            if password != password_repeat:
+                raise ValueError("The new passwords do not match")
+            staged = exchange({"action": "samba-stage-password", "parameters": value, "password": password})
+            if (staged.get("job_id") != value["job_id"] or type(staged.get("expires")) not in {int, float}
+                    or not math.isfinite(staged["expires"]) or not time.time() < staged["expires"] <= time.time() + 3601):
+                raise ValueError("Password staging could not be confirmed")
+        elif password is not None or password_repeat is not None:
+            raise ValueError("Passwords are accepted only for a password reset")
+        try:
+            exchange({"action": "request", "operation": "samba.account", "parameters": value,
+                      "reason": "Shares & Data: " + ACCOUNT_ACTIONS[value["action"]]})
+        except (PrivilegeBrokerUnavailable, PrivilegeRequestRejected):
+            # Acceptance definitively did not happen. Other failures may have
+            # left a pending request, so retain its secret until outcome/expiry.
+            if reset:
+                try:
+                    exchange({"action": "samba-discard-password", "job_id": value["job_id"]})
+                except (OSError, ValueError, RuntimeError):
+                    pass
+            raise
 
 
-def render_accounts(snapshot: dict, csrf: str, *, controls: bool) -> str:
+def render_accounts(snapshot: dict, csrf: str, *, controls: bool, password_controls: bool = False) -> str:
     body = '<section aria-labelledby="samba-accounts">' + render_heading("Samba accounts", "access", heading_id="samba-accounts")
     if not snapshot.get("available"):
         return body + '<p class="empty">Account snapshot unavailable. Enable Samba and check the exporter. Account inspection supports standalone Samba with the local tdbsam backend.</p></section>'
@@ -87,6 +110,10 @@ def render_accounts(snapshot: dict, csrf: str, *, controls: bool) -> str:
             body += f'''<form method="post" action="/actions/samba/review">{csrf}
 <input type="hidden" name="action" value="{action}"><input type="hidden" name="username" value="{username}">
 <input type="hidden" name="revision" value="{row['revision']}"><button>Review {label[0].lower() + label[1:]}</button></form>'''
+            if password_controls:
+                body += f'''<form method="post" action="/actions/samba/review">{csrf}
+<input type="hidden" name="action" value="reset-password"><input type="hidden" name="username" value="{username}">
+<input type="hidden" name="revision" value="{row['revision']}"><button>Reset Samba password</button></form>'''
         body += '</li>'
     return body + '</ul></section>'
 
@@ -95,11 +122,20 @@ def render_review(manager: PanelSamba, fields: dict, csrf: str) -> str:
     ticket, value = manager.prepare(fields)
     label = ACCOUNT_ACTIONS[value["action"]]
     username = html.escape(value["username"])
+    reset = value["action"] == "reset-password"
+    explanation = ("Change only the Samba password. Unix passwords, login flags and share membership are preserved. "
+                   "The supplied password is staged privately for up to one hour; broker restart discards it. "
+                   "Any intervening Samba account database change rejects this reset." if reset else
+                   "This changes the Samba disabled flag and preserves the password, Unix login and share membership.")
+    password_fields = ('''<label for="samba-password">New Samba password</label>
+<input id="samba-password" type="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password" aria-describedby="samba-password-help">
+<label for="samba-password-repeat">Repeat new password</label><input id="samba-password-repeat" type="password" name="password_repeat" required minlength="12" maxlength="128" autocomplete="new-password">
+<p id="samba-password-help">Use 12–128 characters. The password is never included in the approval record or returned by this page. Store it securely before submitting; it cannot be retrieved later.</p>''' if reset else "")
     return f'''<section class="event data-review" aria-labelledby="samba-review">{render_heading("Review: " + label, "security", heading_id="samba-review")}
-<p>{label} for <strong>{username}</strong>. This changes the Samba disabled flag and preserves the password, Unix login and share membership. Existing SMB sessions may continue.</p>
+<p>{label} for <strong>{username}</strong>. {explanation} Existing SMB sessions may continue.</p>
 <p>A changed account or Samba configuration is rejected. After submitting, approve or deny this exact operation on the separate approval page.</p>
 <form method="post" action="/actions/samba/submit" class="data-recovery-form">{csrf}
-<input type="hidden" name="ticket" value="{ticket}"><label for="samba-confirm">Type <code>{username}</code> to confirm</label>
+<input type="hidden" name="ticket" value="{ticket}">{password_fields}<label for="samba-confirm">Type <code>{username}</code> to confirm</label>
 <input id="samba-confirm" name="confirmation" required autocomplete="off"><button>Create Samba approval request</button></form>
 <a href="/shares-data?view=shares">Cancel review</a></section>'''
 

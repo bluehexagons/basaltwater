@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect local Samba accounts and apply an individually approved login flag."""
+"""Inspect local Samba accounts and apply individually approved account changes."""
 
 from __future__ import annotations
 
@@ -114,6 +114,45 @@ def collect_account_snapshot(saved: dict) -> dict:
         return {"available": False}
 
 
+def password_binding() -> str:
+    """Bind a staged reset to local config/passdb metadata, without reading hashes."""
+    conf = _stamp(SMB_CONF)
+    private = _inspect(["/usr/bin/testparm", "-s", "--parameter-name=private dir"]).strip()
+    metadata = [conf, _stamp(str(Path(private) / "passdb.tdb")), _stamp("/etc/passwd")]
+    if conf != _stamp(SMB_CONF):
+        raise ValueError("Samba configuration changed")
+    return hashlib.sha256(json.dumps(metadata).encode()).hexdigest()
+
+
+def _reset_password(value: dict) -> None:
+    from smb.password_staging import consume_password
+
+    try:
+        from samba.samba3 import passdb
+    except ImportError as exc:
+        raise RuntimeError("Samba password controls require the Samba Python bindings") from exc
+
+    binding = password_binding()
+    password = consume_password(value)
+    # smbpasswd can enable a disabled account when changing its password. Use
+    # the local tdbsam backend directly instead: no Unix/PAM password hooks,
+    # and the original flags and new password share the same database update.
+    try:
+        passdb.set_smb_config(SMB_CONF)
+        database = passdb.PDB("tdbsam")
+        account = database.getsampwnam(value["username"])
+        flags = account.acct_ctrl
+        if account.username != value["username"]:
+            raise ValueError("Samba password account identity changed")
+        account.plaintext_passwd = password
+        account.acct_ctrl = flags
+        if binding != password_binding():
+            raise ValueError("Samba accounts changed before password update")
+        database.update_sam_account(account)
+    except passdb.error as exc:
+        raise RuntimeError("Samba password update failed") from exc
+
+
 def change_account(value: dict) -> None:
     value = validate_account_action(value)
     if os.geteuid() != 0:
@@ -132,13 +171,18 @@ def change_account(value: dict) -> None:
         rows = _accounts()
         row = next((row for row in rows if row["username"] == value["username"]), None)
         if (row is None or not row["manageable"] or row["revision"] != value["revision"]
-                or row["disabled"] == (value["action"] == "disable")):
+                or value["action"] != "reset-password" and row["disabled"] == (value["action"] == "disable")):
             raise ValueError("Samba account changed or cannot be managed")
-        subprocess.run(["/usr/bin/smbpasswd", "-e" if value["action"] == "enable" else "-d", value["username"]],
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       env=ENVIRONMENT, timeout=15, check=True)
+        if value["action"] == "reset-password":
+            _reset_password(value)
+        else:
+            subprocess.run(["/usr/bin/smbpasswd", "-e" if value["action"] == "enable" else "-d", value["username"]],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           env=ENVIRONMENT, timeout=15, check=True)
         after = next((entry for entry in _accounts() if entry["username"] == value["username"]), None)
-        if after is None or after["disabled"] != (value["action"] == "disable") or after["uid"] != row["uid"]:
+        if (after is None or after["uid"] != row["uid"]
+                or (after["revision"] != row["revision"] if value["action"] == "reset-password"
+                    else after["disabled"] != (value["action"] == "disable"))):
             raise ValueError("Samba account change could not be verified")
 
 

@@ -33,6 +33,7 @@ from lib.data_actions import DATA_HELPER
 from lib.samba_accounts import SAMBA_ACCOUNT_HELPER
 from lib.samba_shares import SHARE_HELPER, share_label, share_name
 from smb.share_job import job_status as share_job_status, stage_share_job
+from smb.password_staging import discard_password, prune_passwords, require_password, stage_password
 from common.service_tools.data_job import job_status as data_job_status, stage_data_job
 from lib.privilege_execution import (
     COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
@@ -128,6 +129,16 @@ class Broker:
         self.db.execute("UPDATE requests SET state=?,actor=? WHERE id=?", (state, actor, request_id))
         self.db.execute("INSERT INTO events(at,request_id,state,actor) VALUES(?,?,?,?)",
                         (time.time(), request_id, state, actor))
+        if state in {"cancelled", "denied", "expired", "invalidated", "succeeded", "failed", "uncertain"}:
+            row = self.db.execute("SELECT plan FROM requests WHERE id=?", (request_id,)).fetchone()
+            plan = json.loads(row["plan"])
+            if plan["operation"] == "samba.account" and plan["parameters"]["action"] == "reset-password":
+                try:
+                    discard_password(plan["parameters"]["job_id"])
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    # Expiry and runtime-directory removal remain independent
+                    # cleanup paths. Never log the payload or obscure the outcome.
+                    print("Samba password staging cleanup unavailable", file=sys.stderr)
 
     def _expire(self) -> None:
         for row in self.db.execute(
@@ -154,6 +165,11 @@ class Broker:
             try:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, uid, operation, parameters)
+                if operation == "samba.account" and plan["parameters"]["action"] == "reset-password":
+                    if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
+                                       (plan["parameters"]["job_id"],)).fetchone():
+                        raise ValueError("This password reset identity was already used")
+                    require_password(plan["parameters"], uid)
                 if operation in {"admin.run", "data.run", "samba.account", "samba.shares"}:
                     for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
                         existing = json.loads(row["plan"])["operation"]
@@ -263,6 +279,26 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if not approval and action == "samba-discard-password" and set(message) == {"action", "job_id"}:
+            with self.lock:
+                policy = self.policy_loader()
+                if uid != policy["requester_uid"]:
+                    raise PermissionError("Account is not authorized")
+                if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
+                                   (message["job_id"],)).fetchone():
+                    raise ValueError("Inspect or cancel the accepted reset request")
+                discard_password(message["job_id"])
+                return {"discarded": True}
+        if not approval and action == "samba-stage-password" and set(message) == {"action", "parameters", "password"}:
+            with self.lock:
+                policy = self.policy_loader()
+                plan = operation_plan(policy, uid, "samba.account", message["parameters"])
+                if (plan["parameters"]["action"] != "reset-password"
+                        or self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
+                                           (plan["parameters"]["job_id"],)).fetchone()):
+                    raise ValueError("Invalid or previously used password staging identity")
+                protected_path(SAMBA_ACCOUNT_HELPER)
+                return stage_password(plan["parameters"], message["password"], uid)
         if not approval and action == "share-status" and set(message) == {"action"}:
             policy = self.policy_loader()
             if uid != policy["requester_uid"]:
@@ -380,7 +416,7 @@ class Handler(socketserver.StreamRequestHandler):
             response = {"ok": True, "result": result}
         except (BrokerRequestRejected, BrokerPermissionRejected) as exc:
             response = {"ok": False, "code": "request_rejected", "error": str(exc)}
-        except (OSError, ValueError, PermissionError, RecursionError, sqlite3.Error):
+        except (OSError, ValueError, PermissionError, RuntimeError, subprocess.SubprocessError, RecursionError, sqlite3.Error):
             response = {"ok": False, "error": "Broker rejected the request or could not persist it; inspect request status before retrying"}
         self.wfile.write((canonical(response) + "\n").encode())
 
@@ -406,6 +442,7 @@ def main() -> None:
     lock = open(DATABASE_PATH + ".lock", "a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     broker = Broker(DATABASE_PATH)
+    prune_passwords(clear=True)
     approver = pwd.getpwnam(WEB_USER)
     requester = pwd.getpwuid(policy["requester_uid"])
     servers = []
@@ -418,7 +455,14 @@ def main() -> None:
         os.chmod(path, 0o660)
         servers.append(server)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+    next_password_cleanup = time.monotonic() + 30
     while True:
+        if time.monotonic() >= next_password_cleanup:
+            try:
+                prune_passwords()
+            except (OSError, ValueError, subprocess.SubprocessError):
+                print("Samba password staging cleanup unavailable", file=sys.stderr)
+            next_password_cleanup = time.monotonic() + 30
         if not broker.execute_next():
             time.sleep(0.25)
 

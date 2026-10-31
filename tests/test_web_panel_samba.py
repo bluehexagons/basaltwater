@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -20,9 +22,11 @@ from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import WebPanelHandler
 from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ExecutionResult
-from lib.privilege_policy import operation_plan
-from lib.samba_accounts import account_dispatch_argv, validate_account_action, validate_account_snapshot
+from lib.privilege_client import PrivilegeRequestUnconfirmed
+from lib.privilege_policy import canonical, operation_plan
+from lib.samba_accounts import account_dispatch_argv, validate_account_action, validate_account_snapshot, validate_reset_password
 from smb import account_management as accounts
+from smb import password_staging as staging
 
 
 def parameters():
@@ -168,7 +172,7 @@ class SambaApprovalTests(unittest.TestCase):
         self.assertIn("--wait", plan["argv"])
         self.assertIn("--property=RuntimeMaxSec=45", plan["argv"])
         self.assertEqual(plan["argv"], account_dispatch_argv(parameters()))
-        for field, invalid in (("username", "alice;id"), ("action", "reset-password"), ("revision", ""), ("job_id", "%n")):
+        for field, invalid in (("username", "alice;id"), ("action", "delete-unix-user"), ("revision", ""), ("job_id", "%n")):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 validate_account_action({**parameters(), field: invalid})
         with self.assertRaises(ValueError):
@@ -271,3 +275,207 @@ class SambaPanelTests(unittest.TestCase):
         self.assertIn("Review disable Samba login", document)
         self.assertIn("non-system Unix account", document)
         self.assertNotIn('<form ', panel.render_accounts(snapshot, "csrf", controls=False))
+
+    def test_https_password_form_stages_once_and_never_echoes_the_secret(self):
+        self.state.credential_transport_available = lambda: True
+        secret = "PRIVATE-new-password-123"
+        def rpc(message):
+            if message["action"] == "samba-stage-password":
+                return {"job_id": message["parameters"]["job_id"], "expires": time.time() + 3600}
+            return {"available": True, "requests": []}
+        fields = {key: value for key, value in parameters().items() if key != "job_id"}
+        fields["action"] = "reset-password"
+        with patch.object(panel, "exchange", side_effect=rpc) as exchange, \
+             patch.object(storage, "load_storage_snapshot", return_value={"available": False}), \
+             patch("common.service_tools.web_panel_service.os.geteuid", return_value=1000):
+            handler = self.handler("/actions/samba/review", {"csrf": "csrf", **fields})
+            handler.headers["X-Forwarded-Proto"] = "https"
+            handler.do_POST()
+            document = handler._send.call_args.args[1]
+            self.assertIn('type="password"', document)
+            ticket = re.search(r'name="ticket" value="([^"]+)"', document).group(1)
+            values = {"csrf": "csrf", "ticket": ticket, "confirmation": "alice", "password": secret, "password_repeat": secret}
+            handler = self.handler("/actions/samba/submit", values)
+            handler.headers["X-Forwarded-Proto"] = "https"
+            handler.do_POST()
+            self.assertEqual(handler._send.call_args.args[0], 303)
+            messages = [call.args[0] for call in exchange.call_args_list]
+            self.assertEqual(sum(message["action"] == "samba-stage-password" for message in messages), 1)
+            public = next(message for message in messages if message["action"] == "request")
+            self.assertNotIn(secret, canonical(public))
+            self.assertNotIn(secret, str(handler._send.call_args))
+            with self.assertRaises(ValueError):
+                self.manager.submit(ticket, "alice", password=secret, password_repeat=secret)
+
+    def test_password_posts_require_https_and_do_not_accept_duplicate_secret_fields(self):
+        self.state.credential_transport_available = lambda: True
+        values = {"csrf": "csrf", "ticket": "ticket", "confirmation": "alice", "password": "PRIVATE-password", "password_repeat": "PRIVATE-password"}
+        with patch.object(self.manager, "submit") as submit:
+            for changed, code in (({}, 403), ({"password": ["one", "two"]}, 400)):
+                handler = self.handler("/actions/samba/submit", {**values, **changed})
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], code)
+            submit.assert_not_called()
+
+    def test_reset_mismatch_and_lost_response_never_replay_or_discard_an_uncertain_request(self):
+        fields = {key: value for key, value in parameters().items() if key != "job_id"}
+        fields["action"] = "reset-password"
+        ticket, _ = self.manager.prepare(fields)
+        with patch.object(panel, "exchange", return_value={"available": True, "requests": []}) as rpc, self.assertRaises(ValueError):
+            self.manager.submit(ticket, "alice", password="PRIVATE-password", password_repeat="different-password")
+        self.assertEqual(rpc.call_count, 1)
+        ticket, value = self.manager.prepare(fields)
+        with patch.object(panel, "exchange", side_effect=[{"available": True, "requests": []},
+                {"job_id": value["job_id"], "expires": time.time() + 3600}, PrivilegeRequestUnconfirmed("lost")]) as rpc:
+            with self.assertRaises(PrivilegeRequestUnconfirmed):
+                self.manager.submit(ticket, "alice", password="PRIVATE-password", password_repeat="PRIVATE-password")
+            self.assertEqual(rpc.call_count, 3)
+            with self.assertRaises(ValueError):
+                self.manager.submit(ticket, "alice", password="PRIVATE-password", password_repeat="PRIVATE-password")
+
+
+class PasswordStagingTests(unittest.TestCase):
+    def setUp(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.directory = str(Path(directory) / "secrets")
+        self.enterContext(patch.object(staging, "PASSWORD_DIRECTORY", self.directory))
+        self.enterContext(patch.object(staging, "protected_path"))
+        self.findmnt = self.enterContext(patch.object(staging.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="tmpfs\n")))
+        self.enterContext(patch.object(staging, "load_policy", return_value=policy()))
+        self.rows = self.enterContext(patch.object(accounts, "_accounts", side_effect=AssertionError("Staging must not open Samba's database")))
+        self.binding = self.enterContext(patch.object(accounts, "password_binding", return_value="d" * 64))
+        self.value = {**parameters(), "action": "reset-password"}
+        self.secret = "PRIVATE-samba-password"
+
+    def stage(self, value=None):
+        return staging.stage_password(value or self.value, self.secret, 1000)
+
+    def test_secret_is_private_runtime_only_consumed_once_and_bound_to_public_parameters(self):
+        result = self.stage()
+        self.rows.assert_not_called()
+        path = Path(staging._path(self.value["job_id"]))
+        self.assertNotIn(self.secret, canonical(result))
+        self.assertEqual(Path(self.directory).stat().st_mode & 0o777, 0o700)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        staging.require_password(self.value, 1000)
+        for changed, uid in (({**self.value, "username": "bob"}, 1000), (self.value, 1001)):
+            with self.assertRaises(ValueError):
+                staging.require_password(changed, uid)
+        with self.assertRaises(ValueError):
+            self.stage()
+        self.assertEqual(staging.consume_password(self.value), self.secret)
+        self.assertFalse(path.exists())
+        with self.assertRaises(OSError):
+            staging.consume_password(self.value)
+
+    def test_expiry_changed_passdb_and_restart_cleanup_remove_secrets_without_effects(self):
+        self.stage()
+        self.binding.return_value = "e" * 64
+        with self.assertRaises(ValueError):
+            staging.consume_password(self.value)
+        self.assertFalse(Path(staging._path(self.value["job_id"])).exists())
+        self.stage()
+        with patch.object(staging.time, "time", return_value=time.time() + 3601), self.assertRaises(ValueError):
+            staging.consume_password(self.value)
+        self.stage()
+        staging.prune_passwords(clear=True)
+        self.assertFalse(list(Path(self.directory).glob("*.json")))
+
+    def test_unsupported_storage_quota_and_unsafe_permissions_reject_staging(self):
+        self.findmnt.return_value.stdout = "ext4\n"
+        with self.assertRaises(ValueError):
+            self.stage()
+        self.assertFalse(Path(self.directory).exists())
+        self.findmnt.return_value.stdout = "tmpfs\n"
+        self.stage()
+        with patch.object(staging, "MAX_STAGED", 1), self.assertRaises(ValueError):
+            self.stage({**self.value, "job_id": "c" * 32})
+        Path(self.directory).chmod(0o755)
+        with self.assertRaises(ValueError):
+            staging.require_password(self.value, 1000)
+        self.assertEqual(validate_reset_password("界" * 128), "界" * 128)
+        for password in ("short", " " * 12, "new\npassword123", "new\x00password123", "界" * 129, "\ud800" * 12, 123):
+            with self.subTest(password=password), self.assertRaises(ValueError):
+                validate_reset_password(password)
+
+    def test_broker_never_persists_password_and_rejects_reused_staging_identity(self):
+        self.enterContext(patch.object(broker_module, "protected_path"))
+        broker = broker_module.Broker(str(Path(self.directory).parent / "requests.db"), policy_loader=policy)
+        self.addCleanup(broker.db.close)
+        message = {"action": "samba-stage-password", "parameters": self.value, "password": self.secret}
+        with self.assertRaises(PermissionError):
+            broker.dispatch(message, 1001)
+        broker.dispatch(message, 1000)
+        request = broker.request(1000, "samba.account", self.value, "Reset password")
+        self.assertNotIn(self.secret, canonical(request))
+        self.assertNotIn(self.secret, canonical([dict(row) for row in broker.db.execute("SELECT * FROM requests")]))
+        with self.assertRaises(ValueError):
+            broker.dispatch({"action": "samba-discard-password", "job_id": self.value["job_id"]}, 1000)
+        broker.cancel(request["id"], 1000)
+        self.assertFalse(Path(staging._path(self.value["job_id"])).exists())
+        with self.assertRaises(ValueError):
+            broker.dispatch(message, 1000)
+        with self.assertRaises(ValueError):
+            broker.request(1000, "samba.account", self.value, "Replay")
+
+
+class SambaPasswordExecutionTests(unittest.TestCase):
+    def setUp(self):
+        directory = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch.object(accounts, "STATE_DIR", directory))
+        self.enterContext(patch.object(accounts, "protected_path"))
+        self.enterContext(patch.object(accounts.os, "geteuid", return_value=0))
+        self.enterContext(patch.object(accounts, "load_setup_config", return_value={"enable_samba": True}))
+        self.rows = self.enterContext(patch.object(accounts, "_accounts", return_value=[row()]))
+        self.consume = self.enterContext(patch.object(staging, "consume_password", return_value="PRIVATE-samba-password"))
+        self.binding = self.enterContext(patch.object(accounts, "password_binding", return_value="d" * 64))
+        self.run = self.enterContext(patch.object(accounts.subprocess, "run"))
+        self.passdb = Mock(error=type("PassdbError", (Exception,), {}))
+        self.enterContext(patch.dict(sys.modules, {"samba": SimpleNamespace(),
+                                                  "samba.samba3": SimpleNamespace(passdb=self.passdb)}))
+        self.value = {**parameters(), "action": "reset-password"}
+
+    def test_password_and_original_flags_are_written_together_without_unix_password_tools(self):
+        for flags in (16, 17, 0x411):
+            with self.subTest(flags=flags):
+                account = SimpleNamespace(username="alice", acct_ctrl=flags, user_sid="unchanged")
+                self.passdb.PDB.return_value.getsampwnam.return_value = account
+                self.rows.return_value = [{**row(), "disabled": bool(flags & 1), "locked": bool(flags & 0x400)}]
+                self.passdb.PDB.return_value.update_sam_account.side_effect = lambda current: self.assertEqual(
+                    (current.username, current.acct_ctrl, current.user_sid, current.plaintext_passwd),
+                    ("alice", flags, "unchanged", "PRIVATE-samba-password"))
+                accounts.change_account(self.value)
+                self.passdb.set_smb_config.assert_called_with(accounts.SMB_CONF)
+                self.passdb.PDB.assert_called_with("tdbsam")
+                self.consume.assert_called_with(self.value)
+                self.run.assert_not_called()
+
+    def test_changed_identity_or_metadata_never_reaches_the_database_update(self):
+        database = self.passdb.PDB.return_value
+        database.getsampwnam.return_value = SimpleNamespace(username="bob", acct_ctrl=17)
+        with self.assertRaises(ValueError):
+            accounts.change_account(self.value)
+        database.update_sam_account.assert_not_called()
+        database.getsampwnam.return_value = SimpleNamespace(username="alice", acct_ctrl=17)
+        self.binding.side_effect = ["d" * 64, "e" * 64]
+        with self.assertRaises(ValueError):
+            accounts.change_account(self.value)
+        database.update_sam_account.assert_not_called()
+
+    def test_stale_or_ineligible_account_never_consumes_a_password(self):
+        for changed in ({**row(), "manageable": False}, {**row(), "revision": "c" * 64}):
+            with self.subTest(account=changed):
+                self.rows.return_value = [changed]
+                with self.assertRaises(ValueError):
+                    accounts.change_account(self.value)
+                self.consume.assert_not_called()
+                self.passdb.PDB.assert_not_called()
+
+    def test_binding_errors_are_sanitized_and_missing_bindings_never_consume_a_secret(self):
+        self.passdb.PDB.side_effect = self.passdb.error("PRIVATE backend diagnostics")
+        with self.assertRaisesRegex(RuntimeError, "^Samba password update failed$"):
+            accounts.change_account(self.value)
+        self.consume.reset_mock()
+        with patch.dict(sys.modules, {"samba.samba3": None}), self.assertRaisesRegex(RuntimeError, "Python bindings"):
+            accounts.change_account(self.value)
+        self.consume.assert_not_called()

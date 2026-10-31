@@ -19,12 +19,14 @@ function trust(directory, additionalCA) {
 
 const test = base.extend({
   developmentSurface: [null, { option: true }],
-  developmentServer: async ({ developmentSurface }, use) => {
+  developmentHttps: [false, { option: true }],
+  developmentServer: async ({ developmentSurface, developmentHttps }, use) => {
     if (!developmentSurface) { await use(null); return; }
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'basaltwater-specialized-watch-'));
     const watched = path.join(temporary, 'extra.css');
     fs.writeFileSync(watched, 'initial');
     const args = [path.join(__dirname, '../../scripts/panel_dev.py'), '--port', '0', '--surface', developmentSurface, '--watch', watched];
+    if (developmentHttps) args.push('--https');
     if (['desktop', 'console'].includes(developmentSurface)) args.push('--guacamole-assets', process.env.BASALTW_BROWSER_GUACAMOLE_ASSETS);
     const server = spawn(process.env.BASALTW_BROWSER_PYTHON, args,
       { cwd: path.join(__dirname, '../..'), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -924,7 +926,7 @@ test.describe('host inspection', () => {
 });
 
 test.describe('Shares & Data', () => {
-  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test.use({ developmentSurface: 'panel', developmentHttps: true, javaScriptEnabled: false });
   test('inventory, findings filters and recovery guidance work without JavaScript', async ({ page, developmentServer: dev, diagnostics }, info) => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/admin');
@@ -957,7 +959,24 @@ test.describe('Shares & Data', () => {
     await expect(accounts.locator('form')).toHaveCount(0);
     await sambaActivity.getByRole('button', { name: 'Cancel Samba request', exact: true }).click();
     await expect(sambaActivity).toContainText('cancelled');
-    await expect(accounts.locator('form')).toHaveCount(2);
+    await expect(accounts.locator('form')).toHaveCount(4);
+    await accounts.getByRole('button', { name: 'Reset Samba password', exact: true }).first().click();
+    await expect(sambaReview).toContainText('Change only the Samba password');
+    const samplePassword = 'fixture-reset-password-123';
+    await sambaReview.getByLabel('New Samba password', { exact: true }).fill(samplePassword);
+    await sambaReview.getByLabel('Repeat new password', { exact: true }).fill(samplePassword);
+    await sambaReview.getByLabel('Type operator to confirm', { exact: true }).fill('operator');
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath('shares-data-password-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await sambaReview.getByRole('button', { name: 'Create Samba approval request', exact: true }).click();
+    await expect(sambaActivity).toContainText('Reset Samba password: operator');
+    await expect(sambaActivity).toContainText('pending');
+    expect(await page.content()).not.toContain(samplePassword);
+    await sambaActivity.getByRole('button', { name: 'Cancel Samba request', exact: true }).click();
+    await expect(accounts.locator('form')).toHaveCount(4);
     await page.screenshot({ path: info.outputPath('shares-data-accounts-desktop.png'), fullPage: true });
     await page.getByRole('link', { name: 'Edit access and users', exact: false }).first().click();
     const editor = page.getByRole('region', { name: 'Edit share: projects', exact: true });

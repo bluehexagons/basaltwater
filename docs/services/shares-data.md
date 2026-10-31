@@ -2,9 +2,9 @@
 
 Open **Administration → Shares & Data** to inspect this machine’s managed
 Samba shares, recurring backup and sync declarations, and recorded scrub findings.
-Share editing, account login enable/disable, and single-file verification and
+Share editing, account login enable/disable and password reset, and single-file verification and
 recovery have browser controls when the separate privilege approval service is
-configured. Account creation, credential resets and routine editing still use
+configured. Account creation and routine editing still use
 the controller commands described below.
 
 The three views work without JavaScript:
@@ -120,6 +120,50 @@ setup/refresh. It runs once in a supervised service with a 45-second deadline.
 The account list follows the next five-minute export; it may still show the
 earlier flag immediately after success. Reviews expire after five minutes and
 are consumed before submission; a lost response is never replayed automatically.
+
+## Reset a Samba password
+
+On the configured HTTPS panel, choose **Reset Samba password** for a supported
+account. Review the account, enter and repeat a new password of 12–128 characters,
+type the exact username and create the approval request. Store the password
+securely before submitting; the panel cannot retrieve it. Approve or deny on the
+separate approval page. **Samba activity** reports the result and offers pending
+request cancellation.
+
+The new password goes through a separate authenticated local broker message into
+a root-only `0600` file under `/run/basaltwater-privilege-broker/samba-passwords`
+in a `0700` directory. Staging requires a `tmpfs` runtime filesystem. Approval
+records and command arguments contain only public account metadata and an opaque
+one-use job ID; they never contain the password or a password hash. The password
+is not returned in HTML, exported or saved in the approval database.
+
+Staging expires after one hour, or on broker restart, even if the approval policy
+allows a longer wait. Expired files are swept within thirty seconds while the
+broker is idle; execution always checks expiry before use. Denial, cancellation,
+request expiry and terminal execution discard the staging file. An unconfirmed
+submission is not replayed. Inspect existing requests before starting again.
+
+The root helper consumes the secret before effects and checks the reviewed
+account, saved Samba enablement and setup exclusion. It also binds the reset to
+Samba configuration, local account and entire passdb metadata at staging time.
+Any intervening Samba database write rejects that reset, including changes to
+another account. This is stricter than the per-account login-flag review.
+
+The helper uses Samba's Python passdb bindings and the local `tdbsam` backend
+directly, without invoking Unix or PAM password tools. The original account flags
+and new password are saved in the same database update, then account identity and
+login/lockout flags are checked again. The bindings must be installed (normally
+provided by Samba's package dependencies). Samba's
+[passdb bindings](https://github.com/samba-team/samba/blob/master/source3/passdb/py_passdb.c)
+expose the account password setter and database update used here. The helper
+avoids `smbpasswd`'s local password-change flow, which can enable a disabled account.
+
+Reset changes only the Samba password. It does not enable a disabled login,
+clear lockout, change Unix/SSH passwords or change share membership. Existing SMB
+sessions may continue; clients may need to reconnect using the new password.
+The supervised helper has the same 45-second limit as login controls. A failed
+or uncertain result requires checking the account before trying again; the old
+password is not retained for rollback.
 
 ## Review and resolve one finding
 

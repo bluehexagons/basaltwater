@@ -281,6 +281,11 @@ class Scenario:
 
     def exchange(self, message: dict) -> dict:
         with self.lock:
+            if message["action"] == "samba-stage-password":
+                # Never retain even a fixture password in scenario state.
+                return {"job_id": message["parameters"]["job_id"], "expires": time.time() + 3600}
+            if message["action"] == "samba-discard-password":
+                return {"discarded": True}
             if message["action"] == "share-status":
                 records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "samba.shares"]
                 outstanding = any(row.get("state") in {"pending", "approved", "executing"} and row.get("plan", {}).get("operation", "").startswith("samba.") for row in self.data["requests"])

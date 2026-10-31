@@ -165,8 +165,12 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = "approve"
         argv = account_dispatch_argv(parameters)
         effect = (ACCOUNT_ACTIONS[parameters["action"]] + " for " + parameters["username"]
-                  + ". Change only the Samba disabled flag; preserve passwords, Unix login and share membership. "
-                  "Existing SMB sessions may continue. Reject changed account/configuration metadata; "
+                  + (". Consume the separately staged one-use password; change only the Samba password. "
+                     "Preserve login flags, Unix password and share membership. Reject changed passdb metadata; "
+                     "the staged password expires after one hour or broker restart. "
+                     if parameters["action"] == "reset-password" else
+                     ". Change only the Samba disabled flag; preserve passwords, Unix login and share membership. ")
+                  + "Existing SMB sessions may continue. Reject changed account/configuration metadata; "
                   "run once in a supervised root service with a 45-second limit and wait for its result.")
     elif operation == "command.run" and set(parameters) == {"argv"}:
         argv = validate_command_argv(parameters["argv"])
