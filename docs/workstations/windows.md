@@ -454,6 +454,9 @@ Interrupted delivery remains `incomplete` even with matching bytes; explicit set
 can safely retry. Older inventories without the marker remain readable but report
 unknown completion until setup succeeds. Malformed/unsupported inventories fail
 closed. Personal files and edited stale bytecode remain preserved.
+Source resources must fit the same inventory path contract; copied inventories,
+reserved Windows names and unrecordable resource names fail preflight before
+the destination checkpoint changes.
 
 Before updating an installed CLI, the checkout equivalent is
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\Test-AgentWorkstation.ps1 -Skills -Json`.

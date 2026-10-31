@@ -149,6 +149,7 @@ function Install-NativeSkill([string]$source, [string]$destination, [switch]$Pla
         $relative = $item.FullName.Substring($source.TrimEnd('\').Length + 1)
         if ($relative -match '(?:\A|\\)__pycache__(?:\\|\z)' -or
             (-not $item.PSIsContainer -and $item.Extension -in @('.pyc', '.pyo'))) { continue }
+        Assert-NativeSkillResourcePath $relative
         Assert-NativeSkillPath $item.FullName
         if (-not $item.PSIsContainer) {
             $files[$relative] = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash

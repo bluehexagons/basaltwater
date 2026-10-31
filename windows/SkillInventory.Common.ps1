@@ -1,4 +1,14 @@
 <# Shared native inventory reader and read-only bundle comparison. No provider execution. #>
+function Assert-NativeSkillResourcePath([string]$Relative) {
+    if ($Relative -notmatch '\A[A-Za-z0-9_.\\-]+\z' -or
+        @($Relative -split '\\' | Where-Object {
+            $_ -in @('', '.', '..', '.basaltwater-windows-files.json') -or
+            $_ -match '\.\z|\A(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\.|\z)'
+        }).Count) {
+        throw "Invalid skill inventory resource path: $Relative"
+    }
+}
+
 function Read-NativeSkillInventory([string]$Path) {
     Assert-NativeSkillPath $Path
     $files = @{}
@@ -17,11 +27,8 @@ function Read-NativeSkillInventory([string]$Path) {
         throw "Invalid skill inventory: $Path"
     }
     foreach ($property in $inventory.Files.PSObject.Properties) {
-        if ($property.Name -notmatch '\A[A-Za-z0-9_.\\-]+\z' -or
-            @($property.Name -split '\\' | Where-Object {
-                $_ -in @('', '.', '..', '.basaltwater-windows-files.json') -or $_ -match '\.\z|\A(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\.|\z)'
-            }).Count -or
-            ($property.Value -isnot [string] -and $property.Value -isnot [array]) -or
+        Assert-NativeSkillResourcePath $property.Name
+        if (($property.Value -isnot [string] -and $property.Value -isnot [array]) -or
             @($property.Value).Count -eq 0 -or
             @($property.Value | Where-Object { $_ -isnot [string] -or $_ -notmatch '\A[0-9A-Fa-f]{64}\z' }).Count) {
             throw "Invalid skill inventory: $Path"
@@ -76,6 +83,7 @@ function Get-NativeSkillComparison([string]$Source, [string]$Destination) {
         foreach ($item in Get-ChildItem -LiteralPath $Source -Recurse -Force) {
             $relative = $item.FullName.Substring($Source.TrimEnd('\').Length + 1)
             if ($relative -match '(?:\A|\\)__pycache__(?:\\|\z)' -or $item.Extension -in @('.pyc','.pyo')) { continue }
+            Assert-NativeSkillResourcePath $relative
             Assert-NativeSkillAccess $item.FullName
             if (-not $item.PSIsContainer) { $expected[$relative] = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash }
         }

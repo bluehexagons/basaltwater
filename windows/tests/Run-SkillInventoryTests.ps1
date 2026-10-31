@@ -31,6 +31,19 @@ try {
         $before = (Get-FileHash $inventory).Hash
         Install-NativeSkill $source $destination
         Assert-True ((Get-FileHash $inventory).Hash -eq $before) 'Idempotent inventory changed'
+        foreach ($name in @('.basaltwater-windows-files.json', 'unrecordable name.md')) {
+            $invalidSource = Join-Path $source $name
+            Set-Content -LiteralPath $invalidSource -Value '{}'
+            try {
+                $freshDestination = Join-Path $env:USERPROFILE "$catalog\fresh-invalid"
+                Assert-Throws { Install-NativeSkill $source $freshDestination } 'Invalid skill inventory resource path'
+                Assert-True (-not (Test-Path -LiteralPath $freshDestination)) 'Invalid source created a fresh catalog'
+                Assert-Throws { Install-NativeSkill $source $destination -Plan } 'Invalid skill inventory resource path'
+                Assert-Throws { Install-NativeSkill $source $destination } 'Invalid skill inventory resource path'
+                Assert-True ((Get-FileHash $inventory).Hash -eq $before) 'Invalid source changed the destination checkpoint'
+                Assert-True ((Get-NativeSkillComparison $source $destination).State -eq 'unsafe') 'Unrecordable source resource passed comparison'
+            } finally { Remove-Item -LiteralPath $invalidSource }
+        }
         $record = Get-Content $inventory -Raw | ConvertFrom-Json
         $record.PSObject.Properties.Remove('Complete')
         $record | ConvertTo-Json -Depth 5 | Set-Content $inventory
