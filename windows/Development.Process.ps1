@@ -120,6 +120,12 @@ namespace Basaltwater {
             }
         }
     }
+    public sealed class DevelopmentStreamResult {
+        public long RetainedBytes { get; set; }
+        public long DiscardedBytes { get; set; }
+        public int LimitBytes { get; set; }
+        public bool Truncated { get { return DiscardedBytes > 0; } }
+    }
     public static class DevelopmentStreams {
         [DllImport("kernel32.dll", SetLastError=true)]
         static extern uint SetThreadExecutionState(uint flags);
@@ -127,7 +133,8 @@ namespace Basaltwater {
             if (SetThreadExecutionState(active ? 0x80000001u : 0x80000000u) == 0)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         }
-        public static async Task Drain(Stream source, string path, int limit) {
+        public static async Task<DevelopmentStreamResult> Drain(Stream source, string path, int limit) {
+            var result = new DevelopmentStreamResult { LimitBytes = limit };
             using (var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite)) {
                 byte[] buffer = new byte[8192]; int total = 0; int count;
                 while ((count = await source.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0) {
@@ -136,9 +143,12 @@ namespace Basaltwater {
                         await output.WriteAsync(buffer, 0, keep).ConfigureAwait(false);
                         await output.FlushAsync().ConfigureAwait(false); total += keep;
                     }
+                    result.RetainedBytes += keep;
+                    result.DiscardedBytes += count - keep;
                     // Always drain even after the cap, so a noisy child cannot deadlock.
                 }
             }
+            return result;
         }
     }
 }

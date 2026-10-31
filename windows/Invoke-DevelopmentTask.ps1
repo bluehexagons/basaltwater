@@ -53,7 +53,12 @@ if ($record.CompletedUtc -or $record.WorkerPid) {
     throw 'Task already acknowledged; refusing replay.'
 }
 $process = $null; $job = $null; $gateHandle = $null; $started = $false; $awake = $false
-$copies = @(); $cleanupError = $null; $desired = 'failed'
+$copies = @(); $cleanupError = $null; $desired = 'failed'; $timer = $null
+# A legacy queued receipt can still be dispatched; initialize evidence only here.
+foreach ($name in @('ExecutionStartedUtc','ExecutionEndedUtc','ElapsedSeconds','Streams')) {
+    $record | Add-Member NoteProperty $name $null -Force
+}
+$record | Add-Member NoteProperty StreamLimitBytes 4MB -Force
 try {
     if (Test-DevelopmentPreviousBoot $record) { $desired = 'interrupted'; return }
     $self = Get-Process -Id $PID
@@ -89,7 +94,9 @@ try {
     [Basaltwater.DevelopmentStreams]::Awake($true); $awake = $true
     $record.State = 'running'
     Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
+    $record.ExecutionStartedUtc = [DateTime]::UtcNow.ToString('o')
     $timer = [Diagnostics.Stopwatch]::StartNew()
+    Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
     $gateHandle.Set() | Out-Null
     while (-not $process.WaitForExit(200)) {
         if (Test-Path -LiteralPath (Join-Path $directory 'cancel')) { $desired = 'cancelled'; break }
@@ -121,6 +128,15 @@ finally {
                 $record.State = 'cleanup-uncertain'; $record.CompletedUtc = $null
                 $record.Message = 'Private environment cleanup could not be confirmed; inspect the task before maintenance.'
             }
+        }
+        if ($record.CompletedUtc -and $timer -and $desired -ne 'interrupted') {
+            $timer.Stop()
+            $record.ExecutionEndedUtc = [DateTime]::UtcNow.ToString('o')
+            $record.ElapsedSeconds = $timer.Elapsed.TotalSeconds
+            $record.CompletedUtc = $record.ExecutionEndedUtc
+        }
+        if (-not $cleanupError -and $copies.Count -eq 2 -and $copies[0].IsCompletedSuccessfully -and $copies[1].IsCompletedSuccessfully) {
+            $record.Streams = [pscustomobject]@{ Stdout = $copies[0].Result; Stderr = $copies[1].Result }
         }
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         # Environment snapshots may contain provider credentials; retain only task receipts/logs.

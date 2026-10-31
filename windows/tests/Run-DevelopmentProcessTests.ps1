@@ -12,9 +12,14 @@ if ($python.Source -like '*\WindowsApps\*') { throw 'Process qualification requi
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('basaltwater-process-' + [guid]::NewGuid().ToString('N'))
 $savedLocal = $env:LOCALAPPDATA
 $guardian = $null
+$unrelated = $null
 $passed = $false
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
+    $unrelatedInfo = [Diagnostics.ProcessStartInfo]::new()
+    $unrelatedInfo.FileName = $python.Source; $unrelatedInfo.Arguments = '-c "import time; time.sleep(300)"'
+    $unrelatedInfo.UseShellExecute = $false; $unrelatedInfo.CreateNoWindow = $true
+    $unrelated = [Diagnostics.Process]::Start($unrelatedInfo)
     $env:LOCALAPPDATA = Join-Path $temporary 'account'
     $fixtureSource = Join-Path $temporary 'worker source'
     New-Item -ItemType Directory -Path $fixtureSource | Out-Null
@@ -32,6 +37,11 @@ try {
 from __future__ import annotations
 import json, os, pathlib, subprocess, sys, time
 mode, child_path = sys.argv[1:3]
+if mode in ('flood', 'failed-flood'):
+    for stream in (sys.stdout.buffer, sys.stderr.buffer):
+        stream.write(b'z' * (4 * 1024 * 1024 + 12345))
+        stream.flush()
+    sys.exit(23 if mode == 'failed-flood' else 0)
 if mode in ('cancel', 'timeout', 'orphan', 'crash'):
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     marker = pathlib.Path(child_path + '.tmp')
@@ -41,7 +51,7 @@ if mode in ('cancel', 'timeout', 'orphan', 'crash'):
 print(json.dumps({'argv': sys.argv[3:], 'date': os.environ.get('TASK_LITERAL_DATE')}))
 sys.exit(23 if mode == 'fail' else 0)
 '@
-    foreach ($mode in @('success','fail','timeout','cancel','orphan','cleanup-fail','crash')) {
+    foreach ($mode in @('success','fail','flood','failed-flood','timeout','cancel','orphan','cleanup-fail','crash')) {
         $id = [guid]::NewGuid().ToString('N')
         $directory = Get-DevelopmentDirectory $id
         Initialize-DevelopmentDirectory $directory
@@ -58,6 +68,11 @@ sys.exit(23 if mode == 'fail' else 0)
         $record = [pscustomobject]@{ Id = $id; OwnerSid = (Get-DevelopmentSid); SessionId = (Get-Process -Id $PID).SessionId;
             WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = ''; CreatedUtc = [datetime]::UtcNow.ToString('o');
             CompletedUtc = $null; State = 'queued'; ExitCode = $null; TaskName = 'Basaltwater Development ' + $id; Message = '' }
+        if ($mode -eq 'success') {
+            # A long queue across wall-clock days must not inflate execution time.
+            $record.CreatedUtc = [datetime]::UtcNow.AddDays(-30).ToString('o')
+            $record | Add-Member NoteProperty Boot (Get-DevelopmentBoot)
+        }
         Write-DevelopmentJson (Join-Path $directory 'request.json') $request
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         $workerPath = (Join-Path $fixtureSource 'Invoke-DevelopmentTask.ps1').Replace("'", "''")
@@ -89,10 +104,12 @@ function Remove-Item {
             }
         }
         $guardian.Dispose(); $guardian = $null
+        Assert-True (-not $unrelated.HasExited) 'Owned cleanup terminated an unrelated process'
         if ($mode -eq 'cleanup-fail') {
             $uncertain = Get-DevelopmentRecord $id
             Assert-True ($uncertain.State -eq 'cleanup-uncertain' -and -not $uncertain.CompletedUtc -and
                 $uncertain.Message -match 'Private environment cleanup' -and (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Environment deletion failure was hidden by a terminal receipt'
+            Assert-True ($null -eq $uncertain.ElapsedSeconds -and $null -eq $uncertain.ExecutionEndedUtc) 'Uncertain cleanup invented timing'
             continue
         }
         if ($mode -eq 'crash') {
@@ -100,15 +117,27 @@ function Remove-Item {
             $descendant.Dispose()
             $interrupted = Get-DevelopmentStatus $id
             Assert-True ($interrupted.State -eq 'cleanup-uncertain' -and -not $interrupted.CompletedUtc) 'Guardian crash claimed verified completion'
+            Assert-True ($interrupted.ExecutionStartedUtc -and $null -eq $interrupted.ElapsedSeconds -and $null -eq $interrupted.ExecutionEndedUtc) 'Worker loss invented timing'
             $blocked = $false
             try { Assert-NativeDevelopmentIdle } catch { $blocked = $_.Exception.Message -match 'cleanup-uncertain' }
             Assert-True $blocked 'Maintenance did not block on the interrupted guardian receipt'
             continue
         }
         $result = Get-DevelopmentRecord $id
-        $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
+        $expected = switch ($mode) { success { 'complete' }; fail { 'failed' }; flood { 'complete' }; failed-flood { 'failed' }; timeout { 'timed-out' }; cancel { 'cancelled' }; orphan { 'complete' } }
         Assert-True ($result.State -eq $expected -and $result.CompletedUtc) "Expected $expected after process cleanup; got $($result.State): $($result.Message)"
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $directory 'request.json'))) 'Terminal task retained its environment snapshot'
+        Assert-True ($result.ExecutionStartedUtc.EndsWith('Z') -and $result.ExecutionEndedUtc.EndsWith('Z') -and
+            $result.ElapsedSeconds -gt 0 -and $result.ElapsedSeconds -lt 40) "Invalid $mode execution timing"
+        if ($mode -in @('flood','failed-flood')) {
+            foreach ($stream in @($result.Streams.Stdout, $result.Streams.Stderr)) {
+                Assert-True ($stream.RetainedBytes -eq 4MB -and $stream.DiscardedBytes -eq 12345 -and $stream.Truncated -and $stream.LimitBytes -eq 4MB) 'Flood retention accounting was incomplete'
+            }
+            $tail = Invoke-NativeDevelopmentCli @('logs',$id)
+            Assert-True ($tail.Tails.stdout.ReturnedBytes -eq 65536 -and $tail.Tails.stdout.OmittedBytes -eq (4MB - 65536) -and $tail.Tails.stdout.Truncated) 'Tail omission confused with cap loss'
+            if ($mode -eq 'failed-flood') { Assert-True ($result.ExitCode -eq 23) 'Flood hid failure exit code' }
+            continue
+        }
         if ($mode -eq 'success') {
             # Retired tasks refuse late scheduler starts before reading the
             # removed environment or running any project code again.
@@ -123,7 +152,11 @@ function Remove-Item {
             } finally { if (-not $replay.HasExited) { $replay.Kill(); $replay.WaitForExit() }; $replay.Dispose() }
         }
         if ($mode -in @('success','fail')) {
-            $output = Get-Content -LiteralPath (Join-Path $directory 'stdout.log') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-True (-not $result.Streams.Stdout.Truncated -and $result.Streams.Stdout.DiscardedBytes -eq 0 -and
+                $result.Streams.Stderr.RetainedBytes -eq 0) 'Clean stream reported loss'
+            $tail = Invoke-NativeDevelopmentCli @('logs',$id)
+            Assert-True (-not $tail.Tails.stdout.Truncated -and $tail.Tails.stdout.OmittedBytes -eq 0) 'Clean tail reported omission'
+            $output = Read-DevelopmentJson (Join-Path $directory 'stdout.log')
             Assert-True (($output.argv -join '|') -ceq ($literal -join '|') -and $output.date -ceq $environment.TASK_LITERAL_DATE) 'Worker changed Unicode/empty argv or ISO-looking environment values'
             if ($mode -eq 'fail') { Assert-True ($result.ExitCode -eq 23) 'Worker hid native failure code' }
         } else {
@@ -135,6 +168,7 @@ function Remove-Item {
     Write-Host 'PowerShell 7 owned development process tests passed.'
 } finally {
     if ($guardian) { if (-not $guardian.HasExited) { $guardian.Kill(); $guardian.WaitForExit(10000) | Out-Null }; $guardian.Dispose() }
+    if ($unrelated) { if (-not $unrelated.HasExited) { $unrelated.Kill(); $null = $unrelated.WaitForExit(10000) }; $unrelated.Dispose() }
     $env:LOCALAPPDATA = $savedLocal
     $resolved = [IO.Path]::GetFullPath($temporary)
     if (-not $resolved.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test cleanup' }

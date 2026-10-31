@@ -161,6 +161,85 @@ function Resolve-DevelopmentNode([string]$Project, [string]$Runtime) {
     }
     throw "Node $Runtime is not installed under fnm ($versions). Install the reviewed runtime explicitly with fnm install $Runtime, then retry. System Node is never substituted."
 }
+function Get-DevelopmentTrustedGit {
+    # Do not resolve Git from a project-controlled PATH/current directory.
+    foreach ($root in @([Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86'))) {
+        if (-not $root) { continue }
+        $path = Join-Path $root 'Git\cmd\git.exe'
+        try {
+            Assert-DevelopmentPath $path
+            if (Test-Path -LiteralPath $path -PathType Leaf) { return $path }
+        } catch { }
+    }
+    return ''
+}
+function Get-DevelopmentPowerShellPresence {
+    if ($PSVersionTable.PSVersion.Major -ge 7) { return Join-Path $PSHOME 'pwsh.exe' }
+    $candidates = @()
+    if ($env:ProgramFiles) { $candidates += Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe' }
+    $candidates += @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object Source)
+    foreach ($path in $candidates) { if (Test-Path -LiteralPath $path -PathType Leaf) { return $path } }
+    return ''
+}
+function Invoke-DevelopmentGit([string]$Git, [string]$Project, [string]$Arguments) {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Git; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $info.WorkingDirectory = $Project
+    $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.Arguments = '-c core.fsmonitor=false -c core.hooksPath=NUL -c core.untrackedCache=false ' + $Arguments
+    foreach ($key in @($info.EnvironmentVariables.Keys)) {
+        if ($key -like 'GIT_*') { $info.EnvironmentVariables.Remove($key) }
+    }
+    $info.EnvironmentVariables['GIT_CONFIG_NOSYSTEM'] = '1'
+    $info.EnvironmentVariables['GIT_CONFIG_GLOBAL'] = 'NUL'
+    $info.EnvironmentVariables['GIT_OPTIONAL_LOCKS'] = '0'
+    $info.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        # These commands return only a hash, boolean or exit status.
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(5000)) { throw 'Git metadata query timed out' }
+        if (-not $output.Wait(1000) -or -not $errors.Wait(1000)) { throw 'Git metadata output did not settle' }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $output.Result.Trim() }
+    } finally {
+        if (-not $process.HasExited) { $process.Kill(); $null = $process.WaitForExit(10000) }
+        $process.Dispose()
+    }
+}
+function Get-DevelopmentCheckout([string]$Project, [string]$Git) {
+    $result = [pscustomobject]@{ State = 'unknown'; Revision = $null; Dirty = $null; DirtyScope = 'tracked files only; untracked files excluded' }
+    if (-not $Git) { return $result }
+    try {
+        $inside = Invoke-DevelopmentGit $Git $Project 'rev-parse --is-inside-work-tree'
+        if ($inside.ExitCode -ne 0) {
+            # A missing .git ancestor establishes nongit; corrupt metadata stays unknown.
+            $cursor = $Project
+            while ($cursor) {
+                if (Test-Path -LiteralPath (Join-Path $cursor '.git')) { return $result }
+                $cursor = Split-Path -Parent $cursor
+            }
+            $result.State = 'nongit'; return $result
+        }
+        if ($inside.Output -ne 'true') { return $result }
+        # Diff can invoke repository clean/process filters even with --no-ext-diff.
+        # Disable every declared filter before touching working files.
+        $filters = Invoke-DevelopmentGit $Git $Project 'config --name-only --get-regexp ^filter\.'
+        if ($filters.ExitCode -notin @(0,1)) { return $result }
+        $disable = ''
+        foreach ($key in @($filters.Output -split '\r?\n' | Where-Object { $_ })) {
+            if ($key -notmatch '\Afilter\.([A-Za-z0-9_.-]+)\.(clean|smudge|process|required)\z') { return $result }
+            $name = $Matches[1]
+            $disable += " -c filter.$name.clean= -c filter.$name.process= -c filter.$name.required=false"
+        }
+        $head = Invoke-DevelopmentGit $Git $Project 'rev-parse --verify HEAD'
+        $dirty = Invoke-DevelopmentGit $Git $Project ($disable + ' diff --no-ext-diff --no-textconv --ignore-submodules=all --quiet HEAD --')
+        if ($head.ExitCode -eq 0 -and $head.Output -match '\A[0-9a-f]{40,64}\z') { $result.Revision = $head.Output }
+        if ($dirty.ExitCode -in @(0,1)) { $result.Dirty = $dirty.ExitCode -eq 1 }
+        if ($result.Revision -and $null -ne $result.Dirty) { $result.State = 'available' }
+    } catch { } # Discovery is honest about unavailable or unreadable metadata.
+    return $result
+}
 function New-DevelopmentPlan([string[]]$Arguments) {
     if (-not $Arguments.Count) { throw 'Usage: develop doctor|exec|node|editor|run|import --project PATH [--msvc] [--runtime VERSION] [--env NAME=VALUE] [--timeout SECONDS] [--dry-run] -- ARGV; or status|logs|cancel TASKID' }
     $verb = $Arguments[0]
@@ -270,9 +349,10 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
             }
             return [pscustomobject]@{ Id = $id; State = $record.State; CancelRequested = $true; Message = 'Use status to confirm cleanup. Uncertain tasks block setup/reboot.' }
         }
-        $logs = @{}
+        $logs = @{}; $tails = @{}
         foreach ($name in @('stdout','stderr')) {
             $path = Join-Path $directory ($name + '.log'); $logs[$name] = ''
+            $tails[$name] = [pscustomobject]@{ ReturnedBytes = 0; OmittedBytes = 0; Truncated = $false }
             if (Test-Path -LiteralPath $path) {
                 $stream = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
                 try {
@@ -280,16 +360,34 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
                     $buffer = New-Object byte[] 65536
                     $count = $stream.Read($buffer, 0, $buffer.Length)
                     $logs[$name] = [Text.Encoding]::UTF8.GetString($buffer, 0, $count)
+                    $omitted = [Math]::Max(0, $stream.Length - $count)
+                    $tails[$name] = [pscustomobject]@{ ReturnedBytes = $count; OmittedBytes = $omitted; Truncated = ($omitted -gt 0) }
                 } finally { $stream.Dispose() }
             }
         }
-        return [pscustomobject]@{ Id = $id; State = $record.State; Stdout = $logs.stdout; Stderr = $logs.stderr; MaximumBytesPerStream = 65536 }
+        $retention = if ($record.PSObject.Properties['Streams']) { $record.Streams } else { $null }
+        return [pscustomobject]@{ Id = $id; State = $record.State; Stdout = $logs.stdout; Stderr = $logs.stderr; MaximumBytesPerStream = 65536;
+            Tails = [pscustomobject]$tails; Streams = $retention }
     }
     $request = New-DevelopmentPlan $Arguments
     if ($request.Verb -eq 'doctor') {
         $node = ''; $nodeError = ''
         try { $node = Resolve-DevelopmentNode $request.Project '' } catch { $nodeError = $_.Exception.Message }
-        return [pscustomobject]@{ Project = $request.Project; PowerShell = (Get-NativePowerShell7); Node = $node; NodeDiagnostic = $nodeError;
+        $git = Get-DevelopmentTrustedGit
+        $powershell = Get-DevelopmentPowerShellPresence
+        $godot = ''; $missing = @()
+        if (-not $powershell) { $missing += 'Stable PowerShell 7' }
+        if ((Test-Path -LiteralPath (Join-Path $request.Project 'package.json')) -and -not $node) { $missing += $nodeError }
+        if ($node -and (Test-Path -LiteralPath (Join-Path $request.Project 'package.json')) -and
+            -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $node) 'node_modules\npm\bin\npm-cli.js') -PathType Leaf)) {
+            $missing += 'Selected fnm runtime lacks npm-cli.js'
+        }
+        if (Test-Path -LiteralPath (Join-Path $request.Project 'project.godot')) {
+            $selection = if ($env:GODOT_BIN) { $env:GODOT_BIN } elseif ($env:BASALTWATER_GODOT_EXE) { $env:BASALTWATER_GODOT_EXE } else { 'godot.exe' }
+            try { $godot = Resolve-DevelopmentExecutable $selection } catch { $missing += $_.Exception.Message }
+        }
+        return [pscustomobject]@{ Project = $request.Project; PowerShell = $powershell; Node = $node; NodeDiagnostic = $nodeError;
+            Git = $git; Checkout = (Get-DevelopmentCheckout $request.Project $git); Godot = $godot; MissingRequirements = @($missing);
             GodotOverride = @($env:BASALTWATER_GODOT_EXE, $env:GODOT_BIN); Message = 'Read-only discovery. Use exec -- literal argv; node SCRIPT selects installed fnm/npm. Tasks return IDs for status/logs/cancel. No upload credentials required.' }
     }
     $powershell = Get-NativePowerShell7
@@ -308,6 +406,7 @@ function Invoke-NativeDevelopmentCli([string[]]$Arguments) {
         ProviderPid = $PID; ProviderStartedUtc = $provider.StartTime.ToUniversalTime().ToString('o');
         WorkerPid = 0; WorkerStartedUtc = ''; ChildPid = 0; ChildStartedUtc = '';
         CreatedUtc = [DateTime]::UtcNow.ToString('o'); Boot = (Get-DevelopmentBoot); CompletedUtc = $null; State = 'queued'; ExitCode = $null;
+        ExecutionStartedUtc = $null; ExecutionEndedUtc = $null; ElapsedSeconds = $null; Streams = $null; StreamLimitBytes = 4MB;
         TaskName = ('Basaltwater Development ' + $id); Message = 'Use develop status/logs/cancel TASKID.' }
     $provider.Dispose()
     $snapshot = @{}; foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $snapshot[$entry.Key] = $entry.Value }
