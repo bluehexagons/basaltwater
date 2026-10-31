@@ -434,6 +434,44 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
         self.assertIsNone(health["check"]["successful"])
         self.assertFalse(health["check"]["stale"])
 
+    def test_automatic_update_health_rejects_failed_or_incomplete_inspection(self):
+        self.stack.enter_context(patch.object(h, "UPDATE_STATE", self.root / "missing-update.json"))
+        job = "LoadState=loaded\nActiveState=inactive\nResult=success\nExecMainStatus=0\n"
+        timer = "LoadState=loaded\nActiveState=active\nNextElapseUSecRealtime=Sun 2026-09-14 06:00:00 UTC\n"
+        for unit, output, code in (
+            (0, "", 1), (1, "", 1),
+            (0, job, 1), (1, timer, 1),
+            (0, "", 0), (1, "", 0),
+            (0, job.replace("Result=success\n", ""), 0),
+            (0, job.replace("ExecMainStatus=0\n", ""), 0),
+            (1, timer.replace("NextElapseUSecRealtime=Sun 2026-09-14 06:00:00 UTC\n", ""), 0),
+            (0, job.replace("LoadState=loaded", "LoadState=masked"), 0),
+        ):
+            with self.subTest(unit=unit, output=output, code=code):
+                results = [subprocess.CompletedProcess([], 0, job), subprocess.CompletedProcess([], 0, timer)]
+                results[unit] = subprocess.CompletedProcess([], code, output, "private diagnostic")
+                with patch.object(h, "run", side_effect=results):
+                    with self.assertRaisesRegex(RuntimeError, "Cannot inspect HomeBox updater unit") as error:
+                        h._automatic_update_health()
+                self.assertNotIn("private diagnostic", str(error.exception))
+
+    def test_automatic_update_health_requires_both_units_or_explicit_absence(self):
+        self.stack.enter_context(patch.object(h, "UPDATE_STATE", self.root / "missing-update.json"))
+        job = "LoadState=loaded\nActiveState=inactive\nResult=success\nExecMainStatus=0\n"
+        timer = "LoadState=loaded\nActiveState=active\nNextElapseUSecRealtime=Sun 2026-09-14 06:00:00 UTC\n"
+        for job_present, timer_present, missing_code in ((True, True, 0), (False, False, 0),
+                                                       (False, False, 1), (False, True, 0), (True, False, 0)):
+            with self.subTest(job=job_present, timer=timer_present, missing_code=missing_code):
+                results = [
+                    subprocess.CompletedProcess([], 0 if present else missing_code,
+                                                output if present else "LoadState=not-found\n")
+                    for present, output in ((job_present, job), (timer_present, timer))
+                ]
+                with patch.object(h, "run", side_effect=results):
+                    health = h._automatic_update_health()
+                self.assertEqual(health["configured"], job_present or timer_present)
+                self.assertEqual(health["healthy"], job_present == timer_present)
+
     def test_unit_and_proxy_isolation(self):
         value = state(domain="inventory.example.com", public_port=443, sources=["192.168.1.0/24"])
         for endpoint in (self.value, value):
@@ -789,7 +827,7 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         cfg = self.fixture_setup()
         cfg.homebox = []
         with patch.object(h, "_command") as command, \
-                patch.object(h, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(h, "_unit_properties", return_value={"available": True}), \
                 contextlib.redirect_stdout(io.StringIO()):
             h.setup_homebox(cfg)
             self.assertFalse(h.UNIT.exists())
@@ -804,7 +842,7 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         h._save_state({**self.value, "status": "prepared"})
         (self.data / "homebox.db").unlink()
         cfg.homebox = []
-        with patch.object(h, "run", return_value=subprocess.CompletedProcess([], 0)), \
+        with patch.object(h, "_unit_properties", return_value={"available": True}), \
                 contextlib.redirect_stdout(io.StringIO()):
             h.setup_homebox(cfg)
         self.assertTrue(h.read_state()["bootstrap_pending"])
@@ -815,6 +853,38 @@ class HomeBoxTransactionTests(HomeBoxFixture, unittest.TestCase):
         bootstrap.assert_called_once()
         self.assertEqual(h.read_state()["status"], "ready")
         self.assertFalse(h._needs_bootstrap(h.read_state()))
+
+    def test_disable_requires_confirmed_timer_stop_before_changing_installation(self):
+        cfg = self.fixture_setup()
+        cfg.homebox = []
+        previous = h.read_state()
+        for inspection_failed in (True, False):
+            with self.subTest(inspection_failed=inspection_failed), \
+                    patch.object(h, "_unit_properties", return_value={"available": True},
+                                 side_effect=RuntimeError("inspection failed") if inspection_failed else None), \
+                    patch.object(h, "_command", side_effect=RuntimeError("timer stop failed")) as command, \
+                    patch.object(h, "_stop_service") as stop:
+                with self.assertRaisesRegex(RuntimeError, "inspection failed|timer stop failed"):
+                    h.setup_homebox(cfg)
+                if inspection_failed:
+                    command.assert_not_called()
+                else:
+                    command.assert_called_once_with("systemctl", "disable", "--now", h.AUTO_UPDATE_TIMER)
+                stop.assert_not_called()
+                self.assertEqual(h.read_state(), previous)
+                self.assertTrue(h.UNIT.exists())
+                self.assertFalse((h.CONFIG / "maintenance").exists())
+
+    def test_disable_allows_an_explicitly_absent_updater_timer(self):
+        cfg = self.fixture_setup()
+        cfg.homebox = []
+        with patch.object(h, "_unit_properties", return_value={"available": False}), \
+                patch.object(h, "_command") as command, contextlib.redirect_stdout(io.StringIO()):
+            h.setup_homebox(cfg)
+        self.assertNotIn(("systemctl", "disable", "--now", h.AUTO_UPDATE_TIMER),
+                         [call.args for call in command.call_args_list])
+        self.assertEqual(h.read_state()["status"], "disabled")
+        self.assertFalse(h.UNIT.exists())
 
     def test_snapshot_failure_does_not_run_new_binary(self):
         cfg = self.fixture_setup()

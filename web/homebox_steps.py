@@ -939,7 +939,13 @@ def _unit_properties(unit: str, properties: str) -> dict[str, str | bool]:
         if "=" in line:
             key, item = line.split("=", 1)
             value[key] = item
-    value["available"] = result.returncode == 0 and value.get("LoadState") != "not-found"
+    if value.get("LoadState") == "not-found":
+        value["available"] = False
+        return value
+    if (result.returncode != 0 or value.get("LoadState") != "loaded"
+            or any(name not in value for name in properties.split(","))):
+        raise RuntimeError(f"Cannot inspect HomeBox updater unit {unit}; check systemd unit status")
+    value["available"] = True
     return value
 
 
@@ -970,12 +976,13 @@ def _automatic_update_health() -> dict:
     stale = source is not None and (age_seconds is None or age_seconds > MAX_UPDATE_AGE_SECONDS)
     if source is None:
         check["status"] = "pending"
-    configured = timer.get("available") is True
+    configured = job.get("available") is True or timer.get("available") is True
     return {
         "configured": configured,
         "healthy": (
             not configured or (
-                not job_failed
+                job.get("available") is True
+                and not job_failed
                 and timer_active
                 and timer_scheduled
                 and (source is None or (check_successful and not stale))
@@ -1027,7 +1034,9 @@ def setup_homebox(config) -> None:
         if config.homebox == []:
             if previous is None:
                 return
-            run(["systemctl", "disable", "--now", AUTO_UPDATE_TIMER], check=False, capture_output=True)
+            timer = _unit_properties(AUTO_UPDATE_TIMER, "ActiveState")
+            if timer["available"]:
+                _command("systemctl", "disable", "--now", AUTO_UPDATE_TIMER)
             _maintenance(None)
             _stop_service()
             if UNIT.exists():

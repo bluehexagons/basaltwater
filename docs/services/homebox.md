@@ -139,7 +139,10 @@ Health checks service activity, maintenance state, mount identity, free space,
 SQLite integrity and users, secrets, executable digest, API version,
 registration policy, generated configuration and environment permissions, and
 the configured HTTPS frontend. When installed, it also reports the updater
-timer and its last check (`pending` before the first run). SQLite probes run as
+timer and its last check (`pending` before the first run). Failed or incomplete
+systemd inspections and a missing half of the updater service/timer pair make
+health fail. The updater is optional only when both units are explicitly absent.
+SQLite probes run as
 the database owner so they cannot leave root-owned WAL files that prevent a
 restart. Rerun setup to reconcile drift. The HTTPS probe verifies the target
 locally, not public DNS, external firewall reachability, or an authenticated
@@ -251,7 +254,10 @@ basaltw patch inventory-host --no-homebox
 
 Disabling stops the application and removes its unit and Nginx ingress while
 retaining inventory, credentials, releases, and archives. It also disables the
-HomeBox update timer. Re-enable by supplying the original `--homebox` settings.
+HomeBox update timer. If inspecting or disabling that timer fails, setup stops
+before changing the application or its managed state; inspect systemd and retry.
+An explicitly absent timer is allowed. Re-enable by supplying the original
+`--homebox` settings.
 If initial onboarding had not completed before disabling, re-enabling still
 performs the private bootstrap. Shared Nginx/Certbot packages and certificates
 remain installed. Permanent deletion is a separate manual task.
