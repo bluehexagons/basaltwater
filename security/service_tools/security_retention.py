@@ -18,7 +18,7 @@ _JOURNAL_COMMAND = (
     'journalctl', '--system', '--no-pager', '--quiet', '--no-tail',
     '--output=json', '--output-fields=__REALTIME_TIMESTAMP',
 )
-_SOURCES = {'auditd', 'ssh_journal'}
+_SOURCES = {'auditd', 'ssh_journal', 'fail2ban'}
 
 
 class _FirstJournalRecord(Exception):
@@ -107,7 +107,7 @@ def window_gaps(
 
 
 def retained_gaps(state: dict[str, object], gaps: list[JSONDict]) -> list[JSONDict]:
-    """Keep the latest contiguous uncovered interval per source, bounded to two."""
+    """Keep the latest contiguous uncovered interval per source, bounded to three."""
     latest: dict[str, JSONDict] = {}
     previous = state.get('retention_gaps')
     for record in [*(previous if isinstance(previous, list) else []), *gaps]:

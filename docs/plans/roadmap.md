@@ -49,7 +49,7 @@ they are not required to finish the initial three-role host.
 | --- | --- |
 | Stable-release quality | Run the remaining exact-candidate release cases; preserve installer, wheel, metadata and affected CI checks. |
 | Read-only planning and drift | Define stable categories and unavailable-fact handling for services, managed files, packages and deployments. Verify observations again before apply. |
-| Security monitoring | Audit/journal leading gaps are reported with durable history; unknown retention evidence retains the cursor. Handle fail2ban events moved to rotated files in [#108](https://github.com/bluehexagons/basaltwater/issues/108), then qualify continuous-logging and native daemon boundaries. See [authentication hardening](../services/authentication-hardening.md). |
+| Security monitoring | Audit/journal and Fail2ban leading gaps are reported with durable history; unknown retention evidence retains the cursor. Packaged numeric/gzip Fail2ban rotation is collected with bounded retries. Qualify continuous logging, native daemon and power-loss boundaries. See [authentication hardening](../services/authentication-hardening.md). |
 | Recovery | Extend tested same-host backup/restore to off-host recovery; cover remaining worker, storage and interrupted-operation boundaries without automatic replay of uncertain work. |
 | Network changes | Extend verified address handoff to reviewed Proxmox firewall changes, with saved artifacts, timed rollback and connectivity confirmation. |
 | Deployment secrets | Add target-owned runtime bindings under the [secret-reference plan](deploy-secrets.md); retain secret-free artifact builds as the current default. |

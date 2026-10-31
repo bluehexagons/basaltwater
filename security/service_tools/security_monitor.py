@@ -6,7 +6,7 @@ Checks security logs for notable events and sends notifications via the
 configured basaltwater notification targets. Runs every 15 minutes.
 
 Event sources (where installed):
-  - fail2ban: ban/unban events from /var/log/fail2ban.log
+  - fail2ban: ban/unban events from /var/log/fail2ban.log and numeric/gzip rotations
   - auditd: identity, sudoers, SSH config, module, and privileged-exec events
   - SSH: failed authentication attempts from the system journal
   - XRDP: TLS certificate/key validity, expiry, permissions, and readability
@@ -32,7 +32,6 @@ import os
 import re
 import shutil
 import sys
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from logging import ERROR, WARNING
 
@@ -44,10 +43,11 @@ from lib.notifications import load_notification_configs_from_state, send_notific
 from lib.security_activity import managed_setup_audit_windows
 from lib.streamed_process import run_streamed
 from lib.types import JSONDict
-from lib.validation import validate_filesystem_path, validate_network_ip
+from lib.validation import validate_filesystem_path
 from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
 from common.service_tools.web_panel_audit_export import _audit_health
 from security.service_tools.security_retention import inspect_retention, retained_gaps, window_gaps
+from security.service_tools.security_fail2ban import Fail2banScan, scan_fail2ban
 
 logger = get_service_logger('security_monitor', 'security', use_syslog=True)
 
@@ -57,7 +57,6 @@ _SSH_FAILURE_THRESHOLD = 5
 _SSH_WARNING_THRESHOLD = 25
 _SSH_MAX_BREAKDOWN = 10
 _SSH_MAX_GROUPS = 1000
-_MAX_FAIL2BAN_EVENTS = 50
 _MAX_AUDIT_RECORD_BYTES = 256 * 1024
 _MAX_SOURCE_LINE_BYTES = 64 * 1024
 _SCAN_WINDOW = timedelta(minutes=15)
@@ -68,13 +67,6 @@ _AUDIT_PATH = '/usr/sbin:/sbin:/usr/bin:/bin'
 def _audit_tool(name: str) -> str | None:
     """Resolve packaged audit commands without depending on the caller PATH."""
     return shutil.which(name, path=_AUDIT_PATH)
-
-# fail2ban log line pattern — local-time timestamp + jail + action + IP.
-# Jail names may contain hyphens (e.g. nginx-http-auth), so [^\]]+ is used.
-_BAN_RE = re.compile(
-    r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+'
-    r' fail2ban\.actions\s+\[.*?\]:\s+(?:WARNING|NOTICE)\s+\[([^\]]+)\] (Ban|Unban) (\S+)'
-)
 
 # auditd keys that trigger integrity-change notifications.
 _CRITICAL_KEYS = ('identity', 'sudoers', 'sshd_config', 'modules')
@@ -114,70 +106,11 @@ def _save_state(state: dict[str, object]) -> None:
 # fail2ban
 # ---------------------------------------------------------------------------
 
-@dataclass
-class Fail2banScan:
-    """Exact fail2ban totals with a bounded sample for notifications."""
-
-    bans: list[JSONDict] = field(default_factory=list)
-    unbans: list[JSONDict] = field(default_factory=list)
-    ban_count: int = 0
-    unban_count: int = 0
-    error: str | None = None
-
-
 def _check_fail2ban(
     since: datetime, until: datetime
 ) -> Fail2banScan:
-    """Count all ban/unban events while retaining bounded examples."""
-    scan = Fail2banScan()
-    if not os.path.exists(_FAIL2BAN_LOG):
-        # fail2ban is optional on some supported machine types.  Once its
-        # client is installed, however, a missing log means this source is no
-        # longer observable (including when the service switched log targets).
-        if shutil.which('fail2ban-client'):
-            scan.error = f'fail2ban: log file unavailable: {_FAIL2BAN_LOG}'
-        return scan
-    try:
-        with open(_FAIL2BAN_LOG, encoding='utf-8') as f:
-            while line := f.readline(_MAX_SOURCE_LINE_BYTES + 1):
-                if len(line.encode('utf-8')) > _MAX_SOURCE_LINE_BYTES:
-                    scan.error = 'fail2ban log: line exceeded the size limit'
-                    return scan
-                m = _BAN_RE.match(line)
-                if not m:
-                    continue
-                try:
-                    ts = datetime.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')
-                except ValueError:
-                    continue
-                if ts < since or ts > until:
-                    continue
-                jail, action, ip = m.group(2), m.group(3), m.group(4)
-                if len(jail) > 128 or not re.fullmatch(r'[A-Za-z0-9_.-]+', jail):
-                    jail = 'unknown'
-                try:
-                    ip = validate_network_ip(ip, 'fail2ban source')
-                except ValueError:
-                    ip = 'unknown'
-                entry: JSONDict = {
-                    "type": "fail2ban",
-                    "action": action.lower(),
-                    "severity": "warning" if action == "Ban" else "info",
-                    "timestamp": m.group(1),
-                    "jail": jail,
-                    "source_ip": ip,
-                }
-                if action == 'Ban':
-                    scan.ban_count += 1
-                    if len(scan.bans) < _MAX_FAIL2BAN_EVENTS:
-                        scan.bans.append(entry)
-                else:
-                    scan.unban_count += 1
-                    if len(scan.unbans) < _MAX_FAIL2BAN_EVENTS:
-                        scan.unbans.append(entry)
-    except (OSError, UnicodeError) as exc:
-        scan.error = f'fail2ban log: {exc}'
-    return scan
+    """Read the configured active log and its supported rotations."""
+    return scan_fail2ban(_FAIL2BAN_LOG, since, until)
 
 
 # ---------------------------------------------------------------------------
@@ -1170,6 +1103,8 @@ def main() -> int:
     for source in sorted(initial_floors.keys() ^ final_floors.keys()):
         label = 'SSH journal' if source == 'ssh_journal' else source
         final_retention_errors.append(f'{label}: retention source changed during collection')
+    if fail2ban_scan.oldest is not None:
+        floors['fail2ban'] = fail2ban_scan.oldest
     gaps = window_gaps(floors, since, now)
     for gap in gaps:
         log_event(logger, 'Security source interval coverage could not be established',

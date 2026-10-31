@@ -52,6 +52,19 @@ start of that interval and reports a collection failure. A high-cardinality SSH
 attack still contributes to the failure count even after the source breakdown
 reaches its limit.
 
+Fail2ban collection includes the active log and consecutive numeric rotations,
+including gzip archives, using the packaged rename/create rotation policy.
+It counts each file identity once; identical records in separate files remain
+separate events. A changed file set discards the attempt and retries once.
+Unreadable, corrupt, incomplete or persistently changing logs retain the cursor
+and report a collection failure. Collection is bounded to 64 files, 256 MiB of
+decompressed data across both attempts, 64 KiB per line and a 30-second work
+budget. Large histories or busy logs can require investigation rather than a
+successful scan. Unsupported rotation names, compression and missing numeric
+generations also fail visibly. Custom `copytruncate` policies are outside this
+support boundary; a stable copied archive cannot reliably be distinguished from
+separate legitimate records.
+
 Before and after collection, the monitor probes the oldest retained global
 system-journal entry and unfiltered audit event. It uses the same system journal
 and configured audit logs as the event queries, including audit rotation.
@@ -72,15 +85,16 @@ the first observation of newly created logs without permanently stalling.
 The cursor and latest contiguous gap per source are saved atomically in
 `/opt/basaltwater/state/security_monitor_state.json` with mode `0600`. Gap
 intervals are also logged locally and included in notifications; their state
-survives failed delivery, restarts and later clean windows. These two bounded
+survives failed delivery, restarts and later clean windows. These three bounded
 records are not a complete gap archive. Review unobserved intervals against
 archived logs and increase source retention when needed. Later readable windows
 do not recover missing history. An oldest entry before the cursor also does
 not prove continuous logging, absence of interior deletions, or kernel audit
-health. These checks cover audit/journal leading boundaries. The fail2ban reader
-currently reads only its active file and can miss events moved to a rotated
-file; [#108](https://github.com/bluehexagons/basaltwater/issues/108) tracks that
-remaining collection defect.
+health. Fail2ban's oldest timestamped record across the stable retained files
+establishes its leading boundary, including routine records on quiet services.
+Empty files or files without timestamped records leave that boundary unknown.
+Native reader and rotation checks do not qualify continuous daemon operation,
+custom rotation policies or power-loss recovery.
 
 When source filters are configured, setup checks the active UFW rules after
 reconciliation. It fails if SSH, RDP, or a managed web port still has an inbound
