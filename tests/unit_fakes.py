@@ -27,18 +27,19 @@ class FakeSystemd:
             name = command[2]
         root = Path(self.unit_dir() if callable(self.unit_dir) else self.unit_dir)
         path = root / name
+        oneshot = path.is_file() and "Type=oneshot" in path.read_text()
         active, enabled = self.states.setdefault(name, ["inactive", "disabled" if path.exists() else ""])
         if action == "show":
             load = "loaded" if path.exists() else "not-found"
             output = (f"LoadState={load}\nActiveState={active}\nSubState=dead\n"
                       f"UnitFileState={enabled if path.exists() else ''}\n"
-                      f"FragmentPath={path}\nNeedDaemonReload=no\n")
+                      f"FragmentPath={path}\nNeedDaemonReload=no\nType={'oneshot' if oneshot else 'simple'}\n")
         elif action == "enable":
             self.states[name][1] = "enabled-runtime" if "--runtime" in command else "enabled"
         elif action == "disable":
             self.states[name][1] = "disabled"
         elif action in {"restart", "start"}:
-            self.states[name][0] = "active"
+            self.states[name][0] = "inactive" if oneshot else "active"
         elif action == "stop":
             self.states[name][0] = "inactive"
         else:

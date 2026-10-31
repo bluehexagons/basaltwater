@@ -76,7 +76,7 @@ contract and limitations.
 | Manifest `verifying`; static `finalizing` | New release is active; startup and final persistence may be incomplete | Choose between verifying the new release and restoring the old one. For manifest rollback, stop new units, restore the previous tree and unit snapshot, reload systemd, then restore recorded enablement and running state. Restore `previous_ports` too. |
 | Release `rolling-back` or `recovery` | Restoration itself may be interrupted | Inspect destination, backup and failed paths before moving anything. A backup may already be consumed by restoration. Check every recorded unit and port assignment; retain the rejected tree until recovery is verified. |
 | Units `staging` or `validating` | Private candidates and snapshots | Live files and running states have not changed. Verify existing units, preserve or remove unused staging artifacts, then resolve the marker. |
-| Units `replacing`, `removing`, `rolling-back` or `rollback-failed` | Some files and activated/stopped units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Restore the service before rearming its timer/path. Do not restart unrelated executing oneshots. |
+| Units `replacing`, `removing`, `preparing-oneshots`, `preserving-oneshot`, `starting-oneshot`, `rolling-back` or `rollback-failed` | Some files and activated/stopped units may have changed | Inspect current processes and recorded start intents/preserved jobs before restoring `previous.json`: null means previously absent; restore other files with recorded mode/owner, reload systemd and restore enablement/running state. Quiesce jobs started by the operation, but do not stop or replay preserved oneshots. Rearm timers only after restoring their services. |
 | Nginx `staging` | Snapshot preparation | Deployment sites and TLS files have not changed. Inspect any recorded snapshot before resolving the marker. |
 | Nginx `applying`, `verifying`, `rolling-back` or `recovery` | Sites, enabled links, TLS files and loaded workers may differ | Restore each absolute path in `previous.json`: null means previously absent; regular-file contents are base64 with mode/uid/gid; links record target/uid/gid. Restore all files and links before validation. Run `nginx -t`, reload Nginx and verify activity and routing before resolving the marker. |
 | Proxmox migration `prepared`, `shutting_down`, or `stopped` | Guest may have shut down; disk transfer has not been issued | Inspect native tasks and power state, then use the same `proxmox migrate` command with `--resume`. Shutdown is graceful and verified before transfer. |
@@ -101,6 +101,14 @@ failure and quiesce the group before restoring files. The reported recovery
 error chains the original activation or readiness error. Panel service setup
 checks its HTTP socket before completing this unit transaction; its manifest,
 credentials and earlier setup steps remain outside unit rollback.
+Audit exporter setup uses the same owner: it quiesces the timer, starts an idle
+oneshot before rearming the timer and preserves a collection already running.
+Context records `start_once`, `started_jobs` and `preserved_jobs`. A start intent
+can exist without a response or process; inspect actual systemd state. Stop an
+uncertain job started by that operation before removing or restoring its unit.
+Do not stop or restart a preserved collection to reproduce its old activity
+state: it may have finished naturally. Snapshot output already written by any
+collection remains outside unit rollback.
 Removal uses the same lock and snapshot boundary as replacement,
 skips absent managed files, and stops all present units before deleting any
 of their files.
@@ -110,7 +118,8 @@ be queried or started; the owning socket stops concrete login instances through
 their declared dependencies. Restore template files before rearming the socket.
 Services waiting after a failed start (`activating` / `auto-restart`) can be
 replaced so setup can repair their configuration. Actual starting, stopping and
-reloading states still block changes. If replacement fails, rollback restores
+reloading states still block ordinary changes. The explicit oneshot path can
+observe `Type=oneshot` in `activating` state without restarting it. If replacement fails, rollback restores
 the old definition and enablement but does not restart a previously broken
 service that it stopped. Removal verifies that automatic retries have stopped
 before deleting service files.

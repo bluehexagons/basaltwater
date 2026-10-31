@@ -44,17 +44,21 @@ def snapshot_unit_file(path: str) -> dict | None:
     return dict(content=content, mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid)
 
 
-def inspect_unit_state(unit: str) -> dict[str, str]:
+def inspect_unit_state(unit: str, *, allow_oneshot: bool = False) -> dict[str, str]:
     """Reject transitions, but allow repairing a service waiting to retry failure."""
-    output = _command("systemctl", "show", unit, "--property=LoadState,ActiveState,SubState,UnitFileState", "--no-pager")
+    properties = "LoadState,ActiveState,SubState,UnitFileState" + (",Type" if allow_oneshot else "")
+    output = _command("systemctl", "show", unit, "--property=" + properties, "--no-pager")
     state = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    if allow_oneshot and state.get("LoadState") == "loaded" and state.get("Type") != "oneshot":
+        raise RuntimeError(f"Expected a oneshot service: {unit}")
     # Restart=on-failure reports activating/auto-restart between failed starts.
     # No start is executing then; refusing this state blocks the setup that
     # would repair its configuration. Preserve the actual state in snapshots.
     retrying = (unit.endswith(".service") and state.get("ActiveState") == "activating"
                 and state.get("SubState") == "auto-restart")
+    running_job = allow_oneshot and state.get("Type") == "oneshot" and state.get("ActiveState") == "activating"
     if (state.get("LoadState") not in {"loaded", "not-found"}
-            or (state.get("ActiveState") not in {"active", "inactive", "failed"} and not retrying)):
+            or (state.get("ActiveState") not in {"active", "inactive", "failed"} and not retrying and not running_job)):
         raise RuntimeError(f"Cannot change busy or uninspectable unit: {unit} "
                            f"(load={state.get('LoadState', 'unknown')}, "
                            f"active={state.get('ActiveState', 'unknown')}, sub={state.get('SubState', 'unknown')})")
@@ -90,14 +94,20 @@ def _activators_unchanged(units: dict[str, str], activate: tuple[str, ...], unit
 
 def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove: tuple[str, ...], unit_dir: str,
                      deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
-                     preserve_unchanged: bool = False, verify: Callable[[], None] | None = None) -> None:
+                     preserve_unchanged: bool = False, verify: Callable[[], None] | None = None,
+                     start_once: tuple[str, ...] = ()) -> None:
     validate_filesystem_path(unit_dir, must_exist=False)
-    if (not units and not remove) or not (set(activate) | set(deactivate)) <= units.keys():
+    if (not units and not remove) or not (set(activate) | set(deactivate) | set(start_once)) <= units.keys():
         raise ValueError("Activation requires staged units")
     names = (*units, *remove)
     if (len(set(names)) != len(names) or len(set(activate)) != len(activate)
-            or len(set(deactivate)) != len(deactivate)):
+            or len(set(deactivate)) != len(deactivate) or len(set(start_once)) != len(start_once)):
         raise ValueError("Systemd unit names must be unique")
+    if start_once and (not activate or not set(activate) <= set(deactivate)
+                       or set(start_once) & (set(activate) | set(deactivate))
+                       or any(not name.endswith(".timer") for name in activate)
+                       or any(not name.endswith(".service") or name.endswith("@.service") for name in start_once)):
+        raise ValueError("Oneshot starts require separate services and quiesced timer activation")
     if any(name.endswith("@.service") for name in activate):
         raise ValueError("Activate a socket or concrete instance, not a service template")
     for name in names:
@@ -123,7 +133,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
         raise ValueError("Unchanged activator selection must be a boolean")
     if verify is not None and not callable(verify):
         raise ValueError("Unit verification must be callable")
-    if preserve_unchanged and (not activate or remove or deactivate or prepare is not None
+    if preserve_unchanged and (not activate or remove or deactivate or start_once or prepare is not None
                                or verify is not None
                                or any(not name.endswith((".timer", ".path")) for name in activate)):
         raise ValueError("Preserving unchanged units requires timer/path activation without removal or callbacks")
@@ -147,6 +157,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
         record = store.begin(operation, unit_dir, "staging", context={"units": list(names)})
         modified = False
         touched: list[str] = []
+        context = {"units": list(names)}
         try:
             snapshots = {name: snapshot_unit_file(os.path.join(unit_dir, name)) for name in names}
             removals = tuple(name for name in remove if snapshots[name] is not None)
@@ -154,6 +165,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             # stops its instances (e.g. through PartOf) before file removal.
             managed_removals = tuple(name for name in removals if not name.endswith("@.service"))
             states = {name: inspect_unit_state(name) for name in dict.fromkeys((*activate, *deactivate, *managed_removals))}
+            states.update({name: inspect_unit_state(name, allow_oneshot=True) for name in start_once})
             if not units and not removals:
                 store.complete(record.operation_id)
                 resolved = True
@@ -161,6 +173,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             backup_dir = tempfile.mkdtemp(prefix=".basaltwater-units-", dir=unit_dir)
             write_json_atomic(os.path.join(backup_dir, "previous.json"), {"units": snapshots, "states": states})
             context = {"units": list(names), "backup_dir": backup_dir}
+            if start_once:
+                context["start_once"] = list(start_once)
             store.transition(record.operation_id, "validating", context=context)
             candidates = []
             for name, content in units.items():
@@ -190,6 +204,17 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 state = inspect_unit_state(name)
                 if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Unit removal failed verification: {name}")
+            # A job can start while its old timer is being stopped. Preserve
+            # jobs observed running either before or after that stop; a job
+            # finishing naturally must never be replayed during rollback.
+            preserved_jobs = set()
+            for name in start_once:
+                current = inspect_unit_state(name, allow_oneshot=True)
+                if any(state["ActiveState"] in {"active", "activating"} for state in (states[name], current)):
+                    preserved_jobs.add(name)
+            if start_once:
+                context["preserved_jobs"] = sorted(preserved_jobs)
+                store.transition(record.operation_id, "preparing-oneshots", context=context)
             if prepare is not None:
                 prepare()
             for name in removals:
@@ -201,6 +226,23 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                 state = inspect_unit_state(name)
                 if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Removed unit is still active or enabled: {name}")
+            for name in start_once:
+                current = inspect_unit_state(name, allow_oneshot=True)
+                if name in preserved_jobs or current["ActiveState"] in {"active", "activating"}:
+                    if name not in preserved_jobs:
+                        preserved_jobs.add(name)
+                        context["preserved_jobs"] = sorted(preserved_jobs)
+                        store.transition(record.operation_id, "preserving-oneshot", context=context)
+                    continue
+                # Own a requested job before issuing start: an uncertain
+                # response can leave it executing and needing a checked stop.
+                touched.append(name)
+                context["started_jobs"] = [job for job in touched if job in start_once]
+                store.transition(record.operation_id, "starting-oneshot", context=context)
+                _command("systemctl", "start", name)
+                current = inspect_unit_state(name, allow_oneshot=True)
+                if current["ActiveState"] not in {"inactive", "active"}:
+                    raise RuntimeError(f"Oneshot start failed verification: {name}")
             for name in activate:
                 if name not in touched:
                     touched.append(name)
@@ -293,7 +335,8 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                             raise RuntimeError("Restored unit state did not match")
                     attempt(verify_restored_state)
             if errors:
-                store.transition(record.operation_id, "rollback-failed", status="recovery_required", context={"backup_dir": backup_dir, "errors": errors})
+                store.transition(record.operation_id, "rollback-failed", status="recovery_required",
+                                 context={**context, "backup_dir": backup_dir, "errors": errors})
                 raise UnitRecoveryError(store.path, backup_dir) from original_error
             store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
             resolved = True
@@ -313,16 +356,24 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
 
 def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir: str = "/etc/systemd/system",
                   deactivate: tuple[str, ...] = (), prepare: Callable[[], None] | None = None,
-                  preserve_unchanged: bool = False, verify: Callable[[], None] | None = None) -> None:
+                  preserve_unchanged: bool = False, verify: Callable[[], None] | None = None,
+                  start_once: tuple[str, ...] = ()) -> None:
     """Validate, replace, enable and restart units, restoring on any failure.
 
-    Only ``activate`` and ``deactivate`` units change running/enabled state. This lets
+    Only ``activate``, ``deactivate`` and ``start_once`` units change running/enabled state. This lets
     timer/path replacements leave an executing oneshot service alone. Recovery
     backups and a blocking marker survive failed rollback or process death.
     ``deactivate`` units stop and disable before publication, in the supplied
     order (activators before their mount/service), and stay stopped unless also
     in ``activate``. Rollback restores their previous state in reverse order,
     except that an automount is restored before its matching mount.
+
+    ``start_once`` starts idle oneshot services after publication and before
+    arming their timers. All activation timers must also be in ``deactivate``.
+    Jobs already running before or after timer quiescence are left alone, even
+    during rollback; they may finish naturally. Jobs started by this operation
+    require checked quiescence before restoring files on failure. Completed
+    job output is outside unit rollback. Dry runs skip starts.
 
     ``prepare`` runs once after validation and grouped deactivation, before
     publication, under the same lock and rollback boundary. It never runs in
@@ -344,7 +395,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     """
     _reconcile_units(units, activate=activate, remove=(), unit_dir=unit_dir,
                      deactivate=deactivate, prepare=prepare, preserve_unchanged=preserve_unchanged,
-                     verify=verify)
+                     verify=verify, start_once=start_once)
 
 
 def remove_units(names: tuple[str, ...], *, unit_dir: str = "/etc/systemd/system",

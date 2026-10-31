@@ -235,7 +235,15 @@ enablement/running state. If rollback cannot stop or disable the service, it
 retains the candidate, private originals and a blocking unit operation marker;
 follow [transaction recovery](../operations/transaction-recovery.md) before a
 retry. This unit boundary does not restore the manifest, credentials or earlier
-setup steps. Audit exporter setup rollback remains separate recovery work.
+setup steps.
+
+Audit exporter setup uses the same durable unit recovery. It stops the timer
+before publication, refreshes the snapshot through an idle oneshot and rearms
+the timer after that job succeeds. A collection already running is left alone;
+setup does not wait for or restart it. Failures restore previous unit files and
+timer state where safe. A refused or uncertain required stop retains definitions,
+private snapshots and the recovery guard. Follow transaction recovery before
+retrying; already written audit snapshot data is not rolled back.
 
 ## Browser desktop
 

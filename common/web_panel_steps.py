@@ -913,43 +913,19 @@ WantedBy=timers.target
         try:
             with open(path, encoding="utf-8") as file_obj:
                 previous[path] = file_obj.read()
-        except OSError:
+        except FileNotFoundError:
             previous[path] = None
         if previous[path] is not None and _SERVICE_MARKER not in previous[path]:
             raise RuntimeError(f"Refusing unmanaged web panel audit unit: {path}")
 
     changed = any(previous[path] != content for path, content in desired.items())
-    try:
-        for path, content in desired.items():
-            if previous[path] != content:
-                write_text_atomic(path, content, mode=0o644)
-        if changed:
-            run("systemctl daemon-reload", check=True)
-        run(
-            f"systemctl enable --now {WEB_PANEL_AUDIT_SERVICE_NAME}.timer",
-            check=True,
-        )
-        run(f"systemctl start {WEB_PANEL_AUDIT_SERVICE_NAME}.service", check=True)
-    except Exception:
-        if previous[WEB_PANEL_AUDIT_TIMER_FILE] is None:
-            run(
-                f"systemctl disable --now {WEB_PANEL_AUDIT_SERVICE_NAME}.timer",
-                check=False,
-            )
-        run(
-            f"systemctl stop {WEB_PANEL_AUDIT_SERVICE_NAME}.service",
-            check=False,
-        )
-        for path, content in previous.items():
-            if content is None:
-                try:
-                    os.unlink(path)
-                except FileNotFoundError:
-                    pass
-            else:
-                write_text_atomic(path, content, mode=0o644)
-        run("systemctl daemon-reload", check=False)
-        raise
+    unit_dir = os.path.dirname(WEB_PANEL_AUDIT_SERVICE_FILE)
+    if os.path.dirname(WEB_PANEL_AUDIT_TIMER_FILE) != unit_dir:
+        raise ValueError("Audit units must share their recovery directory")
+    timer = os.path.basename(WEB_PANEL_AUDIT_TIMER_FILE)
+    service = os.path.basename(WEB_PANEL_AUDIT_SERVICE_FILE)
+    replace_units({os.path.basename(path): content for path, content in desired.items()},
+                  activate=(timer,), deactivate=(timer,), start_once=(service,), unit_dir=unit_dir)
     return changed
 
 

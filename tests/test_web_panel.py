@@ -760,6 +760,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_audit_exporter_is_root_only_with_one_writable_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
+            self.systemd.unit_dir = temporary
             service_file = os.path.join(temporary, "audit.service")
             timer_file = os.path.join(temporary, "audit.timer")
             with (
@@ -797,11 +798,12 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_audit_exporter_failure_disables_a_new_timer(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
+            self.systemd.unit_dir = temporary
             service_file = os.path.join(temporary, "audit.service")
             timer_file = os.path.join(temporary, "audit.timer")
 
             def run_command(command: str, **_kwargs: object) -> SimpleNamespace:
-                if command == "systemctl start basaltwater-web-panel-audit.service":
+                if command == "systemctl start audit.service":
                     raise RuntimeError("snapshot failed")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -821,11 +823,11 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
             commands = [call.args[0] for call in mock_run.call_args_list]
             self.assertIn(
-                "systemctl disable --now basaltwater-web-panel-audit.timer",
+                "systemctl disable audit.timer",
                 commands,
             )
             self.assertIn(
-                "systemctl stop basaltwater-web-panel-audit.service",
+                "systemctl stop audit.service",
                 commands,
             )
             self.assertFalse(os.path.exists(service_file))
