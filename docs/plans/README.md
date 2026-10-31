@@ -16,6 +16,7 @@ qualification-gated. Completed namespace migration is documented in the
 | Shared Debian build/CI host | Bounded on-demand builds are implemented and qualified for selected static/Go workflows. Webhooks and GitHub runners remain separate. | Compose all three roles on one VM, share capacity and draining, then qualify conversion of an existing runner. See the [build-host plan](cicd-manifest-reuse.md) and [runner plan](github-runner-support.md). |
 | Resource-aware optimization | Serial startup, output, artifact I/O, source scanning and CI preparation are improved; the pinned basic-development workload has selected native 1 vCPU / 1 GiB Debian qualification. | Measure further coupled changes before introducing worker ownership, shared budgets or caches. See the [optimization plan](resource-aware-optimization.md) and [coverage limits](testing-coverage.md). |
 | Release qualification | Repository checks and selected live workflows exist; they do not qualify the complete candidate. | Run the remaining exact-candidate [release cases](../release-qualification.md#stable-qualification-matrix), including user rename, privilege execution, desktop/browser and supported application paths. |
+| Setup reliability | Firewall entrypoints now respect machine capabilities. Fresh XRDP jail activation and failed initramfs rebuild recovery need fixes and qualification. | Address [#113](https://github.com/bluehexagons/basaltwater/issues/113) before fresh RDP qualification and [#114](https://github.com/bluehexagons/basaltwater/issues/114) before resume recovery qualification. |
 | Read-only planning and drift | Domain-specific observations exist, but no general desired-versus-observed plan command. | Define a stable observation/result contract; address security-monitor source-retention detection in [#108](https://github.com/bluehexagons/basaltwater/issues/108). |
 
 ## Follow-up work
@@ -44,8 +45,11 @@ status inventory. Define a bounded deliverable before starting:
 - [#63: secrets](https://github.com/bluehexagons/basaltwater/issues/63):
   follow the deployment-secret plan.
 - [#105](https://github.com/bluehexagons/basaltwater/issues/105) and
-  [#107](https://github.com/bluehexagons/basaltwater/issues/107): define fleet
-  evidence, authority and cost boundaries before broader agent automation.
+  [#107](https://github.com/bluehexagons/basaltwater/issues/107): the
+  [maintenance supervisor](../operations/maintenance-agents.md) and
+  [independent task worker](../agents/agent-tasks.md) exist. Define remaining
+  fleet evidence, conversational authority and cost boundaries before broader
+  agent automation.
 - [#25: multimedia bundles](https://github.com/bluehexagons/basaltwater/issues/25),
   [#83: APT cache](https://github.com/bluehexagons/basaltwater/issues/83),
   [#87: preferences](https://github.com/bluehexagons/basaltwater/issues/87) and
