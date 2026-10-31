@@ -190,3 +190,42 @@ the account's Basaltwater qualification directory.
   considers the incident resolved for now. No USB fault reproduction was run
   during the follow-up health checks. See Microsoft's
   [bug-check reference](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-0x9f--driver-power-state-failure).
+
+## Recorded local run: 2026-10-31
+
+The [Windows workstation improvement pass](../plans/workstation-feedback-windows.md#windows-completion-record-2026-10-31)
+was qualified on Windows 11 Home build 26100 using PowerShell 7.6.9,
+Windows PowerShell 5.1.26100.9711 and Python 3.15.2. Complete native validation
+tested clean implementation `82d5313369abed89f16a1b8a4d559e0a763a8e00`.
+This record and the plan completion record are subsequent documentation changes.
+
+- `Run-NativeTests.ps1` passed in 175.690 seconds, including native process-tree
+  fixtures and all offline workstation suites. The eight Python capture tests
+  had two explicit POSIX-only skips. Expected mocked runner warnings and a Git
+  line-ending warning were inspected; the complete runner reported success.
+- Focused skill/development contracts passed under both PowerShell versions.
+  Owned native process fixtures exercised successful/failed jobs, cancellation,
+  timeout, both-stream cap overflow, failed overflow, guardian loss and uncertain
+  environment cleanup. Descendants terminated and an unrelated process survived.
+  Scheduler, installer, notification and sleep behavior remained mocked.
+- The actual checkout's project doctor returned its exact revision and clean
+  tracked/untracked state through the Windows PowerShell CLI entry point, without
+  executing project shims or GUI apps. Bounded metadata and untracked-dirty
+  regressions passed. Both native documentation checkers passed.
+- Only the Windows workspace skill bundle was updated with the guarded installer.
+  Its entrypoint and supporting resources match the tested checkout, and delivery
+  completion is confirmed. Saved setup/source remains at
+  `116e9c78f809421ae8c624ce9ab2a932457a431d`; freshness correctly reports the newer
+  bundle as different, four other installed bundles as legacy completion unknown,
+  and five absent optional Claude bundles as informational. Loaded session state
+  remains unknown. The installed CLI was not replaced; checkout diagnostics were
+  used. No full refresh or reboot was performed.
+- All 17 pre-existing development receipts were terminal after qualification.
+  No owned live/uncertain task or Scheduler registration remained. Private logs,
+  initial failed attempts, durations, source/catalog reports and implementation
+  handoff remain in this account's qualification evidence directory.
+
+Recipe integration remains deferred until a reviewed native consuming workflow
+justifies it. Physical display/GPU, streaming, audio/input, lock/reconnect,
+real Scheduler independence, fresh installation and live installer/reboot
+interruption were not qualified by these fixtures.

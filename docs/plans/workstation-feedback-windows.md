@@ -1,9 +1,8 @@
 # Windows workstation feedback handoff
 
-Status: implementation in progress. Native skill freshness and completion were
-delivered on `main` in `bcacaf167b8bb532bd2006e673b9cd51af87f154`; task evidence
-and bounded project discovery are being implemented. Final combined native
-qualification and installed guidance delivery remain pending.
+Status: implementation and native fixture qualification completed on 2026-10-31;
+see the [completion record](#windows-completion-record-2026-10-31). The original
+handoff below retains the requested scope and separate qualification boundaries.
 Prepared on Debian on 2026-10-31 from clean `main` at
 `89762e1f8956e66c8f8cdf604042284c95a122ea`. Start from current `main`, record
 the actual full HEAD and dirty state, and preserve unrelated work.
@@ -165,7 +164,7 @@ once after final implementation. From the checkout, examples are:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-AgentWorkstationTests.ps1
-pwsh.exe -NoProfile -File .\windows\tests\Run-WorkstationHealthTests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-WorkstationHealthTests.ps1
 pwsh.exe -NoProfile -File .\windows\tests\Run-DevelopmentTests.ps1
 pwsh.exe -NoProfile -File .\windows\tests\Run-DevelopmentProcessTests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-NativeTests.ps1
@@ -179,9 +178,10 @@ and duration, and inspect failures before retries. Check the native tests'
 current prerequisites: the complete suite requires real Python 3.11+ and stable
 PowerShell 7; process fixtures exercise actual owned Windows processes while
 mocking Scheduler/notifications. The examples do not install prerequisites.
-The workstation aggregate and complete suite use Windows PowerShell 5.1 to
+The health tests, workstation aggregate and complete suite use Windows
+PowerShell 5.1 to
 compile .NET Framework executable fixtures with `Add-Type`; PowerShell 7 does
-not support that executable output mode. Run the focused skill, health and
+not support that executable output mode. Run the focused skill and
 development entry points in PowerShell 7 as well. When invoking 5.1 from a
 PowerShell 7 host with inherited module paths, rebuild only the child process's
 `PSModulePath` from its Windows machine setting, as the native CLI launcher does.
@@ -209,3 +209,68 @@ At preparation, no Windows jobs were launched or inspected from Debian; there
 are no Windows task handles to transfer. Recheck the actual Windows account
 before starting. Existing Debian desktop/test handles do not grant ownership
 over Windows sessions or lab guests.
+
+## Windows completion record (2026-10-31)
+
+Work began on clean `main` at `ea013ae40c935ed7589a68edea4f6ecf28e33414`.
+Skill freshness/completion was delivered in `bcacaf167b8bb532bd2006e673b9cd51af87f154`;
+the combined implementation was tested at
+`82d5313369abed89f16a1b8a4d559e0a763a8e00`, clean when the complete suite started.
+The accompanying completion-record changes are documentation only.
+
+Both required increments and subsequent bounded discovery are implemented:
+
+- [`doctor --skills`](../workstations/windows.md#verify-this-account) compares
+  known bundles against saved source, preserves personal files and reports
+  explicit completion independently of session-loaded state. Shared source and
+  inventory resource validation rejects unrecordable/reserved paths before writes.
+- [Development receipts and logs](../workstations/windows-desktop.md#supervised-project-tasks)
+  expose UTC execution boundaries, monotonic duration, settled stream-cap loss
+  and separate tail omission. Existing containment, identity, cancellation,
+  dispatch and maintenance guards remain authoritative.
+- Project doctor reports selected executable paths, missing conventional runtime
+  requirements and bounded Git revision/dirty state, including untracked files.
+  It disables repository execution callbacks and does not execute project tools.
+  Submodule contents remain outside the reported dirty scope.
+
+On Windows 11 Home build 26100, PowerShell 7.6.9, Windows PowerShell
+5.1.26100.9711 and Python 3.15.2, the complete `Run-NativeTests.ps1` invocation
+passed in 175.690 seconds. Its eight Python output-capture tests included two
+explicit POSIX-only skips. Native job/development process-tree fixtures,
+workstation/health/CLI, skill delivery and all remaining native suites passed.
+Scheduler, notifications, installers and sleep requests were mocked; actual owned
+processes exercised success, failure, cancellation, timeout, both-stream floods
+(including failed flood), early parent exit and guardian loss. Owned descendants
+terminated while the unrelated fixture process survived.
+
+Focused skill and development contracts also passed under both shells. The
+development process fixtures passed under both invoking shells using PowerShell 7
+guardians. Discovery regressions cover staged, working and untracked changes,
+corrupt/unavailable metadata, output bounds and callback/shim nonexecution.
+Both documentation checkers and diff checks passed on native Windows. Earlier
+failed attempts and their corrected test-host/fixture causes are retained in
+private history; they are not counted as successful qualification.
+
+The Windows workspace bundle was delivered through the normal guarded skill
+installer under the setup lock, including its final desktop reference. All its
+installed resources match the tested checkout, with completion confirmed. Saved
+setup remains complete at `116e9c78f809421ae8c624ce9ab2a932457a431d`: the report
+correctly calls this newer bundle `different` from that older source. Four other
+installed bundles retain legacy unknown completion; five unselected Claude
+bundles are absent and informational. No full refresh, package update, installed
+CLI replacement, provider configuration change, desktop restart or reboot occurred.
+Use checkout diagnostics until a normal setup update supplies the new CLI.
+Session-loaded skill contents remain unknown.
+
+Manifest parsing and a recipe adapter are explicitly deferred: no reviewed native
+consuming workflow established an integration gap warranting them. Existing
+project-owned commands remain the route for verification; no second recipe format
+or settings serializer was introduced. Physical GPU/display, audio/input,
+streaming, lock/reconnect, real Scheduler independence and live installer/reboot
+interruption qualification remain separate and were not performed here.
+
+Private qualification evidence contains the implementation handoff, exact command
+statuses/durations, catalog reports and one current checkpoint with separate
+history. The account's 17 existing development receipts were checked terminal;
+no owned running or uncertain task remained after qualification. See the
+[local qualification record](../workstations/windows-qualification.md#recorded-local-run-2026-10-31).
