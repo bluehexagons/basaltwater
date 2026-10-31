@@ -47,6 +47,12 @@ errors; never work around revocation with a different input service.
 
 ## Sleeping displays
 
+Native `doctor` reports timestamped `checks.display_power` (on/off/mixed/unknown),
+and the local CachyOS doctor includes `session.display-power`. These read-only
+queries do not wake displays. An unlocked session/XWayland response does not
+establish display power; unknown observations and partial output coverage remain
+unverified.
+
 A sleeping monitor can leave capture black, frozen or unavailable even when the
 application and portal are running. While agent control is enabled, try
 `basaltw desktop --native wake` from the existing KDE session. It requests
@@ -101,6 +107,27 @@ with the actual screenshot values. The CLI limits text submission to 20 seconds
 and checks the human control revision between characters. In Blender's console, load a task script through a short
 `exec(open('/absolute/task/edit.py').read())` command, inspect the typed command,
 then submit Return. Do not type long scripts rapidly into the console.
+
+For post-input evidence, add `--observe --settle-ms 150` to `input`. After input
+release it waits the requested 0–5000 ms (default 120), skips the capture
+stream's first sample and awaits a subsequent sample within eight seconds.
+It returns input completion and frame receipt UTC/monotonic timestamps plus
+stream-relative PTS; receipt/PTS are not compositor presentation or proof of
+application readiness. A stalled/static stream may time out. Capture failure
+preserves input completion: inspect and recapture; never replay the input.
+Use `screenshot --next-frame --compact` for a separate bounded observation.
+Compact output retains path, generation, geometry, timestamps, pixel hash and
+`changed` (null for the first comparison); full screenshot/status/doctor output
+remains available. Pixel equality is not an application liveness assertion.
+
+For manual playtest reports, `evidence start --project PATH --json` records
+this helper's actions privately without text, key values or argv. Finish with
+`evidence finish --task TASK_ID --renderer 'renderer/device from app log' --json`.
+It attaches project tasks created during recording automatically and retains
+Git provenance, capture paths/hashes/timing and process/log/report snapshots.
+Renderer text is operator-observed; the project owns assertions. After helper
+exit or interrupted collection use `evidence finalize ARTIFACT --json`.
+See [evidence contracts and limits](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-desktop.md#manual-testing-evidence).
 
 For semantic controls use `inspect --pid PID --name NAME --role ROLE` with
 exact selectors; scope repeated reads to an observed `--root` where possible.

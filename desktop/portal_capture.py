@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+import hashlib
 import os
 import struct
 import sys
+import time
 import zlib
 
 
-def capture(fd: int, node: int, output_fd: int) -> list[int]:
+def capture(fd: int, node: int, output_fd: int, next_frame: int = 0) -> dict:
+    if next_frame not in (0, 1):
+        raise ValueError("next_frame must be 0 or 1")
     import gi
     gi.require_version("Gst", "1.0")
     gi.require_version("GstApp", "1.0")
@@ -23,9 +28,17 @@ def capture(fd: int, node: int, output_fd: int) -> list[int]:
     )
     try:
         pipeline.set_state(Gst.State.PLAYING)
-        sample = pipeline.get_by_name("frame").emit("try-pull-sample", 8 * Gst.SECOND)
+        sink = pipeline.get_by_name("frame")
+        deadline = time.monotonic() + 8
+        sample = sink.emit("try-pull-sample", 8 * Gst.SECOND)
         if sample is None:
             raise RuntimeError("No frame from the selected monitor; inspect portal/PipeWire state")
+        if next_frame:
+            sample = sink.emit("try-pull-sample", int(max(0, deadline - time.monotonic()) * Gst.SECOND))
+            if sample is None:
+                raise RuntimeError("No subsequent frame from the selected monitor; application/render readiness is unverified")
+        received_at = datetime.now(timezone.utc).isoformat()
+        received_monotonic_ns = time.monotonic_ns()
         info = GstVideo.VideoInfo.new_from_caps(sample.get_caps())
         width, height = info.width, info.height
         if not (0 < width <= 16384 and 0 < height <= 16384 and width * height <= 32 * 1024 * 1024):
@@ -41,10 +54,13 @@ def capture(fd: int, node: int, output_fd: int) -> list[int]:
             if stride < width * 4 or len(mapped.data) < offset + stride * (height - 1) + width * 4:
                 raise ValueError("Invalid RGBA frame layout")
             compressor = zlib.compressobj()
+            digest = hashlib.sha256()
             chunks = []
             for row in range(height):
                 start = offset + row * stride
-                chunks.append(compressor.compress(b"\0" + mapped.data[start:start + width * 4]))
+                pixels = mapped.data[start:start + width * 4]
+                digest.update(pixels)
+                chunks.append(compressor.compress(b"\0" + pixels))
             chunks.append(compressor.flush())
             compressed = b"".join(chunks)
         finally:
@@ -60,14 +76,17 @@ def capture(fd: int, node: int, output_fd: int) -> list[int]:
             stream.write(chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)))
             stream.write(chunk(b"IDAT", compressed))
             stream.write(chunk(b"IEND", b""))
-        return [width, height]
+        return {"geometry": [width, height], "pixel_sha256": digest.hexdigest(),
+                "frame_received_at": received_at, "frame_received_monotonic_ns": received_monotonic_ns,
+                "frame_pts_ns": None if buffer.pts == Gst.CLOCK_TIME_NONE else buffer.pts,
+                "initial_frame_skipped": bool(next_frame)}
     finally:
         pipeline.set_state(Gst.State.NULL)
 
 
 if __name__ == "__main__":
     try:
-        print(json.dumps({"geometry": capture(*(int(n) for n in sys.argv[1:]))}))
+        print(json.dumps(capture(*(int(n) for n in sys.argv[1:]))))
     except Exception as exc:
         print(json.dumps({"error": str(exc)}))
         raise SystemExit(1)

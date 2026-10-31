@@ -222,9 +222,14 @@ def revoke():
 
 
 def doctor():
+    checks = {}
     try:
         check_session()
         current = status()
+        checks["session"] = current
+        from desktop.display_power import display_power
+        power = display_power()
+        checks["display_power"] = power
         result = subprocess.run(["/usr/bin/python3", "-c",
             "import gi; gi.require_version('Atspi','2.0'); gi.require_version('Gst','1.0'); "
             "gi.require_version('GstApp','1.0'); gi.require_version('GstVideo','1.0'); "
@@ -234,10 +239,16 @@ def doctor():
             capture_output=True, text=True, timeout=5, check=False)
         if result.returncode:
             raise RuntimeError("Install python-gobject, at-spi2-core, gstreamer, gst-plugins-base, gst-plugin-pipewire, gtk3 and libxkbcommon")
-        return {"healthy": True, "checks": {"session": current},
+        suggestions = []
+        if power["state"] in ("off", "mixed"):
+            suggestions.append("A display is asleep; SDL/window creation can stall despite an unlocked session. When agent control is enabled, use 'basaltw desktop --native wake', then recapture.")
+        elif power["state"] == "unknown":
+            suggestions.append(power["reason"])
+        return {"healthy": power["state"] == "on", "checks": checks,
+                "suggestions": suggestions,
                 "unverified": ["portal consent", "capture/input", "application responsiveness"]}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        return {"healthy": False, "suggestions": [str(exc)]}
+        return {"healthy": False, "checks": checks, "suggestions": [str(exc)]}
 
 
 def normalize_window_id(value):
@@ -285,6 +296,11 @@ class NativeSession:
         self.until = time.monotonic() + session_seconds if session_seconds else float("inf")
         self.geometry = None
         self.captured = 0
+        self.pixel_digest = None
+        self.last_input = None
+        self.evidence = None
+        self.last_evidence = None
+        self.evidence_error = None
         self.elements = {}
         self.control_revision = control_state.status()["control_revision"]
         self.launches = {}
@@ -302,6 +318,9 @@ class NativeSession:
                 "restore_attempted": self.restore_attempted, "session_seconds": self.session_seconds,
                 "max_session_seconds": MAX_SESSION_SECONDS,
                 "geometry": self.geometry,
+                "evidence": str(self.evidence.path) if self.evidence else self.last_evidence,
+                "evidence_recording": self.evidence is not None,
+                "evidence_error": self.evidence_error,
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": (None if not self.session_seconds else max(0, int(self.until - time.monotonic()))) if self.state == "running" else 0,
                 "control_active": self.input_active,
@@ -349,6 +368,13 @@ class NativeSession:
             self.state = "stopped"
             self.elements.clear()
             self.stopping.set()
+            if self.evidence:
+                try:
+                    self.last_evidence = str(self.evidence.path)
+                    self.evidence.finish(self.launches, reason="helper-stopped")
+                except (OSError, ValueError, RuntimeError):
+                    self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
+                self.evidence = None
             self.record()
 
     def save_restore_token(self, token):
@@ -371,6 +397,27 @@ class NativeSession:
         control_state.require_enabled(payload)
 
     def handle(self, payload):
+        try:
+            result = self._handle(payload)
+        except Exception:
+            self.record_evidence(payload, None)
+            raise
+        self.record_evidence(payload, result)
+        if self.evidence_error:
+            result["evidence_error"] = self.evidence_error
+        return result
+
+    def record_evidence(self, payload, result):
+        with self.lock:
+            if self.evidence:
+                try:
+                    self.evidence.event(payload, result)
+                except (OSError, ValueError, RuntimeError):
+                    # A completed input must never look like a retryable failure
+                    # merely because recording ran out of disk space.
+                    self.evidence_error = "Evidence checkpoint failed; inspect its private artifact"
+
+    def _handle(self, payload):
         with self.lock:
             self.sync_control()
             action = payload.get("action")
@@ -431,6 +478,25 @@ class NativeSession:
                 return self.snapshot_status()
             if self.input_active:
                 raise RuntimeError("A native input is still releasing; observe before retrying")
+            if action == "evidence":
+                from desktop.evidence import Recorder
+                operation = payload.get("operation")
+                if operation == "start":
+                    if self.evidence is not None:
+                        raise ValueError("Evidence recording is already active; finish it first")
+                    self.evidence = Recorder(payload.get("project"), self.generation, launches=self.launches)
+                    self.evidence_error = None
+                    self.record()
+                    return {"artifact": str(self.evidence.path), "recording": True, "generation": self.generation}
+                if operation == "finish":
+                    if self.evidence is None:
+                        raise ValueError("No evidence recording is active")
+                    result = self.evidence.finish(self.launches)
+                    self.last_evidence = str(self.evidence.path)
+                    self.evidence = None
+                    self.record()
+                    return result
+                raise ValueError("Evidence operation must be start or finish")
             if action == "inspect":
                 pid = payload.get("pid")
                 accessibility.validate_query(payload)
@@ -501,14 +567,20 @@ class NativeSession:
     def capture(self, payload):
         if payload.get("window") or payload.get("active_window"):
             raise ValueError("Portal capture uses the consent-selected monitor; window capture is unavailable")
+        next_frame = payload.get("next_frame", False)
+        if type(next_frame) is not bool:
+            raise ValueError("next_frame must be a boolean")
         output = payload.get("output")
         validate_filesystem_path(output)
         if not Path(output).is_absolute() or Path(output).suffix.lower() != ".png":
             raise ValueError("Capture requires an absolute new PNG path")
         fd = os.open(output, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
-            process = subprocess.run(["/usr/bin/python3", str(Path(__file__).with_name("portal_capture.py")),
-                str(self.portal.fd), str(self.node), str(fd)], pass_fds=(self.portal.fd, fd),
+            argv = ["/usr/bin/python3", str(Path(__file__).with_name("portal_capture.py")),
+                    str(self.portal.fd), str(self.node), str(fd)]
+            if next_frame:
+                argv.append("1")
+            process = subprocess.run(argv, pass_fds=(self.portal.fd, fd),
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=12, check=False)
             if len(process.stdout) > 4096:
                 raise RuntimeError("Capture response exceeded its limit")
@@ -524,10 +596,19 @@ class NativeSession:
             header = os.pread(fd, 24, 0)
             if header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" or len(header) != 24 or list(struct.unpack(">II", header[16:])) != geometry:
                 raise RuntimeError("Capture artifact does not match its reported PNG geometry")
+            digest = result.get("pixel_sha256")
+            if digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                raise RuntimeError("Invalid capture pixel digest")
+            changed = (None if digest is None or self.pixel_digest is None else
+                       digest != self.pixel_digest or geometry != self.geometry)
+            self.pixel_digest = digest
             self.geometry = geometry
             self.captured = time.monotonic()
             return {**self.snapshot_status(), "output": output, "image_geometry": self.geometry,
-                    "captured_at": datetime.now(timezone.utc).isoformat()}
+                    "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
+                    **{key: result.get(key) for key in ("pixel_sha256", "frame_received_at",
+                       "frame_received_monotonic_ns", "frame_pts_ns", "initial_frame_skipped")},
+                    "last_input": self.last_input}
         except Exception:
             os.unlink(output)
             raise
@@ -612,7 +693,9 @@ class NativeSession:
                         raise RuntimeError("Key release failed; native control stopped") from release_error
         else:
             raise ValueError("Unknown native input kind")
-        return {"generation": self.generation, "geometry": self.geometry}
+        self.last_input = {"input_completed_at": datetime.now(timezone.utc).isoformat(),
+                           "input_completed_monotonic_ns": time.monotonic_ns()}
+        return {"generation": self.generation, "geometry": self.geometry, **self.last_input}
 
 
 def serve(*, remember=False, session_seconds=SESSION_SECONDS):

@@ -269,6 +269,24 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None, backe
     return {**result, "submitted_characters": submitted}
 
 
+def observe_after_input(result: dict, payload: dict, output: str, *, settle_ms: int, backend) -> dict:
+    """Retain completed input evidence even when its subsequent capture fails."""
+    from desktop.observations import compact_capture
+    time.sleep(settle_ms / 1000)
+    try:
+        observed = backend.status()
+        if (observed.get("generation") != payload["generation"] or
+                observed.get("control_revision") != payload["control_revision"]):
+            raise RuntimeError("Desktop control changed after input; observe before further input")
+        capture = backend.request({"action": "screenshot", "generation": payload["generation"],
+                                   "output": output, "next_frame": True})
+        if capture.get("initial_frame_skipped") is not True:
+            raise RuntimeError("Backend did not confirm subsequent-frame capture; restart the native helper")
+        return {**result, "observation": compact_capture(capture), "settle_ms": settle_ms}
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {**result, "error": f"Input completed; observation failed: {exc}. Do not replay input."}
+
+
 def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:
     validate_filesystem_path(path, must_exist=True)
     if Path(path).stat().st_size > backend.MAX_MESSAGE:

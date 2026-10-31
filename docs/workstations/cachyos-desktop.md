@@ -45,11 +45,98 @@ before input. This bounded KDE display-power request needs no running portal
 and preserves agent permission, screen locking and idle policy. See the
 [native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#sleeping-displays)
 and [Moonlight recovery](cachyos-maintenance.md#sleeping-monitors-and-moonlight).
+Native `doctor` now reports `checks.display_power` with observed output names,
+on/off/mixed state and observation time. The local CachyOS doctor also includes
+`session.display-power` prominently among deferred observations when asleep or
+unknown. Queries are bounded and read-only; unlocked sessions and responding
+XWayland sockets do not establish display power or SDL window readiness.
+Unknown results stay unknown, including missing tools, timeouts and unrecognized
+output. KDE may report only some outputs, so this is not a physical-panel check.
 
 The [native control reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md)
 is the operational guide for consent stages, saved grants, bounded capture/input,
 accessibility, physical-key troubleshooting, stop/revoke, and recovery.
 It is installed with the skill; use it for exact procedures and limits.
+
+## Post-input observations
+
+After inspecting a fresh capture and confirming focus, use its actual generation,
+dimensions and coordinates:
+
+```fish
+basaltw desktop --native input click --generation GEN --geometry 2560 1440 \
+  --x 400 --y 200 --hold-ms 120 --observe --settle-ms 150
+basaltw desktop --native screenshot --next-frame --compact
+```
+
+`input --observe` completes and releases the bounded input, waits 120 ms by
+default (configurable 0–5000), then opens a capture stream, skips its initial
+sample and awaits a subsequent sample. Frame acquisition has an eight-second
+budget; a static/stalled stream can time out. Capture failure retains completed
+input timestamps and returns nonzero: inspect state and capture again rather
+than replaying the input. A changed control revision cancels the observation.
+This operation does not assert that an application's animation or rendering has
+finished. Project-owned waits/assertions still decide readiness.
+
+Native input returns `input_completed_at` (UTC) and
+`input_completed_monotonic_ns` after release. Native captures include
+`frame_received_at` (UTC), `frame_received_monotonic_ns`, `frame_pts_ns`, and
+`captured_at` (PNG completion). Receipt time describes sample acquisition;
+PipeWire/GStreamer PTS is stream-relative and is not a compositor presentation
+time or directly comparable with monotonic input time. Skipping a sample reduces
+initial-buffer ambiguity but cannot establish input-to-photon latency.
+
+`screenshot --compact` returns the image path, generation, geometry, timestamps,
+pixel SHA-256 and `changed`, omitting the status envelope. Full screenshot
+metadata remains the default; use `status`/`doctor` for diagnostics. Native
+`changed` compares visible RGBA pixels and geometry with the preceding successful
+capture in this helper generation, ignoring row padding; the first comparison
+is null. False means equal pixels, not a stalled app; true can include a cursor
+or unrelated desktop content. Debian compact results retain available metadata,
+without inventing native timing or change detection. Native screenshot help
+hides window-capture switches; attempts still fail explicitly.
+
+## Manual testing evidence
+
+Start recording before the supervised launch and interaction loop, then finish
+after inspecting the application's renderer/device and final task state:
+
+```fish
+basaltw desktop --native evidence start --project /absolute/project --json
+# Launch with develop, observe/interact, then wait or stop only owned tasks.
+basaltw desktop --native evidence finish --task TASK_ID \
+  --renderer 'OpenGL; device observed in the application log' --json
+```
+
+One opt-in record per helper links the generation, Git revision/dirty state,
+input completion metadata, captures and pixel hashes, native launch tokens and
+exit snapshots, and development task log/report paths and process status.
+Tasks created for that exact project during the recording are attached
+automatically; repeat `--task` to include tasks launched earlier. Renderer text
+is explicitly operator-observed, never inferred from installed GPU inventory.
+It is not a project assertion or release qualification.
+
+Records live outside repositories in private
+`~/.local/state/basaltwater/desktop-evidence/*.json` files (0700 directory,
+0600 files). They reference existing images/logs rather than copying them;
+preserve those artifacts with the record. The journal omits typed text, key
+values, argv and portal credentials. It caps events at 500 and task attachments
+at 50 and reports truncation; only this helper's desktop actions are observed.
+Process snapshots can still be running or unverified and are not proof of
+completion. Git lookup is bounded; unavailable revisions remain null.
+
+Finishing freezes the journal before collecting task status outside the portal
+request budget. If interrupted, or if the helper stops, use the saved path from
+start/status with `evidence finalize /absolute/record.json --task TASK_ID
+--renderer 'observed renderer' --json`. Stopped-helper checkpoints retain
+`finalized: false` until this collection succeeds, and `recording_end_reason`
+identifies helper shutdown; an in-flight operation may be absent from that
+checkpoint. Status retains the last evidence path across helper exit.
+Finalizing again refreshes task snapshots while retaining attached tasks and
+the renderer annotation unless replaced explicitly. Disk failures are reported
+as `evidence_error` without disguising completed input as a retryable failure.
+Evidence finish/finalize never stops a process or closes the desktop. Review
+captures and logs before sharing; records have no automatic cleanup timer.
 
 ## Installation and verification
 

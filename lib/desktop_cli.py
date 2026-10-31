@@ -12,12 +12,35 @@ from desktop import client
 from lib.validation import validate_filesystem_path
 
 
+class _NativeBackendAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, True)
+        screenshot = parser.native_screenshot_parser
+        screenshot.description = "KDE Wayland: capture the consent-selected monitor. Window capture is unavailable."
+        for action in screenshot._actions:
+            if action.dest in ("window", "active_window"):
+                action.help = argparse.SUPPRESS
+
+
 def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("desktop", help="Use the shared Debian desktop or opt in to native CachyOS automation")
-    parser.add_argument("--native", action="store_true", help="Use KDE Wayland portal automation on CachyOS; start requests user consent")
+    parser.add_argument("--native", action=_NativeBackendAction, nargs=0, default=False,
+                        help="Use KDE Wayland portal automation on CachyOS; start requests user consent")
     commands = parser.add_subparsers(dest="desktop_command", required=True)
     from desktop.development import add_development_parser
     add_development_parser(commands)
+    evidence = commands.add_parser("evidence", help="Native: record manual launches, inputs and captures with project/task provenance")
+    evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)
+    recording = evidence_commands.add_parser("start")
+    recording.add_argument("--project", required=True)
+    finishing = evidence_commands.add_parser("finish")
+    finalizing = evidence_commands.add_parser("finalize", help="Finalize a saved recording after helper exit or interrupted collection")
+    finalizing.add_argument("artifact")
+    for command in (finishing, finalizing):
+        command.add_argument("--task", action="append", default=[], help="Also attach a pre-existing development task; repeat as needed")
+        command.add_argument("--renderer", help="Renderer/device observed in the application's log; recorded as operator-observed")
+    for command in (recording, finishing, finalizing):
+        command.add_argument("--json", action="store_true")
     for name in ("status", "stop", "logout", "windows", "doctor", "handoff", "revoke"):
         command = commands.add_parser(name)
         command.add_argument("--json", action="store_true")
@@ -34,9 +57,12 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     renewal.add_argument("--seconds", type=int, default=0)
     renewal.add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Live Geany edit/save/dialog check in an isolated test instance")
-    screenshot = commands.add_parser("screenshot")
+    screenshot = commands.add_parser("screenshot", description="Debian: capture the desktop or a selected window. With --native: selected monitor only.")
+    parser.native_screenshot_parser = screenshot
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
     screenshot.add_argument("--json", action="store_true")
+    screenshot.add_argument("--compact", action="store_true", help="Return capture metadata without the status envelope; use status/doctor for diagnostics")
+    screenshot.add_argument("--next-frame", action="store_true", help="Native: skip the initial PipeWire sample and await a subsequent sample (8-second frame budget)")
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
@@ -115,6 +141,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--x", type=int)
     action.add_argument("--y", type=int)
     action.add_argument("--button", type=int, default=1)
+    action.add_argument("--observe", action="store_true", help="Native: after completed input, settle and capture a subsequent frame; never replay input on capture failure")
+    action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
+    action.add_argument("--output", help="New PNG path for --observe; defaults to private artifact storage")
 
 
 def run_desktop_command(args: argparse.Namespace) -> int:
@@ -128,7 +157,26 @@ def run_desktop_command(args: argparse.Namespace) -> int:
     try:
         command = args.desktop_command
         control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
-        if command == "status":
+        if command == "evidence":
+            if backend is runtime:
+                raise ValueError("Manual desktop evidence requires --native")
+            from desktop.evidence import finalize
+            operation = args.evidence_command
+            if operation == "finalize":
+                result = finalize(args.artifact, tasks=args.task, renderer=args.renderer)
+            else:
+                current = backend.status()
+                payload = {"action": "evidence", "operation": operation, "generation": current.get("generation")}
+                if operation == "start":
+                    payload["project"] = str(Path(args.project).expanduser().resolve())
+                result = backend.request(payload)
+                if operation == "finish":
+                    artifact = result["artifact"]
+                    try:
+                        result = finalize(artifact, tasks=args.task, renderer=args.renderer)
+                    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                        result = {**result, "error": f"Recording saved; finalization failed: {exc}", "artifact": artifact}
+        elif command == "status":
             result = backend.status()
         elif command == "wake":
             if backend is runtime:
@@ -238,10 +286,19 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             elif command == "sequence":
                 result = client.run_sequence(args.path, args.generation, backend=backend)
             elif command == "screenshot":
+                if args.next_frame and backend is runtime:
+                    raise ValueError("Subsequent-frame capture requires --native")
                 payload["output"] = str(Path(args.output).absolute()) if args.output else client.artifact_path()
                 payload["window"] = args.window
                 payload["active_window"] = args.active_window
+                if args.next_frame:
+                    payload["next_frame"] = True
                 result = backend.request(payload)
+                if args.next_frame and result.get("initial_frame_skipped") is not True:
+                    result["error"] = "Backend did not confirm subsequent-frame capture; restart the native helper"
+                if args.compact:
+                    from desktop.observations import compact_capture
+                    result = compact_capture(result)
             else:
                 if command == "exec":
                     payload["argv"] = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
@@ -259,6 +316,18 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     payload.update({name: getattr(args, name) for name in
                                     ("generation", "operation", "ref", "action_name", "text")})
                 elif command == "input":
+                    if args.observe and backend is runtime:
+                        raise ValueError("Post-input observation requires --native")
+                    if not 0 <= args.settle_ms <= 5000:
+                        raise ValueError("Observation settling delay must be 0–5000 ms")
+                    if not args.observe and (args.output is not None or args.settle_ms != 120):
+                        raise ValueError("Observation output and settling delay require --observe")
+                    observation_output = None
+                    if args.observe:
+                        observation_output = str(Path(args.output).absolute()) if args.output else client.artifact_path()
+                        validate_filesystem_path(observation_output)
+                        if Path(observation_output).suffix.lower() != ".png" or Path(observation_output).exists():
+                            raise ValueError("Observation requires a new PNG path")
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
                     payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
                     client.validate_text_delay(payload)
@@ -267,6 +336,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     if args.hold_ms is not None and backend is runtime:
                         raise ValueError("Hold duration requires --native")
                 result = client.send_action(payload, backend=backend)
+                if command == "input" and args.observe and "error" not in result:
+                    result = client.observe_after_input(result, payload, observation_output,
+                                                        settle_ms=args.settle_ms, backend=backend)
                 if wait_title:
                     result["window_baseline"] = baseline
                     try:

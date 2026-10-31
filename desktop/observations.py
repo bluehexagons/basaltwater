@@ -9,6 +9,14 @@ import shutil
 import tempfile
 
 
+def compact_capture(result: dict) -> dict:
+    """Keep capture evidence and errors while omitting the control envelope."""
+    return {key: result[key] for key in (
+        "output", "generation", "geometry", "image_geometry", "captured_at", "changed",
+        "pixel_sha256", "frame_received_at", "frame_received_monotonic_ns", "frame_pts_ns",
+        "initial_frame_skipped", "last_input", "error", "evidence_error") if key in result}
+
+
 def save_observation(result: dict) -> dict:
     """Retain the exact JSON result privately and return a bounded preview.
 

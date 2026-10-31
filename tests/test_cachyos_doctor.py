@@ -18,6 +18,9 @@ import basaltwater
 from lib import cachyos_doctor as doctor
 from lib.local_cli import run_local_command
 
+DPMS_PROBE = ["/usr/bin/env", "WAYLAND_DISPLAY=wayland-0", "QT_QPA_PLATFORM=wayland",
+              "/usr/bin/kscreen-doctor", "--dpms", "show"]
+
 
 class CapabilityContractTests(unittest.TestCase):
     def setUp(self):
@@ -342,6 +345,8 @@ class DoctorTests(unittest.TestCase):
 
     @staticmethod
     def healthy_probe(command, _uid):
+        if command == DPMS_PROBE:
+            return "ok", "dpms mode for screen DP-1: on\n"
         if command[0] == "/usr/bin/pacman":
             return "ok", f"{command[-1]} 6.0.0-1\n"
         if command[0] == "/usr/bin/busctl":
@@ -370,7 +375,9 @@ class DoctorTests(unittest.TestCase):
         for call in self.probe.call_args_list:
             command, uid = call.args
             self.assertEqual(uid, 1000)
-            if command[0] == "/usr/bin/pacman":
+            if command == DPMS_PROBE:
+                continue
+            elif command[0] == "/usr/bin/pacman":
                 self.assertEqual(command[1:3], ["-Q", "--"])
                 self.assertIn(command[3], doctor.PACKAGES)
             elif command[0] == "/usr/bin/busctl":
@@ -424,7 +431,9 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(sum(item["name"] == "tool.python" for item in report["capabilities"]), 1)
         for call in self.probe.call_args_list:
             command = call.args[0]
-            if command[0] == "/usr/bin/available":
+            if command == DPMS_PROBE:
+                continue
+            elif command[0] == "/usr/bin/available":
                 self.assertEqual(command[1:], ["--version"])
             else:
                 self.assertIn(command[0], ("/usr/bin/pkg-config", "/usr/bin/pacman", "/usr/bin/systemctl", "/usr/bin/busctl"))
@@ -519,8 +528,24 @@ class DoctorTests(unittest.TestCase):
             self.assertIsNone(records["tool." + command]["version"])
         self.assertEqual(records["package.blender"]["state"], "available")
         for call in self.probe.call_args_list:
+            if call.args[0] == DPMS_PROBE:
+                continue
             self.assertIn(call.args[0][0], ("/usr/bin/pacman", "/usr/bin/systemctl", "/usr/bin/busctl",
                                           "/fixture/git", "/fixture/rg"))
+
+    def test_power_state_stays_visible_without_waking_displays(self):
+        for power, expected in (("on", "available"), ("off", "deferred"), ("unknown", "deferred")):
+            def probe(command, uid):
+                if command == DPMS_PROBE:
+                    return "ok", f"dpms mode for screen DP-1: {power}\n"
+                return self.healthy_probe(command, uid)
+            self.probe.side_effect = probe
+            report = doctor.collect_cachyos_doctor()
+            record = next(row for row in report["capabilities"] if row["name"] == "session.display-power")
+            with self.subTest(power=power):
+                self.assertEqual(record["state"], expected)
+                self.assertIn("DPMS " + power, record["reason"])
+                self.assertFalse(any(call.args[0][-2:] == ["--dpms", "on"] for call in self.probe.call_args_list))
 
     def test_unselected_native_commands_are_not_required_and_overlaps_are_unique(self):
         from lib.config import SetupConfig

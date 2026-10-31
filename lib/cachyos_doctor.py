@@ -357,6 +357,16 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         record("session.wayland", "available" if wayland_ready else "deferred",
                "Owned Wayland socket exists; active compositor and rendering are not verified." if wayland_ready else
                "Run from a KDE Wayland terminal with its owned Wayland socket.")
+        if wayland_ready and bus_ready:
+            from desktop.display_power import display_power
+            power = display_power(probe=lambda command: _probe(command, uid))
+            state = power["state"]
+            reason = ("Reported displays are on; rendering and window creation remain unverified." if state == "on" else
+                      "A reported display is asleep; SDL/window creation may stall. When agent control is enabled, use basaltw desktop --native wake, then recapture."
+                      if state in ("off", "mixed") else power["reason"])
+            record("session.display-power", "available" if state == "on" else "deferred", f"DPMS {state}. {reason}")
+        else:
+            record("session.display-power", "deferred", "Display power unknown; run doctor from the existing KDE Wayland session.")
 
         installed_browsers = []
         for package in dict.fromkeys((*PACKAGES, *selected_packages)):
