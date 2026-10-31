@@ -334,15 +334,24 @@ class KioskCliTests(unittest.TestCase):
         normal = self.command
 
         def failure(argv, **options):
-            if argv[1] == "start":
+            if argv[1] in {"start", "restart"}:
                 return subprocess.CompletedProcess(argv, 1, "secret page URL", "private browser info")
             return normal(argv, **options)
 
         self.run.side_effect = failure
-        code, result = self.invoke("start")
-        self.assertEqual(code, 1)
-        self.assertIn("exit 1", result["error"])
-        self.assertNotIn("secret", json.dumps(result))
+        for command in ("start", "restart"):
+            for service_result in ("success", "start-limit-hit"):
+                self.state["Result"] = service_result
+                with self.subTest(command=command, service_result=service_result):
+                    code, result = self.invoke(command)
+                    self.assertEqual(code, 1)
+                    self.assertIn("exit 1", result["error"])
+                    self.assertNotIn("secret", json.dumps(result))
+                    self.assertEqual("reset-failed" in result["error"], service_result == "start-limit-hit")
+                    if service_result == "start-limit-hit":
+                        self.assertIn("inspect", result["error"])
+                        self.assertIn(cli.steps.SERVICE, result["error"])
+        self.assertFalse(any(call.args[0][1] == "reset-failed" for call in self.run.call_args_list))
         self.run.side_effect = subprocess.TimeoutExpired("systemctl", 10, output="private URL")
         code, result = self.invoke("status")
         self.assertEqual(code, 1)

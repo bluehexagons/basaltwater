@@ -157,10 +157,14 @@ hook terminates this dedicated account's logind sessions too, including browser
 processes outside greetd's service cgroup, and waits up to 45 seconds for user
 and runtime teardown. A matching pre-start check also blocks a new browser
 while old sessions remain. Repeated greetd failures, including unexpected
-zero-status exits, restart with a three-start limit in ten minutes. After
-correcting a startup failure, use `systemctl reset-failed basaltwater-kiosk.service`
-before starting again if that limit was reached. A network failure leaves the
-browser on its error page and does not trigger kiosk restarts.
+zero-status exits, restart with a three-start limit in ten minutes. Systemd also
+counts manual starts, restarts and setup-triggered restarts toward this limit.
+If a start is refused with `start-limit-hit`, the CLI reports the required
+recovery without clearing the limit or retrying. Inspect the local service
+journal, correct any startup problem, then use
+`systemctl reset-failed basaltwater-kiosk.service` before explicitly starting
+again. A network failure leaves the browser on its error page and does not
+trigger kiosk restarts.
 
 When opening a direct homepage, the browser supervisor first waits up to 30
 seconds for a TCP connection to that URL's hostname and port. It retries short
@@ -194,12 +198,26 @@ This prevents a still-running login manager from recreating sessions during clea
 
 ## Proxmox and hardware qualification
 
-The environment used to prepare this guide has no DRM graphics device or
-physical seat. Unit and mocked validation do not demonstrate that a real
-Proxmox host, Surface, display, keyboard, or touchpad works. Qualify the exact
-hardware and monitor arrangement before relying on a kiosk, especially for
-remote VMs that need a local browser. The existing host lid and suspend policy
-is unchanged.
+Selected Debian 13 QEMU checks exercise the kiosk component directly with
+virtio graphics, virtual input and Firefox ESR: installation, CLI/web boot,
+offline destinations, opening a link in a new tab, exact keyboard text submission,
+VT switching, normal browser quit, bounded compositor-crash retries, explicit
+recovery, local commands, unchanged rerun and removal. Account/profile identities
+survive lifecycle changes and reboot; checked stops leave no kiosk processes or
+user runtime. Removal retains the account, browser data and packages.
+
+These are component checks, not a complete `server_proxmox` installation or
+physical-seat qualification. The cloud kernel initially lacked DRM support;
+the fixture required Debian's standard kernel. Virtual graphics used software
+rendering and produced DRM warnings and a transient blank redraw during VT
+switching before Firefox returned. Qualify graphics and switching behavior on
+the intended machine rather than inferring it from this VM.
+
+A real Proxmox host, Surface, monitor arrangement, keyboard and touchpad still
+need qualification, along with native/guest console access, scaling, network
+interruption and delayed direct-homepage startup. The existing host lid and
+suspend policy is unchanged. See the [coverage map](../plans/testing-coverage.md)
+for the current boundaries.
 
 Record results for each intended hardware combination, including:
 

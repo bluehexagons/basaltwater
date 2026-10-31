@@ -321,7 +321,18 @@ def _mutate(command: str) -> dict:
         if failure is not None:
             raise failure
     else:
-        _command(["/usr/bin/systemctl", command, steps.SERVICE], timeout=150 if command == "restart" else 90)
+        try:
+            _command(["/usr/bin/systemctl", command, steps.SERVICE], timeout=150 if command == "restart" else 90)
+        except ERRORS as failure:
+            try:
+                limited = _service()["Result"] == "start-limit-hit"
+            except ERRORS:
+                limited = False
+            if limited:
+                raise RuntimeError(f"{failure}; kiosk start limit reached: inspect local service logs, "
+                                   "correct any startup problem, then run "
+                                   f"systemctl reset-failed {steps.SERVICE} before explicitly retrying") from failure
+            raise
     result = _status()
     service = result["service"]
     expected = "inactive" if command == "stop" else "active"
