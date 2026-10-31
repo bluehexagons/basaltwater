@@ -39,7 +39,8 @@ from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
 from common.service_tools.web_panel_shares_data import parse_shares_data_query, render_shares_data
 from common.service_tools.web_panel_data_actions import PanelData, render_review as render_data_review, unavailable_reason as data_unavailable
-from common.service_tools.web_panel_samba import PanelSamba, render_review as render_samba_review, unavailable_reason as samba_unavailable
+from common.service_tools.web_panel_samba import (PanelSamba, PASSWORD_ACTIONS, render_review as render_samba_review,
+                                                render_saved_review as render_saved_samba_review, unavailable_reason as samba_unavailable)
 from common.service_tools.web_panel_share_actions import PanelShares, render_review as render_share_review, unavailable_reason as shares_unavailable
 from common.service_tools import web_panel_routine_actions as routine_actions
 from lib.storage_diagnostics import StorageDiagnostics
@@ -2750,11 +2751,11 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if set(values) not in allowed or any(len(entries) != 1 for entries in values.values()):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid Samba action\n", "text/plain")
             return
-        if (password_fields & set(values) or values.get("action") == ["reset-password"]) and (
+        if (password_fields & set(values) or values.get("action", [""])[0] in PASSWORD_ACTIONS) and (
             os.geteuid() == 0 or not self.state.credential_transport_available()
             or self.headers.get("X-Forwarded-Proto", "").lower() != "https"
         ):
-            self._send(HTTPStatus.FORBIDDEN, "Samba password reset requires the configured HTTPS panel\n", "text/plain")
+            self._send(HTTPStatus.FORBIDDEN, "Samba password entry requires the configured HTTPS panel\n", "text/plain")
             return
         try:
             fields = {key: entries[0] for key, entries in values.items() if key != "csrf"}
@@ -2770,9 +2771,21 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                                         **({key: fields[key] for key in password_fields} if password_fields <= fields.keys() else {}))
             else:
                 self.state.admin.cancel(fields["id"])
-        except (OSError, ValueError, RuntimeError):
-            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, error=
-                "The Samba request could not be confirmed. Check Samba activity and approval requests before trying again. Reviews expire after five minutes and require the exact username. Password reset also requires matching new passwords of 12–128 characters; password fields are cleared after submission."), "text/html")
+        except (OSError, ValueError, RuntimeError) as exc:
+            review = ""
+            message = "The Samba request could not be confirmed. Check Samba activity and approval requests before trying again. Reviews expire after five minutes. Password fields are cleared; unconfirmed submissions are never replayed."
+            if path.endswith("/review") and isinstance(exc, ValueError):
+                message = str(exc)
+            elif path.endswith("/submit"):
+                try:
+                    value = self.state.samba.reviewed(fields["ticket"])
+                    csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
+                    review = render_saved_samba_review(fields["ticket"], value, csrf)
+                    if isinstance(exc, ValueError):
+                        message = "The Samba request could not be confirmed: " + str(exc) + ". Password fields are cleared."
+                except ValueError:
+                    pass
+            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, review=review, error=message), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=shares"})
 

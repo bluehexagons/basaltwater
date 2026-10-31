@@ -14,7 +14,7 @@ from lib.validation import validate_filesystem_path, validate_no_control_charact
 from lib.validators import validate_host
 from lib.admin_actions import action_spec, dispatch_argv
 from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_action
-from lib.samba_accounts import ACCOUNT_ACTIONS, account_dispatch_argv, validate_account_action
+from lib.samba_accounts import ACCOUNT_ACTIONS, PASSWORD_ACTIONS, account_dispatch_argv, account_effect, validate_account_action
 from lib.samba_shares import share_dispatch_argv, share_label, share_name, validate_share_action
 from lib.storage_routines import routine_dispatch_argv, routine_effect, routine_label, validate_routine_action
 
@@ -172,11 +172,9 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = "approve"
         argv = account_dispatch_argv(parameters)
         effect = (ACCOUNT_ACTIONS[parameters["action"]] + " for " + parameters["username"]
-                  + (". Consume the separately staged one-use password; change only the Samba password. "
-                     "Preserve login flags, Unix password and share membership. Reject changed passdb metadata; "
-                     "the staged password expires after one hour or broker restart. "
-                     if parameters["action"] == "reset-password" else
-                     ". Change only the Samba disabled flag; preserve passwords, Unix login and share membership. ")
+                  + ". " + account_effect(parameters["action"])
+                  + ("The staged password expires after one hour or broker restart. "
+                     if parameters["action"] in PASSWORD_ACTIONS else "")
                   + "Existing SMB sessions may continue. Reject changed account/configuration metadata; "
                   "run once in a supervised root service with a 45-second limit and wait for its result.")
     elif operation == "command.run" and set(parameters) == {"argv"}:

@@ -959,7 +959,7 @@ test.describe('Shares & Data', () => {
     await expect(accounts.locator('form')).toHaveCount(0);
     await sambaActivity.getByRole('button', { name: 'Cancel Samba request', exact: true }).click();
     await expect(sambaActivity).toContainText('cancelled');
-    await expect(accounts.locator('form')).toHaveCount(4);
+    await expect(accounts.locator('form')).toHaveCount(6);
     await accounts.getByRole('button', { name: 'Reset Samba password', exact: true }).first().click();
     await expect(sambaReview).toContainText('Change only the Samba password');
     const samplePassword = 'fixture-reset-password-123';
@@ -976,7 +976,7 @@ test.describe('Shares & Data', () => {
     await expect(sambaActivity).toContainText('pending');
     expect(await page.content()).not.toContain(samplePassword);
     await sambaActivity.getByRole('button', { name: 'Cancel Samba request', exact: true }).click();
-    await expect(accounts.locator('form')).toHaveCount(4);
+    await expect(accounts.locator('form')).toHaveCount(6);
     await page.screenshot({ path: info.outputPath('shares-data-accounts-desktop.png'), fullPage: true });
     await page.getByRole('link', { name: 'Edit access and users', exact: false }).first().click();
     const editor = page.getByRole('region', { name: 'Edit share: projects', exact: true });
@@ -1203,6 +1203,53 @@ test.describe('Shares & Data', () => {
     await review.getByRole('button', { name: 'Create routine approval request', exact: true }).click();
     await expect(activity).toContainText('Create routine: /srv/new-scrub');
     await activity.getByRole('button', { name: 'Cancel routine request', exact: true }).click();
+    await page.goto('about:blank');
+  });
+
+  test('Samba creation distinguishes Unix identities and retains password reviews after input errors', async ({ page, developmentServer: dev, diagnostics }, info) => {
+    await page.goto(dev.url + '/shares-data?view=shares');
+    const accounts = page.getByRole('region', { name: 'Samba accounts', exact: true });
+    const review = page.locator('.data-review');
+    const activity = page.getByRole('region', { name: 'Samba activity', exact: true });
+    await accounts.getByText('Add a Samba user', { exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await accounts.getByLabel('New username', { exact: true }).fill('new-reader');
+    await accounts.getByRole('button', { name: 'Review new Samba user', exact: true }).click();
+    await expect(review).toContainText('locked Unix password');
+    await expect(review).toContainText('No share access is granted');
+    const ticket = await review.locator('input[name=ticket]').inputValue();
+    await review.getByLabel('New Samba password', { exact: true }).fill('sample-new-password-123');
+    await review.getByLabel('Repeat new password', { exact: true }).fill('sample-wrong-password');
+    await review.getByLabel('Type new-reader to confirm', { exact: true }).fill('new-reader');
+    diagnostics.allowed.add(dev.url + '/actions/samba/submit');
+    diagnostics.expectedConsole.push('the server responded with a status of 409');
+    await review.getByRole('button', { name: 'Create Samba approval request', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('passwords do not match');
+    await expect(review.locator('input[name=ticket]')).toHaveValue(ticket);
+    await expect(review.getByLabel('New Samba password', { exact: true })).toHaveValue('');
+    await expect(activity).toContainText('No Samba account changes requested');
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width: 320, height: 900 });
+      await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    }
+    await page.screenshot({ path: info.outputPath('samba-create-review-mobile.png'), fullPage: true });
+    for (const label of ['New Samba password', 'Repeat new password'])
+      await review.getByLabel(label, { exact: true }).fill('sample-new-password-123');
+    await review.getByLabel('Type new-reader to confirm', { exact: true }).fill('new-reader');
+    await review.getByRole('button', { name: 'Create Samba approval request', exact: true }).click();
+    await expect(activity).toContainText('Create Samba and Unix account: new-reader');
+    expect(await page.content()).not.toContain('sample-new-password-123');
+    await activity.getByRole('button', { name: 'Cancel Samba request', exact: true }).click();
+    await accounts.getByText('Add a Samba user', { exact: true }).click();
+    await accounts.getByLabel('Existing Unix account', { exact: true }).selectOption('editor');
+    await accounts.getByRole('button', { name: 'Review adding Samba login', exact: true }).click();
+    await expect(review).toContainText('reviewed existing local Unix account');
+    await expect(review).toContainText('Preserve its Unix password, shell, home and groups');
+    await review.getByRole('link', { name: 'Cancel review', exact: true }).click();
+    await expect(accounts.getByRole('button', { name: 'Review Samba login removal', exact: true })).toHaveCount(0);
+    await expect(accounts).toContainText('first remove the user from every managed share');
     await page.goto('about:blank');
   });
 });

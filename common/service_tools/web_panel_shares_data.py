@@ -135,7 +135,7 @@ def _shares(inventory: dict, host: str, *, controls: bool = False) -> str:
         body += '</ul>'
     if inventory["omitted_shares"]:
         body += f'<p class="data-notice">{inventory["omitted_shares"]} additional shares omitted from this snapshot.</p>'
-    return body + '<p class="data-notice">Account creation still uses the controller’s Samba setup commands.</p>'
+    return body
 
 
 def _routines(inventory: dict) -> str:

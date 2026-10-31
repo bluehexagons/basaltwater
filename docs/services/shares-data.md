@@ -2,10 +2,9 @@
 
 Open **Administration → Shares & Data** to inspect this machine’s managed
 Samba shares, recurring backup and sync declarations, and recorded scrub findings.
-Share and routine editing, account login enable/disable and password reset, and
+Share and routine editing, account creation/removal, login enable/disable and password reset, and
 single-file verification and recovery have browser controls when the separate
-privilege approval service is configured. Account creation still uses the
-controller commands described below.
+privilege approval service is configured.
 
 The three views work without JavaScript:
 
@@ -180,6 +179,53 @@ setup/refresh. It runs once in a supervised service with a 45-second deadline.
 The account list follows the next five-minute export; it may still show the
 earlier flag immediately after success. Reviews expire after five minutes and
 are consumed before submission; a lost response is never replayed automatically.
+
+## Create or remove a Samba login
+
+On the configured HTTPS panel, open **Add a Samba user**. **New username** creates
+a local Unix identity for file ownership with a locked Unix password, a nologin
+shell and no new home directory. **Existing Unix account** instead selects an
+exported local account and preserves its Unix password, shell, home and groups.
+That Samba login inherits the existing account's filesystem access. These are
+separate reviewed operations; a new-account request never adopts a name that
+appeared after review. System and external name-service accounts require the
+administrator command line.
+
+Review the exact username and identity choice, enter and repeat a 12–128 character
+Samba password, type the username and create the approval request. The one-use
+secret staging, expiry, separate approval and status flow are the same as password
+reset below. Neither choice grants share membership. After the next five-minute
+account export, edit the desired shares to grant access.
+
+To remove a login, first edit every managed share that references it. After the
+next export, **Remove Samba login** offers a separate review. Type the username
+and request approval. Removal deletes the Samba database record and any matching
+credential in the target's saved setup. It retains the Unix identity, password,
+groups and files. The worker rechecks that no saved managed share references the
+user, including legacy inline credentials. Manual share configuration is outside
+this check. Existing SMB sessions may continue. Disabling is an alternative when
+you want to suspend login while retaining membership.
+
+Creation/removal require a complete identity export and saved share inventory;
+unsupported or changed state refuses execution. The local Unix inventory supports
+up to 512 regular accounts with UIDs 1000–65533, independently of the 512-record
+Samba inventory. Creation binds review to saved setup, Samba configuration,
+passdb and `/etc/passwd` metadata. The worker consumes a staged password before
+creating a Unix identity and excludes concurrent setup/refresh.
+
+These multi-step operations retain a setup recovery guard if interrupted after
+mutation starts. Creation can leave a locked Unix identity or disabled Samba
+record. Removal can delete the Samba record before its saved credential is
+cleared. Inspect live identities, Samba accounts, saved setup and the recorded
+phase using the [transaction recovery guide](../operations/transaction-recovery.md).
+Do not clear the guard merely to retry. No automatic account deletion, rollback
+or password replay follows an uncertain result. Both operations use the supervised
+45-second account helper; **succeeded** means its final account checks passed.
+
+Confirmation typos, password mismatches and a busy approval service retain the
+five-minute review, with password fields cleared. Once staging or submission
+starts, the ticket is consumed before the socket request; inspect activity after
+a lost response rather than submitting it again.
 
 ## Reset a Samba password
 

@@ -13,7 +13,7 @@ import time
 from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
 from lib.privilege_policy import load_policy, protected_path
 from lib.privilege_execution import ENVIRONMENT
-from lib.samba_accounts import HEX_ID, validate_account_action, validate_reset_password
+from lib.samba_accounts import HEX_ID, PASSWORD_ACTIONS, validate_account_action, validate_reset_password
 
 PASSWORD_DIRECTORY = "/run/basaltwater-privilege-broker/samba-passwords"
 PASSWORD_TTL = 3600
@@ -61,7 +61,7 @@ def _read(path: str) -> dict:
             or not isinstance(value["binding"], str) or len(value["binding"]) != 64):
         raise ValueError("Invalid staged password")
     validate_account_action(value["parameters"])
-    if value["parameters"]["action"] != "reset-password":
+    if value["parameters"]["action"] not in PASSWORD_ACTIONS:
         raise ValueError("Invalid staged password action")
     validate_reset_password(value["password"])
     return value
@@ -92,7 +92,7 @@ def stage_password(parameters: dict, password: str, uid: int) -> dict:
 
     parameters = validate_account_action(parameters)
     password = validate_reset_password(password)
-    if parameters["action"] != "reset-password" or type(uid) is not int or uid < 1000:
+    if parameters["action"] not in PASSWORD_ACTIONS or type(uid) is not int or uid < 1000:
         raise ValueError("Invalid password staging request")
     with _owner(create=True):
         if _prune() >= MAX_STAGED:
@@ -129,7 +129,7 @@ def consume_password(parameters: dict) -> str:
         remove_file_durable(path)
         if (value["parameters"] != parameters or value["uid"] != load_policy()["requester_uid"]
                 or value["expires"] <= time.time() or value["binding"] != password_binding()):
-            raise ValueError("The password reset expired or Samba accounts changed")
+            raise ValueError("The staged password expired or Samba accounts changed")
         return value["password"]
 
 

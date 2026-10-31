@@ -109,7 +109,7 @@ def render_editor(snapshot: dict, query: dict, csrf: str) -> str:
         return f'<p><a class="refresh-link" href="{html.escape(editor_url(), quote=True)}">Add a share →</a></p>'
     eligible = [row for row in accounts["accounts"] if row["manageable"]]
     if not eligible:
-        return '<p class="empty">Create a regular local Samba account through the controller before adding share access.</p>'
+        return '<p class="empty">Create a regular local Samba account in Samba accounts below, then refresh after the next export before adding share access.</p>'
     if selected and not set(selected["users"]) <= {row["username"] for row in eligible}:
         return '<p class="data-notice">This share includes accounts that require administrator command-line management.</p>'
     escape = html.escape

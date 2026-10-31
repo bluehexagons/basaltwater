@@ -30,7 +30,7 @@ from lib.privilege_policy import (
 from common.service_tools.admin_job import availability as admin_availability, job_status
 from lib.admin_actions import ADMIN_HELPER
 from lib.data_actions import DATA_HELPER
-from lib.samba_accounts import SAMBA_ACCOUNT_HELPER
+from lib.samba_accounts import PASSWORD_ACTIONS, SAMBA_ACCOUNT_HELPER
 from lib.samba_shares import SHARE_HELPER, share_label, share_name
 from smb.share_job import job_status as share_job_status, stage_share_job
 from smb.password_staging import discard_password, prune_passwords, require_password, stage_password
@@ -142,7 +142,7 @@ class Broker:
         if state in {"cancelled", "denied", "expired", "invalidated", "succeeded", "failed", "uncertain"}:
             row = self.db.execute("SELECT plan FROM requests WHERE id=?", (request_id,)).fetchone()
             plan = json.loads(row["plan"])
-            if plan["operation"] == "samba.account" and plan["parameters"]["action"] == "reset-password":
+            if plan["operation"] == "samba.account" and plan["parameters"]["action"] in PASSWORD_ACTIONS:
                 try:
                     discard_password(plan["parameters"]["job_id"])
                 except (OSError, ValueError, subprocess.SubprocessError):
@@ -175,10 +175,10 @@ class Broker:
             try:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, uid, operation, parameters)
-                if operation == "samba.account" and plan["parameters"]["action"] == "reset-password":
+                if operation == "samba.account" and plan["parameters"]["action"] in PASSWORD_ACTIONS:
                     if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
                                        (plan["parameters"]["job_id"],)).fetchone():
-                        raise ValueError("This password reset identity was already used")
+                        raise ValueError("This password staging identity was already used")
                     require_password(plan["parameters"], uid)
                 if operation in {"admin.run", "data.run", "data.routine", "samba.account", "samba.shares"}:
                     for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
@@ -318,14 +318,14 @@ class Broker:
                     raise PermissionError("Account is not authorized")
                 if self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
                                    (message["job_id"],)).fetchone():
-                    raise ValueError("Inspect or cancel the accepted reset request")
+                    raise ValueError("Inspect or cancel the accepted Samba password request")
                 discard_password(message["job_id"])
                 return {"discarded": True}
         if not approval and action == "samba-stage-password" and set(message) == {"action", "parameters", "password"}:
             with self.lock:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, uid, "samba.account", message["parameters"])
-                if (plan["parameters"]["action"] != "reset-password"
+                if (plan["parameters"]["action"] not in PASSWORD_ACTIONS
                         or self.db.execute("SELECT 1 FROM requests WHERE json_extract(plan,'$.operation')='samba.account' AND json_extract(plan,'$.parameters.job_id')=? LIMIT 1",
                                            (plan["parameters"]["job_id"],)).fetchone()):
                     raise ValueError("Invalid or previously used password staging identity")

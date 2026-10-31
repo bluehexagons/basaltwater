@@ -29,6 +29,9 @@ def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict
         {"username": username, "uid": uid, "disabled": disabled, "locked": False,
          "manageable": uid >= 1000, "revision": "a" * 64}
         for username, uid, disabled in (("operator", 1000, False), ("maintainer", 1001, True), ("root", 0, False))]}
+    if accounts["available"]:
+        accounts["lifecycle"] = {"available": True, "revision": "e" * 64,
+                                 "unix_accounts": [{"username": "editor", "uid": 1002}], "removable": []}
     rows = configured_routines({
         "backup_specs": [] if empty else [["/srv/projects", "/srv/backups/projects", "daily"]],
         "sync_specs": [] if empty else [["/srv/archive", "/mnt/replica/archive", "weekly"]],

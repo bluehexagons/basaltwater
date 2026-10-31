@@ -22,7 +22,7 @@ from lib.machine_state import STATE_DIR, load_setup_config
 from lib.operation_state import OperationStateStore
 from lib.privilege_execution import ENVIRONMENT
 from lib.privilege_policy import protected_path
-from lib.samba_accounts import MAX_ACCOUNTS, validate_account_action, validate_account_snapshot
+from lib.samba_accounts import LIFECYCLE_ACTIONS, MAX_ACCOUNTS, validate_account_action, validate_account_snapshot
 from lib.validators import validate_username
 
 SMB_CONF = "/etc/samba/smb.conf"
@@ -109,7 +109,11 @@ def collect_account_snapshot(saved: dict) -> dict:
     if saved.get("enable_samba") is not True:
         return {"available": False}
     try:
-        return validate_account_snapshot({"available": True, "accounts": _accounts()})
+        from smb.account_lifecycle import collect_lifecycle_snapshot
+
+        rows = _accounts()
+        return validate_account_snapshot({"available": True, "accounts": rows,
+                                          "lifecycle": collect_lifecycle_snapshot(saved, rows)})
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         return {"available": False}
 
@@ -169,6 +173,11 @@ def change_account(value: dict) -> None:
         if saved is None or saved.get("enable_samba") is not True:
             raise ValueError("Samba is not enabled in saved setup")
         rows = _accounts()
+        if value["action"] in LIFECYCLE_ACTIONS:
+            from smb.account_lifecycle import change_lifecycle
+
+            change_lifecycle(value, store, saved, rows)
+            return
         row = next((row for row in rows if row["username"] == value["username"]), None)
         if (row is None or not row["manageable"] or row["revision"] != value["revision"]
                 or value["action"] != "reset-password" and row["disabled"] == (value["action"] == "disable")):
