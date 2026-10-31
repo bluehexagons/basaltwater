@@ -111,7 +111,12 @@ basaltw setup server_lite 192.168.1.50 admin \
 
 The flag installs and enables `avahi-daemon`, installs `libnss-mdns`, and adds
 the managed UDP 5353 UFW rule. Use `basaltw patch HOST --no-mdns` to stop
-the managed Avahi service and remove its managed firewall rule. Clients must
+and disable both the Avahi socket activator and service, then remove the managed
+firewall rule. Removal inspects both units, skips only explicit absence, and
+checks that neither remains active or enabled. Inspection or stop/disable failure
+aborts setup rather than reporting success. Earlier successful stops are not
+rolled back; inspect the failure, repair it and retry. Packages and client
+resolution support remain installed. Clients must
 support mDNS; Debian/Ubuntu clients can install `libnss-mdns`. mDNS is limited
 to the local Layer-2 network and normally does not cross VLANs or routed
 subnets.

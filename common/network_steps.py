@@ -38,6 +38,7 @@ NETWORK_TRANSITION_PATH = "/run/basaltwater-network-transition.json"
 NETWORK_TRANSITION_VERSION = 2
 MDNS_PACKAGES = ("avahi-daemon", "libnss-mdns")
 MDNS_SERVICE = "avahi-daemon"
+MDNS_UNITS = (f"{MDNS_SERVICE}.socket", f"{MDNS_SERVICE}.service")
 POLICY_TABLE_RANGE = range(20000, 20100)
 NETWORK_TRANSITION_STATES = {"prepared", "committed"}
 NETWORKMANAGER_ROLLBACK_PROPERTIES = (
@@ -92,6 +93,19 @@ def configure_system_hostname(config: SetupConfig) -> None:
     print(f"  ✓ System hostname set to {hostname}")
 
 
+def _mdns_unit_state(unit: str) -> dict[str, str]:
+    result = run(
+        ["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState"],
+        check=False, capture_output=True,
+    )
+    state = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+    if (result.returncode != 0 or not {"LoadState", "ActiveState", "UnitFileState"} <= state.keys()
+            or state["LoadState"] not in {"loaded", "not-found", "masked"}
+            or state["ActiveState"] not in {"active", "inactive", "failed", "activating", "deactivating", "reloading"}):
+        raise RuntimeError(f"Could not inspect mDNS unit {unit}; repair systemd state and retry")
+    return state
+
+
 def configure_mdns(config: SetupConfig) -> None:
     """Install and reconcile Avahi-based hostname discovery on the LAN."""
 
@@ -107,9 +121,19 @@ def configure_mdns(config: SetupConfig) -> None:
 
     if config.clear_mdns:
         if config.dry_run or is_dry_run():
-            print(f"  [DRY-RUN] Would disable {MDNS_SERVICE} mDNS service")
+            print(f"  [DRY-RUN] Would disable {MDNS_SERVICE} mDNS socket and service")
             return
-        run(f"systemctl disable --now {MDNS_SERVICE}", check=False)
+        states = {unit: _mdns_unit_state(unit) for unit in MDNS_UNITS}
+        for unit, state in states.items():
+            if state == {"LoadState": "not-found", "ActiveState": "inactive", "UnitFileState": ""}:
+                continue
+            flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
+            run(["systemctl", "disable", "--now", *flags, unit])
+        for unit in MDNS_UNITS:
+            state = _mdns_unit_state(unit)
+            if (state["ActiveState"] not in {"inactive", "failed"}
+                    or state["UnitFileState"] not in {"", "disabled", "static", "indirect", "masked", "masked-runtime"}):
+                raise RuntimeError(f"mDNS unit {unit} is still active or enabled; repair it and retry --no-mdns")
         print("  ✓ mDNS hostname advertising disabled")
         return
 

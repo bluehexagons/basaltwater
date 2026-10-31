@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -78,6 +79,24 @@ class TestMdnsConfig(unittest.TestCase):
 
 
 class TestMdnsSetup(unittest.TestCase):
+    def test_failed_disable_never_reports_success(self) -> None:
+        config = _config(clear_mdns=True)
+        def command(argv, **kwargs):
+            if 'show' in argv:
+                return subprocess.CompletedProcess(argv, 0, 'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n')
+            if kwargs.get('check', True):
+                raise subprocess.CalledProcessError(1, argv)
+            return subprocess.CompletedProcess(argv, 1, '', 'Stop refused')
+        with (
+            patch.object(network_steps, 'can_manage_mdns', return_value=True),
+            patch.object(network_steps, 'is_dry_run', return_value=False),
+            patch.object(network_steps, 'run', side_effect=command),
+            patch('builtins.print') as output,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                network_steps.configure_mdns(config)
+        self.assertFalse(any('disabled' in str(call) for call in output.call_args_list))
+
     def test_enables_avahi_and_installs_resolution_support(self) -> None:
         config = _config(enable_mdns=True)
 
@@ -95,19 +114,91 @@ class TestMdnsSetup(unittest.TestCase):
         )
         run.assert_called_once_with("systemctl enable --now avahi-daemon")
 
-    def test_disables_managed_avahi_service(self) -> None:
+    def test_disables_socket_before_service_and_verifies_both(self) -> None:
         config = _config(clear_mdns=True)
+        states = dict.fromkeys(network_steps.MDNS_UNITS, 'active')
+        def command(argv, **kwargs):
+            if argv[1] == 'show':
+                active = states[argv[2]]
+                enabled = 'enabled' if active == 'active' else 'disabled'
+                return subprocess.CompletedProcess(argv, 0, f'LoadState=loaded\nActiveState={active}\nUnitFileState={enabled}\n')
+            states[argv[-1]] = 'inactive'
+            return subprocess.CompletedProcess(argv, 0)
 
         with (
             patch.object(network_steps, "can_manage_mdns", return_value=True),
             patch.object(network_steps, "is_dry_run", return_value=False),
-            patch.object(network_steps, "run") as run,
+            patch.object(network_steps, "run", side_effect=command) as run,
             patch.object(network_steps, "install_package") as install,
         ):
             network_steps.configure_mdns(config)
 
-        run.assert_called_once_with("systemctl disable --now avahi-daemon", check=False)
+        self.assertEqual([call.args[0][-1] for call in run.call_args_list if call.args[0][1] == 'disable'],
+                         list(network_steps.MDNS_UNITS))
+        self.assertEqual([call.args[0][2] for call in run.call_args_list if call.args[0][1] == 'show'],
+                         list(network_steps.MDNS_UNITS) * 2)
+        self.assertTrue(all(call.kwargs.get('check', True) for call in run.call_args_list if call.args[0][1] == 'disable'))
         install.assert_not_called()
+
+    def test_absent_or_masked_units_and_partial_installations(self) -> None:
+        for load, enabled in (('not-found', ''), ('masked', 'masked'), ('loaded', 'enabled-runtime')):
+            with self.subTest(load=load, enabled=enabled):
+                def command(argv, **kwargs):
+                    if argv[1] == 'show':
+                        # Socket absent; service may be absent, masked or runtime enabled.
+                        service = argv[2].endswith('.service')
+                        current = enabled if service else ''
+                        if len(disabled):
+                            current = 'masked' if enabled == 'masked' else 'disabled'
+                        return subprocess.CompletedProcess(argv, 0,
+                            f'LoadState={load if service else "not-found"}\nActiveState=inactive\nUnitFileState={current if service else ""}\n')
+                    disabled.append(argv)
+                    return subprocess.CompletedProcess(argv, 0)
+                disabled = []
+                with patch.object(network_steps, 'can_manage_mdns', return_value=True), \
+                        patch.object(network_steps, 'is_dry_run', return_value=False), \
+                        patch.object(network_steps, 'run', side_effect=command):
+                    network_steps.configure_mdns(_config(clear_mdns=True))
+                self.assertEqual(len(disabled), 0 if load == 'not-found' else 1)
+                if enabled == 'enabled-runtime':
+                    self.assertIn('--runtime', disabled[0])
+
+    def test_inspection_errors_or_incomplete_output_abort_before_mutation(self) -> None:
+        for code, output in ((1, ''), (0, ''), (0, 'LoadState=not-found\nActiveState=inactive\n'),
+                             (0, 'LoadState=error\nActiveState=inactive\nUnitFileState=\n')):
+            with self.subTest(code=code, output=output), \
+                    patch.object(network_steps, 'can_manage_mdns', return_value=True), \
+                    patch.object(network_steps, 'is_dry_run', return_value=False), \
+                    patch.object(network_steps, 'run', return_value=subprocess.CompletedProcess([], code, output)) as run:
+                with self.assertRaisesRegex(RuntimeError, 'Could not inspect'):
+                    network_steps.configure_mdns(_config(clear_mdns=True))
+                self.assertTrue(all(call.args[0][1] == 'show' for call in run.call_args_list))
+
+    def test_successful_command_requires_inactive_disabled_postcondition(self) -> None:
+        for active, enabled in (('active', 'disabled'), ('inactive', 'enabled'), ('deactivating', 'disabled')):
+            with self.subTest(active=active, enabled=enabled):
+                def command(argv, **kwargs):
+                    return subprocess.CompletedProcess(argv, 0,
+                        f'LoadState=loaded\nActiveState={active}\nUnitFileState={enabled}\n')
+                with patch.object(network_steps, 'can_manage_mdns', return_value=True), \
+                        patch.object(network_steps, 'is_dry_run', return_value=False), \
+                        patch.object(network_steps, 'run', side_effect=command), patch('builtins.print') as output:
+                    with self.assertRaisesRegex(RuntimeError, 'still active or enabled'):
+                        network_steps.configure_mdns(_config(clear_mdns=True))
+                output.assert_not_called()
+
+    def test_dry_runs_unsupported_machine_and_unselected_feature_have_no_system_calls(self) -> None:
+        for config, supported, dry_run in ((_config(clear_mdns=True, dry_run=True), True, False),
+                                           (_config(clear_mdns=True), True, True),
+                                           (_config(clear_mdns=True), False, False),
+                                           (_config(), True, False)):
+            with self.subTest(supported=supported, dry_run=dry_run), \
+                    patch.object(network_steps, 'can_manage_mdns', return_value=supported), \
+                    patch.object(network_steps, 'is_dry_run', return_value=dry_run), \
+                    patch.object(network_steps, 'run') as run, patch.object(network_steps, 'install_package') as install:
+                network_steps.configure_mdns(config)
+                run.assert_not_called()
+                install.assert_not_called()
 
     def test_reconciles_mdns_firewall_rule(self) -> None:
         config = _config(enable_mdns=True)
