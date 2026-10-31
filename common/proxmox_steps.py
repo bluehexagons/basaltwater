@@ -14,6 +14,7 @@ from lib.proxmox_memory import (
     parse_swapon_output,
 )
 from lib.remote_utils import is_dry_run, run
+from lib.orchestrator_bootstrap import SYSTEM_LAUNCHER_DIR, install_launcher
 from lib.kernel_restart import install_kernel_restart_hook
 from lib.machine_state import can_modify_kernel
 from lib.maintenance_defaults import (
@@ -45,6 +46,18 @@ _APPLY_SWAPPINESS_COMMAND = (
 _NODE_CONFIG_COMMAND = (
     "pvesh get /nodes/$(hostname -s)/config --output-format json"
 )
+_PROXMOX_CLI_SCRIPT = "/opt/basaltwater/basaltwater.py"
+
+
+def install_proxmox_cli(config: SetupConfig) -> None:
+    """Expose the installed control plane on the hypervisor's normal PATH."""
+    del config
+    if is_dry_run():
+        print("  [DRY-RUN] Would install and verify the basaltw management command")
+        return
+    launcher = install_launcher(_PROXMOX_CLI_SCRIPT, target_dir=SYSTEM_LAUNCHER_DIR)
+    run([launcher, "--help"], capture_output=True, timeout=30)
+    print(f"  ✓ Basaltwater management command verified: {launcher}")
 
 
 def preflight_proxmox(config: SetupConfig) -> None:

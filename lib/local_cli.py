@@ -8,9 +8,12 @@ import os
 
 from common.common_steps import install_apt_packages, update_and_upgrade_packages
 from common.network_steps import configure_static_network, configure_system_hostname
+from common.proxmox_steps import preflight_proxmox, upgrade_proxmox_packages
 from desktop.browser_steps import configure_default_browser, install_browser
 from plugins.desktop import extend_desktop_steps
 from lib.config import SetupConfig
+from lib.maintenance_lock import maintenance_lock
+from lib.proxmox_preflight import is_proxmox_host
 from lib.remote_utils import is_dry_run, run, set_dry_run
 from lib.types import StepFunc
 from lib.validation import validate_apt_packages
@@ -220,8 +223,27 @@ def _run_install_command(args: argparse.Namespace) -> int:
 
 
 def _run_update_command(args: argparse.Namespace) -> int:
-    config = _make_config(dry_run=args.dry_run)
+    if is_proxmox_host():
+        config = SetupConfig(
+            host="localhost", username="root", system_type="server_proxmox",
+            machine_type="hardware", dry_run=args.dry_run,
+        )
+        return _run_step(config, "updating Proxmox packages", _update_proxmox)
+    config = _make_config(dry_run=args.dry_run, refresh_packages=True)
     return _run_step(config, "updating and upgrading packages", update_and_upgrade_packages)
+
+
+def _update_proxmox(config: SetupConfig) -> None:
+    """Keep explicit hypervisor updates inside the setup/maintenance guard."""
+    if is_dry_run():
+        preflight_proxmox(config)
+        upgrade_proxmox_packages(config)
+        return
+    with maintenance_lock() as acquired:
+        if not acquired:
+            raise RuntimeError("Proxmox setup or maintenance is busy; retry after it finishes")
+        preflight_proxmox(config)
+        upgrade_proxmox_packages(config)
 
 
 def _run_desktop_command(args: argparse.Namespace) -> int:

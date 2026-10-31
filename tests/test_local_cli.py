@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import os
 import sys
 import unittest
@@ -13,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import basaltwater
 from lib.local_cli import run_local_command
+from lib.remote_utils import is_dry_run
 
 
 class TestLocalCommandParser(unittest.TestCase):
@@ -114,6 +116,93 @@ class TestLocalCommandExecution(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         print_output.assert_called_once_with("eth0 UP 192.168.1.2/24")
+
+
+class TestLocalUpdates(unittest.TestCase):
+    def setUp(self) -> None:
+        self.args = argparse.Namespace(local_command="update", dry_run=False)
+        self.enterContext(patch("lib.local_cli.os.geteuid", return_value=0))
+        self.enterContext(patch("lib.local_cli._target_username", return_value="operator"))
+        self.proxmox = self.enterContext(patch("lib.local_cli.is_proxmox_host", return_value=True))
+        self.generic = self.enterContext(patch("lib.local_cli.update_and_upgrade_packages"))
+        self.preflight = self.enterContext(patch("lib.local_cli.preflight_proxmox"))
+        self.upgrade = self.enterContext(patch("lib.local_cli.upgrade_proxmox_packages"))
+        self.events = []
+
+        @contextmanager
+        def locked():
+            self.events.append("locked")
+            try:
+                yield True
+            finally:
+                self.events.append("released")
+
+        self.lock = self.enterContext(patch("lib.local_cli.maintenance_lock", side_effect=locked))
+
+    def test_explicit_debian_update_does_not_reuse_setup_package_marker(self):
+        self.proxmox.return_value = False
+        self.assertEqual(run_local_command(self.args), 0)
+        self.assertTrue(self.generic.call_args.args[0].refresh_packages)
+        self.preflight.assert_not_called()
+        self.lock.assert_not_called()
+
+    def test_proxmox_uses_checked_nonremoving_steps_under_one_lock(self):
+        self.preflight.side_effect = lambda config: self.events.append("preflight")
+        self.upgrade.side_effect = lambda config: self.events.append("upgrade")
+        self.assertEqual(run_local_command(self.args), 0)
+        self.assertEqual(self.events, ["locked", "preflight", "upgrade", "released"])
+        config = self.upgrade.call_args.args[0]
+        self.assertEqual((config.system_type, config.username), ("server_proxmox", "root"))
+        self.generic.assert_not_called()
+
+    def test_busy_proxmox_lock_refuses_before_package_or_repository_changes(self):
+        @contextmanager
+        def busy():
+            yield False
+
+        self.lock.side_effect = busy
+        self.assertEqual(run_local_command(self.args), 1)
+        self.preflight.assert_not_called()
+        self.upgrade.assert_not_called()
+        self.generic.assert_not_called()
+
+    def test_proxmox_preflight_failure_prevents_upgrade_and_releases_lock(self):
+        self.preflight.side_effect = RuntimeError("unsupported repository")
+        self.assertEqual(run_local_command(self.args), 1)
+        self.upgrade.assert_not_called()
+        self.generic.assert_not_called()
+        self.assertEqual(self.events, ["locked", "released"])
+
+    def test_proxmox_upgrade_failure_is_reported_and_releases_lock(self):
+        self.upgrade.side_effect = RuntimeError("health check failed")
+        self.assertEqual(run_local_command(self.args), 1)
+        self.generic.assert_not_called()
+        self.assertEqual(self.events, ["locked", "released"])
+
+    def test_proxmox_dry_run_does_not_create_lock_and_restores_dry_run_state(self):
+        previous = is_dry_run()
+        self.args.dry_run = True
+
+        def preview(config):
+            self.assertTrue(config.dry_run)
+            self.assertTrue(is_dry_run())
+
+        self.preflight.side_effect = preview
+        self.upgrade.side_effect = preview
+        self.assertEqual(run_local_command(self.args), 0)
+        self.preflight.assert_called_once()
+        self.upgrade.assert_called_once()
+        self.generic.assert_not_called()
+        self.lock.assert_not_called()
+        self.assertEqual(is_dry_run(), previous)
+
+    def test_proxmox_update_requires_root_before_lock_or_mutation(self):
+        with patch("lib.local_cli.os.geteuid", return_value=1000):
+            self.assertEqual(run_local_command(self.args), 1)
+        self.lock.assert_not_called()
+        self.preflight.assert_not_called()
+        self.upgrade.assert_not_called()
+        self.generic.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -16,11 +16,19 @@ sudo basaltw local install --dry-run btop ripgrep
 ## Packages and system updates
 
 Refresh Debian package metadata, upgrade installed packages, and remove
-packages APT no longer needs:
+packages APT no longer needs. An explicit update ignores setup's previous
+package-reconciliation marker:
 
 ```bash
 sudo basaltw local update
 ```
+
+On a Proxmox host, this command instead uses the dedicated Proxmox repository,
+release, package-state and node-health checks under the shared setup/maintenance
+lock. It performs a non-removing distribution upgrade, without broad autoremove
+or a host reboot. A busy lock or failed check stops the command. A dry run
+previews these steps without taking the lock. See
+[Proxmox setup troubleshooting](proxmox-setup-troubleshooting.md).
 
 Install one or more Debian packages without running the rest of setup:
 

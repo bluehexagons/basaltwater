@@ -37,6 +37,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
     from common.proxmox_steps import (
         configure_proxmox_balloon_target,
         configure_proxmox_host_memory_safety,
+        install_proxmox_cli,
         preflight_proxmox,
         upgrade_proxmox_packages,
     )
@@ -60,6 +61,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
     steps = [
         ("Checking Proxmox release and repositories", preflight_proxmox),
         ("Upgrading Proxmox packages", upgrade_proxmox_packages),
+        ("Installing Basaltwater management command", install_proxmox_cli),
         ("Configuring Proxmox snippets storage", configure_proxmox_snippets_storage),
         ("Creating remoteusers group", create_remoteusers_group),
         ("Configuring swap", configure_swap),
@@ -87,7 +89,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
         or config.clear_lan_access
     ):
         steps.insert(
-            5,
+            6,
             (
                 "Configuring Proxmox management access filter",
                 configure_proxmox_management_firewall,

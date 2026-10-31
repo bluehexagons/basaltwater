@@ -94,8 +94,10 @@ class TestKioskSettings(unittest.TestCase):
             with self.subTest(setting=setting), self.assertRaisesRegex(ValueError, "shared desktop"):
                 kiosk_config(kiosk_mode="web", **{setting: True})
 
-    def test_dedicated_kiosk_does_not_reject_hardened_setup_user(self):
-        validate_kiosk_settings(kiosk_config(kiosk_mode="web", username="operator", harden_user=True))
+    def test_dedicated_kiosk_preserves_proxmox_setup_identity(self):
+        config = kiosk_config(kiosk_mode="web", username="operator")
+        validate_kiosk_settings(config)
+        self.assertEqual(config.username, "root")
 
     def test_persistent_service_capability_checked_only_for_enabled_complete_plan(self):
         with patch("lib.kiosk_config.can_manage_system_services", return_value=False) as capability:
