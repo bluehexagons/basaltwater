@@ -24,9 +24,10 @@ _FILTERING_STATUS = "Status: active\nDefault: deny (incoming), allow (outgoing),
 
 
 class TestFirewallOutput(unittest.TestCase):
+    @patch("lib.machine_state.detect_machine_type", return_value="oci")
     @patch("security.security_steps.run")
-    def test_unsupported_machines_skip_all_firewall_entrypoints(self, mock_run) -> None:
-        for machine_type in ("unprivileged", "oci", "wsl"):
+    def test_unsupported_machines_skip_all_firewall_entrypoints(self, mock_run, _detect) -> None:
+        for machine_type in ("unprivileged", "oci", "wsl", "auto"):
             config = SetupConfig(host="192.168.0.44", username="agent",
                                  system_type="server_web", machine_type=machine_type)
             for configure in (configure_firewall, configure_firewall_web, configure_firewall_ssh_only):
@@ -65,6 +66,7 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
         self.delete_failed = False
         self.config = SetupConfig(
             host="192.168.0.44", username="agent", system_type="server_lite",
+            machine_type="vm",
             access_sources=["192.168.0.0/24"], web_ports=[443], default_web_ports=False,
         )
 

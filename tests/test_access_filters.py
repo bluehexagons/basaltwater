@@ -381,6 +381,9 @@ class TestAccessSourceConfig(unittest.TestCase):
 
 
 class TestGenericUfwFiltering(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
+
     @patch.dict(os.environ, {"SSH_CONNECTION": "2001:db8::5 12345 2001:db8::10 22"})
     @patch("security.security_steps.run")
     def test_activation_pruning_retains_ssh_only_ipv6_rule(self, mock_run) -> None:

@@ -643,6 +643,7 @@ class TestConfigurePamLockout(unittest.TestCase):
 
 class TestSSHFirewallPeerSafety(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
         self.command = self.enterContext(patch("security.security_steps.run"))
         self.command.return_value = SimpleNamespace(
@@ -734,6 +735,7 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
 
 class TestConfigureFirewall(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("lib.machine_state.detect_machine_type", return_value="vm"))
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
 
     def test_all_entrypoints_install_ufw_with_bounded_lock_wait_before_rules(self):

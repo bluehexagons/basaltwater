@@ -16,7 +16,7 @@ class BuildSshFirewallTests(unittest.TestCase):
     @patch("security.security_steps.run")
     def test_active_only_preserves_inactive_firewall_and_public_web(self, run) -> None:
         config = SetupConfig(host="target.test", username="root", system_type="custom_steps",
-                             ssh_access_sources=["192.0.2.5"])
+                             machine_type="vm", ssh_access_sources=["192.0.2.5"])
         run.return_value = SimpleNamespace(returncode=1, stdout="")
         configure_firewall_ssh_only(config, active_only=True)
         self.assertEqual(run.call_count, 1)

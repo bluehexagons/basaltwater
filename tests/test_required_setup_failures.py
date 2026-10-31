@@ -15,7 +15,7 @@ from web.cicd_steps import create_cicd_directories, install_cicd_dependencies
 
 
 def _config() -> SetupConfig:
-    return SetupConfig(host="target", username="admin", system_type="server_lite")
+    return SetupConfig(host="target", username="admin", system_type="server_lite", machine_type="vm")
 
 
 class TestRequiredCommonMutations(unittest.TestCase):
@@ -201,7 +201,7 @@ class TestRequiredFirewallMutations(unittest.TestCase):
 
     @patch("security.security_steps.is_container", return_value=True)
     @patch("security.security_steps.run")
-    def test_enable_failure_remains_best_effort_in_container(
+    def test_enable_failure_remains_best_effort_in_privileged_container(
         self, mock_run, _container
     ) -> None:
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
@@ -217,8 +217,10 @@ class TestRequiredFirewallMutations(unittest.TestCase):
 
         mock_run.side_effect = run_side_effect
 
+        config = _config()
+        config.machine_type = "privileged"
         with patch("builtins.print") as mock_print:
-            configure_firewall(_config())
+            configure_firewall(config)
 
         mock_print.assert_any_call(
             "  ⚠ Firewall could not be enabled (container may lack capabilities)"
