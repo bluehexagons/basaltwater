@@ -530,14 +530,14 @@ def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
     enable_detected_build_runtimes(config)
 
     if config.custom_steps == "reconcile_samba_shares":
-        from smb.samba_steps import reconcile_samba_shares
+        from smb.share_management import apply_share_update
 
         detect_os()
         print("Configuring Samba shares only...")
         if args.dry_run:
             print("[DRY-RUN] Would reconcile Samba shares")
             return 0
-        reconcile_samba_shares(config)
+        apply_share_update(config)
         print("✓ Samba share update complete")
         return 0
     

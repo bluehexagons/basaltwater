@@ -483,15 +483,10 @@ def _require_existing_samba_users(share_configs: list[dict[str, Any]]) -> None:
             raise ValueError(f"Share user has no matching Samba account: {username}")
 
 
-def reconcile_samba_shares(
+def preflight_samba_shares(
     config: SetupConfig, *, preserve_accounts: bool = False, **_: Any,
-) -> None:
-    """Reconcile shares; access-only edits preserve passwords and account flags.
-
-    The default setup path provisions accounts from resolved credentials.
-    ``preserve_accounts`` instead accepts only bare, already provisioned users.
-    Its account and mount preflight finishes before any share is changed.
-    """
+) -> list[dict[str, Any]]:
+    """Validate every declaration, mount and existing access-only account."""
 
     if preserve_accounts:
         validate_samba_share_specs(config.samba_shares, config.share_credentials, require_passwords=False)
@@ -506,8 +501,6 @@ def reconcile_samba_shares(
     if not os.path.exists(SMB_CONF_PATH):
         raise RuntimeError("Samba is not installed; run setup with --samba first")
 
-    desired_groups: set[str] = set()
-    sections: list[str] = []
     for share_config in share_configs:
         for share_path in cast(list[str], share_config["paths"]):
             if share_path != "/" + os.path.normpath(share_path).lstrip("/"):
@@ -515,8 +508,25 @@ def reconcile_samba_shares(
             if os.path.realpath(share_path) != os.path.abspath(share_path):
                 raise RuntimeError(f"Refusing symlinked Samba share path: {share_path}")
             assert_declared_storage_mount(config, share_path)
+            if is_path_under_mnt(share_path) and not get_mount_ancestor(share_path):
+                raise RuntimeError(f"No mounted filesystem found for Samba share: {share_path}")
     if preserve_accounts:
         _require_existing_samba_users(share_configs)
+    return share_configs
+
+
+def reconcile_samba_shares(
+    config: SetupConfig, *, preserve_accounts: bool = False, **_: Any,
+) -> None:
+    """Reconcile shares; access-only edits preserve passwords and account flags.
+
+    The default setup path provisions accounts from resolved credentials.
+    ``preserve_accounts`` instead accepts only bare, already provisioned users.
+    Its account and mount preflight finishes before any share is changed.
+    """
+    share_configs = preflight_samba_shares(config, preserve_accounts=preserve_accounts)
+    desired_groups: set[str] = set()
+    sections: list[str] = []
     for share_config in share_configs:
         group_name, section = _prepare_samba_share(config, share_config, provision_users=not preserve_accounts)
         desired_groups.add(group_name)

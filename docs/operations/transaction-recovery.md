@@ -14,7 +14,8 @@ is a separate operator decision that can discard newer writes.
 
 | Boundary | Marker | Recovery evidence |
 | --- | --- | --- |
-| Target setup | `/var/lib/basaltwater/setup-operation.json` | Current step, profile, username and error type |
+| Target setup | `/opt/basaltwater/state/setup-operation.json` | Current step, profile, username and error type |
+| Samba share-only management | `/opt/basaltwater/state/setup-operation.json` (shared with target setup) | Desired credential-free share declarations, last phase and error type |
 | Selected-builder controller setup | `<controller-workspace>/build-setups/<host-hash>/setup.json` | Pinned prepared inputs, delivery identities and expected releases in the recorded attempt directory |
 | Controller artifact delivery | `<attempt>/delivery/delivery.json` | Request and reservation keys, target generations, artifact identities and locally saved acknowledgements |
 | Manifest release | `/var/www/.basaltwater_shared/<app>/manifest-operation.json` | Staging/previous/failed paths, previous ports, desired units, adjacent `manifest-units.previous.json` |
@@ -43,7 +44,7 @@ exited before repairing state. Privately preserve the marker, its backups, the
 last result and relevant logs. Inspect a marker locally, for example:
 
 ```bash
-sudo python3 -m json.tool /var/lib/basaltwater/setup-operation.json
+sudo python3 -m json.tool /opt/basaltwater/state/setup-operation.json
 ```
 
 Do not publish private snapshots or raw error contexts in support reports.
@@ -71,6 +72,7 @@ contract and limitations.
 | --- | --- | --- |
 | Setup `applying` or `recovery` | Earlier steps and part of the named step | Inspect that step's output and actual state. A handled `recovery_required` failure can rerun the matching profile, machine type and username; the full idempotent plan runs again. A hard-kill `in_progress` marker requires explicit review first. |
 | Setup `finalizing` | Machine state may be saved before setup configuration | Reconcile both saved files with the actual host before retrying. Individual atomic writes do not make these files one filesystem transaction. |
+| Samba shares `reconciling` or `saving` | Groups, account flags/passwords on the credential-provisioning path, recursive permissions, Samba configuration and its mount drop-in; saved share state may already be updated | Inspect the recorded desired shares, actual groups/permissions, `testparm -s`, smbd state, mount drop-in and saved setup. Reconcile the chosen share list and saved state before explicitly resolving the marker. Full setup and account changes remain blocked; a new share request never automatically resumes this marker. Filesystem/account effects are outside rollback. |
 | Manifest `preparing` or `building`; static `preparing` or `staging` | Temporary artifacts and prerequisite accounts/tooling | The release has not been switched. Verify the old release and units, then archive or remove the recorded staging tree after confirming it is unused. |
 | Release `activating` | Old services may be stopped; the old tree may be at `backup_path`; destination may be absent or new | Inspect all paths. Restore the previous tree if displaced, then restore saved units and active states. Never assume a rename happened solely because its phase was recorded. |
 | Manifest `verifying`; static `finalizing` | New release is active; startup and final persistence may be incomplete | Choose between verifying the new release and restoring the old one. For manifest rollback, stop new units, restore the previous tree and unit snapshot, reload systemd, then restore recorded enablement and running state. Restore `previous_ports` too. |

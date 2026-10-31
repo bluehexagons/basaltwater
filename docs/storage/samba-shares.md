@@ -179,6 +179,19 @@ basaltw shares fileserver \
   --share read archive /srv/archive alice
 ```
 
+Share-only updates hold the same target lock as full setup, refresh and panel
+account changes. They use the target's saved mount declarations, metadata cache
+and internal-data protections, then update only its saved Samba share selection
+after successful reconciliation. Other target settings remain unchanged;
+passwords are not written into the share declarations or recovery marker.
+
+A failed or interrupted update leaves the shared setup operation marker in
+place because permissions, groups or accounts may already have changed. Inspect
+the recorded desired shares and the actual Samba configuration before following
+the [transaction recovery guide](../operations/transaction-recovery.md). Do not
+delete the marker to retry. A failure while saving state or recording completion
+can follow a successful Samba reload; inspect both live and saved state.
+
 The `--share` option replaces the saved share with the same name. Supply the
 complete desired user list when changing membership:
 
