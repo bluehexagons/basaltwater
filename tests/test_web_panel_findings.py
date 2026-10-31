@@ -81,6 +81,88 @@ class CompleteFindingBrowserTests(unittest.TestCase):
         for invalid in ("1000001", "9" * 100, "-1", "٠١"):
             with self.assertRaises(ValueError):
                 page.parse_shares_data_query("view=scrubs&page=" + invalid)
+            with self.assertRaises(ValueError):
+                page.parse_shares_data_query("view=scrubs&tasks_page=" + invalid)
+
+    def test_all_task_health_is_paginated_and_root_search_is_independent_of_findings(self):
+        for index in range(9, 24):
+            directory = self.root / ("Straße-100%_[quoted]" if index == 23 else f"data{index}")
+            database = self.root / f"parity{index}"
+            directory.mkdir()
+            database.mkdir()
+            self.config["scrub_specs"].append([str(directory), str(database), "10%", "weekly"])
+            report = Findings(str(directory), str(database))
+            report.finish_scan(verify=True, completed=index != 22)
+        snapshot = self.collect()
+        seen = []
+        with patch("subprocess.run") as run, patch("sync.service_tools.scrub_findings.Findings") as private:
+            for number in (1, 2):
+                result = self.load(snapshot, {"tasks_page": str(number), "q": "no matching finding"})
+                health = result["health"]
+                self.assertTrue(health["available"])
+                self.assertLessEqual(len(health["jobs"]), catalog.PAGE_SIZE)
+                self.assertEqual(health["total"], 24)
+                self.assertEqual(result["total"], 0)
+                seen.extend(health["jobs"])
+            health = self.load(snapshot, {"task": "STRASSE-100%_[", "tasks_page": "1000000"})["health"]
+        run.assert_not_called()
+        private.assert_not_called()
+        self.assertEqual(len({job["directory"] for job in seen}), 24)
+        self.assertEqual(seen[0]["status"], "findings")
+        self.assertEqual(seen[0]["open_count"], 63)
+        self.assertEqual(seen[22]["status"], "incomplete")
+        self.assertEqual((health["total"], health["page"]), (1, 1))
+        self.assertEqual(health["jobs"][0]["status"], "verified")
+        self.assertTrue(health["jobs"][0]["last_scan"])
+        self.assertEqual(self.load(snapshot, {"task": "' OR 1=1 --"})["health"]["total"], 0)
+        state = SimpleNamespace(manifest={"host": "nas"}, navigation=Mock(return_value=()))
+        query = page.parse_shares_data_query("view=scrubs&category=repairable&q=file&tasks_page=2&task=data&page=2")
+        with patch.object(storage, "load_storage_snapshot", return_value=snapshot), patch.object(page, "load_findings", side_effect=lambda snapshot, query: self.load(snapshot, query)):
+            document = page.render_shares_data(state, "", query)
+        self.assertIn("data22", document)
+        self.assertIn("Last full scan incomplete", document)
+        self.assertIn("Next findings", document)
+        self.assertIn("Previous tasks", document)
+        self.assertIn("tasks_page=2", document)
+        self.assertIn("task=data", document)
+        self.assertNotIn("additional scrub tasks outside", document)
+        for query in ("view=shares&task=data", "view=routines&tasks_page=1", "view=scrubs&form=scrub&task=data",
+                      "view=scrubs&task=%00", "view=scrubs&task=" + "x" * 201):
+            with self.subTest(query=query), self.assertRaises(ValueError):
+                page.parse_shares_data_query(query)
+
+    def test_bad_health_never_hides_valid_findings_or_claims_healthy(self):
+        snapshot = self.collect()
+        for status, scan, count in (("verified", "", 0), ("verified", "2026-01-01T00:00:00+00:00", 1),
+                                    ("incomplete", "invalid", 0), ("findings", "", 0),
+                                    ("never_scanned", "", -1), ("unknown", "", 0)):
+            with self.subTest(status=status, scan=scan, count=count):
+                with sqlite3.connect(self.catalog_path) as connection:
+                    connection.execute("UPDATE jobs SET status=?,last_scan=?,open_count=? WHERE id=1", (status, scan, count))
+                result = self.load(snapshot)
+                self.assertTrue(result["available"])
+                self.assertEqual(result["total"], 71)
+                self.assertFalse(result["health"]["available"])
+
+    def test_version_one_catalog_retains_findings_and_requires_a_health_export_update(self):
+        snapshot = self.collect()
+        with sqlite3.connect(self.catalog_path) as connection:
+            connection.executescript("""
+                CREATE TABLE old_jobs AS SELECT id,directory,database_path,status FROM jobs;
+                DROP TABLE jobs;
+                ALTER TABLE old_jobs RENAME TO jobs;
+                UPDATE metadata SET version=1;
+            """)
+        snapshot["catalog"]["version"] = 1
+        result = self.load(snapshot)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["total"], 71)
+        self.assertEqual(result["health"], {"available": False, "legacy": True})
+        for reference in ({"version": True, "generated_at": snapshot["generated_at"]},
+                          {"version": 2, "generated_at": snapshot["generated_at"]},
+                          {"version": 1, "generated_at": snapshot["generated_at"], "extra": "invalid"}):
+            with self.subTest(reference=reference):
+                self.assertFalse(self.load({**snapshot, "catalog": reference})["available"])
 
     def test_large_valid_inventory_does_not_hide_the_complete_finding_catalog(self):
         suffix = "/".join(["\U0001f600" * 60] * 12)
@@ -119,6 +201,7 @@ class CompleteFindingBrowserTests(unittest.TestCase):
         self.assertTrue(result["available"])
         self.assertEqual(result["unavailable_jobs"], 1)
         self.assertEqual(result["total"], 70)
+        self.assertEqual(result["health"]["jobs"][-1]["status"], "unavailable")
 
     def test_query_budget_exhaustion_is_unavailable_instead_of_an_empty_result(self):
         snapshot = self.collect()

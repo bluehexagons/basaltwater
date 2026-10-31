@@ -1024,6 +1024,15 @@ test.describe('Shares & Data', () => {
     await expect(page.locator('.data-list')).toContainText('Backup mirror');
     await tabs.getByRole('link', { name: 'Scrubs & findings', exact: true }).click();
     await expect(page.locator('.data-finding')).toHaveCount(3);
+    const health = page.getByRole('region', { name: 'Task health', exact: true });
+    await expect(health).toContainText('Showing 1–1 of 1 matching scrub tasks');
+    await health.getByLabel('Scrub root contains', { exact: true }).fill('no-matching-root');
+    await health.getByRole('button', { name: 'Filter tasks', exact: true }).click();
+    await expect(health).toContainText('No scrub tasks match');
+    await expect(page.locator('.data-finding')).toHaveCount(3);
+    await health.getByLabel('Scrub root contains', { exact: true }).fill('ARCHIVE');
+    await health.getByRole('button', { name: 'Filter tasks', exact: true }).click();
+    await expect(health).toContainText('Unresolved findings');
     await page.getByLabel('Category', { exact: true }).selectOption('repairable');
     await page.getByLabel('File path contains', { exact: true }).fill('holiday');
     await page.getByRole('button', { name: 'Filter findings', exact: true }).click();
@@ -1032,6 +1041,7 @@ test.describe('Shares & Data', () => {
     await page.getByRole('link', { name: 'Refresh snapshot', exact: true }).click();
     await expect(page.getByLabel('Category', { exact: true })).toHaveValue('repairable');
     await expect(page.getByLabel('File path contains', { exact: true })).toHaveValue('holiday');
+    await expect(health.getByLabel('Scrub root contains', { exact: true })).toHaveValue('ARCHIVE');
     const finding = page.locator('.data-finding');
     await finding.locator('summary').focus();
     await page.keyboard.press('Enter');

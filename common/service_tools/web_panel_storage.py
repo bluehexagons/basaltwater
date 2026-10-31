@@ -114,10 +114,10 @@ def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
                 job["status"] = "unavailable"
             job["omitted_findings"] = job["open_count"] - len(job["findings"])
             if catalog:
-                catalog.finish_job(job_id, job["status"])
+                catalog.finish_job(job_id, job)
         result["available"] = True
         if catalog:
-            result["catalog"] = {"version": 1, "generated_at": result["generated_at"]}
+            result["catalog"] = {"version": 2, "generated_at": result["generated_at"]}
     except (OSError, ValueError, RuntimeError):
         pass
     finally:

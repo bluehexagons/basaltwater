@@ -20,7 +20,10 @@ The three views work without JavaScript:
   storage job logs separately. An inventory entry does not prove job completion
   or that a backup is recoverable.
 - **Scrubs & findings** manages scrub declarations and distinguishes unavailable reports, never-scanned roots,
-  incomplete scans, open findings, and completed recorded scans. Filter open
+  incomplete scans, open findings, and completed recorded scans. **Task health**
+  searches scrub roots and pages through every task, including its last full scan,
+  open count and parity directory. Its root filter is independent of the finding
+  filters. Filter open
   findings across all configured tasks by category or file path and move between
   pages of twenty. File searches are case-insensitive and treat punctuation
   literally. Each finding explains
@@ -38,19 +41,23 @@ The older summary includes at most 64 shares, 64 users per share, 128 backup/syn
 routines, eight scrub tasks and twenty preview findings per task. Routine controls
 use a separate complete inventory of up to 256 routines across all three kinds;
 they do not select tasks from that limited summary. A separate sanitized local
-catalog includes open findings from every configured scrub task, including tasks
-outside that summary. Filters and pagination use this complete catalog. Failed
+catalog includes health and open findings from every configured scrub task,
+including tasks outside that summary. Each browser returns twenty rows per page;
+task and finding filters preserve one another when paging or refreshing. Searches
+are case-insensitive and literal. Filters and pagination use this complete catalog. Failed
 mount checks, unreadable reports or unsupported report metadata produce an explicit
 incomplete-results notice. A missing, corrupt or mismatched catalog is unavailable,
 never an empty or healthy result. Older exporters retain the limited preview and
-show an update notice.
+show an update notice. Version-one catalogs still provide complete findings;
+complete task health requires the current exporter. Invalid health metadata is
+marked unavailable independently, so it cannot hide valid findings.
 
 Catalog export shares the storage collector’s twenty-second deadline and has a
 128 MiB file limit. The summary has an 8 MiB transport and read limit to accommodate
 the supported inventory sizes and escaped Unicode paths. Only a completed export
 is published; interruption or exceeding these bounds makes the new export
 unavailable. Queries read an immutable local
-file, return at most twenty rows and have a short execution budget. They never
+file, return at most twenty tasks and twenty findings, and share a short execution budget. They never
 read NAS paths. Use `basaltw scrub status HOST` for controller inspection and
 `--all` to include resolved findings.
 Passwords, mount credentials, raw PAR2 output, and recovery copies are not exported.

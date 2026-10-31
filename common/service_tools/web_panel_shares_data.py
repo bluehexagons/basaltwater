@@ -60,26 +60,29 @@ STYLE = """
 def parse_shares_data_query(raw: str) -> dict[str, str]:
     if len(raw) > 2048:
         raise ValueError("Shares & Data query exceeds its limit")
-    values = parse_qs(raw, keep_blank_values=True, max_num_fields=4)
-    if set(values) - {"view", "category", "q", "page", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
+    values = parse_qs(raw, keep_blank_values=True, max_num_fields=6)
+    if set(values) - {"view", "category", "q", "page", "task", "tasks_page", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
         raise ValueError("Invalid Shares & Data filters")
     result = {key: items[0] for key, items in values.items()}
     if result.get("view", "shares") not in VIEWS:
         raise ValueError("Unknown Shares & Data view")
     if result.get("category", "") not in ("", *ADVICE):
         raise ValueError("Unknown finding category")
-    query = result.get("q", "")
-    if len(query) > 200 or any(ord(character) < 32 or ord(character) == 127 for character in query):
-        raise ValueError("Invalid finding search")
-    page = result.get("page", "1")
-    if not page.isascii() or not page.isdigit() or len(page) > 7 or not 1 <= int(page) <= MAX_PAGE:
-        raise ValueError("Invalid findings page")
-    if result.get("view", "shares") != "scrubs" and set(result) & {"category", "q", "page"}:
-        raise ValueError("Finding filters require the scrubs view")
+    for key in ("q", "task"):
+        query = result.get(key, "")
+        if len(query) > 200 or any(ord(character) < 32 or ord(character) == 127 for character in query):
+            raise ValueError("Invalid scrub search")
+    for key in ("page", "tasks_page"):
+        page = result.get(key, "1")
+        if not page.isascii() or not page.isdigit() or len(page) > 7 or not 1 <= int(page) <= MAX_PAGE:
+            raise ValueError("Invalid scrub page")
+    filters = {"category", "q", "page", "task", "tasks_page"}
+    if result.get("view", "shares") != "scrubs" and set(result) & filters:
+        raise ValueError("Scrub filters require the scrubs view")
     editors = set(result) & {"edit", "form", "routine"}
     view = result.get("view", "shares")
-    if len(editors) > 1 or editors and set(result) & {"category", "q", "page"}:
-        raise ValueError("Choose one editor without finding filters")
+    if len(editors) > 1 or editors and set(result) & filters:
+        raise ValueError("Choose one editor without scrub filters")
     if "edit" in result:
         if view != "shares":
             raise ValueError("Share editing requires the Samba view")
@@ -181,6 +184,21 @@ def _managed_routines(control: dict, query: dict, csrf: str, *, controls: bool, 
     return body + '<p><a class="refresh-link" href="/jobs?load=1">Inspect timer and last service result →</a> · <a class="refresh-link" href="/logs?service=storage-ops.service">Open storage job logs →</a></p>'
 
 
+def _hidden_filters(query: dict, keys: set[str]) -> str:
+    return ''.join(f'<input type="hidden" name="{key}" value="{html.escape(value, quote=True)}">'
+                   for key, value in query.items() if key in keys)
+
+
+def _pagination(query: dict, page: int, total: int, field: str, label: str) -> str:
+    body = f'<nav class="data-pagination" aria-label="{label.capitalize()} pages">'
+    for text, destination in (("Previous " + label, page - 1), ("Next " + label, page + 1)):
+        if 1 <= destination <= (total + PAGE_SIZE - 1) // PAGE_SIZE:
+            values = {"view": "scrubs", **{key: value for key, value in query.items()
+                      if key in {"category", "q", "page", "task", "tasks_page"} - {field}}, field: str(destination)}
+            body += f'<a class="refresh-link" href="{html.escape("/shares-data?" + urlencode(values), quote=True)}">{text}</a>'
+    return body + '</nav>'
+
+
 def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
     body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
     jobs = snapshot["jobs"]
@@ -188,18 +206,36 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
         return body + '<p class="empty">No scrub integrity reports in this snapshot. Newly saved tasks appear after the next export; active tasks create reports when they run.</p>'
     catalog = load_findings(snapshot, query)
     complete = catalog["available"]
-    body += '<p class="data-notice">Recorded file integrity is separate from job execution. Daily parity maintenance does not resolve open findings, and a recorded scan does not verify later changes.</p><ul class="data-list">'
+    health = catalog.get("health", {})
+    body += '<p class="data-notice">Recorded file integrity is separate from job execution. Daily parity maintenance does not resolve open findings, and a recorded scan does not verify later changes.</p>'
+    body += '<section aria-labelledby="scrub-health">' + render_heading("Task health", "security", heading_id="scrub-health")
+    if health.get("available"):
+        jobs = health["jobs"]
+        body += f'''<form class="diagnostic-filters data-filters" method="get" action="/shares-data">
+<input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"category", "q", "page"})}
+<div><label for="scrub-task-search">Scrub root contains</label><input id="scrub-task-search" name="task" value="{html.escape(query.get("task", ""), quote=True)}" maxlength="200" type="search"></div>
+<button>Filter tasks</button></form>'''
+        total, page = health["total"], health["page"]
+        offset = (page - 1) * PAGE_SIZE
+        body += (f'<p class="count">Showing {offset + 1}–{min(offset + PAGE_SIZE, total)} of {total} matching scrub tasks</p>' if total else
+                 '<p class="empty">No scrub tasks match this root filter. Findings below use separate filters.</p>')
+    elif complete:
+        body += '<p class="event" role="status">Complete task health is unavailable in this export; only the bounded summary below is shown. Update or check the exporter. Missing health does not mean a task is healthy.</p>'
+    body += '<ul class="data-list">'
     for job in jobs:
         tone = "warning" if job["status"] in {"findings", "incomplete"} else "error" if job["status"] == "unavailable" else ""
         body += f'<li class="event"><h3>{html.escape(job["directory"])}</h3><p><span class="badge {tone}">{STATUS_LABELS[job["status"]]}</span></p>'
         body += _facts([("Full scan interval", job["interval"]), ("Last full scan", _date(job["last_scan"])),
                         ("Open findings", str(job["open_count"])), ("Parity directory", job.get("database", "Not exported"))])
-        if job["omitted_findings"] and not complete:
+        if job.get("omitted_findings") and not complete:
             body += f'<p class="data-notice">{job["omitted_findings"]} additional findings for this task are outside this snapshot. Use basaltw scrub status for the complete report.</p>'
         body += '</li>'
     body += '</ul>'
-    if snapshot["omitted_jobs"]:
+    if health.get("available"):
+        body += _pagination(query, health["page"], health["total"], "tasks_page", "tasks")
+    elif snapshot["omitted_jobs"]:
         body += f'<p class="data-notice">{snapshot["omitted_jobs"]} additional scrub tasks outside the summary above.</p>'
+    body += '</section>'
     if complete:
         noun = "task" if catalog["tasks"] == 1 else "tasks"
         body += f'<p class="data-notice">The finding browser includes all {catalog["tasks"]} configured scrub {noun} in this export.</p>'
@@ -213,7 +249,7 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     )
     body += f'''<section aria-labelledby="findings-heading">{render_heading("Browse findings", "diagnostics", heading_id="findings-heading")}
 <form class="diagnostic-filters data-filters" method="get" action="/shares-data">
-<input type="hidden" name="view" value="scrubs"><div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
+<input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"task", "tasks_page"})}<div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
 <div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="200" type="search"></div>
 <button>Filter findings</button><a class="refresh-link" href="/shares-data?view=scrubs">Clear filters</a></form>'''
     if not complete and not catalog.get("legacy"):
@@ -245,12 +281,7 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
 <a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a>
 {recovery_form(job, finding, csrf) if controls else ''}</details></li>'''
         body += '</ul>'
-    body += '<nav class="data-pagination" aria-label="Findings pages">'
-    for label, destination in (("Previous findings", page - 1), ("Next findings", page + 1)):
-        if 1 <= destination <= (total + PAGE_SIZE - 1) // PAGE_SIZE:
-            url = "/shares-data?" + urlencode({"view": "scrubs", **{key: value for key, value in query.items() if key in {"category", "q"}}, "page": str(destination)})
-            body += f'<a class="refresh-link" href="{html.escape(url, quote=True)}">{label}</a>'
-    return body + '</nav></section>'
+    return body + _pagination(query, page, total, "page", "findings") + '</section>'
 
 
 def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "", routine_fields: dict | None = None) -> str:

@@ -78,6 +78,10 @@ def finding_catalog_page(snapshot: dict, query: dict[str, str]) -> dict:
                 if (not category or finding["category"] == category) and search in finding["path"].casefold()]
     total = len(findings)
     page = min(int(query.get("page", "1")), max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE))
+    jobs = [job for job in snapshot["jobs"] if query.get("task", "").casefold() in job["directory"].casefold()]
+    tasks_page = min(int(query.get("tasks_page", "1")), max(1, (len(jobs) + PAGE_SIZE - 1) // PAGE_SIZE))
     return {"available": True, "findings": findings[(page - 1) * PAGE_SIZE:page * PAGE_SIZE],
             "total": total, "page": page, "tasks": len(snapshot["jobs"]),
+            "health": {"available": True, "jobs": jobs[(tasks_page - 1) * PAGE_SIZE:tasks_page * PAGE_SIZE],
+                       "total": len(jobs), "page": tasks_page},
             "unavailable_jobs": sum(job["status"] == "unavailable" for job in snapshot["jobs"])}

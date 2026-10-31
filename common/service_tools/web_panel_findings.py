@@ -26,30 +26,59 @@ class FindingCatalog:
         self.connection.execute("PRAGMA synchronous=OFF")
         self.connection.executescript("""
             CREATE TABLE metadata (version INTEGER, generated_at TEXT);
-            CREATE TABLE jobs (id INTEGER PRIMARY KEY, directory TEXT, database_path TEXT, status TEXT);
+            CREATE TABLE jobs (id INTEGER PRIMARY KEY, directory TEXT, search_directory TEXT,
+                database_path TEXT, interval TEXT, status TEXT, last_scan TEXT, open_count INTEGER);
             CREATE TABLE findings (id INTEGER PRIMARY KEY, job INTEGER, path TEXT, search_path TEXT,
                 category TEXT, first_seen TEXT, last_checked TEXT, revision TEXT);
             CREATE INDEX finding_category ON findings(category);
         """)
-        self.connection.execute("INSERT INTO metadata VALUES (1, ?)", (generated_at,))
+        self.connection.execute("INSERT INTO metadata VALUES (2, ?)", (generated_at,))
 
     def add_job(self, job: dict) -> int:
-        return self.connection.execute("INSERT INTO jobs(directory,database_path,status) VALUES (?,?,?)",
-            (job["directory"], job["database"], "unavailable")).lastrowid
+        return self.connection.execute("INSERT INTO jobs(directory,search_directory,database_path,interval,status,last_scan,open_count) VALUES (?,?,?,?,?,?,?)",
+            (job["directory"], job["directory"].casefold(), job["database"], job["interval"], "unavailable", "", 0)).lastrowid
 
     def add_finding(self, job_id: int, finding: dict) -> None:
         self.connection.execute("INSERT INTO findings(job,path,search_path,category,first_seen,last_checked,revision) VALUES (?,?,?,?,?,?,?)",
             (job_id, finding["path"], finding["path"].casefold(), finding["category"],
              finding["first_seen"], finding["last_checked"], finding["revision"]))
 
-    def finish_job(self, job_id: int, status: str) -> None:
-        self.connection.execute("UPDATE jobs SET status=? WHERE id=?", (status, job_id))
+    def finish_job(self, job_id: int, job: dict) -> None:
+        self.connection.execute("UPDATE jobs SET status=?,last_scan=?,open_count=? WHERE id=?",
+            (job["status"], job["last_scan"], job["open_count"], job_id))
 
     def close(self) -> None:
         try:
             self.connection.commit()
         finally:
             self.connection.close()
+
+
+def _load_health(connection: sqlite3.Connection, query: dict[str, str]) -> dict:
+    """Keep task inspection bounded and independent of finding filters."""
+    from common.service_tools.web_panel_storage import STATUSES, _text, _timestamp
+
+    try:
+        search = query.get("task", "").casefold()
+        total = connection.execute("SELECT count(*) FROM jobs WHERE instr(search_directory,?)>0", (search,)).fetchone()[0]
+        page = min(int(query.get("tasks_page", "1")), max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE))
+        rows = connection.execute("SELECT directory,database_path,interval,status,last_scan,open_count FROM jobs "
+            "WHERE instr(search_directory,?)>0 ORDER BY id LIMIT ? OFFSET ?",
+            (search, PAGE_SIZE, (page - 1) * PAGE_SIZE)).fetchall()
+        jobs = []
+        for directory, database, interval, status, last_scan, count in rows:
+            if (status not in STATUSES or type(count) is not int or count < 0
+                    or status == "verified" and (not last_scan or count)
+                    or status == "findings" and not count
+                    or status == "incomplete" and (not last_scan or count)
+                    or status == "never_scanned" and (last_scan or count)):
+                raise ValueError("Invalid task health")
+            jobs.append({"directory": _text(directory), "database": _text(database), "interval": _text(interval),
+                         "status": status, "last_scan": _timestamp(last_scan) if last_scan != "" else "",
+                         "open_count": count})
+        return {"available": True, "jobs": jobs, "total": total, "page": page}
+    except (ValueError, TypeError, sqlite3.Error, OverflowError):
+        return {"available": False}
 
 
 def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PATH) -> dict:
@@ -63,7 +92,9 @@ def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PAT
         return {"available": False, "legacy": True}
     descriptor = None
     try:
-        if reference != {"version": 1, "generated_at": snapshot["generated_at"]}:
+        if (not isinstance(reference, dict) or type(reference.get("version")) is not int
+                or reference["version"] not in {1, 2}
+                or reference != {"version": reference["version"], "generated_at": snapshot["generated_at"]}):
             raise ValueError("Invalid catalog reference")
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         info = os.fstat(descriptor)
@@ -72,7 +103,7 @@ def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PAT
         deadline = time.monotonic() + 0.25
         with closing(sqlite3.connect(f"file:/proc/self/fd/{descriptor}?mode=ro&immutable=1", uri=True, timeout=0.1)) as connection:
             connection.set_progress_handler(lambda: time.monotonic() > deadline, 1000)
-            if connection.execute("SELECT version,generated_at FROM metadata LIMIT 2").fetchall() != [(1, snapshot["generated_at"])]:
+            if connection.execute("SELECT version,generated_at FROM metadata LIMIT 2").fetchall() != [(reference["version"], snapshot["generated_at"])]:
                 raise ValueError("Catalog generation changed")
             category, search = query.get("category", ""), query.get("q", "").casefold()
             conditions, parameters = [], []
@@ -90,6 +121,7 @@ def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PAT
                 (*parameters, PAGE_SIZE, (page - 1) * PAGE_SIZE)).fetchall()
             unavailable = connection.execute("SELECT count(*) FROM jobs WHERE status='unavailable'").fetchone()[0]
             tasks = connection.execute("SELECT count(*) FROM jobs").fetchone()[0]
+            health = _load_health(connection, query) if reference["version"] == 2 else {"available": False, "legacy": True}
         findings = []
         for directory, database, file, category, first, checked, revision in rows:
             if category not in ADVICE or not isinstance(revision, str) or not HEX_DIGEST.fullmatch(revision):
@@ -98,7 +130,7 @@ def load_findings(snapshot: dict, query: dict[str, str], path: str = CATALOG_PAT
                 {"path": _text(file), "category": category, "first_seen": _timestamp(first),
                  "last_checked": _timestamp(checked), "revision": revision}))
         return {"available": True, "findings": findings, "total": total, "page": page,
-                "unavailable_jobs": unavailable, "tasks": tasks}
+                "unavailable_jobs": unavailable, "tasks": tasks, "health": health}
     except (OSError, ValueError, TypeError, sqlite3.Error, OverflowError):
         return {"available": False, "legacy": False}
     finally:
