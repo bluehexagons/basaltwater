@@ -104,6 +104,13 @@ the guard just to retry. Reviews expire after five minutes, submission consumes
 them once, and lost responses or interrupted operations are never replayed
 automatically. Controller commands remain available for unsupported inventories.
 
+Validation errors retain the share directory, access choice and selected users.
+A confirmation typo or temporarily busy approval service retains the same
+five-minute review. If the snapshot changes or editing becomes unavailable, a
+copyable unsaved draft appears instead of rebasing it onto newer configuration.
+Once submission reaches the broker connection, its ticket is consumed even when
+the response is lost; inspect activity before creating another request.
+
 ## Manage backup, sync and scrub routines
 
 In **Backups & sync**, choose **Add backup mirror** or **Add sync mirror**. In
@@ -300,6 +307,10 @@ The controller inspection command remains available for the full private report.
 Reviews expire after five minutes and can be submitted once. Pending requests
 can be cancelled before execution is claimed. Neither the panel nor the worker
 automatically retries a lost response, failed operation, or interrupted job.
+Input errors retain the recovery action and independent-copy path for correction.
+Confirmation typos or a temporarily busy service retain the same review until it
+expires. Once the submission reaches the broker connection, the ticket is consumed;
+inspect activity after an uncertain response instead of replaying the review.
 The worker runs outside the panel with a six-hour deadline and uses the same
 storage lock, configured-job selection, mount guards and staged recovery as
 the CLI. It refuses a finding that changed since review, and refuses recovery

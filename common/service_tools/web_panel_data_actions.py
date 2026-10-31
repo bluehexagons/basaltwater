@@ -58,21 +58,29 @@ class PanelData:
             self.tickets[ticket] = (parameters, time.monotonic() + 300)
         return ticket, parameters
 
-    def submit(self, ticket: str, confirmation: str) -> None:
+    def reviewed(self, ticket: str) -> dict:
         with self.lock:
-            saved = self.tickets.pop(ticket, None)
-        if saved is None or saved[1] <= time.monotonic():
-            raise ValueError("This review expired or was already submitted. Check recent requests before reviewing again.")
-        parameters = saved[0]
+            saved = self.tickets.get(ticket)
+            if saved is None or saved[1] <= time.monotonic():
+                self.tickets.pop(ticket, None)
+                raise ValueError("This review expired or was already submitted. Check recent requests before reviewing again.")
+            return saved[0]
+
+    def submit(self, ticket: str, confirmation: str) -> None:
+        parameters = self.reviewed(ticket)
         required = "ACCEPT CURRENT CONTENT" if parameters["action"] == "accept" else "CHANGE FILE" if parameters["action"] != "verify" else ""
         if confirmation != required:
-            raise ValueError("The confirmation did not match. Review this file again before submitting.")
+            raise ValueError("Type the exact confirmation phrase shown in the review")
         status = self.snapshot()
         reason = unavailable_reason(status)
         if reason:
             raise ValueError(reason)
         # Consume the ticket before crossing the socket: a lost response must
         # never cause automatic replay of an accepted recovery request.
+        with self.lock:
+            saved = self.tickets.pop(ticket, None)
+        if saved is None or saved[1] <= time.monotonic():
+            raise ValueError("This review expired or was already submitted. Check recent requests before reviewing again.")
         exchange({"action": "request", "operation": "data.run", "parameters": parameters,
                   "reason": "Shares & Data: " + DATA_ACTIONS[parameters["action"]][0]})
 
@@ -91,22 +99,38 @@ def unavailable_reason(status: dict) -> str:
     return ""
 
 
-def recovery_form(job: dict, finding: dict, csrf: str) -> str:
+def recovery_form(job: dict, finding: dict, csrf: str, submitted: dict | None = None) -> str:
     if not job.get("database") or not finding.get("revision"):
         return '<p>Refresh the installed snapshot exporter before using browser recovery for this finding.</p>'
     identifier = secrets.token_hex(8)
-    options = ''.join(f'<option value="{key}">{html.escape(label)}</option>' for key, (label, _effect) in DATA_ACTIONS.items())
+    selected = (submitted or {}).get("action", "verify")
+    backup = html.escape((submitted or {}).get("backup", ""), quote=True)
+    options = ''.join(f'<option value="{key}"{" selected" if key == selected else ""}>{html.escape(label)}</option>' for key, (label, _effect) in DATA_ACTIONS.items())
     fields = {"directory": job["directory"], "database": job["database"], "file": finding["path"], "finding": finding["revision"]}
     hidden = ''.join(f'<input type="hidden" name="{key}" value="{html.escape(value, quote=True)}">' for key, value in fields.items())
     return f'''<form method="post" action="/actions/data/review" class="data-recovery-form">{csrf}{hidden}
 <label for="recovery-{identifier}">Recovery action</label><select id="recovery-{identifier}" name="action">{options}</select>
-<label for="backup-{identifier}">Independent copy path (restore only)</label><input id="backup-{identifier}" name="backup" maxlength="1024" placeholder="/path/to/known-good-copy">
+<label for="backup-{identifier}">Independent copy path (restore only)</label><input id="backup-{identifier}" name="backup" value="{backup}" maxlength="1024" placeholder="/path/to/known-good-copy">
 <p>Review creates no host operation. Recovery requires a separate approval. Verify first if the file has changed since this finding was recorded.</p>
 <button>Review recovery</button></form>'''
 
 
 def render_review(manager: PanelData, fields: dict[str, str], csrf: str) -> str:
     ticket, parameters = manager.prepare(fields)
+    return render_saved_review(ticket, parameters, csrf)
+
+
+def render_failed_review(fields: dict, csrf: str) -> str:
+    """Preserve editable recovery inputs only for a valid file/finding identity."""
+    value = validate_data_action({**fields, "action": "verify", "backup": "", "job_id": secrets.token_hex(16)})
+    return ('<section class="event data-review" aria-labelledby="recovery-inputs">'
+            + render_heading("Correct recovery inputs", "security", heading_id="recovery-inputs")
+            + '<p>File: <strong>' + html.escape(value["file"]) + '</strong></p>'
+            + recovery_form({"directory": value["directory"], "database": value["database"]},
+                            {"path": value["file"], "revision": value["finding"]}, csrf, fields) + '</section>')
+
+
+def render_saved_review(ticket: str, parameters: dict, csrf: str) -> str:
     action = parameters["action"]
     label, effect = DATA_ACTIONS[action]
     required = "ACCEPT CURRENT CONTENT" if action == "accept" else "CHANGE FILE" if action != "verify" else ""
@@ -118,7 +142,7 @@ def render_review(manager: PanelData, fields: dict[str, str], csrf: str) -> str:
     return f'''<section class="event data-review" aria-labelledby="recovery-review">{render_heading("Review: " + label, "security", heading_id="recovery-review")}
 <p>{html.escape(effect)}</p><dl class="job-facts">{facts}</dl>
 <p>This creates a single-use request for the separate approval page. The worker rejects a changed finding or file and shares the storage operation lock. Jobs have a six-hour limit; dispatch is separate from completion.</p>
-<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{ticket}">{confirmation}<button>Create recovery approval request</button></form>
+<form method="post" action="/actions/data/submit" class="data-recovery-form">{csrf}<input type="hidden" name="ticket" value="{html.escape(ticket, quote=True)}">{confirmation}<button>Create recovery approval request</button></form>
 <a href="/shares-data?view=scrubs">Cancel review</a></section>'''
 
 

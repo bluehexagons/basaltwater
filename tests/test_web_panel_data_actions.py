@@ -217,10 +217,11 @@ class DataReviewTests(unittest.TestCase):
             self.assertEqual(exchange.call_args.args[0]["operation"], "data.run")
         for action in ("repair", "restore", "accept"):
             fields = {**self.fields(), "action": action, "backup": "/srv/backup/file.bin" if action == "restore" else ""}
-            ticket, _ = self.manager.prepare(fields)
+            ticket, value = self.manager.prepare(fields)
             with patch.object(actions, "exchange") as exchange, self.assertRaises(ValueError):
                 self.manager.submit(ticket, "")
             exchange.assert_not_called()
+            self.assertEqual(self.manager.reviewed(ticket), value)
 
     def test_busy_unavailable_and_expired_reviews_cannot_request_recovery(self):
         for snapshot in ({**status(), "unit_state": "active"}, {**status(), "available": False},
@@ -275,4 +276,24 @@ class DataReviewTests(unittest.TestCase):
             handler.do_POST()
             self.assertEqual(handler._send.call_args.args[0], 422)
             self.assertIn("A backup path is allowed only for restore", handler._send.call_args.args[1])
+            self.assertIn("Correct recovery inputs", handler._send.call_args.args[1])
+            self.assertIn('value="/srv/backup/file.bin"', handler._send.call_args.args[1])
+            self.assertIn('value="verify" selected', handler._send.call_args.args[1])
             self.assertTrue(all(call.args[0]["action"] == "data-status" for call in exchange.call_args_list))
+
+    def test_http_confirmation_error_retains_the_review_and_lost_response_consumes_it(self):
+        ticket, value = self.manager.prepare(self.fields())
+        with patch.object(actions, "exchange", return_value=status()) as exchange, patch.object(storage, "load_storage_snapshot", return_value={"available": False}):
+            handler = self.handler("/actions/data/submit", {"csrf": "csrf", "ticket": ticket, "confirmation": "wrong"})
+            handler.do_POST()
+            self.assertEqual(handler._send.call_args.args[0], 409)
+            self.assertIn('name="ticket" value="' + ticket + '"', handler._send.call_args.args[1])
+            self.assertEqual(self.manager.reviewed(ticket), value)
+            self.assertTrue(all(call.args[0] == {"action": "data-status"} for call in exchange.call_args_list))
+            exchange.side_effect = [status(), OSError("PRIVATE uncertain response"), status()]
+            handler = self.handler("/actions/data/submit", {"csrf": "csrf", "ticket": ticket, "confirmation": "CHANGE FILE"})
+            handler.do_POST()
+            self.assertEqual(handler._send.call_args.args[0], 409)
+            self.assertNotIn('name="ticket"', handler._send.call_args.args[1])
+            self.assertNotIn("PRIVATE", handler._send.call_args.args[1])
+            self.assertNotIn(ticket, self.manager.tickets)

@@ -284,7 +284,8 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     return body + _pagination(query, page, total, "page", "findings") + '</section>'
 
 
-def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "", routine_fields: dict | None = None) -> str:
+def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "",
+                       routine_fields: dict | None = None, share_fields: dict | None = None) -> str:
     snapshot = storage.load_storage_snapshot()
     view = query.get("view", "shares")
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Shares &amp; Data</h1>
@@ -317,6 +318,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
         body += routines.render_status(routine_status, csrf)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
+        if share_fields is not None:
+            body += shares.render_draft(share_fields)
     else:
         body += f'<p class="data-notice">Snapshot: {html.escape(_date(snapshot["generated_at"]))}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
         inventory = snapshot.get("inventory", {"available": False})
@@ -324,7 +327,9 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
             controls = (share_manager is not None and not shares.unavailable_reason(share_status)
                         and snapshot.get("share_management", {}).get("available") is True)
             if controls and not review:
-                body += shares.render_editor(snapshot, query, csrf)
+                body += shares.render_editor(snapshot, query, csrf, share_fields)
+            elif share_fields is not None:
+                body += shares.render_draft(share_fields)
             body += _shares(inventory, state.manifest["host"], controls=controls)
             body += samba.render_accounts(snapshot.get("samba", {"available": False}), csrf,
                                           controls=samba_manager is not None and not samba.unavailable_reason(samba_status),

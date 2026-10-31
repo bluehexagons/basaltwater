@@ -237,9 +237,10 @@ class SharePanelTests(unittest.TestCase):
             self.assertEqual(handler._send.call_args.args[0], code)
 
     def test_confirmation_expiry_and_lost_responses_never_replay(self):
-        ticket, _ = self.manager.prepare(self.fields())
+        ticket, value = self.manager.prepare(self.fields())
         with self.assertRaises(ValueError):
             self.manager.submit(ticket, "wrong")
+        self.assertEqual(self.manager.reviewed(ticket), value)
         self.exchange.assert_not_called()
         ticket, _ = self.manager.prepare(self.fields())
         with patch.object(panel.time, "monotonic", return_value=float("inf")), self.assertRaises(ValueError):
@@ -251,6 +252,46 @@ class SharePanelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.submit(ticket, "projects")
         self.assertEqual(self.exchange.call_count, 2)
+
+    def test_http_errors_retain_editor_values_and_a_confirmation_review_can_be_corrected(self):
+        fields = {"csrf": "csrf", **self.fields(), "path": '/srv/<draft> " & literal $HOME %n'}
+        fields.pop("users")
+        handler = self.handler("/actions/shares/review", fields)
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 409)
+        document = handler._send.call_args.args[1]
+        self.assertIn('value="/srv/&lt;draft&gt; &quot; &amp; literal $HOME %n"', document)
+        self.assertIn('name="original" value="projects"', document)
+        self.assertNotIn('value="operator" checked', document)
+        self.assertNotIn('value="maintainer" checked', document)
+        self.assertFalse(self.manager.tickets)
+        ticket, value = self.manager.prepare(self.fields())
+        handler = self.handler("/actions/shares/submit", {"csrf": "csrf", "ticket": ticket, "confirmation": "wrong"})
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 409)
+        self.assertIn('name="ticket" value="' + ticket + '"', handler._send.call_args.args[1])
+        self.assertEqual(self.manager.reviewed(ticket), value)
+        self.assertTrue(all(call.args[0] == {"action": "share-status"} for call in self.exchange.call_args_list))
+        self.manager.submit(ticket, "projects")
+        self.assertEqual(self.exchange.call_args.args[0]["operation"], "samba.shares")
+        with self.assertRaises(ValueError):
+            self.manager.submit(ticket, "projects")
+
+    def test_stale_and_busy_review_keep_a_copyable_draft_without_rebasing(self):
+        for changed in ({"revision": "a" * 64}, {}):
+            self.exchange.return_value = {**idle(), **({"unit_state": "active"} if not changed else {})}
+            handler = self.handler("/actions/shares/review", {"csrf": "csrf", **self.fields(), **changed})
+            handler.do_POST()
+            self.assertEqual(handler._send.call_args.args[0], 409)
+            document = handler._send.call_args.args[1]
+            self.assertIn("Unsaved share draft", document)
+            self.assertIn("/srv/projects", document)
+            self.assertNotIn('action="/actions/shares/review"', document)
+            self.assertFalse(self.manager.tickets)
+        self.snapshot["inventory"] = {"available": False}
+        document = panel.render_editor(self.snapshot, {"edit": "projects"}, "csrf", self.fields())
+        self.assertIn("Unsaved share draft", document)
+        self.assertNotIn('action="/actions/shares/review"', document)
 
     def test_editing_and_queries_work_locally_without_probing_the_host(self):
         with patch("subprocess.run") as run:

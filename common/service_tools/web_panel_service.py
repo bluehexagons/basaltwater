@@ -38,10 +38,16 @@ from common.service_tools.web_panel_diagnostics import (
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
 from common.service_tools.web_panel_shares_data import parse_shares_data_query, render_shares_data
-from common.service_tools.web_panel_data_actions import PanelData, render_review as render_data_review, unavailable_reason as data_unavailable
+from common.service_tools.web_panel_data_actions import (
+    PanelData, render_review as render_data_review, render_failed_review as render_data_inputs,
+    render_saved_review as render_saved_data_review, unavailable_reason as data_unavailable,
+)
 from common.service_tools.web_panel_samba import (PanelSamba, PASSWORD_ACTIONS, render_review as render_samba_review,
                                                 render_saved_review as render_saved_samba_review, unavailable_reason as samba_unavailable)
-from common.service_tools.web_panel_share_actions import PanelShares, render_review as render_share_review, unavailable_reason as shares_unavailable
+from common.service_tools.web_panel_share_actions import (
+    PanelShares, render_review as render_share_review, render_saved_review as render_saved_share_review,
+    unavailable_reason as shares_unavailable,
+)
 from common.service_tools import web_panel_routine_actions as routine_actions
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
@@ -2643,12 +2649,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if set(values) != expected | {"csrf"} or any(len(entries) != 1 for entries in values.values()):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid recovery action\n", "text/plain")
             return
+        csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
         try:
             fields = {key: entries[0] for key, entries in values.items() if key != "csrf"}
             if path.endswith("/review"):
                 if reason := data_unavailable(self.state.data.snapshot()):
                     raise ValueError(reason)
-                csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
                 review = render_data_review(self.state.data, fields, csrf)
                 self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, review=review), "text/html")
                 return
@@ -2657,12 +2663,24 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             else:
                 self.state.admin.cancel(fields["id"])
         except (OSError, ValueError, RuntimeError) as exc:
+            review = ""
+            message = "The recovery request could not be confirmed. Check recovery activity and approval requests before trying again. Reviews expire after five minutes; a lost response is never replayed."
             if path.endswith("/review"):
-                self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"},
-                    error="Recovery review could not be prepared: " + str(exc)), "text/html")
-                return
-            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, error=
-                "The recovery request could not be confirmed. Check recovery activity and approval requests before trying again. Reviews expire after five minutes; repair and restore require CHANGE FILE, and acceptance requires ACCEPT CURRENT CONTENT."), "text/html")
+                message = "Recovery review could not be prepared: " + str(exc) if isinstance(exc, ValueError) else "Recovery review is unavailable. Check the snapshot and approval service."
+                try:
+                    review = render_data_inputs(fields, csrf)
+                except ValueError:
+                    pass
+            elif path.endswith("/submit"):
+                try:
+                    value = self.state.data.reviewed(fields["ticket"])
+                    review = render_saved_data_review(fields["ticket"], value, csrf)
+                    if isinstance(exc, ValueError):
+                        message = "The recovery request could not be confirmed: " + str(exc) + "."
+                except ValueError:
+                    pass
+            self._send(HTTPStatus.UNPROCESSABLE_ENTITY if path.endswith("/review") else HTTPStatus.CONFLICT,
+                       render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, review=review, error=message), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=scrubs"})
 
@@ -2721,14 +2739,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if not valid:
             self._send(HTTPStatus.BAD_REQUEST, "Invalid share action\n", "text/plain")
             return
+        csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
         try:
             fields = {key: entries if key == "users" else entries[0] for key, entries in values.items() if key != "csrf"}
+            if path.endswith("/review") and fields["kind"] == "save":
+                fields.setdefault("users", [])
             if path.endswith("/review"):
                 if reason := shares_unavailable(self.state.share_actions.snapshot()):
                     raise ValueError(reason)
-                if fields["kind"] == "save":
-                    fields.setdefault("users", [])
-                csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
                 review = render_share_review(self.state.share_actions, fields, csrf)
                 self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, review=review), "text/html")
                 return
@@ -2737,9 +2755,22 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             else:
                 self.state.admin.cancel(fields["id"])
         except (OSError, ValueError, RuntimeError) as exc:
+            query, submitted, review = {"view": "shares"}, None, ""
             message = (str(exc) if path.endswith("/review") and isinstance(exc, ValueError) else
                        "The share request could not be confirmed. Check share activity and approval requests before trying again. Reviews expire after five minutes and require the exact share name.")
-            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "shares"}, error=message), "text/html")
+            if path.endswith("/review") and fields["kind"] == "save":
+                query.update({"edit": fields["original"]} if fields["original"] else {"form": "add"})
+                submitted = fields
+            elif path.endswith("/submit"):
+                try:
+                    value = self.state.share_actions.reviewed(fields["ticket"])
+                    review = render_saved_share_review(fields["ticket"], value, csrf)
+                    if isinstance(exc, ValueError):
+                        message = "The share request could not be confirmed: " + str(exc) + "."
+                except ValueError:
+                    pass
+            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, query, review=review,
+                                                            error=message, share_fields=submitted), "text/html")
             return
         self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=shares"})
 
