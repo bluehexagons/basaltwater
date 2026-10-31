@@ -229,3 +229,50 @@ Recipe integration remains deferred until a reviewed native consuming workflow
 justifies it. Physical display/GPU, streaming, audio/input, lock/reconnect,
 real Scheduler independence, fresh installation and live installer/reboot
 interruption were not qualified by these fixtures.
+
+### Post-refresh follow-up: 2026-10-31
+
+After the operator refreshed to `92b2b5e266ae665e91cf8c086c97fd1ab22e9e12`,
+the installed CLI passed all 28 workstation checks. All five installed Windows
+skill bundles compared current against that saved source; absent unselected
+Claude bundles remained informational. Desktop readiness, GitHub/Codex login,
+configured volumes and selected services passed their checks. The refresh
+receipt was complete and T3's completion receipt reported `restarted`. No
+required reboot was reported; pending file operations were advisory only.
+
+A real Scheduler smoke exposed a launcher boundary missed by the direct-API
+fixtures: `basaltw.cmd` stripped embedded quotes from Python `-c` code before
+task planning. The failed job retained accurate timing/logs and cleaned its
+private request and Scheduler registration. The native launcher correction in
+`392cb47aee388107d932dd742a2c4092ec9c1e7b` transports strings into the existing
+PowerShell CLI without batch parsing. Regressions verify literal/empty/Unicode
+arguments, task-plan delimiters, text-only output, failure exit codes, compilation
+rollback and replacement while an old launcher is still executing.
+
+The complete native suite passed the corrected implementation in 185.995 seconds,
+again with two explicit POSIX-only Python skips. The final extended launcher
+regressions passed separately in 8.019 seconds; later changes were tests and
+documentation. Documentation and diff checks passed. The active session's
+automatic approval review blocked installing the new executable in this account
+with the reason `blocked by policy`; installed files and saved source remained
+unchanged. The next normal refresh supplies the fix.
+
+Real limited interactive Scheduled Tasks were subsequently qualified through the
+existing PowerShell 7 script entry point, bypassing the batch argument boundary:
+
+- A successful job preserved spaces, an empty argument, embedded quotes, percent
+  text and Unicode exactly, with complete timing and clean-stream accounting.
+- A deliberately failed job wrote 4 MiB plus 12,345 bytes to **each** stream,
+  returned exit 23, retained exactly the cap and reported discarded bytes and
+  separate 64 KiB tail omission correctly.
+- Cancellation settled a live native process tree, confirmed the recorded
+  descendant was gone, and published terminal timing only after cleanup.
+
+These jobs completed after their submitting CLI processes exited. All four owned
+receipts, including the original quoting reproducer, were terminal afterward;
+all 21 account receipts had no retained private request, and owned Scheduler
+registrations were removed. This establishes real Scheduler execution and
+cancellation in the current login session. T3 closure/reconnect during an active
+job, live installer interruption and physical display/audio/input/streaming
+qualification remain separate. Private evidence is retained with this account's
+post-refresh qualification report.

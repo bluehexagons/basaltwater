@@ -23,6 +23,18 @@ try {
         try { Install-NativeCli $repo } catch { $failed = $_.Exception.Message -eq 'fixture compilation failure' }
         Assert-True ($failed -and (Get-FileHash -LiteralPath $launcher).Hash -eq $originalHash) 'Compilation failure replaced the working launcher'
     }
+    $planProbe = Join-Path $temporary 'plan-probe.ps1'
+    Set-Content -LiteralPath $planProbe -Encoding UTF8 -Value @'
+param($Launcher, $Project)
+$literal = @('quote"here', '', '%PATH%', '--dry-run')
+$cli = @('desktop','develop','exec','--project',$Project,'--dry-run','--',(Join-Path $PSHOME 'pwsh.exe')) + $literal
+$result = & $Launcher @cli | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $result.Plan -or $result.Argv.Count -ne $literal.Count) { throw 'Native task planning failed' }
+for ($i=0; $i -lt $literal.Count; $i++) { if ($result.Argv[$i] -cne $literal[$i]) { throw "Planned argument $i changed" } }
+'@
+    $shell = Get-NativePowerShell7
+    & $shell -NoProfile -ExecutionPolicy Bypass -File $planProbe -Launcher $launcher -Project $temporary
+    Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Basaltwater\development'))) 'Native dry-run created state or changed argv'
     Set-Content -LiteralPath $entry -Encoding UTF8 -Value @'
 @{ Arguments = @($args) } | ConvertTo-Json -Depth 4 -Compress
 exit 23
@@ -32,12 +44,11 @@ exit 23
     $probe = Join-Path $temporary 'probe.ps1'
     Set-Content -LiteralPath $probe -Encoding UTF8 -Value @'
 param($Launcher)
-$expected = @('two words', '', 'quote"here', 'trailing\', '%PATH%', '$literal & ;', "line`nbreak", 'lambda λ')
+$expected = @('two words', '', 'quote"here', 'trailing\', '%PATH%', '$literal & ;', "line`nbreak", 'lambda λ', '--', '--dry-run')
 $result = & $Launcher @expected | ConvertFrom-Json
 if ($LASTEXITCODE -ne 23 -or $result.Arguments.Count -ne $expected.Count) { throw 'Launcher lost exit status or argument count' }
 for ($i=0; $i -lt $expected.Count; $i++) { if ($result.Arguments[$i] -cne $expected[$i]) { throw "Argument $i changed" } }
 '@
-    $shell = Get-NativePowerShell7
     & $shell -NoProfile -ExecutionPolicy Bypass -File $probe -Launcher $launcher
     Assert-True ($LASTEXITCODE -eq 0) 'Native launcher argument roundtrip failed'
     Assert-True (@(Get-Command basaltw -CommandType Application)[0].Source -eq $launcher) 'Native launcher did not take precedence over batch fallback'
