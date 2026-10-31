@@ -11,6 +11,7 @@ from unittest.mock import patch
 import uuid
 
 from common.service_tools import web_panel_admin as admin
+from common.service_tools import web_panel_data_actions as data_actions
 from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_github_runner as github_runner
@@ -174,6 +175,7 @@ class Scenario:
         self.replace(state.git_settings, "remove_github_token", side_effect=lambda: self.set_token(None))
         state.admin.approval_url = "https://127.0.0.1/fixture-approvals"
         self.replace(admin, "exchange", side_effect=self.exchange)
+        self.replace(data_actions, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "load_policy", return_value={"services": {"example.service": "approve"}})
         self.replace(maintenance, "load_policy", side_effect=lambda: copy.deepcopy(self.data["policy"]))
@@ -272,6 +274,10 @@ class Scenario:
 
     def exchange(self, message: dict) -> dict:
         with self.lock:
+            if message["action"] == "data-status":
+                records = [row for row in self.data["requests"] if row.get("plan", {}).get("operation") == "data.run"]
+                return {"available": self.name != "degraded", "unit_state": "inactive", "latest": {},
+                        "requests": [{**copy.deepcopy(row), "parameters": row["plan"]["parameters"]} for row in records]}
             if message["action"] == "admin-status":
                 records = copy.deepcopy(self.data["requests"])
                 privilege = [{"id": row["id"], "created": row["created"], "expires": row["created"] + 3600,
@@ -282,9 +288,9 @@ class Scenario:
                 return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
                         "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
-                if message["operation"] in {"service.restart", "command.run"}:
+                if message["operation"] in {"service.restart", "command.run", "data.run"}:
                     request = {"id": uuid.uuid4().hex, "action": message["operation"],
-                               "state": "failed" if self.name == "degraded" else "succeeded", "created": time.time(),
+                               "state": "failed" if self.name == "degraded" else "pending" if message["operation"] == "data.run" else "succeeded", "created": time.time(),
                                "plan": {"operation": message["operation"], "parameters": message["parameters"]}}
                     request["review_url"] = "https://127.0.0.1/fixture-approvals/" + request["id"]
                     self.data["requests"].insert(0, request)

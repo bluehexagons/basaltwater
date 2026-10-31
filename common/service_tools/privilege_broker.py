@@ -29,6 +29,8 @@ from lib.privilege_policy import (
 )
 from common.service_tools.admin_job import availability as admin_availability, job_status
 from lib.admin_actions import ADMIN_HELPER
+from lib.data_actions import DATA_HELPER
+from common.service_tools.data_job import job_status as data_job_status, stage_data_job
 from lib.privilege_execution import (
     COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
 )
@@ -49,6 +51,12 @@ def execute(plan: dict) -> ExecutionResult:
             protected_path(ADMIN_HELPER)
             if plan["parameters"]["action"] in admin_availability():
                 return ExecutionResult("failed", failure="action_unavailable")
+        if plan["operation"] == "data.run":
+            protected_path(DATA_HELPER)
+            status = data_job_status()
+            if not status["available"] or status["unit_state"] not in {"inactive", "failed"}:
+                return ExecutionResult("failed", failure="action_unavailable")
+            stage_data_job(plan["parameters"])
         command = plan["operation"] == "command.run"
         if command:
             protected_path(COMMAND_HELPER)
@@ -68,7 +76,7 @@ def execute(plan: dict) -> ExecutionResult:
         return ExecutionResult("uncertain", exit_code=result.returncode, failure="executor_signal")
     if result.returncode:
         return ExecutionResult("failed", exit_code=result.returncode, failure="nonzero_exit")
-    dispatched = plan["operation"] == "system.reboot" or (
+    dispatched = plan["operation"] in {"system.reboot", "data.run"} or (
         plan["operation"] == "admin.run" and plan["parameters"]["action"] != "cancel-shutdown"
     )
     return ExecutionResult("dispatched" if dispatched else "succeeded", exit_code=0)
@@ -135,9 +143,9 @@ class Broker:
             try:
                 policy = self.policy_loader()
                 plan = operation_plan(policy, uid, operation, parameters)
-                if operation == "admin.run":
+                if operation in {"admin.run", "data.run"}:
                     for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
-                        if json.loads(row["plan"])["operation"] == "admin.run":
+                        if json.loads(row["plan"])["operation"] == operation:
                             raise ValueError("An administration request is already outstanding; review or cancel it first")
                 # Persistent quotas bound pending requests and repeated automatic actions.
                 count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
@@ -243,6 +251,22 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if not approval and action == "data-status" and set(message) == {"action"}:
+            policy = self.policy_loader()
+            if uid != policy["requester_uid"]:
+                raise PermissionError("Account is not authorized")
+            result = data_job_status()
+            with self.lock, self.db:
+                self._expire()
+                rows = self.db.execute("SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? AND json_extract(plan,'$.operation')='data.run' ORDER BY created DESC LIMIT 10", (uid,)).fetchall()
+                result["requests"] = [{"id": row["id"], "created": row["created"], "expires": row["expires"], "state": row["state"],
+                    "parameters": json.loads(row["plan"])["parameters"],
+                    "execution": json.loads(row["execution"]) if row["execution"] else None,
+                    "review_url": policy["origin"] + "/requests/" + row["id"]}
+                    for row in rows]
+                while result["requests"] and len(canonical({"ok": True, "result": result}).encode()) > MAX_MESSAGE:
+                    result["requests"].pop()
+            return result
         if not approval and action == "admin-status" and set(message) == {"action"}:
             policy = self.policy_loader()
             if uid != policy["requester_uid"]:

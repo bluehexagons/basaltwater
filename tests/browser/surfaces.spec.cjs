@@ -925,7 +925,7 @@ test.describe('host inspection', () => {
 
 test.describe('Shares & Data', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
-  test('inventory, findings filters and recovery guidance work without JavaScript', async ({ page, developmentServer: dev }, info) => {
+  test('inventory, findings filters and recovery guidance work without JavaScript', async ({ page, developmentServer: dev, diagnostics }, info) => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/admin');
     await page.locator('.admin-tools').getByRole('link', { name: 'Shares & Data', exact: true }).focus();
@@ -956,6 +956,30 @@ test.describe('Shares & Data', () => {
     await expect(finding.locator('pre')).toContainText('--database /srv/parity/archive');
     await expect(finding).toContainText('new baseline');
     await page.screenshot({ path: info.outputPath('shares-data-desktop.png'), fullPage: true });
+
+    await finding.getByLabel('Recovery action', { exact: true }).selectOption('accept');
+    await finding.getByRole('button', { name: 'Review recovery', exact: true }).click();
+    const review = page.locator('.data-review');
+    await expect(review).toContainText('Only accept content you have independently confirmed is correct');
+    await expect(review).toContainText('/srv/archive/photos/holiday.jpg');
+    await review.getByLabel('Type ACCEPT CURRENT CONTENT to confirm', { exact: true }).fill('wrong');
+    diagnostics.allowed.add(dev.url + '/actions/data/submit');
+    diagnostics.expectedConsole.push('the server responded with a status of 409');
+    const refused = page.waitForResponse(response => response.url() === dev.url + '/actions/data/submit');
+    await review.getByRole('button', { name: 'Create recovery approval request', exact: true }).click();
+    expect((await refused).status()).toBe(409);
+    await expect(page.getByRole('alert')).toContainText('could not be confirmed');
+    diagnostics.allowed.delete(dev.url + '/actions/data/submit');
+    const firstFinding = page.locator('.data-finding').first();
+    await firstFinding.locator('summary').click();
+    await firstFinding.getByLabel('Recovery action', { exact: true }).selectOption('verify');
+    await firstFinding.getByRole('button', { name: 'Review recovery', exact: true }).click();
+    await page.locator('.data-review').getByRole('button', { name: 'Create recovery approval request', exact: true }).click();
+    await expect(page.getByRole('link', { name: 'Open recovery approval', exact: false })).toBeVisible();
+    await expect(page.getByText('Approval request:', { exact: false }).first()).toContainText('pending');
+    await expect(page.getByRole('button', { name: 'Review recovery', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Cancel recovery request', exact: true }).click();
+    await expect(page.getByText('Approval request:', { exact: false }).first()).toContainText('cancelled');
 
     for (const colorScheme of ['light', 'dark']) {
       await page.emulateMedia({ colorScheme });

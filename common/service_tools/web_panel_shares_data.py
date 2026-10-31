@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import html
 import shlex
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlencode
 
 from common.service_tools import web_panel_storage as storage
 from common.service_tools.web_panel_templates import render_document, render_heading
 from sync.service_tools.scrub_findings import ADVICE
+from common.service_tools.web_panel_data_actions import recovery_form, render_status, unavailable_reason
 
 PAGE_SIZE = 20
 VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
@@ -33,6 +35,10 @@ STYLE = """
 .data-filters input { min-width:0; }
 .data-pagination { display:flex; flex-wrap:wrap; align-items:center; gap:16px; }
 .data-list code { white-space:pre-wrap; }
+.data-recovery-form { display:grid; gap:8px; margin:12px 0; max-width:680px; }
+.data-recovery-form input, .data-recovery-form select { min-width:0; width:100%; min-height:44px;
+  padding:10px; font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:8px; }
+.data-review { border-left:3px solid var(--warning); margin:16px 0; }
 """
 
 
@@ -62,6 +68,15 @@ def _facts(items: list[tuple[str, str]]) -> str:
     return '<dl class="job-facts">' + ''.join(
         f'<div><dt>{html.escape(label)}</dt><dd>{html.escape(value)}</dd></div>' for label, value in items
     ) + '</dl>'
+
+
+def _date(value: str) -> str:
+    if not value:
+        return "Not recorded"
+    try:
+        return datetime.fromisoformat(value).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (OverflowError, ValueError):
+        return value
 
 
 def _inventory_notice() -> str:
@@ -114,7 +129,7 @@ def _routines(inventory: dict) -> str:
     return body + '<p><a class="refresh-link" href="/jobs?load=1">Inspect timer and last service result →</a> · <a class="refresh-link" href="/logs?service=storage-ops.service">Open storage job logs →</a></p>'
 
 
-def _scrubs(snapshot: dict, query: dict[str, str], host: str) -> str:
+def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "", controls: bool = False) -> str:
     body = render_heading("Scrubs & findings", "security", heading_id="scrubs-heading")
     jobs = snapshot["jobs"]
     if not jobs:
@@ -123,7 +138,7 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str) -> str:
     for job in jobs:
         tone = "warning" if job["status"] in {"findings", "incomplete"} else "error" if job["status"] == "unavailable" else ""
         body += f'<li class="event"><h3>{html.escape(job["directory"])}</h3><p><span class="badge {tone}">{STATUS_LABELS[job["status"]]}</span></p>'
-        body += _facts([("Full scan interval", job["interval"]), ("Last full scan", job["last_scan"] or "Not recorded"),
+        body += _facts([("Full scan interval", job["interval"]), ("Last full scan", _date(job["last_scan"])),
                         ("Open findings", str(job["open_count"])), ("Parity directory", job.get("database", "Not exported"))])
         if job["omitted_findings"]:
             body += f'<p class="data-notice">{job["omitted_findings"]} additional findings for this task are outside this snapshot. Use basaltw scrub status for the complete report.</p>'
@@ -156,12 +171,13 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str) -> str:
             body += f'''<li class="event data-finding"><h3>{html.escape(finding["path"])}</h3>
 <p><span class="badge warning">{html.escape(finding["category"].replace("_", " "))}</span></p>
 <p>{html.escape(ADVICE.get(finding["category"], "Inspect the recorded evidence before changing data."))}</p>
-<p class="event-meta">First detected: {html.escape(finding["first_seen"])} · Last checked: {html.escape(finding["last_checked"])}</p>
+<p class="event-meta">First detected: {html.escape(_date(finding["first_seen"]))} · Last checked: {html.escape(_date(finding["last_checked"]))}</p>
 <details><summary>Inspect evidence and recovery options</summary>
 <p>Run this on the controller to inspect the saved finding, current file identity and parity paths:</p>
 <pre><code>{html.escape(shlex.join(command))}</code></pre>
 <p>Targeted verify, repair, restore and acceptance are available through basaltw scrub. Repair and restore verify a staged candidate and retain originals. Accept establishes the current content as the new baseline; it requires your confirmation that the content is correct.</p>
-<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a></details></li>'''
+<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/scrub-recovery.md">Read the scrub recovery guide ↗</a>
+{recovery_form(job, finding, csrf) if controls else ''}</details></li>'''
         body += '</ul>'
     body += '<nav class="data-pagination" aria-label="Findings pages">'
     for label, destination in (("Previous findings", page - 1), ("Next findings", page + 1)):
@@ -171,7 +187,7 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str) -> str:
     return body + '</nav></section>'
 
 
-def render_shares_data(state, style: str, query: dict[str, str]) -> str:
+def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "") -> str:
     snapshot = storage.load_storage_snapshot()
     view = query.get("view", "shares")
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Shares &amp; Data</h1>
@@ -182,17 +198,26 @@ def render_shares_data(state, style: str, query: dict[str, str]) -> str:
             key, ' aria-current="page"' if key == view else '', html.escape(label),
         ) for key, label in VIEWS.items()
     ) + '</nav>'
+    if error:
+        body += f'<p class="event" role="alert">{html.escape(error)}</p>'
+    body += review
+    manager = getattr(state, "data", None)
+    status = manager.snapshot() if manager is not None and view == "scrubs" else {}
+    csrf = f'<input type="hidden" name="csrf" value="{html.escape(getattr(state, "csrf_token", ""), quote=True)}">'
+    if manager is not None and view == "scrubs":
+        body += render_status(status, csrf)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
     else:
-        body += f'<p class="data-notice">Snapshot: {html.escape(snapshot["generated_at"])}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
+        body += f'<p class="data-notice">Snapshot: {html.escape(_date(snapshot["generated_at"]))}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
         inventory = snapshot.get("inventory", {"available": False})
         if view == "shares":
             body += _shares(inventory, state.manifest["host"])
         elif view == "routines":
             body += _routines(inventory)
         else:
-            body += _scrubs(snapshot, query, state.manifest["host"])
+            body += _scrubs(snapshot, query, state.manifest["host"], csrf=csrf,
+                            controls=manager is not None and not unavailable_reason(status))
     return render_document(title=f'Shares & Data · {state.manifest["host"]}', style=style + STYLE,
                            header=header, content=body, navigation=state.navigation("shares-data"),
                            footer='<footer><a href="/admin">Admin controls</a><span>Configuration and recorded integrity · no automatic refresh</span></footer>')

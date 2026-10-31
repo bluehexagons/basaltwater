@@ -38,6 +38,7 @@ from common.service_tools.web_panel_diagnostics import (
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_storage_usage import parse_storage_query, parse_storage_scan, render_storage_usage
 from common.service_tools.web_panel_shares_data import parse_shares_data_query, render_shares_data
+from common.service_tools.web_panel_data_actions import PanelData, render_review as render_data_review, unavailable_reason as data_unavailable
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
@@ -810,6 +811,7 @@ class WebPanelState:
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
         self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
+        self.data = PanelData(self.admin)
         self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home, features=self.features)
         self.storage_diagnostics = StorageDiagnostics(self.agent_tasks.home)
 
@@ -2188,6 +2190,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
             "/maintenance-agent": "maintenance-agent", "/credentials": "credentials",
             "/publishing": "publishing", "/admin": "admin", "/shares-data": "shares-data",
+            "/actions/data/review": "shares-data", "/actions/data/submit": "shares-data", "/actions/data/cancel": "shares-data",
             "/actions/agent-task": "agent-tools", "/actions/agent-task/save": "agent-tools",
             "/actions/agent-tool/prepare": "agent-tools", "/actions/agent-diagnostics": "agents",
             "/actions/agent-inbox": "agent-inbox", "/actions/maintenance-agent": "maintenance-agent",
@@ -2411,10 +2414,11 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
         admin_paths = {"/actions/admin", "/actions/admin/cancel"}
+        data_paths = {"/actions/data/review", "/actions/data/submit", "/actions/data/cancel"}
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
         maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
-        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | credential_paths | publishing_paths | maintenance_paths:
+        if path not in {"/actions/t3-update", "/actions/storage-scan"} and path not in agent_paths | admin_paths | data_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2480,6 +2484,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if path in admin_paths:
             self._handle_admin_action(path, values)
+            return
+        if path in data_paths:
+            self._handle_data_action(path, values)
             return
         if path in credential_paths:
             self._handle_credential_action(path, values)
@@ -2607,6 +2614,35 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Location", "/credentials?saved=" + {"identity": "identity", "github": "github", "github-remove": "removed"}[action])
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+
+    def _handle_data_action(self, path: str, values: dict[str, list[str]]) -> None:
+        expected = ({"action", "directory", "database", "file", "backup", "finding"} if path.endswith("/review")
+                    else {"ticket", "confirmation"} if path.endswith("/submit") else {"id"})
+        if set(values) != expected | {"csrf"} or any(len(entries) != 1 for entries in values.values()):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid recovery action\n", "text/plain")
+            return
+        try:
+            fields = {key: entries[0] for key, entries in values.items() if key != "csrf"}
+            if path.endswith("/review"):
+                if reason := data_unavailable(self.state.data.snapshot()):
+                    raise ValueError(reason)
+                csrf = f'<input type="hidden" name="csrf" value="{html.escape(self.state.csrf_token, quote=True)}">'
+                review = render_data_review(self.state.data, fields, csrf)
+                self._send(HTTPStatus.OK, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, review=review), "text/html")
+                return
+            if path.endswith("/submit"):
+                self.state.data.submit(fields["ticket"], fields["confirmation"])
+            else:
+                self.state.admin.cancel(fields["id"])
+        except (OSError, ValueError, RuntimeError) as exc:
+            if path.endswith("/review"):
+                self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"},
+                    error="Recovery review could not be prepared: " + str(exc)), "text/html")
+                return
+            self._send(HTTPStatus.CONFLICT, render_shares_data(self.state, _PAGE_STYLE, {"view": "scrubs"}, error=
+                "The recovery request could not be confirmed. Check recovery activity and approval requests before trying again. Reviews expire after five minutes; repair and restore require CHANGE FILE, and acceptance requires ACCEPT CURRENT CONTENT."), "text/html")
+            return
+        self._send(HTTPStatus.SEE_OTHER, "", "text/plain", headers={"Location": "/shares-data?view=scrubs"})
 
     def _handle_admin_action(self, path: str, values: dict[str, list[str]]) -> None:
         expected = {"csrf", "id"} if path.endswith("/cancel") else {"csrf", "action", "ticket", "confirmation"}

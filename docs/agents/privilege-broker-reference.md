@@ -243,7 +243,48 @@ quotas remain in force. A lost dispatch response remains uncertain, and a
 broker restart never retries it. Root refresh additionally checks all installed
 code and Git metadata for root ownership, symlinks, and writable permissions.
 
-### Refresh interrupted during source activation
+## Shares & Data recovery operations
+
+The [Shares & Data page](../services/shares-data.md) requests `data.run` with
+exact fields: `action` (`verify`, `repair`, `restore`, `accept`), normalized
+absolute `directory`, `database`, `file`, restore-only `backup` (otherwise empty),
+the exported `finding` revision and a fresh `job_id`. All paths are bounded to
+1,024 characters. Every request requires individual approval and uses the
+existing expiry, policy-digest revalidation, claim and quota rules. At most one
+recovery request may be pending, approved or executing at once.
+
+After claiming execution, the broker writes the approved public parameters to
+a root-only `data-payload-JOB_ID.json` under its state directory. The fixed
+`data_job.py` helper receives only the hexadecimal job identity through systemd;
+user paths never enter systemd argument/environment substitution. The helper
+validates and durably consumes the protected payload before mutation. A failed
+or uncertain dispatch is never retried. If dispatch leaves a payload behind,
+preserve it and inspect the request and actual unit state before removing it
+through administrator access.
+
+The detached `basaltwater-data-management.service` has a six-hour cap, no
+restart and control-group termination. It serializes its own result publication
+and acquires `/run/lock/storage-ops.lock` before loading current saved setup.
+Only a matching configured scrub job and open finding can proceed. Revision
+checks bind classification, check time and recorded file identity. Recovery
+rechecks that identity at the staged-remediation boundary. Older findings
+without identity require verification before mutation. The existing CLI mount,
+confinement, staged-candidate verification and retained-original safeguards also
+apply. Acceptance explicitly replaces parity for independently confirmed content.
+
+The protected `data-job.json` contains only the latest job’s public parameters,
+fixed status, result category, failure category and timestamps. `data-status`
+on the requester socket returns this record, unit state and at most ten owned
+recovery requests, trimmed to the transport limit. It never reads NAS data or
+returns PAR2 output, private evidence, recovery copies or approval authority.
+The worker reports remaining findings separately from successful recovery.
+An unchanged running record observed with an inactive/failed unit becomes
+interrupted; raced or unsafe history becomes unavailable. A broker `dispatched`
+receipt does not establish completion. The worker and its storage lock continue
+independently of panel or broker restart; cancelling a request cannot stop an
+already dispatched worker. Root SSH remains the inspection and stop path.
+
+## Refresh interrupted during source activation
 
 For a controller-installed source snapshot, refresh publishes a private
 operation marker beside the installed source before its first rename:

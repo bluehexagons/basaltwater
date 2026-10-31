@@ -86,7 +86,8 @@ def execute(args: argparse.Namespace, config: RuntimeConfig) -> tuple[dict, int]
             valid, error = validate_mounts_for_operation([backup], config, "scrub restore")
             if not valid:
                 raise ValueError(error)
-        result = remediate(path, directory, database, redundancy, args.action, backup=backup)
+        review = {"reviewed_identity": args.reviewed_identity} if hasattr(args, "reviewed_identity") else {}
+        result = remediate(path, directory, database, redundancy, args.action, backup=backup, **review)
     else:
         result = examine(path, directory, database)
         report.record(relative, result)

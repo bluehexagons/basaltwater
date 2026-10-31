@@ -292,6 +292,7 @@ def export_assets(assets: Path) -> None:
             key: template for key, template in agents.PROMPT_TEMPLATES.items() if "requires" not in template
         }),
         patch.object(state.admin, "snapshot", return_value={"blocked": {}, "requests": [], "unit_state": "inactive"}),
+        patch.object(state.data, "snapshot", return_value={"error": "Recovery requires the separate privilege approval service."}),
         patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)),
         patch.object(storage, "load_storage_snapshot", return_value=shares_data_snapshot(
             "full", timestamp="2026-01-01T09:00:00+00:00")),

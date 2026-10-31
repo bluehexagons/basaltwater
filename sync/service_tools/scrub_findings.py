@@ -13,6 +13,7 @@ from pathlib import Path
 from lib.atomic_io import _fsync_directory, read_json_file, write_json_atomic
 
 METADATA_DIR = ".basaltwater-scrub"
+_UNREVIEWED = object()
 ADVICE = {
     "unrepairable": "Restore from an independent copy; existing parity has insufficient recovery blocks.",
     "repairable": "Run repair to reconstruct a staged copy using existing parity.",
@@ -175,7 +176,7 @@ def _copy_durable(source: str, destination: str) -> None:
 
 
 def remediate(file_path: str, directory: str, database: str, redundancy: int,
-              action: str, *, backup: str | None = None) -> dict:
+              action: str, *, backup: str | None = None, reviewed_identity: object = _UNREVIEWED) -> dict:
     """Retain originals, work in isolation, verify, then publish one candidate."""
     from sync.service_tools.scrub_par2 import _confined_path, create_par2
     from sync.service_tools.parity_sets import locate, publish
@@ -191,6 +192,8 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
     base, parity = locate(file_path, directory, database)
     _confined_path(base, database)
     before = file_identity(file_path)
+    if reviewed_identity is not _UNREVIEWED and before != reviewed_identity:
+        raise ValueError("File changed after recovery review; verify and review again")
     if action != 'accept' and before is not None and os.stat(file_path).st_nlink > 1:
         raise ValueError('Repair or restore of hard-linked content requires separating the link explicitly first')
     for path in parity:

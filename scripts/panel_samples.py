@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from lib.shares_data_inventory import configuration_inventory
+from lib.data_actions import finding_revision
 
 
 def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict:
@@ -20,6 +21,8 @@ def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict
                 for path, category in (("photos/holiday.jpg", "repairable"),
                                        ("documents/notes.txt", "changed_unverified"),
                                        ("media/missing.flac", "missing_file"))]
+    for finding in findings:
+        finding["revision"] = finding_revision({"state": "open", **finding})
     return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "omitted_jobs": 0,
             "jobs": [] if empty else [{"directory": "/srv/archive", "database": "/srv/parity/archive",
                 "redundancy": "10%", "interval": "weekly", "last_scan": now,

@@ -14,6 +14,7 @@ from common.web_panel_events import WEB_PANEL_AUDIT_DIR
 from common.service_tools.web_panel_templates import render_heading
 from lib.atomic_io import read_json_file
 from lib.shares_data_inventory import configuration_inventory, validate_inventory
+from lib.data_actions import HEX_DIGEST, finding_revision
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
 MAX_JOBS = 8
@@ -86,7 +87,8 @@ def collect_storage_snapshot() -> dict:
                         continue
                     category = finding["category"] if finding["category"] in ADVICE else "tool_error"
                     job["findings"].append({"path": path, "category": category,
-                                            "first_seen": first, "last_checked": checked})
+                                            "first_seen": first, "last_checked": checked,
+                                            "revision": finding_revision(finding)})
                 job["omitted_findings"] = job["open_count"] - len(job["findings"])
                 job["status"] = ("findings" if job["open_count"] else "never_scanned" if scan is None
                                  else "verified" if scan["completed"] else "incomplete")
@@ -134,6 +136,8 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
                 _text(finding.get("category"), 64)
                 _timestamp(finding.get("first_seen"))
                 _timestamp(finding.get("last_checked"))
+                if "revision" in finding and (not isinstance(finding["revision"], str) or not HEX_DIGEST.fullmatch(finding["revision"])):
+                    raise ValueError("Invalid finding revision")
         try:
             data["inventory"] = validate_inventory(data.get("inventory"))
         except (ValueError, TypeError):

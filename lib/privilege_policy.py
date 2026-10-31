@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 from lib.admin_actions import action_spec, dispatch_argv
+from lib.data_actions import DATA_ACTIONS, data_dispatch_argv, validate_data_action
 
 CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
@@ -142,6 +143,11 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         effect = spec["effect"]
         if action != "cancel-shutdown":
             effect += " Run independently of the panel with a six-hour limit; dispatch does not prove completion."
+    elif operation == "data.run":
+        parameters = validate_data_action(parameters)
+        mode = "approve"
+        argv = data_dispatch_argv(parameters)
+        effect = DATA_ACTIONS[parameters["action"]][1] + " Run once independently of the panel with a six-hour limit. A changed finding or file is rejected; dispatch does not prove recovery."
     elif operation == "command.run" and set(parameters) == {"argv"}:
         argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")

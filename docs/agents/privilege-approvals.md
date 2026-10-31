@@ -129,6 +129,15 @@ approve requests. The standalone HTTPS approval portal remains available on
 minimal installations without the web panel; installing the broker does not
 require or enable the broader dashboard.
 
+The panel’s [Shares & Data page](../services/shares-data.md) also requests
+individually approved `data.run` operations for single-file verification,
+repair, restoration and explicit acceptance. Review the exact file, configured
+scrub root, parity directory and any independent copy. These run in a separate
+worker with a six-hour deadline and a storage lock. `dispatched` reports launch;
+the page shows the worker’s result separately. A changed finding or file requires
+verification and a fresh review. This operation does not grant general file
+editing or automatic remediation.
+
 ## Rotate or remove it
 
 ```bash
