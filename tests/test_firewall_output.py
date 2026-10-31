@@ -25,6 +25,16 @@ _FILTERING_STATUS = "Status: active\nDefault: deny (incoming), allow (outgoing),
 
 class TestFirewallOutput(unittest.TestCase):
     @patch("security.security_steps.run")
+    def test_unsupported_machines_skip_all_firewall_entrypoints(self, mock_run) -> None:
+        for machine_type in ("unprivileged", "oci", "wsl"):
+            config = SetupConfig(host="192.168.0.44", username="agent",
+                                 system_type="server_web", machine_type=machine_type)
+            for configure in (configure_firewall, configure_firewall_web, configure_firewall_ssh_only):
+                with self.subTest(machine_type=machine_type, configure=configure.__name__):
+                    configure(config)
+                    mock_run.assert_not_called()
+
+    @patch("security.security_steps.run")
     def test_successful_ufw_output_is_captured(self, mock_run) -> None:
         mock_run.return_value = SimpleNamespace(returncode=0, stdout="Rule added\n", stderr="")
 

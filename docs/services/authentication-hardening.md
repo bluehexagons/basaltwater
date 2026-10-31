@@ -28,6 +28,10 @@ shared 300-second APT/dpkg lock wait, allowing normal overlap with distro APT
 jobs. Lock-wait exhaustion or another install failure still stops that setup
 step before configuration continues; setup does not replay the failed install.
 
+UFW setup skips machines that cannot enforce firewall policy, including
+unprivileged LXC, OCI and WSL. These targets need reachability controls on their
+host or upstream network; skipped UFW setup does not establish source filtering.
+
 The security monitor reads `ausearch` and SSH journal results as a stream, with
 bounded audit and SSH record and summary sizes. It counts all fail2ban bans and
 unbans in the interval, but includes at most 50 examples of each in a

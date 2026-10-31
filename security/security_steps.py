@@ -21,6 +21,7 @@ from lib.kernel_restart import install_kernel_restart_hook
 from lib.config import SetupConfig
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, JOURNAL_MAX_USE
 from lib.machine_state import (
+    can_manage_firewall,
     can_manage_mdns,
     can_manage_system_services,
     can_modify_kernel,
@@ -481,6 +482,9 @@ def _verify_source_restricted_firewall(
 
 
 def configure_firewall(config: SetupConfig) -> None:
+    if not can_manage_firewall(config.machine_type):
+        print("  ✓ Skipping firewall configuration (machine cannot enforce firewall policy)")
+        return
     _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
@@ -1401,6 +1405,9 @@ def configure_auto_updates(config: SetupConfig) -> None:
 
 
 def configure_firewall_web(config: SetupConfig) -> None:
+    if not can_manage_firewall(config.machine_type):
+        print("  ✓ Skipping firewall configuration (machine cannot enforce firewall policy)")
+        return
     _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
@@ -1452,6 +1459,9 @@ def configure_firewall_ssh_only(config: SetupConfig, *, active_only: bool = Fals
     Minimal target enrollment uses ``active_only`` to reconcile an existing
     firewall before delivery without enabling a firewall on a fresh target.
     """
+    if not can_manage_firewall(config.machine_type):
+        print("  ✓ Skipping firewall configuration (machine cannot enforce firewall policy)")
+        return
     _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
