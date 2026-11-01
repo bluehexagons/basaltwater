@@ -135,6 +135,64 @@ strict check as passed. If runtime observations are missing, repair the project
 harness and recapture. Keep randomized scenes or unsettled presentation out of
 whole-image equality claims unless the fixture controls them.
 
+## Review a batch
+
+`basaltw agent visuals batch review.json --json` builds one portable gallery
+for project-owned stages, cameras and quality levels. Image paths are relative
+to the manifest. Each pair supplies actual observed settings; `compare_keys`
+selects top-level values that must exist, be non-null and match in value and
+type. Use nested objects for camera and renderer observations when appropriate.
+Revision and stage labels can differ without making the cameras incompatible.
+
+```json
+{
+  "version": 1,
+  "title": "Prop revision review",
+  "compare_keys": ["camera", "quality", "renderer"],
+  "pairs": [{
+    "id": "rear-high",
+    "category": "silhouette",
+    "before": {
+      "image": "before/rear.png",
+      "settings": {"camera": "rear", "quality": "high", "renderer": "project-renderer"}
+    },
+    "after": {
+      "image": "after/rear.png",
+      "settings": {"camera": "rear", "quality": "high", "renderer": "project-renderer"}
+    },
+    "crops": [{"name": "attachment junction", "rect": [120, 80, 160, 120]}]
+  }]
+}
+```
+
+The project owns its stage/camera recipes and the accuracy of observations.
+Missing or different comparison settings and image dimensions refuse the batch
+before output creation. `--allow-incompatible` explicitly retains these pairs
+for side-by-side inspection with a warning, disabling overlay and differences.
+It does not establish a controlled comparison or repair missing evidence.
+
+The gallery reuses synchronized zoom/scroll, overlays and pixel differences.
+Named crops frame a shared `[x, y, width, height]` rectangle in capture pixels;
+they must fit both captures. They focus the viewer and do not redact image
+content. Inspect the full view and each crop, enter observations or unresolved
+issues, then **Download inspection record** before closing/reloading the tab.
+The record includes each manual inspection timestamp and notes, the batch
+identity, image hashes and incompatibilities. State is held only in the tab;
+no inspection is marked automatically. Downloaded records are private evidence,
+not a correctness verdict, and are not written back to the source manifest.
+
+Use categories `silhouette`, `underside`, `junction`, and `detail` across the
+batch. The viewer reports absent categories; category presence alone does not
+establish coverage. Include front/rear silhouettes, undersides, attachment
+junctions and close-ups at useful scales, across relevant quality levels and
+in the consuming application. Record defects even when captures succeeded.
+
+Batches accept 1–256 pairs, up to 32 named crops per pair, a 1 MiB manifest,
+and at most 128 MiB of embedded image data. Split larger runs. PNG limits and
+private output rules match individual comparisons. `batch.json` records
+observations, hashes, crops, compatibility issues and missing categories;
+`index.html` embeds the images without external resources.
+
 ## Capture two revisions
 
 Use a project-owned capture harness that builds and renders from its current

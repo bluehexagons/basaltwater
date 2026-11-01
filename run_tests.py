@@ -255,6 +255,7 @@ TEST_SUITES: dict[str, list[str]] = {
     # Execute generated JavaScript under each supported Node runtime. The
     # primary CI job still runs every Python and JavaScript test with coverage.
     "node": [
+        "tests.test_agent_visual_batch",
         "tests.test_agent_context_plugin",
         "tests.test_web_guacamole_browser",
         "tests.test_web_panel_ca",
