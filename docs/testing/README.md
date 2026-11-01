@@ -5,15 +5,17 @@ and retained live-test evidence through 2026-11-01. The rerun indicates **basic
 setup functionality only: not all features were tested**. It covers selected
 Debian/Proxmox server and coding-VM commands, a partial CachyOS refresh and basic
 native Windows setup with Godot and T3 Code. Exact tested revisions were not
-supplied for this report. The documentation update ran no additional live tests;
-earlier results still apply to their recorded revisions. See the
-[rerun summary](evidence.md#owner-reported-stack-setup-rerun) for selections and limits.
+supplied for this report. Subsequent native CachyOS checks confirm a running
+T3 desktop/Codex session after manual recovery and read-only backend discovery;
+the corrected automatic relaunch still needs a live run. See the
+[rerun summary](evidence.md#owner-reported-stack-setup-rerun) and
+[T3 recovery record](evidence.md#cachyos-t3-desktop-recovery) for scope and limits.
 
 | At a glance | Status |
 | --- | --- |
 | Owner-reported stack setup rerun | 🟡 **Partial** — basic setup success reported; selected options are not individual feature passes |
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
-| [CachyOS](cachyos.md) | 🟡 **Partial** — owner-reported partial setup refresh plus earlier native component checks |
+| [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3 desktop/Codex session labbed after manual recovery; corrected refresh relaunch awaits a live check |
 | [Windows and WSL](windows.md) | 🟡 **Partial** — owner-reported basic non-WSL setup with Godot/T3 Code plus earlier native checks; WSL integration remains open |
 | Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |

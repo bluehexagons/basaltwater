@@ -2,9 +2,10 @@
 
 **Snapshot: 2026-11-01.** Platform and workflow evidence comes from repository
 records, retained private live-test reports and an owner-reported stack setup
-rerun received 2026-11-01. The documentation update executed no additional live
-tests. Historical inventory and service observations do not establish current
-guest health.
+rerun received 2026-11-01. Later native CachyOS T3 session/discovery observations
+and automated regressions have a separate
+[evidence record](evidence.md#cachyos-t3-desktop-recovery). Historical inventory
+and service observations do not establish current guest health.
 
 ## Intended use cases
 

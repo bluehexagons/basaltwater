@@ -1,7 +1,7 @@
 # Dated testing evidence summaries
 
-Reconciled 2026-11-01 from retained private reports and the owner's stack setup
-rerun report. The documentation update executed no additional live tests.
+Reconciled 2026-11-01 from retained private reports, the owner's stack setup
+rerun report, and subsequent native CachyOS T3 observations and automated checks.
 These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
@@ -35,7 +35,7 @@ passes. Counts distinguish command variants, not fresh installations.
 | `server_github_runner` — one command | Debian provisioned guest, repository/user/label policy, `--ci-register-with-gh`, web panel/TLS, webhooks, restart/wait and LAN allowlist | Basic setup rerun reported successful; no separate registration-state, GitHub job, policy enforcement or cancellation result was supplied |
 | `server_lite` — one unprivileged storage server | Samba accounts and multiple writable shares, daily mirror, monthly PAR2 scrub, panel/TLS, webhooks, LAN allowlist and restart/wait | Basic setup rerun reported successful; individual SMB client, scheduled sync/scrub and data recovery checks were not separately reported |
 | `server_lite` — one provisioned service guest | Gogs, Syncthing and Samba with separate ext4 data mounts; disk SSD/discard/backup selections; automatic swap mode, zram plus swap file and swappiness; panel/TLS and webhooks | Basic setup rerun reported successful; Git transfers, synchronization, share permissions, swap behavior and disk backup/discard behavior were not separately qualified |
-| Partial `agent_cachyos` local setup via `basaltw refresh` | T3 Code desktop, Node/Python/Go/Git LFS, game-development/Godot, AV/GL and gaming/Sunshine selections; OBS, Blender, Kdenlive, Krita, GIMP, Inkscape, Shotcut, Audacity, LMMS and Material Maker; LAN allowlist and webhooks | Partial refresh reported successful; the supplied command was incomplete. Fresh full setup, desktop/provider use, streaming and creative/game application QA remain open |
+| Partial `agent_cachyos` local setup via `basaltw refresh` | T3 Code desktop, Node/Python/Go/Git LFS, game-development/Godot, AV/GL and gaming/Sunshine selections; OBS, Blender, Kdenlive, Krita, GIMP, Inkscape, Shotcut, Audacity, LMMS and Material Maker; LAN allowlist and webhooks | Partial refresh reported successful; the supplied command was incomplete. Fresh full setup, streaming and creative/game application QA remain open. Later T3 session success and an automatic-reopen failure are recorded separately below |
 | Native Windows, non-WSL | Basic setup with Godot and T3 Code; exact command not supplied | Basic setup reported successful; no WSL result or separate application, export, provider, reboot or recovery result was supplied |
 
 The provisioned agent commands also varied memory/ballooning, CPU, image storage
@@ -43,6 +43,25 @@ and disk selections, with LAN allowlists and restart/wait flags. These selection
 do not establish resource floors, performance or that a reboot was required.
 The report adds no full feature sweep or exact-candidate release qualification;
 existing unrun cases and historical failures remain open.
+
+## CachyOS T3 desktop recovery
+
+**2026-11-01; native CachyOS KDE workstation, packaged T3 desktop 0.1.6-1.**
+The installed Basaltwater revision for the failed refresh was not established.
+Checkout checks below exercised `bf0eb670`; they do not imply that its corrected
+completion worker was installed or run against the live desktop.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Owner report plus native failure diagnosis** | Refresh closed T3; automatic reopen and an early manual retry failed with a T3 home ownership error. Retained desktop/backend logs confirmed `ServerAlreadyRunningError` while the old backend was still shutting down | The pre-fix automatic restart failed; successful setup selection does not qualify the final desktop handoff |
+| **Selected live session after manual recovery** | Owner reopened T3 after waiting. The running packaged desktop and embedded backend were observed; subsequent Codex conversation and shell-tool execution completed repository reads/edits, tests, commit and push through T3 | Qualifies that desktop/Codex session only. No new pairing/Connect enrollment, other-provider turn, interactive terminal UI, KDE login or reboot test |
+| **Native read-only component at `bf0eb670`** | New process discovery captured three direct packaged child handles, including the live embedded server. Handles were closed without signaling or restarting the application | Discovery and stable-handle acquisition only; no live corrected shutdown/relaunch, slow-backend wait or timeout |
+| **Installed read-only inventory** | `basaltw local cachyos-doctor --attention --json` completed: 104 observations, 89 available, 15 deferred, zero failed | Deferred checks remain unresolved; package/configuration observations do not establish application, firewall, capture or streaming behavior |
+| **Automated at `bf0eb670`** | All 42 desktop-focused tests passed, then `make check-fast SUITE=agent` passed all 2,107 tests, compilation, documentation and package metadata checks. Regressions cover backend exit after desktop exit, reverse/simultaneous exit order, one shared timeout, invalid handles, process identity and handle cleanup | Focused tests are included in the broader count. System calls were mocked and process fixtures were temporary; this was not full CI, browser testing or live refresh qualification |
+
+The next native check is a refresh using the corrected completion worker,
+followed by an authenticated provider turn and interactive terminal check.
+Keep the original failed reopen in the record when that retry succeeds.
 
 ## Proxmox setup and maintenance
 

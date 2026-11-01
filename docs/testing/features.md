@@ -24,7 +24,7 @@ Unlisted combinations have no availability claim here.
 | Platform record | Status at a glance | Evidence and next checks |
 | --- | --- | --- |
 | [Debian and Proxmox](debian.md) | 🟢 Selected workflows labbed; 🟡 owner-reported basic setup reruns; 🔴 LXC suspend failed | Guest services, host operations, exact gaps and recovery checks |
-| [CachyOS](cachyos.md) | 🟡 Owner-reported partial refresh and earlier native checks; full profile unqualified | KDE workstation, T3, graphics and desktop boundaries |
+| [CachyOS](cachyos.md) | 🟡 Partial profile; 🟢 selected T3 desktop/Codex session labbed after manual recovery; fixed refresh relaunch not yet labbed | KDE workstation, T3, graphics and desktop boundaries |
 | [Windows and WSL](windows.md) | 🟡 Owner-reported basic non-WSL setup with Godot/T3 Code and earlier native checks; WSL end-to-end unqualified | Installer, task, streaming, runner and WSL boundaries |
 
 These are historical observations, not a percentage of features tested or a
