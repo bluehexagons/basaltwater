@@ -1,8 +1,8 @@
 # CachyOS testing status
 
-**Evidence includes native T3 and SDL/OpenGL application checks and automated
-validation on 2026-11-01, an owner report received that day, and native Godot
-playtesting on 2026-10-31.**
+**Evidence includes native T3 and SDL/OpenGL application checks, Godot
+menu/workflow audits and automated validation on 2026-11-01, an owner report
+received that day, and native Godot playtesting on 2026-10-31.**
 Exact execution dates and revisions for the earlier setup report and other
 earlier native checks were not supplied in the public summary.
 The experimental `agent_cachyos` profile adds tools to an existing, updated
@@ -17,15 +17,16 @@ CachyOS VM/container provisioning are outside its scope. See the
 | T3 Code desktop session with Codex | 🟢 **Labbed** | Owner's manual reopen after waiting succeeded; subsequent live Codex conversation, shell-tool execution, repository edits, tests, commit and push worked through T3 | Other providers, T3's interactive terminal UI, pairing/Connect and broader GUI workflows |
 | T3 Code desktop refresh/relaunch | 🟡 **Partial** | Native logs confirmed the old backend still owned the T3 home during premature reopen. Fix `bf0eb670` passed automated shutdown/timeout regressions; read-only native discovery captured the live embedded server | Corrected worker has not been exercised through a live shutdown/relaunch; repeat refresh, slow-backend exit, timeout, reboot and interruption remain open |
 | Graphics discovery and reference contexts | 🟡 **Partial** | Accelerated GLX and isolated llvmpipe contexts | Other devices/backends; these probes alone do not qualify application rendering |
-| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, visible card scenes, gameplay and renderer settings exercised on 2026-10-31 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
+| Native Godot rendering and gameplay | 🟢 **Labbed** | Godot 4.7.2 on KDE Wayland with NVIDIA hardware: Vulkan Forward+ and explicit OpenGL Compatibility launches, visible card scenes, gameplay and renderer settings exercised on 2026-10-31; extended Vulkan menu audit and focused graphical regressions on 2026-11-01 | Other GPU vendors, HDR, performance acceptance, exported-game renderer restart and target devices |
 | Native SDL/OpenGL rendering and scripted UI | 🟢 **Labbed** | Antistatic on KDE Wayland with Mesa Intel Arc OpenGL 4.6: controls-menu scrolling, pause preference toggle, reviewed application/monitor captures and clean shutdown on 2026-11-01; four fixed-frame llvmpipe effect comparisons also matched | Physical controllers, audible output, HDR, display scaling/pacing, other devices and package qualification; software comparisons do not qualify hardware rendering |
 | Blender and visual workflows | 🟡 **Partial** | Small native Blender CPU render | Full project scenes, image fidelity and hardware rendering |
-| Supervised development tasks | 🟡 **Partial** | Native game and GPU-recipe completion through `develop wait`; a wait timeout left the game running, intentional exit 7 remained a failure, stop preview preserved a running task and scoped stop reached `stopped` on 2026-11-01 | Interruption/disconnection, long-running descendants, unavailable user manager and logout/reboot recovery |
+| Supervised development tasks | 🟡 **Partial** | Native game and GPU-recipe completion through `develop wait`; a wait timeout left the game running, intentional exit 7 remained a failure, stop preview preserved a running task and scoped stop reached `stopped` on 2026-11-01. Application regression failures and an engine abort also surfaced as failed tasks with retained logs | Interruption/disconnection, long-running descendants, unavailable user manager and logout/reboot recovery |
+| Managed worktrees and shared checkpoints | 🟢 **Labbed** | Native CLI create/status, shared-memory revision-checked updates, isolated edits/checks, Git fast-forward integration and push, then clean/merged status, removal preview and removal on 2026-11-01; ignored audit evidence retained before cleanup | Dirty/unmerged removal refusal, revision conflicts, concurrent editors, alternate roots and T3 worktree binding |
 | T3 web runtime | 🟡 **Partial** | 0.1.6 archive, PTY, disposable HTTP startup, SQLite and generated unit checks | Live unit activation/restart, pressure and complete client/provider workflows |
-| KDE desktop capture and input | 🟢 **Labbed** | Owner-approved selected-monitor capture, 120 ms keyboard/pointer holds and real Godot menus/gameplay on 2026-10-31; saved access restored without a new prompt on 2026-11-01. Earlier native checks exercised stale-generation rejection and renewal | Live takeover/revocation, monitor/scaling changes, logout/reboot and other application identities |
+| KDE desktop capture and input | 🟢 **Labbed** | Owner-approved selected-monitor capture and real Godot menus/gameplay on 2026-10-31 and 2026-11-01; 120 ms held keys/buttons, wheel input, text entry and popup interaction. Saved access restored without a new prompt; stale-capture input rejection recovered through fresh capture. Earlier native checks exercised stale-generation rejection and renewal | Live takeover/revocation, monitor/scaling changes, logout/reboot and other application identities |
 | Timed native observations | 🟢 **Labbed** | `input --observe` and `screenshot --next-frame --compact` returned reviewed game captures, ordered input/frame timestamps, pixel hashes and change metadata on 2026-11-01; native help correctly hides unavailable window capture | Stalled/static streams, cancellation, capture-failure recovery and latency qualification |
 | Sleeping-display capture recovery | 🟢 **Labbed** | A black monitor capture recovered after `basaltw desktop --native wake` with agent control enabled; a fresh capture showed the desktop and later game presentation on 2026-11-01 | Locked, disconnected or disabled outputs, repeated sleep/wake cycles and capture-stream recovery beyond this case |
-| Manual native evidence records | 🟢 **Labbed** | A 48-event playtest record attached both game and GPU-recipe tasks automatically, retained clean Git provenance and successful exits; private modes and capture paths verified. Offline finalization after helper shutdown and repeated finalization also worked | Interrupted writes/collection, truncation, unavailable task inventory and other application identities |
+| Manual native evidence records | 🟢 **Labbed** | Automatic task attachment, Git provenance, exit outcomes, private modes/paths, offline and repeated finalization verified. Extended audit reached the 500-event cap and reported truncation; three focused follow-up records finalized without truncation on 2026-11-01 | Interrupted writes/collection, unavailable task inventory, recovery at the event cap and other application identities |
 | Godot export prerequisite diagnosis | 🟢 **Labbed** | `develop doctor --export-check` observed Godot 4.7.2 and correctly rejected installed 4.7.1 stable and 4.7 beta4 templates as mismatched on 2026-11-01 | Matching-template positive case, template contents/provenance and actual export remain unverified |
 | Optional Sunshine streaming | ⚪ **Untested** | No end-to-end stream pass recorded in these summaries | Service, pairing, video/audio/input and reconnect |
 | Creative/game tools and publishing | 🟡 **Partial** | Broad tool selections included in the owner-reported refresh; Godot application QA is recorded separately above | Other selected applications, project-specific build/export, input and publishing |
@@ -100,6 +101,61 @@ and approved desktop control was restored and left available.
 T3 refresh/relaunch, setup/reboot, streaming, physical audio/controllers and
 Steam/cloud remain outside this follow-up. The missing-template diagnosis is
 an expected prerequisite failure, not a successful export.
+
+### Native menu audit and worktree workflow, 2026-11-01
+
+An extended Godot application audit used the same installed clean `5184cef0`
+launcher and existing authorized helper, with one owner for desktop input and
+GPU checks. No new helper restart or permission grant was needed. Reviewed
+captures and interaction covered startup/loading, main and pause menus, all
+five settings tabs, dropdowns, save dialogs and validation, binding capture,
+statistics/detail/filter/pager views, credits/licenses, summaries and quit.
+A disposable local fixture also exercised missing-asset/loading-failure UI;
+it did not establish recovery of a damaged installation.
+
+The pass used fullscreen 2560×1440 and application windows at 1600×900 and
+1280×720, text scaling up to 150%, English and longer translated labels.
+These were application layout changes, not physical monitor or KDE scaling
+changes. Held keyboard/pointer input, wheel scrolling and text entry exercised
+real menus. Input attempts rejected because their capture was stale were
+retried after a fresh screenshot. `input --observe` and subsequent compact
+screenshots supplied visual evidence; loading still required a separate
+readiness observation. No input-to-photon latency was measured.
+
+Native review found application UI defects, and focused fixes were checked
+through repeat interaction and project-owned tests. Supervision retained
+application assertion failures and a layout-related engine abort during
+development as failed tasks with logs; corrected normal launches completed
+with exit 0. Final delivery checks passed 3,756 assertions across 74 headless
+suites plus affected tooling checks. Focused graphical checks included 2,043
+main-menu and 407 UI-polish assertions. These are application results, not
+Basaltwater unit-test counts, and headless success did not substitute for
+desktop interaction. No new Basaltwater runtime defect was confirmed.
+
+The long audit record finalized at its 500-event cap with
+`events_truncated: true`; it was not a complete interaction journal. Its clean
+start/end Git revisions differed because a commit occurred during recording.
+Three shorter follow-up records finalized with 98, 54 and 20 events, without
+event or task-inventory truncation. Each attached its game task automatically,
+recorded a successful exit and retained the same clean project revision at
+start/end. Renderer annotations were operator observations. Separate capture
+receipts and an index retained evidence beyond the capped journal; raw
+screenshots, task logs, player data and record identifiers remain private.
+
+The work also exercised managed worktree creation/status, shared-memory
+checkpoints with successful revision checks, isolated edits and validation,
+then Git commit, fast-forward integration and push. Clean/merged status and
+removal preview preceded successful managed removal. Ignored audit evidence
+was copied outside the worktree and verified by SHA-256 before cleanup, with
+relocation metadata preserving the meaning of original receipt paths. This
+qualifies the successful CLI lifecycle, not conflict handling, unsafe-removal
+refusals, concurrent editing or T3 worktree binding.
+
+This pass used Vulkan Forward+ with Godot 4.7.2 and NVIDIA hardware; it did not
+repeat OpenGL qualification. Player data was isolated and Steam/cloud disabled
+for normal audit runs. Physical controllers, audible output, a live screen
+reader, HDR, streaming, export and reboot/recovery remain unverified. All owned
+tasks ended, and the existing desktop control grant was left enabled.
 
 ## Native SDL/OpenGL application follow-up, 2026-11-01
 
