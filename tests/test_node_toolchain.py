@@ -19,7 +19,7 @@ from lib.node_toolchain import (
     choose_node_release, fetch_node_releases, inspect_project_node, inspect_project_node_context,
     resolve_node_release, run_node_command, select_node, satisfies,
 )
-from lib.node_runtime_ownership import mark_runtime, runtime_owner
+from lib.node_runtime_ownership import mark_runtime, runtime_lock, runtime_owner
 
 
 class NodeToolchainTests(unittest.TestCase):
@@ -37,6 +37,8 @@ class NodeToolchainTests(unittest.TestCase):
             binary.parent.mkdir(parents=True)
             binary.write_text('fake node')
             binary.chmod(0o755)
+            binary.with_name('npm').write_text('fake npm')
+            binary.with_name('npm').chmod(0o755)
         (self.nvm / 'alias').mkdir()
         (self.nvm / 'alias/default').write_text('24')
         self.releases = [
@@ -551,6 +553,7 @@ class NodeToolchainTests(unittest.TestCase):
 
         def install(argv, **_options):
             self.assertEqual(argv[-1], 'v24.22.1')
+            self.assertIn('nvm install -b "$2"', argv[4])
             self.assertEqual(runtime_owner(self.nvm, '24.22.1'), 'project')
             self.assertEqual(runtime_owner(self.nvm, '24.22.2'), 'automatic')
             return subprocess.CompletedProcess(argv, 0, 'v24.22.1', '')
@@ -559,6 +562,35 @@ class NodeToolchainTests(unittest.TestCase):
                 patch('lib.node_toolchain.subprocess.run', side_effect=install), \
                 patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.22.1')):
             self.assertEqual(run_node_command(args), 0)
+
+    def test_project_install_recovers_partial_prefix_under_the_shared_lock(self):
+        (self.nvm / 'nvm.sh').write_text('# managed NVM')
+        target = self.nvm / 'versions/node/v26.13.0'
+        (target / 'lib').mkdir(parents=True)
+        (target / 'lib/global-tool').write_text('keep')
+        args = argparse.Namespace(node_command='install', project=str(self.project),
+                                  version='26.13.0', package_manager=[])
+
+        def install(argv, **_options):
+            self.assertIn('nvm install -b "$2"', argv[4])
+            self.assertFalse(target.exists())
+            with self.assertRaisesRegex(ValueError, 'operation is active'):
+                with runtime_lock(self.nvm):
+                    self.fail('extraction was not locked')
+            (target / 'bin').mkdir(parents=True)
+            for tool in ('node', 'npm'):
+                binary = target / 'bin' / tool
+                binary.write_text('fixture')
+                binary.chmod(0o755)
+            return subprocess.CompletedProcess(argv, 0, 'v26.13.0', '')
+
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('lib.node_toolchain.subprocess.run', side_effect=install), \
+                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v26.13.0')):
+            self.assertEqual(run_node_command(args), 0)
+        self.assertEqual(runtime_owner(self.nvm, 'v26.13.0'), 'project')
+        retained, = self.nvm.glob('.basaltwater-incomplete-*/v26.13.0/lib/global-tool')
+        self.assertEqual(retained.read_text(), 'keep')
 
     def test_official_discovery_has_time_output_and_redirect_bounds(self):
         with patch('lib.node_toolchain.run_probe', return_value=ProbeResult(json.dumps(self.releases))) as probe:

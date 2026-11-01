@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from web.service_tools import auto_update_node
 from lib.update_policy import DEPENDENCY_MIN_AGE_DAYS_ENV, ECOSYSTEM_AUTO_UPGRADE_ENV
-from lib.node_runtime_ownership import LATEST_UPDATE_ENV, mark_runtime, runtime_owner
+from lib.node_runtime_ownership import LATEST_UPDATE_ENV, mark_runtime, runtime_lock, runtime_owner
 
 
 class TestAutoUpdateNode(unittest.TestCase):
@@ -35,6 +35,9 @@ class TestAutoUpdateNode(unittest.TestCase):
             directory = auto_update_node.runtime_directory(nvm_dir, version)
             (directory / "bin").mkdir(parents=True, exist_ok=True)
             (directory / "bin/node").write_text("fixture")
+            (directory / "bin/node").chmod(0o755)
+            (directory / "bin/npm").write_text("fixture")
+            (directory / "bin/npm").chmod(0o755)
             mark_runtime(nvm_dir, version, owner=owner)
 
         stack.enter_context(patch.object(auto_update_node, "mark_runtime", side_effect=installed_marker))
@@ -302,6 +305,9 @@ stable -> 22.3 (-> v26.12.3) (default)
         directory = auto_update_node.runtime_directory(self.nvm, "v24.22.2")
         (directory / "bin").mkdir(parents=True)
         (directory / "bin/node").write_text("fixture")
+        (directory / "bin/node").chmod(0o755)
+        (directory / "bin/npm").write_text("fixture")
+        (directory / "bin/npm").chmod(0o755)
         for owner in (None, "project"):
             with self.subTest(owner=owner):
                 if owner:
@@ -315,6 +321,34 @@ stable -> 22.3 (-> v26.12.3) (default)
                 migrate.assert_not_called()
                 self.assertIn(["nvm", "alias", "default", "v24.22.1"], [call.args[0] for call in run.call_args_list])
                 self.assertFalse(any("uninstall" in call.args[0] for call in run.call_args_list))
+
+    def test_install_defers_when_setup_or_project_install_holds_the_lock(self):
+        with runtime_lock(self.nvm), patch.object(auto_update_node, "run_nvm_command") as run:
+            success, details = auto_update_node.install_target_version("lts", "v24.22.2")
+        self.assertFalse(success)
+        self.assertIn("operation is active", details)
+        run.assert_not_called()
+
+    def test_incomplete_install_is_retained_without_granting_cleanup_ownership(self):
+        target = auto_update_node.runtime_directory(self.nvm, "v24.22.2")
+        (target / "lib").mkdir(parents=True)
+        (target / "lib/global-tool").write_text("keep")
+
+        def install(args):
+            self.assertEqual(args, ["nvm", "install", "-b", "v24.22.2"])
+            self.assertFalse(target.exists(), "partial prefix would collide with NVM extraction")
+            with self.assertRaisesRegex(ValueError, "operation is active"):
+                with runtime_lock(self.nvm):
+                    self.fail("extraction was not locked")
+            return subprocess.CompletedProcess(args, 1, "", "binary unavailable; source aborted")
+
+        with patch.object(auto_update_node, "run_nvm_command", side_effect=install):
+            success, details = auto_update_node.install_target_version("lts", "v24.22.2")
+        self.assertFalse(success)
+        self.assertIn("source aborted", details)
+        recovery, = self.nvm.glob(".basaltwater-incomplete-*/v24.22.2/lib/global-tool")
+        self.assertEqual(recovery.read_text(), "keep")
+        self.assertIsNone(runtime_owner(self.nvm, "v24.22.2"))
 
     @patch("web.service_tools.auto_update_node.cleanup_old_versions", return_value=(True, None))
     @patch("web.service_tools.auto_update_node.send_notification_safe")
@@ -411,7 +445,7 @@ stable -> 22.3 (-> v26.12.3) (default)
         self.assertIsNone(details)
         commands = [call_args.args[0] for call_args in mock_run_nvm.call_args_list]
         self.assertIn(["nvm", "alias", "default", "v24.22.2"], commands)
-        self.assertIn(["nvm", "install", "v24.22.2"], commands)
+        self.assertIn(["nvm", "install", "-b", "v24.22.2"], commands)
         reinstall_commands = [command for command in commands if command[:6] == ["nvm", "exec", "v24.22.2", "npm", "install", "-g"]]
         self.assertEqual(len(reinstall_commands), 1)
         self.assertIn("pnpm@9.1.0", reinstall_commands[0])
@@ -574,7 +608,7 @@ stable -> 22.3 (-> v26.12.3) (default)
         ) as run:
             self.assertEqual(auto_update_node.install_target_version('latest', 'v26.12.2', 'v26.12.1'), (True, None))
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertIn(['nvm', 'install', 'v26.12.2'], commands)
+        self.assertIn(['nvm', 'install', '-b', 'v26.12.2'], commands)
         self.assertFalse(any('alias' in command for command in commands))
         self.assertEqual(runtime_owner(self.nvm, 'v26.12.2'), 'automatic')
 

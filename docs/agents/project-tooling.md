@@ -247,6 +247,17 @@ runs and verifies both the activated exact version and its executable before
 optional package-manager work. Setup and scheduled maintenance pin the default
 to their exact validated LTS target.
 
+Setup, explicit installs, and scheduled Node updates serialize NVM extraction
+with runtime maintenance and request binaries only (`nvm install -b`). A failed
+download or extraction stops instead of falling back to a source build. Before
+retrying a target that lacks executable Node or npm, Basaltwater moves its whole
+directory into a private `.basaltwater-incomplete-*` directory under that NVM
+root and prints the retained path. This preserves global tools and other files
+for inspection instead of merging a new archive into a partial installation.
+Verified download caches remain available for retry. Ctrl+C during setup stops
+the installer and its children; rerun the same setup to recover any partial
+target. Completed runtimes and their global tools are reused.
+
 Deployment preparation and builds use this shared selector under the existing
 build identity, including nested frontend pins and `.node-version` precedence.
 Host readiness rejects an observed unsupported active/default runtime even when

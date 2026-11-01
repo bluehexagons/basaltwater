@@ -1014,6 +1014,10 @@ def install_node_for_user(
     nvm_dir = f"{user_home}/.nvm"
     safe_nvm_dir = shlex.quote(nvm_dir)
     nvm_sh = os.path.join(nvm_dir, "nvm.sh")
+    node_installer = shlex.quote(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", "node_install.py",
+    ))
+    install_binary = f"python3 -I {node_installer} {safe_nvm_dir}"
 
     _chown_existing_paths(username, _user_tool_paths(user_home))
     
@@ -1045,7 +1049,7 @@ def install_node_for_user(
             _run_as_login_user(
                 username,
                 user_home,
-                f'{nvm_env} && nvm install {target} && nvm use {target} && '
+                f'{nvm_env} && {install_binary} {target} && nvm use {target} && '
                 f'[ "$(node --version)" = {shlex.quote(target)} ] && nvm alias default {target}',
             )
             npm_freshness = shlex.join(npm_freshness_args())
@@ -1069,7 +1073,7 @@ def install_node_for_user(
         _run_as_login_user(
             username,
             user_home,
-            f'{nvm_env} && nvm install {target} && nvm use {target} && '
+            f'{nvm_env} && {install_binary} {target} && nvm use {target} && '
             f'[ "$(node --version)" = {shlex.quote(target)} ] && nvm alias default {target}',
         )
         npm_freshness = shlex.join(npm_freshness_args())
@@ -1115,7 +1119,7 @@ def install_node_for_user(
     _run_as_login_user(
         username,
         user_home,
-        f'{nvm_env} && nvm install {target} && nvm use {target} && '
+        f'{nvm_env} && {install_binary} {target} && nvm use {target} && '
         f'[ "$(node --version)" = {shlex.quote(target)} ] && nvm alias default {target}',
     )
     

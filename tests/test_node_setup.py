@@ -61,7 +61,7 @@ class TestNodeSetup(unittest.TestCase):
                 patch.object(common_steps, "_run_as_login_user", side_effect=command) as run:
             common_steps.install_node_for_user("user", "/home/user")
         commands = [call.args[2] for call in run.call_args_list]
-        self.assertTrue(any("nvm install v24.22.1" in command for command in commands))
+        self.assertTrue(any("node_install.py /home/user/.nvm v24.22.1" in command for command in commands))
         self.assertTrue(any("nvm alias default v24.22.1" in command for command in commands))
         self.resolve.assert_called_once_with("lts/*")
         self.assertIn("libstdc++6 libatomic1", host_run.call_args.args[0])
@@ -244,7 +244,7 @@ class TestNodeSetup(unittest.TestCase):
             common_steps.install_node(config)
 
         commands = [args[0] for args, _ in mock_run.call_args_list]
-        self.assertTrue(any("nvm install v24.22.1" in command for command in commands))
+        self.assertTrue(any("node_install.py /home/user/.nvm v24.22.1" in command for command in commands))
         self.assertTrue(any(
             "npm install -g pnpm --ignore-scripts=false --allow-scripts=pnpm" in command
             for command in commands
@@ -367,7 +367,7 @@ class TestNodeSetup(unittest.TestCase):
                         with self.assertRaises(subprocess.CalledProcessError):
                             common_steps.install_node_for_user('user', directory, refresh=True)
                 commands = (home / 'calls').read_text().splitlines()
-                self.assertIn('nvm install v24.22.1', commands)
+                self.assertIn('nvm install -b v24.22.1', commands)
                 self.assertIn('nvm use v24.22.1', commands)
                 if observed == 'v24.22.1':
                     self.assertIn('nvm alias default v24.22.1', commands)

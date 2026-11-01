@@ -34,6 +34,7 @@ from lib.update_policy import (
     npm_freshness_args,
 )
 from lib.remote_utils import CommandTimeoutError, run as run_command
+from lib.node_install import node_install_guard
 from lib.node_runtime_ownership import (
     LATEST_UPDATE_ENV, mark_runtime, runtime_directory, runtime_lock, runtime_owner,
 )
@@ -357,10 +358,10 @@ def install_target_version(
                            or node_version_key(source_version) > node_version_key(target_version)):
         return False, "Node update source must be supported, on the target major, and no newer than the target"
     try:
-        existed = runtime_directory(get_nvm_dir(), target_version).exists()
+        with node_install_guard(get_nvm_dir(), target_version) as existed:
+            result = run_nvm_command(["nvm", "install", "-b", target_version])
     except (OSError, ValueError) as exc:
-        return False, f"Unsafe Node runtime directory: {exc}"
-    result = run_nvm_command(["nvm", "install", target_version])
+        return False, f"Node binary installation deferred: {exc}"
     action = "Installed latest Node.js version" if update_track == "latest" else "Installed latest Node.js LTS"
     if not log_subprocess_result(logger, action, result, failure_level=ERROR):
         details = result.stderr.strip() or result.stdout.strip() or action

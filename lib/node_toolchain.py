@@ -17,6 +17,7 @@ import tempfile
 
 from lib.atomic_io import read_json_file
 from lib.agent_probe import run_probe
+from lib.node_install import node_install_guard
 from lib.node_runtime_ownership import mark_runtime, runtime_directory, runtime_owner
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
@@ -525,13 +526,14 @@ def run_node_command(args: argparse.Namespace) -> int:
                 nvm = prepare_project_node_versions()
             # An existing maintenance install becomes a project runtime before
             # NVM or package-manager work can race with automatic cleanup.
-            if runtime_directory(nvm.parent, target).exists():
+            if (runtime_directory(nvm.parent, target) / "bin/node").is_file():
                 mark_runtime(nvm.parent, target, owner="project")
-            result = subprocess.run([
-                "/bin/bash", "--noprofile", "--norc", "-c",
-                '. "$1" --no-use && nvm install "$2" >&2 && nvm current',
-                "basaltwater-node-install", str(nvm), target,
-            ], check=False, capture_output=True, text=True)
+            with node_install_guard(nvm.parent, target):
+                result = subprocess.run([
+                    "/bin/bash", "--noprofile", "--norc", "-c",
+                    '. "$1" --no-use && nvm install -b "$2" >&2 && nvm current',
+                    "basaltwater-node-install", str(nvm), target,
+                ], check=False, capture_output=True, text=True)
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
             if result.returncode:
