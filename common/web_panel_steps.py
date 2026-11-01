@@ -891,6 +891,8 @@ Description=Refresh the basaltwater web panel audit snapshot
 
 [Timer]
 OnBootSec=2min
+# Keep a deadline when a completed exporter was unloaded before timer restart.
+OnActiveSec=5min
 OnUnitActiveSec=5min
 AccuracySec=30s
 RandomizedDelaySec=30s
