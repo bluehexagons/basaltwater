@@ -6,6 +6,10 @@
 - Backend, renderer/device, application version, resolution/scaling, seed:
 - Evidence paths (before/after, editable source/export, settings, report, logs):
 - Observed results (complete image edges/content, dimensions, alpha, consuming-project behavior):
+- Inspected silhouettes (front/rear), undersides, attachment junctions and named close-ups:
+- Batch manifest/inspection record and missing or incompatible views:
+- Geometry observations (components/bounds, normals, designated and intentional overlaps):
+- Export round trip (working copy, format/options, relocated clean import, geometry/material differences):
 - Proposed changes / unresolved objections:
 - Unverified checks (UI interaction, GPU, audio, timing, other platforms):
 - Running or uncertain jobs, status/cleanup commands and checkpoint:

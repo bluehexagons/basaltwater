@@ -28,6 +28,16 @@ def add_blender_parser(commands: argparse._SubParsersAction) -> None:
     smoke.add_argument("--output", help="New artifact directory with an existing parent; default: private managed state")
     smoke.add_argument("--timeout", type=validate_positive_integer, default=120, help="Render timeout in seconds, 1–600 (default: 120)")
     smoke.add_argument("--json", action="store_true")
+    inspect = actions.add_parser("inspect", help="Inspect evaluated asset geometry without changing the source blend")
+    inspect.add_argument("source", help="Existing .blend file")
+    inspect.add_argument("--object", action="append", default=[], dest="objects", help="Exact scene mesh name; repeat to restrict inspection")
+    inspect.add_argument("--intersect", nargs=2, action="append", default=[], metavar=("OBJECT", "OBJECT"), help="Check a designated object pair for surface overlap")
+    inspect.add_argument("--allow-intersection", nargs=2, action="append", default=[], metavar=("OBJECT", "OBJECT"), help="Record an intentional overlap for a designated pair")
+    inspect.add_argument("--render-views", action="store_true", help="Render front/rear/underside CPU diagnostic views")
+    inspect.add_argument("--size", type=validate_positive_integer, default=512, help="Square diagnostic resolution, 64–2048 (default 512)")
+    inspect.add_argument("--output", help="New private evidence directory")
+    inspect.add_argument("--timeout", type=validate_positive_integer, default=300, help="Process deadline, 1–3600 seconds")
+    inspect.add_argument("--json", action="store_true")
 
 
 def _directory(output: str | None) -> str:
@@ -133,13 +143,21 @@ def smoke_blender(output: str | None = None, *, timeout: int = 120) -> dict:
 
 def run_blender_command(args: argparse.Namespace) -> int:
     try:
-        result = smoke_blender(args.output, timeout=args.timeout)
+        if args.blender_command == "inspect":
+            from lib.agent_blender_inspect import inspect_blender
+
+            result = inspect_blender(args)
+        else:
+            result = smoke_blender(args.output, timeout=args.timeout)
     except (OSError, RuntimeError, ValueError) as exc:
         result = {"ok": False, "error": str(exc)}
     if args.json:
         print(json.dumps(result, indent=2))
     elif result["ok"]:
-        print(f"Blender {result['settings']['blender_version']}: Cycles CPU render passed ({result['elapsed_seconds']}s)")
+        if args.blender_command == "inspect":
+            print(f"Inspected {len(result['inspection']['objects'])} objects; visual correctness remains unverified")
+        else:
+            print(f"Blender {result['settings']['blender_version']}: Cycles CPU render passed ({result['elapsed_seconds']}s)")
         print(f"Evidence: {result['directory']}")
         print("UI and GPU readiness remain unverified")
     else:

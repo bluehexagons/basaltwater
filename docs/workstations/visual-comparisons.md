@@ -193,6 +193,49 @@ private output rules match individual comparisons. `batch.json` records
 observations, hashes, crops, compatibility issues and missing categories;
 `index.html` embeds the images without external resources.
 
+## Export and inspect the consumer
+
+Keep interchange recipes in the asset's project. Use the existing declared
+`visuals check` recipe boundary to orchestrate this reusable sequence and retain
+the result under `BASALTWATER_VISUAL_EVIDENCE`:
+
+1. Save a working `.blend` checkpoint without replacing the source. Record its
+   hash, frame and selected objects; inspect it with `agent blender inspect`.
+2. Export into a new directory using the project's format, axes, scale,
+   modifier, UV, material/baking and animation options. Record actual options
+   and require exporter completion plus all companion files.
+3. Copy the export and its companions to a relocated directory, then reimport
+   into an empty scene. Force texture loading or render to expose missing
+   references. Save the imported scene as another checkpoint and inspect it.
+4. Compare evaluated bounds, triangle counts, normals, UVs and material-to-face
+   assignments using the project's tolerances/mapping. Seams and triangulation
+   can change vertex/object counts; equal counts do not prove equivalence.
+5. Invoke the project-owned consumer capture recipe on the exported asset.
+   Record the actual camera, renderer/device, quality and applied materials.
+   Produce a batch manifest with silhouettes, undersides, junctions and details
+   for before/after captures. Include both modeling diagnostics and consumer
+   captures as appropriate, comparing each with compatible observations.
+6. Inspect those views and crops, download the inspection record, and report
+   geometry differences, appearance defects and unverified checks separately.
+
+The recipe owns export/import APIs, object identity mapping and consumer
+launch/camera semantics; Basaltwater does not infer these from a file extension
+or a successful Blender render. A procedural Blender shader may require baking
+or a consumer-specific material assignment. Use project-native commands for
+manual execution too. Run the declared recipe deliberately, for example:
+
+```bash
+basaltw agent visuals check asset-roundtrip --repository ~/repos/my-game \
+  --settings ~/asset-review-settings.json --timeout 600 --json
+```
+
+`check.json` establishes recipe completion and retained settings; the
+project's round-trip report and manual inspection establish the narrower
+checks actually performed. Fail the recipe for missing imports/captures or
+unapplied settings. Keep intentional intersections configurable in project
+settings and pass designated pairs to Blender inspection as described in the
+[Blender reference](../../common/agent_skills/basaltwater-cachyos-desktop/references/blender.md).
+
 ## Capture two revisions
 
 Use a project-owned capture harness that builds and renders from its current

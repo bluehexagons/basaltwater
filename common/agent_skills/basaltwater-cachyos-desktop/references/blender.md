@@ -81,6 +81,53 @@ native package or install unrelated libraries to suppress warnings.
 
 ## Render and compare
 
+For structured asset observations, run:
+
+```fish
+basaltw agent blender inspect /absolute/project/prop.blend \
+  --object Body --object Attachment --intersect Body Attachment \
+  --render-views --timeout 300 --json
+```
+
+This opens the source without auto-executing embedded scripts, using private
+configuration and a background factory session. It never saves over the source.
+`report.json` retains the source hash and outcome; `inspection.json` records
+scene/frame, transforms, modifiers, source selection, evaluated bounds, material
+slots/face counts, UV layer names, vertex-connected islands and their world
+bounds, boundary/nonmanifold/loose edges, zero-area faces and zero-length normals.
+Selection indices refer to the source mesh; topology and overlap indices refer
+to evaluated viewport meshes. Render-only modifiers can differ. Instances are
+not expanded. Inspect exact scene mesh names, restricting large assets with
+repeatable `--object`. Selected non-mesh objects receive transform inventories.
+
+`--render-views` creates front (-Y), rear (+Y) and underside (-Z) orthographic
+views at a shared frame and framing, in solid, wire, face-orientation and island
+modes. The CPU diagnostic materials replace original appearance in a separate
+scene. Wire shading includes Cycles triangulation; orientation is blue for
+front-facing and red for back-facing surfaces, not an outward-normal verdict.
+Island views highlight components after each object's largest component in
+orange, along with faces in non-intentional designated overlaps. Intentional
+parts can also be disconnected. `diagnostics.blend` retains the diagnostic scene
+and source scenes for further inspection. No live viewport overlay is toggled.
+
+`--intersect A B` checks designated evaluated world-space surfaces using BVH
+overlap. `--allow-intersection A B` records an intentional pair already designated
+by `--intersect`; it suppresses that pair's orange highlight, retaining counts.
+Overlap is an observation, not a defect classification. Containment, coplanar
+duplicates, tiny protrusions, clearances and consumer appearance need additional
+review. Pair tests above a two-million triangle-pair budget are explicitly
+unverified; source evaluation is limited to one million vertices/edges/faces
+combined and 256 objects. Component records retain at most 64 bounds and
+selection/overlap samples at most 1000 indices/pairs, with truncation flags.
+
+Optional render failure retains geometry observations and a failed report.
+Successful inspection does not mean an asset passed visual review. Include
+silhouettes, undersides, attachment junctions and close-ups in the project-owned
+batch manifest for `basaltw agent visuals batch`; compare observed camera
+position/target/ortho scale, frame, resolution and diagnostic mode across runs.
+Different bounds change auto framing. Use a project-owned fixed camera recipe
+when framing must remain identical.
+
 `basaltw agent blender smoke --json` uses private configuration/scripts/data,
 cache and temporary paths to render a bundled 128x128 Cycles CPU scene. Inspect
 its PNG, scene, settings and log. UI, Eevee, GPU and asset interchange remain
