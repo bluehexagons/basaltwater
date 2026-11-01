@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import basaltwater
-from lib import build_selection, build_setup, setup_common
+from lib import build_enrollment_cli, build_selection, build_setup, setup_common
 from lib.build_delivery import ApplicationDeliveryReceipt, DeliveryReceipt
 from lib.build_selection import SSHEndpoint
 from lib.build_setup_sources import PreparedSource, _plans
@@ -65,7 +65,7 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         stack.enter_context(patch.object(basaltwater, "store_cli_credentials"))
         stack.enter_context(patch.object(basaltwater, "print_service_access_summary"))
         stack.enter_context(patch.object(build_selection, "_endpoint", side_effect=lambda config, _keys, prefix, _workspace:
-            SSHEndpoint(config.host, prefix + "fixture", "/unused/key", "/unused/known_hosts", "alice")))
+            SSHEndpoint(config.host, prefix + "fixture", "/unused/key", "/unused/known_hosts", next(iter(_keys)))))
         stack.enter_context(patch.object(build_setup, "_preflight_target"))
         stack.enter_context(patch.object(build_setup, "strict_ssh_transport"))
         stack.enter_context(patch.object(build_setup, "_check_workspace_capacity"))
@@ -111,6 +111,76 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         return self.parser.parse_args(["patch", "target.example", "agent", *options])
 
     def test_public_setup_provisions_builder_then_web_vm_using_saved_selection(self):
+        self.provision_builder_and_web(flags_only=False)
+
+    def test_two_flags_only_setup_commands_and_saved_redeploy_need_no_policy_files(self):
+        self.provision_builder_and_web(flags_only=True)
+        with patch.object(build_enrollment_cli, "prepare_setup_sources",
+                          side_effect=AssertionError("Saved deployment must reuse enrollment")):
+            args = self.parser.parse_args(["deploy", "fresh-web", "--yes"])
+            self.assertEqual(basaltwater.run_deploy_command(args), 0, sys.stdout.getvalue())
+
+    def test_flags_only_project_and_target_patches_keep_saved_siblings(self):
+        self.provision_builder_and_web(flags_only=True)
+        self.sources.reset_mock()
+        self.delivery.return_value.deliver.reset_mock()
+        with patch.object(build_enrollment_cli, "prepare_setup_sources",
+                          side_effect=self.prepare_sources) as policies:
+            args = self.parser.parse_args([
+                "patch", "fresh-builds", "--build-project", "sibling.example", self.sibling,
+                "--build-max-records", "256",
+            ])
+            self.assertEqual(basaltwater.run_patch_command(args), 0, sys.stdout.getvalue())
+            builder = load_setup_command("fresh-builds")
+            projects = builder.build_host_enrollment["policy"]["principals"]["deploy"]["projects"]
+            self.assertEqual(len(projects), 2)
+            self.assertTrue(builder.is_build_server)
+            self.assertEqual(builder.build_host_enrollment["max_records"], 256)
+            observed = capabilities()
+            observed["projects"] = projects
+            self.builder.return_value.__enter__.return_value.capabilities.return_value = observed
+            args = self.parser.parse_args([
+                "patch", "fresh-web", "--build-target-auto",
+                "--deploy", "sibling.example", self.sibling,
+            ])
+            self.assertEqual(basaltwater.run_patch_command(args), 0, sys.stdout.getvalue())
+            self.assertEqual(policies.call_count, 2)
+            self.assertEqual(policies.call_args.args[0], [
+                ["example.com", self.old], ["sibling.example", self.sibling],
+            ])
+        saved = load_setup_command("fresh-web")
+        self.assertEqual(saved.build_on, "fresh-builds")
+        self.assertEqual(set(saved.build_target_enrollment["policy"]["applications"]), set(projects))
+        self.assertEqual(self.sources.call_args.args[0], saved.deploy_specs)
+        self.assertEqual(len(self.delivery.return_value.deliver.call_args.args[0]), 2)
+
+    def test_flags_only_source_failure_precedes_provisioning_credentials_and_saved_state(self):
+        key = self.root / "key"
+        key.write_text("fixture", encoding="utf-8")
+        key.chmod(0o600)
+        companion = Path(str(key) + ".pub")
+        companion.write_text(enrollment()["keys"]["alice"], encoding="utf-8")
+        companion.chmod(0o644)
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        with patch.object(build_enrollment_cli, "prepare_setup_sources", side_effect=ValueError("source failed")) as sources, \
+             patch("lib.proxmox_vm.provision_vm") as provision, \
+             patch.object(basaltwater, "store_cli_credentials") as credentials, \
+             patch.object(basaltwater, "save_setup_command") as save:
+            args = self.parser.parse_args([
+                "setup", "server_lite", "192.0.2.53", "agent", "--machine", "vm",
+                "--provision-on", "192.0.2.10", "--key", str(key), "--build-server",
+                "--memory", "4G", "--storage", "root", "local-lvm", "80G",
+                "--build-project", "example.com", self.old,
+            ])
+            self.assertEqual(basaltwater.run_setup_command(args), 1)
+            sources.assert_called_once()
+            provision.assert_not_called()
+            credentials.assert_not_called()
+            save.assert_not_called()
+        self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+        self.apply.assert_not_called()
+
+    def provision_builder_and_web(self, *, flags_only):
         target_policy = enrollment()
         builder_policy = builder_enrollment()
         builder_policy["keys"] = target_policy["keys"]
@@ -119,10 +189,11 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         builder_policy["policy"]["principals"] = {
             "alice": {"projects": {"approved-source": grant}},
         }
-        for name, policy in (("builder", builder_policy), ("target", target_policy)):
-            path = self.root / f"{name}.json"
-            path.write_text(json.dumps(policy), encoding="utf-8")
-            path.chmod(0o600)
+        if not flags_only:
+            for name, policy in (("builder", builder_policy), ("target", target_policy)):
+                path = self.root / f"{name}.json"
+                path.write_text(json.dumps(policy), encoding="utf-8")
+                path.chmod(0o600)
         key = self.root / "controller-key"
         key.write_text("opaque fixture; no real private key", encoding="utf-8")
         key.chmod(0o600)
@@ -138,11 +209,14 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         with patch("lib.proxmox_vm.provision_vm", side_effect=lambda config, **_:
                    events.append(("provision", config.host))) as provision, \
              patch.object(basaltwater, "ensure_guest_ipv4_route"), \
-             patch.object(basaltwater, "register_proxmox_setup_host"):
+             patch.object(basaltwater, "register_proxmox_setup_host"), \
+             patch.object(build_enrollment_cli, "prepare_setup_sources",
+                          side_effect=self.prepare_sources) as policy_sources:
             args = self.parser.parse_args([
                 "setup", "server_lite", "192.0.2.53", "agent", *provisioning,
                 "--name", "fresh-builds", "--memory", "4G", "--cores", "4",
-                "--build-server", "--build-host-policy", str(self.root / "builder.json"),
+                "--build-server", *(["--build-project", "example.com", self.old] if flags_only else
+                                     ["--build-host-policy", str(self.root / "builder.json")]),
                 "--go", "--node",
             ])
             self.assertEqual(basaltwater.run_setup_command(args), 0, sys.stdout.getvalue())
@@ -152,7 +226,12 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
             self.assertTrue(builder.is_build_server)
             self.assertTrue(builder.install_go)
             self.assertTrue(builder.install_node)
-            self.assertEqual(builder.build_host_enrollment, builder_policy)
+            if not flags_only:
+                self.assertEqual(builder.build_host_enrollment, builder_policy)
+            observed = capabilities()
+            principal = next(iter(builder.build_host_enrollment["keys"]))
+            observed["projects"] = builder.build_host_enrollment["policy"]["principals"][principal]["projects"]
+            self.builder.return_value.__enter__.return_value.capabilities.return_value = observed
             self.builder.assert_not_called()
             self.apply.reset_mock()
 
@@ -166,10 +245,13 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
                 "setup", "server_web", "192.0.2.54", "agent", *web_provisioning,
                 "--name", "fresh-web", "--memory", "1G", "--cores", "2",
                 "--ssh-access-source", "192.0.2.10/32", "--build-on", "fresh-builds",
-                "--build-target-policy", str(self.root / "target.json"),
+                *([] if flags_only else ["--build-target-policy", str(self.root / "target.json")]),
                 "--deploy", "example.com", self.old,
             ])
             self.assertEqual(basaltwater.run_setup_command(args), 0, sys.stdout.getvalue())
+            self.assertEqual(policy_sources.call_count, 2 if flags_only else 0)
+            for call in policy_sources.call_args_list:
+                self.assertFalse(Path(call.args[1]).exists())
         self.assertEqual(events, [
             ("provision", "192.0.2.53"), ("provision", "192.0.2.54"),
             ("apply", "bootstrap_build_target"), ("apply", None),
@@ -180,7 +262,13 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         self.delivery.return_value.deliver.assert_called_once()
         saved = load_setup_command("fresh-web")
         self.assertEqual(saved.build_on, "fresh-builds")
-        self.assertEqual(saved.build_target_enrollment, target_policy)
+        if not flags_only:
+            self.assertEqual(saved.build_target_enrollment, target_policy)
+        else:
+            self.assertFalse((self.root / "builder.json").exists())
+            self.assertFalse((self.root / "target.json").exists())
+            self.assertEqual(saved.build_target_enrollment["keys"], {"deploy": target_policy["keys"]["alice"]})
+            self.assertEqual(set(saved.build_target_enrollment["policy"]["applications"]), set(observed["projects"]))
         self.assertFalse(saved.install_go)
         self.assertFalse(saved.install_node)
         profile = self.apply.call_args.args[0]
@@ -188,7 +276,7 @@ class SavedBuilderPatchTransportTests(unittest.TestCase):
         self.assertIsNone(profile.build_target_enrollment)
         self.assertTrue(profile.artifact_deployments)
         self.assertEqual(self.apply.call_args.kwargs["expected_releases"], [
-            {"application": "site", "operation_id": "1" * 32,
+            {"application": next(iter(saved.build_target_enrollment["policy"]["applications"])), "operation_id": "1" * 32,
              "generation": 1, "artifact_sha256": "d" * 64},
         ])
         journal = next(self.root.glob("build-setups/*/setup.json.last.json"))

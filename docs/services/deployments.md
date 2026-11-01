@@ -55,8 +55,13 @@ revision updates, SQLite backups, UDP and retained refresh. Consult the
 [coverage map](../plans/testing-coverage.md) for the tested boundaries; a dry run
 does not establish that a particular deployment will succeed.
 
-For an already enrolled builder named `builds`, an existing remote target, and a
-controller-local typed target policy matching the manifest's routes:
+Enroll the builder with `--build-server --build-project DOMAIN[/PATH] HTTPS_URL`
+for each destination. Initial `--build-on` setup generates matching target grants
+from its deployment manifests, using the selected SSH public companion. No
+enrollment files are required; see the [two-command provisioning example](../examples/builds/homelab-build-test.md).
+Custom `--build-host-policy FILE` and `--build-target-policy FILE` remain available.
+
+For an already enrolled builder named `builds` and an existing remote target:
 
 Provision root setup access for the selected target key separately before this
 command. Typed enrollment grants forced-command transport access and installs
@@ -66,7 +71,7 @@ no root key; preflight and setup use root with the same selected identity file.
 basaltw setup server_web web.example.com deploy --machine vm \
   --key /home/controller/.ssh/web_ed25519 \
   --ssh-access-source 192.0.2.5/32 \
-  --build-on builds --build-target-policy /home/controller/web-target.json \
+  --build-on builds \
   --deploy app.example.com 'https://github.com/example/app.git#tag=v1' \
   --dry-run
 ```
@@ -89,7 +94,11 @@ use the controller's public egress IP or VPN source instead of its LAN address.
 
 Both endpoints require managed Debian 13 x86_64 enrollment and an explicit VM or
 hardware machine type. The target must be remote and use `server_lite` or
-`server_web`, with an explicit `--build-target-policy`. The controller needs
+`server_web`. Initial target enrollment is generated unless an explicit policy
+or saved enrollment is present. Later deployments reuse that saved snapshot;
+`--build-target-auto` explicitly updates it from the complete merged deployment
+set. Builder and target project IDs derive from the same destination, so use
+matching domains and paths in `--build-project` and `--deploy`. The controller needs
 existing private SSH identity files, their Ed25519 public companions and its
 workspace `known_hosts`. Each selected public key must match an enrollment
 principal; typed SSH accounts come from that enrollment. The selected target key

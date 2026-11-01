@@ -1356,7 +1356,7 @@ def add_setup_arguments(
             "--build-on",
             dest="build_on",
             metavar="SAVED-BUILDER",
-            help="Select a saved builder reference for artifact deployments",
+            help="Select a saved builder for artifact deployments; generate initial target grants from --deploy",
         )
         build_selection.add_argument(
             "--no-build-on",
@@ -1455,6 +1455,23 @@ def add_setup_arguments(
             "--build-host-enrollment-json",
             help=argparse.SUPPRESS,
         )
+        build_host_policy.add_argument(
+            "--build-project", action="append", nargs=2,
+            metavar=("DOMAIN[/PATH]", "HTTPS_URL"),
+            help="Generate managed builder grants for this destination and repository; repeat for each project",
+        )
+        parser.add_argument(
+            "--build-limit", action="append", nargs=2, metavar=("RESOURCE", "INTEGER"),
+            help="Override a generated build policy resource ceiling (for example memory_bytes 1073741824); repeat as needed",
+        )
+        parser.add_argument(
+            "--build-max-records", type=int, metavar="N",
+            help="Record limit for generated builder or target enrollment (default: 128)",
+        )
+        parser.add_argument(
+            "--build-max-bytes", type=int, metavar="BYTES",
+            help="Storage limit for generated enrollment (default: builder 64 GiB, target 8 GiB)",
+        )
     if for_remote:
         parser.add_argument(
             "--build-target-enrollment-json",
@@ -1470,6 +1487,10 @@ def add_setup_arguments(
         build_target_policy.add_argument(
             "--build-target-enrollment-json",
             help=argparse.SUPPRESS,
+        )
+        build_target_policy.add_argument(
+            "--build-target-auto", action="store_true",
+            help="Generate or update target grants from the complete deployment set; automatic for an initial --build-on setup",
         )
         parser.add_argument(
             "--no-build-target",

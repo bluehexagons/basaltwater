@@ -1,5 +1,11 @@
 # Draft build enrollment policies from existing manifests
 
+This optional utility writes reviewable policy files for custom enrollment.
+For provisioning entirely with flags, use builder `--build-project` and target
+`--build-on`; see the [two-command example](../examples/builds/homelab-build-test.md).
+Both paths share the pure enrollment generator and bounded source preparation.
+Generated CLI grants are stored directly in the normal saved setup fields.
+
 Run this operator utility from a repository checkout with Python 3.11 or newer:
 
 ```bash

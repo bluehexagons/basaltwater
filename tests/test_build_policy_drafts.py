@@ -1,9 +1,11 @@
-"""Operator draft contracts, using pinned fixtures and no network or builds."""
+"""Shared enrollment generation and CLI contracts without network or builds."""
 
 from __future__ import annotations
 
+import argparse
 import base64
-from contextlib import redirect_stderr, redirect_stdout
+import copy
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
 import io
 import json
@@ -15,6 +17,9 @@ import unittest
 from unittest.mock import patch
 
 from lib.build_setup_sources import PreparedSource
+from lib import build_enrollment, build_enrollment_cli
+from lib.build_setup_sources import _plans
+from lib.config import SetupConfig
 from lib.deployment import DeploymentOrchestrator
 from lib.manifest_serving import runtime_from_component
 from lib.project_manifest import parse_manifest
@@ -53,7 +58,7 @@ class BuildPolicyDraftTests(unittest.TestCase):
         self.key.chmod(0o644)
 
     def draft(self, items=None, **kwargs):
-        return drafts.draft_enrollments(
+        return build_enrollment.generate_enrollments(
             [prepared()] if items is None else items, builder_key=KEY, target_key=KEY, **kwargs)
 
     def test_full_runtime_grant_and_defaults(self):
@@ -62,7 +67,7 @@ class BuildPolicyDraftTests(unittest.TestCase):
         project = next(iter(builder["policy"]["principals"]["deploy"]["projects"].values()))
         app = next(iter(target["policy"]["applications"].values()))
         self.assertEqual(project["runtimes"], ["go"])
-        self.assertEqual(project["limits"], drafts.DRAFT_LIMITS)
+        self.assertEqual(project["limits"], build_enrollment.DEFAULT_POLICY_LIMITS)
         self.assertEqual(app["components"]["api"]["runtime"],
                          runtime_from_component(item.manifest.components[1]))
         self.assertEqual(set(app["components"]), {"site", "api"})
@@ -101,12 +106,12 @@ class BuildPolicyDraftTests(unittest.TestCase):
 
     def test_names_are_stable_bounded_and_disambiguate_lossy_spelling(self):
         destinations = ["a-b.example", "a.b.example", "example.com/" + "long/" * 30]
-        names = [drafts.application_slug(value) for value in destinations]
+        names = [build_enrollment.application_slug(value) for value in destinations]
         self.assertEqual(len(set(names)), 3)
         for name in names:
             self.assertLessEqual(len(name), 64)
             self.assertRegex(name, r"^[a-z0-9][a-z0-9-]*$")
-        self.assertEqual(drafts.application_slug("EXAMPLE.COM./"), drafts.application_slug("example.com"))
+        self.assertEqual(build_enrollment.application_slug("EXAMPLE.COM./"), build_enrollment.application_slug("example.com"))
         items = [prepared("one.example"), prepared("two.example")]
         self.assertEqual(self.draft(items), self.draft(list(reversed(items))))
 
@@ -115,7 +120,7 @@ class BuildPolicyDraftTests(unittest.TestCase):
                       [prepared("a.b.example"), prepared("a_b.example")]):
             with self.subTest(items=items), self.assertRaises(ValueError):
                 self.draft(items)
-        with patch.object(drafts, "application_slug", return_value="collision"):
+        with patch.object(build_enrollment, "application_slug", return_value="collision"):
             with self.assertRaisesRegex(ValueError, "collision"):
                 self.draft([prepared("one.example"), prepared("two.example")])
         item = prepared("other.example")
@@ -129,12 +134,12 @@ class BuildPolicyDraftTests(unittest.TestCase):
         item.manifest.components[1].env_file = "/etc/secret"
         with self.assertRaises(ValueError):
             self.draft([item])
-        for kwargs in ({"limits": dict(drafts.DRAFT_LIMITS, memory_bytes=1)},
+        for kwargs in ({"limits": dict(build_enrollment.DEFAULT_POLICY_LIMITS, memory_bytes=1)},
                        {"principal": "Invalid"}, {"builder_max_records": 0}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.draft(**kwargs)
         with self.assertRaises(ValueError):
-            drafts.draft_enrollments([prepared()], builder_key="private material", target_key=KEY)
+            build_enrollment.generate_enrollments([prepared()], builder_key="private material", target_key=KEY)
 
     def test_exclusive_private_files_and_nooverwrite_of_either_name(self):
         builder, target = self.draft()
@@ -212,6 +217,151 @@ class BuildPolicyDraftTests(unittest.TestCase):
         self.assertFalse(temporary.exists())
         self.assertEqual(list(self.workspace.iterdir()), [])
         self.assertFalse((self.root / "drafts").exists())
+
+
+class BuildEnrollmentCLITests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.workspace = self.root / "workspace"
+        self.key = self.root / "controller-key"
+        self.key.write_text("opaque fixture; never a real private key", encoding="utf-8")
+        self.key.chmod(0o600)
+        companion = Path(str(self.key) + ".pub")
+        companion.write_text(KEY + " operator@example\n", encoding="utf-8")
+        companion.chmod(0o644)
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch("sys.stdout", new_callable=io.StringIO))
+        stack.enter_context(patch("lib.system_utils.get_local_timezone", return_value="UTC"))
+        self.fetch = stack.enter_context(patch.object(
+            build_enrollment_cli, "prepare_setup_sources", side_effect=lambda specs, _root:
+            [prepared(destination) for destination, _url, _ref in _plans(specs)],
+        ))
+        for name in ("subprocess.Popen", "subprocess.run", "socket.socket", "socket.getaddrinfo"):
+            stack.enter_context(patch(name, side_effect=AssertionError("Unexpected system action: " + name)))
+
+    def config(self, *, builder=False, **kwargs):
+        return SetupConfig(
+            host="build.example" if builder else "web.example", username="agent",
+            system_type="server_lite" if builder else "server_web", machine_type="vm",
+            ssh_key=str(self.key), is_build_server=builder,
+            **({} if builder else {"build_on": "builder", "ssh_access_sources": ["192.0.2.10/32"],
+                                   "deploy_specs": [["example.com", "https://example.com/site.git"]]}),
+            **kwargs,
+        )
+
+    def apply(self, config, **kwargs):
+        args = argparse.Namespace(**kwargs)
+        build_enrollment_cli.prepare_cli_build_enrollments(config, args, workspace=str(self.workspace))
+
+    def test_builder_updates_preserve_unrelated_grants_principals_and_adjusted_limits(self):
+        config = self.config(builder=True)
+        specs = [["example.com", "https://example.com/site.git"]]
+        self.apply(config, build_project=specs, build_max_records=256)
+        first = copy.deepcopy(config.build_host_enrollment)
+        grant = next(iter(config.build_host_enrollment["policy"]["principals"]["deploy"]["projects"].values()))
+        grant["limits"]["cpu_percent"] = 100
+        from tests.test_build_selection import public_key
+
+        config.build_host_enrollment["keys"]["other"] = public_key(2)
+        config.build_host_enrollment["policy"]["principals"]["other"] = {
+            "projects": {"retained": copy.deepcopy(grant)},
+        }
+        other = copy.deepcopy(config.build_host_enrollment["policy"]["principals"]["other"])
+        self.apply(config, build_project=[["second.example", "https://example.com/other.git"]])
+        projects = config.build_host_enrollment["policy"]["principals"]["deploy"]["projects"]
+        self.assertEqual(len(projects), 2)
+        self.assertEqual(config.build_host_enrollment["policy"]["principals"]["other"], other)
+        self.assertEqual(config.build_host_enrollment["max_records"], 256)
+        slug = next(iter(first["policy"]["principals"]["deploy"]["projects"]))
+        self.apply(config, build_project=specs, build_limit=[["memory_bytes", str(2 * 1024**3)]])
+        limits = config.build_host_enrollment["policy"]["principals"]["deploy"]["projects"][slug]["limits"]
+        self.assertEqual(limits["memory_bytes"], 2 * 1024**3)
+        self.assertEqual(limits["cpu_percent"], 100)
+        self.assertEqual(list(self.workspace.iterdir()), [])
+
+    def test_target_updates_include_saved_siblings_preserve_limits_and_refuse_root_moves(self):
+        config = self.config()
+        self.apply(config)
+        first = copy.deepcopy(config.build_target_enrollment)
+        slug = next(iter(first["policy"]["applications"]))
+        from tests.test_build_selection import public_key
+
+        config.build_target_enrollment["keys"]["other"] = public_key(2)
+        config.build_target_enrollment["policy"]["applications"][slug]["principals"].append("other")
+        config.build_target_enrollment["policy"]["applications"][slug]["limits"]["artifact_bytes"] = 64 * 1024**2
+        config.deploy_specs.append(["second.example", "https://example.com/other.git"])
+        self.apply(config, build_target_auto=True, build_max_bytes=16 * 1024**3)
+        applications = config.build_target_enrollment["policy"]["applications"]
+        self.assertEqual(len(applications), 2)
+        self.assertEqual(applications[slug]["deployment_root"], first["policy"]["applications"][slug]["deployment_root"])
+        self.assertEqual(applications[slug]["limits"]["artifact_bytes"], 64 * 1024**2)
+        self.assertEqual(applications[slug]["principals"], ["deploy", "other"])
+        self.assertEqual(config.build_target_enrollment["max_bytes"], 16 * 1024**3)
+        applications[slug]["deployment_root"] = "/srv/custom/root"
+        before = copy.deepcopy(config.build_target_enrollment)
+        with self.assertRaisesRegex(ValueError, "cannot change existing roots"):
+            self.apply(config, build_target_auto=True)
+        self.assertEqual(config.build_target_enrollment, before)
+        self.assertEqual(list(self.workspace.iterdir()), [])
+
+    def test_existing_enrollment_is_reused_without_source_or_key_access(self):
+        config = self.config()
+        self.apply(config)
+        before = copy.deepcopy(config.build_target_enrollment)
+        self.fetch.reset_mock()
+        self.key.unlink()
+        self.apply(config)
+        self.fetch.assert_not_called()
+        self.assertEqual(config.build_target_enrollment, before)
+
+    def test_explicit_target_generation_reenables_saved_removal_only_after_success(self):
+        config = self.config(disable_build_target=True)
+        self.fetch.side_effect = ValueError("source failed")
+        with self.assertRaisesRegex(ValueError, "source failed"):
+            self.apply(config, build_target_auto=True)
+        self.assertTrue(config.disable_build_target)
+        self.assertIsNone(config.build_target_enrollment)
+        self.fetch.side_effect = lambda specs, _root: [prepared(destination) for destination, _url, _ref in _plans(specs)]
+        self.apply(config, build_target_auto=True)
+        self.assertFalse(config.disable_build_target)
+        self.assertIsNotNone(config.build_target_enrollment)
+        self.fetch.reset_mock()
+        with self.assertRaisesRegex(ValueError, "Choose --build-target-auto or --no-build-target"):
+            self.apply(config, build_target_auto=True, disable_build_target=True)
+        self.fetch.assert_not_called()
+
+    def test_bad_flags_and_missing_private_identity_fail_before_fetch(self):
+        for options in (
+            {"build_limit": [["unknown", "1"]]},
+            {"build_limit": [["cpu_percent", "0"]]},
+            {"build_limit": [["cpu_percent", "100"], ["cpu_percent", "200"]]},
+            {"build_limit": [["memory_bytes", "1"]]},
+            {"build_max_records": 0},
+            {"build_target_policy": "/unused/policy"},
+        ):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.apply(self.config(), **options)
+            self.fetch.assert_not_called()
+        builder = self.config(builder=True)
+        builder.is_build_server = False
+        with self.assertRaisesRegex(ValueError, "requires an enabled --build-server"):
+            self.apply(builder, build_project=[["example.com", "https://example.com/site.git"]])
+        self.fetch.assert_not_called()
+        self.key.unlink()
+        with self.assertRaisesRegex(ValueError, "Build policy preparation failed"):
+            self.apply(self.config())
+        self.fetch.assert_not_called()
+
+    def test_source_failure_cleans_temporary_inputs_without_publishing_enrollment(self):
+        config = self.config()
+        self.fetch.side_effect = ValueError("source failed")
+        with self.assertRaisesRegex(ValueError, "source failed"):
+            self.apply(config)
+        self.assertIsNone(config.build_target_enrollment)
+        self.assertEqual(list(self.workspace.iterdir()), [])
 
 
 if __name__ == "__main__":

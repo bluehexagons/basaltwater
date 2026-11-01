@@ -1828,9 +1828,14 @@ deployment workflows.
 | Flag | Description |
 |------|-------------|
 | `--build-server` | Configure a build server that deploys to app servers |
+| `--build-project DOMAIN[/PATH] HTTPS_URL` | Generate a managed builder project grant from a committed manifest; repeat for each destination; requires an enabled build-server role |
 | `--build-host-policy FILE` | Load up to 4 MiB of public JSON enrollment policy from a controller-local file for a build server |
 | `--no-build-server` | Remove only the managed enrollment and its key authority; retain build records and evidence |
 | `--build-target-policy FILE` | Load up to 4 MiB of public typed-target enrollment policy from a controller-local file |
+| `--build-target-auto` | Generate or update target grants from the complete merged deployment set; automatic for initial `--build-on` setup without enrollment |
+| `--build-limit RESOURCE INTEGER` | Override a generated resource ceiling; repeat for distinct resources |
+| `--build-max-records N` | Set generated enrollment record capacity for this host (default 128; preserve saved values on patch) |
+| `--build-max-bytes BYTES` | Set generated enrollment retained storage (default builder 64 GiB / target 8 GiB; preserve saved values on patch) |
 | `--no-build-target` | Remove managed typed-target authority while preserving applications and their data |
 | `--build-on SAVED-BUILDER` | Build supported deployments on one uniquely matched, enrolled saved host, friendly name, or exact tag; deliver verified artifacts to the target |
 | `--no-build-on` | Clear the saved builder selection and artifact deployment mode |
@@ -1849,9 +1854,23 @@ See [Debian GitHub runner](../services/github-runner.md) for the dedicated
 profile, supported triggers, local fail-closed gate, panel registration and
 qualification requirements. Docker is not required or installed.
 
+For a flags-only flow, provision the builder with `--build-server`, one
+`--build-project DOMAIN[/PATH] HTTPS_URL` per destination, and its tool flags.
+Then provision the target with `--build-on` and matching `--deploy` destinations.
+Both commands generate and validate grants from pinned manifests, using the
+selected SSH key's Ed25519 public companion, and save decoded enrollment with
+the setup. No policy files or output directories are required. See the
+[two-command homelab example](../examples/builds/homelab-build-test.md).
+Project IDs derive from destinations; builder and target must use matching
+domains and paths. Later deployments reuse saved grants. Builder project
+patches merge grants; `--build-target-auto` explicitly updates target grants
+after merging the saved deployment set. See [policy updates and resource flags](../services/build-operations.md#add-a-site-or-change-its-grants).
+Explicit policy files are alternatives to automatic generation for custom
+keys, IDs or roots.
+
 Build-host enrollment policy is optional for legacy `--build-server` setups.
 `--build-host-policy FILE` accepts only public policy and key data. On a patch,
-omitting both build-host flags preserves the saved role and enrollment policy.
+omitting build-host options preserves the saved role and enrollment policy.
 Use `--no-build-server` to remove only the managed enrollment and its key
 authority; build records and enrollment evidence remain. De-enrollment is
 blocked while builds are active. Re-enabling with `--build-server` clears the
@@ -1870,15 +1889,17 @@ enrollment. Its saved SSH key and public companion must identify an enrolled
 principal, with existing controller-owned identity and workspace `known_hosts`
 files. There is no alternate builder or target-build fallback on failure.
 
-The first supported setup flow requires a remote Debian 13 x86_64 VM or hardware
+The supported setup flow requires a remote Debian 13 x86_64 VM or hardware
 target, explicit `--machine vm` or `--machine hardware`, `server_lite` or
-`server_web`, deployments from public HTTPS committed source with an explicit
-`basaltwater.json`, and explicit `--build-target-policy FILE`. The selected target
-key must authorize both root setup and the typed target principal. Supported
-manifests cover ready static output, Python static builds and Go binary services;
-build commands require explicit `build_runtimes` and declared artifact exports.
-Node, custom execution/runtime settings, target build-tool installs, custom steps,
-builder roles, SSL and Cloudflare setup are outside this flow. See
+`server_web`, and HTTPS committed source with an explicit `basaltwater.json`.
+Private sources use the controller's configured global Git credential helper.
+The selected target key must authorize both root setup and the typed target
+principal. Supported manifests cover ready static output, shell/Node/Python
+static builds and native services, including approved arguments, environment,
+SQLite backups and public UDP. Runtime and artifact inference use the shared
+deployment helpers. SSL and Cloudflare use the ordinary administrative setup.
+Target Go/Node/Godot installs, custom steps, interpreter services, builder roles
+and network activation remain unsupported in this flow. See
 [selected-builder usage and restrictions](../services/deployments.md#build-on-a-saved-builder).
 
 The controller preflights before minimal enrollment, reserves all applications

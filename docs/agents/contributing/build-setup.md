@@ -10,12 +10,26 @@ ordinary setup preserves its existing flow. See the operator
 Both controller CLI entrypoints validate selected-build configuration before
 provisioning or starting a guest, resolving credentials, or saving setup state.
 Patch and saved deploy use the same check. Unsupported profile options and
-missing target enrollment therefore leave the saved setup and guests untouched.
+invalid target enrollment therefore leave the saved setup and guests untouched.
 Source preparation and live builder/target checks still run at execution; this
 early configuration check does not establish source or host readiness.
 
-The first slice requires explicit `--build-target-policy`, an enrolled saved
-builder and controller-local SSH identity/trust files. Selection resolves an
+`lib.build_enrollment_cli.prepare_cli_build_enrollments()` runs once before
+provisioning, credentials or saved-state changes, after patch merging. Builder
+`--build-project` and initial target `--build-on` without enrollment compile
+pinned sources into existing decoded enrollment fields. `--build-target-auto`
+explicitly regenerates target grants from the merged deployment set. Temporary
+inputs are always removed; saved deployments reuse their enrollment snapshot.
+The CLI and optional draft script share `lib.build_enrollment.generate_enrollments`,
+the existing source preparation, ordinary root/identity helpers, strict policy
+parsers and delivery planner. Generated flags are controller-only inputs, not
+new target configuration fields. Additive updates preserve unrelated authority
+and unmodified ceilings; custom root or project moves refuse. Pre-generation
+selection validation permits absent enrollment, then the normal runtime check
+requires the complete validated result.
+
+The flow requires an enrolled saved builder and controller-local SSH
+identity/trust files. Explicit policy files remain available. Selection resolves an
 exact, case-insensitive unique saved host, friendly name or tag, then binds the
 selected public companion to its enrolled endpoint principal. The selected
 target key must authorize both root setup and typed target enrollment; builder
@@ -24,7 +38,7 @@ platform checks require Debian 13 x86-64 and refuse unfinished setup or legacy
 enrollment before bootstrap. Selected-builder failures never fall back to a
 target build. Custom steps, build-host roles, legacy app-server roles, explicit
 build toolchains and network activation are outside
-this first slice. App-server steps weaken the trusted deployment parent permissions;
+this flow. App-server steps weaken the trusted deployment parent permissions;
 network activation cannot yet carry the verified address back to saved selection.
 Targets must be remote, explicitly `vm` or `hardware`, with profiles restricted
 to `server_lite` and `server_web`. See [saved selection](build-selection.md) and

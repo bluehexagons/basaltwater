@@ -2028,6 +2028,9 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
     
     try:
+        from lib.build_enrollment_cli import prepare_cli_build_enrollments
+
+        prepare_cli_build_enrollments(config, args)
         runtime_config = _prepare_runtime_config_for_cli(config)
     except ValueError as e:
         print(f"Error: {e}")
@@ -2316,6 +2319,9 @@ def run_patch_command(args: argparse.Namespace) -> int:
             new_config,
             preserve_keys=_patch_preserve_keys(args),
         )
+        from lib.build_enrollment_cli import prepare_cli_build_enrollments
+
+        prepare_cli_build_enrollments(merged_config, args)
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1

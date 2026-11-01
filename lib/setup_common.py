@@ -1684,6 +1684,9 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
         return 1
 
     try:
+        from lib.build_enrollment_cli import prepare_cli_build_enrollments
+
+        prepare_cli_build_enrollments(config, args, workspace=getattr(args, "workspace", None))
         runtime_config = prepare_validated_runtime_config(
             config,
             getattr(args, "workspace", None),

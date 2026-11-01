@@ -73,19 +73,21 @@ def _private_directory(path: str) -> None:
         os.close(descriptor)
 
 
-def validate_build_setup_selection(config: SetupConfig) -> None:
+def validate_build_setup_selection(config: SetupConfig, *, require_enrollment: bool = True) -> None:
     """Check selected-build configuration before provisioning or saving state.
 
     This is a local, side-effect-free check. Builder selection, source planning
     and live target probes still run under the setup-target lock at execution.
+    CLI enrollment generation may defer the enrollment requirement until its
+    validated snapshot is ready.
     """
     from common.build_target_refresh import validate_artifact_refresh
 
     validate_artifact_refresh(config)
     validate_deploy_specs(config.deploy_specs)
     if (not config.build_on or not config.deploy_specs or config.disable_build_target
-            or config.build_target_enrollment is None):
-        raise ValueError("Build-on setup requires deployments and explicit target enrollment")
+            or (require_enrollment and config.build_target_enrollment is None)):
+        raise ValueError("Build-on setup requires deployments and target enrollment")
     if config.machine_type not in {"vm", "hardware"} or config.host in {"localhost", "127.0.0.1", "::1"}:
         raise ValueError("Build-on setup requires a remote Debian VM or physical target")
     if config.system_type not in {"server_lite", "server_web"}:

@@ -1,7 +1,11 @@
 # Managed typed-target setup configuration
 
 `SetupConfig.build_target_enrollment` stores the decoded schema-1 typed-target
-enrollment envelope. The controller-facing `--build-target-policy FILE`
+enrollment envelope. Initial controller `--build-on` setup without enrollment
+generates grants from pinned deployment manifests and the selected SSH public
+companion. `--build-target-auto` explicitly updates grants after patch merging;
+saved deployments otherwise reuse the snapshot. See [controller preparation](build-setup.md).
+The alternative controller-facing `--build-target-policy FILE`
 contract accepts a regular, non-symlink UTF-8 JSON file no larger than 4 MiB,
 rejects duplicate JSON keys and private-key PEM blocks, then validates the
 mapping with `common.build_target_steps.parse_build_target_enrollment()`.
@@ -13,7 +17,9 @@ The envelope shape is `{schema: 1, policy: <lib.build_target_policy>, keys:
 mapping is saved in setup cache and transported as hidden
 `--build-target-enrollment-json JSON`; the local filename is never forwarded.
 `--no-build-target` records explicit removal intent and clears the saved policy
-during patch merging. Supplying a policy again clears that intent. Omitted
+during patch merging. Supplying a policy again, or successfully generating one
+with explicit `--build-target-auto`, clears that intent. Combining generation
+and removal in one invocation refuses. Omitted
 policy and disable intent preserve saved state.
 
 The [managed installer](build-target-setup.md) consumes this configuration.

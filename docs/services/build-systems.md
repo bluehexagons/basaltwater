@@ -13,7 +13,8 @@ the work and where the build should run.
 The selected-builder path has its own enrollment, admission and artifact
 contracts. It does not use `cicd connect`, a webhook receiver or an Actions
 runner. Bare `--build-server` selects the webhook role; adding
-`--build-host-policy FILE` selects the managed on-demand builder. Combining
+`--build-project DOMAIN[/PATH] HTTPS_URL` selects the managed on-demand builder.
+An explicit `--build-host-policy FILE` is also supported. Combining
 managed enrollment with `--cicd` is refused.
 
 A single host combining all three build/CI services is not available yet.
@@ -43,29 +44,29 @@ and must be mutually trusted. Enrollment controls submission and activation
 authority; resource limits do not isolate mutually hostile repositories. See
 [execution boundaries](../agents/contributing/build-execution.md).
 
-Before setup:
+No enrollment files or preparatory directories are required. Declare builder
+projects with flags; initial `--build-on` setup generates target grants from
+the complete deployment manifests. Both use the same enrollment generator,
+validators and deployment planner as the optional [policy draft utility](build-policy-drafts.md).
+The decoded grants are saved with each setup, rather than regenerated on every
+deployment. Review the selected manifests, which define the authorized routes
+and supported service runtime settings.
 
-1. Prepare the Debian builder and target, controller-local Ed25519 identity
-   files and their public companions, and verified host pins in the controller
-   workspace. Use existing administrative access to establish trust; never
-   disable host-key verification to pass preflight. See [identity and trust
-   requirements](../agents/contributing/build-selection.md).
-2. Prepare enrollment envelopes outside the repository using the
-   [policy draft utility](build-policy-drafts.md) or
-   [enrollment templates](../examples/builds/README.md#enrollment-templates).
-   Review projects, routes, runtime settings, target roots, resource ceilings
-   and storage limits. These are enrollment envelopes, not just their nested policies.
-3. Provision root setup access independently on both hosts. On the target,
-   the selected identity must authorize root as well as its typed transport
-   principal. Enrollment installs only a forced-command transport key; it
-   does not grant root login. Keep private keys on the controller.
+Use existing controller-local Ed25519 identities and public companions. For
+fresh Proxmox VMs, provisioning installs root setup access and records host
+pins; see the [two-command homelab example](../examples/builds/homelab-build-test.md).
+For existing hosts, establish root access and verified workspace host pins
+first. Typed enrollment installs only a forced-command transport key. The
+selected identity must separately authorize root setup. Keep private keys on
+the controller; see [identity and trust requirements](../agents/contributing/build-selection.md).
 
 For the SPA/Go example, enroll and save a builder named `builds`:
 
 ```bash
 basaltw setup server_lite build.example.com root --machine vm --name builds \
   --key /home/controller/.ssh/build_ed25519 \
-  --build-server --build-host-policy /home/controller/build-host.json --go
+  --build-server --go \
+  --build-project app.example.com 'https://github.com/OWNER/spa-api.git#tag=v1'
 ```
 
 Add `--node` on the builder for npm frontend builds. Explicit Node setup
@@ -91,7 +92,7 @@ already provisioned, preflight without applying:
 basaltw setup server_web web.example.com root --machine vm \
   --key /home/controller/.ssh/web_ed25519 \
   --ssh-access-source 192.0.2.5/32 \
-  --build-on builds --build-target-policy /home/controller/build-target.json \
+  --build-on builds \
   --deploy app.example.com 'https://github.com/OWNER/spa-api.git#tag=v1' \
   --dry-run
 ```
@@ -131,8 +132,9 @@ or compiler. Missing retained inputs refuse with controller guidance. See
 [deployment and recovery details](deployments.md#build-on-a-saved-builder).
 
 For a new site or changed grants, follow [policy updates](build-operations.md#add-a-site-or-change-its-grants).
-Saved setups hold enrollment snapshots: changing a JSON file alone changes
-neither the saved setup nor the server. The operations guide also provides a
+Builder project patches add or update grants; `--build-target-auto` explicitly
+updates target grants from the complete merged deployment set. Custom policy
+files remain available for other keys, identities or roots. The operations guide also provides a
 [capacity lookup](build-operations.md#choose-maintenance-by-the-exhausted-resource),
 [completed controller archival](build-operations.md#archive-completed-controller-attempts)
 and [refusal diagnostics](build-operations.md#diagnose-a-refusal).

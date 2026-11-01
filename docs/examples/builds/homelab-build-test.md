@@ -10,34 +10,12 @@ Use unused addresses and saved setup names. The examples assume your registered
 Proxmox host `ts1`, image storage `scrap_100_1_write` and VM storage `local-lvm`
 from the original setup command are available. The builder has 4 GiB RAM, four
 cores and an 80 GiB root disk; the web VM has 1 GiB RAM, two cores and 20 GiB.
-Both commands prompt for any required password instead of recording it in shell
-history. Keep the controller workspace with the saved configurations and verified
-SSH host pins.
-
-## Draft and review the policies
-
-Set the controller source to the address or network the web VM actually sees
-on SSH connections. The public companion of your existing administrative
-Ed25519 key must be readable and must not be writable by other users
-(`chmod 644 "$build_key.pub"` if necessary). The private key stays on the
-controller. Use a new output directory; the draft helper refuses overwrites.
-
-```bash
-build_key="$HOME/.ssh/id_ed25519"
-policy_dir="$HOME/basaltwater-build-test-policies"
-controller_ssh_source='192.168.0.10/32' # replace with your controller's actual source
-
-python3 scripts/prepare_build_policies.py \
-  --builder-key "$build_key.pub" --target-key "$build_key.pub" \
-  --output-dir "$policy_dir" \
-  --deploy build-test.hexagonalhomelab.com https://github.com/bluehexagons/bluehexagons.git
-```
-
-Review both generated JSON files before provisioning. This site uses a Node
-build, and its current repository also causes Go to be detected; install both
-runtimes on the builder. Generated policy authority reflects the source checked
-out when drafting. If the manifest changes before deployment, regenerate and
-review the policies in a new directory. See [draft options](../../services/build-policy-drafts.md).
+Replace the password placeholders and `192.168.0.10/32` with the controller's
+actual SSH source address. Your existing administrative Ed25519 key and its
+readable `.pub` companion are used for setup and restricted transport. Keep
+the controller workspace with the saved configurations and verified SSH host
+pins. No policy files, output directories or preparatory shell variables are
+required: provision with the following two commands.
 
 ## Provision the builder
 
@@ -46,26 +24,36 @@ review the policies in a new directory. See [draft options](../../services/build
   --name homelab-build-test-builder --machine vm --provision-on ts1 \
   --image-storage scrap_100_1_write \
   --memory 4G --cores 4 --storage root local-lvm 80G --disk-ssd root \
-  --key "$build_key" \
-  --build-server --build-host-policy "$policy_dir/builder-enrollment.json" \
+  --password 'REPLACE_ME' --key "$HOME/.ssh/id_ed25519" \
+  --build-server \
+  --build-project build-test.hexagonalhomelab.com https://github.com/bluehexagons/bluehexagons.git \
   --go --node
 ```
 
 ## Provision the web VM and deploy the site
 
 Run this after the builder setup succeeds. The target receives built files and
-serves them with nginx; it does not need Go or Node.
+serves them with nginx; it does not need Go or Node. The initial `--build-on`
+setup generates target grants from the complete manifests automatically.
 
 ```bash
 ./basaltwater.py setup server_web 192.168.0.54 deploy \
   --name homelab-build-test-web --machine vm --provision-on ts1 \
   --image-storage scrap_100_1_write \
   --memory 1G --cores 2 --storage root local-lvm 20G --disk-ssd root \
-  --key "$build_key" --ssh-access-source "$controller_ssh_source" \
+  --password 'REPLACE_ME' --key "$HOME/.ssh/id_ed25519" \
+  --ssh-access-source 192.168.0.10/32 \
   --build-on homelab-build-test-builder \
-  --build-target-policy "$policy_dir/target-enrollment.json" \
   --deploy build-test.hexagonalhomelab.com https://github.com/bluehexagons/bluehexagons.git
 ```
+
+Both commands pin and validate the source using shared deployment planning,
+then save the generated enrollment snapshots with their setup. This site uses
+a Node build, and its current repository also causes Go to be detected; the
+builder therefore installs both. `--build-project` authorizes the destination;
+use the same destination in the target's `--deploy`. Resource and storage
+ceilings can also be set with [flags](../../services/build-operations.md#generated-policy-limits).
+Passwords may be omitted to use the normal prompt instead of shell history.
 
 This first test serves HTTP on the LAN and requires no public DNS changes or
 Cloudflare authentication. Check the actual hostname route from the controller:
