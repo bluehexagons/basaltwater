@@ -32,6 +32,9 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     compare.add_argument("after")
     compare.add_argument("--before-settings")
     compare.add_argument("--after-settings")
+    batch = actions.add_parser("batch", help="Build a review gallery from a project-owned capture manifest")
+    batch.add_argument("manifest", help="Version 1 batch JSON; image paths are relative to this file")
+    batch.add_argument("--allow-incompatible", action="store_true", help="Retain mismatched pairs for side-by-side inspection only")
     capture = actions.add_parser("capture", help="Run the same capture command in two managed worktrees")
     capture.add_argument("--repository", default=".")
     capture.add_argument("--before", required=True, metavar="REVISION")
@@ -44,7 +47,7 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     check.add_argument("--repository", default=".")
     check.add_argument("--settings", help="Non-secret JSON capture settings to retain with the check")
     check.add_argument("--timeout", type=validate_positive_integer, default=600)
-    for action in (compare, capture, check):
+    for action in (compare, batch, capture, check):
         action.add_argument("--output", help="New artifact directory; default: private managed state")
         action.add_argument("--json", action="store_true")
 
@@ -207,6 +210,10 @@ def run_visuals_command(args: argparse.Namespace) -> int:
             from lib.agent_visual_check import check_recipe
 
             result = check_recipe(args)
+        elif args.visuals_command == "batch":
+            from lib.agent_visual_batch import review_batch
+
+            result = review_batch(args)
         else:
             result = capture_revisions(args) if args.visuals_command == "capture" else compare_captures(args)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
