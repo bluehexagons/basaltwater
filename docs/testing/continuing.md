@@ -2,8 +2,9 @@
 
 Updated 2026-11-01 after the selected Shares & Data batch. The
 [dated results](evidence.md#shares-and-data) record installed HTTP/worker,
-exclusion and reboot checks, the missing-finding fix and remaining browser/recovery
-limits. This procedure is not blanket permission to modify retained fixtures. Read the
+repair/acceptance, selected Chromium/Firefox, exclusion and reboot checks and
+remaining client/setup limits. This procedure is not blanket permission to modify
+retained fixtures. Read the
 [status overview](README.md), [dated evidence](evidence.md),
 [coverage map](../plans/testing-coverage.md) and local private operational handoff.
 The handoff owns connection details, credentials, fixture constraints and exact
@@ -26,10 +27,10 @@ guard retained; it has no endurance qualification. Preserve existing data.
 ## First batch: current Shares & Data
 
 The selected run closed the installed per-task UI and setup-recovery revision
-gap without public DNS or external accounts. Repeat this procedure when affected
-behavior changes. Interactive preview certificate trust, successful targeted
-repair with adequate parity, current-run acceptance and full-profile refresh
-remain separate qualification boundaries. Read the
+gap without public DNS or external accounts. Follow-up checks qualify successful
+targeted repair with adequate parity, acceptance and selected installed browsers.
+Repeat this procedure when affected behavior changes. Shared preview certificate
+trust, native Firefox ESR and full-profile refresh remain separate boundaries. Read the
 [service procedure](../services/shares-data.md) and
 [transaction recovery](../operations/transaction-recovery.md) before testing.
 
@@ -49,11 +50,14 @@ remain separate qualification boundaries. Read the
 4. Repeat one SMB permission/account lifecycle and one mirror/PAR2 finding
    workflow, verifying resulting bytes and retained identities/parity. Read the
    saved target declarations before controller reruns: panel edits do not update
-   controller desired state.
+   controller desired state. Use adequate parity for a successful missing-file
+   repair; separately check an intervening-file race, deliberate acceptance and
+   a fresh independent verification. Retain old parity and recovery evidence.
 5. On disposable state only, verify setup/refresh ownership and retained recovery
    guards block conflicting controls/dispatch/execution without clearing the guard
    or causing effects. Inspect uncertain outcomes before considering any retry.
 6. Check persistence after a panel restart and an authorized owned-guest reboot.
+   Check that normal setup rearms the audit timer and observe an unattended export.
    Record cleanup, preserved data, remaining guards and final guest state.
 
 Pass evidence must identify the actual installed revision, real approval/worker

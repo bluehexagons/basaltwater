@@ -84,9 +84,12 @@ Earlier full validation of the Proxmox fixes passed 9,243 tests with six skips
 and 82% branch-aware aggregate coverage. That is automated evidence for its
 revision, separate from the live host checks and the later documentation work.
 Shares & Data's current per-task UI and recovery guards now have installed
-HTTPS/approval/worker coverage, including a fixed missing-finding identity bug
-and owned-guest reboot persistence. Installed interactive browser coverage remains
-open because preview certificate trust failed; see the [dated scope and limits](evidence.md#shares-and-data).
+HTTPS/approval/worker coverage, including missing-file repair with adequate parity,
+accepted content with independent verification, race refusal and owned-guest reboot
+persistence. Selected installed Chromium/Firefox interactions also pass with
+isolated CA trust, including a fixed Unicode search bug. Shared preview trust,
+native ESR and full-profile refresh remain open; see the
+[dated scope and limits](evidence.md#shares-and-data).
 
 Update the affected status and its evidence date when new checks complete;
 preserve older dates for areas not retested. Keep raw logs, personal addresses,
