@@ -3,7 +3,7 @@
 Reconciled 2026-11-01 from retained private reports, the owner's stack setup
 rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
 installed native Windows checks, current Shares & Data qualification,
-package-changing Admin qualification and automated checks.
+package-changing Admin and Proxmox inventory qualification, and automated checks.
 These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
@@ -138,6 +138,24 @@ The running kernel changed, and the guest inventory had fewer running guests
 afterward. Preservation claims compare each operation with its own baseline;
 they do not imply unchanged PIDs or all-guest service health across that reboot.
 No Admin power-action path was exercised by that user action.
+
+## Proxmox inventory and exporter
+
+**2026-11-01; existing single-node host.** The overall installation receipt remains
+`1aa7a632`; the five qualified collector/renderer modules and five supporting
+transaction helpers match `ece5e5bc` byte for byte. No host source redeployment
+or complete current-profile qualification is claimed.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed inventory and scheduling** | Native guest identities, states, types and template flags matched the cached inventory. Two unattended root exports published distinct snapshots, exited successfully and left a future timer deadline. Actual panel and Nginx worker mount namespaces denied access to pmxcfs and its backing database; the unprivileged panel could read, but not write, its root-owned cache | Existing standalone node; no multi-node, HA/Ceph or native console qualification. Observation did not manually start or restart the production collector/timer |
+| **Installed host-local HTTPS** | CA/hostname verification, public CA identity, correct/incorrect/anonymous authentication, twelve inventory/filter/sort views, malformed query rejection and absent management routes passed. Reported guest/storage rows matched native or cached references | Full acceptance ran from the host. Controller-origin requests intermittently timed out after partial bodies, with and without compression. Four bounded TCP-observed GETs passed; a further paced probe reproduced the stall with repeated server TCP retransmissions and a stopped client receive counter. Cause remains unresolved, so complete controller transport and interactive browser behavior remain unqualified |
+| **Native owned component lifecycle** | Separately named units used the current setup/transaction code with only names and snapshot/wrapper paths overridden in memory. Real read-only Proxmox collection, busy-removal refusal, explicit collector interruption and native-child termination, byte-identical last-readable publication, reconfiguration/recovery and removal passed. Actual unprivileged panel namespace reads covered valid/stale/corrupt copies; managed removal preserved an owned unknown file | Component fixture, not public full-host setup or production panel/Nginx teardown. SIGTERM produced the expected failed oneshot state before recovery; no host failure was injected. Initial harness state, syntax and filename assertions were inspected and corrected; an overly fast HTTP probe hit the unchanged request limit |
+| **Preservation and cleanup** | Component evidence was privately archived before enumerated fixture cleanup. All pre-existing guest configurations/states/PIDs, host boot/setup/configuration, storage policy and mounts matched baseline. Production panel/Nginx identities and credentials were preserved; no failed units, active Proxmox tasks or owned lifecycle units remained | No guest allocation/start, host reboot, password replacement, formatting, stress or server limit change. Production teardown, setup interruption/power loss and off-host recovery remain separate |
+
+No Basaltwater defect was confirmed in this batch. Keep the controller transfer
+failure visible and diagnose it before extending the HTTP/browser acceptance;
+successful host-local and later controller probes do not erase that boundary.
 
 ## USB storage
 

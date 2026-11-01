@@ -97,6 +97,13 @@ lock waiting, with exact task, service-identity, credential and data preservatio
 See the [Admin evidence](evidence.md#package-changing-admin-update); broader
 packages, conffile conflicts and interruption/power-loss remain open.
 
+The [Proxmox inventory batch](evidence.md#proxmox-inventory-and-exporter) adds
+native inventory comparison, unattended timer refresh, verified host-local HTTPS
+and worker isolation. Separately owned component units passed interruption,
+snapshot preservation, recovery and removal. Intermittent controller partial-page
+timeouts reproduced with server TCP retransmissions and remain unresolved; this
+does not qualify the full controller/browser or production teardown lifecycle.
+
 Update the affected status and its evidence date when new checks complete;
 preserve older dates for areas not retested. Keep raw logs, personal addresses,
 account paths and private infrastructure inventories outside Git.
