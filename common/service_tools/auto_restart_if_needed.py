@@ -23,7 +23,7 @@ from lib.agent_activity import active_agent_workloads
 from lib.config import validate_current_setup_fields
 from lib.kernel_restart import newer_installed_kernel
 from lib.machine_state import can_restart_system, load_setup_config
-from lib.maintenance_lock import maintenance_lock
+from lib.maintenance_lock import maintenance_lock, recover_reboot_drain, retain_reboot_drain
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.plugin_registry import get_system_type_definition
 from lib.proxmox_preflight import check_proxmox_update_safety, is_proxmox_host
@@ -287,12 +287,13 @@ def perform_restart(notification_configs, grace_minutes: int, forced: bool = Fal
         shutdown_cmd = shutil.which("shutdown")
         if not shutdown_cmd:
             raise FileNotFoundError("shutdown command not found")
+        retain_reboot_drain()
         subprocess.run(
             [shutdown_cmd, "-r", f"+{max(0, grace_minutes)}", "Automatic restart for system updates"],
             check=True,
         )
         return 0
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
         log_event(logger, "Failed to initiate restart", level=ERROR, error=str(exc))
         send_notification_safe(
             notification_configs,
@@ -303,6 +304,19 @@ def perform_restart(notification_configs, grace_minutes: int, forced: bool = Fal
             logger=logger,
         )
         return 1
+
+
+def cancel_scheduled_restart() -> int:
+    """Explicitly cancel shutdown before releasing a certain idle reboot drain."""
+    with maintenance_lock(build_slot=False) as acquired:
+        if not acquired:
+            return 1
+        shutdown_cmd = shutil.which("shutdown")
+        if not shutdown_cmd:
+            return 1
+        subprocess.run([shutdown_cmd, "-c"], check=True)
+        recover_reboot_drain(cancel=True)
+        return 0
 
 
 def _check_restart(notification_configs) -> int:
@@ -401,4 +415,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(cancel_scheduled_restart() if sys.argv[1:] == ["--cancel"] else main())

@@ -60,7 +60,13 @@ REQUIRED_WHEEL_PATHS = (
     "sync/service_tools/scrub_par2.py",
     "sync/service_tools/scrub_runner.py",
     "web/config/nginx.conf.template",
-    "web/service_tools/webhook_manager.py",
+    "common/service_tools/build_webhooks.py",
+    "lib/build_webhook_service.py",
+    "lib/webhook_builds.py",
+    "lib/build_coordinator.py",
+    "lib/build_commands.py",
+    "lib/nginx_validation.py",
+    "web/webhook_build_steps.py",
 )
 SOURCE_COPY_IGNORE = shutil.ignore_patterns(
     ".cache",
@@ -161,7 +167,7 @@ def _smoke_installed_wheel(
         cwd=work_dir,
         env=environment,
     )
-    for retired in ("infra-tools", "infra_tools", "basaltwater"):
+    for retired in ("infra-tools", "infra_tools", "basaltwater", "webhook_manager"):
         if _venv_command(venv_dir, retired).exists():
             raise RuntimeError(f"Wheel installed an unexpected launcher: {retired}")
     subprocess.run(
@@ -174,7 +180,8 @@ def _smoke_installed_wheel(
                 "remote_setup, security, smb, sync, web; "
                 "import sync.service_tools.scrub_par2; "
                 "import sync.service_tools.storage_ops; "
-                "import web.service_tools.webhook_manager"
+                "import lib.build_webhook_service, lib.webhook_builds, lib.build_coordinator"
+                "; import lib.build_commands, lib.nginx_validation, web.webhook_build_steps"
                 "; import common.service_tools.admin_job"
                 "; import common.service_tools.web_panel_admin"
                 "; import common.service_tools.web_panel_agent_tools"
@@ -217,13 +224,13 @@ def _smoke_installed_wheel(
     )
     if version_result.stdout.strip() != f"basaltw {installed_version}":
         raise RuntimeError("Installed basaltw launcher returned the wrong version")
-    subprocess.run(
-        [str(_venv_command(venv_dir, "webhook_manager")), "--help"],
-        check=True,
-        cwd=work_dir,
-        env=environment,
-        stdout=subprocess.DEVNULL,
+    entrypoint = subprocess.run(
+        [str(python), "-I", "-c",
+         "import runpy; runpy.run_module('common.service_tools.build_webhooks', run_name='__main__')"],
+        cwd=work_dir, env=environment, capture_output=True, text=True,
     )
+    if entrypoint.returncode != 1 or "Use the managed webhook services" not in entrypoint.stderr:
+        raise RuntimeError("Managed webhook entrypoint did not enforce its service arguments")
 
 
 

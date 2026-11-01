@@ -6,9 +6,12 @@ covers isolation, troubleshooting, replacement and live qualification.
 ## Installation details
 
 The operator account is separate from `basaltwater-runner`. The service account
-has a locked login shell, a dedicated non-root primary group, no supplementary groups, no sudo and no Docker
-access. Basaltwater installs neither Docker nor the other webhook-based CI
-services. The runner is pinned to official `actions/runner` **2.338.1**, Linux
+has a locked login shell, a dedicated non-root primary group, no supplementary
+groups in the account database, no sudo and no Docker access. The systemd job
+service explicitly grants `SupplementaryGroups=basaltwater-builds` to access the
+shared coordinator lock; its job processes inherit that group. Docker is not
+installed. Optional managed builds and webhook intake can
+share host capacity on server_lite/server_web. The runner is pinned to official `actions/runner` **2.338.1**, Linux
 x64, with SHA-256 verification before extraction. Native runtime libraries and
 CA certificates are installed from Debian packages. Provide outbound HTTPS
 access to GitHub and its runner/action download endpoints.
@@ -31,7 +34,7 @@ The runner profile rejects other workloads, deployments, tunnels, file sharing,
 storage jobs and maintenance agents. Enabling its panel does not install
 maintenance-agent services. Optional privilege approvals belong to the separate
 operator account; see [host administration](github-runner.md#host-administration).
-Configure the other workloads on separate hosts.
+Use server_lite/server_web with --github-runner for composed workloads.
 
 ## Job identity and gate
 
@@ -74,8 +77,9 @@ file type, or if its binaries cannot execute as the service account.
 
 The application and hook live outside job-writable paths. The service uses a
 read-only system view with writes limited to
-`/var/lib/basaltwater-github-runner`, private temporary storage and no privilege
-escalation. In-place runner self-update is disabled to keep the application and
+`/var/lib/basaltwater-github-runner`, private temporary storage and the shared
+`/var/lib/basaltwater-build-coordinator/slot.lock` file in `ReadWritePaths`, with
+no privilege escalation. In-place runner self-update is disabled to keep the application and
 hook environment immutable to jobs.
 
 This is a local guard after GitHub assigns a job. It does not hold jobs for
@@ -113,10 +117,13 @@ applications under `/opt/basaltwater-github-runner/instances/ID`, data under
 with the safe `--check` command. Existing single-runner paths remain valid.
 
 Every listener stays online. After identity approval, the pre-job hook waits on
-the shared `queue.lock` inode in the main data directory. A separate process
+the shared `/var/lib/basaltwater-build-coordinator/slot.lock` inode. A separate process
 holds that lock until its worker exits, including action post steps and normal
-cleanup. Worker crashes release the slot; service shutdown also stops queued
-hooks and lock holders. Do not remove or replace the lock while any runner runs.
+cleanup. Crashes, guardian failures and cgroup orphans retain the lease and
+require root inspection before clearing it. Service shutdown also stops queued
+hooks and lock holders; it does not establish that the lease is safe to clear.
+Do not remove or replace the lock while any runner runs.
+The hook waits at most 60 seconds before refusing the job.
 GitHub shows an assigned waiting job as running, and its timeout includes this
 wait. Action downloads/setup may overlap before the hook; workflow steps are
 serialized. Cross-repository order is not guaranteed. All instances share the
@@ -261,15 +268,20 @@ organization. Record live evidence before claiming qualification.
 
 For personal repositories, configure at least two with repeated `--ci-repository`
 flags. Start jobs in both; verify their workflow steps never overlap, including
-post steps. Cancel a waiting job, terminate an active worker and stop a service;
-confirm later jobs acquire the slot and denied jobs never run a canary. Test
+post steps. Cancel a waiting job and confirm normal cleanup allows later jobs
+to acquire the slot. Terminate an active worker, stop a service, and exercise
+guardian failure and orphan cases; confirm retained leases block later jobs
+until root inspects processes and cgroups and safely clears the lease. Confirm
+denied jobs never run a canary. Test
 reordered setup flags, removing/re-adding a repository, registration permission
 failure for only one scope, and sequential panel registration. With bad `gh`
 credentials, verify the rest of setup and requested restart still complete.
 
 1. Install without Docker; confirm only the dedicated account owns job data,
-   has no supplementary groups, cannot write the policy/application/hook or
-   access an operator's home, and has no sudo or Docker socket access.
+   has no supplementary groups in the account database, while systemd job
+   processes receive `basaltwater-builds` and can write the shared lock file.
+   Confirm jobs cannot write the policy/application/hook or
+   access an operator's home, and have no sudo or Docker socket access.
 2. Confirm the runner is online. Reboot and confirm it returns online with the
    service enabled. Copy this Docker-free workflow into the private test
    repository's `.github/workflows/runner-qualification.yml` on its default
@@ -321,3 +333,5 @@ setup/rerun and pending-state reboot checks are recorded in the
 [coverage map](../plans/testing-coverage.md). These do not establish GitHub delivery
 behavior or registered reboot persistence. Keep production qualification open
 until those checks have recorded evidence.
+
+See [capacity and migration](build-systems.md) before upgrading old runner units.

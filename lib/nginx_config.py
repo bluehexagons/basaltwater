@@ -434,7 +434,7 @@ def _make_static_location(path: str, serve_path: str, index_file: str, try_files
 
 def _make_godot_location(path: str, serve_path: str) -> str:
     """Serve a complete Godot export without SPA fallback or immutable caching."""
-    from lib.cicd_deploy_policy import validate_nginx_path
+    from lib.nginx_validation import validate_nginx_path
 
     validate_nginx_path(path)
     validate_nginx_path(serve_path)
@@ -481,7 +481,7 @@ def generate_merged_nginx_config(
     disable_symlinks: bool = False,
 ) -> str:
     """Generate a merged nginx configuration for multiple deployments on the same domain."""
-    from lib.cicd_deploy_policy import validate_nginx_path
+    from lib.nginx_validation import validate_nginx_path
 
     cert_file, key_file = get_ssl_cert_path(domain)
     server_name_directive = f"server_name {domain};" if domain else "server_name _;"

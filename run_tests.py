@@ -127,7 +127,6 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
     "deployment": (
         "tests/test_audit_regressions.py",
         "tests/test_build_*.py",
-        "tests/test_cicd*.py",
         "tests/test_github_runner*.py",
         "tests/test_common_steps.py",
         "tests/test_deploy*.py",
@@ -139,7 +138,6 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_python_setup.py",
         "tests/test_release_management.py",
         "tests/test_remote_setup.py",
-        "tests/test_remote_deploy.py",
         "tests/test_required_setup_failures.py",
         "tests/test_setup_common.py",
         "tests/test_setup_dry_run.py",
@@ -210,6 +208,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_basaltwater_web.py",
         "tests/test_manifest_deploy.py",
         "tests/test_nginx_config.py",
+        "tests/test_nginx_validation.py",
         "tests/test_ssl_steps.py",
         "tests/test_static_web_publish.py",
         "tests/test_web*.py",

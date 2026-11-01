@@ -24,6 +24,13 @@ def _make_config(**kwargs) -> SetupConfig:
 def _make_setup_args() -> MagicMock:
     """Create parsed-argument mocks with the real parser's SSH defaults."""
     args = MagicMock()
+    args.enable_webhook_builds = None
+    args.enable_github_runner = None
+    args.webhook_repositories = None
+    args.webhook_branches = None
+    args.webhook_domain = None
+    args.webhook_secret = None
+    args.webhook_github_token = None
     args.install_ssh = None
     args.ssh_password_auth = False
     args.ssh_password_window = None
@@ -911,29 +918,6 @@ class TestSetupMainValidation(unittest.TestCase):
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid webhook URL")
 
-    @patch("builtins.print")
-    def test_invalid_deploy_targets_return_error_before_remote_setup(self, mock_print):
-        from lib import setup_common
-
-        parser = MagicMock()
-        args = _make_setup_args()
-        args.workspace = None
-        args.host = "testhost"
-        args.username = "testuser"
-        parser.parse_args.return_value = args
-        config = _make_config(deploy_targets=["bad target"])
-
-        with patch.object(setup_common, "create_argument_parser", return_value=parser), \
-             patch.object(setup_common, "validate_host", return_value=True), \
-             patch.object(setup_common, "validate_username", return_value=True), \
-             patch.object(setup_common, "prepare_runtime_config", return_value=config), \
-             patch.object(setup_common, "validate_hosted_flags", side_effect=ValueError("Invalid hosted node host: bad host")), \
-             patch.object(setup_common, "run_remote_setup") as mock_run_remote:
-            result = setup_common.setup_main("server_lite", "Test", lambda c: None)
-
-        self.assertEqual(result, 1)
-        mock_run_remote.assert_not_called()
-        mock_print.assert_called_with("Error: Invalid deploy target host: bad target")
 
     @patch("builtins.print")
     def test_invalid_deploy_specs_return_error_before_remote_setup(self, mock_print):

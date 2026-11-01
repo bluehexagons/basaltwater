@@ -17,7 +17,6 @@ from lib.validation import (
     validate_agent_git_settings,
     validate_antistatic_settings,
     validate_deploy_specs,
-    validate_deploy_targets,
     validate_gogs_settings,
     validate_samba_share_specs,
     validate_directory_empty,
@@ -102,22 +101,6 @@ class TestValidateNetworkEndpoint(unittest.TestCase):
     def test_multiple_colons(self):
         with self.assertRaises(ValueError):
             validate_network_endpoint('host:80:90')
-
-
-class TestValidateDeployTargets(unittest.TestCase):
-    def test_none_passes(self):
-        validate_deploy_targets(None)
-
-    def test_valid_targets_pass(self):
-        validate_deploy_targets(['app1.example.com', '192.168.1.20'])
-
-    def test_empty_target_fails(self):
-        with self.assertRaisesRegex(ValueError, "Deploy target must be a non-empty hostname or IP"):
-            validate_deploy_targets([''])
-
-    def test_invalid_target_fails(self):
-        with self.assertRaisesRegex(ValueError, "Invalid deploy target host: bad target"):
-            validate_deploy_targets(['bad target'])
 
 
 class TestValidateDeploySpecs(unittest.TestCase):

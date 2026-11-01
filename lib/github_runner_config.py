@@ -30,7 +30,7 @@ EVENTS = ("push", "workflow_dispatch", "pull_request")
 MAX_OUTCOMES = 100
 CREDENTIAL_FILES = (".runner", ".credentials", ".credentials_rsaparams")
 MAX_RUNNERS = 20
-QUEUE_LOCK = DATA + "/queue.lock"
+from lib.build_coordinator import LOCK as QUEUE_LOCK
 
 
 def runner_repositories(config: object) -> list[str]:

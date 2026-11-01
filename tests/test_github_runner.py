@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import io
 import json
 import os
@@ -232,6 +232,28 @@ class IdentityTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("lib.build_coordinator.ensure_coordinator"))
+        self.enterContext(patch("lib.build_coordinator.maintenance", side_effect=nullcontext))
+        self.enterContext(patch.object(steps, "reject_active_legacy_runner"))
+
+    def test_setup_holds_shared_maintenance_during_runner_publication(self) -> None:
+        events = []
+
+        @contextmanager
+        def maintenance():
+            events.append("drained")
+            yield
+            events.append("released")
+
+        with patch.object(steps, "is_dry_run", return_value=False), \
+             patch.object(steps, "check_runner_platform"), \
+             patch("lib.build_coordinator.ensure_coordinator", side_effect=lambda: events.append("ensure")), \
+             patch("lib.build_coordinator.maintenance", side_effect=maintenance), \
+             patch.object(steps, "_setup_github_runner", side_effect=lambda _: events.append("publish")):
+            steps.setup_github_runner(config())
+        self.assertEqual(events, ["ensure", "drained", "publish", "released"])
+
     def test_only_setup_may_inspect_an_older_policy_and_never_downgrade(self) -> None:
         old = policy() | {"runner_version": "2.338.0"}
         self.assertEqual(validate_policy(old, allow_outdated=True), old)
@@ -332,7 +354,7 @@ class ConfigurationTests(unittest.TestCase):
                        {"ci_allowed_users": []}, {"ci_allowed_users": ["alice\n"]},
                        {"ci_labels": ["bad\nlabel"]}, {"machine_type": "wsl"},
                        {"username": ACCOUNT}, {"system_type": "server_lite"},
-                       {"enable_cicd": True}, {"agent_tools": ["codex"]}):
+                       {"enable_webhook_builds": True}, {"agent_tools": ["codex"]}):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 config(**fields)
 
@@ -741,6 +763,9 @@ class InstallationTests(unittest.TestCase):
         self.token.write_bytes(b"A" * 40)
         self.token.chmod(0o600)
         self.enterContext(patch.object(steps, "check_runner_platform"))
+        self.enterContext(patch("lib.build_coordinator.ensure_coordinator"))
+        self.enterContext(patch("lib.build_coordinator.maintenance", side_effect=nullcontext))
+        self.enterContext(patch.object(steps, "reject_active_legacy_runner"))
         self.enterContext(patch.object(steps, "runner_lock", side_effect=nullcontext))
         self.enterContext(patch.object(gate, "check_installation"))
         self.enterContext(patch.object(steps, "is_dry_run", return_value=False))

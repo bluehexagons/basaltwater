@@ -20,15 +20,16 @@ class WslStepTests(unittest.TestCase):
         values = dict(system_type="server_wsl", machine_type="wsl", username="agent",
                       host="localhost", web_interfaces=(), t3code_desktop=False,
                       enable_rdp=False, storage_mounts=(), swap_files=(), swap_devices=(),
-                      is_app_server=False, enable_ssl=False, enable_cloudflare=False,
-                      is_build_server=False, enable_cicd=False)
+                      enable_ssl=False, enable_cloudflare=False,
+                      is_build_server=False, enable_webhook_builds=False, enable_github_runner=False)
         values.update(overrides)
         return SimpleNamespace(**values)
 
     def test_preflight_rejects_nonlocal_and_linux_webhook_configuration(self):
         with patch.object(wsl_steps, "is_dry_run", return_value=True):
             for config in (self._config(host="example.com"),
-                           self._config(enable_cicd=True),
+                           self._config(enable_webhook_builds=True),
+                           self._config(enable_github_runner=True),
                            self._config(machine_type="vm")):
                 with self.subTest(config=config), self.assertRaises(ValueError):
                     wsl_steps.preflight_wsl(config)

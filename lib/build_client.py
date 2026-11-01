@@ -291,7 +291,7 @@ def _validate_capabilities(value: object) -> dict[str, Any]:
         raise ValueError("Invalid capabilities project map")
     checked_projects: dict[str, Any] = {}
     for name, grant in projects.items():
-        if not isinstance(name, str) or _PROJECT.fullmatch(name) is None:
+        if not isinstance(name, str) or (name != "*" and _PROJECT.fullmatch(name) is None):
             raise ValueError("Invalid capabilities project name")
         if not isinstance(grant, dict) or set(grant) != {"platform", "runtimes", "limits"}:
             raise ValueError("Invalid capabilities grant")

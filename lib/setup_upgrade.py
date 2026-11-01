@@ -126,6 +126,12 @@ def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target
         raise ValueError("Invalid setup username")
     runtime = Path(setup_common.REMOTE_INSTALL_DIR)
     root = runtime.parent.parent
+    from lib.build_coordinator import DIRECTORY, maintenance
+    from web.github_runner_steps import reject_active_legacy_runner
+    from web.webhook_build_steps import reject_legacy_build_services
+
+    reject_legacy_build_services()
+    reject_active_legacy_runner()
     _check_unit_operation_markers(root)
     _check_journal(root)
     for parent in ("opt", "var/lib"):
@@ -147,7 +153,11 @@ def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target
         # Requests execute installed modules. Replace that tree only when no
         # typed request can still be using it, including disabled enrollments.
         enrolled = os.path.lexists(root / "etc/basaltwater/build-target")
-        with target_lease(installer=True) if enrolled else nullcontext():
+        # Keep intake drained across the process boundary into remote_setup.
+        # A failed or interrupted activation retains the drain for inspection.
+        builder = os.path.lexists(root / DIRECTORY.lstrip("/"))
+        with (maintenance(release_drain=False) if builder else nullcontext()), \
+             (target_lease(installer=True) if enrolled else nullcontext()):
             setup_common._activate_local_runtime(source)
             repair_syncthing_state_access(root)
 

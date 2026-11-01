@@ -16,7 +16,62 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from lib.config import SetupConfig
+from lib.config import RetiredSetupConfigError, SetupConfig
+
+
+class TestManagedBuildSelections(unittest.TestCase):
+    def config(self, **changes):
+        return SetupConfig(host="target.example", username="agent",
+                           system_type="server_lite", **changes)
+
+    def test_saved_legacy_selections_fail_closed_but_empty_values_are_ignored(self):
+        for field, enabled in (("enable_cicd", True), ("is_app_server", True),
+                               ("deploy_targets", ["target.example"])):
+            with self.subTest(field=field):
+                for value in (enabled, "legacy"):
+                    with self.assertRaises(RetiredSetupConfigError):
+                        SetupConfig.from_dict("target.example", "server_lite", {"username": "agent", field: value})
+                for value in (False, None, [], ""):
+                    restored = SetupConfig.from_dict("target.example", "server_lite", {"username": "agent", field: value})
+                    self.assertNotIn(field, restored.to_dict())
+
+    def test_builder_defaults_all_core_toolchains_and_runner_is_optional(self):
+        config = self.config(is_build_server=True)
+        self.assertTrue(config.install_go)
+        self.assertTrue(config.install_node)
+        self.assertTrue(config.install_python)
+        self.assertFalse(config.enable_github_runner)
+        self.assertFalse(config.enable_webhook_builds)
+
+    def test_runner_and_webhooks_round_trip_public_and_remote_flags(self):
+        from lib.arg_parser import create_setup_argument_parser
+
+        config = self.config(is_build_server=True, enable_github_runner=True,
+                             enable_webhook_builds=True, enable_ssl=True,
+                             ci_repository="example/site", ci_allowed_users=["agent"],
+                             webhook_domain="builds.example.com",
+                             webhook_repositories=["example/site"])
+        for remote in (False, True):
+            with self.subTest(remote=remote):
+                command = config.to_remote_args() if remote else config.to_setup_command()
+                tokens = shlex.split(" ".join(command))
+                if not remote:
+                    tokens = tokens[3:]
+                parser = create_setup_argument_parser("Managed builds", for_remote=remote)
+                args = parser.parse_args(tokens)
+                args.host = config.host
+                restored = SetupConfig.from_args(args, config.system_type)
+                self.assertTrue(restored.enable_webhook_builds)
+                self.assertTrue(restored.enable_github_runner)
+                self.assertEqual(restored.webhook_repositories, ["example/site"])
+
+    def test_webhooks_require_enabled_builder_https_hostname_and_repositories(self):
+        valid = dict(is_build_server=True, enable_webhook_builds=True, enable_ssl=True,
+                     webhook_domain="builds.example.com", webhook_repositories=["example/site"])
+        for changes in ({"is_build_server": False}, {"enable_ssl": False},
+                        {"webhook_domain": None}, {"webhook_repositories": []}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.config(**{**valid, **changes})
 
 
 _build_host_steps_stub = ModuleType("common.build_host_steps")
@@ -1179,10 +1234,7 @@ class TestSetupConfigFromArgs(unittest.TestCase):
             enable_ssl=False,
             ssl_email=None,
             enable_cloudflare=False,
-            enable_cicd=False,
             is_build_server=None,
-            is_app_server=False,
-            deploy_targets=None,
             enable_samba=False,
             samba_shares=None,
             share_credentials=None,

@@ -658,7 +658,14 @@ class SetupConfig:
     ssl_email: Optional[str] = None
     enable_cloudflare: bool = False
     cloudflare_allow_direct: Optional[bool] = False
-    enable_cicd: bool = False
+    enable_webhook_builds: bool = False
+    enable_github_runner: bool = False
+    disable_github_runner: bool = False
+    webhook_repositories: Optional[StrList] = None
+    webhook_branches: Optional[StrList] = None
+    webhook_domain: MaybeStr = None
+    webhook_secret: MaybeStr = field(default=None, repr=False)
+    webhook_github_token: MaybeStr = field(default=None, repr=False)
     ci_repository: str = ""
     ci_repositories: Optional[StrList] = None
     ci_organization: str = ""
@@ -666,11 +673,10 @@ class SetupConfig:
     ci_allowed_users: Optional[StrList] = None
     ci_labels: Optional[StrList] = None
     ci_registration_token_file: MaybeStr = field(default=None, repr=False)
+    ci_registration_token: MaybeStr = field(default=None, repr=False)
     ci_register_with_gh: bool = False
     ci_registration_payload: bool = False
     is_build_server: bool = False
-    is_app_server: bool = False
-    deploy_targets: Optional[StrList] = None
     enable_samba: bool = False
     samba_sources: Optional[StrList] = None
     clear_samba_sources: bool = False
@@ -856,6 +862,10 @@ class SetupConfig:
 
         if self.install_data_analysis_tools:
             self.install_python = True
+
+        if self.is_build_server:
+            # A general builder is usable immediately for every core runtime.
+            self.install_go = self.install_node = self.install_python = True
 
         if self.system_type != "agent_cachyos" and self.install_node_versions:
             raise ValueError("--node-versions requires the agent_cachyos profile; Debian --node already prepares NVM")
@@ -1135,6 +1145,9 @@ class SetupConfig:
         from lib.validation import validate_github_runner_settings
 
         validate_github_runner_settings(self)
+        from lib.webhook_builds import validate_webhook_settings
+
+        validate_webhook_settings(self)
 
     def _validate_ssh_settings(self) -> None:
         """Validate CachyOS SSH policy for parsed and reconstructed configs."""
@@ -1203,6 +1216,8 @@ class SetupConfig:
         """Return managed TCP web ports for this resolved target."""
 
         ports = list(self.web_ports or [])
+        if self.enable_webhook_builds:
+            ports.extend((80, 443))
         if self.privilege_broker_port is not None:
             ports.extend((self.privilege_broker_port, GODOT_WEB_HTTPS_PORT))
         if self.homebox:
@@ -1689,8 +1704,7 @@ class SetupConfig:
                 else "--no-cloudflare-allow-direct"
             )
         
-        if self.enable_cicd:
-            args.append("--cicd")
+        args.extend(self._webhook_build_args(include_secret=True))
         args.extend(self._github_runner_args())
         if self.ci_registration_payload:
             args.append("--ci-registration-payload")
@@ -1709,13 +1723,6 @@ class SetupConfig:
         if self.build_target_enrollment is not None:
             policy_json = json.dumps(self.build_target_enrollment, separators=(",", ":"))
             args.append("--build-target-enrollment-json " + shlex.quote(policy_json))
-        if self.is_app_server:
-            args.append("--app-server")
-        
-        if self.deploy_targets:
-            for target in self.deploy_targets:
-                args.append(f"--deploy-target {shlex.quote(target)}")
-        
         if self.enable_samba:
             args.append("--samba")
         if self.clear_samba_sources:
@@ -2298,8 +2305,7 @@ class SetupConfig:
                 cmd_parts.append("--cloudflare-allow-direct")
         
         # CI/CD
-        if self.enable_cicd:
-            cmd_parts.append("--cicd")
+        cmd_parts.extend(self._webhook_build_args())
         cmd_parts.extend(self._github_runner_args())
         
         # Build/App Server
@@ -2323,13 +2329,6 @@ class SetupConfig:
             cmd_parts.append("--no-build-on")
         if self.artifact_deployments:
             cmd_parts.append("--artifact-deployments")
-        
-        if self.is_app_server:
-            cmd_parts.append("--app-server")
-        
-        if self.deploy_targets:
-            for target in self.deploy_targets:
-                cmd_parts.append(f"--deploy-target {shlex.quote(target)}")
         
         # Samba
         if self.enable_samba:
@@ -2508,13 +2507,31 @@ class SetupConfig:
     def _github_runner_args(self) -> StrList:
         from lib.github_runner_config import runner_repositories
 
-        args = [f"--ci-repository {shlex.quote(repository)}" for repository in runner_repositories(self)]
+        args = (["--no-github-runner"] if self.disable_github_runner else
+                ["--github-runner"] if self.enable_github_runner else [])
+        args.extend(f"--ci-repository {shlex.quote(repository)}" for repository in runner_repositories(self))
         if self.ci_organization:
             args.append(f"--ci-organization {shlex.quote(self.ci_organization)}")
         if self.ci_runner_group:
             args.append(f"--ci-runner-group {shlex.quote(self.ci_runner_group)}")
         args.extend(f"--ci-allowed-user {shlex.quote(user)}" for user in self.ci_allowed_users or [])
         args.extend(f"--ci-label {shlex.quote(label)}" for label in self.ci_labels or [])
+        return args
+
+    def _webhook_build_args(self, *, include_secret: bool = False) -> StrList:
+        args: StrList = []
+        if self.enable_webhook_builds:
+            args.append("--webhook-builds")
+        for repository in self.webhook_repositories or []:
+            args.append(f"--webhook-repository {shlex.quote(repository)}")
+        for branch in self.webhook_branches or []:
+            args.append(f"--webhook-branch {shlex.quote(branch)}")
+        if self.webhook_domain:
+            args.append(f"--webhook-domain {shlex.quote(self.webhook_domain)}")
+        if include_secret and self.webhook_secret:
+            args.append(f"--webhook-secret {shlex.quote(self.webhook_secret)}")
+        if include_secret and self.webhook_github_token:
+            args.append(f"--webhook-github-token {shlex.quote(self.webhook_github_token)}")
         return args
 
     def to_dict(self) -> JSONDict:
@@ -2541,6 +2558,9 @@ class SetupConfig:
             'ci_registration_token_file',
             'ci_register_with_gh',
             'ci_registration_payload',
+            'webhook_secret',
+            'webhook_github_token',
+            'ci_registration_token',
             'git_identity_payload',
             'device_pairing_auth_file',
             'device_pairing_auth_username',
@@ -2622,12 +2642,22 @@ class SetupConfig:
         """Decode saved settings, deferring only the reserved Syncthing tree policy."""
         validate_current_setup_fields(data)
         data = dict(data)
+        for retired in ("enable_cicd", "is_app_server", "deploy_targets"):
+            if data.get(retired):
+                raise RetiredSetupConfigError(
+                    "Legacy webhook/app-server configuration must be retired before "
+                    "using managed builds; see docs/services/build-systems.md"
+                )
+            data.pop(retired, None)
         # Older cache entries may contain this one-shot flag. Never replay a
         # sensitive live handoff merely because a saved configuration is
         # loaded for deploy, patch, or reconstruction.
         data.pop('activate_network', None)
         data.pop('disable_syncthing', None)
         data.pop('ci_registration_token_file', None)
+        data.pop('ci_registration_token', None)
+        data.pop('webhook_secret', None)
+        data.pop('webhook_github_token', None)
         data.pop('ci_register_with_gh', None)
         data.pop('ci_registration_payload', None)
         tags_str = data.get('tags')
@@ -2826,7 +2856,6 @@ class SetupConfig:
             artifact_deployments = False
         elif build_on is not None:
             artifact_deployments = True
-        is_app_server = bool(getattr(args, 'is_app_server', False))
         machine_type = _resolve_machine_type(
             args,
             is_hosted=bool(getattr(args, 'hosted_node', None)),
@@ -3297,7 +3326,14 @@ class SetupConfig:
             ssl_email=getattr(args, 'ssl_email', None),
             enable_cloudflare=getattr(args, 'enable_cloudflare', False),
             cloudflare_allow_direct=_optional_bool_arg(args, 'cloudflare_allow_direct'),
-            enable_cicd=getattr(args, 'enable_cicd', False),
+            enable_webhook_builds=_optional_bool_arg(args, 'enable_webhook_builds') is True,
+            enable_github_runner=_optional_bool_arg(args, 'enable_github_runner') is True,
+            disable_github_runner=_optional_bool_arg(args, 'enable_github_runner') is False,
+            webhook_repositories=getattr(args, 'webhook_repositories', None),
+            webhook_branches=getattr(args, 'webhook_branches', None),
+            webhook_domain=_optional_str_arg(args, 'webhook_domain'),
+            webhook_secret=_optional_str_arg(args, 'webhook_secret'),
+            webhook_github_token=_optional_str_arg(args, 'webhook_github_token'),
             ci_repository=(args.ci_repository[0] if isinstance(getattr(args, 'ci_repository', None), list)
                            and len(args.ci_repository) == 1 else _optional_str_arg(args, 'ci_repository') or ''),
             ci_repositories=(args.ci_repository if isinstance(getattr(args, 'ci_repository', None), list)
@@ -3307,6 +3343,7 @@ class SetupConfig:
             ci_allowed_users=(args.ci_allowed_users if isinstance(getattr(args, 'ci_allowed_users', None), list) else None),
             ci_labels=(args.ci_labels if isinstance(getattr(args, 'ci_labels', None), list) else None),
             ci_registration_token_file=_optional_str_arg(args, 'ci_registration_token_file'),
+            ci_registration_token=_optional_str_arg(args, 'ci_registration_token'),
             ci_register_with_gh=_optional_bool_arg(args, 'ci_register_with_gh') is True,
             ci_registration_payload=_optional_bool_arg(args, 'ci_registration_payload') is True,
             is_build_server=is_build_server,
@@ -3314,8 +3351,6 @@ class SetupConfig:
             build_host_enrollment=build_host_enrollment,
             disable_build_target=disable_build_target,
             build_target_enrollment=build_target_enrollment,
-            is_app_server=is_app_server,
-            deploy_targets=getattr(args, 'deploy_targets', None),
             enable_samba=getattr(args, 'enable_samba', False),
             samba_sources=samba_sources,
             clear_samba_sources=clear_samba_sources,

@@ -18,7 +18,7 @@ from lib.manifest_serving import (
 )
 from lib.build_target_policy import authorize_target_deployment
 from lib.build_target_service import MAX_HEADER_LINE_BYTES, _parse_header
-from lib.cicd_deploy_policy import validate_nginx_path
+from lib.nginx_validation import validate_nginx_path
 from lib.deploy_utils import parse_deploy_spec
 from lib.project_manifest import Component, Manifest, artifact_paths, render_template
 from lib.validation import validate_no_control_characters
@@ -136,7 +136,7 @@ def prepare_delivery_plan(
     application, target = candidates[0]
     # Project authority comes exclusively from the selected target application.
     capabilities = _validate_capabilities(builder_capabilities)
-    builder = capabilities["projects"].get(target["project"])
+    builder = capabilities["projects"].get(target["project"], capabilities["projects"].get("*"))
     if (builder is None or builder["platform"] != target["platform"]
             or builder["platform"] != DEBIAN_PLATFORM
             or not set(tools).issubset(builder["runtimes"])):

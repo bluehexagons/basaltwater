@@ -20,7 +20,6 @@ dev = ["build>=1.6.1", "coverage>=7.17.0", "aiohttp>=3.14.5,<4"]
 
 [project.scripts]
 basaltw = "basaltwater:main"
-webhook_manager = "web.service_tools.webhook_manager:main"
 
 [tool.setuptools]
 py-modules = ["basaltwater", "remote_setup"]

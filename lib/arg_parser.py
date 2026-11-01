@@ -1428,16 +1428,28 @@ def add_setup_arguments(
             "Otherwise only --lan-access / --access-source networks retain direct access"
         ),
     )
-    parser.add_argument("--cicd", dest="enable_cicd", 
+    parser.add_argument("--webhook-builds", dest="enable_webhook_builds",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,
-                       help="Install webhook-based CI/CD system for GitHub Actions")
+                       help="Accept signed GitHub push webhooks into the managed build worker; requires --build-server")
+    parser.add_argument("--webhook-repository", dest="webhook_repositories", action="append", metavar="OWNER/REPO",
+                        help="Repository allowed to submit signed webhook builds; repeat as needed")
+    parser.add_argument("--webhook-branch", dest="webhook_branches", action="append", metavar="BRANCH",
+                        help="Allowed push branch for webhook repositories (default: main); repeat as needed")
+    parser.add_argument("--webhook-domain", metavar="DOMAIN",
+                        help="Public HTTPS hostname for /basaltwater-builds/github; requires --ssl")
+    parser.add_argument("--webhook-secret", metavar="SECRET",
+                        help="Set or rotate the webhook signing secret; transient, or generated on the builder when omitted")
+    parser.add_argument("--webhook-github-token", metavar="TOKEN",
+                        help="Read-only GitHub token for private webhook repositories; retained only by the builder's source broker")
+    parser.add_argument("--github-runner", dest="enable_github_runner", action=argparse.BooleanOptionalAction,
+                        default=None, help="Add a GitHub Actions runner with shared host build capacity")
     
     runner_scope = parser.add_mutually_exclusive_group()
     runner_scope.add_argument("--ci-repository", action="append", metavar="OWNER/REPO",
                        help="Private github.com repository; repeat for multiple repositories sharing one job slot")
     runner_scope.add_argument("--ci-organization", metavar="ORGANIZATION",
-                             help="GitHub organization for server_github_runner; private repositories only")
+                             help="GitHub organization for --github-runner; private repositories only")
     parser.add_argument("--ci-runner-group", metavar="GROUP",
                         help="GitHub runner group for organization scope (default: organization's default group)")
     parser.add_argument("--ci-allowed-user", dest="ci_allowed_users", action="append", metavar="LOGIN",
@@ -1448,6 +1460,8 @@ def add_setup_arguments(
         parser.add_argument("--ci-registration-payload", action="store_true", help=argparse.SUPPRESS)
     else:
         runner_auth = parser.add_mutually_exclusive_group()
+        runner_auth.add_argument("--ci-registration-token", metavar="TOKEN",
+                                 help="One-hour runner registration token; transient and never saved")
         runner_auth.add_argument("--ci-registration-token-file", metavar="PATH",
                                  help="Private file containing a one-hour runner registration token")
         runner_auth.add_argument("--ci-register-with-gh", action="store_true",
@@ -1456,7 +1470,7 @@ def add_setup_arguments(
     parser.add_argument("--build-server", dest="is_build_server",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
                        default=None,
-                       help="Configure as a build server that deploys to app servers")
+                       help="Install a managed builder for arbitrary authenticated projects; no project enrollment flags required")
     if for_remote:
         parser.add_argument(
             "--disable-build-host",
@@ -1526,16 +1540,6 @@ def add_setup_arguments(
             action="store_true",
             help="Remove managed typed target authority while preserving applications and their data",
         )
-    
-    parser.add_argument("--app-server", dest="is_app_server",
-                       action=argparse.BooleanOptionalAction if not for_remote else "store_true",
-                       default=None if not for_remote else False,
-                       help="Configure as a lightweight app server to receive deployments from build server")
-    
-    parser.add_argument("--deploy-target", dest="deploy_targets",
-                       action="append",
-                       metavar="HOST",
-                       help="Target app server for deployments (can be used multiple times). Subsequent --deploy flags deploy to the last specified target")
     
     parser.add_argument("--samba", dest="enable_samba", 
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 

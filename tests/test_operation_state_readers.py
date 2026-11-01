@@ -7,11 +7,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from lib.proxmox_hosts import ProxmoxHost, add_proxmox_host, load_proxmox_hosts, save_proxmox_hosts
 from lib.state_read import StateReadError
-from web.service_tools import webhook_manager
 
 
 class TestInventoryStateReaders(unittest.TestCase):
@@ -71,12 +69,3 @@ class TestInventoryStateReaders(unittest.TestCase):
             host = ProxmoxHost("node", "node.example")
             save_proxmox_hosts([host], directory)
             self.assertEqual(load_proxmox_hosts(directory), [host])
-
-    def test_dangling_webhook_config_link_is_not_missing_configuration(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.json"
-            path.symlink_to(Path(directory) / "missing")
-            with patch.object(webhook_manager, "CONFIG_FILE", str(path)):
-                with self.assertRaises((OSError, ValueError)):
-                    webhook_manager.load_config()
-            self.assertTrue(path.is_symlink())

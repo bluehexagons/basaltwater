@@ -145,11 +145,12 @@ def _component(value: object, *, build: bool) -> dict[str, Any]:
     if build:
         fields |= {"commands", "env"}
     data = _record(value, fields, "component")
-    if data["type"] not in ("static", "godot-web", "service"):
+    if data["type"] not in ("static", "godot-web", "service", "task"):
         raise ValueError("component: unsupported type")
     result: dict[str, Any] = {
         "name": _pattern(data["name"], _NAME, "component name"),
-        "type": data["type"], "artifacts": _exports(data["artifacts"]),
+        "type": data["type"], "artifacts": ([] if data["type"] == "task" and data["artifacts"] == []
+                                           else _exports(data["artifacts"])),
     }
     if "." in result["artifacts"] and (data["type"] == "service" or len(result["artifacts"]) != 1):
         raise ValueError("artifacts: root selection is limited to a single static export")
@@ -227,13 +228,15 @@ def parse_artifact_descriptor(value: object) -> dict[str, Any]:
         "components", "toolchains", "entries",
     }, "artifact descriptor")
     entries = data["entries"]
-    if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_FILES:
+    if not isinstance(entries, list) or not 0 <= len(entries) <= MAX_FILES:
         raise ValueError("artifact inventory: empty or oversized")
     entries = [_entry(item) for item in entries]
     paths = {item["path"]: item for item in entries}
     if len(paths) != len(entries) or sum(item["size"] for item in entries) > MAX_ARTIFACT_BYTES:
         raise ValueError("artifact inventory: duplicate paths or excessive size")
     components = _components(data["components"], build=False)
+    if not entries and any(component["type"] != "task" or component["artifacts"] for component in components):
+        raise ValueError("artifact inventory: empty deployment output")
     exports = {path for component in components for path in component["artifacts"]}
     ordered_exports = sorted(exports)
     entries.sort(key=lambda item: item["path"])

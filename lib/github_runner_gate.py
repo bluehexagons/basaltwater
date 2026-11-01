@@ -159,6 +159,9 @@ def main(*, check: bool = False, instance: str = "", worker: int | None = None) 
             from lib.github_runner_queue import acquire_job_slot
 
             acquire_job_slot(worker)
+            policy = check_installation(**({"instance": instance} if instance else {}))
+            allowed, reason, identity = evaluate_job(policy, event, environment)
+            record_outcome(allowed, reason, identity, environment, **({"instance": instance} if instance else {}))
         return 0 if allowed else 1
     except (OSError, ValueError, TypeError):
         print("GitHub runner gate: configuration or telemetry unavailable")

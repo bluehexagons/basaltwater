@@ -721,7 +721,8 @@ def _service_content() -> str:
     return (
         "[Unit]\n"
         "Description=Basaltwater on-demand build host worker\n"
-        "After=local-fs.target\n\n"
+        "After=local-fs.target basaltwater-build-capacity.service\n"
+        "Wants=basaltwater-build-capacity.service\n\n"
         "[Service]\n"
         "Type=simple\n"
         f"ExecStart=/usr/bin/python3 -I {ENTRYPOINT_PATH} --worker\n"
@@ -1326,7 +1327,7 @@ def _disable_build_host(config: SetupConfig) -> None:
             lease_context.__exit__(None, None, None)
 
 
-def configure_build_host(config: SetupConfig) -> None:
+def _configure_build_host(config: SetupConfig) -> None:
     """Enable or reconcile the independently managed Debian build-host service."""
     disable = getattr(config, "disable_build_host", False)
     if type(disable) is not bool:
@@ -1362,6 +1363,9 @@ def configure_build_host(config: SetupConfig) -> None:
 
     from common.service_tools import build_host as entrypoint
     entrypoint.require_platform()
+    from web.webhook_build_steps import reject_legacy_build_services
+
+    reject_legacy_build_services()
     _trusted_source_tree()
     _reject_legacy_layout()
 
@@ -1448,6 +1452,30 @@ def configure_build_host(config: SetupConfig) -> None:
             except Exception:
                 pass
         raise
+
+
+def configure_build_host(config: SetupConfig) -> None:
+    """Reconcile the managed worker while all build producers are drained."""
+    from lib.build_coordinator import ensure_coordinator, maintenance
+
+    if (bool(getattr(config, "dry_run", False)) or is_dry_run()
+            or not (getattr(config, "build_host_enrollment", None)
+                    or getattr(config, "disable_build_host", False))):
+        _configure_build_host(config)
+        return
+    from lib.machine_state import can_manage_system_services
+
+    if not can_manage_system_services(getattr(config, "machine_type", None)):
+        _configure_build_host(config)
+        return
+    if config.machine_type not in {"vm", "hardware"}:
+        raise RuntimeError("Managed builds require a VM or physical Debian host")
+    from common.service_tools.build_host import require_platform
+
+    require_platform()
+    ensure_coordinator()
+    with maintenance():
+        _configure_build_host(config)
 
 
 __all__ = ["configure_build_host", "parse_build_host_enrollment"]

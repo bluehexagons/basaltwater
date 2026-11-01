@@ -9,7 +9,10 @@ import tempfile
 
 from common.build_host_steps import parse_build_host_enrollment
 from common.build_target_steps import parse_build_target_enrollment
-from lib.build_enrollment import DEFAULT_POLICY_LIMITS, generate_builder_enrollment, generate_enrollments
+from lib.build_enrollment import (
+    DEFAULT_POLICY_LIMITS, generate_builder_enrollment, generate_enrollments,
+    generate_general_builder_enrollment,
+)
 from lib.build_host_policy import _protocol_limits
 from lib.build_selection import _check_private_identity, _local_path, _public_companion
 from lib.build_setup import _private_directory, validate_build_setup_selection
@@ -70,6 +73,10 @@ def prepare_cli_build_enrollments(
     """
     options = vars(args)
     projects = options.get("build_project")
+    builder = bool(projects) or (config.is_build_server and (
+        config.build_host_enrollment is None or options.get("build_limit")
+        or options.get("build_max_bytes") is not None or options.get("build_max_records") is not None
+    ))
     explicit_target = options.get("build_target_auto", False)
     target = explicit_target or (config.build_on is not None
                                 and config.build_target_enrollment is None
@@ -77,9 +84,9 @@ def prepare_cli_build_enrollments(
     raw_limits = options.get("build_limit") or []
     capacity = any(options.get("build_" + field) is not None
                    for field in ("max_bytes", "max_records"))
-    if not projects and not target:
+    if not builder and not target:
         if raw_limits or capacity:
-            raise ValueError("Build policy limits require --build-project or --build-target-auto")
+            raise ValueError("Build policy limits require builder enrollment or --build-target-auto")
         return
     from lib.setup_common import _apply_hosted_proxmox_defaults
 
@@ -89,12 +96,10 @@ def prepare_cli_build_enrollments(
     if config.machine_type not in {"vm", "hardware"} or config.host in {"localhost", "127.0.0.1", "::1"}:
         raise ValueError("Generated build enrollment requires a remote Debian VM or hardware host")
     validate_hosted_flags(config)
-    if projects:
+    if builder:
         if not config.is_build_server or config.disable_build_host:
             raise ValueError("--build-project requires an enabled --build-server")
-        if config.enable_cicd:
-            raise ValueError("--build-project cannot be combined with --cicd; use --no-cicd to clear that saved option")
-        if options.get("build_host_policy") or options.get("build_host_enrollment_json"):
+        if projects and (options.get("build_host_policy") or options.get("build_host_enrollment_json")):
             raise ValueError("Choose --build-project or explicit builder enrollment")
     if target:
         if options.get("build_target_policy") or options.get("build_target_enrollment_json"):
@@ -106,7 +111,8 @@ def prepare_cli_build_enrollments(
             selection.disable_build_target = False
         validate_build_setup_selection(selection, require_enrollment=False)
     specs = projects if projects else config.deploy_specs
-    validate_deploy_specs(specs)
+    if specs:
+        validate_deploy_specs(specs)
     overrides: dict[str, int] = {}
     for name, raw in raw_limits:
         if name not in DEFAULT_POLICY_LIMITS or name in overrides:
@@ -121,8 +127,21 @@ def prepare_cli_build_enrollments(
         identity = _local_path(config.ssh_key or "~/.ssh/id_ed25519", "SSH identity file")
         _check_private_identity(identity)
         key = _public_companion(identity + ".pub")
-        existing = config.build_host_enrollment if projects else config.build_target_enrollment
+        existing = config.build_host_enrollment if builder else config.build_target_enrollment
         principal = _principal(existing, key)
+        if builder and not projects:
+            generated = generate_general_builder_enrollment(key, principal=principal, limits=limits)
+            if existing is not None:
+                # Resource updates must never widen a deliberately restricted
+                # enrollment into permission to build every project.
+                generated = copy.deepcopy(existing)
+                for grant in generated["policy"]["principals"][principal]["projects"].values():
+                    grant["limits"].update(overrides)
+            result = _merge(existing, generated, builder=True, principal=principal,
+                            overrides=overrides, args=args)
+            config.build_host_enrollment = result
+            print("  Managed builder enrollment prepared; target deployment authority is granted separately")
+            return
         root = get_workspace_dir() if workspace is None else workspace
         _private_directory(root)
         with tempfile.TemporaryDirectory(prefix="basaltwater-build-policy-", dir=root) as temporary:

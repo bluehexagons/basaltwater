@@ -92,8 +92,6 @@ def validate_build_setup_selection(config: SetupConfig, *, require_enrollment: b
         raise ValueError("Build-on setup requires a remote Debian VM or physical target")
     if config.system_type not in {"server_lite", "server_web"}:
         raise ValueError("First-slice build-on targets require server_lite or server_web")
-    if config.is_app_server:
-        raise ValueError("Build-on target setup cannot request legacy app-server directory permissions")
     if config.activate_network:
         raise ValueError("First-slice build-on target setup cannot activate network address changes")
     if (config.custom_steps or config.is_build_server or config.install_go or config.install_node
@@ -127,7 +125,10 @@ def _preflight_target(config: SetupConfig, endpoint: SSHEndpoint) -> None:
         command = build_ssh_command(
             config.host, "root", remote_command=shlex.join(["python3", "-I", "-c", script]),
         )
-    result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=60, check=True)
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, timeout=60, check=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise ValueError("Cannot probe the target over pinned administrative SSH; verify it is reachable before build-on preflight") from None
     if len(result.stdout) > 4096:
         raise ValueError("Target platform response is oversized")
     value = json.loads(result.stdout)

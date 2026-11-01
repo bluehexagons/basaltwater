@@ -456,35 +456,6 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid webhook URL")
 
-    @patch("builtins.print")
-    @patch("basaltwater.validate_samba_share_credentials")
-    @patch("basaltwater.prepare_runtime_config")
-    @patch("basaltwater.validate_username", return_value=True)
-    @patch("basaltwater.validate_host", return_value=True)
-    def test_run_setup_command_rejects_invalid_deploy_target(
-        self,
-        _mock_validate_host,
-        _mock_validate_username,
-        mock_prepare_runtime_config,
-        _mock_validate_samba,
-        mock_print,
-    ):
-        config = SetupConfig(
-            host="example.com",
-            username="testuser",
-            system_type="server_lite",
-            deploy_targets=["bad target"],
-        )
-        mock_prepare_runtime_config.return_value = config
-        args = Namespace(host="example.com", username="testuser", system_type="server_lite")
-
-        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
-             patch("basaltwater.run_remote_setup") as mock_run_remote:
-            result = basaltwater.run_setup_command(args)
-
-        self.assertEqual(result, 1)
-        mock_run_remote.assert_not_called()
-        mock_print.assert_called_with("Error: Invalid deploy target host: bad target")
 
     @patch("builtins.print")
     @patch("basaltwater.validate_samba_share_credentials")
@@ -834,40 +805,6 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid SMB mount host: bad host")
 
-    @patch("builtins.print")
-    @patch("basaltwater.validate_samba_share_credentials")
-    @patch("basaltwater.prepare_runtime_config")
-    @patch("basaltwater.load_setup_command")
-    @patch("basaltwater.validate_username", return_value=True)
-    @patch("basaltwater.validate_host", return_value=True)
-    def test_run_patch_command_rejects_invalid_deploy_target(
-        self,
-        _mock_validate_host,
-        _mock_validate_username,
-        mock_load_setup_command,
-        mock_prepare_runtime_config,
-        _mock_validate_samba,
-        mock_print,
-    ):
-        cached = SetupConfig(host="example.com", username="testuser", system_type="server_lite")
-        merged = SetupConfig(
-            host="example.com",
-            username="testuser",
-            system_type="server_lite",
-            deploy_targets=["bad target"],
-        )
-        mock_load_setup_command.return_value = cached
-        mock_prepare_runtime_config.return_value = merged
-        args = Namespace(host="example.com", username="testuser")
-
-        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
-             patch("basaltwater.merge_setup_configs", return_value=merged), \
-             patch("basaltwater.run_remote_setup") as mock_run_remote:
-            result = basaltwater.run_patch_command(args)
-
-        self.assertEqual(result, 1)
-        mock_run_remote.assert_not_called()
-        mock_print.assert_called_with("Error: Invalid deploy target host: bad target")
 
     @patch("builtins.print")
     @patch("basaltwater.validate_samba_share_credentials")

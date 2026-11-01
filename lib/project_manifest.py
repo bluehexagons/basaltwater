@@ -421,7 +421,7 @@ def _parse_component(entry: object, index: int) -> Component:
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError(f"{where}: path must be a string starting with '/'")
     validate_no_control_characters(path, f"{where} path")
-    from lib.cicd_deploy_policy import validate_nginx_path
+    from lib.nginx_validation import validate_nginx_path
     validate_nginx_path(path)
 
     build = _parse_build(entry.get("build"), where)

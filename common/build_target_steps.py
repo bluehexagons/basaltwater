@@ -472,6 +472,9 @@ def configure_build_target(config: object) -> None:
     if os.geteuid() != 0:
         raise PermissionError("Target enrollment requires root")
     entrypoint.require_platform()
+    from web.webhook_build_steps import reject_legacy_build_services
+
+    reject_legacy_build_services()
     # Trust installed code before installing packages, accounts or authority.
     _trusted_source_tree()
     if os.path.lexists(_LEGACY_SSH_ROOT):

@@ -142,8 +142,11 @@ Existing manifests stay unchanged.
 Generated deployment components also receive their own install/build hooks
 for direct deployment. CI uses the explicit `ci` stages, avoiding a second run
 of those hooks. Older manifests without `ci` use component hooks during the CI
-build stage. See [webhook CI/CD](../services/cicd.md) for script overrides, generation when
-missing, and remote publishing limits.
+build stage. Signed webhook builds require a committed manifest and run these
+literal commands through the core policy, source store and worker. They produce
+build/test artifacts only, without automatic target deployment, status checks
+or release publishing. See [signed webhook builds](../services/webhook-builds.md)
+for signed pinned pushes, allowlists and optional Cloudflare ingress.
 
 ## Publishing language declarations
 

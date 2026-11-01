@@ -340,9 +340,8 @@ class BuildSetupTests(unittest.TestCase):
         self.builder.capabilities.assert_not_called()
         self.apply.assert_not_called()
 
-    def test_legacy_app_server_and_network_activation_refuse_before_bootstrap(self):
-        for changes in ({"is_app_server": True},
-                        {"activate_network": True, "static_ipv4": "192.0.2.50/24"}):
+    def test_network_activation_refuses_before_bootstrap(self):
+        for changes in ({"activate_network": True, "static_ipv4": "192.0.2.50/24"},):
             config = copy.deepcopy(self.config)
             for key, value in changes.items():
                 setattr(config, key, value)

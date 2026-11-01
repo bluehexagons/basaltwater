@@ -169,7 +169,7 @@ class TestPluginRegistry(unittest.TestCase):
         self.assertEqual(step_names[0], "Checking Proxmox release and repositories")
         self.assertEqual(step_names[-1], "Checking if restart required")
 
-    def test_build_server_adds_build_user_tool_steps(self):
+    def test_builder_step_composition_requires_controller_enrollment(self):
         config = SetupConfig(
             host="host",
             username="user",
@@ -178,36 +178,42 @@ class TestPluginRegistry(unittest.TestCase):
             install_node=True,
             install_python=True,
         )
-        step_names = [name for name, _ in get_steps_for_system_type(config)]
-        self.assertIn("Installing Node.js (nvm + latest LTS + PNPM)", step_names)
-        self.assertIn("Installing build-user Node.js", step_names)
-        self.assertIn("Installing build-user Python tooling", step_names)
-        self.assertLess(
-            step_names.index("Creating build workspace directories"),
-            step_names.index("Installing build-user Node.js"),
-        )
+        with self.assertRaisesRegex(ValueError, "enrollment must be prepared"):
+            get_steps_for_system_type(config)
 
-    def test_build_server_with_cicd_does_not_duplicate_shared_steps(self):
+    def test_build_server_with_webhooks_uses_managed_steps(self):
+        from tests.test_build_selection import enrollment as builder_enrollment
+
         config = SetupConfig(
             host="host",
             username="user",
             system_type="server_web",
-            enable_cicd=True,
+            enable_webhook_builds=True,
+            enable_ssl=True,
+            webhook_domain="builds.example.com",
+            webhook_repositories=["example/site"],
+            build_host_enrollment=builder_enrollment(),
             is_build_server=True,
         )
 
         step_names = [name for name, _ in get_steps_for_system_type(config)]
         for shared_step in (
-            "Installing CI/CD dependencies",
-            "Creating CI/CD user",
-            "Generating webhook secret",
-            "Creating default webhook configuration",
-            "Creating webhook receiver service",
-            "Creating CI/CD executor service",
-            "Configuring nginx for webhook endpoint",
+            "Configuring managed build host",
+            "Configuring signed build webhooks",
         ):
             with self.subTest(step=shared_step):
                 self.assertEqual(step_names.count(shared_step), 1)
+
+    def test_optional_runner_selects_runner_steps_without_enabling_builder(self):
+        config = SetupConfig(
+            host="host", username="user", system_type="server_lite",
+            machine_type="vm", enable_github_runner=True,
+            ci_repository="example/site", ci_allowed_users=["agent"],
+        )
+        names = [name for name, _ in get_steps_for_system_type(config)]
+        self.assertEqual(names.count("Checking GitHub runner prerequisites"), 1)
+        self.assertEqual(names.count("Configuring GitHub runner"), 1)
+        self.assertNotIn("Configuring managed build host", names)
 
     def test_managed_build_enrollment_selects_only_the_shared_worker(self):
         from common.build_host_steps import configure_build_host
@@ -236,11 +242,8 @@ class TestPluginRegistry(unittest.TestCase):
                 names = [name for name, _ in steps]
                 self.assertNotIn("Creating CI/CD executor service", names)
                 self.assertNotIn("Generating deploy SSH key", names)
+                self.assertNotIn("Configuring GitHub runner", names)
                 self.assertIs(resolve_custom_step("configure_build_host"), configure_build_host)
-
-                config.enable_cicd = True
-                with self.assertRaisesRegex(ValueError, "shared-capacity adapter"):
-                    get_steps_for_system_type(config)
 
     def test_explicit_build_host_disable_selects_managed_teardown(self):
         from common.build_host_steps import configure_build_host
@@ -251,7 +254,7 @@ class TestPluginRegistry(unittest.TestCase):
         )
         steps = get_steps_for_system_type(config)
         names = [name for name, _ in steps]
-        self.assertIn("Removing managed on-demand build host access", names)
+        self.assertIn("Configuring managed build host", names)
         self.assertEqual([function for _, function in steps].count(configure_build_host), 1)
         self.assertNotIn("Creating CI/CD executor service", names)
 
@@ -264,7 +267,7 @@ class TestPluginRegistry(unittest.TestCase):
                 with self.subTest(profile=profile, disable=disable):
                     config = SetupConfig(
                         host="host", username="user", system_type=profile,
-                        machine_type="vm", is_app_server=True,
+                        machine_type="vm",
                         build_target_enrollment=None if disable else enrollment(),
                         disable_build_target=disable,
                     )
@@ -276,11 +279,11 @@ class TestPluginRegistry(unittest.TestCase):
                     self.assertNotIn("Installing app server dependencies", names)
         self.assertIs(resolve_custom_step("configure_build_target"), configure_build_target)
 
-    def test_target_enrollment_omission_keeps_ordinary_app_server_steps(self):
-        config = SetupConfig(host="host", username="user", system_type="server_web", is_app_server=True)
+    def test_target_enrollment_omission_omits_deployment_access_steps(self):
+        config = SetupConfig(host="host", username="user", system_type="server_web")
         names = [name for name, _ in get_steps_for_system_type(config)]
-        self.assertIn("Configuring deploy sudoers", names)
-        self.assertIn("Configuring deploy SSH access", names)
+        self.assertNotIn("Configuring deploy sudoers", names)
+        self.assertNotIn("Configuring deploy SSH access", names)
         self.assertNotIn("Configuring managed target deployment access", names)
 
     def test_server_dev_adds_agent_vm_steps(self):

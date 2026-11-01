@@ -12,7 +12,7 @@ see [Storage](../storage/README.md).
 | [Deployments and manifests](deployments.md) | Deploy repositories, static sites, services, and multi-component manifests |
 | [Deployment safety](deployment-safety.md) | Persistent data, verified backups, rollback, and safety boundaries |
 | [Internal web and previews](internal-web.md) | Internal HTTPS, live previews, TLS trust, and cleanup |
-| [CI/CD webhooks](cicd.md) | Webhook jobs, build servers, and executor behavior |
+| [Signed webhook builds](webhook-builds.md) | Signed webhook intake and shared worker behavior |
 | [GitHub runner](github-runner.md) | Set up and register a dedicated Debian runner through setup or the panel |
 | [GitHub runner operations](github-runner-operations.md) | Identity gate, isolation, recovery and live qualification |
 | [Multi-repository builds](github-runner-repositories.md) | Choose runner registrations and dependency checkouts |

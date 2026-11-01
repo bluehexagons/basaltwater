@@ -51,7 +51,6 @@ from lib.validation import (
     validate_antistatic_settings,
     validate_deploy_specs,
     validate_deploy_git_url,
-    validate_deploy_targets,
     validate_gogs_settings,
     validate_hosted_flags,
     validate_network_setup_settings,
@@ -1295,7 +1294,6 @@ def prepare_validated_runtime_config(
     validate_notification_args(runtime_config.notify_specs)
     validate_ssl_email(runtime_config.ssl_email)
     validate_deploy_specs(runtime_config.deploy_specs)
-    validate_deploy_targets(runtime_config.deploy_targets)
     validate_sync_specs(runtime_config.sync_specs)
     validate_backup_specs(runtime_config.backup_specs)
     validate_scrub_specs(runtime_config.scrub_specs)

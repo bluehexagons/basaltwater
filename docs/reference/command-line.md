@@ -10,7 +10,7 @@ Related pages:
 - [`sysadmin.md`](../operations/sysadmin.md) for remote host shortcuts
 - [`ssh.md`](../operations/ssh.md) for passphrase-protected keys and SSH-agent setup
 - [`networking.md`](../operations/networking.md) for workspace network inventory
-- [`cicd.md`](../services/cicd.md) for webhook CI/CD setup
+- [`webhook-builds.md`](../services/webhook-builds.md) for signed webhook build setup
 - [`project-tooling.md`](../agents/project-tooling.md) for project manifests and Node runtime selection
 - [`workstations.md`](../workstations/workstations.md) for desktop profiles and application choices
 - [`godot.md`](../workstations/godot.md) for graphical/headless Godot installation and updates
@@ -113,9 +113,6 @@ basaltw gogs repo-configure [REPOSITORY] --github-url URL --gogs-url URL [option
 basaltw homebox health HOST [--json]
 basaltw homebox backup HOST /absolute/target/archive.tar.gz [--dry-run]
 basaltw homebox restore HOST /absolute/target/archive.tar.gz --yes [--dry-run]
-basaltw cicd connect BUILD APP [options]
-basaltw cicd status BUILD [--json]
-basaltw cicd test BUILD TARGET
 basaltw maintenance github [--root PATH] <audit|prune> [options]
 basaltw shell
 basaltw network ...
@@ -1824,126 +1821,43 @@ Ruby/Rails deployment support has been discontinued. Their repositories are
 rejected before remote setup begins. Ruby applications are outside Basaltwater's
 deployment workflows.
 
-## CI/CD and Build / App Servers
+## Managed builds, webhooks and GitHub runners
+
+See [build systems](../services/build-systems.md) for defaults, a fresh
+two-command walkthrough, capacity and migration.
 
 | Flag | Description |
-|------|-------------|
-| `--build-server` | Configure a build server that deploys to app servers |
-| `--build-project DOMAIN[/PATH] HTTPS_URL` | Generate a managed builder project grant from a committed manifest; repeat for each destination; requires an enabled build-server role |
-| `--build-host-policy FILE` | Load up to 4 MiB of public JSON enrollment policy from a controller-local file for a build server |
-| `--no-build-server` | Remove only the managed enrollment and its key authority; retain build records and evidence |
-| `--build-target-policy FILE` | Load up to 4 MiB of public typed-target enrollment policy from a controller-local file |
-| `--build-target-auto` | Generate or update target grants from the complete merged deployment set; automatic for initial `--build-on` setup without enrollment |
-| `--build-limit RESOURCE INTEGER` | Override a generated resource ceiling; repeat for distinct resources |
-| `--build-max-records N` | Set generated enrollment record capacity for this host (default 128; preserve saved values on patch) |
-| `--build-max-bytes BYTES` | Set generated enrollment retained storage (default builder 64 GiB / target 8 GiB; preserve saved values on patch) |
-| `--no-build-target` | Remove managed typed-target authority while preserving applications and their data |
-| `--build-on SAVED-BUILDER` | Build supported deployments on one uniquely matched, enrolled saved host, friendly name, or exact tag; deliver verified artifacts to the target |
-| `--no-build-on` | Clear the saved builder selection and artifact deployment mode |
-| `--app-server` | Configure an app server to receive deployments |
-| `--deploy-target HOST` | Target app server for deployments |
-| `--cicd` | Install the signed GitHub webhook receiver and isolated executor |
-| `--ci-repository OWNER/REPO` | Private github.com repository for `server_github_runner`; repeat for up to 20 repositories sharing one active job slot |
-| `--ci-organization ORGANIZATION` | Organization scope instead of `--ci-repository`; the gate still requires private repositories |
-| `--ci-runner-group GROUP` | Organization runner group; defaults to the organization's default group; configure repository access in GitHub |
-| `--ci-allowed-user LOGIN` | Trusted human GitHub identity; repeat to supply the full allowlist |
-| `--ci-label LABEL` | Additional runner label; repeat as needed |
-| `--ci-registration-token-file PATH` | Register during setup using a private local token file (`chmod 600`) |
-| `--ci-register-with-gh` | Request a registration token using the controller's authenticated GitHub CLI; alternative to a token file, used only for this invocation |
+| --- | --- |
+| `--build-server` | Enroll selected Ed25519 public companion as deploy with wildcard projects; install Go, Node and Python |
+| `--build-project DOMAIN HTTPS_REPO` | Optional restrictive project grant; repeat per destination |
+| `--build-host-policy FILE` | Explicit public builder policy |
+| `--build-on SAVED_BUILDER` | Build via SSH core; initial target setup generates exact authority |
+| `--deploy DOMAIN HTTPS_REPO` | Target destination and committed source |
+| `--build-target-auto` | Update authority from complete merged deployment set |
+| `--build-target-policy FILE` | Explicit public target policy |
+| `--build-limit RESOURCE INTEGER` | Generated resource ceiling; repeat per resource |
+| `--build-max-records N`, `--build-max-bytes BYTES` | Generated retained capacity |
+| `--no-build-server`, `--no-build-target`, `--no-build-on` | Explicitly disable corresponding role or selection; preserve user data |
+| `--github-runner`, `--no-github-runner` | Enable optional runner on server_lite/server_web, or disable installed services preserving credentials |
+| `--ci-repository OWNER/REPO` | Repeat private repository scopes |
+| `--ci-organization ORGANIZATION` | Organization scope instead of repositories |
+| `--ci-allowed-user LOGIN`, `--ci-label LABEL` | Repeat trusted users or labels |
+| `--ci-runner-group GROUP` | Organization runner group |
+| `--ci-registration-token INLINE` | Transient token for exactly one scope |
+| `--ci-registration-token-file PATH`, `--ci-register-with-gh` | Alternative registration sources; mutually exclusive with inline token |
+| `--webhook-builds` | Signed GitHub push intake into managed worker |
+| `--webhook-repository OWNER/REPO`, `--webhook-branch BRANCH` | Repeat repository and branch allowlists; default branch main |
+| `--webhook-domain DOMAIN`, `--ssl` | Public webhook HTTPS route |
+| `--webhook-secret SECRET` | 32–512 character signing secret; generated and retained if omitted |
+| `--webhook-github-token TOKEN` | Optional broker-only private-fetch credential |
 
-See [Debian GitHub runner](../services/github-runner.md) for the dedicated
-profile, supported triggers, local fail-closed gate, panel registration and
-qualification requirements. Docker is not required or installed.
-
-For a flags-only flow, provision the builder with `--build-server`, one
-`--build-project DOMAIN[/PATH] HTTPS_URL` per destination, and its tool flags.
-Then provision the target with `--build-on` and matching `--deploy` destinations.
-Both commands generate and validate grants from pinned manifests, using the
-selected SSH key's Ed25519 public companion, and save decoded enrollment with
-the setup. No policy files or output directories are required. See the
-[two-command homelab example](../examples/builds/homelab-build-test.md).
-Project IDs derive from destinations; builder and target must use matching
-domains and paths. Later deployments reuse saved grants. Builder project
-patches merge grants; `--build-target-auto` explicitly updates target grants
-after merging the saved deployment set. See [policy updates and resource flags](../services/build-operations.md#add-a-site-or-change-its-grants).
-Explicit policy files are alternatives to automatic generation for custom
-keys, IDs or roots.
-
-Build-host enrollment policy is optional for legacy `--build-server` setups.
-`--build-host-policy FILE` accepts only public policy and key data. On a patch,
-omitting build-host options preserves the saved role and enrollment policy.
-Use `--no-build-server` to remove only the managed enrollment and its key
-authority; build records and enrollment evidence remain. De-enrollment is
-blocked while builds are active. Re-enabling with `--build-server` clears the
-saved de-enrollment intent.
-`--build-target-policy FILE` saves typed-target enrollment configuration and
-transports its decoded JSON during setup. Omitting the policy preserves saved
-policy and saved `--no-build-target` intent. `--no-build-target` clears the
-saved policy and forwards explicit de-enrollment intent; supplying a policy
-again resets that intent. Disabling typed-target authority does not delete
-applications or their data.
-
-`--build-on SAVED-BUILDER` resolves an exact, case-insensitive match across saved
-hosts, friendly names and tags. Exactly one record must match, even if an
-ineligible record shares the label. The selected record must have managed builder
-enrollment. Its saved SSH key and public companion must identify an enrolled
-principal, with existing controller-owned identity and workspace `known_hosts`
-files. There is no alternate builder or target-build fallback on failure.
-
-The supported setup flow requires a remote Debian 13 x86_64 VM or hardware
-target, explicit `--machine vm` or `--machine hardware`, `server_lite` or
-`server_web`, and HTTPS committed source with an explicit `basaltwater.json`.
-Private sources use the controller's configured global Git credential helper.
-The selected target key must authorize both root setup and the typed target
-principal. Supported manifests cover ready static output, shell/Node/Python
-static builds and native services, including approved arguments, environment,
-SQLite backups and public UDP. Runtime and artifact inference use the shared
-deployment helpers. SSL and Cloudflare use the ordinary administrative setup.
-Target Go/Node/Godot installs, custom steps, interpreter services, builder roles
-and network activation remain unsupported in this flow. See
-[selected-builder usage and restrictions](../services/deployments.md#build-on-a-saved-builder).
-
-The controller preflights before minimal enrollment, reserves all applications
-before builds, stages all artifacts before sequential activation, then applies
-the full profile under expected-release guards. The target retains artifact mode
-and installed release state without a saved-builder reference or builder
-credentials. A dry run clones and pins source locally and uses read-only SSH
-probes; it never bootstraps, reserves, builds, activates or saves setup state.
-Uncertain outcomes retain guards, inputs and IDs for operator reconciliation;
-there are no automatic retries or replacement IDs.
-
-Omitting both builder selection flags during a patch preserves the saved
-selection and artifact mode. `--no-build-on` clears both. The hidden
-`--artifact-deployments` flag carries target-only artifact mode through setup
-replay. Without a selected builder or retained artifact mode, deployment keeps
-the existing build-on-target behavior.
-
-Runner host patches preserve omitted repositories, allowed users and labels.
-An explicit repository list replaces the saved list; an organization scope
-replaces repository scopes.
-
-See [`cicd.md`](../services/cicd.md) for webhook configuration, service units, and
-deployment-boundary behavior.
-
-After saving one `--build-server` setup and one `--app-server` setup, connect
-them from the controller without copying keys manually:
-
-```bash
-basaltw cicd connect build app --target-name production
-basaltw cicd status build
-basaltw cicd test build production
-```
-
-`BUILD` and `APP` accept saved hosts, friendly names, or exact tags. The
-controller reuses its already enrolled app-server host key, installs only the
-build server's public deploy key, writes the dedicated build-user
-`known_hosts` and target JSON atomically, and verifies the connection as the
-unprivileged `webhook` account. If the app key is not enrolled yet, the command
-shows its fingerprint and requires confirmation. For unattended enrollment,
-provide an independently obtained value with `--fingerprint SHA256:...`.
-`--port` and `--base-dir` customize the target connection; setup defaults are
-port 22, user `deploy`, and `/var/www`. A custom base directory must already
-exist as a real directory and be writable by `deploy`.
+No registration source leaves runners pending for panel registration.
+Inline tokens cannot register repeated repository scopes. The dedicated
+`server_github_runner` profile uses the same installer, with runner-only scope.
+See [runner registration](../services/github-runner.md) and
+[webhooks](../services/webhook-builds.md). Transient secrets are not saved in cache or
+transported in SSH argv. Retired commands and flags are listed only in the
+[migration guide](../services/build-systems.md#migrate-retired-installations).
 
 ## Antistatic
 

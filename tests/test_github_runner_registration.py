@@ -198,17 +198,23 @@ class RegistrationUnitTests(unittest.TestCase):
                 units.remove_registration_service()
         remove.assert_not_called()
 
-    def test_panel_setup_installs_handoff_only_for_https_runner_profile(self) -> None:
+    def test_panel_setup_installs_handoff_only_for_https_enabled_runner(self) -> None:
         account = SimpleNamespace(pw_name="operator", pw_uid=1000, pw_gid=1000, pw_dir="/home/operator")
-        for target, tls, expected in (("server_github_runner", True, True), ("server_github_runner", False, False),
-                                      ("server_lite", True, False)):
-            with self.subTest(profile=target, tls=tls):
+        cases = [("server_github_runner", tls, False, False, tls) for tls in (False, True)]
+        for target in ("server_lite", "server_web"):
+            for tls in (False, True):
+                for enabled, disabled in ((True, False), (False, False), (False, True)):
+                    cases.append((target, tls, enabled, disabled, tls and enabled))
+        for target, tls, enabled, disabled, expected in cases:
+            with self.subTest(profile=target, tls=tls, enabled=enabled, disabled=disabled):
                 with ExitStack() as stack:
+                    temporary = stack.enter_context(tempfile.TemporaryDirectory())
+                    stack.enter_context(patch.object(panel_setup, "WEB_PANEL_CONFIG_DIR", temporary))
                     for attribute in ("_ensure_nginx", "_ensure_event_storage", "_validate_ingest_token_path", "_install_ingest_token",
                                       "write_json_atomic", "_configure_audit_exporter", "_configure_service", "configure_nginx_auth_failure_ban"):
                         stack.enter_context(patch.object(panel_setup, attribute))
                     for target_path in ("desktop.guacamole_steps.preflight_units", "desktop.guacamole_steps.preflight_configuration",
-                                        "desktop.guacamole_steps.remove_guacamole", "common.web_panel_steps.os.makedirs"):
+                                        "desktop.guacamole_steps.remove_guacamole"):
                         stack.enter_context(patch(target_path))
                     stack.enter_context(patch.object(panel_setup, "is_dry_run", return_value=False))
                     stack.enter_context(patch("common.godot_web_steps.discover_local_web_identities", return_value=[]))
@@ -218,12 +224,18 @@ class RegistrationUnitTests(unittest.TestCase):
                     nginx = stack.enter_context(patch.object(panel_setup, "_write_nginx_site"))
                     configure = stack.enter_context(patch.object(units, "configure_registration_service"))
                     remove = stack.enter_context(patch.object(units, "remove_registration_service"))
-                    values = dict(web_panel_port=9443 if tls else 8080, enable_ssl=tls, ssl_email="operator@example.test")
-                    if target != "server_github_runner":
-                        values.update(system_type=target, ci_repository="", ci_allowed_users=None, ci_labels=None)
+                    values = dict(system_type=target, web_panel_port=9443 if tls else 8080,
+                                  enable_ssl=tls, ssl_email="operator@example.test",
+                                  enable_github_runner=enabled, disable_github_runner=disabled)
+                    if target != "server_github_runner" and not enabled:
+                        values.update(ci_repository="", ci_allowed_users=None, ci_labels=None)
                     panel_setup.configure_web_panel(config(**values))
-                    self.assertEqual(configure.called, expected)
-                    self.assertEqual(remove.called, not expected)
+                    if expected:
+                        configure.assert_called_once_with(account)
+                        remove.assert_not_called()
+                    else:
+                        configure.assert_not_called()
+                        remove.assert_called_once_with()
                     self.assertEqual(protocol.ENDPOINT in nginx.call_args.args[0], expected)
 
     def test_units_limit_privilege_peer_and_lifetime_without_persistent_requests(self) -> None:

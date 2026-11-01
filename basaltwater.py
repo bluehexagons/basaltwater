@@ -50,7 +50,6 @@ from lib.channel_manager import (
     switch_channel,
     upgrade_channel,
 )
-from lib.cicd_cli import add_cicd_subparser, run_cicd_command
 from lib.manifest_init import add_project_manifest_subparser, run_project_manifest_command
 from lib.node_toolchain import add_node_subparser, run_node_command
 from lib.publishing_cli import add_publishing_subparser, run_publishing_command
@@ -116,7 +115,6 @@ from lib.validation import (
     validate_agent_repositories,
     validate_antistatic_settings,
     validate_deploy_specs,
-    validate_deploy_targets,
     validate_gogs_settings,
     validate_hosted_flags,
     validate_network_setup_settings,
@@ -167,7 +165,6 @@ def _build_basaltwater_epilog() -> str:
     vm [subcommand]             Manage guests through a provider-neutral command surface
     shell                       Interactive REPL for managing saved configurations
     credentials                 Manage workspace credentials
-    cicd connect|status|test    Connect and inspect build/app deployment trust
     manifest init|validate      Initialize or validate project build/deploy settings
     node status|env|exec|install Select a project-specific Node runtime
     publish status|prepare|upload Manage VM publishing and reviewed release writing
@@ -677,7 +674,6 @@ def create_basaltwater_parser(*, _command: str | None = None) -> Tuple[argparse.
     add_homebox_subparser(subparsers)
     add_kiosk_subparser(subparsers)
     add_scrub_subparser(subparsers)
-    add_cicd_subparser(subparsers)
     add_project_manifest_subparser(subparsers)
     add_node_subparser(subparsers)
     add_publishing_subparser(subparsers)
@@ -1173,7 +1169,7 @@ def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
         # Enabling a kiosk must still see a saved shared desktop so validation
         # rejects the conflict instead of treating omission as its removal.
         preserve_keys.add("include_desktop")
-    for field in ("is_build_server", "is_app_server"):
+    for field in ("is_build_server", "enable_github_runner", "enable_webhook_builds"):
         if getattr(args, field, None) is None:
             preserve_keys.add(field)
     if getattr(args, "privilege_broker", None) is None and not getattr(args, "disable_privilege_broker", False):
@@ -1801,7 +1797,6 @@ def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
     validate_notification_args(runtime_config.notify_specs)
     validate_ssl_email(runtime_config.ssl_email)
     validate_deploy_specs(runtime_config.deploy_specs)
-    validate_deploy_targets(runtime_config.deploy_targets)
     validate_sync_specs(runtime_config.sync_specs)
     validate_backup_specs(runtime_config.backup_specs)
     validate_scrub_specs(runtime_config.scrub_specs)
@@ -2311,7 +2306,9 @@ def run_patch_command(args: argparse.Namespace) -> int:
         args.enable_rdp = cached_config.enable_rdp
     if getattr(args, "git_access", None) is None:
         args.git_access = cached_config.git_access
-    if cached_config.system_type == "server_github_runner":
+    if cached_config.system_type == "server_github_runner" or (
+        cached_config.enable_github_runner and getattr(args, "enable_github_runner", None) is not False
+    ):
         from lib.github_runner_config import runner_repositories
 
         # Validate a complete runner policy even for a host-controls-only patch.
@@ -2323,6 +2320,22 @@ def run_patch_command(args: argparse.Namespace) -> int:
                 setattr(args, field, getattr(cached_config, field))
         if args.ci_runner_group is None and args.ci_organization == cached_config.ci_organization:
             args.ci_runner_group = cached_config.ci_runner_group
+        if cached_config.enable_github_runner and args.enable_github_runner is None:
+            args.enable_github_runner = True
+
+    if getattr(args, "is_build_server", None) is False:
+        args.enable_webhook_builds = False
+    if (getattr(args, "enable_webhook_builds", None) is True
+            or (cached_config.enable_webhook_builds
+                and getattr(args, "enable_webhook_builds", None) is not False)):
+        for field in ("is_build_server", "enable_webhook_builds", "enable_ssl"):
+            if getattr(args, field, None) is None:
+                setattr(args, field, getattr(cached_config, field))
+        if getattr(args, "enable_cloudflare", None) is None:
+            args.enable_cloudflare = cached_config.enable_cloudflare
+        for field in ("webhook_repositories", "webhook_branches", "webhook_domain"):
+            if getattr(args, field, None) is None:
+                setattr(args, field, getattr(cached_config, field))
 
     try:
         new_config = SetupConfig.from_args(args, cached_config.system_type)
@@ -2593,8 +2606,6 @@ def main() -> int:
         return run_kiosk_command(args)
     elif args.command == "scrub":
         return run_scrub_command(args)
-    elif args.command == "cicd":
-        return run_cicd_command(args)
     elif args.command == "manifest":
         return run_project_manifest_command(args)
     elif args.command == "node":

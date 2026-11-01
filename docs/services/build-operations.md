@@ -10,8 +10,8 @@ through a separate root or sudo administration session.
 An ordinary source revision update needs no new policy when its complete
 routes, service settings, exports and required tools still fit the existing
 grants. Use the [revision update procedure](build-systems.md#update-and-reconcile).
-A new application, route, service runtime setting or tool grant needs policy
-updates first. For generated enrollments, declare the new project on the
+A restrictive builder grant or changed target authority needs policy
+updates first; wildcard builder enrollment needs no per-project addition. For generated enrollments, declare the new project on the
 builder, then explicitly regenerate the target grants while adding the site:
 
 ```bash
@@ -30,10 +30,8 @@ even when those servers use the same fixed route, service port, public UDP port
 or default deployment root. Each project is checked independently using the
 shared manifest planner. Each target still checks its complete deployment set
 and refuses collisions within that server. Duplicate builder project IDs remain
-invalid. Managed project generation also rejects an enabled legacy `--cicd`
-executor before fetching sources or provisioning. Use `--no-cicd` to clear a
-saved `--cicd` selection. This changes the saved configuration; retire any
-existing legacy executor service separately before enabling managed builds.
+invalid. Retired webhook installations require the explicit
+[migration procedure](build-systems.md#migrate-retired-installations) first.
 
 The target patch generates grants from the complete merged saved deployment
 set, including omitted siblings, then rebuilds and deploys that complete set.
@@ -182,7 +180,7 @@ for exact proof, locking and interruption rules.
 
 | Symptom | Next check |
 | --- | --- |
-| Builder selection is missing or ambiguous | Use an exact unique saved host, name or tag in the original controller workspace. A bare legacy `--build-server` is not managed enrollment. |
+| Builder selection is missing or ambiguous | Use an exact unique saved host, name or tag in the original controller workspace. Fresh bare `--build-server` enrolls wildcard project authority. |
 | SSH identity or host verification fails | Check the selected private key, its enrolled Ed25519 `.pub` companion, root setup authorization and workspace host pins. Ambient SSH agent/configuration is not used for managed transport. See [selection requirements](../agents/contributing/build-selection.md). |
 | Controller SSH source is rejected | Use the source address observed by this target in `--ssh-access-source`; a cloud VPS usually sees a public egress or VPN address. |
 | Application match or runtime grant fails | Compare the pinned manifest's entire component/route/runtime map with the target envelope, and its project/tools with the installed builder grant. Regenerate and review authority only when needed. |

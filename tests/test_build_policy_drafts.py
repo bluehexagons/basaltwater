@@ -320,12 +320,25 @@ class BuildEnrollmentCLITests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.apply(self.config(builder=True), build_project=[["example.com", "https://example.com/site.git"]])
 
-    def test_builder_rejects_legacy_executor_before_source_preparation(self):
-        config = self.config(builder=True, enable_cicd=True)
-        with self.assertRaisesRegex(ValueError, "--cicd"):
-            self.apply(config, build_project=[["example.com", "https://example.com/site.git"]])
+    def test_bare_builder_enrolls_general_policy_without_source_preparation(self):
+        config = self.config(builder=True)
+        self.apply(config)
         self.fetch.assert_not_called()
-        self.assertIsNone(config.build_host_enrollment)
+        projects = config.build_host_enrollment["policy"]["principals"]["deploy"]["projects"]
+        self.assertEqual(set(projects), {"*"})
+        self.assertEqual(projects["*"]["runtimes"], ["go", "node", "python"])
+
+    def test_resource_update_preserves_restricted_project_authority(self):
+        config = self.config(builder=True)
+        self.apply(config, build_project=[["example.com", "https://example.com/site.git"]])
+        names = set(config.build_host_enrollment["policy"]["principals"]["deploy"]["projects"])
+        self.fetch.reset_mock()
+        self.apply(config, build_limit=[["cpu_percent", "100"]], build_max_records=256)
+        self.fetch.assert_not_called()
+        projects = config.build_host_enrollment["policy"]["principals"]["deploy"]["projects"]
+        self.assertEqual(set(projects), names)
+        self.assertNotIn("*", projects)
+        self.assertTrue(all(grant["limits"]["cpu_percent"] == 100 for grant in projects.values()))
 
     def test_target_updates_include_saved_siblings_preserve_limits_and_refuse_root_moves(self):
         config = self.config()

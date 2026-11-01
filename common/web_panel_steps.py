@@ -1242,7 +1242,10 @@ def configure_web_panel(config: SetupConfig) -> None:
             from common.proxmox_web_panel_steps import configure_proxmox_snapshot
 
             configure_proxmox_snapshot(account.pw_gid)
-        if config.system_type == GITHUB_RUNNER_PROFILE and config.enable_ssl:
+        runner_registration_enabled = config.enable_ssl and (
+            config.system_type == GITHUB_RUNNER_PROFILE or config.enable_github_runner
+        )
+        if runner_registration_enabled:
             from web.github_runner_registration_steps import configure_registration_service
 
             configure_registration_service(account)
@@ -1259,7 +1262,7 @@ def configure_web_panel(config: SetupConfig) -> None:
                 key_path=key_path,
                 notification_ingest=ingest_enabled,
                 guacamole=config.guacamole is True,
-                github_runner_registration=config.system_type == GITHUB_RUNNER_PROFILE,
+                github_runner_registration=runner_registration_enabled,
                 ca_https_download=config.system_type == "server_proxmox",
             )
         )
@@ -1272,7 +1275,7 @@ def configure_web_panel(config: SetupConfig) -> None:
             from desktop.guacamole_steps import remove_guacamole
 
             remove_guacamole()
-        if config.system_type != GITHUB_RUNNER_PROFILE or not config.enable_ssl:
+        if not runner_registration_enabled:
             from web.github_runner_registration_steps import remove_registration_service
 
             remove_registration_service()

@@ -394,7 +394,7 @@ class BuildDeliveryController:
     @staticmethod
     def _preflight(plan: DeliveryPlan, capabilities: dict[str, Any], grant: dict[str, Any]) -> None:
         request, deployment = plan.request, plan.deployment
-        builder = capabilities["projects"].get(request["project"])
+        builder = capabilities["projects"].get(request["project"], capabilities["projects"].get("*"))
         routes = [{key: item[key] for key in ("name", "type", "domain", "path")}
                   for item in deployment["components"]]
         if (grant["application"] != deployment["application"] or grant["project"] != request["project"]

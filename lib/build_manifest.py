@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+import shlex
 
 from lib.build_protocol import DEFAULT_LIMITS, parse_build_request
 from lib.project_manifest import Manifest, artifact_paths
@@ -12,8 +13,17 @@ from lib.project_build_tools import source_runtimes
 DEBIAN_PLATFORM = {"os": "linux", "architecture": "x86_64", "baseline": "debian-13"}
 
 
-def manifest_components(manifest: Manifest) -> list[dict[str, Any]]:
+def manifest_components(manifest: Manifest, *, workflow: bool = False) -> list[dict[str, Any]]:
     """Select commands, build environment and exports, excluding runtime inputs."""
+    if isinstance(manifest, Manifest) and manifest.ci and (workflow or not manifest.components):
+        commands = []
+        for stage in ("install", "build", "test"):
+            for step in manifest.ci.get(stage, []):
+                arguments = ["env", *[f"{name}={value}" for name, value in step.env.items()], *step.argv]
+                commands.append("cd " + shlex.quote(step.directory) + " && " + shlex.join(arguments))
+        if not commands:
+            raise ValueError("Build workflow has no commands")
+        return [{"name": "workflow", "type": "task", "artifacts": [], "commands": commands, "env": {}}]
     if not isinstance(manifest, Manifest) or not manifest.components:
         raise ValueError("Remote builds require a manifest with deployment components")
     return [{"name": item.name, "type": item.type, "artifacts": artifact_paths(item),
@@ -23,11 +33,11 @@ def manifest_components(manifest: Manifest) -> list[dict[str, Any]]:
 
 def request_from_manifest(manifest: Manifest, *, request_id: str, project: str,
                           source: object, platform: object,
-                          limits: Mapping[str, int] | None = None) -> dict[str, Any]:
+                          limits: Mapping[str, int] | None = None, workflow: bool = False) -> dict[str, Any]:
     """Create the exact bounded build document from a separately pinned source."""
     return parse_build_request({
         "schema": 1, "request_id": request_id, "project": project,
-        "source": source, "platform": platform, "components": manifest_components(manifest),
+        "source": source, "platform": platform, "components": manifest_components(manifest, workflow=workflow),
         "limits": dict(DEFAULT_LIMITS if limits is None else limits),
     })
 
@@ -35,7 +45,8 @@ def request_from_manifest(manifest: Manifest, *, request_id: str, project: str,
 def validate_manifest_request(manifest: Manifest, request: object) -> dict[str, Any]:
     """Check the pinned manifest again before executing the admitted commands."""
     job = parse_build_request(request)
-    if job["components"] != manifest_components(manifest):
+    workflow = any(component["type"] == "task" for component in job["components"])
+    if job["components"] != manifest_components(manifest, workflow=workflow):
         raise ValueError("Build commands, environment or exports differ from the source manifest")
     return job
 
@@ -44,7 +55,7 @@ def required_tools(manifest: Manifest, *, source_path: str | None = None) -> lis
     """Honor explicit runtimes or infer markers from the pinned source tree."""
     manifest_components(manifest)
     if manifest.build_runtimes is None:
-        if any(item.build for item in manifest.components):
+        if manifest.ci or any(item.build for item in manifest.components):
             if source_path is None:
                 raise ValueError("Runtime inference requires pinned source_path or explicit build_runtimes")
             return source_runtimes(source_path)

@@ -15,7 +15,7 @@ from lib.state_read import StateReadError, read_state_object
 from lib.config import RetiredSetupConfigError, SetupConfig, _normalize_nested_specs
 from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
-from lib.cicd_deploy_policy import validate_nginx_path
+from lib.nginx_validation import validate_nginx_path
 from lib.deploy_utils import parse_deploy_spec
 from lib.validators import validate_host, validate_username
 from lib.validation import (
@@ -532,6 +532,8 @@ def merge_setup_configs(
     preserve_keys = set(preserve_keys or ())
     if "is_build_server" in preserve_keys:
         preserve_keys.add("disable_build_host")
+    if "enable_github_runner" in preserve_keys:
+        preserve_keys.add("disable_github_runner")
 
     if not {"build_on", "clear_build_on", "artifact_deployments"}.intersection(
         preserve_keys
@@ -633,11 +635,22 @@ def merge_setup_configs(
             merged_dict["ssh_access_sources"] = new_config.ssh_access_sources
             merged_dict["clear_ssh_access_sources"] = False
 
-    if new_config.system_type == "server_github_runner":
+    if new_config.system_type == "server_github_runner" or new_config.enable_github_runner:
         # These fields form one validated scope; switching away from multiple
         # repositories must clear the previous list even when the new one is None.
         for field in ("ci_repository", "ci_repositories", "ci_organization", "ci_runner_group"):
             merged_dict[field] = new_dict[field]
+
+    if new_config.disable_github_runner:
+        merged_dict["enable_github_runner"] = False
+        merged_dict["disable_github_runner"] = True
+        for field in ("ci_repository", "ci_organization", "ci_runner_group"):
+            merged_dict[field] = ""
+        for field in ("ci_repositories", "ci_allowed_users", "ci_labels", "ci_registration_token",
+                      "ci_registration_token_file"):
+            merged_dict[field] = None
+        merged_dict["ci_register_with_gh"] = False
+        merged_dict["ci_registration_payload"] = False
 
     if new_config.disable_syncthing:
         merged_dict["enable_syncthing"] = False
@@ -648,6 +661,7 @@ def merge_setup_configs(
         merged_dict["is_build_server"] = False
         merged_dict["build_host_enrollment"] = None
         merged_dict["disable_build_host"] = True
+        merged_dict["enable_webhook_builds"] = False
     elif new_config.is_build_server and "is_build_server" not in preserve_keys:
         merged_dict["is_build_server"] = True
         merged_dict["disable_build_host"] = False

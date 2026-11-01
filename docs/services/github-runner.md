@@ -1,6 +1,6 @@
 # GitHub Actions runner
 
-Use a dedicated Debian 13/Trixie x86-64 VM for trusted jobs from private
+Use a Debian 13/Trixie x86-64 VM or hardware host for trusted jobs from private
 `github.com` repositories. This persistent runner is not a sandbox for hostile
 code. Selected native tokenless setup, rerun and pending-state reboot checks
 pass; registration, real GitHub jobs and registered reboot qualification remain
@@ -9,9 +9,9 @@ open. See the [coverage map](../plans/testing-coverage.md) and
 For native Windows jobs with WSL access, use the
 [Windows runner guide](../workstations/windows-github-runner.md).
 
-This is a general Actions job host. [Webhook CI/CD](cicd.md) and
+This is a general Actions job host. [Signed webhook builds](webhook-builds.md) and
 [selected-builder deployment](deployments.md#build-on-a-saved-builder) have
-separate setup and delivery contracts; an Actions runner is not required for
+shared managed-worker and capacity contracts; an Actions runner is not required for
 either. Compare the paths in [build systems](build-systems.md).
 
 ## Set up
@@ -23,8 +23,9 @@ basaltw setup server_github_runner ci.example.net operator \
 ```
 
 Repeat `--ci-repository` for up to 20 private repositories, including personal
-repositories. Each has its own registration and workspace. **Only one job runs
-workflow steps at a time across the VM**; other assigned jobs wait in the hook.
+repositories. Each has its own registration and workspace. **Only one job runs workflow steps at a time across the host**, sharing
+capacity with managed builds. Assigned jobs wait at most 60 seconds in the
+hook, then are refused.
 Waiting counts toward the job timeout, and order across repositories is not
 guaranteed. These repositories share the same trusted service account.
 For one build that consumes several repositories, see
@@ -42,6 +43,7 @@ Choose how to register:
 | --- | --- |
 | `--ci-register-with-gh` | Request a token using the controller's existing GitHub CLI login and register now |
 | `--ci-registration-token-file PATH` | Register a single configured repository or organization using a private token file (`chmod 600`) |
+| `--ci-registration-token INLINE` | Transient registration token for exactly one repository or organization; incompatible with repeated repositories |
 | Neither | Install in **Pending registration** state, with the service disabled |
 
 You can add either registration option on the first setup or repeat the same
@@ -147,3 +149,10 @@ allowlist. Setup also applies scope, group and label changes; provide a fresh
 token or register later. Remove the retired runner entry from GitHub settings.
 See the [operations reference](github-runner-operations.md) for logs, isolation,
 updates and qualification.
+
+Add `--github-runner` to `server_lite` or `server_web` for composition with a
+managed builder. `server_github_runner` is a runner-only convenience profile
+using the same installer. `--no-github-runner` disables installed services while
+preserving credentials. Inline, file and GitHub CLI registration sources are
+mutually exclusive. Stop old runner units after jobs finish before upgrading:
+the old lock differs. See [shared capacity](build-systems.md#shared-capacity-and-maintenance).

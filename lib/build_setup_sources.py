@@ -24,8 +24,8 @@ from lib.build_source import (
     CommandRunner, DEFAULT_SOURCE_LIMITS, MAX_MANIFEST_BYTES, SourceLimits,
     create_source_snapshot,
 )
-from lib.cicd_deadline import command_timeout
-from lib.cicd_deploy_policy import validate_nginx_path
+from lib.build_commands import command_timeout
+from lib.nginx_validation import validate_nginx_path
 from lib.deploy_utils import parse_deploy_spec, parse_repository_source
 from lib.project_manifest import MANIFEST_FILENAME, Manifest, parse_manifest
 from lib.build_manifest import required_tools
@@ -57,6 +57,10 @@ class PreparedSource:
     source: dict[str, str]
     source_path: str
     build_tools: tuple[str, ...] | None = None
+
+
+class SourceCleanupUncertain(RuntimeError):
+    """Source subprocesses may remain; retain the host lease for inspection."""
 
 
 def _plans(deploy_specs: list[list[str]]) -> list[tuple[str, str, str | None]]:
@@ -179,10 +183,26 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
             os.killpg(process.pid, sig)
         except ProcessLookupError:
             pass
+        except OSError as exc:
+            raise SourceCleanupUncertain("Cannot stop the source process group") from exc
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             pass
+        except OSError as exc:
+            raise SourceCleanupUncertain("Cannot confirm source process termination") from exc
+    try:
+        process.wait(timeout=2)
+        # Reaping the leader alone does not prove its descendants have exited.
+        for _ in range(20):
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SourceCleanupUncertain("Source process cleanup requires inspection") from exc
+    raise SourceCleanupUncertain("Source process group cleanup requires inspection")
 
 
 def _run(
@@ -274,6 +294,7 @@ def prepare_setup_sources(
     limits: SourceLimits = DEFAULT_SOURCE_LIMITS,
     runner: CommandRunner | None = None,
     credential_runner: CommandRunner | None = None,
+    expected_revision: str | None = None,
 ) -> list[PreparedSource]:
     """Prepare 1..16 HTTPS plans under an existing empty owned 0700 root.
 
@@ -286,6 +307,9 @@ def prepare_setup_sources(
     if not isinstance(limits, SourceLimits):
         raise ValueError("Source limits must use SourceLimits")
     plans = _plans(deploy_specs)
+    if expected_revision is not None and (
+            len(plans) != 1 or not re.fullmatch(r"[0-9a-f]{40}", expected_revision)):
+        raise ValueError("A pinned event requires one source and a complete Git revision")
     if not isinstance(destination, str):
         raise ValueError("Source preparation destination must be a text path")
     validate_filesystem_path(destination, must_exist=True)
@@ -381,6 +405,8 @@ def prepare_setup_sources(
                                 git(repository, clone, 0)
                             finally:
                                 clone_credentials = None
+                    except SourceCleanupUncertain:
+                        raise
                     except Exception:
                         raise ValueError(
                             "HTTPS clone failed; configure a noninteractive controller global Git "
@@ -408,6 +434,13 @@ def prepare_setup_sources(
             repository = repositories[url]
             selection = (url, ref)
             revision = selections[selection]
+            if expected_revision is not None:
+                # The signed event chooses an exact commit already present in this
+                # repository's fetched history, even if the branch has advanced.
+                actual = git(repository, ["rev-parse", "--verify", expected_revision + "^{commit}"], 80)
+                if actual != (expected_revision + "\n").encode("ascii"):
+                    raise ValueError("Signed event commit is unavailable in fetched history")
+                revision = expected_revision
             key = (url, revision)
             if key not in snapshots:
                 storage.check(limits.max_source_bytes)

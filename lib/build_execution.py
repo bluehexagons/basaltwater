@@ -22,7 +22,7 @@ if __package__ in {None, ""}:
 
 from lib.build_protocol import MAX_REQUEST_BYTES, decode_document, parse_build_request, request_digest
 from lib.build_git import prepare_history
-from lib.cicd_deadline import run_command
+from lib.build_commands import run_command
 from lib.setup_directories import directory_fd
 from lib.validation import validate_filesystem_path
 from lib.project_build_tools import (

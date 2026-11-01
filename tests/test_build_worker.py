@@ -283,6 +283,23 @@ class BuildWorkerTests(unittest.TestCase):
             self.assertEqual(build_worker._ready_toolchains(
                 manifest, {"go": "go1.27", "node": "installed"}, source_path=source), {"go": "go1.27"})
 
+    def test_ci_only_workflow_uses_the_same_worker_and_publishes_no_undeclared_files(self):
+        self.store.cancel(self.request_id, owner=OWNER)
+        data = {"version": 1, "components": [], "build_runtimes": [],
+                "ci": {"test": [{"argv": ["true"]}]}}
+        self.request_id = "f" * 32
+        self.request, self.snapshot = self.make_request_and_snapshot(
+            stored_manifest=json.dumps(data).encode(), request_manifest=data,
+            request_id=self.request_id,
+        )
+        self.stage_source(self.request_id, self.snapshot)
+        self.store.submit(self.request, owner=OWNER)
+        status = self._run()
+        self.assertEqual(status["state"], "succeeded")
+        self.assertEqual(self.request["components"][0]["type"], "task")
+        self.assertEqual(self.published_toolchains, {})
+        self.assertEqual(self.handle.release_calls, 1)
+
     def test_tampered_input_and_manifest_request_mismatch_fail_before_execution(self) -> None:
         raw = bytearray(self.snapshot)
         marker = b"H" + struct.pack("!Q", len(HISTORY)) + HISTORY

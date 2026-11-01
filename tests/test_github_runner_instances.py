@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import shlex
 import stat
 import subprocess
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -27,15 +25,10 @@ def multiple(**overrides) -> SetupConfig:
 
 
 class MultipleConfigurationTests(unittest.TestCase):
-    def test_queue_preparation_keeps_the_locked_inode_across_setup_runs(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary, patch.object(steps, "DATA", temporary):
-            account = SimpleNamespace(pw_uid=os.geteuid(), pw_gid=os.getegid())
-            steps._prepare_queue(account)
-            before = Path(temporary, "queue.lock").stat()
-            steps._prepare_queue(account)
-            after = Path(temporary, "queue.lock").stat()
-            self.assertEqual(before.st_ino, after.st_ino)
-            self.assertEqual(stat.S_IMODE(after.st_mode), 0o600)
+    def test_queue_preparation_uses_shared_coordinator(self) -> None:
+        with patch("lib.build_coordinator.ensure_coordinator") as ensure:
+            steps._prepare_queue()
+        ensure.assert_called_once_with()
 
     def test_instance_scope_mismatch_and_disabled_runner_fail_before_filesystem_access(self) -> None:
         for instance, policy in ((repository_instance("owner/second"), fixtures.policy()),

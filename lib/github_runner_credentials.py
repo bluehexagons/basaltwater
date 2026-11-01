@@ -73,14 +73,18 @@ def _token_from_gh(config: SetupConfig) -> bytes:
 def prepare_registration_payload(config: SetupConfig, destination: str) -> bool:
     """Stage only the one-hour token; never transfer gh's API credentials."""
     validate_github_runner_settings(config)
-    if not config.ci_registration_token_file and not config.ci_register_with_gh:
+    if not config.ci_registration_token_file and not config.ci_registration_token and not config.ci_register_with_gh:
         return False
     validate_filesystem_path(destination)
     if config.dry_run:
         source = "request a runner token using local gh" if config.ci_register_with_gh else "stage the runner token file"
         print(f"  [DRY RUN] Would {source}")
         return False
-    if config.ci_register_with_gh:
+    if config.ci_registration_token:
+        token = validate_runner_registration_token(config.ci_registration_token.encode("ascii"))
+        os.makedirs(destination, mode=0o700)
+        write_bytes_atomic(os.path.join(destination, "token"), token, mode=0o600)
+    elif config.ci_register_with_gh:
         repositories = runner_repositories(config)
         if len(repositories) > 1:
             tokens = {}

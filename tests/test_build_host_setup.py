@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import copy
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 import hashlib
 import json
 import os
@@ -179,6 +179,30 @@ class BuildHostEnrollmentTests(unittest.TestCase):
 
 
 class BuildHostSetupUnitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("lib.build_coordinator.ensure_coordinator"))
+        self.enterContext(patch("lib.build_coordinator.maintenance", side_effect=nullcontext))
+        self.enterContext(patch("common.service_tools.build_host.require_platform"))
+
+    def test_enable_and_disable_hold_shared_maintenance_during_reconciliation(self) -> None:
+        for disable in (False, True):
+            events = []
+
+            @contextmanager
+            def maintenance():
+                events.append("drained")
+                yield
+                events.append("released")
+
+            with self.subTest(disable=disable), \
+                 patch("lib.machine_state.can_manage_system_services", return_value=True), \
+                 patch.object(setup, "is_dry_run", return_value=False), \
+                 patch("lib.build_coordinator.ensure_coordinator", side_effect=lambda: events.append("ensure")), \
+                 patch("lib.build_coordinator.maintenance", side_effect=maintenance), \
+                 patch.object(setup, "_configure_build_host", side_effect=lambda _: events.append("reconcile")):
+                setup.configure_build_host(setup_config(disable_build_host=disable))
+            self.assertEqual(events, ["ensure", "drained", "reconcile", "released"])
+
     def test_none_enrollment_is_a_noop_even_if_disable_flag_is_false(self) -> None:
         with patch("lib.machine_state.can_manage_system_services") as capability, \
              patch.object(setup, "run") as run:
@@ -186,13 +210,13 @@ class BuildHostSetupUnitTests(unittest.TestCase):
         capability.assert_not_called()
         run.assert_not_called()
 
-    def test_invalid_enrollment_is_rejected_before_capability_or_host_calls(self) -> None:
+    def test_invalid_enrollment_is_rejected_before_installer_host_calls(self) -> None:
         invalid = enrollment()
         invalid["keys"]["alice"] += " comment"
         with patch("lib.machine_state.can_manage_system_services") as capability, \
              patch.object(setup, "run") as run, self.assertRaises(ValueError):
             setup.configure_build_host(setup_config(build_host_enrollment=invalid))
-        capability.assert_not_called()
+        capability.assert_called_once_with("vm")
         run.assert_not_called()
 
     def test_dry_run_returns_before_platform_or_mutation(self) -> None:
@@ -576,6 +600,9 @@ class BuildHostSetupUnitTests(unittest.TestCase):
 
 class BuildHostLifecycleTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("lib.build_coordinator.ensure_coordinator"))
+        self.enterContext(patch("lib.build_coordinator.maintenance", side_effect=nullcontext))
+        self.enterContext(patch("common.service_tools.build_host.require_platform"))
         self.refresh_ssh = self.enterContext(patch("security.security_steps.refresh_transport_ssh_admission"))
 
     def _disable_setup(self, tmp_path: Path, *, store: FakeStore | None = None):
@@ -919,6 +946,8 @@ class BuildHostTransportIntegrationTests(unittest.TestCase):
         self.store = FakeStore()
         stack = ExitStack()
         self.addCleanup(stack.close)
+        stack.enter_context(patch("lib.build_coordinator.ensure_coordinator"))
+        stack.enter_context(patch("lib.build_coordinator.maintenance", side_effect=nullcontext))
         stack.enter_context(root_view())
         real_scandir = os.scandir
 

@@ -77,13 +77,15 @@ def validate_github_runner_settings(config: Any) -> None:
     users = getattr(config, "ci_allowed_users", None)
     labels = getattr(config, "ci_labels", None)
     token = getattr(config, "ci_registration_token_file", None)
+    inline_token = getattr(config, "ci_registration_token", None)
     use_gh = getattr(config, "ci_register_with_gh", False)
     payload = getattr(config, "ci_registration_payload", False)
     if type(use_gh) is not bool:
         raise ValueError("ci_register_with_gh must be boolean")
-    if config.system_type != PROFILE:
-        if repositories or organization or runner_group or users or labels or token or use_gh or payload:
-            raise ValueError("--ci-* runner options require server_github_runner")
+    enabled = config.system_type == PROFILE or getattr(config, "enable_github_runner", False)
+    if not enabled:
+        if repositories or organization or runner_group or users or labels or token or inline_token or use_gh or payload:
+            raise ValueError("--ci-* runner options require --github-runner")
         return
     if config.username == ACCOUNT:
         raise ValueError("The setup/panel account must differ from the dedicated runner account")
@@ -94,15 +96,24 @@ def validate_github_runner_settings(config: Any) -> None:
                              allowed_users=users, labels=labels or [], runner_version=VERSION))
     if type(payload) is not bool:
         raise ValueError("ci_registration_payload must be boolean")
-    if use_gh and token is not None:
-        raise ValueError("Choose --ci-register-with-gh or --ci-registration-token-file, not both")
+    if sum((use_gh, token is not None, inline_token is not None)) > 1:
+        raise ValueError("Choose one runner registration credential source")
+    if inline_token is not None:
+        if not isinstance(inline_token, str) or len(repositories) > 1:
+            raise ValueError("Inline runner registration token requires a single scope")
+        try:
+            validate_runner_registration_token(inline_token.encode("ascii"))
+        except (UnicodeError, ValueError):
+            raise ValueError("Invalid short-lived runner registration token") from None
     if token is not None:
         if len(repositories) > 1:
             raise ValueError("For multiple repositories use --ci-register-with-gh or register each repository in the HTTPS panel")
         if not isinstance(token, str):
             raise ValueError("--ci-registration-token-file must be a path")
         validate_filesystem_path(token)
-    if any((config.enable_cicd, config.is_build_server, config.is_app_server,
+    if config.system_type != PROFILE:
+        return
+    if any((config.enable_webhook_builds, config.is_build_server,
             config.has_agent_features(), config.enable_rdp, config.guacamole)):
         raise ValueError("The dedicated runner profile cannot host agents, RDP or other CI services")
     unrelated = (
@@ -481,21 +492,6 @@ def validate_network_endpoint(endpoint: str) -> None:
             raise ValueError(f"Port must be between 1 and 65535: {port_int}")
     except ValueError as e:
         raise ValueError(f"Invalid port in endpoint: {port}") from e
-
-
-def validate_deploy_targets(targets: Optional[list[str]]) -> None:
-    """Validate deploy target hostnames before setup or patch execution."""
-
-    if not targets:
-        return
-
-    from lib.validators import validate_host
-
-    for target in targets:
-        if not target or not target.strip():
-            raise ValueError("Deploy target must be a non-empty hostname or IP")
-        if not validate_host(target):
-            raise ValueError(f"Invalid deploy target host: {target}")
 
 
 def validate_gogs_settings(config: "SetupConfig") -> None:

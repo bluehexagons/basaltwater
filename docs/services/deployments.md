@@ -55,8 +55,10 @@ revision updates, SQLite backups, UDP and retained refresh. Consult the
 [coverage map](../plans/testing-coverage.md) for the tested boundaries; a dry run
 does not establish that a particular deployment will succeed.
 
-Enroll the builder with `--build-server --build-project DOMAIN[/PATH] HTTPS_URL`
-for each destination. Initial `--build-on` setup generates matching target grants
+Enroll the builder with `--build-server`, which automatically installs Go, Node
+and Python and grants wildcard projects. Optionally restrict enrollment with
+`--build-project DOMAIN[/PATH] HTTPS_URL` for each destination.
+Initial `--build-on` setup generates matching target grants
 from its deployment manifests, using the selected SSH public companion. No
 enrollment files are required; see the [two-command provisioning example](../examples/builds/homelab-build-test.md).
 Custom `--build-host-policy FILE` and `--build-target-policy FILE` remain available.
@@ -475,8 +477,8 @@ The existing staged manifest activation and setup-level Nginx validation apply.
 There is no new artifact upload command or coordinated zero-downtime switch of
 files and Nginx configuration. Retain the previous approved artifact/commit for
 redeployment and consult the rollback limitations in `deployment-safety.md`.
-The webhook executor also supports a single declared Godot-web output;
-multi-component activation still uses the manifest-aware setup/patch path.
+Webhook intake produces build/test artifacts through the managed worker;
+it does not activate target deployments. Publishing execution is unimplemented.
 
 ### Static site plus API service
 
@@ -622,4 +624,4 @@ site before assigning its domain to a managed deployment.
 
 For Nginx and deployment rollback behavior, see
 [`deployment-safety.md`](./deployment-safety.md). For webhook-triggered builds,
-see [`cicd.md`](./cicd.md).
+see [`webhook-builds.md`](./webhook-builds.md).

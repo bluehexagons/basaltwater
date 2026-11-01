@@ -24,6 +24,11 @@ MANIFEST = (b'{"version":1,"components":[{"name":"site","type":"static",'
             b'"domain":"{{domain}}","output":"public"}]}\n')
 
 
+def stopped_group(_pid, sig):
+    if sig == 0:
+        raise ProcessLookupError
+
+
 class SetupGit:
     """Model clone/ref selection/checkout, then use the snapshot Git fixture."""
 
@@ -146,6 +151,17 @@ class BuildSetupSourcesTests(unittest.TestCase):
         helper = Mock(side_effect=AssertionError("No credential lookup expected"))
         self.prepare(credential_runner=helper)
         helper.assert_not_called()
+
+    def test_signed_commit_wins_when_the_selected_branch_has_advanced(self):
+        result = self.prepare(expected_revision="b" * 40)
+        self.assertEqual(result[0].source["revision"], "b" * 40)
+        checkout = next(command for command, _ in self.git.calls if "checkout" in command)
+        self.assertEqual(checkout[-1], "b" * 40)
+
+    def test_unavailable_signed_commit_is_refused_before_checkout(self):
+        with self.assertRaises(ValueError):
+            self.prepare(expected_revision="d" * 40)
+        self.assertFalse(any("checkout" in command for command, _ in self.git.calls))
 
     def test_fake_failure_does_not_query_controller_credentials(self):
         with patch.object(sources, "controller_https_credentials") as helper:
@@ -635,7 +651,7 @@ class BuildSetupSourcesTests(unittest.TestCase):
 
         process.communicate.side_effect = monitor_failed
         with patch.object(sources.subprocess, "Popen", return_value=process), \
-                patch.object(sources.os, "killpg") as kill:
+                patch.object(sources.os, "killpg", side_effect=stopped_group) as kill:
             with self.assertRaisesRegex(ValueError, "aggregate limit"):
                 sources._run(["git"], cwd=str(self.destination), env={}, input_data=b"input",
                              timeout=1, max_output_bytes=10, file_size_limit=100, storage=storage)
@@ -647,7 +663,7 @@ class BuildSetupSourcesTests(unittest.TestCase):
         storage = sources._Storage(str(self.destination), SourceLimits())
         process = Mock(pid=123, returncode=0)
         with patch.object(sources.subprocess, "Popen", return_value=process), \
-                patch.object(sources.os, "killpg"), \
+                patch.object(sources.os, "killpg", side_effect=stopped_group), \
                 patch.object(sources.time, "monotonic", side_effect=[0, 2]):
             with self.assertRaises(TimeoutError):
                 sources._run(["git"], cwd=str(self.destination), env={}, input_data=None,
@@ -658,7 +674,7 @@ class BuildSetupSourcesTests(unittest.TestCase):
             return process
 
         with patch.object(sources.subprocess, "Popen", side_effect=spawn) as popen, \
-                patch.object(sources.os, "killpg"):
+                patch.object(sources.os, "killpg", side_effect=stopped_group):
             with self.assertRaisesRegex(ValueError, "output exceeds"):
                 sources._run(["git"], cwd=str(self.destination), env={}, input_data=None,
                              timeout=1, max_output_bytes=10, file_size_limit=100, storage=storage)
@@ -666,6 +682,31 @@ class BuildSetupSourcesTests(unittest.TestCase):
         self.assertTrue(popen.call_args.kwargs["start_new_session"])
         self.assertEqual(popen.call_args.kwargs["umask"], 0o077)
         self.assertNotIn("preexec_fn", popen.call_args.kwargs)
+
+    def test_unconfirmed_source_process_cleanup_requires_recovery(self):
+        process = Mock(pid=123)
+        process.wait.side_effect = subprocess.TimeoutExpired("git", 2)
+        with patch.object(sources.os, "killpg"), self.assertRaises(sources.SourceCleanupUncertain):
+            sources._stop(process)
+        process.wait.side_effect = None
+        with patch.object(sources.os, "killpg"), patch.object(sources.time, "sleep"), \
+             self.assertRaises(sources.SourceCleanupUncertain):
+            sources._stop(process)
+
+    def test_private_clone_cannot_hide_unconfirmed_cleanup_as_credential_failure(self):
+        calls = 0
+
+        def fail(command, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ValueError("anonymous clone denied")
+            raise sources.SourceCleanupUncertain("inspect remaining source processes")
+
+        helper = Mock(return_value=b"protocol=https\nhost=example.com\npath=project.git\n"
+                                   b"username=fixture\npassword=fixture\n\n")
+        with self.assertRaises(sources.SourceCleanupUncertain):
+            self.prepare(runner=fail, credential_runner=helper)
 
 
 if __name__ == "__main__":

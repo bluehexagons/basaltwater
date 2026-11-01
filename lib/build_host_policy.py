@@ -28,7 +28,7 @@ MAX_PROJECT_GRANTS = 4096
 MAX_BUILD_RUNTIMES = 3
 
 SUPPORTED_BUILD_RUNTIMES = frozenset({"go", "node", "python"})
-SUPPORTED_COMPONENT_TYPES = frozenset({"static", "service"})
+SUPPORTED_COMPONENT_TYPES = frozenset({"static", "service", "task"})
 
 # Keep principal labels compatible with the authenticated owner labels retained
 # by lib.build_jobs and lib.build_admission. Project names match build requests.
@@ -56,6 +56,8 @@ def _principal_label(value: object) -> str:
 
 
 def _project_slug(value: object) -> str:
+    if value == "*":
+        return "*"
     if not isinstance(value, str) or _PROJECT_SLUG.fullmatch(value) is None:
         raise ValueError("Build policy project must be a lowercase project slug")
     validate_no_control_characters(value, "Build policy project")
@@ -188,7 +190,8 @@ def authorize_build_request(
     runtimes = _build_runtimes(requested_runtimes, "Requested build runtimes")
 
     principal_grants = validated_policy["principals"].get(owner)
-    grant = None if principal_grants is None else principal_grants["projects"].get(job["project"])
+    projects = {} if principal_grants is None else principal_grants["projects"]
+    grant = projects.get(job["project"], projects.get("*"))
     if grant is None:
         raise PermissionError("Principal is not authorized for this build project")
     if (job["platform"] != DEBIAN_PLATFORM or job["platform"] != grant["platform"]

@@ -24,7 +24,7 @@ import unicodedata
 from contextlib import contextmanager
 from typing import Any, BinaryIO, Callable, Iterator, Mapping, Sequence
 
-from lib.cicd_deadline import command_timeout
+from lib.build_commands import command_timeout
 from lib.project_manifest import MANIFEST_FILENAME
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 

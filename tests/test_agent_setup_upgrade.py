@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import subprocess
@@ -23,6 +24,8 @@ class SetupUpgradeTests(unittest.TestCase):
         (self.source / "basaltwater.py").write_text("# new runtime\n")
         self.enterContext(patch.object(setup_common, "REMOTE_INSTALL_DIR", str(self.runtime)))
         self.enterContext(patch.object(setup_common, "PERSISTENT_STATE_DIR", str(self.root / "var/lib/basaltwater")))
+        self.enterContext(patch("web.webhook_build_steps.reject_legacy_build_services"))
+        self.enterContext(patch("web.github_runner_steps.reject_active_legacy_runner"))
 
     def journal(self, value):
         directory = self.root / "var/lib/basaltwater-migration"
@@ -52,6 +55,28 @@ class SetupUpgradeTests(unittest.TestCase):
                 self.assertEqual((secret.read_bytes(), secret.stat().st_ino), before)
                 secret.unlink()
                 legacy.rmdir()
+
+    def test_builder_runtime_activation_drains_before_replacing_modules(self):
+        (self.root / "var/lib/basaltwater-build-coordinator").mkdir(parents=True)
+        events = []
+
+        @contextmanager
+        def maintenance(**kwargs):
+            self.assertEqual(kwargs, {"release_drain": False})
+            events.append("drain")
+            yield
+            events.append("retained")
+
+        with patch("lib.build_coordinator.maintenance", side_effect=maintenance), \
+             patch.object(setup_common, "_activate_local_runtime", side_effect=lambda _: events.append("activate")), \
+             patch.object(setup_upgrade, "repair_syncthing_state_access", side_effect=lambda _: events.append("repair")):
+            setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        self.assertEqual(events, ["drain", "activate", "repair", "retained"])
+        with patch("lib.build_coordinator.maintenance", side_effect=RuntimeError("active build")), \
+             patch.object(setup_common, "_activate_local_runtime") as activate:
+            with self.assertRaisesRegex(RuntimeError, "active build"):
+                setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+        activate.assert_not_called()
 
     def test_completed_journal_remains_opaque_and_setup_proceeds(self):
         journal = self.journal({"status": "complete", "actions": ["historical data"]})

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import copy
 import json
 import os
@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from common.service_tools import build_host
+from lib import build_capacity
 from lib.build_manifest import DEBIAN_PLATFORM
 from lib.build_protocol import DEFAULT_LIMITS
 
@@ -235,6 +236,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
     def test_worker_once_uses_exact_roots_and_no_connection_lifetime(self):
         configured = config()
         with patch("lib.build_jobs.BuildJobStore") as store, \
+             patch("lib.build_coordinator.host_slot", side_effect=nullcontext), \
              patch("lib.build_worker.run_next") as run, \
              patch.object(build_host, "authorizer", return_value=Mock()) as authorization, \
              patch.object(build_host.time, "sleep") as sleep:
@@ -257,6 +259,16 @@ class BuildHostEntrypointTest(unittest.TestCase):
                 self.assertEqual(call.kwargs["env"]["HOME"], "/nonexistent")
                 self.assertEqual(call.kwargs["timeout"], 10)
                 self.assertNotIn("SSH_AUTH_SOCK", call.kwargs["env"])
+
+    def test_worker_leaves_jobs_queued_when_shared_capacity_is_busy(self):
+        from lib.build_coordinator import CoordinatorBusy
+
+        with patch("lib.build_jobs.BuildJobStore"), \
+             patch("lib.build_worker.run_next") as run, \
+             patch.object(build_host, "authorizer"), \
+             patch("lib.build_coordinator.host_slot", side_effect=CoordinatorBusy("busy")):
+            build_host.run_worker(config(), config_path="/private/config", once=True)
+        run.assert_not_called()
 
     def test_retention_modes_require_admin_root_and_isolation_before_trust_or_config_reads(self):
         inspect = ["--inspect-retention", "a" * 32]
@@ -291,7 +303,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
              patch.object(build_host, "_trusted_libraries"), \
              patch.object(build_host, "require_platform"), \
              patch.object(build_host, "load_config", return_value=configured), \
-             patch("lib.build_capacity.inspect_build_capacity", return_value={"schema": 1}) as inspect, \
+             patch.object(build_capacity, "inspect_build_capacity", return_value={"schema": 1}) as inspect, \
              patch.object(build_host, "retain_terminal", return_value={"revision": revision}) as retain, \
              patch.object(build_host, "serve") as serve, \
              patch.object(build_host, "run_worker") as worker, \
@@ -323,7 +335,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
              patch.object(build_host, "_trusted_libraries"), \
              patch.object(build_host, "require_platform"), \
              patch.object(build_host, "load_config", return_value=configured) as loader, \
-             patch("lib.build_capacity.inspect_build_capacity", return_value={"schema": 1}) as inspect, \
+             patch.object(build_capacity, "inspect_build_capacity", return_value={"schema": 1}) as inspect, \
              patch.object(build_host, "retain_terminal") as retention, \
              patch.object(build_host, "serve") as serve, \
              patch.object(build_host, "run_worker") as worker, \
@@ -379,7 +391,7 @@ class BuildHostEntrypointTest(unittest.TestCase):
                      patch.object(build_host, "_trusted_libraries"), \
                      patch.object(build_host, "require_platform"), \
                      patch.object(build_host, "load_config", side_effect=load), \
-                     patch("lib.build_capacity.inspect_build_capacity", side_effect=inspect), \
+                     patch.object(build_capacity, "inspect_build_capacity", side_effect=inspect), \
                      patch.object(build_host.sys, "stdout"), \
                      patch.object(build_host.sys, "stderr"), \
                      patch.dict(os.environ, {}, clear=True):

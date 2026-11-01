@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import fcntl
 from pathlib import Path
 import signal
 import subprocess
@@ -16,23 +17,35 @@ class QueueTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.lock = self.root / "queue.lock"
-        self.lock.touch(mode=0o600)
+        self.lock.touch(mode=0o660)
+        self.lock.chmod(0o660)
         repository = str(Path(__file__).resolve().parents[1])
         self.guardian = self.root / "guardian.py"
         self.guardian.write_text(
             "import os,sys,pathlib\n"
             f"sys.path.insert(0, {repository!r})\n"
-            "from lib.github_runner_queue import hold_job_slot\n"
+            "from lib import github_runner_queue as queue\n"
+            "queue._runner_cgroup_idle = lambda: True\n"
             f"pathlib.Path({str(self.root / 'guardian')!r}).write_text(str(os.getpid()))\n"
             "assert 'RUNNER_TRACKING_ID' not in os.environ\n"
-            "raise SystemExit(hold_job_slot(*map(int, sys.argv[2:])))\n"
+            "raise SystemExit(queue.hold_job_slot(*map(int, sys.argv[2:])))\n"
         )
         self.gate = self.root / "gate.py"
         self.gate.write_text(
-            "import sys\n"
+            "import os,stat,sys\n"
             f"sys.path.insert(0, {repository!r})\n"
-            "from lib.github_runner_queue import acquire_job_slot\n"
-            f"acquire_job_slot(int(sys.argv[1]), lock_path={str(self.lock)!r}, entry={str(self.guardian)!r})\n"
+            "from lib import github_runner_queue as queue\n"
+            f"queue.QUEUE_LOCK = {str(self.lock)!r}\n"
+            "def open_slot():\n"
+            "    fd = os.open(queue.QUEUE_LOCK, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)\n"
+            "    info = os.fstat(fd)\n"
+            "    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o660 or info.st_nlink != 1:\n"
+            "        os.close(fd)\n"
+            "        raise ValueError('Unsafe fixture lock')\n"
+            "    return fd\n"
+            "queue.open_slot = open_slot\n"
+            "queue.drained = lambda: False\n"
+            f"queue.acquire_job_slot(int(sys.argv[1]), lock_path=queue.QUEUE_LOCK, entry={str(self.guardian)!r})\n"
         )
         self.hook = self.root / "hook.sh"
         self.hook.write_text(f'#!/bin/bash\nset -e\n{sys.executable} -I {self.gate} "$PPID"\ntrue\n')
@@ -99,15 +112,26 @@ class QueueTests(unittest.TestCase):
         self.finish("second", second)
         self.assertFalse((self.root / "cancelled-start").exists())
 
-    def test_guardian_failure_kills_its_worker_before_unlocking(self) -> None:
+    def test_guardian_failure_kills_worker_and_requires_explicit_recovery(self) -> None:
         first = self.start("first")
         self.wait_for("first-start")
         os.kill(int((self.root / "guardian").read_text()), signal.SIGTERM)
         first.communicate(timeout=10)
         self.assertEqual(first.returncode, -signal.SIGKILL)
         second = self.start("second")
-        self.wait_for("second-start")
-        self.finish("second", second)
+        second.communicate(timeout=10)
+        self.assertNotEqual(second.returncode, 0)
+        self.assertFalse((self.root / "second-start").exists())
+        self.assertGreater(self.lock.stat().st_size, 0)
+        # Administrator recovery is permitted only after inspecting the worker
+        # and acquiring the released lease. No production state is involved.
+        self.assertIsNotNone(first.poll())
+        with self.lock.open("r+") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            stream.truncate(0)
+        recovered = self.start("recovered")
+        self.wait_for("recovered-start")
+        self.finish("recovered", recovered)
 
     def test_unsafe_or_missing_lock_prevents_workflow_steps(self) -> None:
         for kind in ("missing", "public", "symlink", "hardlink"):

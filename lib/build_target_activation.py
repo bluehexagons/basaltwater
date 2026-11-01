@@ -21,7 +21,7 @@ from lib.build_manifest import DEBIAN_PLATFORM, validate_manifest_request
 from lib.build_protocol import encode_document, parse_build_request, request_digest
 from lib.build_target_policy import authorize_target_deployment
 from lib.build_target_routing import load_target_routing, routing_for_config
-from lib.cicd_deploy_policy import validate_nginx_path
+from lib.nginx_validation import validate_nginx_path
 from lib.deployment import DeploymentOrchestrator
 from lib.nginx_config import create_nginx_sites_for_groups
 from lib.operation_state import OperationStateStore

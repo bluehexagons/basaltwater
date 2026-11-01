@@ -48,7 +48,7 @@ class DebianRefreshTests(unittest.TestCase):
         self.saved = stack.enter_context(patch.object(refresh, "_debian_setup", return_value=self.config))
         stack.enter_context(patch.object(refresh, "managed_repository_path", return_value=str(self.root)))
         stack.enter_context(patch.object(refresh, "get_channel_info", return_value={"channel": "dev"}))
-        stack.enter_context(patch.object(refresh, "maintenance_lock", side_effect=lambda: nullcontext(True)))
+        stack.enter_context(patch.object(refresh, "maintenance_lock", side_effect=lambda **kwargs: nullcontext(True)))
         self.upgrade = stack.enter_context(patch.object(refresh, "upgrade_channel", return_value={
             "commit": "abcdef0123456789", "channel": "dev", "updated": True,
         }))
@@ -218,7 +218,7 @@ class DebianRefreshTests(unittest.TestCase):
         self.run.assert_called_once()
 
     def test_busy_setup_blocks_source_mutation_and_target_runner(self):
-        with patch.object(refresh, "maintenance_lock", side_effect=lambda: nullcontext(False)):
+        with patch.object(refresh, "maintenance_lock", side_effect=lambda **kwargs: nullcontext(False)):
             self.assertEqual(self.invoke(), 1)
         self.upgrade.assert_not_called()
         self.run.assert_not_called()

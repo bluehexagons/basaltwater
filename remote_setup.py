@@ -537,6 +537,26 @@ def _run_main() -> int:
 
 
 def _run_configured_setup(config: SetupConfig, args: argparse.Namespace) -> int:
+    """Exclude all build producers before any setup package or service change."""
+    from lib.build_coordinator import LOCK, ensure_coordinator, maintenance
+
+    selected = (config.is_build_server or config.enable_github_runner
+                or config.system_type == "server_github_runner")
+    if not args.dry_run and (selected or os.path.lexists(LOCK)):
+        from common.service_tools.build_host import require_platform
+        from web.webhook_build_steps import reject_legacy_build_services
+        from web.github_runner_steps import reject_active_legacy_runner
+
+        require_platform()
+        reject_legacy_build_services()
+        reject_active_legacy_runner()
+        ensure_coordinator()
+        with maintenance():
+            return _run_configured_setup_locked(config, args)
+    return _run_configured_setup_locked(config, args)
+
+
+def _run_configured_setup_locked(config: SetupConfig, args: argparse.Namespace) -> int:
     """Apply the ordinary plan, optionally inside caller-held artifact exclusion."""
     enable_detected_build_runtimes(config)
 

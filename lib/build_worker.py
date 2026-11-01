@@ -182,9 +182,10 @@ def _read_committed_manifest(checkout_path: str, expected_digest: str) -> Manife
 def _check_request_policy(job: dict[str, Any], manifest: Manifest) -> None:
     if job["platform"] != DEBIAN_PLATFORM:
         raise _KnownFailure
-    if any(component["type"] not in {"static", "service"} for component in job["components"]):
+    if any(component["type"] not in {"static", "service", "task"} for component in job["components"]):
         raise _KnownFailure
-    if any(component.type not in {"static", "service"} for component in manifest.components):
+    if (not all(component["type"] == "task" for component in job["components"])
+            and any(component.type not in {"static", "service"} for component in manifest.components)):
         raise _KnownFailure
 
 

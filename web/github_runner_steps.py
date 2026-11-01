@@ -85,17 +85,20 @@ trap - EXIT HUP INT TERM
 
 def render_unit(paths: RunnerPaths | None = None) -> str:
     paths = paths or _paths()
-    queue = _paths().data + "/queue.lock"
+    from lib.build_coordinator import GROUP, LOCK
+
+    queue = LOCK
     APP, DATA, HOME, HOOK = paths.app, paths.data, paths.home, paths.hook
     return f'''# Managed by Basaltwater GitHub runner
 [Unit]
 Description=GitHub Actions runner
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target basaltwater-build-capacity.service
+After=network-online.target basaltwater-build-capacity.service
 
 [Service]
 User={ACCOUNT}
 Group={ACCOUNT}
+SupplementaryGroups={GROUP}
 WorkingDirectory={APP}
 Environment=HOME={HOME}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
@@ -149,19 +152,10 @@ def _account() -> pwd.struct_passwd:
     return account
 
 
-def _prepare_queue(account: pwd.struct_passwd) -> None:
-    # Never replace this inode: another repository may currently hold its lock.
-    with directory_fd(DATA) as directory:
-        descriptor = os.open("queue.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                             0o600, dir_fd=directory)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid not in {0, account.pw_uid}:
-            raise ValueError("Unsafe runner queue lock")
-        os.fchown(descriptor, account.pw_uid, account.pw_gid)
-        os.fchmod(descriptor, 0o600)
-    finally:
-        os.close(descriptor)
+def _prepare_queue() -> None:
+    from lib.build_coordinator import ensure_coordinator
+
+    ensure_coordinator()
 
 
 def _download_release(destination: Path) -> None:
@@ -447,7 +441,7 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
     # Only this telemetry subdirectory is readable by the panel account.
     _directory(DATA + "/telemetry", uid=account.pw_uid, gid=account.pw_gid)
     _directory(HOOK_DIR)
-    _prepare_queue(account)
+    _prepare_queue()
     if dependencies:
         run(["apt-get", "update"])
         run(["apt-get", "install", "-y", "--no-install-recommends", "ca-certificates", "libicu76",
@@ -491,7 +485,7 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
             print("  ✓ Runner installed: Pending registration (service disabled)")
 
 
-def setup_github_runner(config: SetupConfig) -> None:
+def _setup_github_runner(config: SetupConfig) -> None:
     check_runner_platform(config)
     policies = [validate_policy(dict(schema=1, repository=repository, organization=config.ci_organization,
                                   runner_group=config.ci_runner_group,
@@ -559,3 +553,48 @@ def setup_github_runner(config: SetupConfig) -> None:
                 run(["systemctl", "disable", "--now", paths.service], timeout=120)
                 previous = validate_policy(read_json_file(paths.policy, max_bytes=16 * 1024), allow_outdated=True)
                 write_json_atomic(paths.policy, previous | {"enabled": False}, mode=0o644)
+
+
+def reject_active_legacy_runner() -> None:
+    """An older runner does not hold the common lease; require it stopped first."""
+    from lib.build_coordinator import LOCK
+
+    for instance in ("", *installed_instances(HOOK_DIR)):
+        paths = _paths(instance)
+        unit = Path("/etc/systemd/system", paths.service)
+        if not unit.exists():
+            continue
+        if LOCK not in unit.read_text(encoding="utf-8"):
+            result = run(["systemctl", "is-active", "--quiet", paths.service], check=False)
+            if result.returncode not in {3, 4}:
+                raise RuntimeError("Stop all legacy GitHub runners after their jobs finish before upgrading; see docs/services/build-systems.md")
+
+
+def setup_github_runner(config: SetupConfig) -> None:
+    """Drain shared capacity before changing any runner installation."""
+    from lib.build_coordinator import ensure_coordinator, maintenance
+
+    if getattr(config, "disable_github_runner", False):
+        if is_dry_run():
+            print("  [DRY-RUN] Would drain and disable managed GitHub runners")
+            return
+        ensure_coordinator()
+        with maintenance(), runner_lock():
+            for instance in ("", *installed_instances(HOOK_DIR)):
+                paths = _paths(instance)
+                policy = _installed_policy(paths.policy)
+                if policy is not None:
+                    from lib.github_runner_gate import check_installation
+
+                    check_installation(require_registration=False, allow_outdated=True, instance=instance)
+                    run(["systemctl", "disable", "--now", paths.service], timeout=120)
+                    write_json_atomic(paths.policy, policy | {"enabled": False}, mode=0o644)
+        return
+    if is_dry_run():
+        _setup_github_runner(config)
+        return
+    check_runner_platform(config)
+    reject_active_legacy_runner()
+    ensure_coordinator()
+    with maintenance():
+        _setup_github_runner(config)

@@ -149,6 +149,35 @@ class BuildManifestTests(unittest.TestCase):
                     self.assertRaises(PermissionError):
                 project_build_tools.source_runtimes(source)
 
+    def test_ci_only_project_uses_pinned_commands_and_descriptor_only_bundle(self):
+        from lib.build_artifacts import create_artifact, unpack_artifact
+
+        manifest = parse_manifest({"version": 1, "build_runtimes": [], "components": [], "ci": {
+            "build": [{"argv": ["python3", "-c", "print('one argument')"],
+                       "directory": "scripts", "env": {"VALUE": "space $HOME"}}],
+            "test": [{"argv": ["true"]}],
+        }})
+        request = self.request(manifest)
+        self.assertEqual(request["components"][0]["type"], "task")
+        self.assertIn("'VALUE=space $HOME'", request["components"][0]["commands"][0])
+        self.assertEqual(validate_manifest_request(manifest, request), request)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (workspace / "private-output").write_text("not a declared export")
+            bundle = root / "artifact"
+            artifact = create_artifact(str(workspace), request, str(bundle))
+            self.assertEqual(artifact["descriptor"]["entries"], [])
+            descriptor = unpack_artifact(str(bundle), request, str(root / "verified"),
+                                         expected_sha256=artifact["sha256"])
+            self.assertEqual(descriptor, artifact["descriptor"])
+            self.assertEqual(list((root / "verified").iterdir()), [])
+        request["components"][0]["commands"][0] = "different"
+        with self.assertRaisesRegex(ValueError, "differ"):
+            validate_manifest_request(manifest, request)
+
 
 if __name__ == "__main__":
     unittest.main()

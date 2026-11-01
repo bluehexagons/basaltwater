@@ -1,203 +1,114 @@
 # Choose and operate a build system
 
-Basaltwater has several build paths. Choose the one that matches who starts
-the work and where the build should run.
-
-| Path | Starts work through | Build location and guide |
-| --- | --- | --- |
-| Ordinary deployment | `setup --deploy`, saved `patch` or `deploy` | The deployment target; [manifests and deployment](deployments.md) |
-| Selected builder | `setup --build-on SAVED-BUILDER --deploy …` | A managed builder selected by the controller; verified bundles go to the target over typed SSH |
-| Webhook CI/CD | Signed repository webhooks | The webhook executor; [CI/CD topology and connection](cicd.md) |
-| GitHub Actions runner | GitHub Actions workflows | A dedicated job host; [Debian runner](github-runner.md) or [Windows runner](../workstations/windows-github-runner.md) |
-
-The selected-builder path has its own enrollment, admission and artifact
-contracts. It does not use `cicd connect`, a webhook receiver or an Actions
-runner. Bare `--build-server` selects the webhook role; adding
-`--build-project DOMAIN[/PATH] HTTPS_URL` selects the managed on-demand builder.
-An explicit `--build-host-policy FILE` is also supported. Combining
-managed enrollment with `--cicd` is refused.
-
-A single host combining all three build/CI services is not available yet.
-The runner still has a dedicated profile and separate capacity control;
-[role composition and existing-runner conversion](../plans/cicd-manifest-reuse.md)
-are the next deliverable. `--build-on` selects a saved builder for another
-deployment; it does not enable build services on that builder.
+Managed SSH builds and signed GitHub push webhooks use one policy, input store,
+durable worker, scratch space, limits, logs and artifact pipeline. There is no
+second webhook executor. Optional GitHub Actions runners retain GitHub's vendor
+runner protocol and share durable host capacity with the managed worker.
 
 ## Start with a selected builder
 
-The bounded path supports ready static sites, shell, Node and Python static
-builds, and self-contained native services on Debian 13 x86-64 VMs or physical hosts. It
-requires HTTPS source with a committed root `basaltwater.json`. Private sources
-use the controller's configured noninteractive global Git credential helper;
-credentials remain on the controller.
-[Complete sample projects and enrollment templates](../examples/builds/README.md)
-include ready output, Node and Python static builds, and a ready SPA with a Go
-API in one application.
-Service arguments, literal environment, managed working directories, SQLite
-backups and public UDP listeners require matching administrator policy grants.
-Cloudflare and SSL use the existing target setup and serving helpers.
-Interpreter services remain outside this path; see
-[the exact restrictions](deployments.md#build-on-a-saved-builder).
+Use Debian 13 x86_64 VMs or hardware with native systemd. Bare `--build-server`
+enrolls the selected Ed25519 SSH public companion for principal `deploy` with
+wildcard projects (`*`) and installs Go, Node and Python automatically.
+No `--build-project` is required. Repositories sharing a builder must be
+mutually trusted. Optional `--build-project DOMAIN HTTPS_REPO` selects restrictive
+grant mode; explicit `--build-host-policy FILE` supports custom authority.
+On updates the current SSH public companion must match existing enrollment.
 
-Projects on one managed builder share a persistent unprivileged build identity
-and must be mutually trusted. Enrollment controls submission and activation
-authority; resource limits do not isolate mutually hostile repositories. See
-[execution boundaries](../agents/contributing/build-execution.md).
+The controller must reach both builder and target over SSH. Source and artifacts
+pass through the controller; no inbound builder-to-target connection is needed.
+A LAN builder can serve a LAN target or a cloud VPS. Keep the selected private
+key and verified workspace host pins on the controller.
 
-No enrollment files or preparatory directories are required. Declare builder
-projects with flags; initial `--build-on` setup generates target grants from
-the complete deployment manifests. Both use the same enrollment generator,
-validators and deployment planner as the optional [policy draft utility](build-policy-drafts.md).
-The decoded grants are saved with each setup, rather than regenerated on every
-deployment. Review the selected manifests, which define the authorized routes
-and supported service runtime settings.
-
-Use existing controller-local Ed25519 identities and public companions. For
-fresh Proxmox VMs, provisioning installs root setup access and records host
-pins; see the [two-command homelab example](../examples/builds/homelab-build-test.md).
-For existing hosts, establish root access and verified workspace host pins
-first. Typed enrollment installs only a forced-command transport key. The
-selected identity must separately authorize root setup. Keep private keys on
-the controller; see [identity and trust requirements](../agents/contributing/build-selection.md).
-
-For the SPA/Go example, enroll and save a builder named `builds`:
+These fictional examples provision fresh VMs through registered node
+`lab-node`, with VM image pool `image-pool` and disk pool `vm-pool`.
+Substitute your pools, addresses and published sample repository; the repository
+must contain a committed root `basaltwater.json`.
 
 ```bash
-basaltw setup server_lite build.example.com root --machine vm --name builds \
-  --key /home/controller/.ssh/build_ed25519 \
-  --build-server --go \
-  --build-project app.example.com 'https://github.com/OWNER/spa-api.git#tag=v1'
+basaltw setup server_lite 192.0.2.20 operator \
+  --machine vm --provision-on lab-node --name build-local \
+  --image-storage image-pool --storage root vm-pool 80G \
+  --memory 4G --cores 4 --key "$HOME/.ssh/id_ed25519" --build-server
+
+basaltw setup server_web 192.0.2.30 operator \
+  --machine vm --provision-on lab-node --name web-local \
+  --image-storage image-pool --storage root vm-pool 20G \
+  --memory 1G --cores 2 --key "$HOME/.ssh/id_ed25519" \
+  --ssh-access-source 192.0.2.10/32 --build-on build-local \
+  --deploy site.example.com https://github.com/example/site.git
 ```
 
-Add `--node` on the builder for npm frontend builds. Explicit Node setup
-prepares the supported policy baselines and current LTS through the shared
-Node installer; jobs select an already installed version and cannot install
-new toolchains. Use `--machine hardware` for physical hosts. Go is a builder tool; the
-selected-builder target command refuses Go, Node and Godot installation flags.
-Ready static output needs no compiler; Python static builds use the builder's
-OS Python 3 and need no target `--python` flag. That flag remains available as
-a profile option for installing target Python tooling and uv. Inspect the
-builder's observed capabilities before assuming a runtime is ready.
-
-The controller opens SSH connections to both hosts and relays source and
-artifacts. The target does not connect to the builder. A LAN builder can serve
-a cloud VPS when the controller can reach both over SSH; no public builder
-listener or inbound cloud-to-LAN route is needed.
-
-Publish a sample as its own repository, with its manifest at the root, and
-replace the URL below. With the target's root access and existing host pin
-already provisioned, preflight without applying:
-
-```bash
-basaltw setup server_web web.example.com root --machine vm \
-  --key /home/controller/.ssh/web_ed25519 \
-  --ssh-access-source 192.0.2.5/32 \
-  --build-on builds \
-  --deploy app.example.com 'https://github.com/OWNER/spa-api.git#tag=v1' \
-  --dry-run
-```
-
-Review the result, then repeat without `--dry-run`. Use the same controller
-workspace for both commands. Dry runs clone pinned source and make read-only
-SSH probes; they do not enroll, reserve, submit, stage or activate. Apply
-bootstraps target authority, reserves every application before submitting
-builds, stages every artifact before activation, and finally applies the full
-profile against the exact installed release identities. A chosen builder's
-failure does not fall back to building on the target.
-
-Replace `192.0.2.5/32` with the controller source address observed by this target.
-Web targets require trusted SSH sources because managed delivery opens more
-connections than the default SSH rate limit permits. SSH-only sources leave
-HTTP/HTTPS public; repeat the flag for other administrators. A cloud VPS usually
-sees the controller's public egress or VPN address. Preflight checks this before
-enrollment; existing active firewall rules are reconciled before delivery.
+Initial `--build-on SAVED_BUILDER --deploy DOMAIN HTTPS_REPO` generates exact
+target authority from the complete manifests and builds through the SSH core.
+It reserves applications, builds, stages verified bundles and activates under
+release guards. A builder failure does not fall back to a target build.
+Existing hosts require administrative SSH access and verified pins first.
+See [deployment restrictions](deployments.md#build-on-a-saved-builder) and
+[sample manifests](../examples/builds/README.md).
 
 ## Update and reconcile
 
-After publishing a new committed tag, apply the revision update:
+Use `basaltw patch web-local --deploy site.example.com HTTPS_REPO` to update
+saved source, then `basaltw deploy web-local --yes` for later saved deployments.
+Retain exact request IDs, guards and receipts after an uncertain result.
+See [policy updates and recovery](build-operations.md).
 
-```bash
-basaltw patch web.example.com --deploy app.example.com 'https://github.com/OWNER/spa-api.git#tag=v2'
-```
+## Optional intake
 
-The patch applies the revision update and saves it. To redeploy that saved
-selection later, use `basaltw deploy web.example.com --yes`. Selected
-builder patches replace the source for each named destination, retain omitted
-siblings and preserve the builder. `--no-build-on` explicitly clears that
-selection and artifact mode; it is not recovery for a failed delivery.
+Add `--github-runner` to `server_lite` or `server_web` for Actions jobs.
+The dedicated `server_github_runner` remains a runner-only convenience profile
+using the same installer. See [registration](github-runner.md).
+Add [signed webhook builds](webhook-builds.md) for workflow-free build/test artifacts.
+Webhooks do not deploy targets, publish releases or create status checks.
 
-On an enrolled artifact-mode target, local `basaltw refresh` reconciles retained
-release descriptors and bundles without a builder connection, source checkout
-or compiler. Missing retained inputs refuse with controller guidance. See
-[deployment and recovery details](deployments.md#build-on-a-saved-builder).
+## Shared capacity and maintenance
 
-For a new site or changed grants, follow [policy updates](build-operations.md#add-a-site-or-change-its-grants).
-Builder project patches add or update grants; `--build-target-auto` explicitly
-updates target grants from the complete merged deployment set. Custom policy
-files remain available for other keys, identities or roots. The operations guide also provides a
-[capacity lookup](build-operations.md#choose-maintenance-by-the-exhausted-resource),
-[completed controller archival](build-operations.md#archive-completed-controller-attempts)
-and [refusal diagnostics](build-operations.md#diagnose-a-refusal).
+The fixed lock is `/var/lib/basaltwater-build-coordinator/slot.lock`,
+mode `0660`, owned by `root:basaltwater-builds`. The coordinator's `drain`
+marker blocks new work. Runtime activation acquires and retains the drain before
+code replacement through the entire full setup, including package operations.
+Scheduled APT updates and restart checks defer while build capacity is busy.
+Scheduled reboot grace periods retain a drain. Shared boot recovery removes
+only a valid previous-boot reboot drain when the capacity lease is empty.
+To cancel a scheduled reboot explicitly, run
+`sudo /usr/bin/python3 /opt/basaltwater/common/service_tools/auto_restart_if_needed.py --cancel`.
+Cancellation confirms `shutdown -c` before releasing that reboot drain;
+uncertain build leases and other maintenance drains remain for inspection.
+An Actions job waits at most 60 seconds for capacity, then is refused;
+the webhook queue and worker retry until capacity is free.
+Normal runner-guard exit clears its lease only when no cgroup orphans remain.
+Crashes, guardian failures and remaining cgroup orphans retain the lease.
+Root must inspect processes, cgroups and retained lease evidence before clearing it;
+never blindly delete the lease or lock.
 
 ## Inspect capacity and retain evidence
 
-On the builder, use its installed entrypoint from a root administration shell,
-including a normal SSH session with root or sudo access. Maintenance is refused
-when `SSH_ORIGINAL_COMMAND` is present, including restricted forced-command
-sessions; these actions are not in the authenticated build protocol.
-
+Use a separate root administration shell on the builder:
 ```bash
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py --inspect-capacity
 sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py --inspect-retention REQUEST_ID
 ```
+Settlement, pruning and bundle release require separate explicit decisions and
+current revisions. See [retention](../agents/contributing/build-retention.md)
+and [capacity operations](build-operations.md#choose-maintenance-by-the-exhausted-resource).
 
-For example, from the controller with an administrative key:
+## Migrate retired installations
 
-```bash
-ssh deploy@build.example.com \
-  'sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py --inspect-capacity'
-```
+The `cicd` command, `--cicd`, `--app-server` and `--deploy-target` are retired,
+as are the old executor, `webhook_manager` and `deploy_admin` flows.
+Setup refuses `/etc/basaltwater/cicd` or old sudoers/unit evidence.
 
-Capacity inspection reports logical byte charges, record/history limits and
-physical available bytes separately. It makes no readiness decision or space
-reservation. Retention inspection can reconcile input durability; it is not
-the strictly read-only capacity command. Use the returned exact revision for
-one explicit action:
+1. Stop webhook intake and Actions assignment; finish or explicitly stop jobs.
+2. Preserve configuration, credentials, logs and recovery evidence privately
+   outside Git. Disable `webhook-receiver.service`, `cicd-executor.service`
+   and `cicd-executor.path`.
+3. Revoke old rsync sudo and SSH deployment grants, including the legacy
+   `/etc/sudoers.d/deploy-nginx` authority for
+   `/usr/local/sbin/basaltwater-deploy-admin`. Inspect any local rsync grants
+   separately; do not assume this is the only installed rule.
+4. Archive old configuration outside its active path, then run new setup.
+   Migration does not automatically delete user data.
 
-```bash
-sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
-  --settle-terminal REQUEST_ID --expected-revision INSPECTED_REVISION
-```
-
-Only when source/log deletion is intended, inspect again and explicitly prune:
-
-```bash
-sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
-  --prune-terminal REQUEST_ID --expected-revision INSPECTED_REVISION
-```
-
-Bundle release is another separate decision. Inspect its current revision first:
-
-```bash
-sudo /usr/bin/python3 -I /opt/basaltwater/common/service_tools/build_host.py \
-  --release-bundle REQUEST_ID --expected-revision INSPECTED_REVISION
-```
-
-Settlement recharges verified terminal work for retained bytes. Pruning requires
-settlement and explicitly deletes source/log payloads by default. Bundle release
-requires settlement and an exact successful job; it ends builder retrieval for
-that bundle. Downloading or delivering a bundle never releases it automatically.
-Each action is a separate operator decision; do not execute this list as an
-unconditional cleanup script. They preserve job results, replay identities and
-input/history slots. Finite slots and ledger limits can still refuse new work
-after bytes are reclaimed. See [capacity inspection](../agents/contributing/build-host-entrypoint.md#read-only-local-capacity-inspection)
-and [settlement, pruning and bundle release](../agents/contributing/build-retention.md)
-for refusal conditions, revision retries and interruption evidence.
-
-Controller and target recovery evidence is separate from builder retention.
-Preserve unfinished guards, exact IDs, pinned inputs and receipts after a lost
-reply or failure. The [offline setup inspector](../agents/contributing/build-setup.md#offline-unfinished-setup-inspection)
-reports local acknowledgements and unresolved outcomes without contacting a
-host; it does not resume or reset work. Current qualification and remaining
-crash, power-loss and retention-policy limits are listed in the
-[coverage map](../plans/testing-coverage.md).
+Existing Actions runner units use a different old lock. Let jobs finish and
+stop those units before upgrading; credentials are retained by the upgrade.

@@ -236,14 +236,19 @@ def run_worker(config: dict, *, config_path: str, once: bool = False) -> None:
     """Keep accepted work independent of any controller's SSH connection."""
     from lib.build_jobs import BuildJobStore
     from lib.build_worker import run_next
+    from lib.build_coordinator import CoordinatorBusy, host_slot
 
     store = BuildJobStore(os.path.join(config["roots"]["state"], "jobs.json"))
     authorize = authorizer(config, config_path=config_path)
     while True:
-        run_next(store, uid=config["uid"], gid=config["gid"],
-                 inputs_root=config["roots"]["inputs"], scratch_root=config["roots"]["scratch"],
-                 artifacts_root=config["roots"]["artifacts"], logs_root=config["roots"]["logs"],
-                 authorize=authorize)
+        try:
+            with host_slot():
+                run_next(store, uid=config["uid"], gid=config["gid"],
+                         inputs_root=config["roots"]["inputs"], scratch_root=config["roots"]["scratch"],
+                         artifacts_root=config["roots"]["artifacts"], logs_root=config["roots"]["logs"],
+                         authorize=authorize)
+        except CoordinatorBusy:
+            pass
         if once:
             return
         time.sleep(2)

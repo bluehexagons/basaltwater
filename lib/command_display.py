@@ -7,6 +7,8 @@ import shlex
 from typing import Any
 from urllib.parse import urlsplit
 
+_SECRET_OPTIONS = {"--webhook-secret", "--webhook-github-token", "--ci-registration-token"}
+
 
 def _git_url_needs_redaction(value: str) -> bool:
     try:
@@ -34,6 +36,10 @@ def redacted_git_url(value: str) -> str:
 def redacted_saved_args(args: dict[str, Any]) -> dict[str, Any]:
     """Make a display-only copy of saved setup arguments."""
     visible = deepcopy(args)
+    for option in _SECRET_OPTIONS:
+        field = option[2:].replace("-", "_")
+        if field in visible and visible[field] is not None:
+            visible[field] = "REDACTED"
     for field in ("deploy_specs", "git_credentials", "git_ca_certificates"):
         records = visible.get(field)
         if not isinstance(records, list):
@@ -59,11 +65,21 @@ def redacted_saved_args(args: dict[str, Any]) -> dict[str, Any]:
 def redacted_setup_parts(parts: list[str]) -> list[str]:
     """Hide token-bearing notification and Git URLs in displayed commands."""
     visible: list[str] = []
+    redact_next = False
     for part in parts:
+        if redact_next:
+            visible.append("REDACTED")
+            redact_next = False
+            continue
         try:
             tokens = shlex.split(part)
         except ValueError:
             tokens = []
+        option = part.split("=", 1)[0].split(" ", 1)[0]
+        if option in _SECRET_OPTIONS:
+            visible.append(option + ("=REDACTED" if "=" in part else " REDACTED") if part != option else option)
+            redact_next = part == option
+            continue
         if part.startswith("--notify "):
             if len(tokens) == 3 and tokens[1] == "mailbox":
                 visible.append(part)

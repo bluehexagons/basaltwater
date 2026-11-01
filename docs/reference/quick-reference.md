@@ -110,7 +110,7 @@ can limit the evidence. Invalid command-line selectors exit `2` before collectio
 | Observe or take control of a Debian VM desktop in the browser | [Guacamole browser desktop](../workstations/guacamole.md) |
 | Publish an internal site or preview | [Internal HTTPS sites and previews](../services/internal-web.md) |
 | Deploy an application or manifest | [Deployments and manifests](../services/deployments.md) |
-| Configure CI/CD | [CI/CD webhook system](../services/cicd.md) |
+| Configure signed builds | [Signed webhook builds](../services/webhook-builds.md) |
 | Configure shares, sync, parity, or backups | [Storage and data guides](../storage/README.md) |
 | Provision or operate a coding VM | [Agent systems](../agents/README.md) |
 | Set up Codex and T3 Code desktop on CachyOS | [CachyOS desktop example](../workstations/cachyos.md#install-with-t3-code-desktop) |

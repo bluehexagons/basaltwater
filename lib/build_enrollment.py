@@ -22,6 +22,19 @@ DEFAULT_POLICY_LIMITS = {
 }
 
 
+def generate_general_builder_enrollment(
+    public_key: str, *, principal: str = "deploy", limits: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Authorize an authenticated controller to build projects without target authority."""
+    return parse_build_host_enrollment({
+        "schema": 1, "keys": {principal: public_key},
+        "policy": {"schema": 1, "principals": {principal: {"projects": {"*": {
+            "platform": dict(DEBIAN_PLATFORM), "runtimes": ["go", "node", "python"],
+            "limits": dict(DEFAULT_POLICY_LIMITS if limits is None else limits),
+        }}}}}, "max_bytes": 64 * 1024**3, "max_records": 128,
+    })
+
+
 def application_slug(destination: str) -> str:
     """Return an order-independent readable slug, disambiguating lossy spelling."""
     domain = _destination(destination).lower().removesuffix(".")

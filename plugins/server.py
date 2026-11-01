@@ -142,9 +142,8 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from plugins.desktop import extend_desktop_steps, extend_desktop_browser_and_office_steps
     from plugins.sync import extend_syncthing_steps
     from plugins.web import (
-        extend_app_server_steps,
+        extend_build_target_steps,
         extend_build_server_steps,
-        extend_cicd_steps,
         get_web_server_steps,
     )
 
@@ -191,8 +190,7 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     extend_runtime_steps(config, steps)
     extend_package_steps(config, steps)
     extend_agent_steps(config, steps)
-    extend_cicd_steps(config, steps)
-    extend_app_server_steps(config, steps)
+    extend_build_target_steps(config, steps)
     extend_build_server_steps(config, steps)
     extend_antistatic_steps(config, steps)
     extend_gogs_steps(config, steps)

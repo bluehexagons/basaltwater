@@ -15,7 +15,7 @@ from uuid import UUID
 
 from lib.config import SetupConfig
 from lib.machine_state import can_restart_system
-from lib.maintenance_lock import maintenance_lock
+from lib.maintenance_lock import maintenance_lock, retain_reboot_drain
 from lib.proxmox_vm_restart import pending_vm_restart, request_vm_restart, request_vm_shutdown
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
@@ -221,6 +221,7 @@ def _restart_local_proxmox() -> int:
             if not report.reboot_safe:
                 raise RuntimeError("; ".join(report.reboot_blockers()) or "maintenance checks failed")
             print("Proxmox maintenance checks passed; requesting host reboot", flush=True)
+            retain_reboot_drain()
             result = run(
                 ["/usr/bin/systemctl", "reboot", "--no-wall"],
                 capture_output=True, text=True, check=False, timeout=30,

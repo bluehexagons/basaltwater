@@ -11,7 +11,6 @@ from common import common_steps
 from smb import samba_steps
 from web.cloudflare_steps import _allow_antistatic_direct_access_for_cloudflare
 from security.security_steps import configure_firewall
-from web.cicd_steps import create_cicd_directories, install_cicd_dependencies
 
 
 def _config() -> SetupConfig:
@@ -122,41 +121,6 @@ class TestRequiredSambaMutations(unittest.TestCase):
         with patch.object(samba_steps, "run", side_effect=run):
             with self.assertRaisesRegex(RuntimeError, "account enablement failed"):
                 samba_steps.create_samba_user("admin", "test-only-password")
-
-
-class TestRequiredCICDMutations(unittest.TestCase):
-    @patch("web.cicd_steps.run")
-    @patch("web.cicd_steps.is_package_installed", return_value=False)
-    def test_missing_dependency_after_install_stops_setup(
-        self, _installed, mock_run
-    ) -> None:
-        with self.assertRaisesRegex(RuntimeError, "not present after installation"):
-            install_cicd_dependencies(_config())
-
-        mock_run.assert_called_once_with(
-            ["apt-get", "install", "-y", "-qq", "git", "acl"],
-        )
-
-    @patch("web.cicd_steps.check_directory_path")
-    @patch("web.cicd_steps.directory_fd")
-    @patch("web.cicd_steps.run", return_value=SimpleNamespace(returncode=1))
-    def test_missing_service_user_stops_directory_setup(
-        self, _run, _directory_fd, _check_path
-    ) -> None:
-        with self.assertRaisesRegex(RuntimeError, "user 'webhook' does not exist"):
-            create_cicd_directories(_config())
-
-    @patch("web.cicd_steps.check_directory_path")
-    @patch("web.cicd_steps.directory_fd")
-    @patch("web.cicd_steps.pwd.getpwnam", return_value=SimpleNamespace(pw_uid=123))
-    @patch("web.cicd_steps.grp.getgrnam", return_value=SimpleNamespace(gr_gid=456))
-    @patch("web.cicd_steps.os.fchown", side_effect=RuntimeError("permission mutation failed"))
-    @patch("web.cicd_steps.run", return_value=SimpleNamespace(returncode=0))
-    def test_directory_permission_failure_reaches_caller(
-        self, _run, _fchown, _group, _user, _directory_fd, _check_path
-    ) -> None:
-        with self.assertRaisesRegex(RuntimeError, "permission mutation failed"):
-            create_cicd_directories(_config())
 
 
 class TestRequiredFirewallMutations(unittest.TestCase):

@@ -394,7 +394,7 @@ class BuildHostService:
         if not isinstance(status, dict) or not isinstance(status.get("project"), str):
             raise ValueError("Build store returned invalid public status")
         capabilities = capabilities_for_principal(self.load_policy(), principal=principal)
-        if status["project"] not in capabilities["projects"]:
+        if status["project"] not in capabilities["projects"] and "*" not in capabilities["projects"]:
             raise PermissionError("Current build project grant is unavailable")
 
     @staticmethod

@@ -42,9 +42,9 @@ def preflight_wsl(config: SetupConfig) -> None:
         raise ValueError("server_wsl setup runs inside the selected local distribution")
     if any((config.web_interfaces, config.t3code_desktop, config.enable_rdp,
             config.storage_mounts, config.swap_files, config.swap_devices,
-            config.is_app_server, config.enable_ssl, config.enable_cloudflare)):
+            config.enable_ssl, config.enable_cloudflare)):
         raise ValueError("server_wsl does not support desktop, web, VM storage, or Linux swap options")
-    if config.is_build_server or config.enable_cicd:
+    if config.is_build_server or config.enable_webhook_builds or config.enable_github_runner:
         raise ValueError("Use the Windows/WSL job runner; the Linux webhook profile is not qualified in WSL")
     if is_dry_run():
         return

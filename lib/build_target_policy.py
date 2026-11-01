@@ -23,7 +23,7 @@ from lib.build_protocol import (
     parse_build_request,
     validate_artifact_path,
 )
-from lib.cicd_deploy_policy import validate_nginx_path
+from lib.nginx_validation import validate_nginx_path
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 from lib.manifest_serving import parse_runtime, _exec_binary_path

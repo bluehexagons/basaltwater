@@ -12,32 +12,11 @@ mapping and its public key data are then serialized to the target with the
 internal `--build-host-enrollment-json JSON` argument. The local filename is
 never forwarded.
 
-The config layer checks that the JSON top level is an object and that a policy
-is only attached to a config with `is_build_server=True`, then calls
-`common.build_host_steps.parse_build_host_enrollment()` for strict policy and
-public-key validation. The installer must finish that validation before it
-makes any target changes. The config deliberately does not require every build
-server to have an enrollment policy, preserving legacy build-server
-configuration. With `--build-server --build-project …` or an explicit policy,
-server setup selects the managed on-demand worker instead of the legacy webhook executor.
-The installed source must be root-controlled at `/opt/basaltwater`; see the
-[installer contract](build-host-setup.md) for platform and resource requirements.
-Combining managed enrollment with `--cicd` is refused until its shared-capacity
-adapter is available.
-
-The decoded mapping is saved with the rest of `SetupConfig` and reconstructed
-for setup commands and controller-to-target arguments. Omitted policies remain
-`None` and are preserved by patch merging. Explicit `--no-build-server` records
-de-enrollment intent and clears the saved role and policy; explicit
-`--build-server` clears that intent when re-enabling the role.
-The selected setup step drains and removes only managed access and service
-configuration, retaining accounts, queued jobs, artifacts, and recovery evidence.
-It refuses removal while work is active. Omission of the policy and role never
-requests removal.
-
-The [pinned SSH client](build-client.md) can submit and inspect jobs on an
-enrolled host. [Saved builder selection](build-selection.md) and the public
-[`--build-on` controller flow](build-setup.md) compose enrollment, delivery and
-guarded profile setup. With no selected builder, ordinary deployments retain
-their build-on-target behavior. See the [operator walkthrough](../../services/build-systems.md)
-for complete examples.
+Bare `--build-server` generates wildcard project authority for principal
+`deploy` using the selected Ed25519 public companion. Updates require the
+current companion to match existing enrollment. Optional project flags select
+restrictive grants. Go, Node and Python are installed automatically.
+The decoded policy is saved with setup; omitted patch options preserve it.
+`--no-build-server` removes managed authority while retaining records and data.
+SSH and signed webhook intake use one managed worker and shared capacity with
+optional Actions runners. See [architecture and migration](../../services/build-systems.md).

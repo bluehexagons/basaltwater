@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 from common.common_steps import copy_ssh_keys_to_user
 from lib.config import SetupConfig
 from lib.setup_common import prepare_deployments
-from web.service_tools.cicd_executor import perform_remote_deployment
 
 
 def _config(**overrides: object) -> SetupConfig:
@@ -67,29 +66,6 @@ class TestDeploymentPreflight(unittest.TestCase):
                 prepare_deployments(config, target_dir)
 
             self.assertFalse(os.path.exists(os.path.join(target_dir, "legacy.commit")))
-
-    @patch("lib.remote_deploy.get_deploy_target", return_value={"base_dir": "/var/www"})
-    def test_cicd_remote_deploy_refuses_ruby_workspace(
-        self, _mock_target: MagicMock
-    ) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            with open(os.path.join(workspace, "Gemfile"), "w", encoding="utf-8") as handle:
-                handle.write("gem 'rails'\n")
-            log_file = os.path.join(workspace, "build.log")
-
-            result = perform_remote_deployment(
-                workspace,
-                "app.example.com",
-                "legacy.example.com",
-                "https://example.com/legacy.git",
-                "abc123",
-                log_file,
-                {},
-            )
-
-            self.assertFalse(result)
-            with open(log_file, encoding="utf-8") as handle:
-                self.assertIn("no longer supported by Basaltwater", handle.read())
 
 
 class TestSshKeyUpgrade(unittest.TestCase):

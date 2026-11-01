@@ -256,11 +256,11 @@ tunnel route and do not provide the Cloudflare edge certificate.
 
 ### Webhooks
 
-For a CI/CD webhook, use the dedicated
-[webhook tunnel route guide](../../web/config/webhook_cloudflare_setup.md). Its
-Nginx listener uses `127.0.0.1:8080`, separate from the generated site origin on
-port 80 and the receiver on port 8765. The [CI/CD guide](./cicd.md) covers GitHub
-configuration, signature validation, and the receiver service.
+For signed build webhooks, use `--webhook-builds --webhook-domain DOMAIN`
+with `--cloudflare`. The shared tunnel setup discovers the HTTP Nginx origin
+and activates the route; no ACME origin certificate is requested. First-time
+account authentication and public DNS configuration remain required.
+See [webhook configuration](webhook-builds.md).
 
 ### Direct UDP services
 

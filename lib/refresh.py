@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import hashlib
 import os
 from pathlib import Path
@@ -267,7 +268,9 @@ def _apply_refresh(
     config: SetupConfig, arguments: list[str], *, expected_revision: str,
 ) -> int:
     """Hold the setup lock across source activation and target reconciliation."""
-    with maintenance_lock() as acquired:
+    from lib.build_coordinator import LOCK, maintenance
+
+    with maintenance_lock(build_slot=False) as acquired:
         if not acquired:
             raise RuntimeError("Setup or maintenance is already running; refresh has made no changes")
         _assert_no_source_activation(repository)
@@ -276,7 +279,10 @@ def _apply_refresh(
         # Target setup already owns this marker's kernel lock across its
         # mutations. Hold that same ownership while changing source, including
         # slow staging, so setup cannot start after our marker check.
-        with OperationStateStore(setup_marker).ownership():
+        # Keep intake drained across the process handoff, but release the
+        # coordinator flock so the fresh runner can claim maintenance itself.
+        with (maintenance(release_drain=False) if os.path.lexists(LOCK) else nullcontext()), \
+                OperationStateStore(setup_marker).ownership():
             if saved_setup_revision() != expected_revision:
                 raise ValueError("Saved setup changed before refresh; rerun refresh to use the current configuration")
             _assert_setup_operation_ready(config)
