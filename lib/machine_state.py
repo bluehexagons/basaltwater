@@ -265,6 +265,11 @@ def can_modify_kernel() -> bool:
     return get_machine_type() in ("vm", "privileged", "hardware")
 
 
+def can_manage_auditd(machine_type: Optional[str] = None) -> bool:
+    """Match auditd setup policy: only machines with their own supported kernel."""
+    return _effective_machine_type(machine_type) in ("vm", "hardware")
+
+
 def _effective_machine_type(machine_type: Optional[str]) -> str:
     """Return an explicit setup type or the active/persisted runtime type."""
     return (

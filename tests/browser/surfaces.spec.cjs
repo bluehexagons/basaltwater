@@ -211,6 +211,26 @@ test('panel navigation, keyboard focus, layout, theme and disclosures', async ({
   await expect(page.getByText('Synthetic service', { exact: true })).toBeVisible();
 });
 
+test('certificate shortcuts open details, select browser scripts and focus output', async ({ page }) => {
+  await page.goto(urls.panel);
+  const disclosure = page.locator('.trust-disclosure');
+  await expect(disclosure).not.toHaveAttribute('open', '');
+  const output = page.getByRole('textbox', { name: 'Certificate installation script' });
+  await page.getByRole('button', { name: 'CachyOS · Chrome', exact: true }).click();
+  await expect(disclosure).toHaveAttribute('open', '');
+  await expect(output).toBeFocused();
+  await expect(output).toHaveValue(/certutil -A/);
+  await expect(output).toHaveValue(/^bash -c /);
+  await page.locator('[data-trust-method]').selectOption('file');
+  await page.getByRole('button', { name: 'CachyOS · Firefox', exact: true }).click();
+  await expect(output).toBeFocused();
+  await expect(output).toHaveValue(/Authorities > Import/);
+  await expect(output).toHaveValue(/cp .\/basaltwater-ca.crt/);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+});
+
 test('panel forged CSRF rejection and CA download', async ({ page, diagnostics }, info) => {
   await page.goto(urls.panel);
   const before = await (await page.request.get(urls.panel + '/__fixture__/state')).json();
@@ -933,6 +953,9 @@ test.describe('Shares & Data', () => {
     await page.locator('.admin-tools').getByRole('link', { name: 'Shares & Data', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('heading', { name: 'Shares & Data', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Data overview', exact: true })).toBeVisible();
+    await page.getByRole('navigation', { name: 'Shares and data views', exact: true })
+      .getByRole('link', { name: 'Samba shares', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'projects_write', exact: true })).toBeVisible();
     await expect(page.locator('.data-list').first()).toContainText('operator, maintainer');
     await expect(page.locator('.data-list').first()).toContainText('archive_read');
@@ -1342,6 +1365,55 @@ test.describe('Shares & Data', () => {
     await review.getByRole('link', { name: 'Cancel review', exact: true }).click();
     await expect(accounts.getByRole('button', { name: 'Review Samba login removal', exact: true })).toHaveCount(0);
     await expect(accounts).toContainText('first remove the user from every managed share');
+    await page.goto('about:blank');
+  });
+});
+
+test('responsive Access columns grow and descriptions align', async ({ page }) => {
+  await page.goto(urls.panel);
+  const row = page.locator('.access-list li').first();
+  await expect(row).toBeVisible();
+  await expect(row.locator('strong')).toHaveText('SMB share: long_name_write');
+  const widths = [];
+  for (const width of [1024, 2560]) {
+    await page.setViewportSize({ width, height: 900 });
+    widths.push(await row.locator('strong').evaluate(element => element.getBoundingClientRect().width));
+    const positions = await row.evaluate(element => [element.querySelector('code'), element.querySelector('span')].map(child => child.getBoundingClientRect().left));
+    expect(Math.abs(positions[0] - positions[1])).toBeLessThan(1);
+  }
+  expect(widths[1]).toBeGreaterThan(widths[0]);
+  expect(widths[1]).toBeGreaterThan(300);
+  for (const colorScheme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme });
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  }
+  await page.goto('about:blank');
+});
+test.describe('integration layout and data overview', () => {
+  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('Shares and Data overview templates navigate to paused forms and empty tabs hide', async ({ page, developmentServer: dev }) => {
+    await page.goto(dev.url + '/shares-data');
+    const tabs = page.getByRole('navigation', { name: 'Shares and data views', exact: true });
+    await expect(tabs.getByRole('link', { name: 'Overview', exact: true })).toHaveAttribute('aria-current', 'page');
+    const templates = page.locator('.data-templates article');
+    await expect(templates).toHaveCount(4);
+    for (let index = 0; index < 4; index++) {
+      await templates.nth(index).getByRole('link', { name: 'Use template', exact: false }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByLabel('Schedule', { exact: true })).toHaveValue('1');
+      await expect(page.getByRole('button', { name: 'Review routine change', exact: true })).toBeVisible();
+      await page.getByRole('link', { name: 'Cancel edit', exact: true }).click();
+      await tabs.getByRole('link', { name: 'Overview', exact: true }).click();
+    }
+    const toolbar = page.locator('#panel-development');
+    await toolbar.getByLabel('Scenario').selectOption('empty');
+    await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
+    await page.goto(dev.url + '/shares-data');
+    await expect(tabs.getByRole('link', { name: 'Backups & sync', exact: true })).toHaveCount(0);
+    await expect(tabs.getByRole('link', { name: 'Scrubs & findings', exact: true })).toHaveCount(0);
+    await expect(templates).toHaveCount(4);
     await page.goto('about:blank');
   });
 });

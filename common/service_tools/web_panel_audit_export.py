@@ -23,6 +23,7 @@ if SOURCE_ROOT not in sys.path:
 
 from common.web_panel_events import WEB_PANEL_AUDIT_SNAPSHOT
 from lib.atomic_io import _fsync_directory, write_json_atomic
+from lib.machine_state import can_manage_auditd
 from lib.security_activity import managed_setup_audit_windows
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
@@ -231,6 +232,9 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         "events": [],
         "suppressed_setup_events": 0,
     }
+    if not can_manage_auditd():
+        snapshot["status"] = "not_applicable"
+        return snapshot
     ausearch = _audit_tool("ausearch")
     if not ausearch:
         snapshot["status"] = "unavailable"

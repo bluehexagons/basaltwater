@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from lib.atomic_io import write_text_atomic
+from lib.machine_state import can_manage_auditd
 from lib.types import JSON, JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -229,6 +230,11 @@ def load_audit_snapshot(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Load the root-exported audit snapshot, failing closed on malformed data."""
+
+    # Determine applicability locally rather than trusting an old snapshot.
+    # Inapplicable hosts need no audit freshness; storage still uses the timer.
+    if not can_manage_auditd("auto"):
+        return {"status": "not_applicable", "issues": [], "events": []}
 
     def unavailable(
         issue: str = "No valid audit snapshot is available.",

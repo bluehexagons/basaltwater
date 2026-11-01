@@ -35,14 +35,13 @@ from common.web_panel_steps import (
 )
 from common.service_tools.web_panel_audit_export import _audit_tool, collect_audit_snapshot
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_ca_install import _linux_trust_script, _macos_trust_script
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import (
     WebPanelState,
     WebPanelHandler,
     _ThreadingTCPHTTPServer,
     _internal_web_landing_service,
-    _linux_trust_script,
-    _macos_trust_script,
     _homebox_probe_port,
     _probe_homebox,
     _safe_url,
@@ -1207,6 +1206,8 @@ class WebPanelRenderingTest(unittest.TestCase):
 
 class WebPanelEventTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch('common.service_tools.web_panel_audit_export.can_manage_auditd', return_value=True))
+        self.enterContext(patch('common.web_panel_events.can_manage_auditd', return_value=True))
         self.enterContext(patch.object(WebPanelState, "features", return_value=PanelFeatures()))
         self.enterContext(patch("common.service_tools.web_panel_service.collect_filesystems", return_value=[]))
         self.enterContext(patch("common.service_tools.web_panel_service.collect_pressure", return_value=[]))

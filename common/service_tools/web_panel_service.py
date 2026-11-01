@@ -10,7 +10,6 @@ import ipaddress
 import json
 import os
 import secrets
-import shlex
 import shutil
 import socketserver
 import subprocess
@@ -52,8 +51,8 @@ from common.service_tools import web_panel_routine_actions as routine_actions
 from lib.storage_diagnostics import StorageDiagnostics
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
-from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
-from lib.config import WEB_PANEL_CA_HTTP_PORT
+from common.service_tools.web_panel_ca_ui import PRESET_BUTTONS, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
+from common.service_tools.web_panel_ca_install import _certificate_scripts
 from lib.github_runner_registration import (
     ENDPOINT as RUNNER_REGISTRATION_ENDPOINT, MAX_REQUEST_BYTES as RUNNER_REQUEST_LIMIT,
     registration_error_message, submit_registration,
@@ -1378,7 +1377,7 @@ meter::-moz-meter-bar { background: var(--accent); }
 }
 .access-list li {
   display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 4px 18px;
   padding: 14px 17px;
   border-bottom: 1px solid var(--line);
@@ -1542,127 +1541,6 @@ def _system_type_label(value: str) -> str:
     return " ".join("VM" if word.lower() == "vm" else word.capitalize() for word in words)
 
 
-def _linux_trust_script(
-    fingerprint: str,
-    download_url: str,
-    install_commands: str,
-    *,
-    local_file: bool = False,
-    macos: bool = False,
-) -> str:
-    protocol = "https" if urllib.parse.urlsplit(download_url).scheme == "https" else "http"
-    download = '''  cp ./basaltwater-ca.crt "$temporary"''' if local_file else f'''  if command -v curl >/dev/null 2>&1; then
-    curl --fail --location --max-redirs 0 --proto '={protocol}' --show-error \\
-      --connect-timeout 10 --max-time 60 --max-filesize 1048576 --output "$temporary" "$download_url"
-  elif command -v wget >/dev/null 2>&1; then
-    wget {'--https-only ' if protocol == 'https' else ''}--max-redirect=0 --timeout=60 --tries=1 --output-document="$temporary" "$download_url"
-  else
-    echo 'Install curl or wget, then run this script again.'
-    exit 1
-  fi'''
-    checksum = "shasum -a 256" if macos else "sha256sum"
-    return f"""(
-  set -eu
-  # Confirm this expected file hash independently over SSH or the host console.
-  download_url={shlex.quote(download_url)}
-  expected_sha256='{fingerprint}'
-  temporary=$(mktemp)
-  trap 'rm -f "$temporary"' EXIT
-{download}
-  actual_sha256=$({checksum} "$temporary")
-  actual_sha256=${{actual_sha256%% *}}
-  if [ "$actual_sha256" != "$expected_sha256" ]; then
-    echo 'SHA-256 mismatch; certificate was not installed.'
-    exit 1
-  fi
-  certificate="$temporary"
-{install_commands}
-  echo 'Certificate verified and installed. Fully restart your browser.'
-)"""
-
-
-def _macos_trust_script(fingerprint: str, download_url: str, *, local_file: bool = False) -> str:
-    return _linux_trust_script(
-        fingerprint, download_url,
-        '  sudo security add-trusted-cert -d -r trustRoot \\\n    -k /Library/Keychains/System.keychain "$certificate"',
-        local_file=local_file, macos=True,
-    )
-
-
-def _windows_trust_script(fingerprint: str, download_url: str, *, local_file: bool = False) -> str:
-    powershell_url = download_url.replace("'", "''")
-    download = ('  Copy-Item -LiteralPath .\\basaltwater-ca.crt -Destination $Temporary -ErrorAction Stop'
-                if local_file else '  Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 60 -ErrorAction Stop')
-    return f'''& {{
-$DownloadUrl = '{powershell_url}'
-# Confirm this expected file hash independently over SSH or the host console.
-$ExpectedSha256 = "{fingerprint}"
-$Temporary = [System.IO.Path]::GetTempFileName()
-try {{
-{download}
-  $ActualSha256 = (Get-FileHash -LiteralPath $Temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
-  if ($ActualSha256 -ne $ExpectedSha256) {{ throw "SHA-256 mismatch; certificate was not installed." }}
-  & certutil.exe -user -addstore -f Root $Temporary
-  if ($LASTEXITCODE -ne 0) {{ throw "certutil failed with exit code $LASTEXITCODE" }}
-  Write-Host "Certificate verified and installed. Fully restart your browser."
-}} finally {{
-  Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
-}}
-}}'''
-
-
-def _certificate_scripts(fingerprint: str, download_url: str) -> str:
-    """Render reviewed scripts as inert templates, with a usable no-JS fallback."""
-    parsed = urllib.parse.urlsplit(download_url)
-    host = f"[{parsed.hostname}]" if ":" in str(parsed.hostname) else parsed.hostname
-    http_url = f"http://{host}:{WEB_PANEL_CA_HTTP_PORT}/basaltwater-ca.crt"
-    platforms = (
-        ("debian", "Debian / Ubuntu", '  sudo install -Dm0644 "$certificate" /usr/local/share/ca-certificates/basaltwater-ca.crt\n  sudo update-ca-certificates'),
-        ("arch", "Arch Linux / CachyOS", '  sudo install -Dm0644 "$certificate" /etc/ca-certificates/trust-source/anchors/basaltwater-ca.crt\n  sudo update-ca-trust extract'),
-        ("fedora", "Fedora / RHEL", '  sudo install -Dm0644 "$certificate" /etc/pki/ca-trust/source/anchors/basaltwater-ca.crt\n  sudo update-ca-trust extract'),
-        ("macos", "macOS", ""), ("windows", "Windows PowerShell", ""),
-    )
-    templates: list[str] = []
-    fallback: list[str] = []
-    for key, label, commands in platforms:
-        for method in ("http", "https", "file"):
-            url = http_url if method == "http" else download_url
-            local_file = method == "file"
-            script = (
-                _windows_trust_script(fingerprint, url, local_file=local_file) if key == "windows" else
-                _macos_trust_script(fingerprint, url, local_file=local_file) if key == "macos" else
-                _linux_trust_script(fingerprint, url, commands, local_file=local_file)
-            )
-            variants = {"powershell": script} if key == "windows" else {
-                "posix": script,
-                # Explicitly invoke Bash so fish never interprets POSIX syntax.
-                "fish": "bash -c " + shlex.quote(script),
-            }
-            for shell, variant in variants.items():
-                templates.append(f'<template data-platform="{key}" data-method="{method}" data-shell="{shell}">{html.escape(variant)}</template>')
-            if method == "http":
-                portable = script if key == "windows" else variants["fish"]
-                fallback.append(f'<div class="platform-script"><h3>{label}</h3><pre><code>{html.escape(portable)}</code></pre></div>')
-    return f'''<div data-trust-installer>
-<div class="trust-picker" data-trust-controls hidden>
-<label>Operating system<select data-trust-platform>
-{''.join(f'<option value="{key}">{label}</option>' for key, label, _ in platforms)}
-</select></label>
-<label>Shell<select data-trust-shell><option value="posix">Bash / zsh</option><option value="fish">fish (CachyOS default)</option></select>
-<small>fish examples run the installer in Bash.</small></label>
-<label>Certificate source<select data-trust-method>
-<option value="http">First enrollment · HTTP + SHA-256</option>
-<option value="https">Already trusted · HTTPS</option><option value="file">Local certificate file</option>
-</select></label></div>
-<div data-trust-selected hidden><div class="trust-script-head"><h3 data-trust-title></h3>
-<button type="button" data-trust-copy>Copy script</button></div>
-<p class="trust-intro" data-trust-method-note></p>
-<textarea class="trust-script-output" aria-label="Certificate installation script" data-trust-output readonly spellcheck="false"></textarea>
-<p class="trust-copy-status" role="status" data-trust-status></p></div>
-<div data-trust-fallback><p>First enrollment scripts for your local computer. Linux and macOS examples work in Bash, zsh, and fish by invoking Bash explicitly.</p>{''.join(fallback)}</div>
-{''.join(templates)}</div><script>{CA_SCRIPT}</script>'''
-
-
 def _render_certificate_trust(
     trust: dict[str, str | bool],
 ) -> str:
@@ -1701,7 +1579,9 @@ basaltwater-web ca --json</code></pre>
     fingerprint = str(trust["sha256"])
     scripts = _certificate_scripts(fingerprint, download_url)
     escaped_fingerprint = html.escape(fingerprint)
-    return f'''<section aria-label="Certificate trust">
+    return f'''<section aria-labelledby="trust-heading">
+<div class="section-heading"><div>
+{render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div>{PRESET_BUTTONS}</div>
 <details class="trust-disclosure"><summary><span><span class="trust-summary-label">Certificate trust</span>
 <span class="trust-summary-note">One-time setup for browsers and other devices</span></span></summary>
 <div class="trust-panel"><strong>Trust this machine on your device</strong>
@@ -1818,7 +1698,9 @@ def _render_audit_section(state: WebPanelState) -> str:
             f"Omitted {suppressed_setup_events:,} routine audit {event_label} "
             "recorded during a managed Basaltwater setup.</p>"
         )
-    if events:
+    if status == "not_applicable":
+        content = '<p class="empty">Kernel audit collection is not applicable to this machine type. Basaltwater configures auditd only on VMs and hardware.</p>'
+    elif events:
         rows = []
         for event in events:
             values: list[str] = []
@@ -1862,7 +1744,9 @@ def _render_audit_section(state: WebPanelState) -> str:
         )
     else:
         content = '<p class="empty">No matching audit events were recorded in the last 24 hours.</p>'
-    if status == "unavailable":
+    if status == "not_applicable":
+        status_label = "Not applicable"
+    elif status == "unavailable":
         status_label = "Collection unavailable"
     elif status == "degraded":
         status_label = "Collection incomplete"

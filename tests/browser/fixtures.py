@@ -190,7 +190,11 @@ class FixtureEnvironment:
         home.mkdir()
         state = panel.WebPanelState({"host": "fixture-host", "username": self.username, "system_type": "server_dev",
                                      "title": "Browser fixture", "features": {"t3_update": True, "notification_ingest": False},
-                                     "services": [], "access": []}, agent_home=str(home))
+                                     "services": [], "access": [{
+                                         "label": "SMB share: long_name_write",
+                                         "value": "smb://fixture-host/long_name_write",
+                                         "description": "Synthetic managed share access",
+                                     }]}, agent_home=str(home))
         self.stack.enter_context(patch.object(state, "features", return_value=PanelFeatures()))
         self.stack.enter_context(patch.object(state, "system_overview", return_value=[
             {"label": label, "value": value, "description": "Synthetic host data"}

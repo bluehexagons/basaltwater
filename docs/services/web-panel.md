@@ -78,6 +78,13 @@ The dashboard header identifies the host, profile and account. Service and audit
 totals reuse displayed records, distinguish unchecked endpoints and retain
 collection warnings.
 
+Kernel audit activity shows **Not applicable** on containers and WSL, matching
+the auditd setup policy for VMs and hardware. The panel detects this capability
+without reading root-only setup state. On applicable machines, missing tools,
+failed collection and snapshots older than 15 minutes remain coverage warnings.
+The five-minute audit exporter timer also refreshes storage inventory and stays
+enabled on containers; its storage health is independent of audit applicability.
+
 **Mounted storage** includes separate `/home`, `/var`, `/boot`, and data
 filesystems rather than assuming all storage belongs to `/`. Each row shows
 its mount point, device, filesystem type, space available to ordinary users,
