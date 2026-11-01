@@ -54,9 +54,24 @@ class DebianRefreshTests(unittest.TestCase):
         }))
         self.run = stack.enter_context(patch.object(refresh, "run", return_value=subprocess.CompletedProcess([], 0)))
         self.receipt = stack.enter_context(patch.object(refresh, "write_refresh_source_metadata"))
+        from lib.build_coordinator import reject_active_legacy_worker
+        self.worker_guard = stack.enter_context(patch("lib.build_coordinator.reject_active_legacy_worker",
+                                                      side_effect=lambda: reject_active_legacy_worker(self.root)))
 
     def invoke(self, *, dry_run=False):
         return refresh.run_refresh_command(argparse.Namespace(dry_run=dry_run))
+
+    def test_legacy_worker_blocks_refresh_before_source_or_setup_changes(self):
+        unit = self.root / "etc/systemd/system/basaltwater-build-host.service"
+        unit.parent.mkdir(parents=True)
+        unit.write_text("old worker")
+        with patch("lib.build_coordinator.run", return_value=subprocess.CompletedProcess(
+            [], 0, "LoadState=loaded\nActiveState=activating\n", "",
+        )):
+            self.assertEqual(self.invoke(), 1)
+        self.upgrade.assert_not_called()
+        self.receipt.assert_not_called()
+        self.run.assert_not_called()
 
     def test_upgrade_precedes_fresh_target_setup_and_private_arguments_are_removed(self):
         events = []

@@ -126,12 +126,13 @@ def prepare_target_runtime(source: str, username: str, *, bootstrap_build_target
         raise ValueError("Invalid setup username")
     runtime = Path(setup_common.REMOTE_INSTALL_DIR)
     root = runtime.parent.parent
-    from lib.build_coordinator import DIRECTORY, maintenance
+    from lib.build_coordinator import DIRECTORY, maintenance, reject_active_legacy_worker
     from web.github_runner_steps import reject_active_legacy_runner
     from web.webhook_build_steps import reject_legacy_build_services
 
     reject_legacy_build_services()
     reject_active_legacy_runner()
+    reject_active_legacy_worker(root)
     _check_unit_operation_markers(root)
     _check_journal(root)
     for parent in ("opt", "var/lib"):
@@ -175,7 +176,7 @@ def main() -> int:
             bootstrap_build_target=args.bootstrap_build_target,
         )
         return 0
-    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(f"Setup stopped before running setup steps: {exc}", flush=True)
         return 1
 

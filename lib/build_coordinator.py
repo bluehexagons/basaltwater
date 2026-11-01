@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+import ast
 import fcntl
 import grp
 import os
+from pathlib import Path
 import stat
+import subprocess
 import time
 
 from lib.remote_utils import run
@@ -23,6 +26,53 @@ _MAINTENANCE = ContextVar("basaltwater_build_maintenance", default=False)
 
 class CoordinatorBusy(RuntimeError):
     """Capacity is held or explicitly drained; queued work must remain queued."""
+
+
+def reject_active_legacy_worker(root: Path = Path("/")) -> None:
+    """Refuse source replacement while an uncoordinated worker can build.
+
+    A coordinator installed by another producer does not upgrade the worker.
+    Inspect installed code without importing it, and fail closed on uncertain
+    systemd observations. Administrators must finish jobs and stop old intake.
+    """
+    unit = root / "etc/systemd/system/basaltwater-build-host.service"
+    enrollment = root / "etc/basaltwater/build-host"
+    if not (os.path.lexists(unit) or os.path.lexists(enrollment)):
+        return
+    coordinated = False
+    try:
+        tree = ast.parse((root / "opt/basaltwater/common/service_tools/build_host.py").read_text(encoding="utf-8"))
+        worker = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run_worker")
+        imports_slot = any(isinstance(node, ast.ImportFrom) and node.module == "lib.build_coordinator"
+                           and any(alias.name == "host_slot" and alias.asname is None for alias in node.names)
+                           for node in ast.walk(worker))
+        leased_execution = any(
+            isinstance(node, ast.With)
+            and any(isinstance(item.context_expr, ast.Call)
+                    and isinstance(item.context_expr.func, ast.Name)
+                    and item.context_expr.func.id == "host_slot" for item in node.items)
+            and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "run_next" for call in ast.walk(node))
+            for node in ast.walk(worker)
+        )
+        coordinated = imports_slot and leased_execution and os.path.lexists(root / LOCK.lstrip("/"))
+    except (OSError, UnicodeError, SyntaxError, StopIteration):
+        pass
+    if coordinated:
+        return
+    try:
+        result = run(["systemctl", "show", "basaltwater-build-host.service",
+                      "--property=LoadState,ActiveState", "--no-pager"],
+                     check=False, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("Cannot confirm legacy managed build-host worker is stopped; source unchanged") from exc
+    properties = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+    if (result.returncode != 0 or properties.get("LoadState") not in {"loaded", "not-found"}
+            or properties.get("ActiveState") not in {"inactive", "failed"}):
+        raise RuntimeError(
+            "Finish builds and stop the legacy managed build-host worker before upgrading; "
+            "worker activity is active or uncertain; see docs/services/build-operations.md"
+        )
 
 
 def _directory():
