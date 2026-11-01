@@ -49,6 +49,36 @@ continues to require exactly one matching user and rejects malformed or unsafe
 authentication files; do not weaken these checks or add extra users to bypass
 the error.
 
+## Management firewall compilation warnings
+
+Setup checks the selected native firewall before changing management sources
+and again after enabling the cluster firewall. The legacy `pve-firewall`
+compiler can report invalid rules on stderr while exiting successfully, so
+those warnings still stop setup. The error includes the compiler command,
+exit status and up to 2,048 characters of diagnostics. Inspect the full output
+on the Proxmox host:
+
+```bash
+sudo env LC_ALL=C pve-firewall compile
+```
+
+For a host configured to use the nftables backend, use:
+
+```bash
+sudo env LC_ALL=C /usr/libexec/proxmox/proxmox-firewall compile
+```
+
+Older Basaltwater versions also treated Perl locale warnings as firewall
+configuration warnings and hid the diagnostic. This could happen when SSH
+forwarded a locale unavailable on the host. Updated controllers run the
+compiler probe with the portable `C` locale, without changing the host's locale
+or ignoring rule warnings. Update the controller before rerunning setup.
+
+If compilation fails after activation, setup preserves the previous managed
+access sources and restores a previously disabled cluster firewall. An already
+enabled firewall remains enabled. Inspect and correct the reported rule or
+backend problem before retrying; do not disable validation to continue setup.
+
 ## Updates and restart warnings
 
 `sudo basaltw local update` detects Proxmox independently of a saved profile.

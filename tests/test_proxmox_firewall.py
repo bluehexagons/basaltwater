@@ -77,9 +77,64 @@ class TestNativeManagementFirewall(unittest.TestCase):
             subprocess.CompletedProcess([], 0, "", "host.fw: invalid rule")
             if command == "pve-firewall compile" else original(command, **kwargs)
         )
-        with self.assertRaisesRegex(RuntimeError, "compilation warnings"):
+        with self.assertRaisesRegex(RuntimeError, "compilation warnings") as raised:
             configure_proxmox_management_firewall(self.config)
+        self.assertIn("host.fw: invalid rule", str(raised.exception))
+        self.assertIn("LC_ALL=C pve-firewall compile", str(raised.exception))
         self.assertEqual(self._mutations(), [])
+
+    def test_compiler_uses_portable_locale_without_changing_setup_environment(self) -> None:
+        original = self._run
+
+        def run(command, **kwargs):
+            if command.endswith(" compile") and kwargs.get("env", {}).get("LC_ALL") != "C":
+                return subprocess.CompletedProcess([], 0, "", "perl: warning: Setting locale failed.")
+            return original(command, **kwargs)
+
+        self.command.side_effect = run
+        with patch.dict(os.environ, {"LANG": "missing_locale", "LC_ALL": "missing_locale", "LC_CTYPE": "missing_locale"}):
+            for nftables in (0, 1):
+                with self.subTest(nftables=nftables):
+                    self.node["nftables"] = nftables
+                    self.command.reset_mock()
+                    configure_proxmox_management_firewall(self.config)
+                    probes = [call for call in self.command.call_args_list if call.args[0].endswith(" compile")]
+                    self.assertEqual(len(probes), 2)
+                    self.assertTrue(all(call.kwargs["env"]["LANG"] == "missing_locale" for call in probes))
+                    self.assertEqual(os.environ["LC_ALL"], "missing_locale")
+
+    def test_compile_failures_include_bounded_backend_diagnostics(self) -> None:
+        original = self._run
+        for nftables, stderr in ((0, "invalid rule"), (1, "invalid rule"), (0, ""), (1, "failure " + "x" * 5000)):
+            with self.subTest(nftables=nftables, stderr=bool(stderr)):
+                self.node["nftables"] = nftables
+                self.command.reset_mock()
+                self.command.side_effect = lambda command, **kwargs: (
+                    subprocess.CompletedProcess([], 1, "stdout diagnostic", stderr)
+                    if command.endswith(" compile") else original(command, **kwargs)
+                )
+                with self.assertRaisesRegex(RuntimeError, "could not be compiled") as raised:
+                    configure_proxmox_management_firewall(self.config)
+                message = str(raised.exception)
+                self.assertIn("exit 1", message)
+                self.assertIn((stderr or "stdout diagnostic")[:30], message)
+                self.assertIn("LC_ALL=C ", message)
+                self.assertLess(len(message), 2500)
+                if len(stderr) > 2048:
+                    self.assertIn("truncated", message)
+                self.assertEqual(self._mutations(), [])
+
+    def test_post_activation_compile_warning_restores_enablement_and_keeps_old_sources(self) -> None:
+        original = self._run
+        self.command.side_effect = lambda command, **kwargs: (
+            subprocess.CompletedProcess([], 0, "", "host.fw: invalid rule")
+            if command == "pve-firewall compile" and self.cluster["enable"] else original(command, **kwargs)
+        )
+        with self.assertRaisesRegex(RuntimeError, "host.fw: invalid rule"):
+            configure_proxmox_management_firewall(self.config)
+        self.assertEqual(self.cluster["enable"], 0)
+        self.assertTrue(any(entry["cidr"] == "172.16.0.0/12" for entry in self.entries))
+        self.assertFalse(any(command.startswith("pvesh delete ") for command in self._mutations()))
 
     def test_existing_nftables_backend_is_verified_without_switching_backends(self) -> None:
         self.node["nftables"] = 1

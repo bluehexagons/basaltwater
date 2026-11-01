@@ -1594,13 +1594,27 @@ def _check_proxmox_firewall(*, require_enabled: bool) -> dict[str, object]:
     if active.returncode != 0:
         raise RuntimeError(f"Selected Proxmox firewall backend {service} is not active")
     compiler = "/usr/libexec/proxmox/proxmox-firewall" if nftables else "pve-firewall"
-    compiled = run(f"{compiler} compile", check=False, capture_output=True)
+    command = f"{compiler} compile"
+    # Perl emits locale warnings before compiling when an SSH client forwards
+    # a locale absent on this host. C is always available and overrides all
+    # inherited locale categories without changing the setup environment.
+    compiled = run(command, check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"})
+    detail = (getattr(compiled, "stderr", "") or "").strip()
     if compiled.returncode != 0:
-        raise RuntimeError("Proxmox firewall configuration could not be compiled")
+        failure = "Proxmox firewall configuration could not be compiled"
     # The legacy compiler warns about invalid rules while still exiting zero.
-    if not nftables and (getattr(compiled, "stderr", "") or "").strip():
-        raise RuntimeError("Proxmox firewall compilation warnings require operator review")
-    return cluster
+    elif not nftables and detail:
+        failure = "Proxmox firewall compilation warnings require operator review"
+    else:
+        return cluster
+    detail = detail or (getattr(compiled, "stdout", "") or "").strip()
+    if len(detail) > 2048:
+        detail = detail[:2048] + "\n[truncated]"
+    raise RuntimeError(
+        f"{failure} ({command}, exit {compiled.returncode}). "
+        f"Inspect full output with LC_ALL=C {command}."
+        + (f"\nCompiler diagnostics:\n{detail}" if detail else "")
+    )
 
 
 def _proxmox_source_key(source: str) -> str:
