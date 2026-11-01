@@ -1,8 +1,9 @@
 # Dated testing evidence summaries
 
 Reconciled 2026-11-01 from retained private reports, the owner's stack setup
-rerun report, subsequent native CachyOS T3 observations, installed native Windows
-checks, current Shares & Data qualification and automated checks.
+rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
+installed native Windows checks, current Shares & Data qualification and
+automated checks.
 These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
@@ -90,6 +91,37 @@ completion worker was installed or run against the live desktop.
 The next native check is a refresh using the corrected completion worker,
 followed by an authenticated provider turn and interactive terminal check.
 Keep the original failed reopen in the record when that retry succeeds.
+
+## CachyOS native game and capture workflow
+
+**2026-11-01; existing CachyOS KDE Wayland workstation, Antistatic source through
+[`af23811f2`](https://github.com/bluehexagons/antistatic/commit/af23811f228dc156c5b01f04270e2000de6c3566).**
+The installed Basaltwater revision was not recorded for this application pass.
+These results qualify selected installed workflows, not a fresh workstation
+setup or an exact Basaltwater release candidate.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Project source validation** | Final `npm test` and screenshot smoke passed. Earlier native/rendering cleanup at `643533f60` also passed the project's full gate | Project checks, not Basaltwater unit-test counts or Debian packaging qualification. Initial formatting failures were corrected and the complete source gate rerun |
+| **Supervised native application** | `develop exec` launched the project harness in the existing session; `develop wait` retained successful completion. Application records confirmed SDL Wayland and Mesa Intel Arc OpenGL 4.6, separately from software reference captures | Existing installed tools/session only; no refresh, reboot, disconnect recovery, other GPU or performance acceptance |
+| **Scripted UI and native capture** | Project-protocol actions and state assertions covered controls-menu scrolling and a pause preference toggle. Application screenshots and a fresh selected-monitor capture were reviewed; owned game processes exited cleanly | Scripted pointer/controller actions do not establish physical input, audio, HDR, scaling or compositor pacing. Portal input holds were not requalified by these application commands |
+| **Display-wake recovery** | An initial black monitor capture recovered after the enabled native `wake` command; fresh desktop and game captures were inspected before continuing | One sleeping-display case, not locked/disconnected-output recovery or repeated-cycle qualification |
+| **Fixed software references** | Four deterministic 640×360 effect pairs matched byte-for-byte under isolated X11/llvmpipe. Original per-image records matched actual frame, camera, requested/applied graphics and GL identity | Strict batch comparison remained rejected because its manifest lacked complete runtime metadata; the separate sidecar check supplies the comparison evidence. Software results do not qualify native GPU behavior |
+
+Earlier pause captures remained obscured by a presentation countdown when the
+fixture advanced simulation without presenting intermediate frames. The final
+two-player fixture rendered between bounded steps, checked pause/controller
+state, and kept SDL pumping until the parent finished its monitor capture.
+Randomized battle images were not counted as whole-image equality passes.
+These fixture limitations and the incomplete batch metadata remain in private
+evidence alongside the successful continuations; no Basaltwater runtime defect
+was confirmed by those failures.
+
+Antistatic's source/desktop checks remain separate from game packaging, which
+currently belongs to CI and Debian. No package was built or qualified on CachyOS
+in this pass. Follow the [optional integration workflow](../integrations/antistatic/cachyos.md)
+and [capture comparison guidance](../workstations/visual-comparisons.md#compare-existing-captures).
+Raw captures, transcripts, task handles and account paths remain private.
 
 ## Proxmox setup and maintenance
 

@@ -125,6 +125,16 @@ seed, simulation tick/frame, resolution, renderer, device and application
 version when those affect the comparison. Different rendering backends or
 timing can produce differences without a regression.
 
+Matching requested settings or PNG hashes alone do not establish a controlled
+comparison. Check the actual frame, applied graphics settings, backend/device
+and complete image content. If a project batch manifest is incomplete, preserve
+the strict comparison's refusal. Original per-image runtime records can support
+a separate settings check followed by pixel comparison; record that method and
+its limits explicitly. Do not invent missing metadata or report the refused
+strict check as passed. If runtime observations are missing, repair the project
+harness and recapture. Keep randomized scenes or unsettled presentation out of
+whole-image equality claims unless the fixture controls them.
+
 ## Capture two revisions
 
 Use a project-owned capture harness that builds and renders from its current
