@@ -297,6 +297,7 @@ class NativeSession:
         self.geometry = None
         self.captured = 0
         self.pixel_digest = None
+        self.capture_region = None
         self.last_input = None
         self.evidence = None
         self.last_evidence = None
@@ -565,11 +566,15 @@ class NativeSession:
             raise ValueError("This operation is unavailable on KDE Wayland; use observed accessible controls or portal input")
 
     def capture(self, payload):
+        from desktop.portal_capture import validate_crop
+
         if payload.get("window") or payload.get("active_window"):
             raise ValueError("Portal capture uses the consent-selected monitor; window capture is unavailable")
         next_frame = payload.get("next_frame", False)
         if type(next_frame) is not bool:
             raise ValueError("next_frame must be a boolean")
+        crop = payload.get("crop")
+        validate_crop(crop)
         output = payload.get("output")
         validate_filesystem_path(output)
         if not Path(output).is_absolute() or Path(output).suffix.lower() != ".png":
@@ -578,8 +583,10 @@ class NativeSession:
         try:
             argv = ["/usr/bin/python3", str(Path(__file__).with_name("portal_capture.py")),
                     str(self.portal.fd), str(self.node), str(fd)]
-            if next_frame:
-                argv.append("1")
+            if next_frame or crop is not None:
+                argv.append(str(int(next_frame)))
+            if crop is not None:
+                argv.extend(str(n) for n in crop)
             process = subprocess.run(argv, pass_fds=(self.portal.fd, fd),
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=12, check=False)
             if len(process.stdout) > 4096:
@@ -593,18 +600,28 @@ class NativeSession:
             geometry = result.get("geometry")
             if not isinstance(geometry, list) or len(geometry) != 2 or any(type(n) is not int or not 0 < n <= 16384 for n in geometry) or geometry[0] * geometry[1] > 32 * 1024 * 1024:
                 raise RuntimeError("Invalid capture geometry")
+            validate_crop(crop, geometry)
+            origin = result.get("image_origin", [0, 0] if crop is None else None)
+            image_geometry = result.get("image_geometry", geometry if crop is None else None)
+            expected = crop if crop is not None else [0, 0, *geometry]
+            if (not isinstance(origin, list) or not isinstance(image_geometry, list)
+                    or len(origin) != 2 or len(image_geometry) != 2
+                    or any(type(n) is not int for n in origin + image_geometry)
+                    or origin + image_geometry != expected):
+                raise RuntimeError("Capture crop mapping differs from the request")
             header = os.pread(fd, 24, 0)
-            if header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" or len(header) != 24 or list(struct.unpack(">II", header[16:])) != geometry:
+            if header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" or len(header) != 24 or list(struct.unpack(">II", header[16:])) != image_geometry:
                 raise RuntimeError("Capture artifact does not match its reported PNG geometry")
             digest = result.get("pixel_sha256")
             if digest is not None and (not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)):
                 raise RuntimeError("Invalid capture pixel digest")
             changed = (None if digest is None or self.pixel_digest is None else
-                       digest != self.pixel_digest or geometry != self.geometry)
+                       digest != self.pixel_digest or geometry != self.geometry or expected != self.capture_region)
             self.pixel_digest = digest
+            self.capture_region = expected
             self.geometry = geometry
             self.captured = time.monotonic()
-            return {**self.snapshot_status(), "output": output, "image_geometry": self.geometry,
+            return {**self.snapshot_status(), "output": output, "image_geometry": image_geometry, "image_origin": origin,
                     "captured_at": datetime.now(timezone.utc).isoformat(), "changed": changed,
                     **{key: result.get(key) for key in ("pixel_sha256", "frame_received_at",
                        "frame_received_monotonic_ns", "frame_pts_ns", "initial_frame_skipped")},
@@ -634,20 +651,22 @@ class NativeSession:
 
     def input(self, payload):
         hold_ms = client.validate_hold(payload)
+        drag_ms = client.validate_drag(payload)
         if self.geometry is None or payload.get("geometry") != self.geometry or time.monotonic() - self.captured > 60:
             raise ValueError("Capture the selected monitor again before input; geometry must match a recent screenshot")
         kind = payload.get("kind")
-        if kind in ("click", "move"):
+        if kind in ("click", "move", "drag"):
             x, y = payload.get("x"), payload.get("y")
             if type(x) is not int or type(y) is not int or not (0 <= x < self.geometry[0] and 0 <= y < self.geometry[1]):
                 raise ValueError("Pointer coordinates are outside the selected monitor")
             button = payload.get("button", 1)
             if kind == "click" and (type(button) is not int or button not in range(1, 8)):
                 raise ValueError("Button must be 1 through 7")
+            self.guard(payload)
             self.portal.notify("NotifyPointerMotionAbsolute", "udd", self.node,
                 x * self.logical_size[0] / self.geometry[0], y * self.logical_size[1] / self.geometry[1])
             self.guard(payload)
-            if kind == "click":
+            if kind in ("click", "drag"):
                 if button >= 4:
                     axis, steps = {4:(0,-1), 5:(0,1), 6:(1,-1), 7:(1,1)}[button]
                     self.portal.notify("NotifyPointerAxisDiscrete", "ui", axis, steps)
@@ -655,7 +674,20 @@ class NativeSession:
                     code = {1:272, 2:274, 3:273}[button]
                     try:
                         self.portal.notify("NotifyPointerButton", "iu", code, 1)
-                        self.hold(hold_ms, payload)
+                        if kind == "drag":
+                            # hold yields the session lock and checks permission,
+                            # expiry and client disconnection throughout motion.
+                            steps = max(1, (drag_ms + 19) // 20)
+                            for step in range(1, steps + 1):
+                                self.hold(drag_ms / steps, payload)
+                                self.guard(payload)
+                                px = x + (payload["to_x"] - x) * step / steps
+                                py = y + (payload["to_y"] - y) * step / steps
+                                self.portal.notify("NotifyPointerMotionAbsolute", "udd", self.node,
+                                    px * self.logical_size[0] / self.geometry[0],
+                                    py * self.logical_size[1] / self.geometry[1])
+                        else:
+                            self.hold(hold_ms, payload)
                     finally:
                         try:
                             self.portal.notify("NotifyPointerButton", "iu", code, 0)

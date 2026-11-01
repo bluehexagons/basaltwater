@@ -63,6 +63,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     screenshot.add_argument("--json", action="store_true")
     screenshot.add_argument("--compact", action="store_true", help="Return capture metadata without the status envelope; use status/doctor for diagnostics")
     screenshot.add_argument("--next-frame", action="store_true", help="Native: skip the initial PipeWire sample and await a subsequent sample (8-second frame budget)")
+    screenshot.add_argument("--crop", nargs=4, type=int, metavar=("X", "Y", "WIDTH", "HEIGHT"), help="Native: crop selected-monitor pixels and return image_origin for coordinate mapping")
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")
     target.add_argument("--active-window", action="store_true", help="Capture the active application without changing focus")
@@ -133,13 +134,16 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action = commands.add_parser("input", help="Apply a bounded input using screenshot generation/geometry")
     action.add_argument("--generation", required=True)
     action.add_argument("--geometry", required=True, nargs=2, type=int, metavar=("WIDTH", "HEIGHT"))
-    action.add_argument("kind", choices=("key", "text", "click", "move"))
+    action.add_argument("kind", choices=("key", "text", "click", "move", "drag"))
     action.add_argument("--key")
     action.add_argument("--text")
     action.add_argument("--delay-ms", type=int, help="Pace text characters by 1–100 ms (20-second budget); useful for Blender's console")
     action.add_argument("--hold-ms", type=int, help="Native key/button press duration, 0–5000 ms; e.g. 120 for game buttons")
     action.add_argument("--x", type=int)
     action.add_argument("--y", type=int)
+    action.add_argument("--to-x", type=int, help="Native drag endpoint in full-monitor capture pixels")
+    action.add_argument("--to-y", type=int)
+    action.add_argument("--duration-ms", type=int, help="Native drag duration, 1–5000 ms (default: 300)")
     action.add_argument("--button", type=int, default=1)
     action.add_argument("--observe", action="store_true", help="Native: after completed input, settle and capture a subsequent frame; never replay input on capture failure")
     action.add_argument("--settle-ms", type=int, default=120, help="Settling delay for --observe, 0–5000 ms (default: 120)")
@@ -286,6 +290,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             elif command == "sequence":
                 result = client.run_sequence(args.path, args.generation, backend=backend)
             elif command == "screenshot":
+                if args.crop is not None:
+                    payload["crop"] = args.crop
+                    client.validate_capture_crop(payload, backend=backend)
                 if args.next_frame and backend is runtime:
                     raise ValueError("Subsequent-frame capture requires --native")
                 payload["output"] = str(Path(args.output).absolute()) if args.output else client.artifact_path()
@@ -293,7 +300,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 payload["active_window"] = args.active_window
                 if args.next_frame:
                     payload["next_frame"] = True
-                result = backend.request(payload)
+                result = client.send_action(payload, backend=backend)
                 if args.next_frame and result.get("initial_frame_skipped") is not True:
                     result["error"] = "Backend did not confirm subsequent-frame capture; restart the native helper"
                 if args.compact:
@@ -333,6 +340,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     client.validate_text_delay(payload)
                     payload["hold_ms"] = args.hold_ms
                     client.validate_hold(payload)
+                    payload.update({name: getattr(args, name) for name in ("to_x", "to_y", "duration_ms")})
+                    client.validate_drag(payload)
                     if args.hold_ms is not None and backend is runtime:
                         raise ValueError("Hold duration requires --native")
                 result = client.send_action(payload, backend=backend)

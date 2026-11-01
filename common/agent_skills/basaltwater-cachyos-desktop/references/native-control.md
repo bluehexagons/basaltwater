@@ -88,12 +88,26 @@ size. Recapture after layout changes. Stop/start with fresh consent after
 monitor, scaling or resolution changes to refresh portal coordinates. Input
 rejects snapshots older than 60 seconds or mismatched geometry/generation.
 
+Use `screenshot --crop X Y WIDTH HEIGHT` to inspect a bounded rectangle of that
+same selected monitor. `geometry` remains the full-monitor pixel dimensions;
+`image_geometry` describes the PNG and `image_origin` gives its monitor-pixel
+offset. Convert a point in the cropped PNG with
+`monitor_x = image_origin[0] + crop_x` and
+`monitor_y = image_origin[1] + crop_y`, then pass those monitor coordinates and
+the full `geometry` to input. Portal logical scaling is applied afterward by
+the helper. Crop bounds are validated against the captured frame, and a crop
+change counts as `changed` even when its pixel hash is identical. Cropping is
+a monitor observation, not private window capture or compositor targeting.
+The output, compact observation and evidence record retain this mapping.
+
 ```fish
 basaltw desktop --native input click --generation GEN --geometry 2560 1440 --x 400 --y 200
 basaltw desktop --native input key --generation GEN --geometry 2560 1440 --key ctrl+s
 basaltw desktop --native input key --generation GEN --geometry 2560 1440 --key Return --hold-ms 120
 basaltw desktop --native input text --generation GEN --geometry 2560 1440 \
   --text 'short trusted command' --delay-ms 20
+basaltw desktop --native input drag --generation GEN --geometry 2560 1440 \
+  --x 400 --y 200 --to-x 700 --to-y 500 --button 1 --duration-ms 300 --observe
 ```
 
 Keys use XKB names such as `Return`, `Shift_L`, `F4`, `ctrl+s`.
@@ -101,6 +115,15 @@ Key chords and pointer buttons 1–3 accept `--hold-ms 0–5000`
 (default 0); use 120 ms for game buttons that actuate during a press animation.
 Human override, disabled state, stop, backend expiry and client disconnection
 interrupt holds and release inputs.
+Native `drag` interpolates a straight line between two in-bounds monitor-pixel
+endpoints while holding button 1–3. Duration is 1–5000 ms (default 300); it
+uses at most 250 motion steps and checks control, deadlines and client connection
+between steps. Human override, disabled state, stop, expiry and disconnect
+release the button. Failed releases stop the helper. `--hold-ms` does not apply
+to drag. Inspect the application, focus, canvas mode and fresh coordinate
+mapping before a gesture; successful input does not establish its effect.
+Drag and crop behavior have mocked contract coverage; native application
+interaction still needs task-specific verification.
 Hold duration does not apply to text or scroll buttons. Text defaults
 to 10 ms pacing. Replace the example generation, dimensions and coordinates
 with the actual screenshot values. The CLI limits text submission to 20 seconds
@@ -145,7 +168,7 @@ empty accessibility tree is not proof that an application/window is absent.
 Read `--help` for inspect/element/wait/sequence arguments. `windows` exposes
 showing AT-SPI top-level windows only, always reports partial coverage, and
 does not identify compositor focus. Active-window waits, compositor window
-focus/move/resize, window-specific capture, clipboard, drag gestures and
+focus/move/resize, window-specific capture, clipboard and
 desktop logout are unavailable. Never substitute a monitor screenshot for a
 requested private window capture. Use observed portal input or application
 scripting when these limits matter.

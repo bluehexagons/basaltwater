@@ -81,7 +81,7 @@ class Recorder:
         else:
             row = {"action": action, "at": _now(), "outcome": "returned" if result is not None else "uncertain"}
             # Never record text, key values, argv, element content or portal tokens.
-            for key in ("kind", "x", "y", "button", "hold_ms", "operation"):
+            for key in ("kind", "x", "y", "to_x", "to_y", "duration_ms", "button", "hold_ms", "operation"):
                 if key in payload:
                     row[key] = payload[key]
             if result is not None:
