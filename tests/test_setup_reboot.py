@@ -8,7 +8,7 @@ import json
 import shlex
 import subprocess
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import basaltwater
 from lib.config import SetupConfig
@@ -151,7 +151,7 @@ class RestartWorkflowTests(unittest.TestCase):
     def test_request_without_wait_skips_boot_and_health_probes(self) -> None:
         config = _config()
         self.assertEqual(setup_reboot.restart_after_setup(config), 0)
-        self.request.assert_called_once_with(config)
+        self.request.assert_called_once_with(config, restart_unit=RESTART_UNIT)
         self.boot.assert_not_called()
         self.wait.assert_not_called()
         self.health.assert_not_called()
@@ -164,7 +164,7 @@ class RestartWorkflowTests(unittest.TestCase):
         config = _config(ssh_key="/keys/private")
         self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 7)
         self.assertEqual([call[0] for call in order.mock_calls], ["boot", "request", "wait", "health"])
-        self.wait.assert_called_once_with(config, OLD_BOOT_ID)
+        self.wait.assert_called_once_with(config, OLD_BOOT_ID, restart_unit=RESTART_UNIT)
         self.health.assert_called_once_with(config.host, config.username, config.ssh_key)
 
     def test_boot_probe_failure_prevents_restart(self) -> None:
@@ -263,7 +263,7 @@ class ManagedVMRestartWorkflowTests(unittest.TestCase):
                 self.assertEqual(setup_reboot.restart_after_setup(self.config, wait_for_restart=True), 0)
                 self.assertEqual([call[0] for call in order.mock_calls], ["boot", "provider", "wait", "health"])
                 self.provider_restart.assert_called_with(self.config, 107)
-                self.wait.assert_called_with(self.config, OLD_BOOT_ID)
+                self.wait.assert_called_with(self.config, OLD_BOOT_ID, restart_unit=None)
                 self.health.assert_called_with(self.config.host, self.config.username, self.config.ssh_key)
         self.request.assert_not_called()
         self.proxmox_health.assert_not_called()
@@ -275,7 +275,7 @@ class ManagedVMRestartWorkflowTests(unittest.TestCase):
         self.request.assert_not_called()
         self.status.return_value = "needed"
         self.assertEqual(setup_reboot.restart_after_setup(self.config), 0)
-        self.request.assert_called_once_with(self.config)
+        self.request.assert_called_once_with(self.config, restart_unit=ANY)
         self.provider_restart.assert_not_called()
 
     def test_failed_inspection_or_provider_restart_never_falls_back(self) -> None:
@@ -460,7 +460,7 @@ class RestartTransportTests(unittest.TestCase):
             self.assertFalse(setup_reboot._wait_for_remote_restart(_config(), OLD_BOOT_ID))
         self.assertEqual(ssh.call_args.kwargs["timeout"], 1)
 
-    def test_failed_proxmox_job_stops_waiting_before_restart_timeout(self) -> None:
+    def test_failed_restart_job_stops_waiting_before_restart_timeout(self) -> None:
         output = io.StringIO()
         with (
             patch.object(setup_reboot, "_ssh_result", side_effect=[
@@ -525,7 +525,8 @@ class RestartTransportTests(unittest.TestCase):
                 self.assertTrue(setup_reboot._request_restart(_config(host=host)))
                 command = local.call_args.args[0] if host == "localhost" else shlex.split(remote.call_args.args[1])
                 self.assertIn("--on-active=2s", command)
-                self.assertEqual(command[-3:], ["/usr/bin/systemctl", "reboot", "--no-wall"])
+                self.assertEqual(command[-4:-1], ["/usr/bin/python3", "-I", "-c"])
+                self.assertIn("_restart_local_host()", command[-1])
         with patch.object(setup_reboot, "_ssh_result", return_value=_result(returncode=255)):
             self.assertFalse(setup_reboot._request_restart(_config()))
         with patch.object(setup_reboot, "_ssh_result", side_effect=OSError("SSH unavailable")):

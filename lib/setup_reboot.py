@@ -38,6 +38,33 @@ sys.path.insert(0, "/opt/basaltwater")
 from lib.setup_reboot import _restart_local_proxmox
 raise SystemExit(_restart_local_proxmox())
 """
+_REMOTE_HOST_RESTART = r"""
+import sys
+sys.path.insert(0, "/opt/basaltwater")
+from lib.setup_reboot import _restart_local_host
+raise SystemExit(_restart_local_host())
+"""
+
+
+def _restart_local_host() -> int:
+    """Reacquire idle capacity after setup, retaining intent until reboot."""
+    try:
+        if os.geteuid() != 0:
+            raise PermissionError("Explicit restart requires root")
+        with maintenance_lock() as acquired:
+            if not acquired:
+                raise RuntimeError("setup, maintenance or a build is running; retry restart when idle")
+            if not can_restart_system():
+                raise RuntimeError("target cannot reboot itself")
+            retain_reboot_drain()
+            result = run(["/usr/bin/systemctl", "reboot", "--no-wall"],
+                         capture_output=True, text=True, check=False, timeout=30)
+            if result.returncode:
+                raise RuntimeError((result.stderr or result.stdout).strip() or "reboot request failed")
+            return 0
+    except (CommandTimeoutError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+        print(f"Error: refusing explicit host restart: {exc}", flush=True)
+        return 1
 
 
 def shutdown_after_setup(config: SetupConfig) -> int:
@@ -283,7 +310,7 @@ def _request_restart(
             "/usr/bin/python3", "-c", _REMOTE_PROXMOX_RESTART,
         ]
     else:
-        command += ["/usr/bin/systemctl", "reboot", "--no-wall"]
+        command += ["/usr/bin/python3", "-I", "-c", _REMOTE_HOST_RESTART]
     try:
         if config.host in _LOCAL_HOSTS:
             result = run(
@@ -446,7 +473,7 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
             return 1
 
     print(f"  Restart required on {config.host}; requesting restart")
-    restart_unit = f"basaltwater-setup-reboot-{secrets.token_hex(6)}" if proxmox else None
+    restart_unit = f"basaltwater-setup-reboot-{secrets.token_hex(6)}" if vmid is None else None
     if vmid is not None:
         try:
             request_vm_restart(config, vmid)
@@ -457,12 +484,14 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
     else:
         requested = (
             _request_restart(config, proxmox=True, restart_unit=restart_unit)
-            if proxmox else _request_restart(config)
+            if proxmox else _request_restart(config, restart_unit=restart_unit)
         )
     if not requested:
         return 1
     if proxmox:
         print(f"  Proxmox shutdown and restart job queued: {restart_unit}.service")
+    elif restart_unit:
+        print(f"  Restart job queued: {restart_unit}.service; inspect its journal if reboot is refused")
 
     if not wait_for_restart:
         print("  Restart requested; the setup command will not wait for reconnection")
@@ -475,7 +504,7 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
             config, old_boot_id,
             timeout_seconds=_GUEST_SHUTDOWN_WAIT_SECONDS + _RESTART_WAIT_SECONDS,
             restart_unit=restart_unit,
-        ) if proxmox else _wait_for_remote_restart(config, old_boot_id)
+        ) if proxmox else _wait_for_remote_restart(config, old_boot_id, restart_unit=restart_unit)
     )
     if not completed:
         return 1

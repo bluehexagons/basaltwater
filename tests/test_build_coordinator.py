@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import tempfile
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -126,3 +127,87 @@ class CoordinatorTests(unittest.TestCase):
                 with self.assertRaises(coordinator.CoordinatorBusy):
                     with coordinator.host_slot():
                         self.fail("scheduled maintenance overlapped a build")
+
+    def test_explicit_host_restart_refuses_busy_build_then_retains_reboot_drain(self):
+        from lib import maintenance_lock as scheduled, setup_reboot
+
+        with patch.object(coordinator, "LOCK", str(self.lock)), \
+             patch.object(scheduled, "SETUP_LOCK_FILE", str(self.root / "setup.lock")), \
+             patch.object(scheduled, "_local_boot_id", return_value="00000000-0000-0000-0000-000000000001"), \
+             patch.object(setup_reboot, "can_restart_system", return_value=True), \
+             patch.object(setup_reboot, "run") as reboot:
+            with coordinator.host_slot():
+                self.assertEqual(setup_reboot._restart_local_host(), 1)
+            reboot.assert_not_called()
+
+            def request(*_args, **_kwargs):
+                self.assertTrue((self.root / "drain").read_bytes().startswith(b"basaltwater-reboot:"))
+                with self.assertRaises(coordinator.CoordinatorBusy), coordinator.host_slot():
+                    self.fail("build overlapped reboot")
+                with scheduled.maintenance_lock() as acquired:
+                    self.assertFalse(acquired)
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            reboot.side_effect = request
+            self.assertEqual(setup_reboot._restart_local_host(), 0)
+            reboot.assert_called_once()
+            self.assertTrue((self.root / "drain").exists())
+            with self.assertRaises(coordinator.CoordinatorBusy), coordinator.host_slot():
+                self.fail("build admitted after reboot request")
+
+    def test_failed_explicit_reboot_retains_intent_and_returns_failure(self):
+        from lib import maintenance_lock as scheduled, setup_reboot
+
+        with patch.object(coordinator, "LOCK", str(self.lock)), \
+             patch.object(scheduled, "SETUP_LOCK_FILE", str(self.root / "setup.lock")), \
+             patch.object(scheduled, "_local_boot_id", return_value="00000000-0000-0000-0000-000000000001"), \
+             patch.object(setup_reboot, "can_restart_system", return_value=True), \
+             patch.object(setup_reboot, "run", return_value=subprocess.CompletedProcess([], 1, "", "refused")):
+            self.assertEqual(setup_reboot._restart_local_host(), 1)
+            self.assertTrue((self.root / "drain").exists())
+            with self.assertRaises(coordinator.CoordinatorBusy), coordinator.host_slot():
+                self.fail("failed reboot silently reopened capacity")
+
+
+class LegacyWorkerGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.unit = self.root / "etc/systemd/system/basaltwater-build-host.service"
+        self.unit.parent.mkdir(parents=True)
+        self.unit.write_text("[Service]\nExecStart=installed-worker\n")
+        self.query = self.enterContext(patch.object(coordinator, "run"))
+
+    def test_active_transitional_and_uncertain_queries_refuse_without_stopping(self):
+        for state in ("active", "activating", "deactivating", "reloading", "unknown", ""):
+            for status in (0, 1):
+                with self.subTest(state=state, status=status):
+                    self.query.return_value = subprocess.CompletedProcess(
+                        [], status, f"LoadState=loaded\nActiveState={state}\n", "",
+                    )
+                    with self.assertRaisesRegex(RuntimeError, "legacy managed build-host"):
+                        coordinator.reject_active_legacy_worker(self.root)
+        self.assertTrue(all(call.args[0][:2] == ["systemctl", "show"] for call in self.query.call_args_list))
+        self.query.side_effect = subprocess.TimeoutExpired("systemctl", 30)
+        with self.assertRaisesRegex(RuntimeError, "Cannot confirm"):
+            coordinator.reject_active_legacy_worker(self.root)
+
+    def test_confirmed_stopped_worker_permits_first_upgrade(self):
+        for state in ("inactive", "failed"):
+            self.query.return_value = subprocess.CompletedProcess([], 0, f"LoadState=loaded\nActiveState={state}\n", "")
+            coordinator.reject_active_legacy_worker(self.root)
+
+    def test_only_installed_worker_with_leased_execution_can_bypass_query(self):
+        installed = self.root / "opt/basaltwater/common/service_tools/build_host.py"
+        installed.parent.mkdir(parents=True)
+        lock = self.root / coordinator.LOCK.lstrip("/")
+        lock.parent.mkdir(parents=True)
+        lock.touch()
+        self.query.return_value = subprocess.CompletedProcess([], 0, "LoadState=loaded\nActiveState=active\n", "")
+        for source in ("# host_slot run_next\n", "def run_worker():\n    run_next()\n", "invalid python!"):
+            installed.write_text(source)
+            with self.assertRaises(RuntimeError):
+                coordinator.reject_active_legacy_worker(self.root)
+        installed.write_text((Path(__file__).parents[1] / "common/service_tools/build_host.py").read_text())
+        self.query.reset_mock()
+        coordinator.reject_active_legacy_worker(self.root)
+        self.query.assert_not_called()

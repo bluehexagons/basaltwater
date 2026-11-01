@@ -40,6 +40,21 @@ class SetupUpgradeTests(unittest.TestCase):
         self.assertEqual((self.runtime / "basaltwater.py").read_text(), "# new runtime\n")
         self.assertEqual((self.runtime / "state").resolve(), self.root / "var/lib/basaltwater")
 
+    def test_first_upgrade_refuses_active_legacy_worker_even_with_coordinator(self):
+        unit = self.root / "etc/systemd/system/basaltwater-build-host.service"
+        unit.parent.mkdir(parents=True)
+        unit.write_text("[Service]\nExecStart=old-worker\n")
+        for installed in (False, True):
+            with self.subTest(coordinator=installed):
+                if installed:
+                    (self.root / "var/lib/basaltwater-build-coordinator").mkdir(parents=True)
+                with patch("lib.build_coordinator.run", return_value=subprocess.CompletedProcess(
+                    [], 0, "LoadState=loaded\nActiveState=active\n", "",
+                )), patch.object(setup_common, "_activate_local_runtime") as activate:
+                    with self.assertRaisesRegex(RuntimeError, "legacy managed build-host"):
+                        setup_upgrade.prepare_target_runtime(str(self.source), "agent")
+                activate.assert_not_called()
+
     def test_retired_runtime_or_state_is_untouched(self):
         for relative in ("opt/infra_tools", "opt/infra-tools", "var/lib/infra_tools", "var/lib/infra-tools"):
             with self.subTest(relative=relative):

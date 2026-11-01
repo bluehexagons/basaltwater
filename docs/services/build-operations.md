@@ -126,6 +126,30 @@ them with newly generated IDs. Removing a grant revokes future transport
 authority; it is not an application removal or data migration procedure.
 Policy changes do not clear admission history or recover an uncertain deployment.
 
+## Upgrade and restart a build host safely
+
+Before the first upgrade from a worker that predates shared build capacity,
+let its builds finish, then stop `basaltwater-build-host.service` through an
+administrator session. Setup and refresh refuse an active, activating or
+deactivating legacy worker, or an uncertain service query, before replacing
+source. They inspect the installed worker's coordinator participation; a
+coordinator directory created by another producer does not establish safety.
+Neither command stops a busy worker automatically. Preserve job evidence and
+inspect the refusal before retrying. Setup reenables the managed worker after
+installing its coordinated implementation.
+
+An explicit ordinary-host restart runs as a named target-side systemd job. It
+reacquires the setup maintenance lock and idle build capacity after setup,
+then persists a reboot drain before requesting reboot. If a build has started,
+the job refuses reboot; retry when idle. Setup prints the job name; inspect
+`journalctl -u UNIT.service --no-pager` for a refusal. With
+`--wait-for-restart`, a failed job makes the command fail promptly. Without
+waiting, successful dispatch only confirms that the job was queued.
+Reboot intent remains drained if the reboot request fails or its outcome is
+uncertain. Use the existing reboot cancellation or confirmed boot recovery
+procedure; do not delete coordinator markers to reopen intake. Proxmox's
+explicit restart retains its graceful guest shutdown and evacuation checks.
+
 ## Choose maintenance by the exhausted resource
 
 These limits are independent. Free filesystem space does not establish logical

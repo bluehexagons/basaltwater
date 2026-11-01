@@ -268,11 +268,12 @@ def _apply_refresh(
     config: SetupConfig, arguments: list[str], *, expected_revision: str,
 ) -> int:
     """Hold the setup lock across source activation and target reconciliation."""
-    from lib.build_coordinator import LOCK, maintenance
+    from lib.build_coordinator import LOCK, maintenance, reject_active_legacy_worker
 
     with maintenance_lock(build_slot=False) as acquired:
         if not acquired:
             raise RuntimeError("Setup or maintenance is already running; refresh has made no changes")
+        reject_active_legacy_worker()
         _assert_no_source_activation(repository)
         setup_marker = _setup_operation_marker()
         _protected_operation_record(setup_marker)
