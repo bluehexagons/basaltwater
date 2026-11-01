@@ -5,12 +5,36 @@ coverage recorded through 2026-10-31; it does not establish that every check
 was repeated on the current commit. The private test-environment inventory was
 reviewed as of 2026-11-01. See each linked record for its scope and date.
 
-Basaltwater has broad automated coverage and selected native checks across
-Debian guests, a physical virtualization host, and development workstations.
-Those checks cover useful setup, deployment, storage and agent workflows. They
-are evidence for the cases exercised, not a blanket claim for every option,
-platform or release candidate. The `2.0.0rc1` stable-release matrix remains
-unqualified; see the [release gate](../release-qualification.md).
+| At a glance | Status |
+| --- | --- |
+| Server, storage, deployment and agent workflows | 🟢 **Labbed** — selected workflows passed in a test environment; options and recovery gaps remain |
+| Component and workstation coverage | 🟡 **Partial** — automated tests or narrower native checks; see individual features |
+| Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
+| LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
+| Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
+| `2.0.0rc1` stable release | ⚪ **Untested** — required [release qualification](../release-qualification.md) remains open |
+
+## Status legend
+
+Labels describe the **specific scope in each row**, not every configuration
+of a feature. The accompanying evidence and limits still matter.
+
+| Label | Meaning |
+| --- | --- |
+| ⚪ **Planning only** | Proposed work; implementation has not started. |
+| 🔵 **In progress** | Implementation or qualification is underway. |
+| ⚪ **Untested** | No qualifying test is recorded for the stated scope. |
+| 🟡 **Partial** | Automated, fixture or limited component checks passed; the stated full workflow has not been labbed. |
+| 🟢 **Labbed** | Agents exercised the stated workflow on a real test system; this does not establish production reliability. |
+| 🔴 **Failed** | A recorded attempt failed; the affected scope remains unqualified. |
+| 🟣 **Deployed** | The owner reports using the stated scope on a real production or internal server. |
+| ✅ **Verified** | Long-term consistent reliability or broader human QA supports dependability for the stated scope. |
+
+Statuses are not a strict progression: a deployed feature can still have a
+failed test or untested configuration. Record the date, scope and evidence;
+do not infer deployed or verified status from lab or automated results.
+
+## Documents
 
 | Document | Purpose |
 | --- | --- |

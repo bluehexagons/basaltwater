@@ -8,6 +8,8 @@ use a disposable target and data before applying setup.
 
 ## Debian server and shared desktop
 
+🟢 **Labbed:** selected workflow; crash and interruption cases remain open.
+
 Selected clean Debian 13 `server_lite` setup with XFCE and RDP, populated rerun,
 reboot, client input/clipboard and reconnect passed. Desktop crash, interrupted
 setup and the complete release case remain open. The
@@ -22,6 +24,8 @@ an actual setup. Follow the guide's authentication and networking instructions.
 
 ## Build on one machine, deploy on another
 
+🟢 **Labbed:** selected builder and deployment workflows; public ingress remains open.
+
 Selected Debian VM checks covered builder enrollment, Node/static and Go builds,
 artifact delivery, rerun, target refresh with the builder offline and retained
 application data. Public tunnel/ACME and power-loss behavior are separate.
@@ -33,6 +37,8 @@ not a claim that those exact fictional endpoints were tested.
 
 ## Storage and service recovery
 
+🟢 **Labbed:** selected storage and same-host recovery; off-host recovery remains open.
+
 Selected checks covered Btrfs setup/rerun/reboot, Samba and Syncthing exchange,
 Gogs Git/LFS, HomeBox API backup/restore and same-host guest recovery. Follow
 the [storage procedures](../storage/storage-operations.md), [Gogs guide](../services/gogs.md)
@@ -40,6 +46,8 @@ or [HomeBox guide](../services/homebox.md) for the relevant workflow. Verify
 restored data and service behavior; same-host restore is not off-host recovery.
 
 ## Offline developer checks
+
+🟡 **Partial:** automated coverage; commands do not qualify live installations.
 
 From a prepared development environment, choose the scope for the change:
 
