@@ -88,6 +88,31 @@ installed-system qualification. See the [evidence boundary](evidence.md#shares-a
 and [operator procedure](../services/shares-data.md). The Proxmox root panel cannot
 substitute for the required non-root guest operator and separate approval service.
 
+## Native Windows project tasks
+
+🟢 **Labbed:** selected installed task submission, output and waiting; fresh
+installation and physical application QA remain open.
+
+From PowerShell 7, use the native launcher with a local disposable project:
+
+```powershell
+basaltw desktop develop --help
+basaltw desktop develop doctor --project C:\work\sample
+basaltw desktop develop exec --project C:\work\sample -- node.exe build.mjs
+basaltw desktop develop wait TASK_ID --timeout 120
+basaltw desktop develop logs TASK_ID
+```
+
+Use the returned task ID. `exec` uses the requested executable; `develop node
+NPM_SCRIPT --project PATH [-- NPM_ARGS...]` instead selects an installed project
+runtime and runs a named npm script. The live disposable probe verified literal
+argv, task environment, late output beyond the cap and failure propagation.
+Caller wait timeout returns 124 and leaves the task running; a settled task
+failure returns 1 with the authoritative receipt. Earlier real tasks also
+qualified cancellation cleanup. See the [dated evidence](evidence.md#native-windows-workstation-and-tasks)
+and [desktop/task guide](../workstations/windows-desktop.md#supervised-project-tasks).
+These illustrative build commands were not themselves the test workload.
+
 ## Offline developer checks
 
 🟡 **Partial:** automated coverage; commands do not qualify live installations.
