@@ -191,6 +191,8 @@ def admit_event(envelope: dict, settings: dict, *, host: dict,
         raise RuntimeError("Webhook receipts are full; archive settled receipts explicitly")
     receipt = previous or dict(event, principal=settings["principal"], state="preparing")
     source_path = str(Path(preparing, request_id + ".source"))
+    if previous is None and os.path.lexists(source_path):
+        raise ValueError("Prepared webhook source has no receipt; preserve it for inspection")
     try:
         if previous is None:
             write_json_atomic(path, receipt, mode=0o600, indent=None)
@@ -244,9 +246,14 @@ def admit_event(envelope: dict, settings: dict, *, host: dict,
             write_json_atomic(path, receipt, mode=0o600, indent=None)
             return receipt
         receipt["state"] = "submitted"
-    except BaseException:
+    except BaseException as exc:
         receipt["state"] = "recovery_required"
-        write_json_atomic(path, receipt, mode=0o600, indent=None)
+        try:
+            write_json_atomic(path, receipt, mode=0o600, indent=None)
+        except BaseException as journal_error:
+            # A failed receipt update must not hide uncertain process cleanup
+            # from the caller holding the shared host capacity lease.
+            raise exc from journal_error
         raise
     write_json_atomic(path, receipt, mode=0o600, indent=None)
     remove_file_durable(source_path)

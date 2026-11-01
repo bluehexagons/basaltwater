@@ -105,6 +105,31 @@ class WebhookTests(unittest.TestCase):
         self.prepare.assert_called_once()
         self.assertEqual(list(self.preparing.iterdir()), [])
 
+    def test_failed_receipt_update_preserves_source_cleanup_uncertainty(self):
+        from lib.build_setup_sources import SourceCleanupUncertain
+
+        self.prepare.side_effect = SourceCleanupUncertain("inspect processes")
+        write = service.write_json_atomic
+
+        def update(path, value, **kwargs):
+            if value.get("state") == "recovery_required":
+                raise OSError("receipt sync failed")
+            return write(path, value, **kwargs)
+
+        with patch.object(service, "write_json_atomic", side_effect=update), \
+                self.assertRaises(SourceCleanupUncertain) as caught:
+            self.admit()
+        self.assertIsInstance(caught.exception.__cause__, OSError)
+
+    def test_orphan_prepared_source_is_preserved_without_fetch_or_overwrite(self):
+        event, _ = service.authenticated(envelope(), SETTINGS)
+        source = self.preparing / (event["request_id"] + ".source")
+        source.write_bytes(b"retained evidence")
+        with self.assertRaisesRegex(ValueError, "has no receipt"):
+            self.admit()
+        self.prepare.assert_not_called()
+        self.assertEqual(source.read_bytes(), b"retained evidence")
+
     def test_current_builder_policy_is_enforced_before_queue_submission(self):
         self.host["policy"]["principals"]["deploy"]["projects"] = {
             "other-project": self.host["policy"]["principals"]["deploy"]["projects"]["*"]}

@@ -75,7 +75,7 @@ def _prepare_local_vm_power() -> int:
         with maintenance_lock() as acquired:
             if not acquired:
                 raise RuntimeError("setup, maintenance or a build is running; retry when idle")
-            retain_reboot_drain()
+            retain_reboot_drain(external=True)
         return 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Error: refusing VM power operation: {exc}", flush=True)

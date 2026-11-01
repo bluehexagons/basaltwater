@@ -16,6 +16,7 @@ from lib.validation import validate_filesystem_path
 SETUP_LOCK_FILE = "/run/lock/basaltwater-setup.lock"
 _BUILD_SLOT = ContextVar("basaltwater_maintenance_slot", default=None)
 _REBOOT_PREFIX = b"basaltwater-reboot:"
+_EXTERNAL_POWER_PREFIX = b"basaltwater-external-power:"
 
 
 def _local_boot_id() -> str:
@@ -26,7 +27,7 @@ def _local_boot_id() -> str:
     return value
 
 
-def retain_reboot_drain() -> None:
+def retain_reboot_drain(*, external: bool = False) -> None:
     """Persist reboot intent while maintenance owns idle build capacity."""
     if _BUILD_SLOT.get() is None:
         return  # This machine has no installed build coordinator.
@@ -37,7 +38,8 @@ def retain_reboot_drain() -> None:
         descriptor = os.open("drain", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=directory)
         try:
-            os.write(descriptor, _REBOOT_PREFIX + boot_id.encode("ascii") + b"\n")
+            prefix = _EXTERNAL_POWER_PREFIX if external else _REBOOT_PREFIX
+            os.write(descriptor, prefix + boot_id.encode("ascii") + b"\n")
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
@@ -76,13 +78,18 @@ def recover_reboot_drain(*, cancel: bool = False) -> bool:
                 content = os.read(descriptor, 128)
             finally:
                 os.close(descriptor)
-            if not content.startswith(_REBOOT_PREFIX):
+            prefix = next((value for value in (_REBOOT_PREFIX, _EXTERNAL_POWER_PREFIX)
+                           if content.startswith(value)), None)
+            if prefix is None:
                 return False
-            recorded = content[len(_REBOOT_PREFIX):].decode("ascii").strip()
+            recorded = content[len(prefix):].decode("ascii").strip()
             if (str(UUID(recorded)) != recorded
-                    or content != _REBOOT_PREFIX + recorded.encode("ascii") + b"\n"
+                    or content != prefix + recorded.encode("ascii") + b"\n"
                     or info.st_size != len(content)):
                 raise ValueError("Invalid reboot drain boot ID")
+            # shutdown -c cannot cancel a provider's external power request.
+            if cancel and prefix == _EXTERNAL_POWER_PREFIX:
+                return False
             if not cancel and recorded == _local_boot_id():
                 return False
             current = os.stat("drain", dir_fd=directory, follow_symlinks=False)

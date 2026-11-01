@@ -137,6 +137,20 @@ class BuilderMaintenanceTests(unittest.TestCase):
             run.assert_called_with(["/sbin/shutdown", "-c"], check=True)
         self.assertFalse(self.drain.exists())
 
+    def test_local_shutdown_cancel_cannot_release_external_provider_power_intent(self):
+        from common.service_tools import auto_restart_if_needed as restart
+        with maintenance_lock() as acquired:
+            self.assertTrue(acquired)
+            scheduled.retain_reboot_drain(external=True)
+        with patch.object(restart.shutil, "which", return_value="/sbin/shutdown"), \
+                patch.object(restart.subprocess, "run"):
+            self.assertEqual(restart.cancel_scheduled_restart(), 0)
+        self.assertTrue(self.drain.exists())
+        self.boot.return_value = "00000000-0000-0000-0000-000000000002"
+        with maintenance_lock() as acquired:
+            self.assertTrue(acquired)
+        self.assertFalse(self.drain.exists())
+
     def test_scheduled_apt_runs_idle_and_defers_busy_without_leaving_a_drain(self):
         from common.service_tools import auto_update_apt as apt
         with patch.object(apt, "load_notification_configs_from_state", return_value=[]), \

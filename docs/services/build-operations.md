@@ -153,8 +153,10 @@ For a provisioned VM with pending hardware changes, setup also acquires idle
 capacity inside the guest and persists its reboot drain before asking Proxmox
 to restart it. `--shutdown` uses the same guest preparation before graceful
 poweroff. A busy or unreachable guest prevents either power request. Failed or
-uncertain provider requests retain the drain for explicit inspection and
-cancellation; a confirmed subsequent boot clears the previous-boot intent.
+uncertain provider requests retain a distinct external-power drain. Inspect
+the provider's task state before arranging the power operation administratively;
+a confirmed subsequent boot clears the previous-boot intent. Local
+`shutdown -c` cannot cancel provider tasks and preserves this external drain.
 
 ## Choose maintenance by the exhausted resource
 
