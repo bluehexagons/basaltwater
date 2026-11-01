@@ -34,10 +34,16 @@ class AgentOutputTests(unittest.TestCase):
     def summary(self, output: str) -> dict[str, object]:
         lines = output.splitlines()
         self.assertEqual(len(lines), 1)
-        return json.loads(lines[0])
+        result = json.loads(lines[0])
+        path = Path(result["summary_path"])
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), result)
+        if os.name == "posix":
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        return result
 
     def test_streams_both_outputs_without_shell_or_echoing_content(self) -> None:
         captured = {}
+        summary_path = self.root / "artifacts/summary.json"
 
         class FakeProcess:
             pid = 321
@@ -47,6 +53,7 @@ class AgentOutputTests(unittest.TestCase):
                 self.kwargs = kwargs
                 captured["command"] = command
                 captured["kwargs"] = kwargs
+                captured["initial"] = json.loads(summary_path.read_text(encoding="utf-8"))
 
             def wait(self, timeout=None):
                 self.kwargs["stdout"].write(b"private out\n")
@@ -66,10 +73,54 @@ class AgentOutputTests(unittest.TestCase):
         self.assertNotIn("unsafe", output.getvalue())
         self.assertEqual(captured["command"], ["program", "a; echo unsafe"])
         self.assertIs(captured["kwargs"]["shell"], False)
+        self.assertEqual(captured["initial"]["status"], "in_progress")
+        self.assertIsNone(captured["initial"]["return_code"])
+        self.assertNotIn("unsafe", json.dumps(captured["initial"]))
         if os.name == "posix":
             self.assertEqual(Path(summary["stdout_path"]).parent.stat().st_mode & 0o777, 0o700)
             self.assertEqual(Path(summary["stdout_path"]).stat().st_mode & 0o777, 0o600)
             self.assertEqual(Path(summary["stderr_path"]).stat().st_mode & 0o777, 0o600)
+
+    def test_selected_directory_is_created_and_never_reused_or_overwritten(self) -> None:
+        directory = self.root / "selected output with spaces"
+        with (patch.object(capture_output.subprocess, "Popen") as popen,
+              patch("sys.stdout", new_callable=io.StringIO) as output):
+            popen.return_value.wait.return_value = 0
+            self.assertEqual(capture_output.main([
+                "--output-directory", str(directory), "--", "program",
+            ]), 0)
+            self.assertEqual(Path(self.summary(output.getvalue())["summary_path"]), directory / "summary.json")
+            original = (directory / "summary.json").read_bytes()
+            regular_file = self.root / "existing-file"
+            regular_file.write_text("keep", encoding="utf-8")
+            for invalid in (directory, regular_file, self.root / "missing-parent/output"):
+                popen.reset_mock()
+                with self.subTest(path=invalid), patch("sys.stderr", new_callable=io.StringIO), \
+                        self.assertRaises(SystemExit) as failure:
+                    capture_output.main(["--output-directory", str(invalid), "--", "program"])
+                self.assertEqual(failure.exception.code, 2)
+                popen.assert_not_called()
+            self.assertEqual((directory / "summary.json").read_bytes(), original)
+            self.assertEqual(regular_file.read_text(encoding="utf-8"), "keep")
+
+    def test_final_summary_survives_a_lost_terminal(self) -> None:
+        with (patch.object(capture_output.subprocess, "Popen") as popen,
+              patch.object(capture_output, "_emit", side_effect=BrokenPipeError)):
+            popen.return_value.wait.return_value = 23
+            with self.assertRaises(BrokenPipeError):
+                capture_output.main(["--", "program"])
+        saved = json.loads((self.root / "artifacts/summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["status"], "completed")
+        self.assertEqual(saved["return_code"], 23)
+
+    def test_failed_summary_replace_preserves_previous_status_and_removes_temporary_file(self) -> None:
+        path = self.root / "artifacts/summary.json"
+        capture_output._save_summary(path, {"status": "in_progress"})
+        with patch.object(capture_output.os, "replace", side_effect=OSError("fixture failure")):
+            with self.assertRaises(OSError):
+                capture_output._save_summary(path, {"status": "completed"})
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "in_progress"})
+        self.assertEqual(list(path.parent.iterdir()), [path])
 
     def test_preserves_child_failure_code(self) -> None:
         with (patch.object(capture_output.subprocess, "Popen") as popen,

@@ -34,6 +34,19 @@ a harmless provider turn and terminal command, then run relevant project checks.
 Do not repeat a refresh while its completion is pending or uncertain. Preserve
 the current job's evidence and inspect it through the platform's operations guide.
 
+For verbose project checks run directly in a T3 terminal, use the shared
+[`capture_output.py`](../scripts/capture_output.py) helper with the selected
+environment's Python interpreter. `--output-directory NEW_PATH` chooses a new
+directory under an existing private parent outside Git. Retain that path before
+starting the check: `summary.json` records its initial `in_progress` status and
+then its final status, exit code, duration and log byte counts without recording
+command arguments or environment values. The final JSON is saved before it is
+emitted to the terminal, so lost terminal output does not lose that result.
+A stale `in_progress` record is an uncertain outcome; inspect the owned run
+instead of launching a duplicate. Capture does not keep a process alive after
+terminal/service shutdown. For a submitted native development task, keep its
+supervisor's handle and result; wrapping submission only measures dispatch.
+
 ## Shared 0.1.6 client workflows
 
 These workflows apply to compatible web/desktop clients on Debian, CachyOS,

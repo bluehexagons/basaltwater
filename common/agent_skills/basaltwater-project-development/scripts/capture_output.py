@@ -99,9 +99,27 @@ def _emit(result: dict[str, object]) -> None:
     print(json.dumps(result, separators=(",", ":")))
 
 
+def _save_summary(path: Path, result: dict[str, object]) -> None:
+    """Replace a private summary atomically, including on native Windows."""
+    descriptor, temporary = tempfile.mkstemp(prefix=".summary-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            if os.name == "posix":
+                os.fchmod(stream.fileno(), 0o600)
+            json.dump(result, stream, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=_positive_finite, default=300.0)
+    parser.add_argument("--output-directory", type=Path,
+                        help="create a new private directory under an existing parent for logs and summary.json")
     raw_args = list(sys.argv[1:] if argv is None else argv)
     if "--" not in raw_args:
         parser.error("separate the command and its arguments with --")
@@ -111,10 +129,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not command:
         parser.error("provide a command after --")
 
-    artifact_dir = Path(tempfile.mkdtemp(prefix="basaltwater-output-"))
+    if args.output_directory is None:
+        artifact_dir = Path(tempfile.mkdtemp(prefix="basaltwater-output-"))
+    else:
+        artifact_dir = args.output_directory.expanduser().absolute()
+        try:
+            artifact_dir.mkdir(mode=0o700)
+        except (OSError, ValueError):
+            parser.error("--output-directory must name a new directory under an existing writable parent")
     os.chmod(artifact_dir, 0o700)
     stdout_path = artifact_dir / "stdout.log"
     stderr_path = artifact_dir / "stderr.log"
+    summary_path = artifact_dir / "summary.json"
     started = time.monotonic()
     status = "completed"
     return_code = 127
@@ -122,6 +148,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     cleanup_error: str | None = None
 
     with _private_file(stdout_path) as stdout_file, _private_file(stderr_path) as stderr_file:
+        result: dict[str, object] = {
+            "schema_version": 1,
+            "status": "in_progress",
+            "summary_path": str(summary_path),
+            "stdout_path": str(stdout_path), "stdout_bytes": 0,
+            "stderr_path": str(stderr_path), "stderr_bytes": 0,
+            "return_code": None, "duration_seconds": None,
+        }
+        _save_summary(summary_path, result)
         try:
             process = subprocess.Popen(
                 command,
@@ -149,19 +184,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return_code = 130
                 cleanup_error = _terminate_group(process)
 
-    result: dict[str, object] = {
+    result.update({
         "status": status,
-        "stdout_path": str(stdout_path),
         "stdout_bytes": stdout_path.stat().st_size,
-        "stderr_path": str(stderr_path),
         "stderr_bytes": stderr_path.stat().st_size,
         "return_code": return_code,
         "duration_seconds": round(time.monotonic() - started, 3),
-    }
+    })
     if launch_error is not None:
         result["error"] = launch_error
     if cleanup_error is not None:
         result["cleanup_error"] = cleanup_error
+    _save_summary(summary_path, result)
     _emit(result)
     return return_code
 

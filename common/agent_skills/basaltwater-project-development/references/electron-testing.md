@@ -188,7 +188,12 @@ Replace the skill path and project arguments with their actual values. For a
 direct launcher, put the explicit Xvfb wrapper after `--` instead. Allow startup
 and shutdown time beyond the workload duration. The helper retains private
 stdout/stderr logs and emits paths, byte counts, duration, completion status and
-return code. `completed` can include a nonzero child exit: require return code
+return code. It saves that result in `summary.json` before emitting it to the
+terminal. Use `--output-directory NEW_PATH` before `--` to retain a known new
+directory under an existing private parent outside Git. An initial `in_progress`
+summary is an uncertain outcome after disconnection; inspect the owned run
+before retrying. This foreground helper does not detach or supervise the job.
+`completed` can include a nonzero child exit: require return code
 zero and the project's completion assertions. Timeout (`124`) is a failure.
 Bring only bounded diagnostic excerpts into agent context; preserve the logs.
 For durable native CachyOS/Windows tasks use their supervisor's retained logs

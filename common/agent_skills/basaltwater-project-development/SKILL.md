@@ -54,7 +54,14 @@ For a verbose local command, use
 `python3 <skill-directory>/scripts/capture_output.py --timeout 300 -- COMMAND [ARGS...]`.
 It runs argv without a shell, closes stdin, and keeps stdout/stderr in private
 temporary logs; its JSON summary reports log paths, byte counts, status, return
-code, and duration. It returns the child status, `124` on timeout, or `130` on
+code, and duration. The same summary is saved as `summary.json` before terminal
+output. Use `--output-directory NEW_PATH` before `--` to choose a new directory
+under an existing private parent outside Git and retain its path before launch.
+Existing paths are refused. The saved initial `in_progress` status has no return
+code; it is not proof that the command remains alive or completed. Inspect the
+owned run before retrying after a disconnect. The helper captures a foreground
+command; it does not detach or supervise a durable job.
+It returns the child status, `124` on timeout, or `130` on
 interrupt. Windows cleanup targets the owned process tree before its parent;
 a `cleanup_error` field means cleanup could not be confirmed, so inspect owned
 processes before retrying. Keep the summary and only bounded failure excerpts in
