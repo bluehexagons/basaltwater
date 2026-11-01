@@ -107,7 +107,7 @@ def installed_instances(hook_dir: str = HOOK_DIR) -> list[str]:
     return sorted(instances)
 
 
-def validate_policy(value: object) -> dict:
+def validate_policy(value: object, *, allow_outdated: bool = False) -> dict:
     """Validate the sole nonsecret policy shared by setup, hook and panel."""
     from lib.validation import validate_github_runner_repository, validate_github_runner_labels, validate_github_runner_group
 
@@ -130,8 +130,13 @@ def validate_policy(value: object) -> dict:
             or any(not isinstance(user, str) or not validate_github_login(user) for user in users)):
         raise ValueError("GitHub runner requires 1–100 valid allowed users")
     validate_github_runner_labels(value.get("labels"))
-    if value.get("runner_version") != VERSION:
-        raise ValueError("GitHub runner version differs from the managed release")
+    version = value.get("runner_version")
+    if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){2}", version):
+        raise ValueError("Invalid GitHub runner version")
+    if version != VERSION and not (
+        allow_outdated and tuple(map(int, version.split("."))) < tuple(map(int, VERSION.split(".")))
+    ):
+        raise ValueError(f"GitHub runner version {version} differs from managed release {VERSION}; rerun updated setup")
     # Policies installed before deferred registration were always registered.
     registration = value.get("registration", "registered")
     if not isinstance(registration, str) or registration not in {"pending", "registered"}:

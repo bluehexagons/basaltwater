@@ -171,8 +171,28 @@ GitHub requires timely runner updates. Basaltwater deliberately uses
 revision with a reviewed version/checksum pin and qualified gate behavior.
 Do not make the application writable to enable automatic updates.
 
+Rerunning setup upgrades an older managed runner to that revision's pinned
+release. Setup validates the saved policy and protected installation, verifies
+the download checksum, stages the release, and stops the affected listener
+before replacing application files. Registration credentials, workspaces,
+diagnostics and other repository instances stay in place. A registered runner
+needs no new token; a pending runner stays pending. Multiple selected
+repositories share one release download. Newer installed versions and malformed
+policies are refused rather than downgraded. The job gate still requires the
+current managed release; older-policy inspection is limited to setup.
+
+Drain jobs before this rerun, as with allowlist changes. Failed publication or
+cancellation restores the previous release and policy and leaves the listener
+stopped for a setup retry. Process death or failed restoration retains a
+root-only `.basaltwater-release-recovery-*` backup under the affected application
+and a `release-recovery.json` journal in its hook directory. Setup refuses to
+overwrite that evidence, and the job gate refuses startup. Inspect the recorded
+backup and restore its `application/` entries and `policy.json` while the service
+is stopped before removing the journal, or use the full quarantine procedure below. These backups contain
+private policy data and must remain root-only.
+
 Setup handles ordinary scope/group/label replacement automatically. Use this
-manual procedure for release upgrades, lost registration or inspection. With
+manual procedure for lost registration, damaged installations or inspection. With
 multiple repositories, stop all runner services first: the original application
 and data directories also contain the additional instances. Quarantine their
 policy/hook tree `/etc/basaltwater/github-runner/` as well, and remove each retired

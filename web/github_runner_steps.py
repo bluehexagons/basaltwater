@@ -19,7 +19,7 @@ import tempfile
 import urllib.request
 
 from lib.atomic_io import (
-    fsync_tree, read_json_file, rename_path_durable, write_bytes_atomic, write_json_atomic, write_text_atomic,
+    fsync_tree, read_json_file, remove_file_durable, rename_path_durable, write_bytes_atomic, write_json_atomic, write_text_atomic,
 )
 from lib.config import SetupConfig
 from lib.github_runner_config import (
@@ -337,6 +337,71 @@ def register_pending_runner(token: bytes, instance: str = "") -> None:
             _register_pending(policy, token, account)
 
 
+def _installed_policy(path: str) -> dict | None:
+    """Inspect older saved policies for replacement, never for job admission."""
+    try:
+        return validate_policy(read_json_file(path, max_bytes=16 * 1024), allow_outdated=True)
+    except FileNotFoundError:
+        return None
+
+
+@contextmanager
+def _replace_runner_release(application: Path, previous: dict, paths: RunnerPaths):
+    """Replace release entries while preserving registration and nested instances.
+
+    Keep a private journal until application and policy publication complete.
+    Ordinary failures and cancellation restore the prior files; process death
+    or failed restoration retains an explicit recovery boundary.
+    """
+    entries = sorted(path.name for path in application.iterdir())
+    reserved = {*CREDENTIAL_FILES, ".env", ".path", "_diag", "instances"}
+    if (set(entries) & reserved or any(name.startswith(".basaltwater-") for name in entries)
+            or not all((application / "bin" / name).is_file() for name in ("Runner.Listener", "Runner.Worker"))):
+        raise ValueError("Runner release contains unexpected state or lacks its executables")
+    # Keep both staging and backup on the application's filesystem. /opt and
+    # /var/lib can be separate mounts; release publication relies on rename.
+    backup = Path(tempfile.mkdtemp(prefix=".basaltwater-release-recovery-", dir=paths.app))
+    saved_application = backup / "application"
+    saved_application.mkdir(mode=0o700)
+    marker = os.path.join(paths.hook_dir, "release-recovery.json")
+    changed: list[tuple[str, bool]] = []
+    write_json_atomic(str(backup / "policy.json"), previous, mode=0o600)
+    write_json_atomic(marker, {"backup_dir": str(backup), "entries": entries,
+                              "previous_entries": [name for name in entries if os.path.lexists(Path(paths.app, name))]}, mode=0o600)
+    try:
+        run(["systemctl", "stop", paths.service], timeout=120)
+        for name in entries:
+            destination = Path(paths.app, name)
+            existed = os.path.lexists(destination)
+            changed.append((name, existed))
+            if existed:
+                rename_path_durable(str(destination), str(saved_application / name))
+            rename_path_durable(str(application / name), str(destination))
+        yield
+    except BaseException:
+        try:
+            for name, existed in reversed(changed):
+                destination = Path(paths.app, name)
+                saved = saved_application / name
+                # A durable rename can raise after moving the entry. Inspect
+                # both paths before restoring it instead of relying on a flag.
+                if os.path.lexists(destination) and not os.path.lexists(application / name):
+                    rename_path_durable(str(destination), str(application / name))
+                if os.path.lexists(saved):
+                    rename_path_durable(str(saved), str(destination))
+                elif existed and not os.path.lexists(destination):
+                    raise RuntimeError("Previous runner release entry is unavailable")
+            write_json_atomic(paths.policy, previous, mode=0o644)
+            remove_file_durable(marker)
+        except BaseException as exc:
+            raise RuntimeError(f"Runner release recovery required; inspect {marker} and {backup}") from exc
+        shutil.rmtree(backup)
+        raise
+    else:
+        remove_file_durable(marker)
+        shutil.rmtree(backup)
+
+
 def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None = None,
                   *, release: Path | None = None, dependencies: bool = True) -> None:
     resolved = paths or _paths()
@@ -344,10 +409,10 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
     HOOK_DIR, HOOK, POLICY, SERVICE = resolved.hook_dir, resolved.hook, resolved.policy, resolved.service
     for path in (APP, DATA, HOOK_DIR, os.path.dirname(POLICY)):
         check_directory_path(path)
-    try:
-        previous = validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
-    except FileNotFoundError:
-        previous = None
+    recovery = os.path.join(HOOK_DIR, "release-recovery.json")
+    if os.path.lexists(recovery):
+        raise RuntimeError(f"Runner release recovery required; inspect {recovery} before retrying setup")
+    previous = _installed_policy(POLICY)
     replacement = bool(previous and (runner_target(previous).lower() != runner_target(policy).lower()
                      or bool(previous.get("organization")) != bool(policy.get("organization"))
                      or previous.get("runner_group", "") != policy.get("runner_group", "")
@@ -368,10 +433,12 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
                 print("  Retired previous runner credentials; remove its old entry in GitHub Settings → Actions → Runners.")
             policy["registration"] = "pending"
             # Validate the unchanged application against its credential-free state.
-            write_json_atomic(POLICY, previous | {"registration": "pending"}, mode=0o644)
+            previous = previous | {"registration": "pending"}
+            write_json_atomic(POLICY, previous, mode=0o644)
         from lib.github_runner_gate import check_installation
 
-        check_installation(require_registration=False, **({"instance": resolved.instance} if resolved.instance else {}))
+        check_installation(require_registration=False, allow_outdated=True,
+                           **({"instance": resolved.instance} if resolved.instance else {}))
     account = _account()
     _directory(DATA)
     _directory(HOME, uid=account.pw_uid, gid=account.pw_gid, mode=0o700)
@@ -385,8 +452,11 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
         run(["apt-get", "update"])
         run(["apt-get", "install", "-y", "--no-install-recommends", "ca-certificates", "libicu76",
              "libssl3t64", "libkrb5-3", "zlib1g", "liblttng-ust1t64", "libcurl4t64", "libunwind8"])
-    if previous is None:
-        with tempfile.TemporaryDirectory(prefix=".github-runner-", dir="/opt") as temporary:
+    with ExitStack() as publication:
+        if previous is None or previous["runner_version"] != VERSION:
+            temporary = publication.enter_context(tempfile.TemporaryDirectory(
+                prefix=".github-runner-", dir=APP if previous else "/opt",
+            ))
             staging = Path(temporary)
             staging.chmod(0o755)
             archive = release or staging / "runner.tar.gz"
@@ -395,15 +465,19 @@ def _setup_runner(policy: dict, token: bytes | None, paths: RunnerPaths | None =
             application = staging / "app"
             application.mkdir(mode=0o755)
             _extract_release(archive, application)
-            os.symlink(DATA + "/diag", application / "_diag")
-            write_text_atomic(str(application / ".env"), "", mode=0o644)
-            write_text_atomic(str(application / ".path"), "/usr/local/bin:/usr/bin:/bin", mode=0o644)
+            if previous is None:
+                os.symlink(DATA + "/diag", application / "_diag")
+                write_text_atomic(str(application / ".env"), "", mode=0o644)
+                write_text_atomic(str(application / ".path"), "/usr/local/bin:/usr/bin:/bin", mode=0o644)
             fsync_tree(str(application))
-            rename_path_durable(str(application), APP)
-    else:
-        run(["systemctl", "stop", SERVICE], timeout=120)
-    write_text_atomic(HOOK, render_hook(resolved.instance), mode=0o755)
-    write_json_atomic(POLICY, policy, mode=0o644)
+            if previous is None:
+                rename_path_durable(str(application), APP)
+            else:
+                publication.enter_context(_replace_runner_release(application, previous, resolved))
+        else:
+            run(["systemctl", "stop", SERVICE], timeout=120)
+        write_text_atomic(HOOK, render_hook(resolved.instance), mode=0o755)
+        write_json_atomic(POLICY, policy, mode=0o644)
     registered = policy["registration"] == "registered"
     replace_units({SERVICE: render_unit(paths)}, activate=(SERVICE,) if registered else ())
     if not registered:
@@ -449,8 +523,8 @@ def setup_github_runner(config: SetupConfig) -> None:
 
         def install(policy: dict, paths: RunnerPaths | None = None) -> None:
             nonlocal release, dependencies
-            new = primary is None if paths is None else not os.path.lexists(paths.policy)
-            if new and release is None:
+            previous = primary if paths is None else _installed_policy(paths.policy)
+            if (previous is None or previous["runner_version"] != VERSION) and release is None:
                 staging = lease.enter_context(tempfile.TemporaryDirectory(prefix=".github-runner-release-", dir="/opt"))
                 release = Path(staging) / "runner.tar.gz"
                 _download_release(release)
@@ -458,10 +532,7 @@ def setup_github_runner(config: SetupConfig) -> None:
                           release=release, dependencies=dependencies)
             dependencies = False
 
-        try:
-            primary = validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
-        except FileNotFoundError:
-            primary = None
+        primary = _installed_policy(POLICY)
         primary_target = runner_target(primary).lower() if primary else runner_target(policies[0]).lower()
         existing = installed_instances(HOOK_DIR)
         selected = next((policy for policy in policies if runner_target(policy).lower() == primary_target), None)
@@ -486,5 +557,5 @@ def setup_github_runner(config: SetupConfig) -> None:
             if instance not in desired:
                 paths = _paths(instance)
                 run(["systemctl", "disable", "--now", paths.service], timeout=120)
-                previous = validate_policy(read_json_file(paths.policy, max_bytes=16 * 1024))
+                previous = validate_policy(read_json_file(paths.policy, max_bytes=16 * 1024), allow_outdated=True)
                 write_json_atomic(paths.policy, previous | {"enabled": False}, mode=0o644)

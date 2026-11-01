@@ -158,6 +158,25 @@ class MultipleInstallationTests(unittest.TestCase):
         steps.setup_github_runner(multiple())
         self.assertTrue(json.loads(Path(secondary.policy).read_text()).get("enabled", True))
 
+    def test_release_upgrades_share_one_download_and_preserve_all_registrations(self) -> None:
+        bundle = self.token.with_name("tokens.json")
+        bundle.write_text(json.dumps({"owner/first": "A" * 40, "owner/second": "B" * 40}))
+        bundle.chmod(0o600)
+        steps.setup_github_runner(multiple(ci_registration_payload=True))
+        secondary = self.paths("owner/second")
+        for paths in (steps._paths(), secondary):
+            saved = json.loads(Path(paths.policy).read_text()) | {"runner_version": "2.338.0"}
+            Path(paths.policy).write_text(json.dumps(saved))
+            Path(paths.app, "bin/Runner.Listener").write_bytes(b"old")
+        with patch.object(steps, "_download_release", wraps=steps._download_release) as download:
+            steps.setup_github_runner(multiple())
+        download.assert_called_once()
+        self.assertEqual(self.register.call_count, 2)
+        for paths, repository in ((steps._paths(), "owner/first"), (secondary, "owner/second")):
+            self.assertEqual(json.loads(Path(paths.policy).read_text())["runner_version"], steps.VERSION)
+            self.assertEqual(Path(paths.app, ".credentials").read_text(), "generated:" + repository)
+            self.assertEqual(Path(paths.app, "bin/Runner.Listener").read_bytes(), b"code")
+
     def test_panel_registers_next_pending_repository_using_only_installed_policy(self) -> None:
         steps.setup_github_runner(multiple())
         primary = json.loads(Path(steps.POLICY).read_text()) | {"registration": "registered"}

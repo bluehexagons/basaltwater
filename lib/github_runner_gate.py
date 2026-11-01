@@ -81,12 +81,14 @@ def evaluate_job(policy: dict, event: object, environment: dict[str, str]) -> tu
         return False, "malformed-identity-or-event", ""
 
 
-def check_installation(*, require_registration: bool = True, instance: str = "") -> dict:
+def check_installation(*, require_registration: bool = True, instance: str = "", allow_outdated: bool = False) -> dict:
     """Require root-controlled policy, hook, interpreter inputs and app files."""
     paths = runner_paths(instance, app=APP, data=DATA, policy=POLICY, hook_dir=HOOK_DIR, hook=HOOK)
     application, hook, policy_path = paths.app, paths.hook, paths.policy
     executables = {application + "/bin/Runner.Listener", application + "/bin/Runner.Worker"}
-    policy = validate_policy(read_json_file(policy_path, max_bytes=16 * 1024))
+    if allow_outdated and require_registration:
+        raise ValueError("Outdated runner inspection is only available to setup")
+    policy = validate_policy(read_json_file(policy_path, max_bytes=16 * 1024), allow_outdated=allow_outdated)
     if instance and (not policy["repository"] or repository_instance(policy["repository"]) != instance):
         raise ValueError("Runner instance policy mismatch")
     if require_registration and not policy.get("enabled", True):
@@ -96,6 +98,8 @@ def check_installation(*, require_registration: bool = True, instance: str = "")
     credentials = tuple(application + "/" + name for name in CREDENTIAL_FILES)
     if policy["registration"] == "pending" and any(os.path.lexists(path) for path in credentials):
         raise ValueError("Partial runner registration requires recovery; see runner guide")
+    if os.path.lexists(os.path.join(paths.hook_dir, "release-recovery.json")):
+        raise ValueError("Runner release recovery is required; see runner guide")
     for path in (policy_path, hook, GATE, application, application + "/.env", application + "/.path",
                  *(credentials if policy["registration"] == "registered" else ()),
                  *sorted(executables)):

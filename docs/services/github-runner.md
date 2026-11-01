@@ -48,6 +48,9 @@ You can add either registration option on the first setup or repeat the same
 complete setup command later. Registered runners need no token on routine
 setup. Credential errors leave registration pending and let the rest of setup,
 including requested restarts, finish. `--dry-run` makes no token request.
+When Basaltwater's reviewed runner release changes, a rerun upgrades the managed
+application while preserving registration and job data. Drain jobs first; see
+[release updates and recovery](github-runner-operations.md#updates-deregistration-and-recovery).
 On later setup runs, include the complete desired repository list. Omitted
 repositories are disabled locally; re-adding them reuses their registration.
 

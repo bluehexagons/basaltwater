@@ -180,6 +180,7 @@ class IdentityTests(unittest.TestCase):
 
             with (self.subTest(failure=failure), patch.object(gate.os, "lstat", side_effect=inspect),
                   patch.object(gate.os, "access", side_effect=accessible),
+                  patch.object(gate.os.path, "lexists", return_value=False),
                   patch.object(gate, "read_json_file", return_value=policy())):
                 if failure == "none":
                     self.assertEqual(gate.check_installation(), policy())
@@ -231,6 +232,41 @@ class IdentityTests(unittest.TestCase):
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_only_setup_may_inspect_an_older_policy_and_never_downgrade(self) -> None:
+        old = policy() | {"runner_version": "2.338.0"}
+        self.assertEqual(validate_policy(old, allow_outdated=True), old)
+        with self.assertRaisesRegex(ValueError, "differs from managed release"):
+            validate_policy(old)
+        for version in (None, 42, "", "2.338", "2.338.0-rc.1", "2.338.0\n", "02.338.0", "99999.0.0"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                validate_policy(policy() | {"runner_version": version}, allow_outdated=True)
+
+    def test_outdated_inspection_keeps_ownership_checks_and_cannot_admit_jobs(self) -> None:
+        old = policy() | {"runner_version": "2.338.0"}
+        with patch.object(gate, "read_json_file", return_value=old), \
+                patch.object(gate.os.path, "lexists", return_value=False), \
+                patch.object(gate.os, "lstat", return_value=SimpleNamespace(st_uid=123, st_mode=stat.S_IFREG | 0o644)) as inspect:
+            with self.assertRaisesRegex(ValueError, "writable"):
+                gate.check_installation(require_registration=False, allow_outdated=True)
+            inspect.assert_called_once()
+            inspect.reset_mock()
+            with self.assertRaises(ValueError):
+                gate.check_installation()
+            inspect.assert_not_called()
+            with self.assertRaises(ValueError):
+                gate.check_installation(allow_outdated=True)
+        event, env = delivery("workflow_dispatch")
+        with self.assertRaises(ValueError):
+            gate.evaluate_job(old, event, env)
+
+    def test_unfinished_release_journal_blocks_runner_startup_and_setup_inspection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(gate, "HOOK_DIR", temporary), \
+                patch.object(gate, "read_json_file", return_value=policy()):
+            Path(temporary, "release-recovery.json").write_text("{}")
+            for options in ({}, {"require_registration": False, "allow_outdated": True}):
+                with self.subTest(options=options), self.assertRaisesRegex(ValueError, "release recovery"):
+                    gate.check_installation(**options)
+
     def test_gh_registration_is_controller_only_mutually_exclusive_and_not_replayed(self) -> None:
         parser = create_setup_argument_parser("Controller test")
         argv = ["localhost", "operator", "--ci-repository", "owner/repo", "--ci-allowed-user", "alice"]
@@ -716,8 +752,11 @@ class InstallationTests(unittest.TestCase):
             Path(path).chmod(kwargs.get("mode", 0o755))
 
         def staging(**kwargs):
-            self.assertEqual(kwargs["dir"], "/opt")
-            return temporary_directory(**(kwargs | {"dir": str(self.opt)}))
+            if kwargs["dir"] == "/opt":
+                kwargs = kwargs | {"dir": str(self.opt)}
+            else:
+                self.assertTrue(Path(kwargs["dir"]).is_relative_to(Path(steps.APP)))
+            return temporary_directory(**kwargs)
 
         def download(destination):
             with tarfile.open(destination, "w:gz") as archive:
@@ -858,3 +897,108 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.run.call_args.args[0], ["systemctl", "stop", SERVICE])
         self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
         self.units.assert_not_called()
+
+    def make_outdated(self) -> dict:
+        saved = json.loads(Path(steps.POLICY).read_text()) | {"runner_version": "2.338.0"}
+        Path(steps.POLICY).write_text(json.dumps(saved))
+        Path(steps.APP, "bin/Runner.Listener").write_bytes(b"old listener")
+        return saved
+
+    def test_release_upgrade_preserves_registration_state_and_workspaces_without_a_token(self) -> None:
+        for registered in (False, True):
+            with self.subTest(registered=registered):
+                steps.setup_github_runner(config(ci_registration_payload=registered))
+                self.make_outdated()
+                credentials = {name: (Path(steps.APP, name).read_bytes(), Path(steps.APP, name).stat().st_ino)
+                               for name in steps.CREDENTIAL_FILES if Path(steps.APP, name).exists()}
+                workspace = Path(steps.DATA, "work/project")
+                workspace.write_text("keep workspace")
+                # Nested application state belongs to other repository
+                # listeners and must never move with the primary release.
+                nested = Path(steps.APP, "instances/fixture/keep")
+                nested.parent.mkdir(parents=True, exist_ok=True)
+                nested.write_text("keep other runner")
+                registrations = self.register.call_count
+                with patch.object(steps, "_download_release", wraps=steps._download_release) as download:
+                    steps.setup_github_runner(config())
+                download.assert_called_once()
+                self.assertEqual(Path(steps.APP, "bin/Runner.Listener").read_bytes(), b"code")
+                self.assertEqual(json.loads(Path(steps.POLICY).read_text())["runner_version"], VERSION)
+                self.assertEqual(self.register.call_count, registrations)
+                self.assertEqual({name: (Path(steps.APP, name).read_bytes(), Path(steps.APP, name).stat().st_ino)
+                                  for name in credentials}, credentials)
+                self.assertEqual(workspace.read_text(), "keep workspace")
+                self.assertEqual(nested.read_text(), "keep other runner")
+                self.assertEqual(self.units.call_args.kwargs["activate"], (SERVICE,) if registered else ())
+                self.assertFalse(Path(steps.HOOK_DIR, "release-recovery.json").exists())
+                self.assertEqual(list(Path(steps.APP).glob(".basaltwater-release-recovery-*")), [])
+
+    def test_release_failure_and_cancellation_restore_files_and_allow_retry(self) -> None:
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        previous = self.make_outdated()
+        rename, write = steps.rename_path_durable, steps.write_json_atomic
+        for failure in ("before-rename", "after-rename", "policy", "cancel"):
+            failed = False
+
+            def move(source, destination):
+                nonlocal failed
+                if destination == str(Path(steps.APP, "bin")) and not failed and failure != "policy":
+                    failed = True
+                    if failure == "after-rename":
+                        rename(source, destination)
+                    if failure == "cancel":
+                        raise KeyboardInterrupt()
+                    raise OSError("publication failed")
+                rename(source, destination)
+
+            def publish(path, value, **kwargs):
+                nonlocal failed
+                if path == steps.POLICY and value["runner_version"] == VERSION and failure == "policy" and not failed:
+                    failed = True
+                    raise OSError("policy publication failed")
+                write(path, value, **kwargs)
+
+            self.units.reset_mock()
+            with self.subTest(failure=failure), patch.object(steps, "rename_path_durable", side_effect=move), \
+                    patch.object(steps, "write_json_atomic", side_effect=publish):
+                with self.assertRaises(KeyboardInterrupt if failure == "cancel" else OSError):
+                    steps.setup_github_runner(config())
+            self.assertEqual(json.loads(Path(steps.POLICY).read_text()), previous)
+            self.assertEqual(Path(steps.APP, "bin/Runner.Listener").read_bytes(), b"old listener")
+            self.assertEqual(Path(steps.APP, ".credentials").read_text(), "generated configuration")
+            self.units.assert_not_called()
+            self.assertFalse(Path(steps.HOOK_DIR, "release-recovery.json").exists())
+        steps.setup_github_runner(config())
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text())["runner_version"], VERSION)
+        self.register.assert_called_once()
+
+    def test_download_failure_and_unsafe_old_install_do_not_change_the_runner(self) -> None:
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        previous = self.make_outdated()
+        with patch.object(steps, "_download_release", side_effect=ValueError("checksum mismatch")), self.assertRaises(ValueError):
+            steps.setup_github_runner(config())
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text()), previous)
+        self.assertEqual(Path(steps.APP, "bin/Runner.Listener").read_bytes(), b"old listener")
+        with patch.object(gate, "check_installation", side_effect=ValueError("writable")), self.assertRaises(ValueError):
+            steps.setup_github_runner(config())
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text()), previous)
+        self.assertEqual(Path(steps.APP, "bin/Runner.Listener").read_bytes(), b"old listener")
+
+    def test_failed_release_restoration_retains_journal_and_blocks_a_blind_retry(self) -> None:
+        steps.setup_github_runner(config())
+        self.make_outdated()
+        rename = steps.rename_path_durable
+
+        def fail(source, destination):
+            if destination == str(Path(steps.APP, "bin")):
+                raise OSError("cannot publish or restore bin")
+            rename(source, destination)
+
+        with patch.object(steps, "rename_path_durable", side_effect=fail), self.assertRaisesRegex(RuntimeError, "recovery required"):
+            steps.setup_github_runner(config())
+        marker = Path(steps.HOOK_DIR, "release-recovery.json")
+        backup = Path(json.loads(marker.read_text())["backup_dir"])
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((backup / "application/bin/Runner.Listener").read_bytes(), b"old listener")
+        with self.assertRaisesRegex(RuntimeError, "recovery required"):
+            steps.setup_github_runner(config())
