@@ -14,6 +14,9 @@ Native Windows checks on 2026-11-01 additionally confirm installed diagnostics,
 skill freshness and real supervised task behavior at `5f549204`; see the
 [Windows evidence](evidence.md#native-windows-workstation-and-tasks). Historical
 project builds/exports retain their original dates and do not qualify fresh setup.
+The [Windows follow-up](windows.md#follow-up-native-qualification-2026-11-01)
+adds disposable desktop control, supervised npm/MSVC/Godot workloads and real
+timeout/cancel cleanup, including reproduced restore and completion-order fixes.
 Native CachyOS SDL/OpenGL application checks on the same date also qualify
 selected Intel Arc Wayland rendering, scripted UI interaction, software capture
 comparisons and display-wake recovery; see the
@@ -24,7 +27,7 @@ comparisons and display-wake recovery; see the
 | Owner-reported stack setup rerun | 🟡 **Partial** — basic setup success reported; selected options are not individual feature passes |
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
 | [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3/Codex, Godot and SDL/OpenGL application workflows and display-wake recovery labbed; corrected T3 refresh relaunch awaits a live check |
-| [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected installed diagnostics/tasks, T3/Codex session and historical native builds/exports labbed; fresh installation, physical QA and WSL integration remain open |
+| [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected diagnostics/tasks, scoped desktop control, native toolchain workloads and T3/Codex session labbed; fresh installation, physical QA and WSL integration remain open |
 | Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |

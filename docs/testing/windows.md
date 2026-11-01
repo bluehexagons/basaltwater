@@ -1,7 +1,7 @@
 # Windows and WSL testing status
 
-**Evidence reconciled 2026-11-01 from installed native checks, retained task
-and project QA records, and the owner's basic setup report.** Native Windows
+**Evidence reconciled 2026-11-01 from installed and checkout native checks,
+retained task and project QA records, and the owner's basic setup report.** Native Windows
 and Ubuntu WSL are separate environments: a pass on one does not establish the other. See the
 [status legend](README.md#status-legend) and
 [Windows qualification procedure](../workstations/windows-qualification.md).
@@ -19,9 +19,10 @@ web services, privilege broker or remote setup profiles. See the
 | T3 desktop with Codex | 🟢 **Labbed** | Native T3 conversation and shell-tool execution support repository work and tests; enabled login task and executable discovered | Interactive terminal UI, pairing/Connect, other providers, actual login startup, refresh/relaunch and reboot recovery were not exercised in this pass |
 | Installed skill freshness | 🟢 **Labbed** | Five selected bundles have complete delivery and match the saved source at `5f549204`; absent unselected bundles are informational | Session-loaded revisions remain unknown; this inventory is not an instruction-reload test |
 | Native launcher and task help | 🟢 **Labbed** | Installed executable preserved literal/empty/quoted/Unicode argv, working directory and task-local environment on 2026-11-01; namespace help explains npm scripts, explicit executables and waiting | Compilation rollback and active replacement have fixture coverage; fresh installation and other invoking-shell binders remain separate |
-| Process supervision | 🟡 **Partial** | Native process fixtures cover failures, timeouts, cancellation and child cleanup | Logoff, reboot and additional interruption boundaries |
-| Scheduled development tasks | 🟢 **Labbed** | Earlier real tasks cover cancellation and completion after CLI exit; installed `5f549204` preserves late flood output, separate byte counters and exit 7, while caller wait timeout leaves work running | Logoff/reconnect, T3 closure during active work and live reboot/interruption remain open |
-| Desktop API readiness | 🟡 **Partial** | Installed doctor reports a healthy interactive Win32/UI Automation backend, with no capture or input | Window inspection, mutation, screenshot fidelity and physical interaction require separate tests |
+| Local process supervision | 🟢 **Labbed** | Real corrected checkout guardians settled timeout and cancellation after owned parent/child exit, private-request removal and verified Scheduler retirement; native fixtures also cover failures and cleanup uncertainty | The installed guardian's premature-completion failure is retained in the follow-up below; logoff, reboot and additional interruption boundaries remain open |
+| Scheduled development tasks | 🟢 **Labbed** | Installed `5f549204` preserves late flood output, separate byte counters and exit 7; caller wait timeout leaves work running. This round also ran real pinned npm, MSVC and Godot tasks | Logoff/reconnect, T3 closure during active work and live reboot/interruption remain open |
+| Desktop observation and control | 🟢 **Labbed**, scoped WinForms fixture | Installed and corrected checkout CLIs exercised UI Automation, literal Unicode text, stale-reference rejection, invoke, window actions, inspected window capture, raw keys/text/click and close | One transient UIA inspection failure remains unresolved. Hardware-rendered capture, physical interaction, mixed DPI, secure desktop and lock/reconnect remain separate |
+| Supervised native workloads | 🟢 **Labbed** | Installed public CLI selected an installed fnm runtime/npm in a spaced Unicode project; task-local MSVC/SDK compiled and ran C; managed Godot imported and ran a disposable headless project | Synthetic projects, not a complete project build/export, template, performance or physical presentation qualification |
 | Physical presentation, audio and input | ⚪ **Untested** | No complete manual interaction pass recorded; bounded OpenGL project fixtures are separate evidence | Actual display presentation, audible audio, physical input, lock and reconnect |
 | Sunshine streaming | 🟡 **Partial** | Installed service observed running with automatic startup on 2026-11-01; offline package/service fixtures pass | Fresh install, firewall, actual boot startup, pairing and Moonlight video/audio/input/reconnect remain open |
 | Windows/WSL GitHub runner | 🟡 **Partial** | Offline native runner tests; live Windows 11/WSL qualification open | Registration, real jobs, cancellation and reboot |
@@ -37,13 +38,55 @@ Later selected task/launcher checks are described there. The
 separates historical checks from the installed 2026-11-01 results and current
 offline validation. None is a fresh installation or release pass.
 
-The installed task probe used the public native executable, real limited
+The earlier installed task probe used the public native executable, real limited
 interactive Scheduler and a disposable project. It confirmed the end marker
 both while the child paused after overflowing stdout and after its intentional
 exit 7. A one-second caller wait returned 124 without cancellation; the final
 wait returned a completed failed receipt and CLI exit 1. The child, private
 environment request and Scheduler registration were absent afterward. No
 refresh, package change, desktop input, reboot or WSL command was performed.
+
+### Follow-up native qualification: 2026-11-01
+
+This round retained installed source `5f549204` and began from checkout
+`70373002`. The installed executable passed health, skill freshness and desktop
+readiness again; `refresh --dry-run` completed without applying setup. Four
+real limited-interactive tasks passed: pinned Node/npm, MSVC C compile/run,
+Godot headless import and headless execution. No packages were installed.
+
+The disposable WinForms pass reproduced a restore failure after maximize →
+minimize → restore: Windows resumed the prior maximized presentation, but the
+adapter incorrectly rejected it. Fix `9ec105aa` passed offline outcome
+regressions and live checkout-CLI checks for both that transition and subsequent
+restore to normal size. Captured window pixels were inspected. Raw input was
+verified in the fixture's text and button state, rather than inferred from
+input-queue acceptance. One earlier UIA inspection raced an unavailable element;
+fresh observation succeeded, but no fix is claimed for that intermittent error.
+
+A real timeout also exposed `wait` publishing completion before Scheduler
+unregistration. The corrected guardian retires and verifies registration before
+terminal publication; retirement failure remains `cleanup-uncertain`, without
+a completed timestamp. The process regression reproduces the old ordering and
+covers unregister failure. Real corrected timeout/cancel tasks returned only
+after descendants, registration and private environment requests were gone.
+Guardian fix `c53f4a50` includes those regressions; the unchanged installed source
+does not include either correction until a later refresh applies them.
+
+The complete native suite passed after both fixes, in 213.840 seconds, with two
+explicit POSIX-only skips in its 11 Python capture tests. This is Windows
+qualification, not the full Debian CI suite. Its Windows PowerShell 5.1 entry
+point also exercises PowerShell 7 guardians. The first captured launch failed because a
+Python intermediary inherited PowerShell 7 module paths. Child-only isolation
+resolved that failure; the [qualification command](../workstations/windows-qualification.md#check-host-health-and-offline-behavior)
+now documents it. Running framework UIA compilation directly under PowerShell 7
+is not a supported substitute for that 5.1 suite entry point.
+
+Original adapter failures, fixture corrections and successful continuations
+remain in private evidence. Saved installation bytes and human control mode
+were unchanged; all owned GUI windows and real task processes, requests and
+registrations were gone at the final check. Corrected behavior was tested from
+the checkout; no installed refresh, reboot, WSL, streaming or physical-input
+qualification is implied.
 
 Selected project checks retain their own dates and limits in the public
 [native game QA record](https://github.com/bluehexagons/antistatic/blob/main/docs/qa/native.md#verified-windows-local-qualification)
@@ -70,9 +113,11 @@ Windows host setup and the Linux environment have separate evidence. See the
 
 ## Next checks
 
-1. Use a fresh disposable Windows VM to exercise installer, package, reboot
+1. Reproduce the intermittent UIA inspection failure with a disposable changing
+   application; keep transient provider loss separate from successful mutations.
+2. Use a fresh disposable Windows VM to exercise installer, package, reboot
    and recovery paths; retain individual failures and retries in private evidence.
-2. Separately exercise native desktop/streaming hardware and any project-owned
+3. Separately exercise native desktop/streaming hardware and any project-owned
    build, export and manual QA cases that matter to the intended use.
-3. Qualify WSL setup and the selected Windows/WSL integration, then real runner
+4. Qualify WSL setup and the selected Windows/WSL integration, then real runner
    registration and jobs when an authorized test repository is available.

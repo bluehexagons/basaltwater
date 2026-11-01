@@ -65,10 +65,20 @@ Run the complete offline suite after Basaltwater setup/diagnostic changes.
 It uses temporary state and mocked installers and requires Python 3.11+:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\tests\Run-NativeTests.ps1 *> (Join-Path $evidence 'native-tests.log')
+$nativeCommand = '$env:PSModulePath = [Environment]::GetEnvironmentVariable("PSModulePath", "Machine"); & .\windows\tests\Run-NativeTests.ps1'
+$nativeEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($nativeCommand))
+powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $nativeEncoded *> (Join-Path $evidence 'native-tests.log')
 $nativeExit = $LASTEXITCODE
 Set-Content -LiteralPath (Join-Path $evidence 'native-tests-exit.txt') -Value $nativeExit
 ```
+
+Initialize the module path only in that Windows PowerShell 5.1 child. A Python
+capture process or another intermediary can otherwise carry PowerShell 7 module
+paths into it, causing `Microsoft.PowerShell.Security` autoload failures with
+duplicate type-data errors. The encoded command preserves its literal quotes;
+the invoking shell and saved user/machine module paths remain unchanged. The
+installed native CLI already isolates its compatibility workers. The full suite
+uses the 5.1 framework UI Automation assemblies; project tasks still use 7.
 
 Inspect every nonzero result before rerunning. Preserve failure logs and use
 the relevant focused test entry point for diagnosis. A successful retry does

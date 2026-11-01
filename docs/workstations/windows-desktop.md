@@ -144,6 +144,9 @@ Cancellation and timeout settle
 the process tree before a terminal receipt is published. Interrupted or uncertain
 cleanup blocks setup/reboot; inspect the task rather than blindly replaying it.
 Failed dispatch never replaces a running or completed guardian receipt.
+Terminal publication includes verified Scheduler retirement and private-request
+removal. An unregister failure leaves `cleanup-uncertain` with no completed
+timestamp, so `wait` cannot report settled work while registration remains.
 `develop status` exits nonzero for failure, timeout, cancellation, interrupted
 work or uncertain cleanup; queued/running/complete queries exit zero.
 
@@ -230,9 +233,11 @@ reviewed consuming workflow.
 
 ## Maintenance and qualification
 
-`basaltw refresh` returns a detached refresh ID by default, allowing T3 upgrades
-to close/restart the desktop without killing setup. Use `refresh --status ID`
-and `refresh --logs ID` for progress; `--wait` runs in the invoking terminal.
+`basaltw refresh` submits a durable background job and follows its live output
+by default, allowing T3 upgrades to close/restart the desktop without killing
+setup. `--detach` returns its ID without following; Ctrl+C stops following
+without cancelling setup. Use `refresh --status ID` and `refresh --logs ID` for
+progress, or `--follow ID` to reconnect. `--wait` runs setup in the invoking terminal.
 `refresh --cancel ID` can cancel a queued job before setup starts; an applying
 package installer must finish before another attempt.
 Status reports `cleanup-uncertain` when a running job loses its worker in the
