@@ -67,6 +67,21 @@ def _restart_local_host() -> int:
         return 1
 
 
+def _prepare_local_vm_power() -> int:
+    """Hold guest intake drained across an external Proxmox power request."""
+    try:
+        if os.geteuid() != 0:
+            raise PermissionError("VM power preparation requires root")
+        with maintenance_lock() as acquired:
+            if not acquired:
+                raise RuntimeError("setup, maintenance or a build is running; retry when idle")
+            retain_reboot_drain()
+        return 0
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"Error: refusing VM power operation: {exc}", flush=True)
+        return 1
+
+
 def shutdown_after_setup(config: SetupConfig) -> int:
     """Shut down a provisioned QEMU VM after successful setup."""
     if not config.hosted_node or config.machine_type != "vm":

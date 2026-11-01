@@ -16,13 +16,17 @@ from lib.validation import validate_filesystem_path, validate_positive_integer
 from lib.validators import validate_host, validate_username
 
 
-def _provider_command(config: SetupConfig, command: str, *, timeout: int = 30) -> str:
+def _validate_provider(config: SetupConfig) -> None:
     if not config.hosted_node or not validate_host(config.hosted_node):
         raise ValueError("Invalid Proxmox power operation host")
     if not validate_username(config.hosted_user):
         raise ValueError("Invalid Proxmox power operation username")
     if config.hosted_key:
         validate_filesystem_path(config.hosted_key, must_exist=False)
+
+
+def _provider_command(config: SetupConfig, command: str, *, timeout: int = 30) -> str:
+    _validate_provider(config)
     result = run(
         build_ssh_command(
             config.hosted_node, config.hosted_user, config.hosted_key,
@@ -113,7 +117,30 @@ def pending_vm_restart(config: SetupConfig) -> int | None:
 def request_vm_restart(config: SetupConfig, vmid: int) -> None:
     """Gracefully restart through Proxmox so QEMU applies pending settings."""
     vmid = _vmid(vmid)
+    _validate_provider(config)
+    _drain_guest(config)
     _provider_command(config, f"qm reboot {vmid} --timeout 180", timeout=240)
+
+
+def _drain_guest(config: SetupConfig) -> None:
+    """Persist a guest-side capacity drain before asking its provider for power."""
+    if not validate_host(config.host):
+        raise ValueError("Invalid VM power operation guest")
+    if config.ssh_key:
+        validate_filesystem_path(config.ssh_key)
+    program = (
+        'import sys; sys.path.insert(0, "/opt/basaltwater"); '
+        'from lib.setup_reboot import _prepare_local_vm_power; '
+        'raise SystemExit(_prepare_local_vm_power())'
+    )
+    result = run(build_ssh_command(
+        config.host, "root", config.ssh_key,
+        remote_command=shlex.join(["/usr/bin/python3", "-I", "-c", program]),
+        batch_mode=ssh_batch_mode(), connect_timeout=15, server_alive_interval=15,
+        control_path=get_ssh_control_path(config.host, "root", config.ssh_key),
+    ), capture_output=True, text=True, check=False, timeout=30)
+    if result.returncode != 0:
+        raise RuntimeError("Guest power preparation refused or is uncertain; inspect guest capacity before retrying")
 
 
 def request_vm_shutdown(config: SetupConfig) -> None:
@@ -125,6 +152,7 @@ def request_vm_shutdown(config: SetupConfig) -> None:
         return
     if guest.get("status") != "running":
         raise ValueError(f"Proxmox VM {vmid} is not running")
+    _drain_guest(config)
     _provider_command(
         config, f"qm shutdown {vmid} --timeout 180 --forceStop 0", timeout=240,
     )

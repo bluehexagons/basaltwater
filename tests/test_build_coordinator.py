@@ -168,6 +168,21 @@ class CoordinatorTests(unittest.TestCase):
             with self.assertRaises(coordinator.CoordinatorBusy), coordinator.host_slot():
                 self.fail("failed reboot silently reopened capacity")
 
+    def test_external_vm_power_preparation_requires_idle_and_retains_drain_after_reply(self):
+        from lib import maintenance_lock as scheduled, setup_reboot
+
+        with patch.object(coordinator, "LOCK", str(self.lock)), \
+             patch.object(scheduled, "SETUP_LOCK_FILE", str(self.root / "setup.lock")), \
+             patch.object(scheduled, "_local_boot_id", return_value="00000000-0000-0000-0000-000000000001"):
+            with coordinator.host_slot():
+                self.assertEqual(setup_reboot._prepare_local_vm_power(), 1)
+            self.assertFalse(coordinator.drained())
+            self.assertEqual(setup_reboot._prepare_local_vm_power(), 0)
+            self.assertTrue(coordinator.drained())
+            self.assertEqual(self.lock.read_bytes(), b"")
+            with self.assertRaises(coordinator.CoordinatorBusy), coordinator.host_slot():
+                self.fail("build started before the external power request")
+
 
 class LegacyWorkerGuardTests(unittest.TestCase):
     def setUp(self):

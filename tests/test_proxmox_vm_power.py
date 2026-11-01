@@ -193,6 +193,7 @@ class TestOfflineVMSetup(unittest.TestCase):
 
 class TestSetupVMShutdown(unittest.TestCase):
     def setUp(self) -> None:
+        self.drain = self.enterContext(patch("lib.proxmox_vm_restart._drain_guest"))
         self.command = self.enterContext(patch("lib.proxmox_vm_restart._provider_command"))
         self.command.side_effect = self._command
         self.inventory: object = [{"vmid": 112, "name": "offline-vm", "status": "running"}]
@@ -262,6 +263,12 @@ class TestSetupVMShutdown(unittest.TestCase):
 
         self.assertEqual(shutdown_after_setup(_config()), 0)
 
+        self.assertEqual(self._shutdown_commands(), [])
+        self.drain.assert_not_called()
+
+    def test_busy_guest_refuses_shutdown_before_provider_power_request(self) -> None:
+        self.drain.side_effect = RuntimeError("build is active")
+        self.assertEqual(shutdown_after_setup(_config()), 1)
         self.assertEqual(self._shutdown_commands(), [])
 
     def test_provider_timeout_is_reported_without_force_stop(self) -> None:

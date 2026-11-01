@@ -242,6 +242,7 @@ class RestartWorkflowTests(unittest.TestCase):
 
 class ManagedVMRestartWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(proxmox_vm_restart, "_drain_guest"))
         self.status = self.enterContext(patch.object(setup_reboot, "_restart_status", return_value="needed"))
         self.request = self.enterContext(patch.object(setup_reboot, "_request_restart", return_value=True))
         self.boot = self.enterContext(patch.object(setup_reboot, "_boot_id", return_value=OLD_BOOT_ID))
@@ -345,6 +346,8 @@ class ManagedVMRestartWorkflowTests(unittest.TestCase):
 
 class ProxmoxVMPendingTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.real_drain = proxmox_vm_restart._drain_guest
+        self.drain = self.enterContext(patch.object(proxmox_vm_restart, "_drain_guest"))
         self.config = _config(host="192.0.2.41", machine_type="vm", hosted_node="pve.example.test",
                               friendly_name="test-vm", hosted_user="operator", hosted_key="/keys/provider")
         self.guest = {"vmid": 107, "name": "test-vm", "status": "running"}
@@ -423,9 +426,33 @@ class ProxmoxVMPendingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 proxmox_vm_restart.request_vm_restart(self.config, True)
             run.assert_not_called()
+            self.drain.assert_not_called()
             run.return_value = _result(returncode=1)
             with self.assertRaises(RuntimeError):
                 proxmox_vm_restart.request_vm_restart(self.config, 107)
+
+    def test_busy_guest_prevents_provider_restart(self) -> None:
+        self.drain.side_effect = RuntimeError("build is active")
+        with patch.object(proxmox_vm_restart, "_provider_command") as power:
+            with self.assertRaisesRegex(RuntimeError, "build is active"):
+                proxmox_vm_restart.request_vm_restart(self.config, 107)
+        power.assert_not_called()
+
+    def test_guest_drain_uses_guest_identity_and_isolated_root_helper(self) -> None:
+        self.config.ssh_key = "/keys/guest"
+        with patch.object(proxmox_vm_restart, "run", return_value=_result()) as run, \
+             patch.object(proxmox_vm_restart, "get_ssh_control_path", return_value="/guest/control") as control, \
+             patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts"):
+            self.real_drain(self.config)
+            command = run.call_args.args[0]
+            self.assertIn("/keys/guest", command)
+            self.assertEqual(command[-2], "root@192.0.2.41")
+            self.assertEqual(shlex.split(command[-1])[:3], ["/usr/bin/python3", "-I", "-c"])
+            self.assertIn("_prepare_local_vm_power()", command[-1])
+            control.assert_called_once_with(self.config.host, "root", "/keys/guest")
+            run.return_value = _result(returncode=1)
+            with self.assertRaisesRegex(RuntimeError, "Guest power preparation"):
+                self.real_drain(self.config)
 
 
 class RestartTransportTests(unittest.TestCase):

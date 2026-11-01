@@ -149,6 +149,12 @@ Reboot intent remains drained if the reboot request fails or its outcome is
 uncertain. Use the existing reboot cancellation or confirmed boot recovery
 procedure; do not delete coordinator markers to reopen intake. Proxmox's
 explicit restart retains its graceful guest shutdown and evacuation checks.
+For a provisioned VM with pending hardware changes, setup also acquires idle
+capacity inside the guest and persists its reboot drain before asking Proxmox
+to restart it. `--shutdown` uses the same guest preparation before graceful
+poweroff. A busy or unreachable guest prevents either power request. Failed or
+uncertain provider requests retain the drain for explicit inspection and
+cancellation; a confirmed subsequent boot clears the previous-boot intent.
 
 ## Choose maintenance by the exhausted resource
 
