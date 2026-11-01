@@ -93,3 +93,33 @@ def generate_enrollments(
             builder_capabilities=capabilities, build_tools=item.build_tools,
         )
     return builder, target
+
+
+def generate_builder_enrollment(
+    prepared: list[PreparedSource], *, builder_key: str, principal: str = "deploy",
+    limits: dict[str, int] | None = None, builder_max_bytes: int = 64 * 1024**3,
+    builder_max_records: int = 128,
+) -> dict[str, Any]:
+    """Validate each deployable project independently, then combine builder grants.
+
+    One builder may serve several targets that reuse routes, fixed ports or
+    deployment roots. Only an actual target's enrollment combines those serving
+    constraints. Individual project validation still uses the shared generator
+    and delivery planner, including supported manifest and runtime checks.
+    """
+    if not 1 <= len(prepared) <= 16:
+        raise ValueError("Enrollments require 1..16 prepared destinations")
+    projects: dict[str, Any] = {}
+    builder: dict[str, Any] = {}
+    for item in prepared:
+        builder, _ = generate_enrollments(
+            [item], builder_key=builder_key, target_key=builder_key, principal=principal,
+            limits=limits, builder_max_bytes=builder_max_bytes,
+            builder_max_records=builder_max_records,
+        )
+        additions = builder["policy"]["principals"][principal]["projects"]
+        if projects.keys() & additions.keys():
+            raise ValueError("Duplicate destination or application/project slug collision")
+        projects.update(additions)
+    builder["policy"]["principals"][principal]["projects"] = projects
+    return parse_build_host_enrollment(builder)

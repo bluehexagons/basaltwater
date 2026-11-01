@@ -9,7 +9,7 @@ import tempfile
 
 from common.build_host_steps import parse_build_host_enrollment
 from common.build_target_steps import parse_build_target_enrollment
-from lib.build_enrollment import DEFAULT_POLICY_LIMITS, generate_enrollments
+from lib.build_enrollment import DEFAULT_POLICY_LIMITS, generate_builder_enrollment, generate_enrollments
 from lib.build_host_policy import _protocol_limits
 from lib.build_selection import _check_private_identity, _local_path, _public_companion
 from lib.build_setup import _private_directory, validate_build_setup_selection
@@ -92,6 +92,8 @@ def prepare_cli_build_enrollments(
     if projects:
         if not config.is_build_server or config.disable_build_host:
             raise ValueError("--build-project requires an enabled --build-server")
+        if config.enable_cicd:
+            raise ValueError("--build-project cannot be combined with --cicd; use --no-cicd to clear that saved option")
         if options.get("build_host_policy") or options.get("build_host_enrollment_json"):
             raise ValueError("Choose --build-project or explicit builder enrollment")
     if target:
@@ -126,10 +128,14 @@ def prepare_cli_build_enrollments(
         with tempfile.TemporaryDirectory(prefix="basaltwater-build-policy-", dir=root) as temporary:
             os.chmod(temporary, 0o700)
             prepared = prepare_setup_sources(specs, temporary)
-            builder, receiver = generate_enrollments(
-                prepared, builder_key=key, target_key=key, principal=principal, limits=limits,
-            )
-            generated = builder if projects else receiver
+            if projects:
+                generated = generate_builder_enrollment(
+                    prepared, builder_key=key, principal=principal, limits=limits,
+                )
+            else:
+                _, generated = generate_enrollments(
+                    prepared, builder_key=key, target_key=key, principal=principal, limits=limits,
+                )
             result = _merge(existing, generated, builder=bool(projects), principal=principal,
                             overrides=overrides, args=args)
     except (OSError, TimeoutError) as exc:

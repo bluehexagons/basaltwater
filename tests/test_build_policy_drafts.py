@@ -22,7 +22,7 @@ from lib.build_setup_sources import _plans
 from lib.config import SetupConfig
 from lib.deployment import DeploymentOrchestrator
 from lib.manifest_serving import runtime_from_component
-from lib.project_manifest import parse_manifest
+from lib.project_manifest import PublicUDP, parse_manifest
 from scripts import prepare_build_policies as drafts
 
 
@@ -281,6 +281,51 @@ class BuildEnrollmentCLITests(unittest.TestCase):
         self.assertEqual(limits["memory_bytes"], 2 * 1024**3)
         self.assertEqual(limits["cpu_percent"], 100)
         self.assertEqual(list(self.workspace.iterdir()), [])
+
+    def test_builder_projects_for_separate_targets_can_reuse_routes_ports_and_roots(self):
+        for collision in ("route", "udp", "port", "root"):
+            destinations = (["example.com/a/b", "example.com/a_b"] if collision == "root" else
+                            ["stage.example", "production.example"])
+            items = [prepared(destination) for destination in destinations]
+            for item in items:
+                if collision == "route":
+                    item.manifest.components[0].domain = "fixed.example"
+                elif collision == "udp":
+                    item.manifest.components[1].public_udp = [PublicUDP(3478)]
+                elif collision == "port":
+                    item.manifest.components[1].port = 8080
+                elif collision == "root":
+                    path = item.destination.removeprefix("example.com")
+                    item.manifest.components[0].path = path
+                    item.manifest.components[1].path = path + "/api"
+            specs = [[destination, "https://example.com/site.git"] for destination in destinations]
+            self.fetch.side_effect = lambda _specs, _root: copy.deepcopy(items)
+            with self.subTest(collision=collision):
+                builder = self.config(builder=True)
+                self.apply(builder, build_project=specs)
+                projects = builder.build_host_enrollment["policy"]["principals"]["deploy"]["projects"]
+                self.assertEqual(len(projects), 2)
+                target = self.config()
+                target.deploy_specs = specs
+                with self.assertRaises(ValueError):
+                    self.apply(target)
+                self.assertIsNone(target.build_target_enrollment)
+                self.assertEqual(list(self.workspace.iterdir()), [])
+        self.fetch.side_effect = lambda _specs, _root: [prepared(), prepared()]
+        with self.assertRaisesRegex(ValueError, "collision"):
+            self.apply(self.config(builder=True), build_project=[["example.com", "https://example.com/site.git"]])
+        item = prepared()
+        item.manifest.components[1].env_file = "/etc/secret"
+        self.fetch.side_effect = lambda _specs, _root: [item]
+        with self.assertRaises(ValueError):
+            self.apply(self.config(builder=True), build_project=[["example.com", "https://example.com/site.git"]])
+
+    def test_builder_rejects_legacy_executor_before_source_preparation(self):
+        config = self.config(builder=True, enable_cicd=True)
+        with self.assertRaisesRegex(ValueError, "--cicd"):
+            self.apply(config, build_project=[["example.com", "https://example.com/site.git"]])
+        self.fetch.assert_not_called()
+        self.assertIsNone(config.build_host_enrollment)
 
     def test_target_updates_include_saved_siblings_preserve_limits_and_refuse_root_moves(self):
         config = self.config()

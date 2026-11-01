@@ -25,6 +25,16 @@ already enabled builder needs no repeated `--build-server`. Add `--node` or
 `--go` if new tools are needed. Grants do not install toolchains. The installer
 refuses an active worker instead of stopping it.
 
+A shared builder can declare projects for different targets in one command,
+even when those servers use the same fixed route, service port, public UDP port
+or default deployment root. Each project is checked independently using the
+shared manifest planner. Each target still checks its complete deployment set
+and refuses collisions within that server. Duplicate builder project IDs remain
+invalid. Managed project generation also rejects an enabled legacy `--cicd`
+executor before fetching sources or provisioning. Use `--no-cicd` to clear a
+saved `--cicd` selection. This changes the saved configuration; retire any
+existing legacy executor service separately before enabling managed builds.
+
 The target patch generates grants from the complete merged saved deployment
 set, including omitted siblings, then rebuilds and deploys that complete set.
 It preserves unrelated grants, existing principals, unmodified limits and
