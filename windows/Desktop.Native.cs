@@ -90,8 +90,16 @@ public static class Native {
         return result;
     }
     public static Window Check(long id,string identity) { var w=Observe(id); if(w.identity!=identity) throw new Exception("Stale window identity; observe again"); return w; }
+    static bool WindowOutcomeMatches(string operation,Window before,Window after,int x,int y,int width,int height) {
+        return (operation=="focus" && after.active)||(operation=="move" && after.x==x && after.y==y)||
+            (operation=="resize" && after.width==width && after.height==height)||(operation=="maximize" && after.maximized)||
+            (operation=="minimize" && after.minimized)||
+            // Restoring a minimized window resumes its previous presentation,
+            // which can be maximized. A non-minimized maximize/restore toggles normal.
+            (operation=="restore" && !after.minimized && (before.minimized || !after.maximized));
+    }
     public static Window Change(long id,string identity,string operation,int x,int y,int width,int height) {
-        var w=Check(id,identity); var h=new IntPtr(id); bool requested=true;
+        var before=Check(id,identity); var w=before; var h=new IntPtr(id); bool requested=true;
         switch(operation) {
             case "focus": requested=SetForegroundWindow(h); break;
             case "move": requested=SetWindowPos(h,IntPtr.Zero,x,y,0,0,0x15); break;
@@ -107,10 +115,7 @@ public static class Native {
             Thread.Sleep(50);
             if(operation=="close" && !IsWindow(h)) return null;
             w=Check(id,identity); // close may show a save dialog: do not claim success
-            bool ok=(operation=="focus" && w.active)||(operation=="move" && w.x==x && w.y==y)||
-                (operation=="resize" && w.width==width && w.height==height)||(operation=="maximize" && w.maximized)||
-                (operation=="minimize" && w.minimized)||(operation=="restore" && !w.minimized && !w.maximized);
-            if(ok) return w;
+            if(WindowOutcomeMatches(operation,before,w,x,y,width,height)) return w;
         }
         throw new Exception("Window outcome not observed; inspect before retrying");
     }
