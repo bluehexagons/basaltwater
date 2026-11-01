@@ -6,8 +6,18 @@ import base64
 import hashlib
 
 
+PRESET_BUTTONS = '''<div class="trust-presets" data-trust-presets hidden aria-label="Common certificate setups">
+<button type="button" data-trust-preset="arch:fish:chromium">CachyOS · Chrome</button>
+<button type="button" data-trust-preset="arch:fish:firefox">CachyOS · Firefox</button>
+<button type="button" data-trust-preset="windows:posix:system">Windows · Edge / Chrome</button>
+<button type="button" data-trust-preset="macos:posix:system">macOS · Safari</button>
+</div>'''
+
+
 STYLE = """
-.trust-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+.trust-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.trust-presets button { min-height: 44px; white-space: normal; }
+.trust-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
   padding: 14px; margin: 16px 0; border: 1px solid var(--line); border-radius: 10px; }
 .trust-picker label { min-width: 0; font-weight: 650; font-size: .85rem; }
 .trust-picker small { display: block; margin-top: 6px; color: var(--muted); font-weight: 400; }
@@ -32,6 +42,7 @@ SCRIPT = r"""(() => {
   const platform = panel.querySelector('[data-trust-platform]');
   const shell = panel.querySelector('[data-trust-shell]');
   const method = panel.querySelector('[data-trust-method]');
+  const browser = panel.querySelector('[data-trust-browser]');
   const output = panel.querySelector('[data-trust-output]');
   const status = panel.querySelector('[data-trust-status]');
   const templates = [...panel.querySelectorAll('template[data-platform]')];
@@ -42,10 +53,12 @@ SCRIPT = r"""(() => {
     const windows = platform.value === 'windows';
     shell.closest('label').hidden = windows;
     const selected = templates.find(item => item.dataset.platform === platform.value &&
-      item.dataset.method === method.value && item.dataset.shell === (windows ? 'powershell' : shell.value));
+      item.dataset.method === method.value && item.dataset.shell === (windows ? 'powershell' : shell.value) &&
+      (item.dataset.browser || 'system') === (browser?.value || 'system'));
     output.value = selected.content.textContent;
     panel.querySelector('[data-trust-title]').textContent =
-      platform.selectedOptions[0].textContent + ' · ' + (windows ? 'PowerShell' : shell.selectedOptions[0].textContent);
+      platform.selectedOptions[0].textContent + ' · ' + (windows ? 'PowerShell' : shell.selectedOptions[0].textContent) +
+      (browser ? ' · ' + browser.selectedOptions[0].textContent : '');
     panel.querySelector('[data-trust-method-note]').textContent = {
       http: 'First enrollment: HTTP downloads only the public certificate. The script verifies its SHA-256 before installation. Rerun updated server setup to enable port 8442; upstream firewalls must also allow it.',
       https: 'Use this when your terminal already trusts the HTTPS endpoint. Certificate errors stop the script.',
@@ -59,6 +72,21 @@ SCRIPT = r"""(() => {
   });
   shell.addEventListener('change', update);
   method.addEventListener('change', update);
+  browser?.addEventListener('change', update);
+  document.querySelectorAll('[data-trust-preset]').forEach(button => {
+    button.addEventListener('click', () => {
+      const [os, terminal, client] = button.dataset.trustPreset.split(':');
+      platform.value = os;
+      shell.value = terminal;
+      if (browser) browser.value = client;
+      // Preserve the chosen source, including a locally transferred certificate.
+      update();
+      const disclosure = panel.closest('details');
+      if (disclosure) disclosure.open = true;
+      output.focus();
+    });
+  });
+  document.querySelectorAll('[data-trust-presets]').forEach(group => { group.hidden = false; });
   panel.querySelector('[data-trust-copy]').addEventListener('click', async () => {
     const copied = output.value;
     try {
@@ -75,7 +103,8 @@ SCRIPT = r"""(() => {
   panel.querySelector('[data-trust-fallback]').hidden = true;
   update();
   function openLinkedHelp() {
-    if (location.hash === '#trust') panel.closest('details').open = true;
+    const disclosure = panel.closest('details');
+    if (location.hash === '#trust' && disclosure) disclosure.open = true;
   }
   window.addEventListener('hashchange', openLinkedHelp);
   openLinkedHelp();

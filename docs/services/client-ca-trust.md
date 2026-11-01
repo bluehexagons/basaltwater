@@ -101,7 +101,10 @@ Another trusted transfer channel is also acceptable. Transfer only
 
 The web panel's **Certificate trust** section offers operating-system, shell,
 and certificate-source selectors, followed by **Copy script**. Choose the OS
-and shell on the client running the script. Arch Linux / CachyOS selects fish
+and shell on the client running the script. The browser selector distinguishes
+system trust, Chrome / Chromium, and Firefox. Common setup buttons in the
+Certificate trust heading select the platform, shell, and browser together,
+while preserving the selected certificate source. Arch Linux / CachyOS selects fish
 by default; its example explicitly invokes Bash so POSIX syntax is not parsed
 by fish. Instructions remain available without JavaScript.
 
@@ -122,6 +125,40 @@ page is not independent verification. No certificate-check bypass is needed.
 The scripts reject redirects, stop on download/hash/installation failure,
 and remove temporary files; they do not overwrite a certificate in the
 working directory.
+
+Generated Linux installers use an anchor filename containing the verified file
+SHA-256, so enrolling another VM does not overwrite an earlier VM's root. Keep
+each VM's root enrolled while that VM is trusted. Older scripts used the same
+`basaltwater-ca.crt` anchor filename for every VM; rerun the current installer
+for each affected VM if installing a second VM made the first stop working.
+
+For Chrome / Chromium on Linux, run the installer as the desktop browser user
+without wrapping the whole script in `sudo`. It imports the verified root with
+website-authority trust into that user's NSS shared database, as well as system
+trust. Install NSS tools first (`sudo pacman -S nss` on CachyOS/Arch,
+`sudo apt install libnss3-tools` on Debian, or `sudo dnf install nss-tools` on
+Fedora). Missing tools and failed imports stop the script. Chromium M146 and
+later default to `~/.local/share/pki/nssdb`, but use `~/.pki/nssdb` when that
+legacy directory exists; the generated script follows that selection. See
+[Chromium's certificate management documentation](https://chromium.googlesource.com/chromium/src/+/master/docs/linux/cert_management.md).
+
+Firefox on Linux may require importing the installed anchor through
+**Settings > Privacy & Security > Certificates > View Certificates > Authorities
+> Import**, with website identification enabled. The Firefox script prints
+the installed file path and this next step; it does not claim that system
+trust alone completes Firefox enrollment. An administrator can instead
+configure the p11-kit trust module using
+[Mozilla's documented policy](https://support.mozilla.org/en-US/kb/setting-certificate-authorities-firefox).
+Sandboxed browsers may use different stores and still require manual import.
+
+Server setup preserves the VM CA and private key across refreshes. Renewing a
+leaf certificate or adding DNS/IP subject alternative names does not rotate
+that CA. Leaf reuse checks its remaining lifetime, key, requested names, and
+chain against the current VM CA. A mismatched chain causes leaf reissuance.
+An incomplete or mismatched CA pair is an error requiring investigation,
+rather than automatic rotation. Enrollment cannot repair an expired CA, a
+hostname mismatch, or a server still serving an old certificate; inspect the
+exact failing URL and live chain before reinstalling client trust.
 
 If HTTP is unavailable, transfer the file over SSH and select **Local
 certificate file**, running the script from the directory containing it.

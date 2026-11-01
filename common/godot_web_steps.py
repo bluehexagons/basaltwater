@@ -255,7 +255,15 @@ def _ensure_local_server_certificate(identities: list[str]) -> bool:
     """Issue or renew a server certificate from the preserved local CA."""
 
     if _certificate_is_usable(GODOT_WEB_CERT, GODOT_WEB_KEY, identities):
-        return False
+        verified = run(
+            "openssl verify -purpose sslserver -no-CApath -no-CAstore "
+            f"-CAfile {shlex.quote(GODOT_WEB_CA_CERT)} "
+            f"{shlex.quote(GODOT_WEB_CERT)}",
+            check=False,
+            capture_output=True,
+        )
+        if verified.returncode == 0:
+            return False
     if _managed_pair_is_partial(GODOT_WEB_CERT, GODOT_WEB_KEY):
         raise RuntimeError("The managed internal-web server certificate is incomplete")
 

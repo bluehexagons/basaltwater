@@ -12,13 +12,18 @@ import tempfile
 import unittest
 from html.parser import HTMLParser
 from unittest.mock import patch
+from types import SimpleNamespace
+
+from common import godot_web_steps
 
 from common.service_tools.basaltwater_web import _certificate_trust
 from common.service_tools.web_panel_service import (
-    _linux_trust_script, _macos_trust_script, _render_certificate_trust,
-    _certificate_scripts, discover_certificate_trust,
+    _render_certificate_trust, discover_certificate_trust,
 )
-from common.service_tools.web_panel_ca_ui import SCRIPT, SCRIPT_CSP
+from common.service_tools.web_panel_ca_install import (
+    _linux_trust_script, _macos_trust_script, _certificate_scripts,
+)
+from common.service_tools.web_panel_ca_ui import PRESET_BUTTONS, SCRIPT, SCRIPT_CSP
 from common.web_panel_steps import render_web_panel_nginx
 from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
 
@@ -27,18 +32,25 @@ class ScriptTemplates(HTMLParser):
     def __init__(self, markup):
         super().__init__(convert_charrefs=True)
         self.scripts = {}
+        self.browser_scripts = {}
+        self.presets = []
         self.current = None
         self.feed(markup)
 
     def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "button" and "data-trust-preset" in attrs:
+            self.presets.append(attrs["data-trust-preset"])
         if tag == "template":
-            attrs = dict(attrs)
             self.current = tuple(attrs[name] for name in ("data-platform", "data-method", "data-shell"))
+            self.browser = attrs.get("data-browser", "system")
             self.scripts[self.current] = ""
+            self.browser_scripts[(*self.current, self.browser)] = ""
 
     def handle_data(self, data):
         if self.current is not None:
             self.scripts[self.current] += data
+            self.browser_scripts[(*self.current, self.browser)] += data
 
     def handle_endtag(self, tag):
         if tag == "template":
@@ -46,6 +58,89 @@ class ScriptTemplates(HTMLParser):
 
 
 class TestCertificateDownloadTrust(unittest.TestCase):
+    def test_local_leaf_reuse_requires_current_ca_chain(self):
+        for valid_chain in (True, False):
+            with (
+                self.subTest(valid_chain=valid_chain),
+                patch.object(godot_web_steps, "_certificate_is_usable", return_value=True),
+                patch.object(godot_web_steps, "run", return_value=SimpleNamespace(returncode=0 if valid_chain else 1)) as run,
+                patch.object(godot_web_steps, "_managed_pair_is_partial", return_value=False),
+                patch.object(godot_web_steps, "_ensure_managed_directory", side_effect=RuntimeError("renew leaf")) as issue,
+            ):
+                if valid_chain:
+                    self.assertFalse(godot_web_steps._ensure_local_server_certificate(["example.test"]))
+                    issue.assert_not_called()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "renew leaf"):
+                        godot_web_steps._ensure_local_server_certificate(["example.test"])
+                self.assertIn("openssl verify -purpose sslserver -no-CApath -no-CAstore -CAfile", run.call_args.args[0])
+
+    def test_chromium_installers_enroll_distinct_roots_in_user_database(self):
+        payloads = ("first CA", "second CA")
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                db = os.path.join(directory, ".pki/nssdb" if legacy else ".local/share/pki/nssdb")
+                if legacy:
+                    os.makedirs(db)
+                for name, body in (
+                    ("id", "echo 1000"),
+                    ("certutil", '''printf '%s\\n' "$@" >> "$HOME/nss-args"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -d ]; then shift; db=${1#sql:}; fi
+  shift
+done
+touch "$db/cert9.db"'''),
+                ):
+                    path = os.path.join(directory, name)
+                    with open(path, "w") as file_obj:
+                        file_obj.write("#!/bin/sh\n" + body + "\n")
+                    os.chmod(path, 0o700)
+                installers = []
+                hashes = [hashlib.sha256(payload.encode()).hexdigest() for payload in payloads]
+                for payload, digest in zip(payloads, hashes):
+                    script = ScriptTemplates(_certificate_scripts(digest, "https://example.test/ca")).browser_scripts[
+                        "arch", "http", "posix", "chromium"]
+                    installers.append("export TRUST_TEST_PAYLOAD='" + payload + "'\n" + script)
+                result = self._run_installer(directory, "\n".join(installers), payloads[0])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with open(os.path.join(directory, "nss-args")) as file_obj:
+                    args = file_obj.read()
+                self.assertEqual(args.splitlines().count("-N"), 1)
+                self.assertEqual(args.splitlines().count("-A"), 2)
+                self.assertIn("sql:" + db, args)
+                with open(os.path.join(directory, "installed")) as file_obj:
+                    installed = file_obj.read()
+                for digest in hashes:
+                    self.assertIn("basaltwater CA " + digest, args)
+                    self.assertIn("basaltwater-ca-" + digest + ".crt", installed)
+
+    def test_browser_scripts_parse_and_firefox_explains_required_import(self):
+        scripts = ScriptTemplates(_certificate_scripts("a" * 64, "https://example.test/ca")).browser_scripts
+        for (platform, method, shell, browser), script in scripts.items():
+            if shell == "powershell":
+                continue
+            result = subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            if platform == "arch" and browser == "firefox":
+                self.assertIn("Authorities > Import", script)
+
+    def test_chromium_failure_stops_before_system_trust_and_cleans_download(self):
+        payload = "public certificate fixture"
+        script = ScriptTemplates(_certificate_scripts(hashlib.sha256(payload.encode()).hexdigest(),
+            "https://example.test/ca")).browser_scripts["arch", "http", "posix", "chromium"]
+        for root_user in (False, True):
+            with self.subTest(root_user=root_user), tempfile.TemporaryDirectory() as directory:
+                for name, body in (("id", "echo " + ("0" if root_user else "1000")), ("certutil", "exit 1")):
+                    path = os.path.join(directory, name)
+                    with open(path, "w") as file_obj:
+                        file_obj.write("#!/bin/sh\n" + body + "\n")
+                    os.chmod(path, 0o700)
+                result = self._run_installer(directory, script, payload)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("Certificate verified and installed", result.stdout)
+                self.assertFalse(os.path.exists(os.path.join(directory, "installed")))
+                self.assertFalse(any(name.startswith("tmp.") for name in os.listdir(directory)))
+
     def test_missing_ca_never_means_public_trust(self):
         with patch("common.service_tools.basaltwater_web.os.path.isfile") as exists:
             exists.side_effect = lambda path: path == "/tmp/server.crt"
@@ -281,6 +376,7 @@ exit "$TRUST_TEST_INSTALL_EXIT"'''),
         return subprocess.run(
             ["bash", "-c", script], cwd=directory, capture_output=True, text=True, timeout=10,
             env={"PATH": directory + ":/usr/bin:/bin", "TMPDIR": directory,
+                 "HOME": directory,
                  "TRUST_TEST_PAYLOAD": payload, "TRUST_TEST_DOWNLOAD_EXIT": str(download_exit),
                  "TRUST_TEST_INSTALL_EXIT": str(install_exit)},
         )
@@ -334,8 +430,8 @@ exit "$TRUST_TEST_INSTALL_EXIT"'''),
 
     @unittest.skipUnless(shutil.which("node"), "Node.js required for UI behavior checks")
     def test_picker_shell_switching_copy_and_clipboard_failure(self):
-        scripts = ScriptTemplates(_certificate_scripts("a" * 64, "https://example.test:8443/basaltwater-ca.crt")).scripts
-        templates = [{"dataset": {"platform": key[0], "method": key[1], "shell": key[2]},
+        scripts = ScriptTemplates(_certificate_scripts("a" * 64, "https://example.test:8443/basaltwater-ca.crt")).browser_scripts
+        templates = [{"dataset": {"platform": key[0], "method": key[1], "shell": key[2], "browser": key[3]},
                       "content": {"textContent": script}} for key, script in scripts.items()]
         harness = r'''
 const assert = require('node:assert/strict');
@@ -345,15 +441,20 @@ function element(value = '') {
     focus() { this.focused = true; }, select() { this.selected = true; },
     get selectedOptions() { return [{textContent: this.value}]; }};
 }
-const names = ['platform','shell','method','output','status','title','method-note','copy','controls','selected','fallback'];
+const names = ['platform','shell','browser','method','output','status','title','method-note','copy','controls','selected','fallback'];
 const elements = Object.fromEntries(names.map(name => ['[data-trust-' + name + ']', element()]));
 const platform = elements['[data-trust-platform]']; platform.value = 'debian';
 const shell = elements['[data-trust-shell]']; shell.value = 'posix';
 const method = elements['[data-trust-method]']; method.value = 'http';
+const browser = elements['[data-trust-browser]']; browser.value = 'system';
 const shellLabel = element(); shell.closest = () => shellLabel;
 const details = {open: false};
 const panel = {querySelector: name => elements[name], querySelectorAll: () => TEMPLATES, closest: () => details};
-globalThis.document = {querySelector: () => panel};
+const presets = PRESETS.map(value => {
+  const button = element(); button.dataset = {trustPreset: value}; return button;
+});
+const presetGroup = element();
+globalThis.document = {querySelector: () => panel, querySelectorAll: name => name === '[data-trust-preset]' ? presets : [presetGroup]};
 const listeners = {};
 globalThis.window = {addEventListener: (name, callback) => listeners[name] = callback};
 globalThis.location = {hash: '#trust'};
@@ -384,6 +485,15 @@ UI_SCRIPT
   method.value = 'file'; method.listeners.change();
   assert.ok(output.value.includes('cp ./basaltwater-ca.crt'));
   assert.ok(!output.value.includes('curl '));
+  presets[0].listeners.click();
+  assert.equal(platform.value, 'arch'); assert.equal(shell.value, 'fish');
+  assert.equal(method.value, 'file'); assert.equal(output.focused, true);
+  assert.equal(presetGroup.hidden, false);
+  assert.equal(browser.value, 'chromium'); assert.match(output.value, /certutil -A/);
+  presets[1].listeners.click();
+  assert.equal(browser.value, 'firefox'); assert.match(output.value, /Authorities > Import/);
+  presets[2].listeners.click(); assert.equal(platform.value, 'windows'); assert.equal(shellLabel.hidden, true);
+  presets[3].listeners.click(); assert.equal(platform.value, 'macos'); assert.equal(shellLabel.hidden, false);
   navigator.clipboard.writeText = async () => { throw Error('clipboard blocked'); };
   await copy.listeners.click(); assert.equal(output.selected, true);
   assert.match(status.textContent, /selected/);
@@ -395,6 +505,6 @@ UI_SCRIPT
   assert.ok(output.value.includes('shasum -a 256'));
 })().catch(error => { console.error(error); process.exitCode = 1; });
 '''
-        result = subprocess.run(["node", "-"], input=harness.replace("TEMPLATES", json.dumps(templates)).replace("UI_SCRIPT", SCRIPT),
+        result = subprocess.run(["node", "-"], input=harness.replace("TEMPLATES", json.dumps(templates)).replace("PRESETS", json.dumps(ScriptTemplates(PRESET_BUTTONS).presets)).replace("UI_SCRIPT", SCRIPT),
                                 text=True, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
