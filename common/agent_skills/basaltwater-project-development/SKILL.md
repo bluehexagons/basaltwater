@@ -24,8 +24,9 @@ build/test commands usable without Basaltwater. Reuse shared environment tools
 while retaining project-specific behavior and a documented manual setup route.
 For disposable rootless Podman testing assets, follow the
 [container lifecycle reference](references/containers.md).
-For Debian Electron tests, use the [isolated Xvfb recipe](references/electron-testing.md)
-to select the test display, retain logs and distinguish VM from target performance.
+For Electron tests on Debian, CachyOS, Windows or WSL, use the
+[platform testing guide](references/electron-testing.md) to select the display,
+retain logs and distinguish VM from target performance.
 See [project standards](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-standards.md)
 when adopting these conventions.
 

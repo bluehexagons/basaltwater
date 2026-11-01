@@ -23,6 +23,12 @@ project commands; native Windows uses [Windows desktop operation](windows-deskto
 Linux CLI success does not establish native Windows support. Keep platform
 acceptance separate using the hardware template.
 
+For Electron checks, use the shared
+[platform testing guide](../../common/agent_skills/basaltwater-project-development/references/electron-testing.md).
+It covers Debian/CachyOS Xvfb isolation, KDE launches that restore display
+variables, native Windows task receipts and WSLg boundaries. Keep each
+platform's sandbox policy, actual renderer and performance evidence explicit.
+
 For a backend prerequisite check, explicitly run `basaltw agent graphics doctor
 --context display --json` or `--context xvfb --require-software --json`.
 GLX context creation does not verify a project frame. EGL/Vulkan/offscreen checks

@@ -17,6 +17,11 @@ The installed `basaltw` launcher provides workspace and project model helpers;
 this profile does not provision Debian VM maintenance, a panel, a gateway, XRDP,
 or managed browser automation.
 
+For Electron tests, follow the shared
+[platform testing guide](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/electron-testing.md#ubuntu-wsl-and-wslg).
+Select isolated Xvfb or WSLg deliberately; Linux GUI success does not qualify
+the native Windows build. Keep display cleanup local to the test child.
+
 Setup fills missing provider context budgets. Use the
 [context budget guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-context.md)
 for pricing and larger-window controls. Honor an explicit user's temporary or

@@ -54,6 +54,12 @@ explicit execution uses that executable without selecting a project runtime.
 Godot `develop editor|run|import --project PATH` honors `GODOT_BIN`, then the managed
 engine. Project pins, templates and build commands remain authoritative.
 
+For Electron tests, read the shared
+[platform testing guide](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/electron-testing.md#native-windows).
+Use native Windows commands and graphics evidence; Xvfb and WSL results do not
+qualify the Windows executable. Preserve the sandbox and distinguish a rendered
+application frame from a successful launch or screenshot API call.
+
 Tasks return IDs; use `develop status ID`, `logs ID` and `cancel ID`. `--dry-run`
 does not create state. `--msvc`, `--env NAME=VALUE` and `--timeout SECONDS` apply
 only to the task. Real executables are accepted directly; scripts/batch launchers

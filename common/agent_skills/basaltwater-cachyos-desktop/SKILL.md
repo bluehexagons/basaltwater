@@ -29,6 +29,7 @@ Read only the reference needed for the current operation:
 | Task | Read |
 | --- | --- |
 | Godot/Electron/native launches, project checks, task logs | [Development tasks](references/development.md) |
+| Electron display isolation versus KDE/target acceptance | [Platform testing guide](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/electron-testing.md) |
 | Blender model/material/UV edits, bpy, export round trips | [Blender](references/blender.md) |
 | Vector, raster, audio, video and other native assets | [Media](references/media.md) |
 | Capture backends, Xvfb, high-resolution and post-refresh evidence | [Rendering evidence](references/rendering.md) |

@@ -3,7 +3,10 @@
 - Task, tester, observation time and intended acceptance criteria:
 - Checkout, tested commit/dirty state and project command:
 - OS/kernel, GPU PCI identity/name, driver, actual renderer/backend and tool versions:
+- CPU model, allocated cores/vCPUs, available RAM, VM/WSL/native environment and known contention:
 - Session/display, monitor geometry/scaling/refresh, streaming path when used:
+- Electron/Chromium versions when applicable, launch flags, observed graphics feature/acceleration status:
+- Workload/settings/seed, warmup and measured interval, sample count and frame-time results:
 - Observed checks (criterion, action, result, command/exit/duration, evidence):
 - Input/audio/controller/focus/fullscreen/reconnect observations when required:
 - Proposed work / unresolved failures:
@@ -12,3 +15,5 @@
 
 Use the [platform routes](../../workstations/workflows.md) and its linked native
 guidance. Keep game frame timing separate from streaming/encoding/client latency.
+Record software-reference and representative target-hardware results separately;
+worker elapsed time includes startup/cleanup and does not establish frame rate.
