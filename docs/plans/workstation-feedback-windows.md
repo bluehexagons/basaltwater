@@ -189,9 +189,9 @@ Run affected Windows PowerShell 5.1 entry-point contracts too; moving the guardi
 to PowerShell 7 did not remove the 5.1 bootstrap/CLI boundary. Keep full Debian
 Make/coverage validation in Debian CI; Linux-only success is not native proof.
 
-Commit and push completed, validated increments to `main` as authorized for
-this work, subject to the receiving session's authority. If native prerequisites
-or interactive access are unavailable, complete independent code/tests/docs and
+Commit and push completed, validated increments only under the active session's
+authorization; this historical handoff grants no standing permission. If native
+prerequisites or interactive access are unavailable, complete independent code/tests/docs and
 record the exact unverified acceptance cases without claiming native success.
 Browser tests, physical GPU/display, streaming, audio/input, lock/reconnect,
 reboot and installation-interruption qualification remain separate; do not
@@ -233,10 +233,10 @@ Both required increments and subsequent bounded discovery are implemented:
   It disables repository execution callbacks and does not execute project tools.
   Submodule contents remain outside the reported dirty scope.
 
-On Windows 11 Home build 26100, PowerShell 7.6.9, Windows PowerShell
-5.1.26100.9711 and Python 3.15.2, the complete `Run-NativeTests.ps1` invocation
-passed in 175.690 seconds. Its eight Python output-capture tests included two
-explicit POSIX-only skips. Native job/development process-tree fixtures,
+On native Windows with Windows PowerShell 5.1, PowerShell 7 and Python 3.15,
+the complete `Run-NativeTests.ps1` invocation passed. Its eight Python
+output-capture tests included two explicit POSIX-only skips.
+Native job/development process-tree fixtures,
 workstation/health/CLI, skill delivery and all remaining native suites passed.
 Scheduler, notifications, installers and sleep requests were mocked; actual owned
 processes exercised success, failure, cancellation, timeout, both-stream floods
@@ -251,16 +251,11 @@ Both documentation checkers and diff checks passed on native Windows. Earlier
 failed attempts and their corrected test-host/fixture causes are retained in
 private history; they are not counted as successful qualification.
 
-The Windows workspace bundle was delivered through the normal guarded skill
-installer under the setup lock, including its final desktop reference. All its
-installed resources match the tested checkout, with completion confirmed. Saved
-setup remains complete at `116e9c78f809421ae8c624ce9ab2a932457a431d`: the report
-correctly calls this newer bundle `different` from that older source. Four other
-installed bundles retain legacy unknown completion; five unselected Claude
-bundles are absent and informational. No full refresh, package update, installed
-CLI replacement, provider configuration change, desktop restart or reboot occurred.
-Use checkout diagnostics until a normal setup update supplies the new CLI.
-Session-loaded skill contents remain unknown.
+Guarded skill delivery confirmed matching resources and explicit completion.
+Freshness distinguished a newer delivered bundle from older saved source,
+retained legacy unknown completion and treated absent optional bundles as
+informational. Those are verified behaviors, not a record of the operator's
+current catalog. Session-loaded skill contents remain unknown.
 
 Manifest parsing and a recipe adapter are explicitly deferred: no reviewed native
 consuming workflow established an integration gap warranting them. Existing
@@ -271,6 +266,6 @@ interruption qualification remain separate and were not performed here.
 
 Private qualification evidence contains the implementation handoff, exact command
 statuses/durations, catalog reports and one current checkpoint with separate
-history. The account's 17 existing development receipts were checked terminal;
-no owned running or uncertain task remained after qualification. See the
+history. Owned qualification tasks settled terminal cleanup before handback;
+private account receipt inventories are omitted. See the
 [local qualification record](../workstations/windows-qualification.md#recorded-local-run-2026-10-31).

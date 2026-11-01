@@ -1,9 +1,9 @@
 # Windows game tooling
 
-Native Windows workstations primarily cover compatibility tests, CI and
-packaging. CachyOS remains the main interactive Antistatic development and
-asset workstation. Basaltwater prepares host tools; each repository owns its
-runtime requirements, library pins, npm dependencies and build commands.
+Native Windows workstations support development, compatibility tests, CI and
+packaging. Choose a host according to the project's supported platforms.
+Basaltwater prepares host tools; each repository owns its runtime requirements,
+library pins, npm dependencies and build commands.
 
 ## Select host tools
 
@@ -19,18 +19,17 @@ VS 2022 is the provisioning baseline, not a new game compiler pin.
 See Microsoft's [component catalog](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=vs-2022).
 
 `-ShaderTools` independently adds the Vulkan SDK's `glslangValidator` for shader
-validation. The SDK is larger than the game needs at runtime; omit this option
-when only building or running the focused Windows gate. LLVM tools are
-unversioned on Windows; check the game's formatter baseline before accepting
+validation. Omit this option when the project's build and checks do not need
+shader validation. LLVM tools are unversioned on Windows; check the project's
+formatter baseline before accepting
 format changes from a different LLVM major. Installing a validator does not
 establish GPU or driver readiness.
 
 `-NodeVersions` independently prepares [fnm](https://github.com/Schniz/fnm).
 Setup installs no project runtime through fnm and changes no shell profile
 or Node default. The ordinary `-Node` selection supplies LTS, which may be
-older than a game's minimum. Antistatic currently requires Node 26.4 or newer;
-its `.nvmrc` selects major 26 and its build manifest owns the exact packaging
-runtime. Use those project files when versions change.
+older than a project's minimum. Read its version files, package engines and
+packaging manifest before selecting a runtime.
 
 `-Godot` independently prepares the standard Godot editor and `godot` command
 through `GodotEngine.GodotEngine`. The host engine is updated and checked
@@ -48,8 +47,8 @@ other export SDKs remain separate. See the official
 [Windows downloads](https://godotengine.org/download/windows/) and
 [export guide](https://docs.godotengine.org/en/stable/tutorials/export/exporting_projects.html).
 
-For a fresh Antistatic/Godot PC, paste this command into PowerShell as the coding
-account. It includes T3 Code, Git/GitHub CLI/Codex, Node LTS, Python/uv, Go,
+For a fresh native game-development PC, paste this command into PowerShell as
+the coding account. It includes T3 Code, Git/GitHub CLI/Codex, Node LTS, Python/uv, Go,
 fnm, native game tools, shader validation and Godot. Package installers may
 show UAC or require a restart.
 
@@ -145,71 +144,28 @@ storage, the larger floor applies to the account drive. These are conservative
 bootstrap floors; vcpkg sources, intermediate builds, packages, captures and
 multiple checkouts need additional space. Shared Windows SDK components,
 vendor installer caches and some packages still use C:.
-Put the game checkout on the storage drive too: its `.build`, `node_modules`
-and release output otherwise remain with the checkout.
+Place large checkouts on the storage drive too when their dependencies,
+intermediate builds and release output are stored beside source files.
 
-## Antistatic qualification
+## Native project qualification
 
-Use the [local qualification report](windows-qualification.md) to record the
-tested revisions, tool pins, commands and open manual checks.
-
-Use the game's [setup](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md)
-and [Windows testing guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development/testing.md)
-at the revision being tested. Start an x64 developer shell from the Basaltwater
-checkout so MSVC, headers, libraries and SDK tools agree:
+Use the [local qualification procedure](windows-qualification.md) to record
+tool versions, project revisions and open manual checks. Start the supported
+x64 developer shell before native builds:
 
 ```powershell
 powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -File .\windows\Enter-GameDevShell.ps1
 ```
 
-The helper preserves the prior `VCPKG_ROOT` (including an unset value) because
-Visual Studio's shell otherwise injects its own bundled vcpkg checkout.
+The helper preserves the prior `VCPKG_ROOT` because Visual Studio may supply
+its own bundled checkout. Keep the project's runtime, dependency manager and
+compiler/toolchain requirements authoritative. Choose the CMake generator before
+initial configuration; changing it in a populated build directory needs the
+project's cleanup procedure. Use a generator that supports
+`compile_commands.json` when the analysis workflow needs it.
 
-In that shell, enter the game checkout and select its reviewed runtime. This
-example reads the project manifest instead of copying a pin into Basaltwater:
-
-```powershell
-Set-Location F:\Basaltwater\repos\antistatic
-$nodeVersion = node --input-type=module -e "import {nodeBootstrap} from './scripts/build/manifest.mjs'; console.log(nodeBootstrap.version)"
-if ($LASTEXITCODE -ne 0) { throw 'Could not read the project Node pin' }
-fnm install $nodeVersion
-if ($LASTEXITCODE -ne 0) { throw 'Node installation failed' }
-fnm exec --using=$nodeVersion -- node --version
-fnm exec --using=$nodeVersion -- npm.cmd --version
-fnm exec --using=$nodeVersion -- npm.cmd run bootstrap:windows
-if ($LASTEXITCODE -ne 0) { throw 'Native dependency bootstrap failed' }
-fnm exec --using=$nodeVersion -- npm.cmd ci
-if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
-fnm exec --using=$nodeVersion -- npm.cmd run doctor
-if ($LASTEXITCODE -ne 0) { throw 'Project doctor failed' }
-fnm exec --using=$nodeVersion -- npm.cmd run build
-if ($LASTEXITCODE -ne 0) { throw 'Game build failed' }
-```
-
-If no base Node is installed, obtain the explicit version from the checked-out
-manifest and use it with fnm. `fnm exec` selects the runtime for one command
-without replacing the system Node or requiring shell-profile initialization.
-The game bootstrap owns its vcpkg checkout, baseline, static triplet and SDL,
-FreeType, OpenAL and other libraries. Do not globally set `VCPKG_ROOT`, triplets
-or CMake toolchain overrides to replace them.
-
-Before the documented `npm.cmd run test:windows` gate, verify the project's Go
-requirement and build its locked lobby dependency as its Windows workflow does:
-
-```powershell
-go version
-go -C node_modules/@bluehexagons/antistatic-server-protocol build -o antistatic-server.exe .
-if ($LASTEXITCODE -ne 0) { throw 'Lobby test server build failed' }
-fnm exec --using=$nodeVersion -- npm.cmd run test:windows
-```
-
-For C analysis, select Ninja with `$env:CMAKE_GENERATOR = 'Ninja'` **before the
-first native configure**, inside the developer shell. Visual Studio generators
-do not export `compile_commands.json`; see
-[CMake's limitation](https://cmake.org/cmake/help/latest/variable/CMAKE_EXPORT_COMPILE_COMMANDS.html).
-Do not switch generators in an existing build directory without following the
-project's build-state cleanup procedure. Shader checks can deliberately skip a
-missing validator; verify its executable before claiming that coverage.
+For game-specific bootstrap, lobby tests and packaging, use the optional
+[Antistatic Windows guide](../integrations/antistatic/windows.md).
 
 ## Godot project qualification
 
@@ -220,34 +176,10 @@ ordinary template directory is `%APPDATA%\Godot\export_templates\VERSION.stable`
 a self-contained editor uses its own `editor_data` directory instead. See
 [Godot's export instructions](https://docs.godotengine.org/en/stable/tutorials/export/exporting_projects.html).
 
-For [snake2d](https://github.com/bluehexagons/snake2d), enter its native checkout
-and use its project-owned PowerShell commands:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test.ps1 source
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 windows
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\test.ps1 windows-export
-```
-
-Source tests require no templates. The native scripts resolve the actual Godot
-executable from `BASALTWATER_GODOT_EXE` when no project override is supplied;
-use `GODOT_BIN` for a different project pin. Git Bash does not find `godot.cmd`
-as `godot`. Batch launchers also expand literal `%NAME%` argument text, so use
-the real executable for such paths. A successful source suite/export smoke
-does not replace a rendered game, real input and audio checks.
-
-## Related repositories
-
-Animator uses its own `npm ci`, Node requirement and Electron package; no global
-Electron installation is needed. Use its documented Electron launch for native
-dialogs and filesystem behavior. Blender and `antistatic-assets` are optional
-authoring tools; ordinary game builds use committed exports. For asset work,
-install the Blender version required by that checkout (currently 5.2.3 LTS),
-using Blender's official distribution, and run its guarded export/check commands.
-Do not replace that pin with the latest generic Blender package.
-The adjacent Go matchmaking checkout is optional for ordinary game builds.
-The protocol dependency installed by the game lockfile supplies its Windows
-netplay test server source; a sister clone is not needed for that gate.
+Use the project's native source-test, export and exported-startup commands.
+A source suite does not qualify a packaged export, rendered interaction or audio.
+The optional [snake2d example](../integrations/snake2d.md) illustrates the
+project-owned commands and engine-launcher boundaries.
 
 ## Validate Basaltwater changes
 

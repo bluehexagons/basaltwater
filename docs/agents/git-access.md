@@ -60,7 +60,7 @@ hidden prompt and select the named credential:
 ```bash
 basaltw credentials set agent-1-github
 
-basaltw setup agent_vm 192.168.0.41 agent \
+basaltw setup agent_vm 10.23.0.50 agent \
   --git-access read --git-auth-credential agent-1-github \
   --repo https://github.com/example/private-project.git
 ```
@@ -130,13 +130,13 @@ HTTPS origin:
 ```bash
 basaltw credentials set agent-git
 
-basaltw setup agent_vm 192.168.0.41 agent \
+basaltw setup agent_vm 10.23.0.50 agent \
   --git-access read-write \
-  --git-credential https://192.168.0.51:3000 agent-git \
-  --git-ca-certificate https://192.168.0.51:3000 \
-    ssh://gitadmin@192.168.0.51/etc/nginx/ssl/192.168.0.51.crt \
+  --git-credential https://10.23.0.40:3000 agent-git \
+  --git-ca-certificate https://10.23.0.40:3000 \
+    ssh://gitadmin@10.23.0.40/etc/nginx/ssl/10.23.0.40.crt \
   --git-lfs \
-  --repo https://192.168.0.51:3000/team/project.git
+  --repo https://10.23.0.40:3000/team/project.git
 ```
 
 `HTTPS_ORIGIN` contains only `https://`, a host or IP, and an optional port.
@@ -150,7 +150,7 @@ writable. SSH sources use strict host-key checking and non-interactive `sudo`
 when required. Enroll and verify an unknown SSH host key first:
 
 ```bash
-basaltw ssh-key enroll 192.168.0.51
+basaltw ssh-key enroll 10.23.0.40
 ```
 
 Never bypass a trust failure with `http.sslVerify=false`.
@@ -167,7 +167,7 @@ origin. Remove every Basaltwater-managed Git credential and private CA setting
 with:
 
 ```bash
-basaltw patch 192.168.0.41 agent --no-git-credentials
+basaltw patch 10.23.0.50 agent --no-git-credentials
 ```
 
 Removal rejects symlinks and directories owned by another user throughout the

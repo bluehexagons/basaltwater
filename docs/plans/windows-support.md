@@ -10,10 +10,8 @@ the unused WSL-backed runner paths without migration or compatibility shims.
 Preserve standard build-on-target behavior elsewhere. Windows remains outside
 the current [v2.0.0 stable-release gate](../release-qualification.md).
 
-Windows agentic workstations are a lower development priority than CachyOS.
-They follow the same existing-account approach, primarily for compatibility
-testing, CI, and native packaging. CachyOS remains the main workstation for
-new feature development. The experimental
+Windows agentic workstations follow the existing-account approach for native
+development, compatibility testing, CI and packaging. The experimental
 [native workstation bootstrap](../workstations/windows.md) prepares tools and
 agent skills independently of the managed build-host backend proposed here.
 
@@ -124,10 +122,11 @@ separate from build success; reuse the [notification contract](../services/notif
 1. **Native proof:** qualify the shared Python/PowerShell backend and SSH transport;
    demonstrate protected status, typed build submission, version detection,
    packaging, Windows ACLs and process-tree cancellation without WSL.
-2. **First real workload:** use [Antistatic's project-owned Windows setup](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md)
-   and its dependency policy/CI. Run the documented bootstrap, doctor, build and
-   Windows tests at a recorded revision. Keep pins and build scripts in the
-   project; do not turn Basaltwater into an engine/dependency manager.
+2. **First real workload:** select a project with native Windows commands and
+   declared dependencies; the optional [Antistatic integration](../integrations/antistatic/windows.md)
+   is one candidate. Run its bootstrap, doctor, build and Windows tests at a
+   recorded revision. Keep pins and build scripts in the project; do not turn
+   Basaltwater into an engine/dependency manager.
 3. **Entry points and panel:** compose GitHub Runner and webhook/on-demand jobs
    under shared capacity, then expose inspection and bounded actions. Qualify
    allowed/denied/malformed identities, duplicate requests, waiting, drain,

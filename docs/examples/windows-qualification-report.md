@@ -21,12 +21,9 @@ Use `Pass`, `Fail`, `Blocked` or `Not run`. Evidence source is `Command`,
 | --- | --- | --- | --- |
 | Basaltwater doctor | Not run | Command | |
 | Basaltwater offline native suite | Not run | Command | |
-| Antistatic locked install, doctor and build | Not run | Command | Include Node/npm and native generator. |
-| Antistatic lobby build and Windows gate | Not run | Command | Include effective Go toolchain and any skipped cases. |
-| Antistatic broader or focused gameplay checks | Not run | Command | Record budgets, pass/skip/cancellation counts, retained failures and focused controls. |
-| Antistatic staged package and extracted archive | Not run | Command | Include bundled runtime, archive digest, launch CWD/PATH, private data isolation and asset diagnostics from actual engine startup. |
-| snake2d source suites and composed-scene smoke | Not run | Command | Include Godot version. |
-| snake2d Windows export and exported startup | Not run | Command | Include matching template source/digest. |
+| Selected project: locked install, doctor and build | Not run | Command | Record runtime pins and native generator. |
+| Selected project: source and native tests | Not run | Command | Record budgets, pass/skip/cancellation counts and retained failures. |
+| Selected project: package/export and extracted startup | Not run | Command | Record runtime/engine, templates, archive digest, isolated data, CWD/PATH and actual startup diagnostics. |
 | Reboot/login and fresh-session tool discovery | Not run | Observed | Identify which parts were observed or operator-reported. |
 | Rendered desktop, resize and display scaling | Not run | Observed | Record application, settings and display conditions. |
 | Physical input, audible audio and persistence | Not run | Observed | Name devices/actions and isolate player data. |

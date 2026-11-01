@@ -1,9 +1,9 @@
 # Project development standards
 
-Basaltwater is the primary supported development environment for these projects.
-Debian is the default; projects can also support development or testing on
-CachyOS and Windows 11 where useful. Basaltwater supplies shared tooling, skills
-and reference workflows. Projects retain their native toolchains and adapt the
+These standards describe optional Basaltwater integration for software projects.
+Debian is the default managed environment; CachyOS and Windows 11 provide
+additional development/testing profiles. Basaltwater supplies shared tooling,
+skills and reference workflows. Projects retain their native toolchains and adapt the
 standards to their own needs. Installing Basaltwater is not a prerequisite for
 editing, building or testing a project.
 
@@ -40,6 +40,15 @@ raw logs and captures in private state outside Git, such as
 [local project memory](agent-memory.md). A request to operate or test a user's
 infrastructure does not authorize publishing its details. Include specific
 personal details in tracked files only when the user explicitly requests it.
+Apply the same rule to private business information: customer identities,
+nonpublic repository inventories, internal workflows and unpublished release
+plans. Use synthetic data in tests as well as documentation.
+
+Keep product-specific setup and examples in a dedicated integration guide,
+linked from the general capability documentation. An integration must not make
+one project's repository layout, tools, host assignments or release process a
+requirement for other projects. Keep runtime support and public upstream
+attribution where they document an actual supported capability.
 
 Apply this boundary to examples, manifests, plans, handoffs and evidence archives.
 Summarize tested behavior and limits without identifying the operator's systems;

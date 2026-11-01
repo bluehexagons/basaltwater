@@ -14,25 +14,20 @@ basaltw node exec -- npm test
 
 ## Related checkouts and host roles
 
-CachyOS workstations and Debian hosts both support Antistatic and Godot
-development/testing. CachyOS provides the interactive KDE, hardware playtest,
-Animator, and asset-authoring environment; Debian also provides reproducible
-validation, final builds, release qualification, CI, publishing, and servers.
-Use the profile and diagnostics for the actual OS. A successful host doctor
-establishes prerequisites; each repository still owns its validation gates.
-Use CachyOS development binaries for local testing; final release artifacts and
-publishing credentials belong on the Debian build/publishing host. See the
+CachyOS and Debian profiles support native game, Godot and asset-authoring
+workflows. Choose the profile for the actual OS and the checks the project needs.
+Debian also supports Basaltwater's managed build, publication and server roles;
+CachyOS supplies native KDE development and hardware playtesting. A host doctor
+establishes prerequisites; each repository owns its validation gates. See the
 [development comparison](../workstations/cachyos-game-development.md#comparable-development-checks)
-for shared project gates and distinct hardware/software evidence.
+for distinct hardware/software evidence.
 
 Both profiles clone primary repositories under `~/repos` by default. Set
 `--agent-workspace /absolute/path` to choose another root. Keep related
-checkouts as siblings using their repository basenames, such as `antistatic`,
-`antistatic-animator`, `antistatic-assets`, and `basaltwater`. Project examples
-using `../NAME` assume this layout; discover the actual checkout before use.
-Managed worktrees can live elsewhere: use `git worktree list` to locate the
-primary checkout and pass explicit source/game-root options where supported.
-Each worktree needs its own ignored dependencies and build products.
+checkouts as siblings only when the project's scripts expect that layout.
+Discover the actual paths before using `../NAME`. Managed worktrees can live
+elsewhere: use `git worktree list` and explicit source-root options where
+supported. Each worktree needs its own ignored dependencies and build products.
 
 Repeated `--repo HTTPS_URL` options clone missing repositories. Existing
 checkouts must match the requested origin; a trailing `.git` or slash does not
@@ -45,10 +40,10 @@ absolute checkout path. Preserve application state and register each checkout
 once. The development checkout of Basaltwater and its managed installed source
 are separate; `basaltw upgrade` updates the installed CLI on its chosen channel.
 
-See [CachyOS game development](../workstations/cachyos-game-development.md) for the Antistatic
-inventory and [Debian native tooling](#debian-native-game-development) for its
-host bundle. Basaltwater and adjacent source repositories remain optional for
-ordinary project builds and immutable tagged package installs.
+See [CachyOS game tooling](../workstations/cachyos-game-development.md) and
+[Debian native tooling](#debian-native-game-development) for host bundles.
+Optional project layouts and release commands belong in the
+[integration guides](../integrations/README.md).
 
 ## Initialize a manifest
 
@@ -209,8 +204,8 @@ unsupported syntax fail with guidance; no runtime is downloaded implicitly.
 Commit a stable pin for reproducible builds. A rolling `node` pin deliberately
 selects the newest policy-allowed installed release and can differ from reviewed packaging
 metadata. A development major and a reviewed packaged runtime are separate
-contracts: projects such as Antistatic select development Node independently
-and obtain their verified packaged runtime during packaging.
+contracts: a project can select development Node independently and obtain its
+verified packaged runtime during packaging.
 
 ```bash
 # Execute in the current directory using the frontend's runtime selection.
@@ -370,7 +365,7 @@ can retain a working uv, but an unusable result fails setup.
 
 Add `--game-dev` to a Debian coding VM or workstation setup for compilers,
 CMake/Ninja, native dependency headers, shader checks, debugging/cache tools,
-Xvfb captures, and GTK/NSS/audio/graphics libraries used by Animator/Electron.
+Xvfb captures, and GTK/NSS/audio/graphics libraries used by Electron.
 For an existing saved setup, review and apply the patch from the controller:
 
 ```bash
@@ -378,13 +373,13 @@ basaltw patch HOST USER --game-dev --dry-run
 basaltw patch HOST USER --game-dev
 ```
 
-The bundle provisions host prerequisites through APT. Antistatic retains its
-SDL/SDL_image source pins, native bootstrap, compiler requirements, and release
-SDK; run the project's bootstrap and doctor after setup. Basaltwater never
-builds checkout code during provisioning. CachyOS has its own
+The bundle provisions host prerequisites through APT. Each project retains its
+native library pins, bootstrap, compiler requirements and release SDK; run its
+bootstrap and doctor after setup. Basaltwater never builds checkout code during
+provisioning. CachyOS has its own
 [`--game-dev` bundle](../workstations/cachyos-game-development.md) for development work.
 
-GTK is a runtime prerequisite for Animator/Electron. Debian's `libgtk-3-bin`
+GTK is a runtime prerequisite for Electron. Debian's `libgtk-3-bin`
 pulls the release's GTK shared library, including its t64 package name, without
 requesting `libgtk-3-dev`. Native GTK addon development is a separate project
 requirement. Those headers can transitively require a D-Bus runtime version that
@@ -555,8 +550,9 @@ A newer VM's libc and native libraries can exceed a project's supported
 release ABI even when its source builds and tests pass. Use the project's
 reviewed SDK/container build and retain its compatibility gates. Runtime
 selection alone cannot make newer host libraries compatible with older targets.
-Antistatic's `npm run package:linux` builds in its pinned Steam Runtime SDK;
-its normal source builds remain independent of Basaltwater.
+The optional [Antistatic integration](../integrations/antistatic/README.md)
+illustrates a project that uses a pinned release SDK. Its source and packaging
+commands remain project-owned.
 
 For managed Debian coding VMs that need container builds, add `--container-tools`
 to the saved setup. It expands to `podman`, `uidmap`, `passt`, `slirp4netns`, and

@@ -20,6 +20,7 @@ each section index routes to its detailed pages.
 | Host operations, maintenance, networking, and Proxmox | [Operations](operations/README.md) |
 | Shares, synchronization, backups, and storage recovery | [Storage](storage/README.md) |
 | Deployments, web services, and applications | [Services](services/README.md) |
+| Optional project-specific workflows | [Integrations](integrations/README.md) |
 | Repository changes and coding-agent workflow | [Contributor guide](agents/contributing/README.md) |
 | Current priorities, follow-up work, and release qualification | [Project plans](plans/README.md) |
 
@@ -34,7 +35,8 @@ each section index routes to its detailed pages.
 
 The [root README](../README.md) introduces the project, supported targets, and
 common capabilities. Examples in these guides use `basaltw` and placeholders;
-never add real secrets to documentation.
+keep private infrastructure and business details outside Git; see the
+[documentation privacy rules](agents/project-standards.md#documentation-and-private-operational-state).
 
 ## Documentation conventions
 

@@ -15,7 +15,9 @@ workflows that use native desktop applications. For coding-agent security and VM
 | [CachyOS maintenance](cachyos-maintenance.md) | Maintain and recover the managed CachyOS profile |
 | [CachyOS desktop control](cachyos-desktop.md) | KDE capture, input, accessibility, consent, and qualification |
 | [Remote CachyOS development](cachyos-development.md) | Godot-first development, playtesting, and client workflows |
-| [Antistatic game development](cachyos-game-development.md) | Native game, TypeScript/Go, Animator, and Blender workflows |
+| [CachyOS game tooling](cachyos-game-development.md) | Native game tools, runtime selection and capture backends |
+| [Windows game tooling](windows-game-development.md) | Native compiler/SDK setup, runtime tools and local qualification |
+| [Antistatic integration](../integrations/antistatic/README.md) | Optional game, Animator, asset and service workflows |
 | [Desktop automation](desktop-automation.md) | Accessibility inspection, screenshots, window management, and input |
 | [Desktop development](desktop-development.md) | Discover tools, render assets, and run native UI checks |
 | [Visual comparisons](visual-comparisons.md) | Compare captures or rendering results across Git revisions |

@@ -39,10 +39,11 @@ def harden_kernel() -> None:
 ## Critical Rules
 
 1. **Always** use `from __future__ import annotations`
-2. **Never** commit secrets, credentials, or personal infrastructure details.
+2. **Never** commit secrets, credentials, personal infrastructure details, or
+   private business/project information.
    Keep private endpoints, host/storage inventories, account paths, and raw
    operational evidence outside Git. Use fictional examples in documentation;
-   publishing specific personal details requires an explicit user request.
+   publishing specific private details requires an explicit user request.
    See [documentation privacy](docs/agents/project-standards.md#documentation-and-private-operational-state).
 3. **Always** validate inputs with the appropriate validator: use
    `lib/validation.py` for paths, packages, network/configuration values, and

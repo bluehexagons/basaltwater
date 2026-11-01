@@ -22,6 +22,9 @@ Keep changes scoped and follow the project's patterns. Update docs for changed
 behavior and reusable project decisions; put task progress in tracking tools.
 Keep personal infrastructure details, deployment inventories, account paths and
 raw operational evidence in private state outside Git, even without credentials.
+Treat private business/customer information and nonpublic project inventories
+likewise. Use synthetic test data. Keep product-specific workflows in opt-in
+integration docs; do not generalize one user's layout or release process.
 Operating or testing a user's systems does not authorize publishing them. Use
 fictional documentation examples and sanitized verification summaries; retain
 intentionally public project/upstream references. Specific personal details need

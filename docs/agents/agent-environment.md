@@ -126,7 +126,7 @@ discovery never reads native session files, opens the publishing database, runs
 provider tools or contacts a storefront. Guidance directs human authentication
 to a configured Debian HTTPS panel or the owner's interactive terminal. On
 CachyOS `publishing.readiness` is `outside-host-role` and `management_command`
-is null: this workstation is for Antistatic/Godot development and testing, with
+is null: this profile supports native development and testing, with
 final builds and publication handed to Debian. Installed tools remain inventory;
 discovery does not direct provider sign-in or uploads here. CachyOS development
 records include `intended_use: development-and-testing` and

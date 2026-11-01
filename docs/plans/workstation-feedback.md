@@ -1,6 +1,6 @@
 # Workstation feedback implementation
 
-The October 2026 CachyOS/Antistatic feedback is evaluated against existing
+The workstation feedback is evaluated against existing
 Basaltwater interfaces. Shared workflow and evidence conventions apply across
 projects; platform-specific execution remains with each platform's commands.
 Native validation on other supported platforms is a later acceptance phase.
@@ -15,8 +15,8 @@ Native validation on other supported platforms is a later acceptance phase.
 | Owned processes | Native development transient units and guarded stop; portal session ownership | Expose task unit process metadata and completion evidence; retain identity guards |
 | Handoffs | Existing project/visual qualification guidance | Lightweight implementation, visual review and hardware acceptance templates |
 
-No private Antistatic files are copied into Basaltwater. Repeatable rendering
-logic belongs in that project's reviewed harness and `basaltwater-agent.json`;
+Private consuming-project files stay outside Basaltwater. Repeatable rendering
+logic belongs in each project's reviewed harness and `basaltwater-agent.json`;
 Basaltwater owns launching, evidence collection and platform operation. Existing
 user-session applications are never adopted or stopped by name.
 

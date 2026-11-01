@@ -14,7 +14,7 @@
       "paths": ["artifacts"],
       "strategy": "agent",
       "archive": "docs/development-history",
-      "instructions": "Review logs, screenshots and videos. Propose archiving useful milestones, regressions and comparisons with capture date, commit, original path, caption and checksum. Preserve release and unfinished-work evidence; delete only explicitly approved remnants after archive verification."
+      "instructions": "Keep raw logs, screenshots and videos in private storage outside Git or explicitly ignored artifact directories. Review selected evidence for credentials, personal infrastructure, business/customer information and user data before proposing tracked summaries or sanitized artifacts. Use repository-relative provenance, capture date, commit, caption and checksum; keep original private paths in local evidence only. Preserve release and unfinished-work evidence; delete only explicitly approved remnants after archive verification."
     }
   ]
 }

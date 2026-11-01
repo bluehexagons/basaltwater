@@ -8,10 +8,9 @@ and T3 settings are preserved. Run as the
 intended Windows account; package installers may ask for UAC. Allow at least
 5 GiB of free space, plus space for your projects and their dependencies.
 
-Windows follows CachyOS's existing-account workstation approach at a lower
-development priority. Its primary role is compatibility testing, CI, and native
-packaging; CachyOS remains the main workstation for developing new features.
-Project-owned Windows build and test commands stay authoritative.
+Windows follows the existing-account workstation approach for development,
+compatibility testing, CI and native packaging. Choose platforms according to
+the project's requirements; project-owned build and test commands stay authoritative.
 
 This is a tools-and-skills setup. Basaltwater's Linux controller,
 managed web services, privilege broker, and remote setup profiles
@@ -211,7 +210,7 @@ failures require a manual restart/retry. A later setup run clears prior queued
 restart work before applying changes. The WSL profile retains its existing
 manual Windows-reboot flow.
 
-For Antistatic builds, Windows tests and packaging, select `-GameDev`; add
+For native game builds, Windows tests and packaging, select `-GameDev`; add
 `-ShaderTools` for shader validation. `-NodeVersions` independently prepares
 fnm for project-selected Node versions. Optional `-StorageDrive F:` uses
 `F:\Basaltwater` for runtime versions, development caches and new checkouts
@@ -429,8 +428,10 @@ It requires the account's saved native installation, including when optional
 selections are absent in an older state. Checkout-only setup has no saved
 selection to diagnose. `refresh --dry-run` checks discovery, storage paths and
 managed skill collisions without running version probes. Use the
-[game tooling examples](windows-game-development.md#antistatic-qualification)
-for Antistatic's Node selection, native bootstrap and Windows test gate.
+[game tooling guide](windows-game-development.md#native-project-qualification)
+for native prerequisites, or the optional
+[Antistatic integration](../integrations/antistatic/windows.md) for its runtime,
+bootstrap and test commands.
 
 Python's Microsoft Store execution alias can exist before Python is installed.
 Use the project's uv environment, or disable that alias in Windows App execution

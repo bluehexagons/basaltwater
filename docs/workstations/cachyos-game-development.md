@@ -1,13 +1,13 @@
-# Antistatic development on CachyOS
+# CachyOS native game tooling
 
-Use `agent_cachyos` on an existing, fully updated CachyOS KDE workstation.
-The workstation supports Godot and Antistatic development and playtesting on
-hardware, locally or through the [remote development workflow](cachyos-development.md).
-This guide covers editing/testing the native game, its TypeScript/Go components,
-Blender source assets, and Antistatic Animator. Final builds, release
-qualification, publishing, and servers belong on the designated Debian systems.
-Rolling desktop tools need not reproduce a release SDK or Debian's reviewed
-compiler, formatter, graphics, or packaged-runtime baseline.
+Use `agent_cachyos` on an existing, fully updated CachyOS KDE workstation for
+native game development, Godot, Node/Go tools and Electron asset authoring.
+This guide covers host prerequisites, runtime selection and capture backends.
+Each project owns its dependency pins, builds, tests and acceptance criteria.
+Basaltwater's managed final-build and publication workflows use Debian; a
+rolling development toolchain need not reproduce a release SDK.
+For game-specific layouts and commands, use the optional
+[Antistatic integration](../integrations/antistatic/cachyos.md).
 
 For a first installation, use the [fish installer](cachyos.md#quick-start)
 with the options below after `--local-setup agent_cachyos`. If the launcher is
@@ -38,11 +38,11 @@ See [local setup](cachyos.md) for T3 modes and package prompts, and
 | `--av-tools`, `--gl-tools` | Optional asset processing and additional Vulkan/API-trace diagnostics |
 
 `--game-dev` also supplies the existing KDE automation prerequisites for native
-Animator work. It starts no GUI, capture, input session, or service. Packages
-come from the configured repositories, with their normal headers and distro
+desktop-authoring work. It starts no GUI, capture, input session, or service.
+Packages come from the configured repositories, with their normal headers and distro
 versions; setup neither synchronizes pacman databases nor replaces installed
-packages. Run CachyOS's normal full update first. Antistatic's portable
-`npm run bootstrap:linux` remains available independently of Basaltwater.
+packages. Run CachyOS's normal full update first. Project-native bootstrap
+commands remain available independently of Basaltwater.
 
 Xvfb and xauth allow optional project captures without using the personal
 desktop. The workstation's existing graphics stack supplies OpenGL/GBM and
@@ -52,7 +52,7 @@ The [Arch Xvfb package](https://archlinux.org/packages/extra/x86_64/xorg-server-
 provides both `Xvfb` and `xvfb-run`.
 
 The bundle installs host libraries for project-installed Electron.
-Animator's lockfile owns its Electron version and supported desktop
+Each project's lockfile owns its Electron version and supported desktop
 baseline; launch it through its npm scripts. GTK3/NSS are also runtime
 dependencies of [Arch's Electron package](https://archlinux.org/packages/extra/x86_64/electron44/).
 No sandbox override is configured. Distro compiler/formatter/shader tools are
@@ -90,8 +90,8 @@ Host diagnosis never runs project builds or grants capture/input consent.
 
 ## Select each project's Node version
 
-Antistatic and Animator intentionally use different development pins. Their
-`package.json` engines and `.nvmrc` files remain authoritative; do not copy the
+Related projects can intentionally use different development pins. Their
+`package.json` engines and version files remain authoritative; do not copy the
 workstation's rolling Node version into project or release metadata.
 
 `basaltw node install` prepares missing `~/.nvm` on demand with Basaltwater's
@@ -111,19 +111,19 @@ Install the checked-out pins deliberately, then select them for individual
 commands:
 
 ```fish
-basaltw node install --project "$HOME/repos/antistatic"
-basaltw node install --project "$HOME/repos/antistatic-animator"
-basaltw node status --project "$HOME/repos/antistatic" --json
-basaltw node status --project "$HOME/repos/antistatic-animator" --json
+basaltw node install --project "$HOME/repos/game"
+basaltw node install --project "$HOME/repos/authoring-tool"
+basaltw node status --project "$HOME/repos/game" --json
+basaltw node status --project "$HOME/repos/authoring-tool" --json
 
-cd "$HOME/repos/antistatic"
+cd "$HOME/repos/game"
 basaltw node exec -- npm ci
 basaltw node exec -- npm run doctor
 basaltw node exec -- npm run build
 
-cd "$HOME/repos/antistatic-animator"
+cd "$HOME/repos/authoring-tool"
 basaltw node exec -- npm ci
-basaltw node exec -- npm run dev:electron
+basaltw node exec -- npm run dev
 ```
 
 `basaltw node exec` selects the project runtime for each command and works in
@@ -145,30 +145,18 @@ and project policy disabled; these host probes do not establish project readines
 
 ## Repositories and native authoring
 
-Keep these primary checkouts beside one another under `~/repos`, or the root
-selected with `--agent-workspace /absolute/path`:
+Keep related checkouts under the selected workspace root when the project's
+scripts expect siblings. Use explicit paths for managed worktrees and let each
+repository's instructions own its maintenance. Repeated `--repo HTTPS_URL`
+clones missing repositories after local authentication; setup retains existing
+checkouts without pulling, installing dependencies or running project scripts.
+See [workspace conventions](../agents/project-tooling.md#related-checkouts-and-host-roles).
 
-- `antistatic`, the game.
-- `antistatic-animator`, the Electron authoring tool.
-- `capacitor`, `easing`, `trace`, and `antistatic-translations`, direct packages.
-- `antistatic-assets`, editable Blender sources.
-- `basaltwater`, an optional source checkout for host-tool development and
-  references; the installed CLI uses its own managed source directory.
-
-Use repeated `--repo HTTPS_URL` during setup to clone missing repositories.
-Authenticate private repositories locally first. Setup retains existing
-checkouts; it does not pull them, install project dependencies, or run their
-scripts. Each checkout's `AGENTS.md` owns its maintenance and validation rules.
-No website, sandbox, database, or matchmaking server is required for this setup.
-See [project workspace conventions](../agents/project-tooling.md#related-checkouts-and-host-roles)
-for existing origins, managed worktrees, and separate T3 project registration.
-Cloning a sibling does not change the tagged dependency installed by `npm ci`.
-
-Use Animator's Electron mode for native file access and live sync. Its Vite
-browser mode remains useful when an available browser can reach the local URL.
-For agent-driven native GUI work, start the existing KDE portal session with
-`basaltw desktop --native start` and obtain the owner's monitor/input consent;
-see [native desktop work](cachyos-desktop.md). Package setup grants no consent.
+Use a project's documented Electron launch for native file dialogs and sync.
+Browser authoring remains useful when a browser can reach its local URL.
+For agent-driven GUI work, start `basaltw desktop --native start` and obtain
+the owner's monitor/input consent; see [native desktop work](cachyos-desktop.md).
+Package setup grants no consent.
 
 `basaltw local cachyos-doctor --json` inventories the saved selections, native
 development commands/packages, system pkg-config modules, and NVM loadability.
@@ -176,20 +164,12 @@ For selected game tooling it also records parseable `cc`, Clang, Clang-Format,
 Clang-Tidy and LLVM symbolizer versions using bounded terminal-only probes.
 Null versions remain unverified; an installed command does not establish
 compatibility with a project's lint configuration or compiler baseline.
-The CachyOS bundle supplies distribution LLVM, without installing a specific
-LLVM major or versioned aliases. Antistatic's lint/format scripts prefer
-`clang-tidy-19`/`clang-format-19` when available and otherwise select the
-unversioned tools. The doctor's versions describe those unversioned host tools,
-not a project-selected LLVM or a reviewed formatting baseline. Projects that
-require an exact LLVM must arrange and verify that toolchain separately.
-The doctor never launches the game or Animator, builds repository code, or tests the GPU.
-Run the game's doctor/build and open Animator after setup. Difficult native,
-formatter, screenshot, and full-suite validation can remain on the Debian VM;
-record the host on which a check actually ran.
-
-Use the game's [environment guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development-environments.md)
-for capture display isolation and fresh-checkout lobby test preparation. These
-checks belong to the game and work independently of Basaltwater.
+The bundle supplies distribution LLVM without choosing an exact LLVM major.
+The doctor's unversioned tool observations do not establish a project's chosen
+formatter/compiler baseline. Arrange and verify required versioned tools
+separately. The doctor never launches a game or authoring tool, builds repository
+code or tests the GPU. Run the project's declared checks after setup and record
+the host on which they actually ran.
 
 ## Capture backends and post-refresh checks
 
@@ -228,13 +208,10 @@ and GL renderer in the application's logs:
 | SDL offscreen, when the application supports GL with that driver | Hardware captures independent of desktop window size | Driver support and GPU/software selection must be verified by the project; does not qualify desktop interaction |
 
 `LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe` are configuration requests,
-not proof of software coverage. On this host, SDL offscreen/EGL fixtures have
-emitted a warning that the API explicitly selects a hardware device despite
-the software request. That warning alone does not identify the final GL
-renderer either. Retain both and qualify each fixture from the actual renderer.
-A separate llvmpipe GLX probe does not qualify an offscreen/EGL test.
-Antistatic's god-ray fixture honors `SDL_VIDEODRIVER=x11`; fixtures that force
-offscreen need their own driver/renderer verification.
+not proof of software coverage. An SDL offscreen/EGL context can select a
+hardware device despite those requests. Qualify each fixture from its actual
+renderer. A separate llvmpipe GLX probe does not qualify an offscreen/EGL test;
+fixtures that force a driver need their own verification.
 
 For an isolated Xvfb capture, explicitly select `SDL_VIDEODRIVER=x11` and remove
 `WAYLAND_DISPLAY` from the child environment so SDL does not prefer the personal
@@ -250,25 +227,12 @@ allocation races. Query capabilities once per harness invocation rather than
 starting a throwaway `xvfb-run ... true` availability probe before every capture.
 Keep the actual capture server startup and diagnostics separate from that query.
 
-Antistatic's screenshot scripts own this selection. For a hardware capture
-larger than the desktop, its Linux renderer supports:
-
-```fish
-cd "$HOME/repos/antistatic"
-env SDL_VIDEODRIVER=offscreen basaltw node exec -- npm run screenshot:stage -- \
-  --stage 'Visual Test' --cpus 0 --frame 180 --resolution 3840x2160 \
-  --no-xvfb --verbose --out /absolute/new-artifact/visual-test-4k.png
-```
-
-Inspect the reported GL renderer and complete scene content, including corners
-and UI where requested. In the observed Antistatic SDR path, oversized native
-Wayland PNGs could have the requested dimensions while containing clipped/black
-regions; offscreen captures produced complete 4K content on Intel Mesa. Keep the
-workaround until that project uses an independent SDR presentation/capture
-framebuffer. See the game's
-[headless capture guide](https://github.com/bluehexagons/antistatic/blob/main/docs/headless-mode.md)
-for current limitations and fixture settings. A working offscreen capture does
-not establish native desktop, HDR, monitor-scaling or end-to-end FPS behavior.
+Use the project's own capture harness. Inspect the reported renderer and full
+scene content, including image corners and UI: requested PNG dimensions alone
+do not prove complete rendering. An offscreen capture does not qualify native
+desktop, HDR, monitor scaling or end-to-end frame rate. The optional
+[Antistatic capture example](../integrations/antistatic/cachyos.md#capture-backends)
+shows a project-specific route.
 
 After refresh, run `basaltw local cachyos-doctor --json` for prerequisites, then
 the project's build and declared graphics-check recipe. The optional
@@ -286,5 +250,6 @@ at the same frame, camera, resolution, renderer, locale, graphics settings and
 clean data state. Fix fixture palettes/seed and allow time-based UI transitions
 to settle. Record observed runtime/GPU/backend in project outputs, distinguish
 capture startup and CPU preparation timings from frame-rate measurements, and
-put shared evidence in the project's active ignored artifact directory. Compare
-like backends; software references and native GPU captures serve different checks.
+put raw evidence outside Git or in the project's explicitly ignored artifact
+directory. Compare like backends; software references and native GPU captures
+serve different checks.
