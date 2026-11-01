@@ -23,6 +23,10 @@ from lib.validation import validate_filesystem_path, validate_no_control_charact
 
 Version = tuple[int, int, int]
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+_RELEASE_VERSION = re.compile(
+    r"v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?"
+)
 _PARTIAL = re.compile(r"v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?")
 _TOKEN = re.compile(r"(>=|<=|>|<|=|\^|~)?\s*(v?\d+(?:\.(?:\d+|[xX*])){0,2}|[xX*])")
 MAX_RUNTIME_ENTRIES = 256
@@ -139,7 +143,7 @@ def satisfies(version: Version, requirement: str) -> bool:
 
 
 def fetch_node_releases() -> list[dict]:
-    """Read the official stable release index with bounded time and output."""
+    """Read official stable/prerelease metadata with bounded time and output."""
     result = run_probe([
         sys.executable, "-I", "-c",
         "import sys, urllib.request\n"
@@ -168,7 +172,8 @@ def _validate_node_releases(payload: object) -> None:
     for release in payload:
         if not isinstance(release, dict) or not isinstance(release.get("version"), str):
             raise ValueError("Invalid release in official Node index")
-        _version(release["version"])
+        if len(release["version"]) > 128 or not _RELEASE_VERSION.fullmatch(release["version"]):
+            raise ValueError("Invalid version metadata in official Node index")
         lts = release.get("lts")
         if lts is not False and (not isinstance(lts, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", lts)):
             raise ValueError("Invalid LTS metadata in official Node index")
@@ -189,6 +194,10 @@ def choose_node_release(releases: list[dict], specification: str, *, engines: st
         satisfies((0, 0, 0), engines)
     candidates = []
     for release in releases:
+        # The official index includes prereleases; validate them above, but
+        # never allow them into stable managed runtime selection.
+        if not _VERSION.fullmatch(release["version"]):
+            continue
         actual = _version(release["version"])
         if (is_supported_node(release["version"]) and satisfies(actual, requirement)
                 and (not engines or satisfies(actual, engines))

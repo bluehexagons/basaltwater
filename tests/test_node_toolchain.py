@@ -573,6 +573,21 @@ class NodeToolchainTests(unittest.TestCase):
                     self.assertRaises(ValueError):
                 fetch_node_releases()
 
+    def test_official_prereleases_are_validated_but_never_selected(self):
+        releases = [
+            {'version': 'v27.0.0-alpha.0.0.0', 'lts': False},
+            {'version': 'v26.14.0-rc.1', 'lts': 'Lithium'},
+            {'version': 'v26.13.0', 'lts': 'Lithium'},
+            *self.releases,
+        ]
+        with patch('lib.node_toolchain.run_probe', return_value=ProbeResult(json.dumps(releases))):
+            fetched = fetch_node_releases()
+        self.assertEqual(choose_node_release(fetched, 'node'), 'v26.13.0')
+        self.assertEqual(choose_node_release(fetched, 'lts/*'), 'v26.13.0')
+        for version in ('v27.0.0-', 'v27.0.0-alpha..1', 'v27.0.0-alpha.01', 'v27.0.0;bad'):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                choose_node_release([{'version': version, 'lts': False}], 'node')
+
     def test_resolve_command_reports_exact_target_without_nvm_or_runtime_changes(self):
         (self.project / '.node-version').write_text('24')
         (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '<24.22.2'}}))

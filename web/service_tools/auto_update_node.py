@@ -507,7 +507,10 @@ def main() -> int:
         if latest_version and node_major(latest_version) <= node_major(current_lts):
             latest_version = ""  # All allowed lines are LTS; no separate Current track.
     except (OSError, ValueError) as exc:
-        log_event(logger, "Failed to discover supported Node releases", level=ERROR)
+        log_event(logger, "Failed to discover supported Node releases", level=ERROR,
+                  error=str(exc), release_index="https://nodejs.org/dist/index.json",
+                  supported_range=SUPPORTED_NODE_RANGE,
+                  recovery="Check official index reachability and metadata; no runtime changes made")
         send_notification_safe(
             notification_configs, subject="Error: Node.js update failed", job="auto_update_node",
             status="error", message="Failed to discover supported Node releases", details=str(exc), logger=logger,
