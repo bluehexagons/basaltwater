@@ -69,6 +69,7 @@ from lib.proxmox_memory import (
     parse_guest_memory_mib,
 )
 from lib.proxmox_tasks import ProxmoxTaskError, resize_vm_disk, vm_disk_resize_command
+from lib.proxmox_lifecycle import guest_startup, print_guest_lifecycle, reconcile_guest_lifecycle
 from lib.types import NestedStrList, StrList
 from lib.validation import parse_memory_mib, validate_filesystem_path
 from lib.validators import validate_host, validate_ip_address, validate_username
@@ -819,6 +820,7 @@ def _reconcile_existing_vm(
     desired_disk_hardware: Optional[dict[str, VMDiskHardware]] = None,
     desired_storage_layout: Optional[dict[str, VMDataDisk]] = None,
     desired_bridge: Optional[str] = None,
+    lifecycle_config: Optional[SetupConfig] = None,
     require_existing: bool = False,
     require_existing_name: bool = False,
     start_existing: bool = False,
@@ -1368,9 +1370,12 @@ def _reconcile_existing_vm(
             "model changes to take effect in the guest"
         )
 
-    print(
-        f"  ✓ VM {matched.vmid} already exists and is reachable at IP {target_ip}"
-    )
+    if lifecycle_config is not None:
+        reconcile_guest_lifecycle(
+            lifecycle_config, tool="qm", vmid=matched.vmid, node_ip=node_ip,
+            user=user, ssh_opts=ssh_opts, ssh_run=_ssh_run,
+        )
+    print(f"  ✓ VM {matched.vmid} already exists and is reachable at IP {target_ip}")
     return True
 
 
@@ -1920,6 +1925,8 @@ def _create_vm(
     disk_discard: bool = True,
     disk_ssd: bool = False,
     disk_hardware_settings: Optional[dict[str, VMDiskHardware]] = None,
+    autostart: bool = True,
+    startup: Optional[str] = None,
 ) -> bool:
     """Build, populate, and start the VM on ``node_ip``."""
     cpu_type = _validate_cpu_type(cpu_type)
@@ -1963,8 +1970,10 @@ def _create_vm(
         ),
         f"--ipconfig0 {shlex.quote(','.join(ipconfig_parts))}",
         f"--nameserver {shlex.quote(' '.join(nameservers))}",
-        "--onboot 1",
+        f"--onboot {int(autostart)}",
     ]
+    if startup is not None:
+        create_parts.append(f"--startup {shlex.quote(startup)}")
     if user_data_ref:
         create_parts.append(f"--cicustom user={shlex.quote(user_data_ref)}")
 
@@ -2361,6 +2370,7 @@ def _provision_vm_locked(
         else:
             print("  DNS servers: auto-detect from Proxmox node")
         print(f"  Hostname: {hostname}")
+        print_guest_lifecycle(config)
         print(f"  Memory: {memory_mb} MiB")
         if balloon_min_mb < memory_mb:
             print(f"  Balloon minimum: {balloon_min_mb} MiB (dynamic)")
@@ -2501,6 +2511,7 @@ def _provision_vm_locked(
             desired_disk_hardware=disk_hardware_settings,
             desired_storage_layout=verified_storage_layout,
             desired_bridge=bridge if verify_existing_bridge else None,
+            lifecycle_config=config,
             require_existing=require_existing_vm,
             require_existing_name=require_existing_name,
             start_existing=start_existing_vm,
@@ -2656,6 +2667,8 @@ def _provision_vm_locked(
                 "disk_discard": disk_discard,
                 "disk_ssd": disk_ssd,
                 "disk_hardware_settings": disk_hardware_settings,
+                "autostart": config.guest_autostart is not False,
+                "startup": guest_startup(config),
             }
             vmid = _create_with_vmid_retry(
                 _create_vm,
@@ -2728,3 +2741,8 @@ def _provision_vm_locked(
                     "  ⚠ VM removal was not confirmed; preserving potentially "
                     f"referenced cloud-init snippet {user_data_path}"
                 )
+
+    reconcile_guest_lifecycle(
+        config, tool="qm", vmid=vmid, node_ip=node_ip,
+        user=user, ssh_opts=ssh_opts, ssh_run=_ssh_run,
+    )

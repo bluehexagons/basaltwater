@@ -708,6 +708,11 @@ class SetupConfig:
     hosted_user: str = "root"
     hosted_key: MaybeStr = None
     hosted_bridge: MaybeStr = None
+    guest_autostart: Optional[bool] = None
+    guest_start_order: Optional[int] = None
+    guest_start_delay: Optional[int] = None
+    guest_shutdown_timeout: Optional[int] = None
+    guest_protection: Optional[bool] = None
     container_memory: MaybeStr = None
     vm_balloon_min: MaybeStr = None
     vm_balloon_shares: int = 1000
@@ -921,11 +926,13 @@ class SetupConfig:
 
         from lib.validation import (
             validate_godot_bundle_settings,
+            validate_guest_lifecycle_settings,
             validate_notification_level,
             validate_syncthing_settings,
         )
 
         validate_godot_bundle_settings(self)
+        validate_guest_lifecycle_settings(self, require_provisioning=False)
         validate_notification_level(self.notification_level)
         if self.notification_strict_https is not None and not isinstance(
             self.notification_strict_https, bool
@@ -1879,6 +1886,9 @@ class SetupConfig:
                 cmd_parts.append(f"--provision-key {shlex.quote(self.hosted_key)}")
             if self.hosted_bridge:
                 cmd_parts.append(f"--bridge {shlex.quote(self.hosted_bridge)}")
+            from lib.proxmox_lifecycle import lifecycle_setup_args
+
+            cmd_parts.extend(lifecycle_setup_args(self))
             if self.container_memory:
                 cmd_parts.append(f"--memory {shlex.quote(self.container_memory)}")
             if self.vm_balloon_min:
@@ -3344,6 +3354,11 @@ class SetupConfig:
             hosted_user=getattr(args, 'hosted_user', None) or 'root',
             hosted_key=getattr(args, 'hosted_key', None),
             hosted_bridge=getattr(args, 'hosted_bridge', None),
+            guest_autostart=_optional_bool_arg(args, 'guest_autostart'),
+            guest_start_order=_optional_int_arg(args, 'guest_start_order'),
+            guest_start_delay=_optional_int_arg(args, 'guest_start_delay'),
+            guest_shutdown_timeout=_optional_int_arg(args, 'guest_shutdown_timeout'),
+            guest_protection=_optional_bool_arg(args, 'guest_protection'),
             container_memory=getattr(args, 'container_memory', None),
             vm_balloon_min=getattr(args, 'vm_balloon_min', None),
             vm_balloon_shares=getattr(args, 'vm_balloon_shares', 1000),

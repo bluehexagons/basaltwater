@@ -36,6 +36,7 @@ from lib.proxmox_guest import (
     remote_proxmox_locks,
 )
 from lib.types import NestedStrList, StrList
+from lib.proxmox_lifecycle import guest_startup, print_guest_lifecycle, reconcile_guest_lifecycle
 from lib.validation import parse_memory_mib, validate_filesystem_path
 from lib.validators import validate_host, validate_ip_address, validate_username
 
@@ -167,7 +168,7 @@ def _find_containers_by_ip(
 
 def _ensure_container_running_locked(
     config: SetupConfig, target_ip: str, hostname: str,
-) -> None:
+) -> int:
     """Recover a uniquely identified container while its identity is reserved."""
     node_ip = cast(str, config.hosted_node)
     user = config.hosted_user
@@ -196,6 +197,7 @@ def _ensure_container_running_locked(
     elif state != "status: running":
         raise ProvisionError(f"Unexpected container {vmid} status: {state}")
     _wait_for_container_ssh(target_ip, node_ip, user, opts, timeout=300)
+    return vmid
 
 
 def ensure_container_running(config: SetupConfig) -> None:
@@ -483,6 +485,8 @@ def _create_container(
     ssh_pubkey_remote_path: Optional[str] = None,
     ipv6_cidr: Optional[str] = None,
     gateway6: Optional[str] = None,
+    autostart: bool = True,
+    startup: Optional[str] = None,
 ) -> None:
     """Create and start the LXC container on the Proxmox host."""
     unprivileged = "0" if privileged else "1"
@@ -515,11 +519,13 @@ def _create_container(
         f"--net0 {shlex.quote(','.join(network_parts))}",
         f"--nameserver {shlex.quote(' '.join(nameservers))}",
         f"--unprivileged {unprivileged}",
-        "--onboot 1",
+        f"--onboot {int(autostart)}",
         "--start 1",
     ]
     if ssh_pubkey_remote_path:
         cmd_parts.insert(-1, f"--ssh-public-keys {shlex.quote(ssh_pubkey_remote_path)}")
+    if startup is not None:
+        cmd_parts.insert(-1, f"--startup {shlex.quote(startup)}")
 
     cmd = " ".join(cmd_parts)
 
@@ -618,6 +624,7 @@ def _provision_container_locked(config: SetupConfig) -> None:
         else:
             print("  DNS servers: auto-detect from Proxmox node")
         print(f"  Hostname: {hostname}")
+        print_guest_lifecycle(config)
         print(f"  Memory: {memory_mb} MiB")
         print(f"  Cores: {config.container_cores}")
         print(f"  Container type: {'privileged' if privileged else 'unprivileged'}")
@@ -668,7 +675,11 @@ def _provision_container_locked(config: SetupConfig) -> None:
     if check_container_exists(
         node_ip, target_ip, user, config.hosted_key, dry_run=dry_run
     ):
-        _ensure_container_running_locked(config, target_ip, hostname)
+        vmid = _ensure_container_running_locked(config, target_ip, hostname)
+        reconcile_guest_lifecycle(
+            config, tool="pct", vmid=vmid, node_ip=node_ip,
+            user=user, ssh_opts=ssh_opts, ssh_run=_ssh_run,
+        )
         raise ContainerAlreadyExists(
             f"Container with IP {target_ip} already exists on {node_ip}"
         )
@@ -768,6 +779,8 @@ def _provision_container_locked(config: SetupConfig) -> None:
                     "ssh_pubkey_remote_path": remote_pubkey_path,
                     "ipv6_cidr": config.static_ipv6,
                     "gateway6": config.network_gateway6,
+                    "autostart": config.guest_autostart is not False,
+                    "startup": guest_startup(config),
                 },
             )
 
@@ -790,3 +803,8 @@ def _provision_container_locked(config: SetupConfig) -> None:
                 f"rm -f {shlex.quote(remote_pubkey_path)}",
                 dry_run=False,
             )
+
+    reconcile_guest_lifecycle(
+        config, tool="pct", vmid=vmid, node_ip=node_ip,
+        user=user, ssh_opts=ssh_opts, ssh_run=_ssh_run,
+    )

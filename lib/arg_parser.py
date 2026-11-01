@@ -521,6 +521,34 @@ def add_setup_arguments(
             help="Proxmox bridge for the new guest (default: node default-route bridge)",
         )
         parser.add_argument(
+            "--autostart",
+            dest="guest_autostart",
+            action=argparse.BooleanOptionalAction,
+            default=argparse.SUPPRESS,
+            help="Start the guest at Proxmox node boot (default: enabled for new guests)",
+        )
+        parser.add_argument(
+            "--start-order", dest="guest_start_order", type=int,
+            default=argparse.SUPPRESS, metavar="N",
+            help="Guest startup order at node boot (non-negative; lower starts first)",
+        )
+        parser.add_argument(
+            "--start-delay", dest="guest_start_delay", type=int,
+            default=argparse.SUPPRESS, metavar="SECONDS",
+            help="Delay after starting this guest before starting the next guest",
+        )
+        parser.add_argument(
+            "--shutdown-timeout", dest="guest_shutdown_timeout", type=int,
+            default=argparse.SUPPRESS, metavar="SECONDS",
+            help="Proxmox guest shutdown timeout during node shutdown",
+        )
+        parser.add_argument(
+            "--protection", dest="guest_protection",
+            action=argparse.BooleanOptionalAction,
+            default=argparse.SUPPRESS,
+            help="Protect the guest against accidental deletion (default: disabled for new guests)",
+        )
+        parser.add_argument(
             "--memory",
             dest="container_memory",
             metavar="SIZE",

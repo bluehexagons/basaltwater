@@ -2522,6 +2522,29 @@ def validate_proxmox_balloon_settings(config: Any) -> None:
         raise ValueError("--balloon-shares must be between 1 and 50000")
 
 
+def validate_guest_lifecycle_settings(
+    config: Any, *, require_provisioning: bool = True,
+) -> None:
+    """Validate typed Proxmox startup and deletion-protection settings."""
+    for field, flag in (
+        ("guest_autostart", "--autostart/--no-autostart"),
+        ("guest_protection", "--protection/--no-protection"),
+        ("guest_start_order", "--start-order"),
+        ("guest_start_delay", "--start-delay"),
+        ("guest_shutdown_timeout", "--shutdown-timeout"),
+    ):
+        value = getattr(config, field, None)
+        if value is None:
+            continue
+        if field in {"guest_autostart", "guest_protection"}:
+            if type(value) is not bool:
+                raise ValueError(f"{flag} must be boolean")
+        elif type(value) is not int or value < 0:
+            raise ValueError(f"{flag} must be a non-negative integer")
+        if require_provisioning and not getattr(config, "hosted_node", None):
+            raise ValueError(f"{flag} requires --provision-on")
+
+
 def validate_hosted_flags(config: Any) -> None:
     """Validate Proxmox guest options used with ``--provision-on``.
 
@@ -2531,6 +2554,7 @@ def validate_hosted_flags(config: Any) -> None:
     Raises:
         ValueError: If required flags are missing or invalid
     """
+    validate_guest_lifecycle_settings(config)
     validate_proxmox_balloon_settings(config)
     validate_swap_settings(config)
     balloon_min = getattr(config, "vm_balloon_min", None)

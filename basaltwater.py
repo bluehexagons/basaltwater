@@ -88,6 +88,7 @@ from lib.proxmox_guest import (
     refresh_managed_guest_host_keys,
 )
 from lib.proxmox_hosts import find_proxmox_host
+from lib.proxmox_lifecycle import LIFECYCLE_FIELD_FLAGS
 from lib.proxmox_cli import add_proxmox_subparser, run_proxmox_command
 from lib.vm_cli import add_vm_subparser, run_vm_command
 from lib.sysadmin_cli import add_sysadmin_subparsers, run_sysadmin_command
@@ -1265,6 +1266,7 @@ def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
 
 
 _PROVISIONING_CHANGE_ARGS = (
+    *LIFECYCLE_FIELD_FLAGS,
     "machine_type",
     "hosted_bridge",
     "container_memory",
@@ -1286,6 +1288,7 @@ _PROVISIONING_CHANGE_ARGS = (
 )
 
 _CACHED_PROVISIONING_FIELDS = (
+    *LIFECYCLE_FIELD_FLAGS,
     "machine_type",
     "hosted_node",
     "hosted_user",
@@ -1330,6 +1333,7 @@ _PROVIDER_BINDING_FIELDS = {
 }
 
 _PROVISIONING_FIELD_FLAGS = {
+    **LIFECYCLE_FIELD_FLAGS,
     "machine_type": "--machine",
     "hosted_bridge": "--bridge",
     "container_memory": "--memory",
@@ -1577,6 +1581,7 @@ def _unsupported_cached_provisioning_changes(
         for field in _PROVISIONING_CHANGE_ARGS
         if getattr(args, field, None) is not None
         and getattr(config, field) != getattr(cached_config, field)
+        and field not in LIFECYCLE_FIELD_FLAGS
     ]
     if cached_config.machine_type == "vm":
         additive_storage_fields = (
@@ -1738,11 +1743,12 @@ def _reuse_cached_provisioning_metadata(
         or vm_identity_changed
         or getattr(args, "verify_provider", False)
         or disk_policy_requested
+        or any(getattr(args, field, None) is not None for field in LIFECYCLE_FIELD_FLAGS)
     ):
         # Provider-side names and explicit verification requests must be
         # checked against Proxmox instead of trusted from local metadata.
-        # Disk flags are also repair requests: an older cache can contain the
-        # desired defaults even when the provider never received those hints.
+        # Disk and lifecycle flags also request drift repair, even when the
+        # saved values already match the requested provider settings.
         return False
 
     return True
@@ -2279,6 +2285,12 @@ def run_setup_command(args: argparse.Namespace) -> int:
 
 def run_patch_command(args: argparse.Namespace) -> int:
     """Execute the patch command."""
+    if any(getattr(args, field, None) is not None for field in LIFECYCLE_FIELD_FLAGS):
+        print(
+            "Error: guest startup and protection options require setup with "
+            "--provision-on; rerun the saved setup command to change provider settings"
+        )
+        return 1
     if not validate_host(args.host):
         print(f"Error: Invalid IP address or hostname: {args.host}")
         return 1
