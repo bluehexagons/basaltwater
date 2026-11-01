@@ -129,6 +129,13 @@ finally {
                 $record.Message = 'Private environment cleanup could not be confirmed; inspect the task before maintenance.'
             }
         }
+        if ($record.CompletedUtc) {
+            try { Remove-DevelopmentScheduledTask $record }
+            catch {
+                $record.State = 'cleanup-uncertain'; $record.CompletedUtc = $null
+                $record.Message = 'Scheduler cleanup could not be confirmed: ' + $_.Exception.Message
+            }
+        }
         if ($record.CompletedUtc -and $timer -and $desired -ne 'interrupted') {
             $timer.Stop()
             $record.ExecutionEndedUtc = [DateTime]::UtcNow.ToString('o')
@@ -141,7 +148,6 @@ finally {
         Write-DevelopmentJson (Join-Path $directory 'receipt.json') $record
         # Environment snapshots may contain provider credentials; retain only task receipts/logs.
         if ($record.CompletedUtc) {
-            Unregister-ScheduledTask -TaskName $record.TaskName -Confirm:$false -ErrorAction SilentlyContinue
             try {
                 Show-NativeDesktopNotification 'Basaltwater task' ("Task " + $record.State + '. Use develop status/logs ' + $record.Id)
             } catch { } # Notification failure does not invalidate verified cleanup.
