@@ -153,6 +153,9 @@ updates and qualification.
 Add `--github-runner` to `server_lite` or `server_web` for composition with a
 managed builder. `server_github_runner` is a runner-only convenience profile
 using the same installer. `--no-github-runner` disables installed services while
-preserving credentials. Inline, file and GitHub CLI registration sources are
+preserving credentials.
+The dedicated profile also retains its scope and allowlist so a later
+`basaltw patch ci.example.net operator --github-runner` can re-enable it.
+Inline, file and GitHub CLI registration sources are
 mutually exclusive. Stop old runner units after jobs finish before upgrading:
 the old lock differs. See [shared capacity](build-systems.md#shared-capacity-and-maintenance).

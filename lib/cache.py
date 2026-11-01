@@ -644,10 +644,14 @@ def merge_setup_configs(
     if new_config.disable_github_runner:
         merged_dict["enable_github_runner"] = False
         merged_dict["disable_github_runner"] = True
-        for field in ("ci_repository", "ci_organization", "ci_runner_group"):
-            merged_dict[field] = ""
-        for field in ("ci_repositories", "ci_allowed_users", "ci_labels", "ci_registration_token",
-                      "ci_registration_token_file"):
+        # The dedicated profile still needs its validated scope while disabled,
+        # including after a saved configuration is loaded or patched again.
+        if cached_config.system_type != "server_github_runner":
+            for field in ("ci_repository", "ci_organization", "ci_runner_group"):
+                merged_dict[field] = ""
+            for field in ("ci_repositories", "ci_allowed_users", "ci_labels"):
+                merged_dict[field] = None
+        for field in ("ci_registration_token", "ci_registration_token_file"):
             merged_dict[field] = None
         merged_dict["ci_register_with_gh"] = False
         merged_dict["ci_registration_payload"] = False

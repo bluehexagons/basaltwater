@@ -517,6 +517,30 @@ class TestMergeSetupConfigs(unittest.TestCase):
         merged = merge_setup_configs(cached, new)
         self.assertEqual(merged.timezone, 'America/New_York')
 
+    def test_dedicated_runner_patch_can_disable_reload_and_reenable_saved_scope(self):
+        import basaltwater
+
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        for scope in ({"ci_repository": "example/project"},
+                      {"ci_repositories": ["example/one", "example/two"]},
+                      {"ci_organization": "example", "ci_runner_group": "Private CI"}):
+            with self.subTest(scope=scope):
+                saved = self._make_config(system_type="server_github_runner", machine_type="vm",
+                                          ci_allowed_users=["operator"], ci_labels=["ci"], **scope)
+                for flags, disabled in ((["--no-github-runner"], True), ([], True),
+                                        (["--github-runner"], False)):
+                    args = parser.parse_args(["patch", saved.host, saved.username, *flags])
+                    with patch.object(basaltwater, "load_setup_command", return_value=saved), \
+                         patch.object(basaltwater, "_execute_patch_config", return_value=0) as execute:
+                        self.assertEqual(basaltwater.run_patch_command(args), 0)
+                    updated = execute.call_args.args[0]
+                    self.assertEqual(updated.disable_github_runner, disabled)
+                    for field in ("ci_repository", "ci_repositories", "ci_organization", "ci_runner_group",
+                                  "ci_allowed_users", "ci_labels"):
+                        self.assertEqual(getattr(updated, field), getattr(saved, field))
+                    saved = SetupConfig.from_dict(updated.host, updated.system_type, updated.to_dict())
+                    self.assertEqual(saved.disable_github_runner, disabled)
+
     def test_none_values_not_overwritten(self):
         cached = self._make_config(timezone='America/New_York')
         new = self._make_config(timezone=None)

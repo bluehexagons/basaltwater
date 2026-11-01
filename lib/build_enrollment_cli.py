@@ -42,8 +42,11 @@ def _merge(enrollment: dict | None, generated: dict, *, builder: bool,
         else:
             current = result["policy"]["applications"]
             additions = generated["policy"]["applications"]
+        # Explicit project selection narrows this controller's general grant.
+        # Keep its resource ceilings for new project grants unless overridden.
+        general = current.pop("*", None) if builder and "*" not in additions else None
         for name, grant in additions.items():
-            previous = current.get(name)
+            previous = current.get(name, general)
             if previous is not None:
                 if not builder and (previous["deployment_root"] != grant["deployment_root"]
                                     or previous["project"] != grant["project"]):

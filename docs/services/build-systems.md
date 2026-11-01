@@ -13,7 +13,11 @@ wildcard projects (`*`) and installs Go, Node and Python automatically.
 No `--build-project` is required. Repositories sharing a builder must be
 mutually trusted. Optional `--build-project DOMAIN HTTPS_REPO` selects restrictive
 grant mode; explicit `--build-host-policy FILE` supports custom authority.
-On updates the current SSH public companion must match existing enrollment.
+Adding `--build-project` to a general builder removes the selected controller's
+wildcard grant after successful project validation. Existing specific grants,
+other principals and resource ceilings remain. Resource-only updates preserve
+the existing project restrictions. Enrollment regeneration checks that the
+current SSH public companion matches an existing principal.
 
 The controller must reach both builder and target over SSH. Source and artifacts
 pass through the controller; no inbound builder-to-target connection is needed.

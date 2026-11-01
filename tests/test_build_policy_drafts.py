@@ -340,6 +340,35 @@ class BuildEnrollmentCLITests(unittest.TestCase):
         self.assertNotIn("*", projects)
         self.assertTrue(all(grant["limits"]["cpu_percent"] == 100 for grant in projects.values()))
 
+    def test_explicit_projects_replace_only_selected_principals_general_grant(self):
+        from tests.test_build_selection import public_key
+
+        config = self.config(builder=True)
+        self.apply(config, build_limit=[["cpu_percent", "100"]])
+        enrollment = config.build_host_enrollment
+        principals = enrollment["policy"]["principals"]
+        principals["deploy"]["projects"]["retained"] = copy.deepcopy(principals["deploy"]["projects"]["*"])
+        enrollment["keys"]["other"] = public_key(2)
+        principals["other"] = copy.deepcopy(principals["deploy"])
+        before = copy.deepcopy(enrollment)
+        self.fetch.side_effect = ValueError("source failed")
+        specs = [["example.com", "https://example.com/site.git"]]
+        with self.assertRaisesRegex(ValueError, "source failed"):
+            self.apply(config, build_project=specs)
+        self.assertEqual(config.build_host_enrollment, before)
+
+        self.fetch.side_effect = lambda _specs, _root: [prepared()]
+        self.apply(config, build_project=specs, build_limit=[["memory_bytes", str(2 * 1024**3)]])
+        principals = config.build_host_enrollment["policy"]["principals"]
+        projects = principals["deploy"]["projects"]
+        slug = build_enrollment.application_slug("example.com")
+        self.assertEqual(set(projects), {"retained", slug})
+        self.assertEqual(projects["retained"], before["policy"]["principals"]["deploy"]["projects"]["retained"])
+        self.assertEqual(projects[slug]["limits"]["cpu_percent"], 100)
+        self.assertEqual(projects[slug]["limits"]["memory_bytes"], 2 * 1024**3)
+        self.assertEqual(principals["other"], before["policy"]["principals"]["other"])
+        self.assertEqual(list(self.workspace.iterdir()), [])
+
     def test_target_updates_include_saved_siblings_preserve_limits_and_refuse_root_moves(self):
         config = self.config()
         self.apply(config)
