@@ -19,6 +19,7 @@ from lib.samba_accounts import HEX_REVISION
 from lib.validation import validate_samba_share_name
 
 VIEWS = {"overview": "Overview", "shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
+SEARCH_LIMIT = 200
 STATUS_LABELS = {
     "unavailable": "Report unavailable", "never_scanned": "No full scan recorded",
     "incomplete": "Last full scan incomplete", "findings": "Unresolved findings",
@@ -81,7 +82,7 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
         raise ValueError("Unknown finding category")
     for key in ("q", "task"):
         query = result.get(key, "")
-        if len(query) > 200 or any(ord(character) < 32 or ord(character) == 127 for character in query):
+        if len(query) > SEARCH_LIMIT or any(ord(character) < 32 or ord(character) == 127 for character in query):
             raise ValueError("Invalid scrub search")
     for key in ("page", "tasks_page"):
         page = result.get(key, "1")
@@ -324,7 +325,7 @@ def _task_health(snapshot: dict, catalog: dict, query: dict) -> str:
         jobs = health["jobs"]
         body += f'''<form class="diagnostic-filters data-filters" method="get" action="/shares-data#scrub-health">
 <input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"category", "q", "page", "scope"})}
-<div><label for="scrub-task-search">Scrub root contains</label><input id="scrub-task-search" name="task" value="{html.escape(query.get("task", ""), quote=True)}" maxlength="200" type="search"></div>
+<div><label for="scrub-task-search">Scrub root contains</label><input id="scrub-task-search" name="task" value="{html.escape(query.get("task", ""), quote=True)}" maxlength="{SEARCH_LIMIT * 2}" pattern=".{{0,{SEARCH_LIMIT}}}" title="Use at most {SEARCH_LIMIT} characters" type="search"></div>
 <button>Filter tasks</button>{_clear_filters(query, {"category", "q", "page", "scope"}, "scrub-health", "Clear task filter")}</form>'''
         total, page = health["total"], health["page"]
         offset = (page - 1) * PAGE_SIZE
@@ -389,7 +390,7 @@ def _scrubs(snapshot: dict, query: dict[str, str], host: str, *, csrf: str = "",
     body += f'''
 <form class="diagnostic-filters data-filters" method="get" action="/shares-data#findings-heading">
 <input type="hidden" name="view" value="scrubs">{_hidden_filters(query, {"task", "tasks_page", "scope"})}<div><label for="finding-category">Category</label><select id="finding-category" name="category">{options}</select></div>
-<div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="200" type="search"></div>
+<div><label for="finding-search">File path contains</label><input id="finding-search" name="q" value="{html.escape(search, quote=True)}" maxlength="{SEARCH_LIMIT * 2}" pattern=".{{0,{SEARCH_LIMIT}}}" title="Use at most {SEARCH_LIMIT} characters" type="search"></div>
 <button>Filter findings</button>{_clear_filters(query, {"task", "tasks_page", "scope"}, "findings-heading", "Clear finding filters")}</form>'''
     if not complete and not catalog.get("legacy"):
         return body + '<p class="empty" role="status">The complete findings catalog is unavailable or changed during export. Refresh after the next export. This does not mean there are no findings.</p></section>' + health

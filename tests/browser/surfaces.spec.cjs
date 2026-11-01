@@ -947,6 +947,40 @@ test.describe('host inspection', () => {
 
 test.describe('Shares & Data', () => {
   test.use({ developmentSurface: 'panel', developmentHttps: true, javaScriptEnabled: false });
+  test('searches accept 200 Unicode characters and reject longer input without JavaScript', async ({ page, developmentServer: dev }) => {
+    await page.goto(dev.url + '/shares-data?view=scrubs');
+    const supplementary = '🧪'.repeat(200);
+    for (const [label, button, parameter] of [
+      ['File path contains', 'Filter findings', 'q'],
+      ['Scrub root contains', 'Filter tasks', 'task'],
+    ]) {
+      const input = page.getByLabel(label, { exact: true });
+      for (const value of ['x'.repeat(200), supplementary, 'x'.repeat(100) + '🧪'.repeat(100)]) {
+        await input.fill(value);
+        await expect(input).toHaveValue(value);
+        expect(await input.evaluate(element => element.validity.valid)).toBe(true);
+      }
+      for (const value of ['x'.repeat(201), 'x'.repeat(199) + '🧪'.repeat(2)]) {
+        await input.fill(value);
+        await expect(input).toHaveValue(value);
+        expect(await input.evaluate(element => element.validity.patternMismatch)).toBe(true);
+        const previous = page.url();
+        await page.getByRole('button', { name: button, exact: true }).click();
+        expect(page.url()).toBe(previous);
+      }
+      await input.fill(supplementary);
+      const [response] = await Promise.all([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+        page.getByRole('button', { name: button, exact: true }).click(),
+      ]);
+      expect(response.status()).toBe(200);
+      expect(new URL(page.url()).searchParams.get(parameter)).toBe(supplementary);
+      await expect(input).toHaveValue(supplementary);
+    }
+    expect(new URL(page.url()).searchParams.get('q')).toBe(supplementary);
+    await page.goto('about:blank');
+  });
+
   test('inventory, findings filters and recovery guidance work without JavaScript', async ({ page, developmentServer: dev, diagnostics }, info) => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/admin');
