@@ -191,8 +191,10 @@ followed by a controller command for reading its private evidence:
 
 Choose **Review recovery**, check the file, scrub root, parity directory and copy
 path, then follow the approval flow above. The worker rejects changed findings
-or changed file identities. Verify older findings without an identity before
-recovery. Verification that still detects damage reports **findings**, not success.
+or changed file identities. A missing-file scan records absence as its reviewed
+identity; a file appearing afterward blocks recovery. Verify older findings
+without an identity before recovery. Verification that still detects damage
+reports **findings**, not success.
 No bulk acceptance, deletion or unattended remediation is provided.
 
 A recorded scan does not verify later file changes. Missing mounts, unreadable

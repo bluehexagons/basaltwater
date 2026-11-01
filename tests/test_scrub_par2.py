@@ -152,6 +152,47 @@ class TestSetupFailurePropagation(unittest.TestCase):
 
 
 class TestScrubResultFailures(unittest.TestCase):
+    def test_missing_inventory_identity_allows_reviewed_recovery_but_rejects_reappearing_file(self):
+        from common.service_tools import data_job
+        from lib.data_actions import finding_revision
+        from sync.service_tools import parity_sets
+
+        for generation in (False, True):
+            for previously_healthy in (False, True):
+                with self.subTest(generation=generation, previously_healthy=previously_healthy), tempfile.TemporaryDirectory() as root:
+                    source, database = Path(root) / 'source', Path(root) / 'parity'
+                    source.mkdir()
+                    database.mkdir()
+                    data = source / 'data.bin'
+                    data.write_bytes(b'original')
+                    parity = database / 'data.bin.par2'
+                    parity.write_bytes(b'recovery parity')
+                    if generation:
+                        parity_sets.publish(str(data), str(source), str(database), [str(parity)])
+                        parity.unlink()
+                    report = scrub_par2.Findings(str(source), str(database))
+                    if previously_healthy:
+                        report.record('data.bin', {'category': 'healthy', 'file_identity': scrub_par2.file_identity(str(data))})
+                    data.unlink()
+                    with patch.object(scrub_par2, 'log'):
+                        scrub_par2._record_missing_files(str(source), str(database), set(), 'unused')
+                    entry = scrub_par2.Findings(str(source), str(database)).data['files']['data.bin']
+                    self.assertEqual(entry['category'], 'missing_file')
+                    self.assertIn('file_identity', entry)
+                    self.assertIsNone(entry['file_identity'])
+                    value = {'action': 'repair', 'directory': str(source), 'database': str(database),
+                             'file': str(data), 'backup': '', 'finding': finding_revision(entry), 'job_id': 'a' * 32}
+                    saved = {'username': 'root', 'scrub_specs': [[str(source), str(database), '10%', 'weekly']]}
+                    with patch.object(data_job, 'execute', return_value=({'category': 'healthy'}, 0)) as execute:
+                        self.assertEqual(data_job.recover(value, saved), ({'category': 'healthy'}, 0))
+                        self.assertIsNone(execute.call_args.args[0].reviewed_identity)
+                        execute.reset_mock()
+                        data.write_bytes(b'appeared after inventory')
+                        with self.assertRaisesRegex(data_job.DataJobRejected, 'file_changed'):
+                            data_job.recover(value, saved)
+                        execute.assert_not_called()
+                    self.assertTrue(parity_sets.locate(str(data), str(source), str(database))[1])
+
     def test_file_source_preserves_orphan_parity(self):
         with tempfile.TemporaryDirectory() as root:
             source, database = os.path.join(root, "file"), os.path.join(root, "db")

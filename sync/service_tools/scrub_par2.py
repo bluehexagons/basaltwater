@@ -304,7 +304,8 @@ def _record_missing_files(
             failed.append(relative)
             continue
         if not report.active(relative):
-            report.record(relative, {"category": "missing_file", "evidence": "Protected source absent; generation retained"})
+            report.record(relative, {"category": "missing_file", "evidence": "Protected source absent; generation retained",
+                                     "file_identity": None})
     
     for root, _, files in _scan_tree(database, (os.path.abspath(os.path.join(database, METADATA_DIR)),)):
         if Path(root).is_relative_to(Path(database) / METADATA_DIR):
@@ -330,7 +331,8 @@ def _record_missing_files(
             
             # Absence cannot distinguish intentional deletion from data loss.
             report.record(relative_data, {"category": "missing_file",
-                                         "evidence": "Absent from complete inventory; parity retained"})
+                                         "evidence": "Absent from complete inventory; parity retained",
+                                         "file_identity": None})
             log(f"Missing protected file; preserving parity: {relative_data}", log_file)
     return failed
 
