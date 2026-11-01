@@ -73,6 +73,17 @@ try {
     Assert-True (-not $outcome.Invoke('restore',$minimized,$minimized,0,0,0,0)) 'Restore accepted a still-minimized window'
     Assert-True (-not $outcome.Invoke('restore',$maximized,$maximized,0,0,0,0)) 'Restore accepted an unchanged non-minimized maximized window'
     Assert-True ($outcome.Invoke('restore',$maximized,$normal,0,0,0,0)) 'Restore did not accept normal size after maximize'
+    $method = [Basaltwater.Desktop.Native].GetMethod('WaitForClose', [Reflection.BindingFlags]'Static,NonPublic')
+    $waitForClose = $method.CreateDelegate([Action[Func[bool],Func[bool],Action]])
+    $script:ClosePolls = 0; $script:CloseIdentityChecks = 0
+    $exists = [Func[bool]]{ $script:ClosePolls++; return $script:ClosePolls -lt 3 }
+    $visible = [Func[bool]]{ return $script:ClosePolls -eq 2 }
+    $verify = [Action]{ $script:CloseIdentityChecks++ }
+    $waitForClose.Invoke($exists, $visible, $verify)
+    Assert-True ($script:ClosePolls -eq 3 -and $script:CloseIdentityChecks -eq 1) 'Close did not wait through a hidden phase or verify a visible window'
+    $caught = $null
+    try { $waitForClose.Invoke([Func[bool]]{ return $true }, [Func[bool]]{ return $false }, $verify) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'outcome not observed') 'A hidden but surviving window was reported closed'
     # Fake provider callbacks exercise the actual observation boundary without UIA calls.
     Add-Type -ReferencedAssemblies (Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'WPF\UIAutomationTypes.dll') -TypeDefinition @'
 using System;

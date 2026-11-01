@@ -98,6 +98,16 @@ public static class Native {
             // which can be maximized. A non-minimized maximize/restore toggles normal.
             (operation=="restore" && !after.minimized && (before.minimized || !after.maximized));
     }
+    static void WaitForClose(Func<bool> exists,Func<bool> visible,Action verifyIdentity) {
+        for(int i=0;i<20;i++) {
+            Thread.Sleep(50);
+            if(!exists()) return;
+            // SDL and other applications can hide their window before destroying it.
+            // Hidden is still pending, never proof that close has completed.
+            if(visible()) verifyIdentity();
+        }
+        throw new Exception("Window outcome not observed; inspect before retrying");
+    }
     public static Window Change(long id,string identity,string operation,int x,int y,int width,int height) {
         var before=Check(id,identity); var w=before; var h=new IntPtr(id); bool requested=true;
         switch(operation) {
@@ -111,10 +121,13 @@ public static class Native {
             default: throw new Exception("Unsupported window operation");
         }
         if(!requested) throw new Exception("Window manager rejected request");
+        if(operation=="close") {
+            WaitForClose(delegate { return IsWindow(h); },delegate { return IsWindowVisible(h); },delegate { Check(id,identity); });
+            return null;
+        }
         for(int i=0;i<20;i++) {
             Thread.Sleep(50);
-            if(operation=="close" && !IsWindow(h)) return null;
-            w=Check(id,identity); // close may show a save dialog: do not claim success
+            w=Check(id,identity);
             if(WindowOutcomeMatches(operation,before,w,x,y,width,height)) return w;
         }
         throw new Exception("Window outcome not observed; inspect before retrying");

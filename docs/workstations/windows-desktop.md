@@ -105,6 +105,9 @@ key chords or held gamepad/key input. It does not bypass UAC or a locked desktop
 Restoring a minimized window resumes its previous presentation, which can be
 maximized. Restoring an already maximized, non-minimized window returns it to
 normal size. Both outcomes are verified against the state before the action.
+Close succeeds only after the window handle is destroyed. Applications can hide
+their window during shutdown; that remains pending, and a surviving hidden
+window or save prompt times out. Inspect before retrying an uncertain close.
 
 One controller operates at a time. Human control state persists for this account:
 
@@ -151,6 +154,11 @@ Failed dispatch never replaces a running or completed guardian receipt.
 Terminal publication includes verified Scheduler retirement and private-request
 removal. An unregister failure leaves `cleanup-uncertain` with no completed
 timestamp, so `wait` cannot report settled work while registration remains.
+State readers and publishers share a per-file lock with a five-second acquisition
+limit. Publication replaces an existing file from a complete temporary snapshot;
+receipt validation and reading hold the same lock. Concurrent CLI polling sees
+complete snapshots or an explicit busy error. This coordination covers the
+Basaltwater state helpers; direct file readers do not participate in the lock.
 `develop status` exits nonzero for failure, timeout, cancellation, interrupted
 work or uncertain cleanup; queued/running/complete queries exit zero.
 

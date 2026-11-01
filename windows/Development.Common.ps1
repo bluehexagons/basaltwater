@@ -14,12 +14,30 @@ function Assert-DevelopmentPath([string]$Path) {
     }
 }
 function Get-DevelopmentSid { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+function Enter-DevelopmentStateLock([string]$Path) {
+    # Readers and publishers share a bounded, reentrant lease across processes.
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Path).ToUpperInvariant()))).Replace('-', '') }
+    finally { $hash.Dispose() }
+    $mutex = [Threading.Mutex]::new($false, ('Global\Basaltwater.DevelopmentState.' + $key))
+    try {
+        try { $acquired = $mutex.WaitOne(5000) } catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw 'Development state is busy; inspect the task before retrying.' }
+        return $mutex
+    } catch { $mutex.Dispose(); throw }
+}
+function Exit-DevelopmentStateLock($Lock) {
+    try { $Lock.ReleaseMutex() } finally { $Lock.Dispose() }
+}
 function Read-DevelopmentJson([string]$Path) {
-    Assert-DevelopmentPath $Path
-    if ((Get-Item -LiteralPath $Path).Length -gt 4MB) { throw 'Development state exceeds its size bound' }
-    $options = @{}
-    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $options.DateKind = 'String' }
-    return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json @options
+    $lease = Enter-DevelopmentStateLock $Path
+    try {
+        Assert-DevelopmentPath $Path
+        if ((Get-Item -LiteralPath $Path).Length -gt 4MB) { throw 'Development state exceeds its size bound' }
+        $options = @{}
+        if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $options.DateKind = 'String' }
+        return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json @options
+    } finally { Exit-DevelopmentStateLock $lease }
 }
 function Stop-DevelopmentProcess($Job, $Process, [bool]$Started, [object[]]$Copies) {
     if ($Job) { $Job.TerminateAndWait(10000) }
@@ -34,12 +52,17 @@ function Stop-DevelopmentProcess($Job, $Process, [bool]$Started, [object[]]$Copi
     }
 }
 function Write-DevelopmentJson([string]$Path, $Value) {
-    Assert-DevelopmentPath $Path
+    $lease = Enter-DevelopmentStateLock $Path
     $temp = $Path + '.' + [guid]::NewGuid().ToString('N')
     try {
+        Assert-DevelopmentPath $Path
         [IO.File]::WriteAllText($temp, ($Value | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-        Move-Item -LiteralPath $temp -Destination $Path -Force
-    } finally { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue }
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+        else { [IO.File]::Move($temp, $Path) }
+    } finally {
+        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        Exit-DevelopmentStateLock $lease
+    }
 }
 function Get-DevelopmentDirectory([string]$Id) {
     if ($Id -notmatch '\A[a-f0-9]{32}\z') { throw 'Expected a development task ID (32 lowercase hex characters); use the ID returned by develop exec/node/editor/run/import.' }
@@ -49,12 +72,15 @@ function Get-DevelopmentDirectory([string]$Id) {
 }
 function Get-DevelopmentRecord([string]$Id) {
     $path = Join-Path (Get-DevelopmentDirectory $Id) 'receipt.json'
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Unknown development task $Id; check the ID and Windows account." }
-    Assert-DevelopmentPath $path
-    if ((Get-Item -LiteralPath $path).Length -gt 65536) { throw 'Development receipt exceeds its size limit' }
-    $record = Read-DevelopmentJson $path
-    if ($record.OwnerSid -ne (Get-DevelopmentSid) -or $record.Id -ne $Id -or $record.TaskName -ne ('Basaltwater Development ' + $Id)) { throw 'Development task belongs to another account or has an invalid identity.' }
-    return $record
+    $lease = Enter-DevelopmentStateLock $path
+    try {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Unknown development task $Id; check the ID and Windows account." }
+        Assert-DevelopmentPath $path
+        if ((Get-Item -LiteralPath $path).Length -gt 65536) { throw 'Development receipt exceeds its size limit' }
+        $record = Read-DevelopmentJson $path
+        if ($record.OwnerSid -ne (Get-DevelopmentSid) -or $record.Id -ne $Id -or $record.TaskName -ne ('Basaltwater Development ' + $Id)) { throw 'Development task belongs to another account or has an invalid identity.' }
+        return $record
+    } finally { Exit-DevelopmentStateLock $lease }
 }
 function Test-DevelopmentProcess([int]$ProcessId, [string]$StartedUtc) {
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue

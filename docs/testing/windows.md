@@ -20,13 +20,13 @@ web services, privilege broker or remote setup profiles. See the
 | Installed skill freshness | 🟢 **Labbed** | Five selected bundles have complete delivery and match the saved source at `5f549204`; absent unselected bundles are informational | Session-loaded revisions remain unknown; this inventory is not an instruction-reload test |
 | Native launcher and task help | 🟢 **Labbed** | Installed executable preserved literal/empty/quoted/Unicode argv, working directory and task-local environment on 2026-11-01; namespace help explains npm scripts, explicit executables and waiting | Compilation rollback and active replacement have fixture coverage; fresh installation and other invoking-shell binders remain separate |
 | Local process supervision | 🟢 **Labbed** | Real corrected checkout guardians settled timeout and cancellation after owned parent/child exit, private-request removal and verified Scheduler retirement; native fixtures also cover failures and cleanup uncertainty | The installed guardian's premature-completion failure is retained in the follow-up below; logoff, reboot and additional interruption boundaries remain open |
-| Scheduled development tasks | 🟢 **Labbed** | Installed `5f549204` preserves late flood output, separate byte counters and exit 7; caller wait timeout leaves work running. This round also ran real pinned npm, MSVC and Godot tasks | Logoff/reconnect, T3 closure during active work and live reboot/interruption remain open |
-| Desktop observation and control | 🟢 **Labbed**, scoped WinForms fixtures | Installed and corrected checkout CLIs exercised UI Automation, literal Unicode text, stale-reference rejection, invoke, window actions, inspected window capture, raw keys/text/click and close. Provider disappearance now returns an explicit partial scan in the corrected checkout | Other provider errors remain failures. Hardware-rendered capture, physical interaction, mixed DPI, secure desktop and lock/reconnect remain separate |
+| Scheduled development tasks | 🟢 **Labbed** | Installed `5f549204` preserves late flood output, separate byte counters and exit 7; caller wait timeout leaves work running. Real pinned npm, MSVC and Godot tasks passed. Corrected checkout state helpers also passed concurrent-publication regressions and a real Node-version task through settled cleanup | Logoff/reconnect, T3 closure during active work and live reboot/interruption remain open |
+| Desktop observation and control | 🟢 **Labbed**, scoped WinForms and source SDL checks | Installed and corrected checkout CLIs exercised UI Automation, literal Unicode text, stale-reference rejection, invoke, window actions, inspected capture, raw keys/text/click and close. Checkout fixes handle disappearing UIA elements and SDL's hidden-before-destroy close phase | Other provider errors remain failures. One source SDL press-start capture does not establish general hardware-rendered capture, physical interaction, mixed DPI, secure desktop or lock/reconnect |
 | Supervised native workloads | 🟢 **Labbed** | Installed public CLI selected an installed fnm runtime/npm in a spaced Unicode project; task-local MSVC/SDK compiled and ran C; managed Godot imported and ran a disposable headless project | Synthetic projects, not a complete project build/export, template, performance or physical presentation qualification |
 | Physical presentation, audio and input | ⚪ **Untested** | No complete manual interaction pass recorded; bounded OpenGL project fixtures are separate evidence | Actual display presentation, audible audio, physical input, lock and reconnect |
 | Sunshine streaming | 🟡 **Partial** | Installed service observed running with automatic startup on 2026-11-01; offline package/service fixtures pass | Fresh install, firewall, actual boot startup, pairing and Moonlight video/audio/input/reconnect remain open |
 | Windows/WSL GitHub runner | 🟡 **Partial** | Offline native runner tests; live Windows 11/WSL qualification open | Registration, real jobs, cancellation and reboot |
-| Selected native builds, packages and Godot exports | 🟢 **Labbed** | Historical project-owned QA from 2026-10-28 covers C++/Node builds and tests, bounded hardware OpenGL fixtures, extracted-package startup and Godot source suites/export/headless startup; Godot 4.7.2 executable rechecked on 2026-11-01 | Projects were not rebuilt in this pass; matching templates are not revalidated by doctor. Manual presentation, physical input/audio, clean-machine packages and broader projects remain open |
+| Selected native builds, packages and Godot exports | 🟢 **Labbed** | Historical project-owned QA from 2026-10-28 covers C++/Node builds, OpenGL fixtures, package startup and Godot suites/export. The 2026-11-01 source game follow-up rebuilt its addon/TypeScript and passed its full Windows gate and desktop checks; Godot 4.7.2 executable was rechecked | Historical packages and Godot exports were not rebuilt or requalified; matching templates are not revalidated by doctor. Manual presentation, physical input/audio, clean-machine packages and broader projects remain open |
 | Managed native build host | ⚪ **Planning only** | Proposed backend; distinct from the existing runner | Implementation, isolation, transport and native workload qualification |
 
 The 2026-10-31 [native record](../workstations/windows-qualification.md#recorded-local-run-2026-10-31)
@@ -100,6 +100,39 @@ failed two of its six observations. These are bounded functional probes, not a
 reliability benchmark. Fake-provider regressions exercise the production
 observation boundary without desktop APIs, and the full native suite passed.
 The installed copy remains unchanged until a later refresh applies the fix.
+
+### Source application and state-publication follow-up: 2026-11-01
+
+The normal Antistatic source client at `af23811f2` passed readiness-gated focus,
+resize, maximize/minimize, both restore outcomes, UIA observation and frame
+advancement with isolated preferences and null audio. Native renderer and Win32
+window captures were inspected and showed the press-start screen. Its full
+Windows source gate also passed. The project owns the detailed
+[source desktop record](https://github.com/bluehexagons/antistatic/blob/main/docs/qa/windows.md#source-desktop-follow-up-2026-11-01)
+and remaining manual acceptance checks; no package was rebuilt in this pass.
+
+The first close probe exposed SDL hiding its window before destruction. The
+adapter reported a stale/hidden handle despite normal game exit. The corrected
+checkout waits for destruction through that hidden phase, still revalidates a
+visible window, and never treats hiding alone as completion. Mocked callbacks
+cover both hidden-then-destroyed and hidden-but-surviving windows. A fresh source
+launch then closed through the public checkout CLI with verified destruction
+and process exit 0.
+
+A later native-suite run exposed a receipt read racing file replacement. State
+helpers now coordinate snapshot validation, reads and publication with a bounded
+per-file lock. The temporary-file regression runs a concurrent reader through
+100 publications and confirms complete snapshots and the final update; the old
+publisher failed this probe. A real limited Scheduler task through the corrected
+checkout returned the Node version and settled only after its registration and
+private request were gone.
+
+The final complete native suite passed in 231.186 seconds, including the new
+regressions and 11 Python capture tests with two explicit POSIX-only skips.
+This remains native Windows qualification rather than the Debian CI suite.
+Original failures and successful continuations are retained privately. All owned
+GUI processes and the task were settled; saved setup bytes, human control mode
+and the installed source remained unchanged.
 
 Selected project checks retain their own dates and limits in the public
 [native game QA record](https://github.com/bluehexagons/antistatic/blob/main/docs/qa/native.md#verified-windows-local-qualification)
