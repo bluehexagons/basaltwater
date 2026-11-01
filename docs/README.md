@@ -21,6 +21,7 @@ each section index routes to its detailed pages.
 | Shares, synchronization, backups, and storage recovery | [Storage](storage/README.md) |
 | Deployments, web services, and applications | [Services](services/README.md) |
 | Optional project-specific workflows | [Integrations](integrations/README.md) |
+| Testing status, workflows, environments, and gaps | [Testing](testing/README.md) |
 | Repository changes and coding-agent workflow | [Contributor guide](agents/contributing/README.md) |
 | Current priorities, follow-up work, and release qualification | [Project plans](plans/README.md) |
 

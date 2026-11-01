@@ -6,6 +6,10 @@ partial: selected live workflows passed, with automated or controlled probes
 where stated. CI success does not establish live coverage; repeat affected
 checks when behavior changes.
 
+For the dated overview, concise feature table, tested workflow examples and
+methodology, start at [Testing status](../testing/README.md). This page retains
+the detailed supporting observations and qualification boundaries.
+
 Selected bounded storage checks include SSD-backed guests and USB-backed
 storage. They do not qualify drive reliability. Keep fault experiments
 disposable; disk-wide scans, SMART self-tests and hardware stress/endurance
