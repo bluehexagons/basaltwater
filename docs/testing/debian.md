@@ -9,19 +9,25 @@ repository test coverage. Consult the
 [detailed coverage map](../plans/testing-coverage.md) for exact observations
 and the [release matrix](../release-qualification.md#stable-qualification-matrix)
 for candidate-specific status.
-The [dated evidence summaries](evidence.md) identify the latest tested revisions;
-older rows retain their earlier scope. No new live checks ran during this refresh.
+The [dated evidence summaries](evidence.md) identify tested revisions where known;
+older rows retain their earlier scope. The owner's newly reported setup rerun
+has no supplied revision and indicates basic functionality, with features not
+exhaustively tested. The documentation update ran no additional live checks.
 
 Debian is the project's officially supported distribution on physical machines,
 VMs and unprivileged Proxmox LXC where each profile permits. Selected runs
 covered `server_lite`, `server_web`, `server_proxmox` and `agent_vm`, not every
-profile on every machine type. The [platform index](features.md) distinguishes
-availability from test status.
+profile on every machine type. The owner additionally reports basic setup reruns
+of `server_lite`, `server_web`, `server_proxmox`, `agent_code_vm` and
+`server_github_runner`; this does not extend the earlier lab results to every
+selected option. The [platform index](features.md) distinguishes availability
+from test status.
 
 ## Debian guests and services
 
 | Feature | Status | Evidence | Major remaining boundary |
 | --- | --- | --- | --- |
+| Owner-reported server and coding-VM reruns | 🟡 **Partial** | 2026-11-01 report: selected web, storage/service, `agent_code_vm` and runner setup commands; starting an initially stopped coding VM explicitly succeeded | Basic setup only; individual tools/services, registration/jobs and recovery were not separately qualified; see [selections](evidence.md#owner-reported-stack-setup-rerun) |
 | Debian server and agent setup | 🟢 **Labbed** | Fresh setup, rerun and reboot | Other profiles, option combinations and exact candidate |
 | Shared XFCE/XRDP desktop | 🟢 **Labbed** | Setup, concurrent starts, input, clipboard and reconnect | Additional clients, crash/interruption and release matrix |
 | Browser installation | 🟡 **Partial** | Debian package failure, repair and retry; automated selection | Graphical startup and other installers/platforms |
@@ -41,7 +47,7 @@ availability from test status.
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
 | Selected builder | 🟢 **Labbed** | Enrollment, delivery, refresh and multi-application workflows | Public ingress, more failure boundaries and unsupported interpreter services |
 | Builder retention/recovery | 🟡 **Partial** | Component and automated settlement, pruning and lost-acknowledgement guards | Further crash/power-loss boundaries; no automatic collection |
-| GitHub runner | 🟢 **Labbed** | Tokenless setup, rerun and reboot | Registration, real jobs and cancellation |
+| GitHub runner | 🟢 **Labbed** | Earlier tokenless setup, rerun and reboot; owner also reports a basic setup rerun selecting `--ci-register-with-gh` | Registered state was not separately reported; end-to-end registration, real jobs and cancellation remain open |
 | Combined build/CI host | 🔵 **In progress** | Separate roles implemented | Composition and shared capacity not yet implemented or qualified |
 | Web panels | 🟢 **Labbed** | Selected setup/auth and component lifecycle/recovery; browser fixtures | Full removal/interruption, additional browsers and native console |
 | Managed user rename | 🟢 **Labbed** | Selected identity, home and recovery cases | More interruption points and application-specific migration |
@@ -53,11 +59,13 @@ availability from test status.
 
 ## Proxmox host and guest operations
 
-These host features are separate from Debian guest profile results. Host
-setup is selected evidence on one physical node, not cluster qualification.
+These host features are separate from Debian guest profile results. Earlier
+detailed host checks cover one physical node; the owner also reports two basic
+`server_proxmox` setup reruns. Neither establishes cluster qualification.
 
 | Feature | Status | Evidence | Major remaining boundary |
 | --- | --- | --- | --- |
+| Owner-reported host setup reruns | 🟡 **Partial** | Two commands with LAN allowlists and restart/wait selections, including panel/TLS and webhook variants | Basic setup only; panel features, actual restart occurrence, preservation and failure recovery were not separately reported |
 | Setup repair and management CLI | 🟢 **Labbed** | Saved public patch completed 21 steps and recovered an interrupted panel operation; installed `basaltw --help`, update preview and busy-lock refusal passed | Fresh complete host installation, package-changing upgrade and interrupted host upgrade remain unqualified |
 | Proxmox panel identity and authentication | 🟢 **Labbed** | Automated root payload regression; native isolated Nginx accepted generated root auth and rejected another user/anonymous access; actual panel accepted the operator credential over verified TLS on 2026-11-01 | Isolated auth is component evidence; public password-replacement flow and interrupted auth replacement still need native qualification |
 | Guarded host maintenance | 🟡 **Partial** | Installed updater and cleanup succeeded with no package upgrades available; update preview and maintenance-lock exclusion passed | No package-changing transaction or Admin-triggered power action was exercised |

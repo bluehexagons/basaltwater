@@ -1,6 +1,7 @@
 # Windows and WSL testing status
 
-**Evidence recorded through 2026-10-31.** Native Windows and Ubuntu WSL are
+**Evidence includes an owner report received 2026-11-01 and earlier checks
+recorded through 2026-10-31.** Native Windows and Ubuntu WSL are
 separate environments: a pass on one does not establish the other. See the
 [status legend](README.md#status-legend) and
 [Windows qualification procedure](../workstations/windows-qualification.md).
@@ -14,14 +15,15 @@ web services, privilege broker or remote setup profiles. See the
 
 | Available feature | Status | Evidence | Next qualification boundary |
 | --- | --- | --- | --- |
-| Native workstation setup | 🟡 **Partial** | Offline suite and selected existing-account checks; installers mocked | Fresh account/machine, WinGet/UAC and live install recovery |
+| Native workstation setup | 🟡 **Partial** | Owner reports basic non-WSL setup with Godot and T3 Code; earlier offline installers were mocked | Exact command/revision and separate feature checks not supplied; fresh account/machine, WinGet/UAC and live install recovery remain open |
+| Native Godot and T3 Code setup | 🟡 **Partial** | Included in the owner's basic setup report | Launch, project export, pairing/provider use, reboot and recovery were not separately reported |
 | Skills and native launcher | 🟡 **Partial** | Delivery/freshness and argument, exit and rollback fixtures | Fresh installation and active-session instruction reload |
 | Process supervision | 🟡 **Partial** | Native process fixtures cover failures, timeouts, cancellation and child cleanup | Logoff, reboot and additional interruption boundaries |
 | Scheduled development tasks | 🟢 **Labbed** | Real limited interactive tasks: arguments, logs, cancellation and completion after CLI exit | Logoff/reconnect and interruption during active work |
 | Desktop and physical input | ⚪ **Untested** | No complete physical interaction pass recorded in the native run | Display/GPU, audio/input, lock and reconnect |
 | Sunshine streaming | 🟡 **Partial** | Offline package/service fixtures | Live install, firewall, boot and Moonlight streaming |
 | Windows/WSL GitHub runner | 🟡 **Partial** | Offline native runner tests; live Windows 11/WSL qualification open | Registration, real jobs, cancellation and reboot |
-| Game tools and project exports | ⚪ **Untested** | Optional tools documented; project QA is separate | Native build, package/export, rendering, audio and input |
+| Game tools and project exports | ⚪ **Untested** | Godot setup reported; no project QA result supplied | Native build, package/export, rendering, audio and input |
 | Managed native build host | ⚪ **Planning only** | Proposed backend; distinct from the existing runner | Implementation, isolation, transport and native workload qualification |
 
 The 2026-10-31 [native record](../workstations/windows-qualification.md#recorded-local-run-2026-10-31)
@@ -29,6 +31,11 @@ passed the offline suite on Windows PowerShell 5.1 and PowerShell 7; installers,
 notifications and sleep were mocked, and POSIX-only cases were skipped.
 Later selected task/launcher checks are described there. This is historical
 evidence for the stated cases, not a fresh installation or release pass.
+
+The new [owner report](evidence.md#owner-reported-stack-setup-rerun) indicates
+basic setup functionality only; not all features were tested. Its exact execution
+date, source revision, Windows version and setup command were not supplied.
+It adds no WSL qualification or broader native application QA.
 
 ## Ubuntu WSL
 

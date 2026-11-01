@@ -1,12 +1,48 @@
 # Dated testing evidence summaries
 
-Reconciled 2026-11-01 from retained private reports. This refresh executed no
-new live tests. These sanitized summaries supplement the
+Reconciled 2026-11-01 from retained private reports and the owner's stack setup
+rerun report. The documentation update executed no additional live tests.
+These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
 Exact endpoints, credentials, fixture identities, commands and raw evidence stay
 in private operational records. Commit IDs below identify tested source, not
 necessarily the current checkout or every installed module on a retained guest.
+
+## Owner-reported stack setup rerun
+
+**Reported 2026-11-01; exact execution dates, source revisions and installed
+versions were not supplied.** The owner reports successful setup reruns across
+the stack, a partial CachyOS setup applied with `basaltw refresh`, and basic
+native Windows setup with Godot and T3 Code. This is an indicator of **basic
+setup functionality only**. Not all selected features were tested, and the
+commands alone do not establish application behavior, service health, notification
+delivery, registration state or recovery guarantees. These are owner-reported
+results, separate from the retained agent-run tests below.
+
+The following summarizes the supplied selections without publishing host names,
+endpoints, deployment repositories, accounts or storage inventories. Options
+describe what was included in a setup invocation; they are not individual feature
+passes. Counts distinguish command variants, not fresh installations.
+
+| Setup scope | Selected configuration in the reported rerun | Result and limit |
+| --- | --- | --- |
+| `server_web` — two commands | Provisioned guest and existing server; Cloudflare, including an allow-direct variant; multiple deployments, shared-domain aliases and branch-specific sources. One command also selected hostname, web panel/TLS and webhook notifications | Basic setup reruns reported successful; individual sites, public ingress, certificate issuance and deployment hooks were not separately qualified |
+| `server_proxmox` — two commands | Restart-if-needed/wait, LAN source allowlists; one command selected web panel/TLS and another selected webhook notifications | Basic host setup reruns reported successful; actual restart occurrence, panel flows, guest preservation and maintenance recovery were not separately reported |
+| `agent_code_vm` — one smaller tool selection | Provisioning, device-pairing and privilege-broker credentials, Guacamole, web panel/TLS, webhooks, Playwright, Node, AV/PDF tools and Inkscape; explicit GitHub CLI exclusion | Basic setup rerun reported successful; individual pairing, approval, remote desktop, browser and application checks were not separately reported |
+| `agent_code_vm` — two broader tool selections | OpenCode, Git LFS, AV/audio/GL/container/debug/PDF/game-development bundles, Blender, Inkscape, Audacity, Shotcut and MuseScore; Playwright, Node, Go, Godot web bundle and Python; Guacamole, broker, panel/TLS and notification ingest. One variant used a separate ext4 home disk | Basic setup reruns reported successful; tool launch, builds/exports, hardware acceleration and populated-home migration were not separately qualified |
+| `agent_code_vm` — one initially stopped VM | Provision-on rerun with pairing/broker, panel/TLS, webhooks, Playwright, Node, separate ext4 home disk and restart/wait selections | **Starting the stopped VM succeeded**, explicitly reported by the owner; this does not qualify every lifecycle state or restart/recovery boundary |
+| `server_github_runner` — one command | Debian provisioned guest, repository/user/label policy, `--ci-register-with-gh`, web panel/TLS, webhooks, restart/wait and LAN allowlist | Basic setup rerun reported successful; no separate registration-state, GitHub job, policy enforcement or cancellation result was supplied |
+| `server_lite` — one unprivileged storage server | Samba accounts and multiple writable shares, daily mirror, monthly PAR2 scrub, panel/TLS, webhooks, LAN allowlist and restart/wait | Basic setup rerun reported successful; individual SMB client, scheduled sync/scrub and data recovery checks were not separately reported |
+| `server_lite` — one provisioned service guest | Gogs, Syncthing and Samba with separate ext4 data mounts; disk SSD/discard/backup selections; automatic swap mode, zram plus swap file and swappiness; panel/TLS and webhooks | Basic setup rerun reported successful; Git transfers, synchronization, share permissions, swap behavior and disk backup/discard behavior were not separately qualified |
+| Partial `agent_cachyos` local setup via `basaltw refresh` | T3 Code desktop, Node/Python/Go/Git LFS, game-development/Godot, AV/GL and gaming/Sunshine selections; OBS, Blender, Kdenlive, Krita, GIMP, Inkscape, Shotcut, Audacity, LMMS and Material Maker; LAN allowlist and webhooks | Partial refresh reported successful; the supplied command was incomplete. Fresh full setup, desktop/provider use, streaming and creative/game application QA remain open |
+| Native Windows, non-WSL | Basic setup with Godot and T3 Code; exact command not supplied | Basic setup reported successful; no WSL result or separate application, export, provider, reboot or recovery result was supplied |
+
+The provisioned agent commands also varied memory/ballooning, CPU, image storage
+and disk selections, with LAN allowlists and restart/wait flags. These selections
+do not establish resource floors, performance or that a reboot was required.
+The report adds no full feature sweep or exact-candidate release qualification;
+existing unrun cases and historical failures remain open.
 
 ## Proxmox setup and maintenance
 

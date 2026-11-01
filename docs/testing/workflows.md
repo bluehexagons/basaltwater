@@ -6,6 +6,18 @@ the exact commands, versions and configuration used in a private run can
 differ. A successful dry run checks planning only. Read each linked guide and
 use a disposable target and data before applying setup.
 
+## Owner-reported stack setup rerun
+
+🟡 **Partial:** basic setup functionality reported; not all features tested.
+
+The 2026-11-01 owner report includes selected `server_web`, `server_proxmox`,
+`agent_code_vm`, `server_github_runner` and `server_lite` reruns, a partial
+`agent_cachyos` local setup applied with `basaltw refresh`, and basic native
+Windows setup with Godot and T3 Code. One coding-VM rerun explicitly succeeded
+in starting a stopped VM. See the [sanitized command selections](evidence.md#owner-reported-stack-setup-rerun)
+for variants and limits. Included options are not individual feature passes;
+source revisions and exact execution dates were not supplied.
+
 ## Debian server and shared desktop
 
 🟢 **Labbed:** selected workflow; crash and interruption cases remain open.

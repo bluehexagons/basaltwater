@@ -1,16 +1,20 @@
 # Testing status
 
-**Snapshot: 2026-11-01.** Reconciled with retained live-test evidence through
-2026-11-01, including the Proxmox setup repair, USB storage activation and
-installed Shares & Data checks. This documentation refresh ran no new live
-tests; results apply to their recorded revisions, not automatically to the
-current commit. See the [evidence summaries](evidence.md) for dates and limits.
+**Snapshot: 2026-11-01.** Includes the owner's newly reported stack setup rerun
+and retained live-test evidence through 2026-11-01. The rerun indicates **basic
+setup functionality only: not all features were tested**. It covers selected
+Debian/Proxmox server and coding-VM commands, a partial CachyOS refresh and basic
+native Windows setup with Godot and T3 Code. Exact tested revisions were not
+supplied for this report. The documentation update ran no additional live tests;
+earlier results still apply to their recorded revisions. See the
+[rerun summary](evidence.md#owner-reported-stack-setup-rerun) for selections and limits.
 
 | At a glance | Status |
 | --- | --- |
+| Owner-reported stack setup rerun | 🟡 **Partial** — basic setup success reported; selected options are not individual feature passes |
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
-| [CachyOS](cachyos.md) | 🟡 **Partial** — selected native discovery, graphics, task and T3 component checks |
-| [Windows and WSL](windows.md) | 🟡 **Partial** — selected native Windows checks; full installations and WSL integration remain open |
+| [CachyOS](cachyos.md) | 🟡 **Partial** — owner-reported partial setup refresh plus earlier native component checks |
+| [Windows and WSL](windows.md) | 🟡 **Partial** — owner-reported basic non-WSL setup with Godot/T3 Code plus earlier native checks; WSL integration remains open |
 | Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
@@ -44,7 +48,7 @@ do not infer deployed or verified status from lab or automated results.
 | [Debian and Proxmox](debian.md) · [CachyOS](cachyos.md) · [Windows and WSL](windows.md) | Feature status, evidence, limits and next checks for each environment |
 | [Tested workflows](workflows.md) | Examples and procedures corresponding to selected live checks |
 | [Methodology and environments](methodology.md) | Test levels, CI, anonymized platforms and intended use cases |
-| [Dated evidence summaries](evidence.md) | Reconciled host, storage, Shares & Data and automated results, with tested revisions |
+| [Dated evidence summaries](evidence.md) | Owner-reported setup rerun and retained host, storage, Shares & Data and automated results; tested revisions where known |
 | [Continue testing on Proxmox](continuing.md) | First bounded test batch, acceptance criteria and handoff requirements |
 | [Detailed coverage map](../plans/testing-coverage.md) | Supporting observations, narrower boundaries and next checks |
 | [Release qualification](../release-qualification.md) | Exact-candidate cases and publication gate |

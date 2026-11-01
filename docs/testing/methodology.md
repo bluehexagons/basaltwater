@@ -1,9 +1,10 @@
 # Testing methodology and environments
 
 **Snapshot: 2026-11-01.** Platform and workflow evidence comes from repository
-records and retained private live-test reports through 2026-11-01. The latest
-refresh reconciled those records without executing new live tests. Historical
-inventory and service observations do not establish current guest health.
+records, retained private live-test reports and an owner-reported stack setup
+rerun received 2026-11-01. The documentation update executed no additional live
+tests. Historical inventory and service observations do not establish current
+guest health.
 
 ## Intended use cases
 
@@ -35,6 +36,15 @@ procedure, outcome, skips and limits. Record failures and retries separately.
 Use private storage for raw evidence and publish only sanitized summaries.
 Selected successes do not imply hardware endurance, off-host recovery, every
 option combination, or current status on a later revision.
+
+Label owner-reported results explicitly and distinguish the report date from
+the execution date. If revisions, versions or individual outcomes were not
+supplied, record them as unknown. A successful setup rerun indicates basic
+functionality; including an option does not qualify its application, service,
+notification, pairing or registration workflow. A restart/wait option does not
+prove that a reboot occurred. See the
+[stack rerun summary](evidence.md#owner-reported-stack-setup-rerun) for this level
+of evidence; it does not promote a feature to labbed or verified status.
 
 Use the [dated evidence summaries](evidence.md) to distinguish installed-system
 checks from local browser fixtures and automated regressions. In particular,

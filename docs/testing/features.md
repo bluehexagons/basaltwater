@@ -1,6 +1,8 @@
 # Feature availability and testing by platform
 
-**Snapshot: 2026-11-01; retained evidence reconciled through 2026-11-01.**
+**Snapshot: 2026-11-01; includes the owner's stack setup rerun report and retained
+evidence through 2026-11-01.** The rerun indicates basic functionality only;
+not all selected features were tested.
 The table shows what the documented profiles offer, not whether a feature
 passed on that platform. Follow each link for scoped status, evidence and
 next checks. The [status legend](README.md#status-legend) explains the labels.
@@ -21,12 +23,12 @@ Unlisted combinations have no availability claim here.
 
 | Platform record | Status at a glance | Evidence and next checks |
 | --- | --- | --- |
-| [Debian and Proxmox](debian.md) | 🟢 Selected workflows labbed; 🔴 LXC suspend failed | Guest services, host operations, exact gaps and recovery checks |
-| [CachyOS](cachyos.md) | 🟡 Selected native checks; full profile unqualified | KDE workstation, T3, graphics and desktop boundaries |
-| [Windows and WSL](windows.md) | 🟡 Selected native Windows checks; WSL end-to-end unqualified | Installer, task, streaming, runner and WSL boundaries |
+| [Debian and Proxmox](debian.md) | 🟢 Selected workflows labbed; 🟡 owner-reported basic setup reruns; 🔴 LXC suspend failed | Guest services, host operations, exact gaps and recovery checks |
+| [CachyOS](cachyos.md) | 🟡 Owner-reported partial refresh and earlier native checks; full profile unqualified | KDE workstation, T3, graphics and desktop boundaries |
+| [Windows and WSL](windows.md) | 🟡 Owner-reported basic non-WSL setup with Godot/T3 Code and earlier native checks; WSL end-to-end unqualified | Installer, task, streaming, runner and WSL boundaries |
 
 These are historical observations, not a percentage of features tested or a
 statement about a later commit. The [release matrix](../release-qualification.md)
 owns exact-candidate qualification.
-See the [dated evidence summaries](evidence.md) for the latest Proxmox repair,
-storage activation and installed-versus-local Shares & Data boundaries.
+See the [dated evidence summaries](evidence.md) for the owner-reported rerun,
+Proxmox repair, storage activation and installed-versus-local Shares & Data boundaries.
