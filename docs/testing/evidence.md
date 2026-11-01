@@ -1,7 +1,8 @@
 # Dated testing evidence summaries
 
 Reconciled 2026-11-01 from retained private reports, the owner's stack setup
-rerun report, and subsequent native CachyOS T3 observations and automated checks.
+rerun report, subsequent native CachyOS T3 observations, current Shares & Data
+qualification and automated checks.
 These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
@@ -94,9 +95,20 @@ That earlier guest reboot does not qualify the later host mount declaration.
 | Date / source | Check level and observed result | Qualification boundary |
 | --- | --- | --- |
 | 2026-10-31 / installed backend `e7f8e43f` | **Installed workflow:** authenticated HTTPS forms, CSRF, independent approval and actual root workers exercised Samba shares/accounts, password reset and enable/disable/removal, backup mirror controls and persistence, PAR2 scans/findings and targeted verify/restore/accept. SMB access and retained Unix identities/files were checked; targeted repair also has real PAR2 component evidence | Selected service qualification on a non-root Debian operator guest, not every setup profile or installed browser interaction. Cleanup retained accounts, files/parity and broker evidence, restored saved configuration and stopped the fixture |
-| 2026-10-31 / follow-ups through `bca3b72e` | **Local regression/browser:** later per-task selection, filters, pagination, draft retention and canonical setup-recovery guards passed relevant regressions and six Chromium/Firefox cases, including keyboard, no JavaScript, narrow layout, text zoom and themes | These follow-ups were not redeployed for installed-system qualification. Browser services/approvals were simulated; a live current-source operator/approval/worker pass remains open |
+| 2026-10-31 / follow-ups through `bca3b72e` | **Local regression/browser:** later per-task selection, filters, pagination, draft retention and canonical setup-recovery guards passed relevant regressions and six Chromium/Firefox cases, including keyboard, no JavaScript, narrow layout, text zoom and themes | Browser services/approvals were simulated; installed HTTP qualification followed on 2026-11-01 below |
+| 2026-11-01 / clean installed `5184cef0` | **Installed workflow:** fresh disposable Debian guest, non-root operator, independently authenticated approvals and real root workers. Denial/cancellation and one-use submission, Samba account/share lifecycle, encrypted SMB read/write and access rejection, mirror create/edit/pause/resume/run/remove, literal paths and deletion, PAR2 scans and approved verify/restore passed. Actual HTTPS catalog checks covered 22 tasks, 26 findings, pagination, exact case-sensitive root/parity selection, independent filter/clear links, Unicode queries, unavailable selection and stale copyable drafts | Normal custom-step service setup, not a full-profile installation. Initial missing firewall prerequisites and harness failures were retained and inspected before continuation. Fresh missing-file repair exposed absent identity metadata; fixed below. Acceptance was not repeated in this run |
+| 2026-11-01 / fix installed `ed2fa820` | **Installed recovery:** normal source deployment retained saved declarations, pause controls and fixture bytes; all 579 runtime files matched the controller. A fresh missing finding recorded explicit absent identity and separately approved repair reached real PAR2. **Automated:** 608 storage/recovery tests plus compilation, documentation and package checks passed for the fix | PAR2 correctly reported insufficient recovery data for an entirely missing file protected by 10% parity. The source remained absent and its finding open. This qualifies the identity fix and insufficient-parity result, not successful targeted repair |
+| 2026-11-01 / installed `ed2fa820` | **Installed exclusion/persistence:** a retained synthetic setup guard blocked controls, approved dispatch and root execution; a live canonical setup owner excluded a real worker. Guarded refresh refused before source activation. Approved task removal retained parity and showed an unavailable selection. Panel restart and an owned-guest reboot preserved approved account/share settings, 21 paused scrub tasks, identities/groups, TLS/auth and exact data/parity bytes; catalog pagination/selection and encrypted SMB writes passed after boot. All 30 real requests retained the normal rate/quota policy | Refresh was an installed component probe; this custom-step fixture does not qualify public full-profile refresh. Only the owned synthetic guard was reconciled. Scheduled storage also refused that guard and resumed afterward. The fixture was stopped with evidence, data and a local snapshot retained; existing guests and host configuration were preserved |
 
-Use [Continue testing on Proxmox](continuing.md) for the next bounded batch.
+The configured interactive preview failed twice with `ERR_CERT_AUTHORITY_INVALID`;
+its tab was closed. HTTPS assertions used the guest CA with hostname verification,
+but installed interactive browser behavior remains unqualified. Initial setup,
+harness and insufficient-parity failures remain in private evidence; no uncertain
+request was replayed. No host reboot, formatting or disk stress was performed.
+Successful targeted repair with adequate recovery data, current-run acceptance,
+full-profile refresh and interruption/power-loss cases remain separate checks.
+
+Use [Continue testing on Proxmox](continuing.md) for subsequent bounded batches.
 The Proxmox root panel is not the non-root guest approval environment required
 by [Shares & Data](../services/shares-data.md).
 

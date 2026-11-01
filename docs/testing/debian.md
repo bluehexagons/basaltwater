@@ -12,7 +12,8 @@ for candidate-specific status.
 The [dated evidence summaries](evidence.md) identify tested revisions where known;
 older rows retain their earlier scope. The owner's newly reported setup rerun
 has no supplied revision and indicates basic functionality, with features not
-exhaustively tested. The documentation update ran no additional live checks.
+exhaustively tested. The current Shares & Data qualification below is separate
+agent-run evidence.
 
 Debian is the project's officially supported distribution on physical machines,
 VMs and unprivileged Proxmox LXC where each profile permits. Selected runs
@@ -41,7 +42,7 @@ from test status.
 | Sync and PAR2 | 🟢 **Labbed** | Selected mirror, mount guards and repair; controlled failures | Hard-mounted network storage and power loss |
 | Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and read-only native scrub | Diagnostic integration and scheduled native scrub; multi-device/subvolume support needs design, and single-copy data cannot self-repair |
 | Samba and Syncthing | 🟢 **Labbed** | SMB3 access/reconnect and two-peer synchronization | Other client OSs, hard mounts and relay/discovery |
-| Shares & Data management | 🟢 **Labbed** | Installed HTTPS forms, independent approvals and root workers: Samba accounts/shares, mirror routines, PAR2 findings, verify/restore/accept | Later per-task UI and recovery guards have local regression/browser evidence only; current installed-system and installed-browser qualification remain open |
+| Shares & Data management | 🟢 **Labbed** | 2026-11-01: current installed HTTPS, independent approvals and root workers; account/share and mirror lifecycles, catalog scope/pagination/drafts, verify/restore, fixed missing-file identity, setup exclusion and guest reboot persistence; [revision boundaries](evidence.md#shares-and-data) | Installed interactive browser blocked by certificate trust. Successful targeted repair with adequate parity, current-run acceptance, full-profile refresh and power-loss boundaries remain open |
 | Gogs and mirrors | 🟢 **Labbed** | Git/LFS, rerun, reboot and same-host restore | GitHub transport and off-host recovery |
 | HomeBox | 🟢 **Labbed** | Loopback API, upgrade, restore, reboot and re-enable | Browser, public TLS, replacement host and rollback |
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
@@ -77,9 +78,10 @@ detailed host checks cover one physical node; the owner also reports two basic
 
 ## Next checks
 
-- Follow the [bounded continuation batch](continuing.md): requalify current
-  Shares & Data on a disposable non-root Debian operator installation, then
-  exercise a package-changing Admin update on a separate disposable target.
+- Follow the [bounded continuation procedure](continuing.md). Current Shares &
+  Data HTTP/worker qualification is recorded; close its browser and recovery
+  limits separately, then exercise a package-changing Admin update on another
+  disposable target.
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
 - Exercise registered GitHub runner jobs and cancellation, then implement and

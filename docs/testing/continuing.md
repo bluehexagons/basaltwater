@@ -1,7 +1,9 @@
 # Continue testing on Proxmox
 
-Prepared 2026-11-01. This is a proposed next batch, not a new test result or
-blanket permission to modify retained fixtures. Read the
+Updated 2026-11-01 after the selected Shares & Data batch. The
+[dated results](evidence.md#shares-and-data) record installed HTTP/worker,
+exclusion and reboot checks, the missing-finding fix and remaining browser/recovery
+limits. This procedure is not blanket permission to modify retained fixtures. Read the
 [status overview](README.md), [dated evidence](evidence.md),
 [coverage map](../plans/testing-coverage.md) and local private operational handoff.
 The handoff owns connection details, credentials, fixture constraints and exact
@@ -23,9 +25,11 @@ guard retained; it has no endurance qualification. Preserve existing data.
 
 ## First batch: current Shares & Data
 
-This closes a known revision gap without requiring public DNS or GitHub access.
-The earlier installed backend passed; later UI and setup-recovery changes were
-tested locally but not on an installed guest. Read the
+The selected run closed the installed per-task UI and setup-recovery revision
+gap without public DNS or external accounts. Repeat this procedure when affected
+behavior changes. Interactive preview certificate trust, successful targeted
+repair with adequate parity, current-run acceptance and full-profile refresh
+remain separate qualification boundaries. Read the
 [service procedure](../services/shares-data.md) and
 [transaction recovery](../operations/transaction-recovery.md) before testing.
 
