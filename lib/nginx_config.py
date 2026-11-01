@@ -24,12 +24,12 @@ SSL_PROTOCOLS = "TLSv1.2 TLSv1.3"
 SSL_CIPHERS = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
 NGINX_SITES_AVAILABLE_DIR = "/etc/nginx/sites-available"
 NGINX_SITES_ENABLED_DIR = "/etc/nginx/sites-enabled"
-PRESERVED_SITE_PREFIXES = ("antistatic_", "gogs_")
+PRESERVED_SITE_PREFIXES = ("antistatic_", "gogs_", "webhook_")
 GENERATED_CONFIG_MARKER = "# Managed by basaltwater deployment nginx generator"
 
 
-def _config_name_for_domain(domain: Optional[str]) -> str:
-    return domain.replace('.', '_') if domain else 'default'
+def _config_name_for_domain(domain: Optional[str], site_owner: str = "deployment") -> str:
+    return ("webhook_" if site_owner == "webhook" else "") + (domain.replace('.', '_') if domain else 'default')
 
 
 def _remove_path(path: str) -> None:
@@ -71,10 +71,12 @@ def _is_basaltwater_deployment_site(path: str) -> bool:
     ))
 
 
-def _assert_managed_config_names(current_config_names: set[str]) -> None:
+def _assert_managed_config_names(current_config_names: set[str], site_owner: str = "deployment") -> None:
     """Refuse to replace a same-named Nginx site not owned by basaltwater."""
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         for name in current_config_names:
+            if site_owner == "deployment" and name.startswith(PRESERVED_SITE_PREFIXES):
+                raise ValueError("Deployment name conflicts with a service-owned Nginx site")
             path = os.path.join(directory, name)
             if os.path.lexists(path) and not _is_basaltwater_deployment_site(path):
                 raise RuntimeError(
@@ -97,7 +99,8 @@ def _reconcile_deployment_sites(
             continue
 
         for name in os.listdir(directory):
-            if name in current_config_names or name.startswith(PRESERVED_SITE_PREFIXES):
+            if name in current_config_names or (name.startswith(PRESERVED_SITE_PREFIXES)
+                    and (managed_config_names is None or name not in managed_config_names)):
                 continue
             if managed_config_names is not None and name not in managed_config_names:
                 continue
@@ -594,20 +597,21 @@ def _write_nginx_sites_for_groups(
     grouped_deployments: dict[Optional[str], Deployments],
     enable_https_redirect: bool = True,
     managed_config_names: Optional[set[str]] = None,
+    site_owner: str = "deployment",
 ) -> None:
     """Create nginx site configurations for grouped deployments."""
     
     run("mkdir -p /var/www/letsencrypt/.well-known/acme-challenge")
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         os.makedirs(directory, exist_ok=True)
-    current_config_names = {_config_name_for_domain(domain) for domain in grouped_deployments}
+    current_config_names = {_config_name_for_domain(domain, site_owner) for domain in grouped_deployments}
     _reconcile_deployment_sites(current_config_names, managed_config_names)
     
     for domain, deployments in grouped_deployments.items():
         cert_domain = domain or 'default'
         generate_self_signed_cert(cert_domain)
         
-        config_name = _config_name_for_domain(domain)
+        config_name = _config_name_for_domain(domain, site_owner)
 
         config_file = os.path.join(NGINX_SITES_AVAILABLE_DIR, config_name)
         
@@ -640,10 +644,22 @@ def create_nginx_sites_for_groups(
     enable_https_redirect: bool = True,
     *,
     managed_domains: Optional[set[Optional[str]] | list[Optional[str]]] = None,
+    site_owner: str = "deployment",
 ) -> None:
     """Recoverably reconcile deployment sites and their generated TLS files."""
     if not isinstance(grouped_deployments, dict):
         raise ValueError("Nginx deployment groups must be a mapping")
+    # Carry service ownership through the shared SSL regeneration path too.
+    owners = {dep.get("nginx_site_owner", site_owner)
+              for group in grouped_deployments.values() for dep in group}
+    if owners == {"webhook"}:
+        site_owner = "webhook"
+    elif owners - {site_owner}:
+        raise ValueError("Nginx groups must have one site owner")
+    if site_owner not in {"deployment", "webhook"}:
+        raise ValueError("Unknown Nginx site owner")
+    if site_owner == "webhook" and managed_domains is None:
+        raise ValueError("Webhook reconciliation requires explicit managed domains")
     for domain in grouped_deployments:
         if domain is not None and (not isinstance(domain, str) or not validate_host(domain)):
             raise ValueError("Nginx deployment domain must be a valid host")
@@ -664,18 +680,32 @@ def create_nginx_sites_for_groups(
         validate_filesystem_path(directory)
         if os.path.islink(directory):
             raise ValueError(f"Nginx site directory must not be a symlink: {directory}")
-    current_config_names = {_config_name_for_domain(domain) for domain in grouped_deployments}
+    current_config_names = {_config_name_for_domain(domain, site_owner) for domain in grouped_deployments}
     if len(current_config_names) != len(grouped_deployments):
         raise ValueError("Nginx deployment domains produce duplicate configuration names")
     managed_config_names = None
     snapshot_domains = list(grouped_deployments)
     if managed_domain_values is not None:
-        managed_config_names = {_config_name_for_domain(domain) for domain in managed_domain_values}
+        managed_config_names = {_config_name_for_domain(domain, site_owner) for domain in managed_domain_values}
         if len(managed_config_names) != len(managed_domain_values):
             raise ValueError("Managed Nginx domains produce duplicate configuration names")
-        if any(name.startswith(PRESERVED_SITE_PREFIXES) for name in managed_config_names):
+        if site_owner == "deployment" and any(name.startswith(PRESERVED_SITE_PREFIXES) for name in managed_config_names):
             raise ValueError("Managed Nginx domain conflicts with a prefix-owned Nginx site")
         snapshot_domains = managed_domain_values
+    if site_owner == "webhook":
+        # Migrate only the old generated webhook proxy, never a same-domain
+        # application. Include it in the transaction's snapshot and removal.
+        for domain in snapshot_domains:
+            legacy = _config_name_for_domain(domain)
+            for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
+                candidate = os.path.join(directory, legacy)
+                if not os.path.lexists(candidate):
+                    continue
+                content = _read_config_file(os.path.realpath(candidate))[0].decode("utf-8")
+                if (GENERATED_CONFIG_MARKER in content
+                        and f"server_name {domain};" in content
+                        and "proxy_pass http://127.0.0.1:8765;" in content):
+                    managed_config_names.add(legacy)
     extra_paths = tuple(path for domain in snapshot_domains for path in _self_signed_cert_path(domain or "default"))
     for path in extra_paths:
         validate_filesystem_path(path)
@@ -694,7 +724,7 @@ def create_nginx_sites_for_groups(
     try:
         record = store.begin("nginx-reconciliation", NGINX_SITES_AVAILABLE_DIR, "staging")
         try:
-            _assert_managed_config_names(current_config_names)
+            _assert_managed_config_names(current_config_names, site_owner)
             # The apply path requires reload, so refuse an inactive/uninspectable
             # daemon before changing files rather than trying to start it.
             if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
@@ -735,6 +765,7 @@ def create_nginx_sites_for_groups(
                 grouped_deployments,
                 enable_https_redirect=enable_https_redirect,
                 managed_config_names=managed_config_names,
+                site_owner=site_owner,
             )
             for directory in dict.fromkeys((NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR,
                                             *(os.path.dirname(path) for path in extra_paths))):

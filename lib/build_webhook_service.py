@@ -8,6 +8,9 @@ uses the same policy, input store, queue and worker as SSH controllers.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+import fcntl
+from itertools import islice
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 from pathlib import Path
@@ -16,8 +19,8 @@ import stat
 import tempfile
 import time
 
-from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
-from lib.build_protocol import decode_document
+from lib.atomic_io import read_json_file, remove_file_durable, rename_path_durable, write_json_atomic
+from lib.build_protocol import MAX_REQUEST_BYTES, decode_document
 from lib.webhook_builds import MAX_EVENT_BYTES, MAX_EVENTS, WEBHOOK_PATH, authenticate_event, project_name
 
 ACCOUNT = "basaltwater-webhook"
@@ -30,7 +33,30 @@ PREPARING = DATA + "/preparing"
 PORT = 8765
 ENTRY = "/opt/basaltwater/common/service_tools/build_webhooks.py"
 MAX_ENVELOPE = 2 * MAX_EVENT_BYTES
+MAX_RECEIPT = 2 * MAX_REQUEST_BYTES + 32768
 _NAME = re.compile(r"[0-9a-f]{32}\.json")
+# These exact core refusals happen before admission commits a new job. All
+# other failures require inspection, including partial input writes/sync loss.
+_CAPACITY_REFUSALS = frozenset({
+    "Build input store is full; retained evidence cannot be pruned",
+    "Build input store lacks capacity for the full retention reservation",
+    "Build input store lacks retained metadata capacity",
+    "Build job store is full; retained operations cannot be pruned",
+    "Build job queue is full",
+    "Build job store lacks space for lifecycle metadata",
+    "Build host is draining and refuses new admissions",
+})
+
+
+@contextmanager
+def _inbox_lock(inbox: str):
+    """Serialize publication and junk cleanup, including atomic temporaries."""
+    descriptor = os.open(inbox, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def load_settings() -> dict:
@@ -63,6 +89,8 @@ def load_settings() -> dict:
 def authenticated(envelope: dict, settings: dict) -> tuple[dict, bytes]:
     if not isinstance(envelope, dict) or set(envelope) != {"body", "signature", "delivery", "event"}:
         raise ValueError("Invalid signed envelope")
+    if any(not isinstance(value, str) for value in envelope.values()):
+        raise ValueError("Signed envelope fields must be text")
     body = base64.b64decode(envelope["body"], validate=True)
     return authenticate_event(body, signature=envelope["signature"], delivery=envelope["delivery"],
                               event=envelope["event"], secret=settings["secret"],
@@ -74,11 +102,13 @@ def retain_event(envelope: dict, settings: dict, *, inbox: str = INBOX) -> dict:
     if event["event"] == "ping":
         return {"event": "ping"}
     path = Path(inbox, event["request_id"] + ".json")
-    if path.exists():
-        return {"request_id": event["request_id"]}
-    if len(list(Path(inbox).iterdir())) >= MAX_EVENTS:
-        raise RuntimeError("Webhook intake is full")
-    write_json_atomic(str(path), envelope, mode=0o600)
+    with _inbox_lock(inbox):
+        if path.exists():
+            return {"request_id": event["request_id"]}
+        with os.scandir(inbox) as entries:
+            if sum(1 for _ in islice(entries, MAX_EVENTS)) >= MAX_EVENTS:
+                raise RuntimeError("Webhook intake is full")
+        write_json_atomic(str(path), envelope, mode=0o600)
     return {"request_id": event["request_id"]}
 
 
@@ -128,8 +158,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def admit_event(envelope: dict, settings: dict, *, host: dict,
                 receipts: str = RECEIPTS, preparing: str = PREPARING,
-                prepare=None) -> dict:
-    """Durable signed-event receipt followed by ordinary core source admission."""
+                prepare=None, recover: bool = False) -> dict:
+    """Admit exact retained inputs; ``recover`` permits one explicit core replay.
+
+    Callers must hold the host slot. Recovery never refetches source or resumes
+    uncertain preparation; the caller must inspect cleanup and core evidence.
+    """
     from lib.build_host_policy import authorize_build_request
     from lib.build_inputs import BuildInputStore
     from lib.build_jobs import BuildJobStore
@@ -142,52 +176,80 @@ def admit_event(envelope: dict, settings: dict, *, host: dict,
     request_id = event["request_id"]
     path = str(Path(receipts, request_id + ".json"))
     try:
-        previous = read_json_file(path, max_bytes=32768)
+        previous = read_json_file(path, max_bytes=MAX_RECEIPT)
     except FileNotFoundError:
         previous = None
     if previous is not None:
         if (not isinstance(previous, dict) or previous.get("body_sha256") != event["body_sha256"]
                 or previous.get("principal") != settings["principal"]):
             raise ValueError("Webhook receipt identity changed")
-        # Repeated signed bodies never refetch or execute again. Interrupted
-        # preparation requires explicit inspection; changing unsigned headers
-        # cannot obtain another core request identity.
-        return previous
-    if len(list(Path(receipts).iterdir())) >= MAX_EVENTS:
+        if previous.get("state") != "retry_pending" and not (
+                recover and previous.get("state") in {"admitting", "recovery_required"}
+                and previous.get("prepared") is True):
+            return previous
+    if previous is None and len(list(Path(receipts).iterdir())) >= MAX_EVENTS:
         raise RuntimeError("Webhook receipts are full; archive settled receipts explicitly")
-    receipt = dict(event, principal=settings["principal"], state="preparing")
-    write_json_atomic(path, receipt, mode=0o600)
+    receipt = previous or dict(event, principal=settings["principal"], state="preparing")
+    source_path = str(Path(preparing, request_id + ".source"))
     try:
-        with tempfile.TemporaryDirectory(prefix=request_id + "-", dir=preparing) as temporary:
-            os.chmod(temporary, 0o700)
-            url = "https://github.com/" + event["repository"] + ".git#branch=" + event["branch"]
-            item, = (prepare or prepare_setup_sources)(
-                [["build.invalid", url]], temporary, expected_revision=event["revision"],
-                credential_runner=credential_runner,
-            )
-            project = project_name(event["repository"])
-            projects = host["policy"]["principals"][settings["principal"]]["projects"]
-            grant = projects.get(project, projects.get("*"))
-            if grant is None:
-                raise PermissionError("Webhook project is not allowed by current build policy")
-            request = request_from_manifest(
-                item.manifest, request_id=request_id, project=project, source=item.source,
-                platform=DEBIAN_PLATFORM, limits=grant["limits"], workflow=True,
-            )
-            authorize_build_request(host["policy"], principal=settings["principal"], request=request,
-                                    requested_runtimes=list(item.build_tools or ()))
-            jobs = BuildJobStore(str(Path(host["roots"]["state"], "jobs.json")))
-            inputs = BuildInputStore(host["roots"]["inputs"], max_records=host["max_records"],
-                                     max_bytes=host["max_bytes"])
-            with open(item.source_path, "rb") as stream:
+        if previous is None:
+            write_json_atomic(path, receipt, mode=0o600, indent=None)
+            with tempfile.TemporaryDirectory(prefix=request_id + "-", dir=preparing) as temporary:
+                os.chmod(temporary, 0o700)
+                url = "https://github.com/" + event["repository"] + ".git#branch=" + event["branch"]
+                item, = (prepare or prepare_setup_sources)(
+                    [["build.invalid", url]], temporary, expected_revision=event["revision"],
+                    credential_runner=credential_runner,
+                )
+                project = project_name(event["repository"])
+                projects = host["policy"]["principals"][settings["principal"]]["projects"]
+                grant = projects.get(project, projects.get("*"))
+                if grant is None:
+                    raise PermissionError("Webhook project is not allowed by current build policy")
+                receipt["request"] = request_from_manifest(
+                    item.manifest, request_id=request_id, project=project, source=item.source,
+                    platform=DEBIAN_PLATFORM, limits=grant["limits"], workflow=True,
+                )
+                receipt["runtimes"] = list(item.build_tools or ())
+                receipt["source_size"] = os.stat(item.source_path).st_size
+                with open(item.source_path, "rb") as stream:
+                    os.fsync(stream.fileno())
+                rename_path_durable(item.source_path, source_path)
+            # Source cleanup must be confirmed before core admission begins.
+            receipt["prepared"] = True
+        request = receipt["request"]
+        if request["request_id"] != request_id:
+            raise ValueError("Prepared webhook request identity changed")
+        authorize_build_request(host["policy"], principal=settings["principal"], request=request,
+                                requested_runtimes=receipt["runtimes"])
+        receipt["state"] = "admitting"
+        write_json_atomic(path, receipt, mode=0o600, indent=None)
+        jobs = BuildJobStore(str(Path(host["roots"]["state"], "jobs.json")))
+        inputs = BuildInputStore(host["roots"]["inputs"], max_records=host["max_records"],
+                                 max_bytes=host["max_bytes"])
+        try:
+            descriptor = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or stat.S_IMODE(info.st_mode) != 0o400
+                        or info.st_uid != os.geteuid() or info.st_size != receipt["source_size"]):
+                    raise ValueError("Unsafe prepared webhook source")
                 inputs.admit(request, owner=settings["principal"], source=stream,
-                             source_size=os.fstat(stream.fileno()).st_size, jobs=jobs)
+                             source_size=receipt["source_size"], jobs=jobs)
+        except (ValueError, RuntimeError) as exc:
+            if str(exc) not in _CAPACITY_REFUSALS:
+                raise
+            receipt["state"] = "retry_pending"
+            write_json_atomic(path, receipt, mode=0o600, indent=None)
+            return receipt
         receipt["state"] = "submitted"
     except BaseException:
         receipt["state"] = "recovery_required"
-        write_json_atomic(path, receipt, mode=0o600)
+        write_json_atomic(path, receipt, mode=0o600, indent=None)
         raise
-    write_json_atomic(path, receipt, mode=0o600)
+    write_json_atomic(path, receipt, mode=0o600, indent=None)
+    remove_file_durable(source_path)
     return receipt
 
 
@@ -197,17 +259,33 @@ def process_once() -> None:
     from lib.build_setup_sources import SourceCleanupUncertain
 
     settings = load_settings()
-    for entry in sorted(Path(INBOX).iterdir()):
-        if _NAME.fullmatch(entry.name) is None:
-            raise ValueError("Unexpected webhook intake entry")
+    # Take a bounded batch under the receiver's publication lock. Any atomic
+    # temporary seen here is abandoned: an active writer holds the same lock.
+    batch = []
+    with _inbox_lock(INBOX), os.scandir(INBOX) as entries:
+        for index, item in enumerate(entries):
+            if index >= MAX_EVENTS:
+                break
+            batch.append(Path(item.path))
+    for entry in batch:
         try:
-            envelope = read_json_file(str(entry), max_bytes=MAX_ENVELOPE)
-            event, _ = authenticated(envelope, settings)
-            if entry.name != event.get("request_id", "") + ".json":
-                raise ValueError("Signed event identity differs from its intake name")
-        except (OSError, ValueError, RuntimeError, KeyError):
+            with _inbox_lock(INBOX):
+                if _NAME.fullmatch(entry.name) is None:
+                    raise ValueError("Unexpected webhook intake entry")
+                envelope = read_json_file(str(entry), max_bytes=MAX_ENVELOPE)
+                event, _ = authenticated(envelope, settings)
+                if entry.name != event.get("request_id", "") + ".json":
+                    raise ValueError("Signed event identity differs from its intake name")
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError):
             print("Invalid webhook intake refused", flush=True)
-            remove_file_durable(str(entry))
+            try:
+                with _inbox_lock(INBOX):
+                    if entry.is_dir() and not entry.is_symlink():
+                        entry.rmdir()
+                    else:
+                        remove_file_durable(str(entry))
+            except OSError:
+                print("Webhook junk cleanup requires inspection", flush=True)
             continue
         # Capacity or configuration recovery must not discard an accepted push.
         # Only admission with a durable receipt can consume its inbox entry.
@@ -215,11 +293,11 @@ def process_once() -> None:
             with host_slot():
                 host = load_config()
                 try:
-                    admit_event(envelope, settings, host=host)
+                    receipt = admit_event(envelope, settings, host=host)
                 except SourceCleanupUncertain:
                     raise  # Leave the capacity marker and inbox entry retained.
                 except (OSError, ValueError, RuntimeError, KeyError):
-                    receipt = read_json_file(str(Path(RECEIPTS, event["request_id"] + ".json")), max_bytes=32768)
+                    receipt = read_json_file(str(Path(RECEIPTS, event["request_id"] + ".json")), max_bytes=MAX_RECEIPT)
                     if (not isinstance(receipt, dict) or receipt.get("body_sha256") != event["body_sha256"]
                             or receipt.get("principal") != settings["principal"]):
                         raise ValueError("Webhook refusal has no durable receipt")
@@ -229,7 +307,8 @@ def process_once() -> None:
         except (OSError, ValueError, RuntimeError, KeyError):
             print("Webhook admission paused; preserve intake and inspect capacity/configuration", flush=True)
             return
-        remove_file_durable(str(entry))
+        if receipt.get("state") == "submitted":
+            remove_file_durable(str(entry))
 
 
 def credential_runner(_command, *, input_data, **_kwargs) -> bytes:
