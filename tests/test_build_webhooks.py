@@ -70,9 +70,9 @@ class WebhookTests(unittest.TestCase):
         snapshot.chmod(0o400)
         return [PreparedSource("build.invalid", parse_manifest(self.manifest), source, str(snapshot), ())]
 
-    def admit(self, event=None):
+    def admit(self, event=None, **kwargs):
         return service.admit_event(envelope() if event is None else event, SETTINGS, host=self.host,
-                                   receipts=str(self.receipts), preparing=str(self.preparing), prepare=self.prepare)
+                                   receipts=str(self.receipts), preparing=str(self.preparing), prepare=self.prepare, **kwargs)
 
     def test_signed_push_uses_core_queue_and_unsigned_headers_cannot_replay(self):
         result = self.admit()
@@ -156,16 +156,132 @@ class WebhookTests(unittest.TestCase):
         self.assertEqual(uncertain, [True])
         self.assertEqual(len(list(self.inbox.iterdir())), 1)
 
-    def test_confirmed_source_refusal_consumes_push_only_after_durable_receipt(self):
+    def test_source_refusal_retains_push_and_receipt_for_inspection(self):
         service.retain_event(envelope(), SETTINGS, inbox=str(self.inbox))
         self.prepare.side_effect = ValueError("confirmed source refusal")
         admit = service.admit_event
         self.process(nullcontext, lambda event, settings, **kwargs: admit(
             event, settings, host=self.host, receipts=str(self.receipts),
             preparing=str(self.preparing), prepare=self.prepare))
-        self.assertEqual(list(self.inbox.iterdir()), [])
+        self.assertEqual(len(list(self.inbox.iterdir())), 1)
         receipt, = self.receipts.iterdir()
         self.assertEqual(json.loads(receipt.read_text())["state"], "recovery_required")
+
+    def test_capacity_refusals_retry_exact_prepared_input_without_fetch(self):
+        for refusal in ("input", "queue"):
+            with self.subTest(refusal=refusal):
+                event = envelope(extra=refusal)
+                if refusal == "input":
+                    self.host["max_bytes"] = 1
+                    first = self.admit(event)
+                    self.host["max_bytes"] = 64 * 1024**3
+                else:
+                    with patch("lib.build_jobs.BuildJobStore", side_effect=lambda *args:
+                               BuildJobStore(*args, max_queue_length=1)):
+                        first = self.admit(event)
+                self.assertEqual(first["state"], "retry_pending")
+                retained = Path(self.preparing, first["request_id"] + ".source").read_bytes()
+                # Moving policy/branch data cannot regenerate the prepared request.
+                self.manifest["ci"]["test"] = [{"argv": ["false"]}]
+                result = self.admit(event)
+                self.assertEqual(result["state"], "submitted")
+                self.assertEqual(result["request"], first["request"])
+                self.assertEqual(Path(self.host["roots"]["inputs"], result["request_id"] + ".source").read_bytes(), retained)
+        self.assertEqual(self.prepare.call_count, 2)
+
+    def test_response_loss_requires_explicit_exact_idempotent_recovery(self):
+        original = BuildJobStore.submit
+
+        def lost_response(store, *args, **kwargs):
+            original(store, *args, **kwargs)
+            raise OSError("response lost after durable core submission")
+
+        with patch.object(BuildJobStore, "submit", lost_response), self.assertRaises(OSError):
+            self.admit()
+        for _ in range(2):
+            self.assertEqual(self.admit()["state"], "recovery_required")
+        result = self.admit(recover=True)
+        self.assertEqual(result["state"], "submitted")
+        ledger = json.loads(Path(self.host["roots"]["state"], "jobs.json").read_text())
+        self.assertEqual(len(ledger["jobs"]), 1)
+        self.prepare.assert_called_once()
+
+    def test_malformed_and_abandoned_entries_do_not_block_valid_push(self):
+        from lib.atomic_io import write_json_atomic
+
+        for index, field in enumerate(("body", "signature", "delivery", "event")):
+            value = envelope()
+            value[field] = None
+            write_json_atomic(str(self.inbox / (f"{index:032x}.json")), value)
+        (self.inbox / "unexpected").write_text("junk")
+        (self.inbox / ".unfinished.json-temporary").write_text("partial")
+        service.retain_event(envelope(), SETTINGS, inbox=str(self.inbox))
+        admit = service.admit_event
+        self.process(nullcontext, lambda event, settings, **kwargs: admit(
+            event, settings, host=self.host, receipts=str(self.receipts),
+            preparing=str(self.preparing), prepare=self.prepare))
+        self.assertEqual(list(self.inbox.iterdir()), [])
+        self.prepare.assert_called_once()
+
+    def test_pending_capacity_push_survives_until_exact_retry_succeeds(self):
+        service.retain_event(envelope(), SETTINGS, inbox=str(self.inbox))
+        admit = service.admit_event
+        callback = lambda event, settings, **kwargs: admit(
+            event, settings, host=self.host, receipts=str(self.receipts),
+            preparing=str(self.preparing), prepare=self.prepare)
+        self.host["max_bytes"] = 1
+        self.process(nullcontext, callback)
+        self.assertEqual(len(list(self.inbox.iterdir())), 1)
+        receipt, = self.receipts.iterdir()
+        self.assertEqual(json.loads(receipt.read_text())["state"], "retry_pending")
+        self.host["max_bytes"] = 64 * 1024**3
+        self.process(nullcontext, callback)
+        self.assertEqual(list(self.inbox.iterdir()), [])
+        self.prepare.assert_called_once()
+
+    def test_cleanup_waits_for_receiver_atomic_publication(self):
+        original = service.write_json_atomic
+        staged = threading.Event()
+        release = threading.Event()
+        processing = threading.Event()
+        errors = []
+
+        def checked(callback):
+            try:
+                callback()
+            except BaseException as exc:
+                errors.append(exc)
+
+        def writing(path, value, **kwargs):
+            temporary = Path(self.inbox, ".active-write")
+            temporary.write_text("partial")
+            staged.set()
+            self.assertTrue(release.wait(5))
+            self.assertTrue(temporary.exists())
+            original(path, value, **kwargs)
+            temporary.unlink()
+
+        def process():
+            processing.set()
+            self.process(nullcontext, Mock(return_value={"state": "submitted"}))
+
+        with patch.object(service, "write_json_atomic", side_effect=writing):
+            writer = threading.Thread(target=lambda: checked(
+                lambda: service.retain_event(envelope(), SETTINGS, inbox=str(self.inbox))))
+            reader = threading.Thread(target=lambda: checked(process))
+            writer.start()
+            try:
+                self.assertTrue(staged.wait(5))
+                reader.start()
+                self.assertTrue(processing.wait(5))
+            finally:
+                release.set()
+                writer.join(5)
+                if reader.ident is not None:
+                    reader.join(5)
+        self.assertFalse(writer.is_alive() or reader.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(list(self.inbox.iterdir()), [])
 
     def test_http_authentication_and_bounded_framing(self):
         server = HTTPServer(("127.0.0.1", 0), service.Handler)

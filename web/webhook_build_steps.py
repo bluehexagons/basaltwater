@@ -93,7 +93,7 @@ def configure_webhook_builds(config) -> None:
         if previous is not None:
             from lib.nginx_config import create_nginx_sites_for_groups
 
-            create_nginx_sites_for_groups({}, managed_domains={previous["domain"]})
+            create_nginx_sites_for_groups({}, managed_domains={previous["domain"]}, site_owner="webhook")
         return
     from lib.build_coordinator import ensure_coordinator, maintenance
 
@@ -139,7 +139,8 @@ def configure_webhook_builds(config) -> None:
         install_nginx(config)
         domain = config.webhook_domain
         domains = {domain} | ({previous["domain"]} if previous else set())
-        deployments = [dict(domain=domain, path="/", needs_proxy=True, backend_port=PORT, preserve_path=True)]
+        deployments = [dict(domain=domain, path="/", needs_proxy=True, backend_port=PORT,
+                            preserve_path=True, nginx_site_owner="webhook")]
         create_nginx_sites_for_groups({domain: deployments}, managed_domains=domains,
                                       enable_https_redirect=not config.enable_cloudflare)
         if not config.enable_cloudflare:
