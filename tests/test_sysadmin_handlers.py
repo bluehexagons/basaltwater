@@ -124,7 +124,7 @@ class TestSysadminHealth(unittest.TestCase):
         self.assertIn("permission denied", stderr.getvalue())
 
     def test_proxmox_health_defaults_to_root_and_honors_an_explicit_user(self) -> None:
-        config = SimpleNamespace(username="loren", ssh_key="/keys/private", system_type="server_proxmox")
+        config = SimpleNamespace(username="developer", ssh_key="/keys/private", system_type="server_proxmox")
         with (
             patch.object(sysadmin_health, "load_setup_command", return_value=config),
             patch.object(sysadmin_health, "build_ssh_command", return_value=["ssh"]) as build,

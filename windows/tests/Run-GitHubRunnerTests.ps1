@@ -45,7 +45,7 @@ try {
     Assert-Throws { Assert-RunnerArguments @('owner/a') '' @('owner') @() 'group' $false '' $false } 'group'
     Assert-Throws { Assert-RunnerArguments @('owner/a') '' @('owner') @() '' $true 'token' $false } 'Choose'
     Assert-Throws { Assert-RunnerArguments @('owner/a', 'owner/b') '' @('owner') @() '' $false 'token' $false } 'multiple repositories'
-    Assert-True ((Get-RunnerId 'bluehexagons/ocelli') -eq '2d9ed0fc1bc97280') 'Instance ID differs from Linux'
+    Assert-True ((Get-RunnerId 'owner/project') -eq '90829ce5ea7850da') 'Instance ID differs from Linux'
     Assert-True ((Get-RunnerId 'OWNER/ONE') -eq (Get-RunnerId 'owner/one')) 'Instance IDs must ignore case'
     New-Item -ItemType Directory -Path (Get-RunnerRoot) -Force | Out-Null
     $json = Join-Path (Get-RunnerRoot) 'test.json'

@@ -213,7 +213,7 @@ class RestartWorkflowTests(unittest.TestCase):
                                 ("needed-proxmox", "custom_steps"), ("needed", "server_proxmox")):
             with self.subTest(status=status, profile=profile):
                 self.status.return_value = status
-                config = _config(username="loren", system_type=profile, ssh_key="/keys/private")
+                config = _config(username="developer", system_type=profile, ssh_key="/keys/private")
                 with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True):
                     self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 0)
                 self.health.assert_called_with(
@@ -563,7 +563,7 @@ class RestartTransportTests(unittest.TestCase):
         self.assertIn("_restart_local_proxmox()", command[-1])
 
     def test_preflight_reports_inactive_storage_warning_for_local_and_remote_targets(self) -> None:
-        warning = "Storage ts1sd32 is inactive"
+        warning = "Storage archive32 is inactive"
         for host in ("localhost", "192.168.0.23"):
             with (
                 self.subTest(host=host),
@@ -679,9 +679,9 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
         self.assertEqual(self.reboot.call_args.args[0], ["/usr/bin/systemctl", "reboot", "--no-wall"])
 
     def test_share_lost_after_container_shutdown_does_not_block_reboot(self) -> None:
-        self.stopped.storage_states = {"local": "active", "scrap_100_1_write": "inactive"}
+        self.stopped.storage_states = {"local": "active", "archive_01_write": "inactive"}
         self.stopped.warnings = [
-            "Storage scrap_100_1_write is inactive; "
+            "Storage archive_01_write is inactive; "
             "explicit restart can proceed, but dependent guests and jobs "
             "may be unavailable until storage returns",
         ]
@@ -759,12 +759,12 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
                 self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
 
     def test_already_evacuated_node_reboots_without_stopall(self) -> None:
-        self.stopped.storage_states = {"ts1sd32": "inactive"}
-        self.stopped.warnings = ["Storage ts1sd32 is inactive"]
+        self.stopped.storage_states = {"archive32": "inactive"}
+        self.stopped.warnings = ["Storage archive32 is inactive"]
         self.collect.return_value = self.stopped
         with redirect_stdout(io.StringIO()) as output:
             self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
-        self.assertIn("WARNING: Storage ts1sd32 is inactive", output.getvalue())
+        self.assertIn("WARNING: Storage archive32 is inactive", output.getvalue())
         self.collect.assert_called_once_with(allow_inactive_storage=True)
         self.shutdown.assert_not_called()
         self.reboot.assert_called_once()
@@ -802,13 +802,13 @@ class ProxmoxRestartVerificationTests(unittest.TestCase):
         self.assertIn("Core service pveproxy is failed", output.getvalue())
 
     def test_post_reboot_ghost_storage_remains_visible_without_failing_host_readiness(self) -> None:
-        self.healthy.storage_states = {"local": "active", "ts1sd32": "inactive"}
-        self.healthy.warnings = ["Storage ts1sd32 is inactive"]
+        self.healthy.storage_states = {"local": "active", "archive32": "inactive"}
+        self.healthy.warnings = ["Storage archive32 is inactive"]
         self.collect.return_value = self.healthy
         with redirect_stdout(io.StringIO()) as output:
             self.assertTrue(setup_reboot._verify_proxmox_restart(_config()))
-        self.assertIn("ts1sd32=inactive", output.getvalue())
-        self.assertIn("WARNING: Storage ts1sd32 is inactive", output.getvalue())
+        self.assertIn("archive32=inactive", output.getvalue())
+        self.assertIn("WARNING: Storage archive32 is inactive", output.getvalue())
         self.assertTrue(self.collect.call_args.kwargs["allow_inactive_storage"])
 
     def test_audit_commands_share_remaining_deadline_and_saved_root_identity(self) -> None:

@@ -689,7 +689,7 @@ class TestBuildRuntimeDetection(unittest.TestCase):
             host="localhost",
             username="root",
             system_type="server_lite",
-            deploy_specs=[["click.example.com", "https://github.com/example/goclick.git"]],
+            deploy_specs=[["api.example.com", "https://github.com/example/sampleapi.git"]],
         )
         with patch.dict(os.environ, {}, clear=False), \
              patch.object(remote_setup.os.path, "isfile", return_value=True), \

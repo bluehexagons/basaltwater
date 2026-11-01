@@ -351,7 +351,7 @@ class TestProvisionedGuestHostKeyEnrollment(unittest.TestCase):
     )
     @patch(
         "lib.proxmox_guest.os.path.expanduser",
-        return_value="/home/loren/.ssh/known_hosts",
+        return_value="/home/developer/.ssh/known_hosts",
     )
     @patch(
         "lib.proxmox_guest.replace_scanned_host_keys",
@@ -390,7 +390,7 @@ class TestProvisionedGuestHostKeyEnrollment(unittest.TestCase):
                 call(
                     "192.0.2.40",
                     scan,
-                    known_hosts_path="/home/loren/.ssh/known_hosts",
+                    known_hosts_path="/home/developer/.ssh/known_hosts",
                 ),
             ],
         )

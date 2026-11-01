@@ -61,11 +61,11 @@ class TestMaintenanceCli(unittest.TestCase):
     def test_discover_github_repos_uses_git_roots(self, mock_remote_url, mock_find_roots) -> None:
         mock_find_roots.return_value = ["/tmp/repo1", "/tmp/repo2"]
         mock_remote_url.side_effect = [
-            "https://github.com/bluehexagons/alpha.git",
-            "https://github.com/bluehexagons/beta.git",
+            "https://github.com/example/alpha.git",
+            "https://github.com/example/beta.git",
         ]
         repos = discover_github_repos(["/tmp/workspace"])
-        self.assertEqual([repo.full_name for repo in repos], ["bluehexagons/alpha", "bluehexagons/beta"])
+        self.assertEqual([repo.full_name for repo in repos], ["example/alpha", "example/beta"])
 
 
 if __name__ == "__main__":

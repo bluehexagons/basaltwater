@@ -48,12 +48,12 @@ class TestConfigCleanup(unittest.TestCase):
                 {
                     "host": "192.168.0.41",
                     "system_type": "workstation_dev",
-                    "args": {"username": "loren", "install_t3code": True},
+                    "args": {"username": "developer", "install_t3code": True},
                 },
             )
             valid_config = SetupConfig(
                 host="192.168.0.42",
-                username="loren",
+                username="developer",
                 system_type="server_lite",
             )
             self._write_json(
@@ -201,7 +201,7 @@ class TestConfigCleanup(unittest.TestCase):
                 {
                     "host": "192.168.0.41",
                     "system_type": "workstation_dev",
-                    "args": {"username": "loren", "install_t3code": True},
+                    "args": {"username": "developer", "install_t3code": True},
                 },
             )
 
@@ -226,7 +226,7 @@ class TestConfigCleanup(unittest.TestCase):
                 {
                     "host": "192.168.0.41",
                     "system_type": "workstation_dev",
-                    "args": {"username": "loren", "install_t3code": True},
+                    "args": {"username": "developer", "install_t3code": True},
                 },
             )
 

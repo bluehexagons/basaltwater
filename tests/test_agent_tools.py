@@ -1284,13 +1284,13 @@ class TestAgentUpdate(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    'HOME': '/home/loren',
-                    'PWD': '/home/loren',
-                    'OLDPWD': '/home/loren/old',
-                    'PATH': '/home/loren/.local/bin:/usr/bin',
-                    'XDG_CONFIG_HOME': '/home/loren/.config',
-                    'CODEX_HOME': '/home/loren/.codex',
-                    'NPM_CONFIG_PREFIX': '/home/loren/.npm-global',
+                    'HOME': '/home/developer',
+                    'PWD': '/home/developer',
+                    'OLDPWD': '/home/developer/old',
+                    'PATH': '/home/developer/.local/bin:/usr/bin',
+                    'XDG_CONFIG_HOME': '/home/developer/.config',
+                    'CODEX_HOME': '/home/developer/.codex',
+                    'NPM_CONFIG_PREFIX': '/home/developer/.npm-global',
                 },
             ), patch('lib.agent_cli.run_command', return_value=completed) as runner:
                 _invoke_agent_update(
@@ -1304,7 +1304,7 @@ class TestAgentUpdate(unittest.TestCase):
         self.assertEqual(environment['PWD'], home)
         self.assertEqual(environment['CODEX_HOME'], os.path.join(home, '.codex'))
         self.assertEqual(environment['XDG_CONFIG_HOME'], os.path.join(home, '.config'))
-        self.assertNotIn('/home/loren', environment['PATH'])
+        self.assertNotIn('/home/developer', environment['PATH'])
         self.assertNotIn('OLDPWD', environment)
         self.assertNotIn('NPM_CONFIG_PREFIX', environment)
         self.assertEqual(environment['CODEX_NON_INTERACTIVE'], '1')

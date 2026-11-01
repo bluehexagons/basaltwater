@@ -442,7 +442,7 @@ class TestUserCommandEnvironment(unittest.TestCase):
         )
         self.assertIn("PATH=/home/agent/.local/bin:/home/agent/.opencode/bin", command)
         self.assertIn("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", command)
-        self.assertNotIn("/home/loren", command)
+        self.assertNotIn("/home/developer", command)
 
 
 class TestUserSSHKeys(unittest.TestCase):

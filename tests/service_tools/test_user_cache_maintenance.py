@@ -105,7 +105,7 @@ class TestUserCacheHelpers(unittest.TestCase):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         context = self._context("/home/agent")
 
-        with patch.dict(os.environ, {"PATH": "/home/loren/.local/bin:/usr/bin"}, clear=False):
+        with patch.dict(os.environ, {"PATH": "/home/developer/.local/bin:/usr/bin"}, clear=False):
             user_cache_maintenance.run_tool_command(
                 context,
                 ["npm", "cache", "verify"],
@@ -121,7 +121,7 @@ class TestUserCacheHelpers(unittest.TestCase):
         environment = mock_run.call_args.kwargs["env"]
         self.assertEqual(environment["HOME"], "/home/agent")
         self.assertEqual(environment["PWD"], "/home/agent")
-        self.assertNotIn("/home/loren", environment["PATH"])
+        self.assertNotIn("/home/developer", environment["PATH"])
         self.assertEqual(environment["CODEX_HOME"], "/home/agent/.codex")
 
     @patch("common.service_tools.user_cache_maintenance.run_tool_command")
@@ -731,8 +731,8 @@ class TestUserCachePolicies(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "XDG_CACHE_HOME": "/home/loren/.cache",
-                "CODEX_HOME": "/home/loren/.codex",
+                "XDG_CACHE_HOME": "/home/developer/.cache",
+                "CODEX_HOME": "/home/developer/.codex",
             },
             clear=False,
         ):

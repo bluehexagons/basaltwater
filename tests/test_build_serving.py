@@ -25,11 +25,11 @@ def service(exec_only=False, stun=3478):
     entry = {
         "name": "api", "type": "service", "domain": "{{domain}}", "path": "/v1",
         "port": "auto", "build": "go build ./...", "env": {"CGO_ENABLED": "0"},
-        "health": "/up", "binary": ".basaltwater/bin/goclick",
-        "runtime_env": {"GOCLICK_ADDR": "127.0.0.1:{{port}}",
-                        "GOCLICK_DATABASE": "{{data_dir}}/goclick.db",
+        "health": "/up", "binary": ".basaltwater/bin/sampleapi",
+        "runtime_env": {"APP_ADDR": "127.0.0.1:{{port}}",
+                        "APP_DATABASE": "{{data_dir}}/sampleapi.db",
                         "SECURE_COOKIES": "true", "TRUST_PROXY": "true"},
-        "sqlite_backup": "{{data_dir}}/goclick.db", "backup_retention": 14,
+        "sqlite_backup": "{{data_dir}}/sampleapi.db", "backup_retention": 14,
     }
     if exec_only:
         entry.pop("binary")
@@ -37,7 +37,7 @@ def service(exec_only=False, stun=3478):
                      "-port {{port}} -trust-proxy -trusted-proxy-cidrs 127.0.0.1/32,::1/128 "
                      f"-stun-port {stun}", runtime_env={"ANTISTATIC_DATA_DIR": "{{data_dir}}"},
                      health="/health", sqlite_backup=None, backup_retention=10,
-                     public_udp=[{"port": 3478, "hostname": "stun.antistaticgame.com"}] if stun else [])
+                     public_udp=[{"port": 3478, "hostname": "stun.example.com"}] if stun else [])
     return entry
 
 
@@ -103,8 +103,8 @@ class ServingTests(unittest.TestCase):
                     self.assertIn("-stun-port " + ("3478" if expected.public_udp else "0"), install.call_args.args[1])
                     self.assertIn("ANTISTATIC_DATA_DIR", env)
                 else:
-                    self.assertEqual(env["GOCLICK_ADDR"], "127.0.0.1:8123")
-                    self.assertTrue(env["GOCLICK_DATABASE"].endswith("/data/goclick.db"))
+                    self.assertEqual(env["APP_ADDR"], "127.0.0.1:8123")
+                    self.assertTrue(env["APP_DATABASE"].endswith("/data/sampleapi.db"))
                     self.assertEqual(env["SECURE_COOKIES"], "true")
 
     def test_runtime_requires_exact_grant_and_affects_binding_digest(self):

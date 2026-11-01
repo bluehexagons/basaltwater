@@ -202,21 +202,21 @@ class TestWorkspaceCli(unittest.TestCase):
             "testuser",
             "--node",
             "--deploy-latest",
-            "hexagonalhomelab.com/,/",
-            "https://github.com/bluehexagons/bluehexagons.git",
+            "example.com/,/",
+            "https://github.com/example/site.git",
             "--deploy-latest",
-            "clicker.hexagonalhomelab.com",
-            "https://github.com/bluehexagons/clicker.git",
+            "counter.example.com",
+            "https://github.com/example/counter.git",
             "--deploy-latest",
-            "foodguide.hexagonalhomelab.com,/foodguide,hexagonalhomelab.com/foodguide",
-            "https://github.com/bluehexagons/foodguide.git",
+            "docs.example.com,/docs,example.com/docs",
+            "https://github.com/example/docs.git",
         ])
 
         self.assertTrue(args.deploy_latest)
         self.assertEqual(args.deploy_specs, [
-            ["hexagonalhomelab.com/,/", "https://github.com/bluehexagons/bluehexagons.git"],
-            ["clicker.hexagonalhomelab.com", "https://github.com/bluehexagons/clicker.git"],
-            ["foodguide.hexagonalhomelab.com,/foodguide,hexagonalhomelab.com/foodguide", "https://github.com/bluehexagons/foodguide.git"],
+            ["example.com/,/", "https://github.com/example/site.git"],
+            ["counter.example.com", "https://github.com/example/counter.git"],
+            ["docs.example.com,/docs,example.com/docs", "https://github.com/example/docs.git"],
         ])
 
     def test_remote_setup_parser_accepts_deploy_latest_pairs(self):
@@ -225,12 +225,12 @@ class TestWorkspaceCli(unittest.TestCase):
             "--system-type",
             "server_web",
             "--deploy-latest",
-            "clicker.example.com",
-            "https://github.com/user/clicker.git",
+            "counter.example.com",
+            "https://github.com/example/counter.git",
         ])
 
         self.assertTrue(args.deploy_latest)
-        self.assertEqual(args.deploy_specs, [["clicker.example.com", "https://github.com/user/clicker.git"]])
+        self.assertEqual(args.deploy_specs, [["counter.example.com", "https://github.com/example/counter.git"]])
 
     def test_setup_parser_still_accepts_repeated_deploy_flags(self):
         args = self.parser.parse_args([
@@ -239,16 +239,16 @@ class TestWorkspaceCli(unittest.TestCase):
             "example.com",
             "testuser",
             "--deploy",
-            "clicker.example.com",
-            "https://github.com/user/clicker.git",
+            "counter.example.com",
+            "https://github.com/example/counter.git",
             "--deploy",
-            "food.example.com",
-            "https://github.com/user/food.git",
+            "docs.example.com",
+            "https://github.com/example/docs.git",
         ])
 
         self.assertEqual(args.deploy_specs, [
-            ["clicker.example.com", "https://github.com/user/clicker.git"],
-            ["food.example.com", "https://github.com/user/food.git"],
+            ["counter.example.com", "https://github.com/example/counter.git"],
+            ["docs.example.com", "https://github.com/example/docs.git"],
         ])
 
     def test_basaltwater_parser_accepts_recall_command(self):

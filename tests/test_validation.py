@@ -294,7 +294,7 @@ class TestValidateGogsSettings(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires a DNS hostname"):
             validate_gogs_settings(
                 self._make_config(
-                    gogs=['192.168.0.51:3000', '/srv/gogs'],
+                    gogs=['10.23.0.40:3000', '/srv/gogs'],
                     enable_ssl=True,
                 )
             )
@@ -1154,7 +1154,7 @@ class TestValidateVMStorageSettings(unittest.TestCase):
         config = _MockConfig(
             machine_type='vm',
             container_storage=[
-                ['data', 'ts1-storage', '3T'],
+                ['data', 'bulk-lvm', '3T'],
                 ['data-cache', 'local-lvm', '128G'],
             ],
             storage_mounts=[['data', '/srv/data', 'xfs']],
@@ -1167,7 +1167,7 @@ class TestValidateVMStorageSettings(unittest.TestCase):
         config = _MockConfig(
             machine_type='vm',
             container_storage=[
-                ['data', 'ts1-storage', '3T'],
+                ['data', 'bulk-lvm', '3T'],
                 ['cache', 'local-lvm', '32G'],
             ],
             storage_mounts=[
@@ -1195,7 +1195,7 @@ class TestValidateVMStorageSettings(unittest.TestCase):
         config = _MockConfig(
             machine_type='vm',
             container_storage=[
-                ['data', 'ts1-storage', '3T'],
+                ['data', 'bulk-lvm', '3T'],
                 ['cache', 'local-lvm', '256M'],
             ],
             storage_mounts=[['data', '/srv/data']],

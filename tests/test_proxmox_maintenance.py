@@ -409,9 +409,9 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                 results = self._inventory_results("[]")
                 results[6] = _result(json.dumps([
                     {"storage": "local", "enabled": 1, "active": 1},
-                    {"storage": "scrap_100_1_write", "enabled": 1, "active": 0,
+                    {"storage": "archive_01_write", "enabled": 1, "active": 0,
                      "type": storage_type, "content": content},
-                    {"storage": "scrap_100_2_write", "enabled": 1, "active": 0,
+                    {"storage": "archive_02_write", "enabled": 1, "active": 0,
                      "type": storage_type, "content": content},
                 ]))
                 command.side_effect = results
@@ -419,9 +419,9 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                     self.host, allow_inactive_storage=explicit,
                 )
                 self.assertEqual(report.reboot_safe, explicit)
-                self.assertEqual(report.storage_states["scrap_100_1_write"], "inactive")
+                self.assertEqual(report.storage_states["archive_01_write"], "inactive")
                 messages = report.warnings if explicit else report.errors
-                for name in ("scrap_100_1_write", "scrap_100_2_write"):
+                for name in ("archive_01_write", "archive_02_write"):
                     self.assertTrue(any(f"Storage {name} is inactive" in message for message in messages))
                 if explicit:
                     self.assertIn("until storage returns", format_maintenance_report(report))
@@ -433,15 +433,15 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                 results = self._inventory_results("[]")
                 results[6] = _result(json.dumps([
                     {"storage": "local", "enabled": 1, "active": local_active, "type": "dir"},
-                    {"storage": "ts1sd32", "enabled": 1, "active": 0,
+                    {"storage": "archive32", "enabled": 1, "active": 0,
                      "type": "dir", "content": "images,rootdir,backup"},
                 ]))
                 command.side_effect = results
                 report = collect_maintenance_report(self.host, allow_inactive_storage=explicit)
                 self.assertEqual(report.reboot_safe, explicit)
-                self.assertEqual(report.to_dict()["storage_states"]["ts1sd32"], "inactive")
+                self.assertEqual(report.to_dict()["storage_states"]["archive32"], "inactive")
                 messages = report.warnings if explicit else report.errors
-                self.assertTrue(any("Storage ts1sd32 is inactive" in message for message in messages))
+                self.assertTrue(any("Storage archive32 is inactive" in message for message in messages))
 
     @patch("lib.proxmox_maintenance._run")
     def test_explicit_restart_does_not_ignore_failed_storage_probe(self, command) -> None:

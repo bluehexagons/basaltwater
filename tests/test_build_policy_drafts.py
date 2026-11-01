@@ -75,22 +75,22 @@ class BuildPolicyDraftTests(unittest.TestCase):
         self.assertEqual(target["max_bytes"], 8 * 1024**3)
         self.assertEqual(builder["max_records"], 128)
 
-    def test_foodguide_fixed_path_and_ordinary_root_identity_data_parity(self):
-        item = prepared("food.example.com/foodguide")
-        item.manifest.components[0].path = "/foodguide"
+    def test_docs_fixed_path_and_ordinary_root_identity_data_parity(self):
+        item = prepared("docs.example.com/docs")
+        item.manifest.components[0].path = "/docs"
         _, target = self.draft([item])
         app = next(iter(target["policy"]["applications"].values()))
-        self.assertEqual(app["components"]["site"]["path"], "/foodguide")
+        self.assertEqual(app["components"]["site"]["path"], "/docs")
         self.assertEqual(app["components"]["api"]["path"], "/api")
         local = DeploymentOrchestrator()
-        ordinary = local.get_deployment_path("food.example.com", "/foodguide", "https://example.com/repo")
+        ordinary = local.get_deployment_path("docs.example.com", "/docs", "https://example.com/repo")
         self.assertEqual(app["deployment_root"], ordinary)
-        self.assertEqual(ordinary, "/var/www/food_example_com__foodguide")
+        self.assertEqual(ordinary, "/var/www/docs_example_com__docs")
         component = item.manifest.components[1]
         self.assertEqual(local._service_identity(app["deployment_root"], component),
                          local._service_identity(ordinary, component))
         self.assertEqual(local._component_data_dir(app["deployment_root"], component),
-                         "/var/www/.basaltwater_shared/food_example_com__foodguide/api/data")
+                         "/var/www/.basaltwater_shared/docs_example_com__docs/api/data")
 
     def test_explicit_runtimes_take_precedence_and_inferred_tools_are_preserved(self):
         for tools in ((), ("node",), ("python", "go")):

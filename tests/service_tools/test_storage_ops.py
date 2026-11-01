@@ -125,21 +125,21 @@ class TestValidateMountsForOperation(unittest.TestCase):
         self.assertIn("No mounted filesystem found", message)
     
     @patch("sync.service_tools.storage_ops.os.path.ismount", return_value=True)
-    @patch("sync.service_tools.storage_ops.get_mount_ancestor", return_value="/mnt/scrap_100_1")
+    @patch("sync.service_tools.storage_ops.get_mount_ancestor", return_value="/mnt/archive_01")
     @patch("sync.service_tools.storage_ops.os.path.exists")
     def test_accepts_nonexistent_destination_on_mounted_parent(self, mock_exists, mock_ancestor, mock_ismount):
         """Test that sync destinations can be created on mounted filesystems.
         
-        Simulates the case where /mnt/scrap_100_1 is mounted but
-        /mnt/scrap_100_1/incoming/scrap_100_2 doesn't exist yet.
+        Simulates the case where /mnt/archive_01 is mounted but
+        /mnt/archive_01/incoming/archive_02 doesn't exist yet.
         """
         def exists_side_effect(path):
             # Mount point exists, but destination subdirectory doesn't
-            if path == "/mnt/scrap_100_1":
+            if path == "/mnt/archive_01":
                 return True
-            if path == "/mnt/scrap_100_1/incoming":
+            if path == "/mnt/archive_01/incoming":
                 return False
-            if path == "/mnt/scrap_100_1/incoming/scrap_100_2":
+            if path == "/mnt/archive_01/incoming/archive_02":
                 return False
             return False
         
@@ -147,7 +147,7 @@ class TestValidateMountsForOperation(unittest.TestCase):
         
         config = RuntimeConfig(username="test", sync_specs=[], scrub_specs=[], notify_specs=[])
         valid, message = validate_mounts_for_operation(
-            ["/mnt/scrap_100_1/incoming/scrap_100_2"], 
+            ["/mnt/archive_01/incoming/archive_02"],
             config, 
             "sync"
         )

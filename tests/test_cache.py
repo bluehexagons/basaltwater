@@ -420,9 +420,9 @@ class TestScopedSetupLookup(unittest.TestCase):
                     self.assertIsNone(load_setup_command(address))
 
     def test_new_ip_cannot_resolve_to_another_hosts_name_or_tag(self):
-        self._save_current(host="192.168.0.25", friendly_name="192.168.0.50", tags=["192.168.0.51"])
+        self._save_current(host="192.168.0.25", friendly_name="192.168.0.50", tags=["10.23.0.40"])
         self.assertIsNone(load_setup_command("192.168.0.50"))
-        self.assertIsNone(load_setup_command("192.168.0.51"))
+        self.assertIsNone(load_setup_command("10.23.0.40"))
 
     def test_new_vm_provisioning_metadata_ignores_unrelated_retired_setup(self):
         import basaltwater
@@ -434,7 +434,7 @@ class TestScopedSetupLookup(unittest.TestCase):
         for host in ("192.168.0.50", "192.168.0.50/24"):
             with self.subTest(host=host):
                 config = SetupConfig(host=host, username="agent", system_type="server_lite",
-                                     machine_type="vm", hosted_node="ts1")
+                                     machine_type="vm", hosted_node="pve1")
                 self.assertIsNone(basaltwater._load_cached_provisioning_metadata(config))
                 self.assertFalse(basaltwater._reuse_cached_provisioning_metadata(config, Namespace()))
         with open(path, "rb") as file_obj:

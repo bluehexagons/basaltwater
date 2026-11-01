@@ -97,7 +97,7 @@ class KernelRestartTests(unittest.TestCase):
     @patch("lib.kernel_restart.Path.is_file", return_value=True)
     @patch("lib.kernel_restart.os.uname", return_value=SimpleNamespace(release="7.0.14-15-pve"))
     @patch("lib.kernel_restart.subprocess.run")
-    def test_ts1_detected_using_only_configured_kernel_packages(self, run, _uname, image):
+    def test_proxmox_detected_using_only_configured_kernel_packages(self, run, _uname, image):
         run.return_value = SimpleNamespace(stdout=(
             "installed proxmox-kernel-7.0.14-14-pve-signed\n"
             "installed proxmox-kernel-7.0.14-15-pve-signed\n"
@@ -170,7 +170,7 @@ class KernelRestartTests(unittest.TestCase):
                 patch("builtins.print") as output,
                 patch("security.security_steps.can_restart_system", return_value=True),
             ):
-                config = SetupConfig(username="root", host="ts1", system_type="server_proxmox")
+                config = SetupConfig(username="root", host="pve1", system_type="server_proxmox")
                 configure_auto_restart(config)
                 with (
                     patch("common.common_steps.can_modify_kernel", return_value=True),
@@ -193,6 +193,6 @@ class KernelRestartTests(unittest.TestCase):
                 patch("security.security_steps.can_modify_kernel", return_value=capable),
                 patch("security.security_steps.can_restart_system", return_value=capable),
             ):
-                configure_auto_restart(SetupConfig(username="root", host="ts1", system_type="server_proxmox"))
+                configure_auto_restart(SetupConfig(username="root", host="pve1", system_type="server_proxmox"))
         probe.assert_not_called()
         install.assert_not_called()

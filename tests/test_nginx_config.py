@@ -73,11 +73,11 @@ class TestGetSslCertPath(unittest.TestCase):
     def test_self_signed_ip_certificate_includes_ip_san(
         self, _exists, mock_run, _usable
     ):
-        generate_self_signed_cert("192.168.0.51")
+        generate_self_signed_cert("10.23.0.40")
 
         command = mock_run.call_args_list[-1].args[0]
-        self.assertIn("-subj /CN=192.168.0.51", command)
-        self.assertIn("-addext subjectAltName=IP:192.168.0.51", command)
+        self.assertIn("-subj /CN=10.23.0.40", command)
+        self.assertIn("-addext subjectAltName=IP:10.23.0.40", command)
 
     @patch("lib.nginx_config.certificate_is_usable", return_value=True)
     @patch("lib.nginx_config.run")
@@ -96,11 +96,11 @@ class TestGetSslCertPath(unittest.TestCase):
     def test_self_signed_certificate_includes_additional_ip_san(
         self, _exists, mock_run, _usable
     ):
-        generate_self_signed_cert("192.168.0.51", ["127.0.0.1"])
+        generate_self_signed_cert("10.23.0.40", ["127.0.0.1"])
 
         command = mock_run.call_args_list[-1].args[0]
         self.assertIn(
-            "-addext subjectAltName=IP:192.168.0.51,IP:127.0.0.1",
+            "-addext subjectAltName=IP:10.23.0.40,IP:127.0.0.1",
             command,
         )
 
@@ -110,7 +110,7 @@ class TestGetSslCertPath(unittest.TestCase):
     def test_expiring_self_signed_certificate_is_replaced(
         self, _exists, mock_run, _usable
     ):
-        generate_self_signed_cert("192.168.0.51")
+        generate_self_signed_cert("10.23.0.40")
 
         self.assertTrue(any("openssl req -x509" in call.args[0] for call in mock_run.call_args_list))
 
@@ -126,9 +126,9 @@ class TestCertificateIsUsable(unittest.TestCase):
         ]
 
         self.assertTrue(
-            certificate_is_usable("cert.pem", "key.pem", ["192.168.0.51"])
+            certificate_is_usable("cert.pem", "key.pem", ["10.23.0.40"])
         )
-        self.assertIn("-checkip 192.168.0.51", mock_run.call_args_list[1].args[0])
+        self.assertIn("-checkip 10.23.0.40", mock_run.call_args_list[1].args[0])
 
 
 class TestMakeCacheMaps(unittest.TestCase):
@@ -144,7 +144,7 @@ class TestMakeCacheMaps(unittest.TestCase):
         self.assertNotIn('1y', maps)
 
     def test_hyphenated_site_uses_valid_variable_identifiers(self):
-        maps, expires_var, cc_var = _make_cache_maps('mm0-beta_hexagonalhomelab_com')
+        maps, expires_var, cc_var = _make_cache_maps('app-beta_example_com')
         for variable in (expires_var, cc_var):
             self.assertRegex(variable, r'^\$[A-Za-z_][A-Za-z0-9_]*$')
             self.assertIn(f'map $uri {variable} {{', maps)
@@ -206,12 +206,12 @@ class TestMakeStaticLocation(unittest.TestCase):
         self.assertIn('return 301 /blog/$is_args$args;', result)
 
     def test_subpath_normalizes_location_and_alias_without_matching_siblings(self):
-        result = _make_static_location('/foodguide/', '/var/www/guide/html', 'index.html index.htm', '$uri =404', '# Guide')
-        self.assertIn('location /foodguide/ {', result)
+        result = _make_static_location('/docs/', '/var/www/guide/html', 'index.html index.htm', '$uri =404', '# Guide')
+        self.assertIn('location /docs/ {', result)
         self.assertIn('alias /var/www/guide/html/;', result)
-        self.assertIn('location = /foodguide {', result)
-        self.assertNotIn('location /foodguide {', result)
-        self.assertNotIn('location /foodguide//', result)
+        self.assertIn('location = /docs {', result)
+        self.assertNotIn('location /docs {', result)
+        self.assertNotIn('location /docs//', result)
 
 
 class TestGenerateMergedNginxConfig(unittest.TestCase):
@@ -221,7 +221,7 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
             {'path': '/guide/', 'needs_proxy': False, 'serve_path': '/var/www/guide'},
             {'path': '/api', 'needs_proxy': True, 'backend_port': 3007},
         ]
-        domain = 'mm0-beta.hexagonalhomelab.com'
+        domain = 'app-beta.example.com'
         for redirects in (True, False):
             with self.subTest(redirects=redirects):
                 config = generate_merged_nginx_config(
@@ -391,16 +391,16 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
     def test_cloudflare_static_subpath_keeps_slash_redirect_and_query(self):
         config = generate_merged_nginx_config('example.com', [
             {'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site'},
-            {'path': '/foodguide/', 'needs_proxy': False, 'serve_path': '/var/www/guide/html'},
+            {'path': '/docs/', 'needs_proxy': False, 'serve_path': '/var/www/guide/html'},
         ], enable_https_redirect=False)
         http_block = config.split('server {\n    listen 443 ssl')[0]
         self.assertIn('absolute_redirect off;', http_block)
-        self.assertIn('return 301 /foodguide/$is_args$args;', http_block)
+        self.assertIn('return 301 /docs/$is_args$args;', http_block)
         self.assertIn('alias /var/www/guide/html/;', http_block)
         self.assertIn('root /var/www/site/;', http_block)
 
     def test_cloudflare_proxy_preserves_direct_http_and_trusts_only_tunnel_peer(self):
-        config = generate_merged_nginx_config('mm0-beta.example.com', [
+        config = generate_merged_nginx_config('app-beta.example.com', [
             {'path': '/', 'needs_proxy': True, 'backend_port': 3007},
         ], enable_https_redirect=False)
         self.assertNotIn('proxy_set_header X-Forwarded-Proto https;', config)

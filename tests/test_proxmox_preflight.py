@@ -143,7 +143,7 @@ class TestLocalUpdateSafety(unittest.TestCase):
     def test_storage_exception_is_opt_in_and_retains_evacuated_guest_gate(self) -> None:
         check_proxmox_update_safety()
         self.audit.assert_called_once_with(allow_inactive_storage=False)
-        self.report.warnings = ["Storage ts1sd32 is inactive"]
+        self.report.warnings = ["Storage archive32 is inactive"]
         self.report.running_guests = [ContainerInfo(vmid=107, status="running", name="samba")]
         with self.assertRaisesRegex(RuntimeError, "running guests: 107"):
             check_proxmox_update_safety(require_evacuated=True, allow_inactive_storage=True)

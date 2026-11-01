@@ -218,7 +218,7 @@ class TestRdpDisplay(unittest.TestCase):
 
     def test_access_summary_uses_gogs_tls_port(self) -> None:
         config = SetupConfig(
-            host="192.168.0.51",
+            host="10.23.0.40",
             username="gitadmin",
             system_type="server_web",
             gogs=[":3000", "/srv/gogs"],
@@ -231,20 +231,20 @@ class TestRdpDisplay(unittest.TestCase):
             print_service_access_summary(config)
 
         rendered = output.getvalue()
-        self.assertIn("Web server: http://192.168.0.51/", rendered)
-        self.assertIn("Gogs web: https://192.168.0.51:3000/", rendered)
-        self.assertNotIn("Gogs web: https://192.168.0.51/", rendered)
+        self.assertIn("Web server: http://10.23.0.40/", rendered)
+        self.assertIn("Gogs web: https://10.23.0.40:3000/", rendered)
+        self.assertNotIn("Gogs web: https://10.23.0.40/", rendered)
 
     def test_proxmox_access_summary_advertises_the_existing_root_account(self) -> None:
-        config = SetupConfig(host="192.168.0.22", username="loren", system_type="server_proxmox")
+        config = SetupConfig(host="10.23.0.10", username="developer", system_type="server_proxmox")
         with redirect_stdout(io.StringIO()) as output:
             print_service_access_summary(config)
-        self.assertIn("SSH: ssh root@192.168.0.22", output.getvalue())
-        self.assertNotIn("ssh loren@", output.getvalue())
+        self.assertIn("SSH: ssh root@10.23.0.10", output.getvalue())
+        self.assertNotIn("ssh developer@", output.getvalue())
 
     def test_access_summary_omits_cloudflare_backend_port(self) -> None:
         config = SetupConfig(
-            host="192.168.0.51",
+            host="10.23.0.40",
             username="gitadmin",
             system_type="server_web",
             gogs=["git.example.test:3000", "/srv/gogs"],
@@ -261,7 +261,7 @@ class TestRdpDisplay(unittest.TestCase):
 
     def test_ipv6_only_generic_source_does_not_publish_ipv4_only_gogs(self) -> None:
         config = SetupConfig(
-            host="192.168.0.51",
+            host="10.23.0.40",
             username="gitadmin",
             system_type="server_web",
             gogs=[":3000", "/srv/gogs"],
@@ -276,7 +276,7 @@ class TestRdpDisplay(unittest.TestCase):
 
     def test_hostless_antistatic_remains_http_when_ssl_is_for_gogs(self) -> None:
         config = SetupConfig(
-            host="192.168.0.51",
+            host="10.23.0.40",
             username="gitadmin",
             system_type="server_web",
             gogs=[":3000", "/srv/gogs"],
@@ -291,8 +291,8 @@ class TestRdpDisplay(unittest.TestCase):
             print_service_access_summary(config)
 
         rendered = output.getvalue()
-        self.assertIn("Antistatic lobby: http://192.168.0.51:8080/", rendered)
-        self.assertIn("Antistatic DB: http://192.168.0.51:8081/", rendered)
+        self.assertIn("Antistatic lobby: http://10.23.0.40:8080/", rendered)
+        self.assertIn("Antistatic DB: http://10.23.0.40:8081/", rendered)
 
     def test_access_summary_marks_loopback_web_interfaces(self) -> None:
         config = SetupConfig(

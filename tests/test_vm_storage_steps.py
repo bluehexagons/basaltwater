@@ -843,7 +843,7 @@ class TestSetupVMStorage(unittest.TestCase):
             machine_type="vm",
             container_storage=[
                 ["root", "local-lvm", "32G"],
-                ["data", "ts1-storage", "3T"],
+                ["data", "bulk-lvm", "3T"],
                 ["data-cache", "local-lvm", "128G"],
             ],
             storage_mounts=[["data", "/srv/data", "xfs"]],
@@ -890,7 +890,7 @@ class TestSetupVMStorage(unittest.TestCase):
         )
         state = write_state.call_args.args[1]
         self.assertEqual(state["schema_version"], 2)
-        self.assertEqual(state["caches"][0]["data_pool"], "ts1-storage")
+        self.assertEqual(state["caches"][0]["data_pool"], "bulk-lvm")
 
 
 class TestDeclaredMountAssertion(unittest.TestCase):
