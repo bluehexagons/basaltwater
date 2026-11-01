@@ -12,6 +12,8 @@ CachyOS uses `basaltwater-cachyos-t3code` for its separate web unit or packaged
 desktop. Native Windows uses the packaged desktop app; follow the
 [Windows workflow](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/windows.md).
 Do not install a second upstream service to repair either environment.
+For connection/account, loaded-skill or cross-platform command mismatches, use
+the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
 
 Start Debian server investigations with a scoped readiness check:
 
@@ -28,7 +30,13 @@ Restarting it interrupts active T3 sessions: arrange the interruption with the
 owner first. Authorized setup/refresh starts or reloads selected T3 after
 provider, skill, saved-state and notification work. Debian `sudo basaltw refresh`
 runs independently of its terminal; exit 0 confirms dispatch, so inspect its
-printed private log and systemd result. CachyOS keeps package/sudo prompts in
+printed private log and systemd result. Debian final T3 completion also prints
+a private per-request JSON receipt. Its `status` distinguishes queued/waiting,
+restarting/checking readiness, ready, superseded, dispatch-uncertain and failed outcomes; `issue`
+retains a safe failure code. `provider_turn_verified` remains false even for
+`ready`. A nonterminal receipt after worker termination requires inspection of
+the printed unit, not another blind refresh.
+CachyOS keeps package/sudo prompts in
 the terminal and queues web activation or graceful desktop relaunch afterward.
 A stopped desktop starts in an available graphical session; otherwise KDE login
 startup remains enabled. Windows uses an independent, same-session task and

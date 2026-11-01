@@ -65,6 +65,8 @@ The provider must run as this Linux account to discover its skills. A native
 Windows provider has a separate home and does not discover Ubuntu's catalog.
 Use preview tools only when the active T3 session exposes them; another session
 or a desktop installation does not supply tools to a terminal agent.
+For connection/account, loaded-skill or cross-platform command mismatches, use
+the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
 
 Stable 0.1.6's [shared client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows)
 cover side chats, project pin/archive, local commit review, and optional
@@ -80,6 +82,6 @@ do not run `t3 service install` or `t3 service protect` to refresh it.
 Logout, sleep, reboot, or WSL shutdown can interrupt work despite the optional
 login keepalive. Do not stop or refresh the distribution during active work.
 Refresh guidance by rerunning Windows setup from an updated pinned Basaltwater
-source; a tool-only update does not refresh skills. Do not infer host capability
-or health from a manifest's generic non-CachyOS profile label. Native PowerShell
+source; a tool-only update does not refresh skills. The manifest identifies
+`ubuntu-wsl`; it does not provision host diagnostics or verify WSLg. Native PowerShell
 artifact jobs are a separate workflow, not Basaltwater Codex prompt tasks.

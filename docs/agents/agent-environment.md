@@ -114,8 +114,12 @@ their `readiness` remains `unverified`. Discovery never launches a window,
 renderer, device probe, or audio session. `desktop_skills` links available local
 desktop instructions; it does not establish that a desktop session is attached.
 
-`host_profile` distinguishes the native CachyOS workstation from the Debian
-management profile; it does not infer that a Debian host is a VM.
+`host_profile` distinguishes `ubuntu-wsl`, the native CachyOS workstation and the
+Debian management profile; it does not infer that a Debian host is a VM.
+WSL detection uses the running kernel identity, independently of the client
+window. WSL reports no managed host health or publishing command; its publishing
+readiness is `outside-host-role`. Use the selected distribution's project tools
+and platform guidance rather than Debian VM management commands.
 `publishing` inventories Butler and SteamCMD on the active PATH and links the
 [publishing guide](../workstations/game-publishing.md). Debian `readiness` remains `unverified`;
 discovery never reads native session files, opens the publishing database, runs
@@ -161,6 +165,11 @@ literal document arguments; manifest launch guidance uses the same routing.
 CachyOS skills cover native application scripts/exports and explicitly started,
 user-approved [KDE Wayland automation](../workstations/cachyos-desktop.md). Discovery does not
 request consent or query desktop contents.
+On WSL, `desktop_backend` is `wslg-unverified`, `automation_command` is null,
+and `launch_argv` starts with the Linux executable. Discovery does not establish
+that WSLg is available or that a graphical session is attached. Use the project's
+isolated test display or intended WSLg session deliberately; Linux GUI results
+do not qualify a native Windows build.
 
 Projects can commit an optional `basaltwater-agent.json` at their Git root.
 This discovery file is separate from the `basaltwater.json` build/deployment and

@@ -40,6 +40,9 @@ managed desktop autostart; failed activation preserves it.
 
 ## Agent and browser workflows
 
+For connection/account, loaded-skill or cross-platform command mismatches, use
+the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
+
 Stable 0.1.6 adds side chats (`/side` or `/btw`), project pin/archive,
 local commit review in the Diff pane, and optional 1Password secret providers.
 Use the shared [workflow reference](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-t3code/references/operations.md#016-conversation-project-and-credential-workflows).

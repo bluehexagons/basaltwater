@@ -794,18 +794,29 @@ class DebianT3CompletionTests(unittest.TestCase):
             self.completion.queue_completion(self.config)
         return json.loads(self.request.read_text())["id"]
 
+    def receipt(self, request):
+        path = Path(self.completion._receipt_path(request))
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        return json.loads(path.read_text())
+
     def test_queue_is_independent_and_latest_completed_setup_wins(self):
         old = self.queue()
         current = self.queue()
+        self.assertEqual(self.receipt(current)["status"], "queued")
         self.assertEqual(stat.S_IMODE(self.request.stat().st_mode), 0o600)
         command = self.run.call_args.args[0]
         self.assertIn("--property=StandardInput=null", command)
         self.assertIn("--on-active=5s", command)
         self.completion.complete(old, 123, "456")
         self.service.assert_not_called()
+        self.assertEqual(self.receipt(old)["status"], "superseded")
         self.completion.complete(current, 123, "456")
         self.service.assert_called_once_with("human", 1000, "restart", "t3code")
         self.ready.assert_called_once_with("human", 1000, "127.0.0.1", 3773, "/home/human")
+        receipt = self.receipt(current)
+        self.assertEqual(receipt["status"], "ready")
+        self.assertFalse(receipt["provider_turn_verified"])
+        self.assertIsNone(receipt["issue"])
 
     def test_unfinished_setup_prevents_restart_and_service_failure_propagates(self):
         request = self.queue()
@@ -815,11 +826,42 @@ class DebianT3CompletionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Unfinished setup"):
             self.completion.complete(request, 123, "456")
         self.service.assert_not_called()
+        self.assertEqual(self.receipt(request)["issue"], "setup_unfinished")
         store.complete(record.operation_id)
         self.service.return_value.returncode = 1
         with self.assertRaisesRegex(RuntimeError, "start/reload failed"):
             self.completion.complete(request, 123, "456")
         self.ready.assert_not_called()
+        self.assertEqual(self.receipt(request)["issue"], "restart_failed")
+
+    def test_readiness_failure_retains_a_safe_code_without_application_output(self):
+        request = self.queue()
+        self.ready.side_effect = RuntimeError("fixture-secret from provider log")
+        with self.assertRaisesRegex(self.completion.CompletionError, "readiness check failed"):
+            self.completion.complete(request, 123, "456")
+        receipt = self.receipt(request)
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["issue"], "readiness_failed")
+        self.assertNotIn("fixture-secret", json.dumps(receipt))
+
+    def test_dispatch_failure_is_recorded_and_invalid_identity_cannot_write(self):
+        self.run.return_value.returncode = 1
+        with self.assertRaisesRegex(RuntimeError, "Could not queue"):
+            self.queue()
+        request = json.loads(self.request.read_text())["id"]
+        self.assertEqual(self.receipt(request)["issue"], "dispatch_failed")
+        before = set(self.root.iterdir())
+        with self.assertRaises(ValueError):
+            self.completion.complete("../invalid", 123, "456")
+        self.assertEqual(set(self.root.iterdir()), before)
+
+    def test_dispatch_timeout_does_not_claim_the_worker_failed_to_start(self):
+        self.run.side_effect = subprocess.TimeoutExpired("systemd-run", 30)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.queue()
+        request = json.loads(self.request.read_text())["id"]
+        self.assertEqual(self.receipt(request)["status"], "dispatch_uncertain")
+        self.service.assert_not_called()
 
     def test_completion_accepts_configured_ipv4_and_ipv6_wildcard_listeners(self):
         for host in ("0.0.0.0", "::", "::1", "localhost"):

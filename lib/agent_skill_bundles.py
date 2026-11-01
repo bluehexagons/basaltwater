@@ -90,8 +90,11 @@ def _digest(content: bytes) -> str:
 
 
 def skill_resources_ready(directory: Path, uid: int) -> bool:
-    """Check recorded bundle resources while accepting older entrypoint-only skills."""
+    """Check resource integrity and completeness against known shipped bundles."""
     try:
+        inventory = directory / _INVENTORY
+        if inventory.exists() and inventory.stat().st_mode & 0o022:
+            return False
         recorded, complete = _inventory(directory, uid)
         if not complete:
             return False
@@ -100,6 +103,15 @@ def skill_resources_ready(directory: Path, uid: int) -> bool:
             content = _read(path, uid)
             if content is None or _digest(content) != digest or path.stat().st_mode & 0o022:
                 return False
+        source = Path(__file__).resolve().parents[1] / "common/agent_skills" / directory.name
+        if source.is_dir():
+            # Legacy inventories establish no supporting-file coverage. Check
+            # known source paths too, without equating completeness with freshness
+            # or overwriting personal edits. The catalog reports those separately.
+            for name in _source_bundle(source):
+                path = directory / name
+                if _read(path, uid) is None or path.stat().st_mode & 0o022:
+                    return False
         return True
     except (OSError, ValueError, RuntimeError):
         return False

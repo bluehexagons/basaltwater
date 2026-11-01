@@ -72,8 +72,9 @@ savings justify handoff and integration. For broad audits, split independent
 file groups into bounded read-only reviews; reconcile findings before edits.
 Keep coupled changes under one owner.
 
-In T3 sessions, use [project actions and visual replies](references/t3-workflows.md)
-when connecting native project commands to T3 or presenting an interactive result.
+In T3 sessions, use [environment checks, project actions and visual replies](references/t3-workflows.md)
+when diagnosing connection/account mismatches, connecting native project commands
+to T3 or presenting an interactive result.
 Use the live tools; installing T3 does not expose them to independent agents.
 
 ## Wait for jobs to finish

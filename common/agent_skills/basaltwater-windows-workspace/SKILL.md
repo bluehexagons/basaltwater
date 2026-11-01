@@ -132,6 +132,8 @@ T3 owns worktrees it creates. Native Windows and WSL providers have separate
 homes, settings, and skills; choose the local Windows connection for these projects.
 
 T3 browser and orchestration tools exist only when exposed to the active session.
+For connection/account, loaded-skill or cross-platform command mismatches, use
+the shared [execution-environment checks](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#establish-the-execution-environment).
 For stable 0.1.6 side chats, project pin/archive, local commit review, and optional
 1Password sources, read the shared [client workflows](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-project-development/references/t3-workflows.md#shared-016-client-workflows).
 Use `basaltw refresh` to deliver updated skills and available WinGet T3 updates;

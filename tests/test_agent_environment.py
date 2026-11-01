@@ -26,6 +26,7 @@ class TestAgentEnvironment(unittest.TestCase):
             agent_workspace, "_git", return_value=subprocess.CompletedProcess([], 0, "", ""),
         ))
         self.cachyos = self.enterContext(patch.object(agent_environment, "is_cachyos", return_value=False))
+        self.kernel = self.enterContext(patch.object(agent_environment.platform, "release", return_value="6.12-debian"))
         self.provenance = self.enterContext(patch.object(agent_environment, "inspect_installation_provenance",
                                                         return_value=inspect_installation_provenance(self.directory)))
 
@@ -126,6 +127,28 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertIn("preview_status and preview_open", output.getvalue())
         self.assertIn("Legacy browser artifacts:", output.getvalue())
         self.assertNotIn("Browser evidence:", output.getvalue())
+
+    def test_wsl_does_not_advertise_xrdp_or_debian_management(self) -> None:
+        self.kernel.return_value = "6.6.87.2-microsoft-standard-WSL2"
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/usr/bin/" + name),
+            patch.object(agent_environment.subprocess, "run") as execute,
+        ):
+            result = agent_environment.inspect_environment(self.directory)
+        self.assertEqual(result["host_profile"], "ubuntu-wsl")
+        self.assertIsNone(result["health_command"])
+        self.assertIsNone(result["development"])
+        self.assertIsNone(result["publishing"]["management_command"])
+        self.assertEqual(result["publishing"]["readiness"], "outside-host-role")
+        for application in result["desktop_applications"].values():
+            self.assertEqual(application["launch_argv"], [application["executable"]])
+            self.assertEqual(application["desktop_backend"], "wslg-unverified")
+            self.assertIsNone(application["automation_command"])
+            self.assertNotIn("basaltw desktop", " ".join(application["instructions"]))
+        execute.assert_not_called()
 
     def test_desktop_discovery_provides_workflows_without_claiming_readiness(self) -> None:
         skill = Path(self.directory, ".agents/skills/basaltwater-desktop/SKILL.md")

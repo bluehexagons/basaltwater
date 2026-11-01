@@ -4,6 +4,36 @@ Use these integrations when the active T3 session exposes the relevant tools.
 Follow its injected instructions and live schemas. This reference follows
 [stable 0.1.6](https://github.com/pingdotgg/t3code/releases/tag/v0.1.6).
 
+## Establish the execution environment
+
+The client window's operating system does not determine where commands run.
+Before diagnosing tools, skills or paths, identify the selected connection,
+provider account, shell and repository from the active session. Compare the
+terminal's current directory and Git checkout with T3's bound workspace.
+A shell `cd` changes that shell only; it does not rebind the thread or its tools.
+
+| Provider environment | Host integration |
+| --- | --- |
+| Debian | Per-user `t3code.service`; use `basaltwater-t3code` for service operations. |
+| CachyOS desktop | Packaged `t3code-bin` and desktop account; use `basaltwater-cachyos-t3code`. |
+| CachyOS web | `basaltwater-cachyos-t3.service`, with separate data from the desktop app. |
+| Native Windows | Local Windows connection, PowerShell and Windows paths; use `basaltwater-windows-workspace`. |
+| Ubuntu WSL | Selected distribution's Linux account, paths, provider and skills; use `basaltwater-wsl-workspace`. Windows desktop updates and Ubuntu skill updates are separate. |
+
+Installed bundle completeness, installed revision, session-loaded guidance,
+provider authentication and a working project are separate observations.
+Use the platform's skill inventory for files, and the active agent's skill list
+for access; neither establishes that a long-running thread loaded a new revision.
+After setup finishes, use T3's **Restart agent session** for an authorized thread
+reload when needed. Do not restart a whole server to refresh one thread.
+
+For an authorized setup/refresh, retain its job handle, private log and final
+completion status. Dispatch acceptance, HTTP readiness or a desktop process does
+not verify a provider turn. After completion, check the intended connection with
+a harmless provider turn and terminal command, then run relevant project checks.
+Do not repeat a refresh while its completion is pending or uncertain. Preserve
+the current job's evidence and inspect it through the platform's operations guide.
+
 ## Shared 0.1.6 client workflows
 
 These workflows apply to compatible web/desktop clients on Debian, CachyOS,
@@ -44,6 +74,9 @@ commands instead of maintaining a second build system. Read existing actions
 with `t3_project_read`; inspect environment preferences with
 `t3_environment_read` before changing settings. A saved action or accepted
 launch is not evidence that its command finished successfully.
+Actions run in the selected environment's shell. Use its project-documented
+commands and interpreter; a Windows action must not assume GNU Make or Bash,
+and an Ubuntu action must not assume Windows tools, paths or credentials.
 
 Repositories can share actions in `t3.json`, imported through the project's
 Actions settings. Preserve existing project overrides: for file-backed settings,

@@ -18,6 +18,7 @@ from unittest.mock import patch
 from common import browser_automation_steps
 from lib import agent_cli
 from lib.arg_parser import add_setup_arguments
+from lib.agent_skill_bundles import install_skill_bundle
 from lib.config import SetupConfig
 from lib.validation import validate_browser_automation_settings
 from plugins.common import extend_agent_steps
@@ -766,12 +767,9 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                 / "skills"
                 / "basaltwater-playwright-testing"
             )
-            skill_dir.mkdir(parents=True)
-            (skill_dir / "SKILL.md").write_text(
-                "metadata:\n  managed-by: basaltwater\n",
-                encoding="utf-8",
-            )
-            os.chmod(skill_dir / "SKILL.md", 0o644)
+            skill_dir.parent.mkdir(parents=True)
+            source = Path(__file__).resolve().parents[1] / "common/agent_skills/basaltwater-playwright-testing"
+            install_skill_bundle(source, skill_dir, os.getuid(), os.getgid())
 
             def tool_path(tool: str, _home: str) -> str | None:
                 return "/tmp/codex" if tool == "codex" else None

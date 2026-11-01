@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shlex
@@ -376,20 +377,30 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         name: {**recipe, "missing_tools": [tool for tool in recipe["requires"] if not tools[tool]]}
         for name, recipe in project["recipes"].items()
     }
-    native_desktop = is_cachyos()
-    launch_prefix = "" if native_desktop else "basaltw desktop exec -- "
+    wsl = any(marker in platform.release().lower() for marker in ("microsoft", "wsl"))
+    native_desktop = is_cachyos() and not wsl
+    launch_prefix = "" if native_desktop or wsl else "basaltw desktop exec -- "
     desktop = {
         name: {**guidance,
                "instructions": [instruction.format(launch_prefix=launch_prefix, executable=tools[name])
                                 for instruction in guidance.get("instructions", [])],
-               "launch_argv": ([tools[name]] if native_desktop else ["basaltw", "desktop", "exec", "--", tools[name]]),
-               "desktop_backend": "native-session" if native_desktop else "shared-xrdp",
-               "automation_command": "basaltw desktop --native" if native_desktop else "basaltw desktop",
+               "launch_argv": ([tools[name]] if native_desktop or wsl else ["basaltw", "desktop", "exec", "--", tools[name]]),
+               "desktop_backend": "wslg-unverified" if wsl else "native-session" if native_desktop else "shared-xrdp",
+               "automation_command": None if wsl else "basaltw desktop --native" if native_desktop else "basaltw desktop",
                "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
         for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
     }
     skills = inspect_skill_catalogs(home)
-    desktop_names = (("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
+    if wsl:
+        for application in desktop.values():
+            application["instructions"] = [
+                "Run the project's Linux application command in the intended WSLg session, "
+                "preserving its profiles, dependencies and render settings. WSLg readiness is unverified.",
+                "Use project scripts for isolated exports/tests and verify saved artifacts. "
+                "Linux GUI results do not qualify native Windows behavior or GPU performance.",
+            ]
+    desktop_names = (("basaltwater-wsl-workspace",) if wsl else
+                     ("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
                      if native_desktop else ("basaltwater-desktop",))
     desktop_skills = [
         entry["path"] for catalog in skills["catalogs"] for name in desktop_names
@@ -414,7 +425,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         "schema_version": 1,
         "basaltwater": installation,
         "installation_context": context,
-        "host_profile": "cachyos-workstation" if native_desktop else "debian-managed",
+        "host_profile": "ubuntu-wsl" if wsl else "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
         "skills": skills,
         "browser": {
@@ -430,9 +441,12 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         },
         "publishing": {
             "tools": {name: tools[name] for name in ("butler", "steamcmd")},
-            "readiness": "outside-host-role" if native_desktop else "unverified",
-            "management_command": None if native_desktop else "basaltw publish status --json",
-            "guide": PUBLISHING_GUIDE, "instructions": _publishing_instructions(native_desktop),
+            "readiness": "outside-host-role" if native_desktop or wsl else "unverified",
+            "management_command": None if native_desktop or wsl else "basaltw publish status --json",
+            "guide": PUBLISHING_GUIDE,
+            "instructions": ["WSL tool presence does not provision a publishing host. "
+                             "Use the designated build/publishing environment and project release procedure."]
+                            if wsl else _publishing_instructions(native_desktop),
         },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
@@ -454,7 +468,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False,
         "deployments": mappings,
         "current_deployment": mappings.get(state["branch"]),
         "undeclared_branches": [branch for branch in ("dev", "staging") if branch not in mappings],
-        "health_command": "basaltw local cachyos-doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
+        "health_command": None if wsl else "basaltw local cachyos-doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
     }
 
 
@@ -594,5 +608,6 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         print(f"Deploy: {branch} -> {mapping['environment']}" + (f" ({details})" if details else ""))
     if result["undeclared_branches"]:
         print("Deployment mapping unknown: " + ", ".join(result["undeclared_branches"]) + f"; declare in {PROJECT_FILE}")
-    print(f"Health: {result['health_command']} (tool presence is not a health or authentication check)")
+    health = result['health_command'] or 'platform host diagnostics not provisioned'
+    print(f"Health: {health} (tool presence is not a health or authentication check)")
     return 0

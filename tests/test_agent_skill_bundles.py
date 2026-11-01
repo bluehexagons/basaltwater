@@ -344,6 +344,13 @@ class AgentSkillBundleTests(unittest.TestCase):
             self.install()
         self.assertEqual(personal.read_bytes(), b"personal edits")
 
+    def test_writable_inventory_cannot_hide_missing_resources(self) -> None:
+        self.resource("references/update.md", b"managed")
+        self.install()
+        inventory = self.destination / ".basaltwater-files.json"
+        inventory.chmod(0o666)
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+
     def test_stale_resources_removed_but_edits_and_personal_files_preserved(self) -> None:
         obsolete = self.resource("references/old/update.md", b"old")
         edited = self.resource("references/edited.md", b"original")
