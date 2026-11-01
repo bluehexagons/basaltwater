@@ -10,13 +10,21 @@ T3 desktop/Codex session after manual recovery and read-only backend discovery;
 the corrected automatic relaunch still needs a live run. See the
 [rerun summary](evidence.md#owner-reported-stack-setup-rerun) and
 [T3 recovery record](evidence.md#cachyos-t3-desktop-recovery) for scope and limits.
+Native Windows checks on 2026-11-01 additionally confirm installed diagnostics,
+skill freshness and real supervised task behavior at `5f549204`; see the
+[Windows evidence](evidence.md#native-windows-workstation-and-tasks). Historical
+project builds/exports retain their original dates and do not qualify fresh setup.
+Native CachyOS SDL/OpenGL application checks on the same date also qualify
+selected Intel Arc Wayland rendering, scripted UI interaction, software capture
+comparisons and display-wake recovery; see the
+[application evidence](evidence.md#cachyos-native-game-and-capture-workflow).
 
 | At a glance | Status |
 | --- | --- |
 | Owner-reported stack setup rerun | 🟡 **Partial** — basic setup success reported; selected options are not individual feature passes |
 | [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
-| [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3 desktop/Codex session labbed after manual recovery; corrected refresh relaunch awaits a live check |
-| [Windows and WSL](windows.md) | 🟡 **Partial** — owner-reported basic non-WSL setup with Godot/T3 Code plus earlier native checks; WSL integration remains open |
+| [CachyOS](cachyos.md) | 🟡 **Partial** overall; 🟢 selected T3/Codex, Godot and SDL/OpenGL application workflows and display-wake recovery labbed; corrected T3 refresh relaunch awaits a live check |
+| [Windows and WSL](windows.md) | 🟡 **Partial** overall; 🟢 selected installed diagnostics/tasks, T3/Codex session and historical native builds/exports labbed; fresh installation, physical QA and WSL integration remain open |
 | Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
@@ -64,6 +72,9 @@ work. Historical failures, including LXC suspend, are not passes.
 On 2026-11-01, the documentation/privacy cleanup passed 33 focused agent and
 documentation tests, followed by 868 tests across affected Python modules.
 These runs qualified those changes only; native Windows tests were not run.
+The later Windows catalog pass separately ran native validation and installed
+component/workflow checks; its [dated evidence](evidence.md#native-windows-workstation-and-tasks)
+does not extend those earlier Python runs to Windows.
 Keep per-run revisions, exact commands and private evidence outside this page.
 
 Earlier full validation of the Proxmox fixes passed 9,243 tests with six skips

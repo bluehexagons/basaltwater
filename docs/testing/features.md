@@ -25,10 +25,10 @@ Unlisted combinations have no availability claim here.
 | --- | --- | --- |
 | [Debian and Proxmox](debian.md) | 🟢 Selected workflows labbed; 🟡 owner-reported basic setup reruns; 🔴 LXC suspend failed | Guest services, host operations, exact gaps and recovery checks |
 | [CachyOS](cachyos.md) | 🟡 Partial profile; 🟢 selected T3 desktop/Codex session labbed after manual recovery; fixed refresh relaunch not yet labbed | KDE workstation, T3, graphics and desktop boundaries |
-| [Windows and WSL](windows.md) | 🟡 Owner-reported basic non-WSL setup with Godot/T3 Code and earlier native checks; WSL end-to-end unqualified | Installer, task, streaming, runner and WSL boundaries |
+| [Windows and WSL](windows.md) | 🟡 Partial profile; 🟢 selected installed diagnostics/tasks, T3/Codex session and historical native builds/exports labbed; WSL end-to-end unqualified | Fresh installer/recovery, physical QA, streaming, runner and WSL boundaries |
 
 These are historical observations, not a percentage of features tested or a
 statement about a later commit. The [release matrix](../release-qualification.md)
 owns exact-candidate qualification.
 See the [dated evidence summaries](evidence.md) for the owner-reported rerun,
-Proxmox repair, storage activation and installed-versus-local Shares & Data boundaries.
+Proxmox repair, storage activation, native Windows checks and installed-versus-local Shares & Data boundaries.

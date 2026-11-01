@@ -53,10 +53,19 @@ Use Animator's documented Electron launch for native dialogs and live sync;
 its browser mode is another project-owned option. For Blender sources, use the
 version and guarded export/check commands declared by the asset checkout.
 
+Game packaging and package validation currently belong to CI and Debian.
+CachyOS development still runs the relevant source, native, rendering and
+desktop checks, including the normal tooling tests. Do not run local packaging,
+archive, package-smoke or package ABI checks there. This also applies to
+runtime-layout and packaging-code changes. Test a package on CachyOS only when
+explicitly instructed to test a CI-built artifact; use that artifact rather
+than rebuilding it locally. Follow the game's
+[packaging host policy](https://github.com/bluehexagons/antistatic/blob/main/docs/development/testing.md#packaging-hosts).
+
 ## Capture backends
 
 Use the game's
-[environment guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development-environments.md)
+[development setup](https://github.com/bluehexagons/antistatic/blob/main/docs/development/setup.md#host-boundaries)
 for isolated displays and lobby test preparation. Its screenshot harness owns
 SDL driver selection and render-worker inheritance. For a hardware capture
 larger than the desktop, the Linux renderer supports:
@@ -73,10 +82,37 @@ checks found that an oversized native Wayland PNG could have the requested
 dimensions while containing clipped/black regions; an offscreen capture avoided
 that presentation limit. This is a project workaround, not a guarantee for
 all drivers. See the game's
-[headless capture guide](https://github.com/bluehexagons/antistatic/blob/main/docs/headless-mode.md)
+[headless capture guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development/captures.md)
 for current limitations. A complete capture does not qualify desktop interaction,
 HDR, display scaling or end-to-end frame rate.
 
 Keep detailed captures and run evidence private. Project recipes own image
 assertions; the general [visual check command](../../workstations/visual-comparisons.md#run-a-project-check)
 can retain their settings, logs and results without copying the harness here.
+
+For before/after effects, use the deterministic showcase fixtures and pin the
+same frame, camera, graphics, data state and actual renderer. Some effect
+batch manifests have omitted resolved graphics and GL identity even though
+individual `.capture.json` records retained them. Keep a strict-comparison
+refusal in the evidence. Until the project batch writer carries that metadata,
+compare the original per-image records before interpreting pixel equality;
+missing runtime evidence still requires a new capture. See the
+[general comparison guidance](../../workstations/visual-comparisons.md#compare-existing-captures).
+
+## Scripted desktop checks
+
+Use the game's [agent-play protocol](https://github.com/bluehexagons/antistatic/blob/main/docs/development/agent-play.md)
+and the [native task workflow](../../workstations/cachyos-development.md) in the
+existing approved KDE session. Establish the intended controller roster and
+scene readiness, then assert observable menu/controller state after each action.
+Presentation countdowns and effects can need rendered frames between bounded
+simulation steps; one long simulation-only step does not establish readiness.
+Keep SDL processing/rendering until the parent has captured the monitor, then
+quit the owned process and wait for the same task's final status. Give each run
+fresh transcript, screenshot and capture-handshake paths.
+
+For black monitor captures, inspect native control status, use the documented
+[sleeping-display recovery](../../workstations/cachyos-desktop.md#agent-permission-and-portal-access)
+while enabled, and inspect a fresh capture before input. Project-protocol input
+and application screenshots do not establish physical gamepad, audible output,
+display pacing or portal keyboard/pointer delivery.

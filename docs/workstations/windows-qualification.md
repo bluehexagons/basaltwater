@@ -142,3 +142,9 @@ Physical display/GPU, streaming, audible audio/input, lock/reconnect during acti
 work, fresh installation and live installer/reboot interruption remain separate
 qualification. Host reconciliation and an operator-reported reboot do not
 establish these cases.
+
+Current scoped results and next checks are maintained in the
+[Windows testing catalog](../testing/windows.md) with
+[dated evidence summaries](../testing/evidence.md#native-windows-workstation-and-tasks).
+Keep new raw run records private and update those catalog entries without
+turning this procedure into a machine inventory.

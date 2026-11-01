@@ -61,6 +61,18 @@ try {
     Initialize-NativeDesktopTypes
     $dto = [Basaltwater.Desktop.Element]([pscustomobject]@{ reference = 'r'; window = 123L; pid = 42; path = @(0,1); identity = 'i'; runtime = 'r'; name = 'n'; role = 'ControlType.Edit' })
     Assert-True ($dto.path.Length -eq 2 -and $dto.window -eq 123) 'Worker cannot deserialize UIA DTO'
+    # Exercise the native outcome rule without calling Win32: SW_RESTORE can
+    # resume a minimized window maximized, but cannot leave it minimized.
+    $method = [Basaltwater.Desktop.Native].GetMethod('WindowOutcomeMatches', [Reflection.BindingFlags]'Static,NonPublic')
+    $outcome = $method.CreateDelegate([Func[string,Basaltwater.Desktop.Window,Basaltwater.Desktop.Window,int,int,int,int,bool]])
+    $minimized = [Basaltwater.Desktop.Window]@{ minimized = $true }
+    $maximized = [Basaltwater.Desktop.Window]@{ maximized = $true }
+    $normal = New-Object Basaltwater.Desktop.Window
+    Assert-True ($outcome.Invoke('restore',$minimized,$maximized,0,0,0,0)) 'Restore rejected the previous maximized presentation'
+    Assert-True ($outcome.Invoke('restore',$minimized,$normal,0,0,0,0)) 'Restore rejected the previous normal presentation'
+    Assert-True (-not $outcome.Invoke('restore',$minimized,$minimized,0,0,0,0)) 'Restore accepted a still-minimized window'
+    Assert-True (-not $outcome.Invoke('restore',$maximized,$maximized,0,0,0,0)) 'Restore accepted an unchanged non-minimized maximized window'
+    Assert-True ($outcome.Invoke('restore',$maximized,$normal,0,0,0,0)) 'Restore did not accept normal size after maximize'
     # Exercise actual worker transport/timeout using code with NO native APIs.
     $originalSource = $script:NativeDesktopSource
     $fixtureSource = Join-Path $temporary "worker's unicode $([char]0x03bb)"

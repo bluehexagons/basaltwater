@@ -98,6 +98,10 @@ to that window; multi-monitor origins and DPI scaling are handled by the worker.
 The first input slice supports individual keys, Unicode text and clicks, without
 key chords or held gamepad/key input. It does not bypass UAC or a locked desktop.
 
+Restoring a minimized window resumes its previous presentation, which can be
+maximized. Restoring an already maximized, non-minimized window returns it to
+normal size. Both outcomes are verified against the state before the action.
+
 One controller operates at a time. Human control state persists for this account:
 
 ```powershell
