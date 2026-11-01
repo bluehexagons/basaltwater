@@ -15,7 +15,14 @@ refreshing T3. Only after all steps, saved state and notifications finish does
 desktop setup/refresh queue a detached user worker. This keeps local and remote
 T3 terminals available for package-review and sudo prompts until completion.
 The worker disables the managed web service, then gracefully sends SIGTERM to a running same-user `t3code-bin`,
-waits for exit, and relaunches the packaged app with its original arguments.
+waits for the app and its packaged child processes (including the embedded
+server) to exit, and relaunches the packaged app with its original arguments.
+The worker captures stable child process handles before shutdown so it still
+waits if the backend outlives its parent. One 60-second deadline covers the
+whole shutdown; a timeout leaves relaunch unapplied and reports the failure in
+the worker journal. It never deletes the T3 home ownership lock. This prevents
+an immediate reopen from failing with **This T3 home is unavailable** while
+the previous backend is still releasing the data directory.
 Readable app environment settings override the worker's inherited KDE user-manager
 environment. Electron can clear `/proc` environment data; the fallback retains
 display, runtime and session-bus settings rather than reopening without a display.

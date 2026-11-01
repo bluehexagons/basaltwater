@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import stat
 import subprocess
@@ -120,7 +121,8 @@ class DesktopRefreshTests(unittest.TestCase):
         self.pidfd = stack.enter_context(patch.object(refresh.os, "pidfd_open", side_effect=lambda pid: pid + 1000))
         self.close = stack.enter_context(patch.object(refresh.os, "close"))
 
-    def process(self, pid, arguments=(), environment=(), *, executable=None, started_seconds=1):
+    def process(self, pid, arguments=(), environment=(), *, executable=None, started_seconds=1,
+                parent_pid=0, children=()):
         path = self.proc / str(pid)
         path.mkdir()
         (path / "exe").symlink_to(executable or refresh.APP_EXECUTABLE)
@@ -129,7 +131,10 @@ class DesktopRefreshTests(unittest.TestCase):
                                                (refresh.APP_EXECUTABLE, *arguments)) + b"\0")
         (path / "environ").write_bytes(b"\0".join(os.fsencode(item) for item in environment) + b"\0")
         start_ticks = started_seconds * os.sysconf("SC_CLK_TCK")
-        (path / "stat").write_text(f"{pid} (T3 (desktop)) S " + "0 " * 18 + str(start_ticks) + "\n")
+        (path / "stat").write_text(f"{pid} (T3 (desktop)) S {parent_pid} " + "0 " * 17 + str(start_ticks) + "\n")
+        task = path / "task" / str(pid)
+        task.mkdir(parents=True)
+        (task / "children").write_text(" ".join(str(child) for child in children))
         return path
 
     def test_discovery_excludes_renderers_cli_hosts_and_other_executables(self):
@@ -169,11 +174,40 @@ class DesktopRefreshTests(unittest.TestCase):
                          {1101, 1102, 1103, 1104})
 
     def test_multiple_desktop_profiles_fail_before_shutdown_and_close_handles(self):
-        self.process(100)
+        self.process(100, children=(102,))
         self.process(101)
+        self.process(102, environment=("ELECTRON_RUN_AS_NODE=1",), parent_pid=100)
         with self.assertRaisesRegex(RuntimeError, "Multiple T3 desktops"):
             refresh._running_desktop(self.QUEUED_BEFORE_NS)
-        self.assertEqual({call.args[0] for call in self.close.call_args_list}, {1100, 1101})
+        self.assertEqual({call.args[0] for call in self.close.call_args_list}, {1100, 1101, 1102})
+
+    def test_discovery_keeps_packaged_child_handles_without_provider_processes(self):
+        self.process(100, children=(101, 102, 103, 104))
+        self.process(101, environment=("ELECTRON_RUN_AS_NODE=1",), parent_pid=100,
+                     executable=refresh.APP_EXECUTABLE + " (deleted)")
+        self.process(102, parent_pid=100, executable="/usr/bin/provider")
+        # The child-list snapshot can race an exit and PID reuse.
+        self.process(103, environment=("ELECTRON_RUN_AS_NODE=1",), parent_pid=999)
+        app = refresh._running_desktop(self.QUEUED_BEFORE_NS)
+        self.assertEqual(app.child_descriptors, [1101])
+        self.assertNotIn(102, [call.args[0] for call in self.pidfd.call_args_list])
+
+    def test_child_discovery_closes_handles_when_later_inspection_fails(self):
+        parent = self.process(100, children=(101, 102))
+        self.process(101, parent_pid=100)
+        self.process(102, parent_pid=100)
+        self.pidfd.side_effect = [1101, OSError("fixture failure")]
+        with self.assertRaises(OSError):
+            refresh._desktop_children(parent)
+        self.close.assert_called_once_with(1101)
+
+    def test_child_discovery_rechecks_identity_and_skips_sandboxed_children(self):
+        parent = self.process(100, children=(101, 102, 103))
+        for pid in (101, 102, 103):
+            self.process(pid, parent_pid=100)
+        with patch.object(refresh, "_is_app", side_effect=[True, False, PermissionError(), True, True]):
+            self.assertEqual(refresh._desktop_children(parent), [1103])
+        self.close.assert_called_once_with(1101)
 
     def test_unreadable_unrelated_process_does_not_block_discovery(self):
         self.process(100)
@@ -187,9 +221,7 @@ class DesktopRefreshTests(unittest.TestCase):
         self.assertEqual(app.descriptor, 1100)
         # The first worker exits the old process and execs T3 after both setups
         # queued their requests. The next serialized worker sees the new app.
-        for path in (self.proc / "100").iterdir():
-            path.unlink()
-        (self.proc / "100").rmdir()
+        shutil.rmtree(self.proc / "100")
         self.process(200, started_seconds=12)
         self.assertFalse(refresh._running_desktop(self.QUEUED_BEFORE_NS + 1_000_000_000).refresh_needed)
         # A later setup can still refresh the newly running app.
@@ -267,6 +299,54 @@ class DesktopRefreshTests(unittest.TestCase):
                                              }.items() if key != "ELECTRON_RUN_AS_NODE"})
         self.chdir.assert_called_once_with(app.directory)
         self.close.assert_called_once_with(app.descriptor)
+
+    def test_restart_waits_for_backend_after_desktop_exits(self):
+        app = self.runtime_mocks()
+        app.child_descriptors = [1101, 1102]
+        events = []
+
+        def poll(timeout):
+            if timeout == 0:
+                return []
+            exited = 1100 + len(events)
+            events.append(exited)
+            self.execute.assert_not_called()
+            return [(exited, refresh.select.POLLIN)]
+
+        self.poller.poll.side_effect = poll
+        self.execute.side_effect = lambda *args: events.append("launch")
+        self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
+        self.assertEqual(events, [1100, 1101, 1102, "launch"])
+        self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
+        self.assertEqual([call.args[0] for call in self.close.call_args_list], [1100, 1101, 1102])
+
+    def test_backend_timeout_uses_one_deadline_and_never_reopens(self):
+        app = self.runtime_mocks(polls=[[], [(1100, 1)], []])
+        app.child_descriptors = [1101]
+        with patch.object(refresh.time, "monotonic", side_effect=[100, 100, 155]), \
+                self.assertRaisesRegex(RuntimeError, "backend did not quit"):
+            refresh.restart_running_desktop(self.QUEUED_BEFORE_NS)
+        self.assertEqual([call.args[0] for call in self.poller.poll.call_args_list], [0, 60_000, 5_000])
+        self.terminate.assert_called_once_with(app.descriptor, signal.SIGTERM)
+        self.execute.assert_not_called()
+        self.record_relaunch.assert_not_called()
+        self.assertEqual([call.args[0] for call in self.close.call_args_list], [1100, 1101])
+
+    def test_backend_can_exit_before_desktop_and_in_same_poll(self):
+        app = self.runtime_mocks()
+        app.child_descriptors = [1101]
+        for exits in ([[(1101, 1)], [(1100, 1)]], [[(1100, 1), (1101, 1)]]):
+            with self.subTest(exits=exits):
+                self.poller.poll.side_effect = [[], *exits]
+                self.assertTrue(refresh.restart_running_desktop(self.QUEUED_BEFORE_NS))
+
+    def test_invalid_child_handle_does_not_count_as_backend_shutdown(self):
+        app = self.runtime_mocks(polls=[[], [(1100, 1), (1101, refresh.select.POLLNVAL)]])
+        app.child_descriptors = [1101]
+        with self.assertRaisesRegex(RuntimeError, "Cannot confirm T3 shutdown"):
+            refresh.restart_running_desktop(self.QUEUED_BEFORE_NS)
+        self.execute.assert_not_called()
+        self.assertEqual([call.args[0] for call in self.close.call_args_list], [1100, 1101])
 
     def test_receipt_failure_does_not_leave_the_closed_app_stopped(self):
         self.runtime_mocks()

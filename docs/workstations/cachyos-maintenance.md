@@ -274,8 +274,18 @@ graphical session and user-manager environment are available; otherwise its
 journal reports that launch is deferred until KDE login. Inspect the printed
 worker unit with `journalctl --user -u UNIT` on failure, then verify a provider
 turn and terminal; queue acceptance alone does not establish readiness.
-The worker excludes Electron renderer, GPU, utility and zygote children,
-including Chromium's flattened process titles. Older workers could mistake
+Before closing the app, the worker captures stable handles to its packaged
+children, including the embedded server. It waits for both the desktop and
+those children to exit within one 60-second deadline before reopening. The
+backend can outlive the desktop window while releasing its data-directory
+lock; reopening too early causes **This T3 home is unavailable**. On timeout,
+the worker reports failure without force-killing processes or launching a
+duplicate. Inspect its journal and allow shutdown to finish before opening
+T3 manually. Never delete `server-owner.sqlite` to bypass a running server's
+ownership lock.
+When identifying desktop instances, the worker excludes Electron renderer,
+GPU, utility and zygote children, including Chromium's flattened process titles.
+Older workers could mistake
 these for desktop instances and fail with `T3 desktop refresh failed: ValueError`
 before restarting the app; upgrade Basaltwater and repeat refresh to repair this.
 The entry's `TryExec` prevents login launch attempts after package removal.

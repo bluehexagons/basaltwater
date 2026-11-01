@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import fcntl
+import math
 import os
 from pathlib import Path
 import re
@@ -35,6 +36,7 @@ class RunningDesktop:
     environment: dict[str, str]
     directory: str
     refresh_needed: bool = True
+    child_descriptors: list[int] = field(default_factory=list)
 
 
 def _process_data(path: Path) -> list[str]:
@@ -117,6 +119,38 @@ def _exec_desktop(arguments: list[str], environment: dict[str, str]) -> None:
     os.execve(APP_EXECUTABLE, [APP_EXECUTABLE, *arguments], environment)
 
 
+def _desktop_children(path: Path) -> list[int]:
+    """Keep handles to packaged children before shutdown can orphan them."""
+    descriptors: list[int] = []
+    try:
+        children = _process_data(path / "task" / path.name / "children")
+        for pid in " ".join(children).split():
+            child = PROC / pid
+            descriptor = None
+            try:
+                if not _is_app(child):
+                    continue
+                descriptor = os.pidfd_open(int(pid))
+                # Recheck executable and parent after acquiring the stable
+                # handle. Never wait on an unrelated reused PID or provider.
+                fields = (child / "stat").read_bytes().rpartition(b") ")[2].split()
+                if _is_app(child) and int(fields[1]) == int(path.name):
+                    descriptors.append(descriptor)
+                    descriptor = None
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                # Sandboxed Chromium children may be inaccessible. The
+                # embedded server is an ordinary same-user child process.
+                continue
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+        return descriptors
+    except BaseException:
+        for descriptor in descriptors:
+            os.close(descriptor)
+        raise
+
+
 def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
     """Find only this user's Electron main process, excluding provider CLI hosts."""
     candidates: list[RunningDesktop] = []
@@ -158,7 +192,8 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
                     refresh_needed = False
                 directory = os.readlink(path / "cwd")
                 validate_filesystem_path(directory, must_exist=True)
-                candidates.append(RunningDesktop(descriptor, arguments, environment, directory, refresh_needed))
+                children = _desktop_children(path) if refresh_needed else []
+                candidates.append(RunningDesktop(descriptor, arguments, environment, directory, refresh_needed, children))
                 descriptor = None
             except (FileNotFoundError, ProcessLookupError):
                 continue
@@ -170,7 +205,8 @@ def _running_desktop(queued_before_ns: int) -> RunningDesktop | None:
         return candidates.pop() if candidates else None
     finally:
         for app in candidates:
-            os.close(app.descriptor)
+            for descriptor in [app.descriptor, *app.child_descriptors]:
+                os.close(descriptor)
 
 
 def _validate_executable() -> None:
@@ -228,18 +264,34 @@ def restart_running_desktop(queued_before_ns: int, home: Path | None = None) -> 
         environment = _launch_environment(app.environment)
         # Resolve a vanished working directory before disturbing the running app.
         os.chdir(app.directory)
+        for descriptor in app.child_descriptors:
+            poller.register(descriptor, select.POLLIN)
         try:
             signal.pidfd_send_signal(app.descriptor, signal.SIGTERM)
         except ProcessLookupError:
             return False
-        if not poller.poll(60_000):
-            raise RuntimeError("T3 desktop did not quit within 60 seconds; no forced kill or duplicate launch")
+        # Electron's main process can exit before its embedded server releases
+        # the T3 home ownership lock. Keep waiting on the captured child handles
+        # even after reparenting; reopening on main-process exit alone races it.
+        pending = {app.descriptor, *app.child_descriptors}
+        deadline = time.monotonic() + 60
+        while pending:
+            remaining_ms = math.ceil((deadline - time.monotonic()) * 1000)
+            events = poller.poll(max(0, remaining_ms)) if remaining_ms > 0 else []
+            if not events:
+                raise RuntimeError("T3 desktop or its backend did not quit within 60 seconds; no forced kill or duplicate launch")
+            for descriptor, event in events:
+                if not event & (select.POLLIN | select.POLLHUP):
+                    raise RuntimeError("Cannot confirm T3 shutdown; no forced kill or duplicate launch")
+                poller.unregister(descriptor)
+                pending.remove(descriptor)
         # Credentials/environment stay in memory. The worker becomes the app,
         # allowing systemd to track it without killing it when a helper exits.
         _exec_desktop(app.arguments[1:], environment)
         return True  # Reached only by tests that mock execve.
     finally:
-        os.close(app.descriptor)
+        for descriptor in [app.descriptor, *app.child_descriptors]:
+            os.close(descriptor)
 
 
 def main(queued_before_ns: int, mode: str, home: Path, config_root: Path, request: str) -> int:
