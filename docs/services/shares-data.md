@@ -4,9 +4,17 @@ Open **Administration → Shares & Data** on the machine you want to manage.
 
 | View | Use it to |
 | --- | --- |
+| **Overview** | Summarize configured shares, mirrors, integrity findings and paused schedules; start a task from a template |
 | **Samba shares** | Publish shares, choose their users, and manage Samba logins and passwords |
 | **Backups & sync** | Configure recurring rsync mirrors, pause schedules and run individual routines |
 | **Scrubs & findings** | Browse integrity findings, recover individual files, inspect task health and configure scrubs |
+
+The main link opens **Overview**. Samba is hidden when the exporter confirms
+`smbd` is absent. Empty mirror and scrub views are hidden from navigation when
+there are no declarations, reports or retained activity. Setup templates remain
+available to create the first task. Unavailable inventory is shown as unknown,
+rather than being treated as empty. Older exporters use their saved Samba
+selection until updated.
 
 **On this page** jumps between sections. The scrub view puts findings first;
 selecting an editor brings that form forward. **Activity & approvals** groups
@@ -98,6 +106,24 @@ Creation/removal can leave partial state if interrupted; inspect live identities
 Samba and saved setup using the transaction recovery guide.
 
 ## Manage backup, sync and scrub routines
+
+Start with **Overview → Set up a data task** for common defaults:
+
+| Template | Interval | Parity |
+| --- | --- | --- |
+| Daily sync | Daily mirror | — |
+| Weekly backup mirror | Weekly mirror, without retained versions | — |
+| Weekly integrity check | Weekly full scan; daily parity maintenance when active | 10% |
+| Monthly archive check | Monthly full scan; daily parity maintenance when active | 10% |
+
+Each template opens an editable form with blank directories and a **paused**
+schedule. Set the paths, adjust the defaults, review and approve the routine,
+then resume it when ready. Choosing a template only fills a form; it creates no
+request and starts no host operation. Templates do not change existing routines
+or overwrite values retained after an input error. The browser needs the same
+approval service and complete export as other routine changes. On hosts without
+browser management, use the controller setup options in the
+[storage operations guide](../storage/storage-operations.md).
 
 Choose **Add backup mirror**, **Add sync mirror** or **Add scrub task**.
 Enter absolute directories, an interval and schedule state; scrubs also take

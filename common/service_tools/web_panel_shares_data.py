@@ -18,7 +18,7 @@ from common.service_tools import web_panel_routine_actions as routines
 from lib.samba_accounts import HEX_REVISION
 from lib.validation import validate_samba_share_name
 
-VIEWS = {"shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
+VIEWS = {"overview": "Overview", "shares": "Samba shares", "routines": "Backups & sync", "scrubs": "Scrubs & findings"}
 STATUS_LABELS = {
     "unavailable": "Report unavailable", "never_scanned": "No full scan recorded",
     "incomplete": "Last full scan incomplete", "findings": "Unresolved findings",
@@ -57,6 +57,13 @@ STYLE = """
 .routine-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:14px; }
 .routine-action { min-width:0; max-width:100%; }
 .routine-action button { white-space:normal; overflow-wrap:anywhere; max-width:100%; }
+.data-summary, .data-templates { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:16px; margin:16px 0; }
+.data-summary .event, .data-templates .event { min-width:0; margin:0; }
+.data-summary h3, .data-templates h3 { margin-top:0; }
+.data-summary .data-total { font-size:1.8rem; font-weight:750; margin:8px 0; }
+.data-templates .event { display:flex; flex-direction:column; align-items:start; border-top:3px solid var(--workspace); }
+.data-templates p { flex:1; color:var(--muted); }
+.data-templates a { display:inline-flex; align-items:center; min-height:44px; }
 """
 
 
@@ -65,10 +72,10 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
     if len(raw) > 6144:
         raise ValueError("Shares & Data query exceeds its limit")
     values = parse_qs(raw, keep_blank_values=True, max_num_fields=7)
-    if set(values) - {"view", "category", "q", "page", "task", "tasks_page", "scope", "edit", "form", "routine"} or any(len(items) != 1 for items in values.values()):
+    if set(values) - {"view", "category", "q", "page", "task", "tasks_page", "scope", "edit", "form", "routine", "template"} or any(len(items) != 1 for items in values.values()):
         raise ValueError("Invalid Shares & Data filters")
     result = {key: items[0] for key, items in values.items()}
-    if result.get("view", "shares") not in VIEWS:
+    if result.get("view", "overview") not in VIEWS:
         raise ValueError("Unknown Shares & Data view")
     if result.get("category", "") not in ("", *ADVICE):
         raise ValueError("Unknown finding category")
@@ -83,20 +90,24 @@ def parse_shares_data_query(raw: str) -> dict[str, str]:
     if "scope" in result and not HEX_REVISION.fullmatch(result["scope"]):
         raise ValueError("Invalid selected scrub task")
     filters = {"category", "q", "page", "task", "tasks_page", "scope"}
-    if result.get("view", "shares") != "scrubs" and set(result) & filters:
+    if result.get("view", "overview") != "scrubs" and set(result) & filters:
         raise ValueError("Scrub filters require the scrubs view")
     editors = set(result) & {"edit", "form", "routine"}
-    view = result.get("view", "shares")
+    view = result.get("view", "overview")
     if len(editors) > 1 or editors and set(result) & filters:
         raise ValueError("Choose one editor without scrub filters")
     if "edit" in result:
         if view != "shares":
             raise ValueError("Share editing requires the Samba view")
         validate_samba_share_name(result["edit"])
-    if "routine" in result and (view == "shares" or not HEX_REVISION.fullmatch(result["routine"])):
+    if "routine" in result and (view not in {"routines", "scrubs"} or not HEX_REVISION.fullmatch(result["routine"])):
         raise ValueError("Invalid routine editor")
-    if "form" in result and result["form"] not in {"shares": {"add"}, "routines": {"sync", "backup"}, "scrubs": {"scrub"}}[view]:
+    if "form" in result and result["form"] not in {"overview": set(), "shares": {"add"}, "routines": {"sync", "backup"}, "scrubs": {"scrub"}}[view]:
         raise ValueError("Unknown form for this view")
+    if "template" in result:
+        template = routines.ROUTINE_TEMPLATES.get(result["template"])
+        if not template or result.get("form") != template["kind"] or view != routines.view_for(template["kind"]):
+            raise ValueError("Choose a matching routine template and new routine form")
     return result
 
 
@@ -118,6 +129,84 @@ def _date(value: str) -> str:
 def _inventory_notice() -> str:
     return ('<p class="empty">Configuration inventory unavailable. The snapshot exporter may need an update. '
             'Rerun setup or refresh the saved setup, then allow the next five-minute export to finish.</p>')
+
+
+def _visible_views(snapshot: dict, routine_status: dict, recovery_status: dict) -> set[str]:
+    if not snapshot.get("available"):
+        return set(VIEWS)
+    inventory = snapshot.get("inventory", {})
+    control = snapshot.get("routine_management", {})
+    rows = control.get("routines", []) if control.get("available") else []
+    visible = {"overview"}
+    if snapshot.get("samba_installed") is not False and (
+            snapshot.get("samba_installed") is True or not inventory.get("available") or inventory.get("samba_enabled")
+            or snapshot.get("samba", {}).get("available") or snapshot.get("share_management", {}).get("available")):
+        visible.add("shares")
+    if (any(row["kind"] != "scrub" for row in rows) or inventory.get("routines") or inventory.get("omitted_routines")
+            or not control.get("available") and not inventory.get("available")):
+        visible.add("routines")
+    if snapshot.get("jobs") or snapshot.get("omitted_jobs") or any(row["kind"] == "scrub" for row in rows):
+        visible.add("scrubs")
+    # Retained approval/worker history can outlive a removed declaration.
+    for request in routine_status.get("requests", []):
+        try:
+            value = routines.validate_routine_action(request.get("parameters"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        visible.add(routines.view_for((value["after"] or value["before"])["kind"]))
+    if routine_status.get("latest") and not routine_status.get("requests"):
+        visible.update({"routines", "scrubs"})
+    if recovery_status.get("requests") or recovery_status.get("latest"):
+        visible.add("scrubs")
+    return visible
+
+
+def _overview(snapshot: dict, visible: set[str]) -> str:
+    inventory = snapshot.get("inventory", {})
+    control = snapshot.get("routine_management", {})
+    rows = control.get("routines", []) if control.get("available") else []
+    body = '<section aria-labelledby="data-overview">' + render_heading("Data overview", "data", heading_id="data-overview")
+    if visible == {"overview"}:
+        body += '<p class="empty">No shares or data routines are configured in this snapshot. Start with a template below.</p>'
+    body += '<div class="data-summary">'
+    summaries = []
+    if "shares" in visible:
+        count = str(len(inventory["shares"]) + inventory["omitted_shares"]) if inventory.get("available") else "Unknown"
+        summaries.append(("shares", count, "Saved managed shares. Manually configured shares are outside this inventory."))
+    if "routines" in visible:
+        count = (str(sum(row["kind"] != "scrub" for row in rows)) if control.get("available") else
+                 str(len(inventory["routines"]) + inventory["omitted_routines"]) if inventory.get("available") else "Unknown")
+        summaries.append(("routines", count, "Configured mirrors. Copies can replace and delete destination files; no versions are retained."))
+    if "scrubs" in visible:
+        count = (str(sum(row["kind"] == "scrub" for row in rows)) if control.get("available") else
+                 str(len(snapshot["jobs"]) + snapshot["omitted_jobs"]))
+        findings = sum(job["open_count"] for job in snapshot["jobs"])
+        attention = sum(job["status"] in {"unavailable", "never_scanned", "incomplete"} for job in snapshot["jobs"])
+        description = f'{findings} open findings in the exported summary. {attention} reports unavailable, incomplete or awaiting a full scan.'
+        if snapshot["omitted_jobs"]:
+            description += f' {snapshot["omitted_jobs"]} more tasks are outside this summary; open the scrub view for complete task health.'
+        summaries.append(("scrubs", count, description))
+    for key, count, description in summaries:
+        body += (f'<article class="event"><h3>{html.escape(VIEWS[key])}</h3><p class="data-total">{count}</p>'
+                 f'<p>{html.escape(description)}</p><a class="refresh-link" href="/shares-data?view={key}">Open {html.escape(VIEWS[key].lower())} →</a></article>')
+    body += '</div>'
+    if rows:
+        paused = sum(row["paused"] for row in rows)
+        body += f'<p class="data-notice">{len(rows) - paused} active schedules · {paused} paused. Recorded scans and completed copies do not verify later file changes.</p>'
+    return body + '</section>'
+
+
+def _setup_templates(*, editing_reason: str = "") -> str:
+    body = '<section aria-labelledby="data-setup">' + render_heading("Set up a data task", "jobs", heading_id="data-setup")
+    body += '<p>Choose a starting point, enter your directories, then review the exact settings. Templates start paused and do not copy or scan files when saved.</p>'
+    if editing_reason:
+        body += f'<p class="data-notice" role="status">{html.escape(editing_reason)} Browser setup requires a complete export and the privilege approval service. Use the usage guide for controller setup.</p>'
+    body += '<div class="data-templates">'
+    for key, template in routines.ROUTINE_TEMPLATES.items():
+        body += (f'<article class="event"><h3>{html.escape(template["title"])}</h3>'
+                 f'<p>{html.escape(template["description"])}</p>'
+                 f'<a class="refresh-link" href="{html.escape(routines.template_url(key), quote=True)}">Use template →</a></article>')
+    return body + '</div><p class="data-notice">Mirrors require rsync and unshare; scrubs require PAR2. Provision tools and mounts through controller setup. Keep parity in a separate directory; parity helps repair files and does not replace a second copy.</p></section>'
 
 
 def _shares(inventory: dict, host: str, *, controls: bool = False) -> str:
@@ -340,7 +429,14 @@ def _activity(sections: list[tuple[dict, str]], *, expand: bool = False) -> str:
 def render_shares_data(state, style: str, query: dict[str, str], *, review: str = "", error: str = "",
                        routine_fields: dict | None = None, share_fields: dict | None = None) -> str:
     snapshot = storage.load_storage_snapshot()
-    view = query.get("view", "shares")
+    view = query.get("view", "overview")
+    manager = getattr(state, "data", None)
+    status = manager.snapshot() if manager is not None else {}
+    routine_manager = getattr(state, "routines", None)
+    routine_status = routine_manager.snapshot() if routine_manager is not None else {}
+    visible = _visible_views(snapshot, routine_status, status)
+    if view == "shares" and snapshot.get("samba_installed") is False:
+        view = "overview"
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Host administration</p><h1>Shares &amp; Data</h1>
 <p class="lede">Samba access, recurring copies and file integrity on <code>{html.escape(state.manifest["host"])}</code>.</p></div>
 <div class="data-header-links"><a class="refresh-link" href="{html.escape('/shares-data?' + urlencode(query), quote=True)}">Refresh snapshot</a>
@@ -348,11 +444,13 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     body = '<nav class="data-tabs" aria-label="Shares and data views">' + ''.join(
         '<a href="/shares-data?view={}"{}>{}</a>'.format(
             key, ' aria-current="page"' if key == view else '', html.escape(label),
-        ) for key, label in VIEWS.items()
+        ) for key, label in VIEWS.items() if key in visible or key == view
     ) + '</nav>'
     if snapshot.get("available"):
         links = []
-        if view == "shares":
+        if view == "overview":
+            links = [("data-overview", "Summary"), ("data-setup", "Set up a task")]
+        elif view == "shares":
             links = [("samba-heading", "Shares"), ("samba-accounts", "Accounts and passwords")]
         elif view == "scrubs":
             if snapshot.get("jobs"):
@@ -365,11 +463,9 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     if error:
         body += f'<p class="event" role="alert">{html.escape(error)}</p>'
     body += review
-    manager = getattr(state, "data", None)
-    status = manager.snapshot() if manager is not None and view == "scrubs" else {}
     csrf = f'<input type="hidden" name="csrf" value="{html.escape(getattr(state, "csrf_token", ""), quote=True)}">'
     activity = []
-    if manager is not None and view == "scrubs":
+    if manager is not None and (view == "scrubs" or view == "overview" and (status.get("requests") or status.get("latest"))):
         activity.append((status, render_status(status, csrf)))
     samba_manager = getattr(state, "samba", None)
     samba_status = samba_manager.snapshot() if samba_manager is not None and view == "shares" else {}
@@ -379,9 +475,8 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     share_status = share_manager.snapshot() if share_manager is not None and view == "shares" else {}
     if share_manager is not None and view == "shares":
         activity.append((share_status, shares.render_status(share_status, csrf)))
-    routine_manager = getattr(state, "routines", None)
-    routine_status = routine_manager.snapshot() if routine_manager is not None and view != "shares" else {}
-    if routine_manager is not None and view != "shares":
+    if routine_manager is not None and (view in {"routines", "scrubs"}
+            or view == "overview" and (routine_status.get("requests") or routine_status.get("latest"))):
         activity.append((routine_status, routines.render_status(routine_status, csrf)))
     body += _activity(activity, expand=bool(error))
     if routine_fields is not None and (not snapshot.get("available")
@@ -389,12 +484,19 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
         body += routines.render_draft(routine_fields)
     if not snapshot.get("available"):
         body += '<p class="empty" role="status">Shares &amp; Data snapshot unavailable or stale. Check the web panel audit exporter and refresh after its next run. This does not mean the host has no shares, routines or findings.</p>'
+        if view == "overview":
+            body += _setup_templates(editing_reason="Configuration inventory is unavailable.")
         if share_fields is not None:
             body += shares.render_draft(share_fields)
     else:
         body += f'<p class="data-notice">Snapshot: {html.escape(_date(snapshot["generated_at"]))}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
         inventory = snapshot.get("inventory", {"available": False})
-        if view == "shares":
+        if view == "overview":
+            reason = routines.unavailable_reason(routine_status)
+            if not snapshot.get("routine_management", {}).get("available"):
+                reason = "Routine configuration is unavailable in this export."
+            body += _overview(snapshot, visible) + _setup_templates(editing_reason=reason)
+        elif view == "shares":
             controls = (share_manager is not None and not shares.unavailable_reason(share_status)
                         and snapshot.get("share_management", {}).get("available") is True)
             if controls and not review:

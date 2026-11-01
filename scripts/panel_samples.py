@@ -41,7 +41,7 @@ def shares_data_snapshot(scenario: str, *, timestamp: str | None = None) -> dict
         "cadence_at": None if row["paused"] else 1767258000, "retry": None,
         "parity_at": 1767258000 if row["kind"] == "scrub" else None, "parity_retry": None,
     } for row in rows}
-    return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "samba": accounts,
+    return {"available": True, "version": 1, "generated_at": now, "inventory": inventory, "samba": accounts, "samba_installed": not empty,
             "routine_management": {"available": False} if scenario == "degraded" else {
                 "available": True, "revision": "d" * 64, "routines": rows, "history": {"available": True, "routines": history}},
             "share_management": {"available": False} if empty or scenario == "degraded" else {"available": True, "revision": "c" * 64}, "omitted_jobs": 0,

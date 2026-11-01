@@ -29,6 +29,8 @@ class StorageSnapshotTests(unittest.TestCase):
         self.path = self.root / "snapshot.json"
         self.config = {"scrub_specs": [[str(self.data), str(self.db), "10%", "weekly"]]}
         self.report = Findings(str(self.data), str(self.db))
+        self.samba_installed = False
+        self.enterContext(patch.object(storage.shutil, "which", side_effect=lambda _command: "/usr/sbin/smbd" if self.samba_installed else None))
 
     def collect(self):
         with patch("lib.machine_state.load_setup_config", return_value=self.config), patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, "")), patch("smb.account_management.collect_account_snapshot", return_value={"available": False}), patch("smb.share_management.collect_share_snapshot", return_value={"available": False}), patch("sync.routine_management.collect_routine_snapshot", return_value={"available": False}), patch("subprocess.run") as run:
@@ -123,6 +125,18 @@ class StorageSnapshotTests(unittest.TestCase):
         self.assertTrue(loaded["available"])
         self.assertFalse(loaded["routine_management"]["available"])
         self.assertNotIn("PRIVATE", json.dumps(loaded))
+
+    def test_samba_installation_is_observed_independently_of_saved_selection(self):
+        self.config["enable_samba"] = True
+        self.assertFalse(self.load(self.collect())["samba_installed"])
+        self.samba_installed = True
+        self.config["enable_samba"] = False
+        self.assertTrue(self.load(self.collect())["samba_installed"])
+        snapshot = self.collect()
+        snapshot["samba_installed"] = "unsupported"
+        loaded = self.load(snapshot)
+        self.assertTrue(loaded["available"])
+        self.assertNotIn("samba_installed", loaded)
 
     def test_inventory_limits_and_malformed_configuration(self):
         saved = {"enable_samba": True,

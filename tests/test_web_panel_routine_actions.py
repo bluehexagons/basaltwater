@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import http.client
 import io
+import html
 import re
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlencode
+from urllib.parse import urlsplit
+from html.parser import HTMLParser
 
 from common.service_tools import web_panel_routine_actions as panel, web_panel_storage as storage
 from common.service_tools.web_panel_admin import PanelAdmin
@@ -270,6 +273,109 @@ class RoutinePanelTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 panel.parse_fields({"view": ["shares"]}, action)
 
+    def test_overview_templates_prefill_paused_forms_and_review_explicit_inputs(self):
+        class EditorFields(HTMLParser):
+            def __init__(self, document):
+                super().__init__()
+                self.forms, self.current, self.select = [], None, None
+                self.feed(document)
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == "form" and attrs.get("action") == "/actions/routines/review":
+                    self.current = {}
+                    self.forms.append(self.current)
+                elif self.current is not None:
+                    if tag == "input" and "name" in attrs:
+                        self.current[attrs["name"]] = attrs.get("value", "")
+                    elif tag == "select":
+                        self.select = attrs.get("name")
+                    elif tag == "option" and self.select and "selected" in attrs:
+                        self.current[self.select] = attrs["value"]
+
+            def handle_endtag(self, tag):
+                if tag == "form":
+                    self.current = None
+                elif tag == "select":
+                    self.select = None
+
+        document = render_shares_data(self.state, "", {})
+        self.assertIn('id="data-overview"', document)
+        self.assertIn("2 active schedules · 1 paused", document)
+        self.assertIn("3 open findings", document)
+        for key, template in panel.ROUTINE_TEMPLATES.items():
+            with self.subTest(template=key):
+                target = panel.template_url(key)
+                self.assertIn(html.escape(target, quote=True), document)
+                query = parse_shares_data_query(urlsplit(target).query)
+                editor = render_shares_data(self.state, "", query)
+                self.assertIn('<option value="1" selected>Paused</option>', editor)
+                self.assertIn(f'<option value="{template["interval"]}" selected>', editor)
+                self.assertIn('id="routine-first" name="first" required maxlength="512" value=""', editor)
+                if template["kind"] == "scrub":
+                    self.assertIn('name="redundancy" required maxlength="64" value="10%"', editor)
+                fields = next(form for form in EditorFields(editor).forms if "first" in form)
+                fields.update(first="/srv/new-data", second="/srv/new-output")
+                handler = self.handler("review", fields)
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], 200)
+                ticket = re.search(r'name="ticket" value="([^"]+)"', handler._send.call_args.args[1]).group(1)
+                value = self.manager.reviewed(ticket)
+                self.assertTrue(value["after"]["paused"])
+                self.assertEqual(value["after"]["spec"][-1], template["interval"])
+        self.assertFalse(any(call.args[0]["action"] == "request" for call in self.exchange.call_args_list))
+
+    def test_template_cannot_select_edit_existing_or_wrong_kind_and_preserves_failed_inputs(self):
+        for query in ("template=daily-sync", "view=overview&form=sync&template=daily-sync",
+                      "view=routines&form=backup&template=daily-sync", "view=routines&form=sync&template=unknown",
+                      "view=routines&form=sync&template=daily-sync&template=daily-sync",
+                      "view=routines&routine=" + "a" * 64 + "&template=daily-sync"):
+            with self.subTest(query=query), self.assertRaises(ValueError):
+                parse_shares_data_query(query)
+        fields = self.fields("sync", original="", first="/srv/my-input", second="/srv/my-output", interval="monthly", paused="0")
+        document = render_shares_data(self.state, "", parse_shares_data_query("view=routines&form=sync&template=daily-sync"), routine_fields=fields)
+        self.assertIn('value="/srv/my-input"', document)
+        self.assertIn('<option value="monthly" selected>', document)
+        self.assertIn('<option value="0" selected>Active</option>', document)
+
+    def test_empty_navigation_hides_uninstalled_samba_and_routines_but_templates_remain(self):
+        self.snapshot = shares_data_snapshot("empty")
+        document = render_shares_data(self.state, "", {})
+        self.assertIn('id="data-setup"', document)
+        self.assertIn("No shares or data routines are configured", document)
+        self.assertNotIn('href="/shares-data?view=shares"', document)
+        self.assertNotIn('href="/shares-data?view=routines"', document)
+        self.assertNotIn('href="/shares-data?view=scrubs"', document)
+        self.assertIn("Use template →", document)
+        self.snapshot["inventory"]["samba_enabled"] = True
+        document = render_shares_data(self.state, "", {"view": "shares"})
+        self.assertNotIn('id="samba-heading"', document)
+        self.assertNotIn('id="samba-accounts"', document)
+        self.assertIn('id="data-overview"', document)
+
+    def test_retained_history_and_findings_keep_empty_task_views_accessible(self):
+        _, value = self.manager.prepare(self.operation("run", "sync"))
+        self.snapshot = shares_data_snapshot("empty")
+        self.exchange.return_value = idle(requests=[{"id": "a" * 32, "parameters": value, "state": "dispatched"}])
+        document = render_shares_data(self.state, "", {})
+        self.assertIn('href="/shares-data?view=routines"', document)
+        self.assertNotIn('href="/shares-data?view=scrubs"', document)
+        self.assertIn("Completion is not established", document)
+        self.exchange.return_value = idle()
+        self.snapshot["jobs"] = shares_data_snapshot("full")["jobs"]
+        document = render_shares_data(self.state, "", {})
+        self.assertIn('href="/shares-data?view=scrubs"', document)
+        self.assertIn("3 open findings", document)
+
+    def test_unavailable_snapshot_does_not_claim_no_data_or_hide_unknown_views(self):
+        self.snapshot = {"available": False, "jobs": []}
+        document = render_shares_data(self.state, "", {})
+        self.assertIn("snapshot unavailable or stale", document)
+        self.assertIn('href="/shares-data?view=shares"', document)
+        self.assertIn('href="/shares-data?view=scrubs"', document)
+        self.assertIn("Use template →", document)
+        self.assertNotIn("No shares or data routines are configured", document)
+
     def test_unavailable_controls_do_not_hide_integrity_or_configuration(self):
         self.exchange.return_value = idle(available=False)
         document = render_shares_data(self.state, "", {"view": "scrubs"})
@@ -301,8 +407,6 @@ class RoutinePanelTests(unittest.TestCase):
 
     def test_findings_pagination_leaves_editor_query_without_invalid_combinations(self):
         from common.service_tools import web_panel_shares_data as page
-        from urllib.parse import urlsplit
-        import html
 
         query = {"view": "scrubs", "form": "scrub"}
         catalog = {"available": True, "tasks": 1, "unavailable_jobs": 0, "findings": [], "total": 21, "page": 1}

@@ -20,6 +20,16 @@ from lib.storage_routines import (
 )
 
 KINDS = {"backup": "Backup mirror", "sync": "Sync mirror", "scrub": "Scrub task"}
+ROUTINE_TEMPLATES = {
+    "daily-sync": {"kind": "sync", "interval": "daily", "title": "Daily sync",
+                   "description": "Mirror a working directory to another disk each day."},
+    "weekly-backup": {"kind": "backup", "interval": "weekly", "title": "Weekly backup mirror",
+                      "description": "Keep a weekly second copy on a separate disk. This mirror does not retain versions."},
+    "weekly-scrub": {"kind": "scrub", "interval": "weekly", "redundancy": "10%", "title": "Weekly integrity check",
+                     "description": "Verify files weekly with 10% repair parity, maintained daily when active."},
+    "monthly-scrub": {"kind": "scrub", "interval": "monthly", "redundancy": "10%", "title": "Monthly archive check",
+                      "description": "Verify a larger, rarely changed archive monthly with 10% repair parity."},
+}
 FAILURES = {
     "storage_busy": "Another storage or setup operation owns the lock. Inspect its status before preparing a new request.",
     "setup_recovery_required": "An unfinished setup operation needs administrator recovery before storage work can continue.",
@@ -37,6 +47,11 @@ def view_for(kind: str) -> str:
 
 def editor_url(kind: str, identifier: str = "") -> str:
     return "/shares-data?" + urlencode({"view": view_for(kind), **({"routine": identifier} if identifier else {"form": kind})})
+
+
+def template_url(key: str) -> str:
+    template = ROUTINE_TEMPLATES[key]
+    return editor_url(template["kind"]) + "&" + urlencode({"template": key}) + "#routine-editor"
 
 
 def unavailable_reason(status: dict) -> str:
@@ -204,13 +219,18 @@ def render_editor(control: dict, query: dict, csrf: str, submitted: dict | None 
     fields = ({"first": selected["spec"][0], "second": selected["spec"][1], "interval": selected["spec"][-1],
                "paused": "1" if selected["paused"] else "0", "redundancy": selected["spec"][2] if kind == "scrub" else ""} if selected else
               {"first": "", "second": "", "interval": "weekly" if kind == "scrub" else "daily", "paused": "1", "redundancy": "10%"})
+    template = ROUTINE_TEMPLATES.get(query.get("template")) if not selected else None
+    if template and template["kind"] == kind:
+        fields.update({key: template[key] for key in ("interval", "redundancy") if key in template})
     if submitted:
         fields.update({key: submitted[key] for key in fields if key in submitted})
     escape = html.escape
     original = routine_identity(kind, selected["spec"]) if selected else ""
     first_label, second_label = ("Scrub root", "Parity directory") if kind == "scrub" else ("Source directory", "Destination directory")
-    body = f'''<section class="event" aria-labelledby="routine-editor">{render_heading(('Edit ' if selected else 'Add ') + KINDS[kind].lower(), "data", heading_id="routine-editor")}
-<form method="post" action="/actions/routines/review" class="data-recovery-form">{csrf}
+    body = '<section class="event" aria-labelledby="routine-editor">' + render_heading(('Edit ' if selected else 'Add ') + KINDS[kind].lower(), "data", heading_id="routine-editor")
+    if template:
+        body += f'<p class="data-notice">Template: <strong>{escape(template["title"])}</strong>. Choose your directories and review the settings. The new schedule starts paused.</p>'
+    body += f'''<form method="post" action="/actions/routines/review" class="data-recovery-form">{csrf}
 <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="{kind}">
 <input type="hidden" name="original" value="{original}"><input type="hidden" name="revision" value="{control['revision']}">
 <label for="routine-first">{first_label}</label><input id="routine-first" name="first" required maxlength="512" value="{escape(fields['first'], quote=True)}" placeholder="/srv/data" autocomplete="off">

@@ -171,7 +171,10 @@ class PanelDevelopmentTests(unittest.TestCase):
     def test_minimal_scenario_hides_optional_pages(self) -> None:
         self.serve("minimal")
         self.assertEqual(self.request("/agents")[0], 404)
-        self.assertIn("Samba is not enabled", self.request("/shares-data")[2])
+        overview = self.request("/shares-data")[2]
+        self.assertIn("No shares or data routines are configured", overview)
+        self.assertIn("Use template →", overview)
+        self.assertNotIn('id="samba-heading"', overview)
         self.assertNotIn('href="/credentials"', self.request("/")[2])
 
     def test_proxmox_scenario_renders_inventory_without_host_commands(self) -> None:

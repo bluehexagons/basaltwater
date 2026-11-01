@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
 
@@ -56,6 +57,7 @@ def collect_storage_snapshot(*, catalog_path: str | None = None) -> dict:
         saved = load_setup_config()
         if saved is None:
             return result
+        result["samba_installed"] = shutil.which("smbd") is not None
         result["inventory"] = configuration_inventory(saved)
         from smb.account_management import collect_account_snapshot
         result["samba"] = collect_account_snapshot(saved)
@@ -139,6 +141,9 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
             raise ValueError("Stale snapshot")
         if type(data.get("omitted_jobs")) is not int or data["omitted_jobs"] < 0:
             raise ValueError("Invalid count")
+        if "samba_installed" in data and type(data["samba_installed"]) is not bool:
+            # An unsupported observation must not hide configuration or reports.
+            del data["samba_installed"]
         for job in data["jobs"]:
             if not isinstance(job, dict) or job.get("status") not in STATUSES:
                 raise ValueError("Invalid job")
