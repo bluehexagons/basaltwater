@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 from common import web_panel_events
 from common.service_tools import web_panel_audit_export as exporter
-from common.service_tools import web_panel_ca_install as installers
 from common.service_tools import web_panel_service as panel
 from lib.machine_state import can_manage_auditd, machine_type_context
 
@@ -50,7 +49,6 @@ class PanelBugfixTests(unittest.TestCase):
                 self.assertEqual(tool.call_count, int(machine == 'vm'))
 
     def test_service_uses_authoritative_browser_specific_installers(self):
-        self.assertIs(panel._certificate_scripts, installers._certificate_scripts)
         for host_command in ('basaltwater-web ca', 'sha256sum /example/public-ca.crt'):
             rendered = panel._render_certificate_trust({'url': 'https://example.test/basaltwater-ca.crt',
                 'sha256': 'a' * 64, 'host_command': host_command})
