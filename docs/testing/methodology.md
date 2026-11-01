@@ -60,6 +60,6 @@ cover the supported Python endpoints. Browser qualification is separate from
 the full CI target. See the [contributor guide](../agents/contributing/README.md#standard-checks)
 for current commands, versions and selection rules.
 
-The [feature table](features.md) summarizes results; the
+The [platform index](features.md) links to scoped feature results; the
 [detailed coverage map](../plans/testing-coverage.md) retains narrower evidence
 and open checks. Neither replaces exact-candidate release qualification.

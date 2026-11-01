@@ -7,8 +7,9 @@ reviewed as of 2026-11-01. See each linked record for its scope and date.
 
 | At a glance | Status |
 | --- | --- |
-| Server, storage, deployment and agent workflows | 🟢 **Labbed** — selected workflows passed in a test environment; options and recovery gaps remain |
-| Component and workstation coverage | 🟡 **Partial** — automated tests or narrower native checks; see individual features |
+| [Debian and Proxmox](debian.md) | 🟢 **Labbed** — selected server and host workflows passed; options and recovery gaps remain |
+| [CachyOS](cachyos.md) | 🟡 **Partial** — selected native discovery, graphics, task and T3 component checks |
+| [Windows and WSL](windows.md) | 🟡 **Partial** — selected native Windows checks; full installations and WSL integration remain open |
 | Combined build/CI host | 🔵 **In progress** — separate roles exist; composition is not implemented or qualified |
 | LXC suspend | 🔴 **Failed** — the recorded live attempt failed |
 | Production use and broad human QA | 🟣 **Deployed** / ✅ **Verified** — no status claimed without the relevant evidence |
@@ -38,7 +39,8 @@ do not infer deployed or verified status from lab or automated results.
 
 | Document | Purpose |
 | --- | --- |
-| [Feature status](features.md) | Skimmable coverage and gaps by feature |
+| [Feature availability by platform](features.md) | Compare platform scope and open a detailed status page |
+| [Debian and Proxmox](debian.md) · [CachyOS](cachyos.md) · [Windows and WSL](windows.md) | Feature status, evidence, limits and next checks for each environment |
 | [Tested workflows](workflows.md) | Examples and procedures corresponding to selected live checks |
 | [Methodology and environments](methodology.md) | Test levels, CI, anonymized platforms and intended use cases |
 | [Detailed coverage map](../plans/testing-coverage.md) | Supporting observations, narrower boundaries and next checks, recorded through 2026-10-31 |
@@ -47,8 +49,8 @@ do not infer deployed or verified status from lab or automated results.
 Important open areas include off-host recovery, broader interrupted-setup and
 power-loss cases, real registered GitHub runner jobs, combined build/CI host
 composition, public tunnel and certificate issuance, and native platform
-qualification. The feature table distinguishes implemented-but-unqualified
-and planned work. Historical failures, including LXC suspend, are not passes.
+qualification. Platform pages distinguish available, planned and unqualified
+work. Historical failures, including LXC suspend, are not passes.
 
 On 2026-11-01, the documentation/privacy cleanup passed 33 focused agent and
 documentation tests, followed by 868 tests across affected Python modules.
