@@ -91,6 +91,12 @@ isolated CA trust, including a fixed Unicode search bug. Shared preview trust,
 native ESR and full-profile refresh remain open; see the
 [dated scope and limits](evidence.md#shares-and-data).
 
+A separate fresh Debian guest at `176caeff62ad` also passed a real approved
+leaf-package upgrade, separately approved no-op, native APT index failure and
+lock waiting, with exact task, service-identity, credential and data preservation.
+See the [Admin evidence](evidence.md#package-changing-admin-update); broader
+packages, conffile conflicts and interruption/power-loss remain open.
+
 Update the affected status and its evidence date when new checks complete;
 preserve older dates for areas not retested. Keep raw logs, personal addresses,
 account paths and private infrastructure inventories outside Git.

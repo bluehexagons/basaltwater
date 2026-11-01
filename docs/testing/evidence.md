@@ -2,8 +2,8 @@
 
 Reconciled 2026-11-01 from retained private reports, the owner's stack setup
 rerun report, subsequent native CachyOS T3 and SDL/OpenGL application observations,
-installed native Windows checks, current Shares & Data qualification and
-automated checks.
+installed native Windows checks, current Shares & Data qualification,
+package-changing Admin qualification and automated checks.
 These sanitized summaries supplement the
 [platform status](debian.md) and [coverage map](../plans/testing-coverage.md);
 they are not a complete run archive or exact-candidate release qualification.
@@ -181,6 +181,27 @@ matched the fresh baseline; a same-node snapshot does not qualify off-host recov
 Use [Continue testing on Proxmox](continuing.md) for subsequent bounded batches.
 The Proxmox root panel is not the non-root guest approval environment required
 by [Shares & Data](../services/shares-data.md).
+
+## Package-changing Admin update
+
+**2026-11-01; clean installed `176caeff62ad` on a fresh disposable Debian 13
+guest.** Normal custom-step setup configured a non-root panel operator, separate
+HTTPS approval identity and real task/broker workers. All 574 runtime files
+matched source before and after qualification. Base OS updates and task-tool
+installation were fixture preparation, separate from the approved transactions.
+
+| Check level | Observed result | Qualification boundary |
+| --- | --- | --- |
+| **Installed HTTPS and approval guards** | Controller-origin CA/hostname-verified panel and approval responses passed, as did direct panel Unix-socket HTTP. Anonymous and cross-password access, invalid CSRF, reused submission and reused approval were rejected. Cancellation and denial left packages, tasks and services unchanged | Actual HTTP forms and separate credentials, without a new interactive browser pass. Initial missing task-tool and private fixture-directory permission failures were inspected and corrected before the transaction baseline |
+| **Installed failed update** | An owned unreachable repository produced a separately approved real worker failure at index refresh, command 1, exit 100. Upgrade did not run; the older package, task records, service identities, credentials and data remained unchanged. The temporary source was removed after the terminal outcome | Controlled localhost index failure, not an interrupted download, package-hook failure or power-loss test |
+| **Installed package change and rerun** | Normal repositories offered only GNU Hello `2.10-3` → `2.10-5`, after authenticated retrieval of the older Debian package through an isolated index. The approved root worker waited for a real APT frontend lock; active-job controls withheld another submission form. Package version, changed binary and dpkg history proved the upgrade. A new separately approved worker then completed without package or dpkg-log changes | A small leaf-package upgrade, not kernel/service-restarting packages, conffile conflicts, distribution upgrade, host maintenance or interruption recovery. Broker `dispatched` was correlated with distinct worker IDs, serialized request events, action/times and observed outcomes; it was not treated as completion |
+| **Installed preservation and cleanup** | The draft, active future schedule and task-state bytes survived both workers, as did all other package versions, task/fixture/panel/broker/approval/Nginx PIDs and activation times, setup/auth/PKI and fixture bytes. The heartbeat continued. Cleanup paused only the owned future schedule and retained all five broker records, three worker outcomes, an online database backup and private evidence | No provider task executed. The owned guest was gracefully stopped with an offline local snapshot; existing guest configurations/states/PIDs and host configuration/boot matched baseline. Same-node retention does not qualify off-host recovery |
+
+No Basaltwater defect was reproduced in this batch. The expected failed worker
+and fixture-preparation failures remain in private evidence. No host reboot,
+formatting, disk stress, server quota relaxation or uncertain-request replay
+occurred. Repeat affected checks when the Admin implementation changes; wider
+package and interruption boundaries remain open.
 
 ## Automated validation
 

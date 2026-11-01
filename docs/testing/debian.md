@@ -37,7 +37,7 @@ from test status.
 | Compressed swap | 🟡 **Partial** | Real zram devices and component failure/recovery | Native zswap controls, reboot and pressure |
 | Security event retention | 🟡 **Partial** | Logs, rotation, gaps and live monitor components | Continuous daemon behavior and power loss |
 | Agent tools and tasks | 🟢 **Labbed** | Selected enrollment, managed skills, task/goal flows | Other providers and longer interrupted runs |
-| Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; controlled failure and browser fixtures | Package-changing upgrades and uncertain/power-loss boundaries |
+| Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; 2026-11-01 real leaf-package upgrade, separately approved no-op, native index failure/lock wait and task/service preservation; see [scope](evidence.md#package-changing-admin-update) | Kernel/service-restarting upgrades, conffile conflicts and uncertain/power-loss boundaries |
 | mDNS and automatic updates | 🟡 **Partial** | Packaged services and timer handoff failure/retry components | Full setup, remote discovery and scheduled upgrades |
 | Sync and PAR2 | 🟢 **Labbed** | Selected mirror, mount guards and repair; controlled failures | Hard-mounted network storage and power loss |
 | Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and read-only native scrub | Diagnostic integration and scheduled native scrub; multi-device/subvolume support needs design, and single-copy data cannot self-repair |
@@ -79,9 +79,10 @@ detailed host checks cover one physical node; the owner also reports two basic
 ## Next checks
 
 - Follow the [bounded continuation procedure](continuing.md). Selected Shares &
-  Data HTTP/worker, recovery and installed-browser checks are recorded; exercise
-  a package-changing Admin update on another disposable target. Keep remaining
-  client, full-profile and interruption boundaries separate.
+  Data HTTP/worker, recovery and installed-browser checks are recorded. A real
+  leaf-package Admin update and separately approved no-op now pass
+  on another disposable target. Keep remaining client, package breadth,
+  full-profile and interruption boundaries separate.
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
 - Exercise registered GitHub runner jobs and cancellation, then implement and

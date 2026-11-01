@@ -2,8 +2,8 @@
 
 Updated 2026-11-01 from retained live evidence and the owner's stack setup rerun
 report, native CachyOS T3 and SDL/OpenGL application checks, current Shares & Data
-HTTP/worker, recovery and installed-browser qualification, installed native Windows
-checks and automated regressions.
+HTTP/worker, recovery and installed-browser qualification, package-changing Admin
+qualification, installed native Windows checks and automated regressions.
 The rerun indicates basic functionality only; not all selected features
 were tested. Corrected T3 refresh relaunch still needs a live run.
 This is a current testing map, not a run log or the
@@ -64,7 +64,7 @@ installations; optional combinations need their own checks.
 | Security event retention | Automated known/unknown boundary, error, state-write and restart checks. Native Debian 12/13 audit/journal fixtures cover rotated history, C-locale dates, removed files and durable gaps despite failed delivery. Packaged Fail2ban logrotate policies cover numeric/gzip history, rotation during collection, exact counts and corrupt archives. A live Debian monitor reports first-observation gaps, then succeeds and advances its cursor while retaining private gap history. Real SSH journal collection excludes successful public-key logins; automated cases retain explicit authentication failures | Rotation probes use fixture logs, journal import and logrotate without forcing real authentication failures or daemon rotation. Continuous timer/daemon behavior, interior loss, custom rotation policies and power-loss recovery remain separate qualification |
 | Agent tasks and goals | Live Luna inspection, workspace edits and conversation/checkpoint continuation, pruning and a token-budget stop. Permission/cancellation/limit guards; controlled synthetic-CLI recurrence, worker restarts and receipt recovery, including interrupted-run review stops; unknown usage, surviving-child exclusion and failure isolation | Longer provider-backed goals, additional crash/claim/publication boundaries and physical write failures. Token budgets are checked between invocations |
 | Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication with synthetic execution and no broker/provider actions; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries, manual reconciliation of uncertain remote outcomes and remaining live follow-up browser flows |
-| Admin jobs | Approved refresh and no-op APT updates preserve tasks; live Chromium approval controls and job status; Chromium/Firefox layouts and rejected power confirmations. Controlled metadata/fetch/status failures and synthetic-source crash/setup-exclusion probes | Package-changing upgrades, executed power actions, power loss and other interruption boundaries |
+| Admin jobs | At clean installed `176caeff62ad` on 2026-11-01, fresh non-root Debian service setup qualifies real separately approved Hello package upgrade and no-op, native APT index failure before upgrade, frontend-lock waiting and one-use/cancel/deny/CSRF controls. Exact task/draft/future-schedule records, other packages, service identities, credentials and data survive; cleanup pauses only the owned schedule and stops the guest. See [dated evidence](../testing/evidence.md#package-changing-admin-update). Earlier approved refresh, live Chromium controls, Chromium/Firefox layouts and controlled crash/setup-exclusion probes retain their scope | Leaf package only; kernel/service-restarting upgrades, conffile conflicts, new installed interactive-browser pass, executed power actions, power loss and other interruption boundaries remain open. Broker dispatch alone is not worker completion |
 | Proxmox guests | Provisioning, identity/reboot, lifecycle controls, disk/resource flags, snapshots, full/linked clones, selected storage moves, backups and same-host restores | Off-host restore/retention, reverse storage moves, EFI/TPM layouts and template retirement. LXC CRIU suspend failed |
 | Proxmox setup and maintenance | Saved public patch completes 21 steps, recovers the interrupted panel operation and preserves guest states/PIDs, configurations, SSH identity, network/storage policy and existing panel auth. Installed management launcher help, local-update dry run and occupied-maintenance-lock refusal pass. Installed updater and cleanup complete with no packages requiring upgrade. Root identity/password-payload regression has automated coverage; isolated native Nginx accepts generated root auth and rejects another user/anonymous requests. The operator-configured actual panel accepts its credential over verified TLS | The saved patch preserves existing auth; isolated Nginx does not qualify public password replacement. Fresh complete host installation, native password-replacement/interruption, package-changing upgrades, Admin power actions and interrupted host upgrades remain open. The user-initiated host reboot is separate from those workflows |
 | Host storage and networking | Passive capacity audit, storage persistence, selected maintenance guards, local orphan protection, firewall allowlists and strict SSH/TLS | Management-network isolation, multi-node/HA/Ceph, interrupted host upgrades and live remote-node/RBD/VirtioFS deletion guards |
@@ -95,9 +95,10 @@ installations; optional combinations need their own checks.
 For an immediately runnable live-test batch, follow
 [Continue testing on Proxmox](../testing/continuing.md): the selected current
 Shares & Data HTTP/worker, selected recovery and installed-browser checks are
-recorded; qualify a package-changing Admin update on a separate target. Remaining
-client/full-profile/interruption cases keep their stated boundaries. The priorities
-below also include implementation and work requiring additional infrastructure;
+recorded, as is a real leaf-package Admin upgrade and separately approved no-op.
+Remaining client, broader package, full-profile and interruption cases keep their
+stated boundaries. The priorities below also include implementation and work
+requiring additional infrastructure;
 they are not all ready to execute on one node.
 
 1. **Combined build/CI host:** implement role composition and shared capacity,
@@ -110,7 +111,8 @@ they are not all ready to execute on one node.
    and evidence; automatic retention and generic resume are separate policy.
 3. **Longer agent runs:** exercise longer provider-backed goals and remaining
    worker crash/restart boundaries while preserving usage limits and recovery.
-4. **Agent administration:** test package-changing upgrades on a disposable target;
+4. **Agent administration:** extend the selected leaf-package upgrade to
+   service-restarting packages and conffile conflicts on disposable targets;
    extend interruption checks to other applying jobs.
 5. **Storage failure handling:** check hard-mounted network storage, then Btrfs
    diagnostic integration and native scrub scheduling.

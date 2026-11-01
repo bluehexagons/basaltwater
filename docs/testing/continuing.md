@@ -10,6 +10,11 @@ retained fixtures. Read the
 The handoff owns connection details, credentials, fixture constraints and exact
 evidence paths; keep those out of Git. Follow repository and session instructions.
 
+The subsequent [Admin package batch](evidence.md#package-changing-admin-update)
+qualifies a real leaf-package upgrade, separately approved no-op, native index
+failure/lock waiting and task/service preservation on another disposable guest.
+Package breadth, conffile conflicts and interrupted upgrades remain separate.
+
 ## Establish a baseline
 
 Record the checkout revision/dirty state and separately inspect the target's
@@ -70,7 +75,7 @@ as untested rather than substituting HTTP or another browser silently.
 
 | Batch | Acceptance boundary / prerequisites |
 | --- | --- |
-| Package-changing Admin update | Separate disposable Debian target with a deliberately available safe package upgrade; actual approval, changed package version, correlated job outcome, rerun/no-op and task/service preservation. An empty upgrade plan does not qualify it |
+| Package-changing Admin update | Selected leaf-package case passed at `176caeff62ad`; repeat affected cases after changes. Use a separate disposable Debian target with a deliberately available safe upgrade; actual approval, changed package version, correlated worker outcome, separately approved rerun/no-op and task/service preservation. Extend to service-restarting packages/conffile conflicts separately. An empty upgrade plan does not qualify a package change |
 | Proxmox panel/exporter | Inspect read-only inventory/HTTPS first; plan ownership before timer/removal/interruption tests. Existing patch/auth checks do not qualify the full inventory timer/HTTP lifecycle, console, native password replacement or teardown |
 | Native storage diagnostics/scrub | Use disposable guest data; target missing integration/scheduling. Keep mount guards. Hard-mounted CIFS can leave uninterruptible I/O, so isolation and a bounded containment plan must precede fault injection |
 | Registered runner and GitHub mirrors | Authorized test account/repository and privately supplied credentials; actual registration/events/jobs/cancellation or transport permissions. Pending tokenless setup is already covered |
