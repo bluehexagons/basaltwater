@@ -262,6 +262,26 @@ class RoutinePanelTests(unittest.TestCase):
         self.assertNotIn("Last completed mirror", document)
         self.assertIn("unavailable", panel.render_history({}, row))
 
+    def test_orphan_worker_result_survives_expired_or_unrelated_approval_history(self):
+        _, value = self.manager.prepare(self.operation("run", "sync"))
+        request = {"id": "a" * 32, "parameters": value, "state": "dispatched"}
+        latest = {"job_id": "b" * 32, "status": "failed", "failure": "tools_unavailable",
+                  "started": 1, "finished": 2}
+        for requests in ([], [request]):
+            with self.subTest(requests=requests):
+                self.exchange.return_value = idle(requests=requests, latest=latest)
+                document = render_shares_data(self.state, "", {})
+                self.assertIn("Latest routine worker", document)
+                self.assertIn("Required tools are missing", document)
+                self.assertIn("1970-01-01 00:00:02 UTC", document)
+                self.assertIn("Approval details are unavailable", document)
+                self.assertNotIn("No recent requests", document)
+                self.assertNotIn("selected run completed", document)
+        latest["job_id"] = value["job_id"]
+        document = panel.render_status(idle(requests=[request], latest=latest), "csrf")
+        self.assertEqual(document.count("Worker result:"), 1)
+        self.assertNotIn("Latest routine worker", document)
+
     def test_query_view_and_action_identity_are_strict(self):
         for query in ("view=routines&form=backup", "view=routines&form=sync", "view=scrubs&form=scrub", "view=routines&routine=" + "a" * 64):
             self.assertTrue(parse_shares_data_query(query))
@@ -387,6 +407,28 @@ class RoutinePanelTests(unittest.TestCase):
         document = render_shares_data(self.state, "", {"view": "routines"})
         self.assertIn("older inventory below may be incomplete", document)
         self.assertIn("/srv/backups/projects", document)
+
+    def test_template_preview_survives_unavailable_controls_or_inventory(self):
+        for unavailable in ("worker", "configuration", "snapshot", "manager"):
+            with self.subTest(unavailable=unavailable):
+                self.snapshot = shares_data_snapshot("empty")
+                self.state.routines = self.manager
+                self.exchange.return_value = idle(other_active=unavailable == "worker")
+                if unavailable == "configuration":
+                    self.snapshot["routine_management"] = {"available": False}
+                elif unavailable == "snapshot":
+                    self.snapshot = {"available": False}
+                elif unavailable == "manager":
+                    self.state.routines = None
+                for key, template in panel.ROUTINE_TEMPLATES.items():
+                    query = parse_shares_data_query(urlsplit(panel.template_url(key)).query)
+                    document = render_shares_data(self.state, "", query)
+                    self.assertIn('id="routine-editor"', document)
+                    self.assertIn(template["title"], document)
+                    self.assertIn(template["interval"], document)
+                    self.assertIn("Paused", document)
+                    self.assertIn("Controller setup guide", document)
+                    self.assertNotIn('action="/actions/routines/review"', document)
 
     def test_activity_is_collapsed_until_requests_results_or_unavailability_need_display(self):
         document = render_shares_data(self.state, "", {"view": "scrubs"})

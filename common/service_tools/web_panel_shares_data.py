@@ -209,6 +209,18 @@ def _setup_templates(*, editing_reason: str = "") -> str:
     return body + '</div><p class="data-notice">Mirrors require rsync and unshare; scrubs require PAR2. Provision tools and mounts through controller setup. Keep parity in a separate directory; parity helps repair files and does not replace a second copy.</p></section>'
 
 
+def _template_preview(query: dict, reason: str) -> str:
+    template = routines.ROUTINE_TEMPLATES[query["template"]]
+    facts = [("Kind", routines.KINDS[template["kind"]]), ("Interval", template["interval"]), ("Schedule", "Paused")]
+    if template["kind"] == "scrub":
+        facts.append(("Redundancy", template["redundancy"]))
+    return ('<section class="event" aria-labelledby="routine-editor">'
+            + render_heading(template["title"], "data", heading_id="routine-editor")
+            + f'<p>{html.escape(template["description"])}</p>' + _facts(facts)
+            + f'<p class="data-notice" role="status">{html.escape(reason)} Refresh when editing is available to choose directories and review this template.</p>'
+            + '<a class="refresh-link" href="https://github.com/bluehexagons/basaltwater/blob/main/docs/storage/storage-operations.md">Controller setup guide ↗</a></section>')
+
+
 def _shares(inventory: dict, host: str, *, controls: bool = False) -> str:
     body = render_heading("Samba shares", "access", heading_id="samba-heading")
     if not inventory.get("available"):
@@ -434,6 +446,9 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
     status = manager.snapshot() if manager is not None else {}
     routine_manager = getattr(state, "routines", None)
     routine_status = routine_manager.snapshot() if routine_manager is not None else {}
+    routine_reason = routines.unavailable_reason(routine_status)
+    if not snapshot.get("available") or not snapshot.get("routine_management", {}).get("available"):
+        routine_reason = "Routine configuration is unavailable in this export."
     visible = _visible_views(snapshot, routine_status, status)
     if view == "shares" and snapshot.get("samba_installed") is False:
         view = "overview"
@@ -479,6 +494,10 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
             or view == "overview" and (routine_status.get("requests") or routine_status.get("latest"))):
         activity.append((routine_status, routines.render_status(routine_status, csrf)))
     body += _activity(activity, expand=bool(error))
+    if query.get("template") and routine_reason and routine_fields is None:
+        body += _template_preview(query, routine_reason)
+    if share_fields is not None and view != "shares" and snapshot.get("available"):
+        body += shares.render_draft(share_fields)
     if routine_fields is not None and (not snapshot.get("available")
             or not snapshot.get("routine_management", {}).get("available")):
         body += routines.render_draft(routine_fields)
@@ -492,10 +511,7 @@ def render_shares_data(state, style: str, query: dict[str, str], *, review: str 
         body += f'<p class="data-notice">Snapshot: {html.escape(_date(snapshot["generated_at"]))}. Exported every five minutes. Refreshing this page reads the latest export.</p>'
         inventory = snapshot.get("inventory", {"available": False})
         if view == "overview":
-            reason = routines.unavailable_reason(routine_status)
-            if not snapshot.get("routine_management", {}).get("available"):
-                reason = "Routine configuration is unavailable in this export."
-            body += _overview(snapshot, visible) + _setup_templates(editing_reason=reason)
+            body += _overview(snapshot, visible) + _setup_templates(editing_reason=routine_reason)
         elif view == "shares":
             controls = (share_manager is not None and not shares.unavailable_reason(share_status)
                         and snapshot.get("share_management", {}).get("available") is True)

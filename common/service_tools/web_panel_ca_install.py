@@ -101,6 +101,7 @@ def _certificate_scripts(fingerprint: str, download_url: str) -> str:
     templates: list[str] = []
     fallback: list[str] = []
     for key, label, commands in platforms:
+        browser_fallback: list[str] = []
         # A client can enroll several independent VM roots without replacing one.
         commands = commands.replace("basaltwater-ca.crt", f"basaltwater-ca-{fingerprint}.crt")
         for method in ("http", "https", "file"):
@@ -125,9 +126,12 @@ def _certificate_scripts(fingerprint: str, download_url: str) -> str:
                     if shell == "fish":
                         browser_script = "bash -c " + shlex.quote(browser_script)
                     templates.append(f'<template data-platform="{key}" data-method="{method}" data-shell="{shell}" data-browser="{browser}">{html.escape(browser_script)}</template>')
+                    if key in {"debian", "arch", "fedora"} and method == "http" and shell == "fish" and browser != "system":
+                        browser_label = "Chrome / Chromium" if browser == "chromium" else "Firefox"
+                        browser_fallback.append(f'<details><summary>{browser_label}</summary><pre><code>{html.escape(browser_script)}</code></pre></details>')
             if method == "http":
                 portable = script if key == "windows" else variants["fish"]
-                fallback.append(f'<div class="platform-script"><h3>{label}</h3><pre><code>{html.escape(portable)}</code></pre></div>')
+                fallback.append(f'<div class="platform-script"><h3>{label}</h3><p>System trust / other app</p><pre><code>{html.escape(portable)}</code></pre>{"".join(browser_fallback)}</div>')
     return f'''<div data-trust-installer>
 <div class="trust-picker" data-trust-controls hidden>
 <label>Operating system<select data-trust-platform>

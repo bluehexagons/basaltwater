@@ -306,3 +306,18 @@ class SharePanelTests(unittest.TestCase):
         for query in ("view=scrubs&edit=projects", "form=remove", "edit=projects&form=add", "edit=bad%0Aname"):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 parse_shares_data_query(query)
+
+    def test_removed_samba_preserves_failed_review_draft_on_overview(self):
+        self.snapshot["samba_installed"] = False
+        handler = self.handler("/actions/shares/review", {
+            "csrf": "csrf", **self.fields(), "path": "/srv/unsaved <draft>",
+        })
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], 409)
+        document = handler._send.call_args.args[1]
+        self.assertIn('id="data-overview"', document)
+        self.assertIn("Unsaved share draft", document)
+        self.assertIn("/srv/unsaved &lt;draft&gt;", document)
+        self.assertNotIn('id="samba-heading"', document)
+        self.assertNotIn('action="/actions/shares/review"', document)
+        self.assertFalse(self.manager.tickets)

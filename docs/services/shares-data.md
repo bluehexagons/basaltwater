@@ -48,6 +48,9 @@ applying old inputs to a new revision. Password fields always clear after errors
 After a lost response, inspect activity and actual state before creating another
 request; operations are never replayed automatically.
 
+If Samba is removed while a share edit is open, the page returns to Overview
+and retains the entered values as a copyable draft.
+
 Failed or interrupted multi-step changes can retain a setup recovery guard.
 Follow [transaction recovery](../operations/transaction-recovery.md) before
 retrying; do not clear the guard just to enable another operation.
@@ -124,6 +127,10 @@ or overwrite values retained after an input error. The browser needs the same
 approval service and complete export as other routine changes. On hosts without
 browser management, use the controller setup options in the
 [storage operations guide](../storage/storage-operations.md).
+When controls or inventory are unavailable, the template opens a preview of
+its interval, paused schedule and parity settings, with the reason editing is
+unavailable and a link to controller setup. Refresh after resolving the reason
+to enter directories and review it.
 
 Choose **Add backup mirror**, **Add sync mirror** or **Add scrub task**.
 Enter absolute directories, an interval and schedule state; scrubs also take
@@ -159,6 +166,9 @@ with repairs/precautions or unresolved findings. **Inspect routine execution ove
 SSH** opens the shared operation-log command; the scheduled service journal does
 not contain selected-worker output. Correlate times and paths. See
 [storage operations](../storage/storage-operations.md) for scheduling and guards.
+The latest worker result remains visible after its approval history expires.
+Without matching approval details, the page cannot identify its routine or
+whether it changed configuration or ran a task; inspect logs and actual state.
 
 ## Review and resolve one finding
 

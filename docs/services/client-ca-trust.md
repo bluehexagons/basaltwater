@@ -106,7 +106,8 @@ system trust, Chrome / Chromium, and Firefox. Common setup buttons in the
 Certificate trust heading select the platform, shell, and browser together,
 while preserving the selected certificate source. Arch Linux / CachyOS selects fish
 by default; its example explicitly invokes Bash so POSIX syntax is not parsed
-by fish. Instructions remain available without JavaScript.
+by fish. Without JavaScript, expand the Chrome / Chromium or Firefox instructions
+under your Linux platform to get the same browser-specific enrollment steps.
 
 **First enrollment · HTTP + SHA-256** downloads only the public CA through
 `http://VM:8442/basaltwater-ca.crt`. HTTPS panel setup installs this
@@ -204,13 +205,15 @@ connection.
 ## Linux
 
 The commands below install the CA system-wide. Run them from the directory
-containing the verified `basaltwater-ca.crt` file.
+containing the verified `basaltwater-ca.crt` file. Replace `EXPECTED_FILE_SHA256`
+in the destination filename with its independently verified 64-character file
+hash. This keeps certificates from different servers in separate anchors.
 
 ### Debian, Ubuntu, and derivatives
 
 ```bash
 sudo install -m 0644 basaltwater-ca.crt \
-  /usr/local/share/ca-certificates/basaltwater-ca.crt
+  /usr/local/share/ca-certificates/basaltwater-ca-EXPECTED_FILE_SHA256.crt
 sudo update-ca-certificates
 ```
 
@@ -224,7 +227,7 @@ zsh, and fish after the file has been independently verified:
 
 ```bash
 sudo install -Dm0644 basaltwater-ca.crt \
-  /etc/ca-certificates/trust-source/anchors/basaltwater-ca.crt
+  /etc/ca-certificates/trust-source/anchors/basaltwater-ca-EXPECTED_FILE_SHA256.crt
 sudo update-ca-trust extract
 ```
 
@@ -232,7 +235,7 @@ sudo update-ca-trust extract
 
 ```bash
 sudo install -m 0644 basaltwater-ca.crt \
-  /etc/pki/ca-trust/source/anchors/basaltwater-ca.crt
+  /etc/pki/ca-trust/source/anchors/basaltwater-ca-EXPECTED_FILE_SHA256.crt
 sudo update-ca-trust extract
 ```
 

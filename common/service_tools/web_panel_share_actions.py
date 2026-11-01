@@ -54,7 +54,8 @@ class PanelShares:
         inventory = snapshot.get("inventory", {})
         control = snapshot.get("share_management", {})
         accounts = snapshot.get("samba", {})
-        if (not snapshot.get("available") or not inventory.get("available") or not control.get("available")
+        if (not snapshot.get("available") or snapshot.get("samba_installed") is False
+                or not inventory.get("available") or not control.get("available")
                 or not inventory.get("samba_enabled") or inventory.get("omitted_shares")
                 or any(row["omitted_users"] for row in inventory.get("shares", []))
                 or not accounts.get("available") or fields["revision"] != control["revision"]):

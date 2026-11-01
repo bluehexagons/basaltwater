@@ -35,10 +35,18 @@ class ScriptTemplates(HTMLParser):
         self.browser_scripts = {}
         self.presets = []
         self.current = None
+        self.fallback_scripts = []
+        self.fallback_depth = 0
+        self.in_fallback_code = False
         self.feed(markup)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == "div" and (self.fallback_depth or "data-trust-fallback" in attrs):
+            self.fallback_depth += 1
+        if tag == "code" and self.fallback_depth:
+            self.in_fallback_code = True
+            self.fallback_scripts.append("")
         if tag == "button" and "data-trust-preset" in attrs:
             self.presets.append(attrs["data-trust-preset"])
         if tag == "template":
@@ -48,11 +56,17 @@ class ScriptTemplates(HTMLParser):
             self.browser_scripts[(*self.current, self.browser)] = ""
 
     def handle_data(self, data):
+        if self.in_fallback_code:
+            self.fallback_scripts[-1] += data
         if self.current is not None:
             self.scripts[self.current] += data
             self.browser_scripts[(*self.current, self.browser)] += data
 
     def handle_endtag(self, tag):
+        if tag == "div" and self.fallback_depth:
+            self.fallback_depth -= 1
+        if tag == "code":
+            self.in_fallback_code = False
         if tag == "template":
             self.current = None
 
@@ -123,6 +137,17 @@ touch "$db/cert9.db"'''),
             self.assertEqual(result.returncode, 0, result.stderr)
             if platform == "arch" and browser == "firefox":
                 self.assertIn("Authorities > Import", script)
+
+    def test_no_javascript_fallback_includes_browser_specific_linux_enrollment(self):
+        parsed = ScriptTemplates(_certificate_scripts("a" * 64, "https://example.test/ca"))
+        self.assertEqual(len(parsed.fallback_scripts), 11)
+        for (platform, method, shell, browser), script in parsed.browser_scripts.items():
+            if method != "http" or shell not in {"fish", "powershell"}:
+                continue
+            if platform in {"macos", "windows"} and browser != "system":
+                continue
+            with self.subTest(platform=platform, browser=browser):
+                self.assertIn(script, parsed.fallback_scripts)
 
     def test_chromium_failure_stops_before_system_trust_and_cleans_download(self):
         payload = "public certificate fixture"

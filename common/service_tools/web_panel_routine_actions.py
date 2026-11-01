@@ -304,28 +304,31 @@ def render_history(control: dict, row: dict) -> str:
 def render_status(status: dict, csrf: str) -> str:
     reason = unavailable_reason(status)
     rows = status.get("requests", [])[:10]
-    if not rows and not reason:
+    latest = status.get("latest", {})
+    if not rows and not latest and not reason:
         return ""
     escape = html.escape
     body = '<section aria-labelledby="routine-activity">' + render_heading("Routine activity", "maintenance", heading_id="routine-activity")
     if reason:
         body += f'<p class="data-notice" role="status">{escape(reason)}</p>'
-    latest, earlier = status.get("latest", {}), False
-    for index, request in enumerate(rows):
+    earlier, matched_latest, rendered = False, False, 0
+    for request in rows:
         try:
             value = validate_routine_action(request.get("parameters"))
-        except (ValueError, TypeError):
+        except (AttributeError, ValueError, TypeError):
             continue
         identifier = request.get("id", "")
         if not isinstance(identifier, str) or not HEX_ID.fullmatch(identifier):
             continue
-        if index == 1:
+        if rendered == 1:
             body += '<details><summary>Earlier routine requests</summary>'
             earlier = True
+        rendered += 1
         row, state = value["after"] or value["before"], request.get("state", "unavailable")
         body += f'<article class="event"><h3>{escape(routine_label(value))}: {escape(row["spec"][0])}</h3><p>Approval request: <strong>{escape(state)}</strong></p><p class="event-meta">Requested: {_timestamp(request.get("created"))}</p>'
         body += row_facts(row)
         if value["job_id"] == latest.get("job_id"):
+            matched_latest = True
             result = latest.get("status", "unavailable")
             body += f'<p>Worker result: <strong>{escape(result)}</strong></p>'
             body += f'<p class="event-meta">Started: {_timestamp(latest.get("started"))} · Finished: {_timestamp(latest.get("finished"))}</p>'
@@ -347,4 +350,15 @@ def render_status(status: dict, csrf: str) -> str:
         if state in {"pending", "approved"}:
             body += f'<p class="event-meta">Approval expires: {_timestamp(request.get("expires"))}</p><form method="post" action="/actions/routines/cancel" class="data-recovery-form">{csrf}<input type="hidden" name="id" value="{identifier}"><input type="hidden" name="view" value="{view_for(row["kind"])}"><button>Cancel routine request</button></form>'
         body += '</article>'
-    return body + ('</details>' if earlier else '') + '</section>'
+    if earlier:
+        body += '</details>'
+    if latest and not matched_latest:
+        result = latest.get("status", "unavailable")
+        body += ('<article class="event"><h3>Latest routine worker</h3>'
+                 + f'<p>Worker result: <strong>{escape(result)}</strong></p>'
+                 + f'<p class="event-meta">Started: {_timestamp(latest.get("started"))} · Finished: {_timestamp(latest.get("finished"))}</p>'
+                 + '<p>Approval details are unavailable for this worker record. Inspect storage job logs and current configuration to identify the operation before retrying.</p>')
+        if result in {"failed", "interrupted"}:
+            body += f'<p>{escape(FAILURES.get(latest.get("failure"), FAILURES["routine_failed"]))}</p>'
+        body += '</article>'
+    return body + '</section>'
