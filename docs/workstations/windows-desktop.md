@@ -67,6 +67,10 @@ control state. Window discovery returns current-account/session windows with
 decimal handles, identities, physical geometry and monitor device IDs. It can
 omit inaccessible windows. UI Automation inspection returns bounded controls
 and references; some custom or embedded controls expose limited information.
+If an element disappears while its window is being inspected, the observed
+prefix is returned with `truncated: true`. This is incomplete evidence; observe
+again when needed. Explicit stale root references and other provider errors
+still fail, and actions always revalidate their target immediately before use.
 
 For an explicit capture, substitute a freshly observed window identity and
 generation and choose a new PNG path in an existing directory:

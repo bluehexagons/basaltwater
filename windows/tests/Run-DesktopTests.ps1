@@ -73,6 +73,30 @@ try {
     Assert-True (-not $outcome.Invoke('restore',$minimized,$minimized,0,0,0,0)) 'Restore accepted a still-minimized window'
     Assert-True (-not $outcome.Invoke('restore',$maximized,$maximized,0,0,0,0)) 'Restore accepted an unchanged non-minimized maximized window'
     Assert-True ($outcome.Invoke('restore',$maximized,$normal,0,0,0,0)) 'Restore did not accept normal size after maximize'
+    # Fake provider callbacks exercise the actual observation boundary without UIA calls.
+    Add-Type -ReferencedAssemblies (Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'WPF\UIAutomationTypes.dll') -TypeDefinition @'
+using System;
+using System.Windows.Automation;
+public static class DesktopInspectionFixture {
+    public static void Available() { }
+    public static void Disappeared() { throw new ElementNotAvailableException("fixture provider disappeared"); }
+    public static void Broken() { throw new InvalidOperationException("fixture provider failure"); }
+}
+'@
+    $method = [Basaltwater.Desktop.Native].GetMethod('InspectAvailable', [Reflection.BindingFlags]'Static,NonPublic')
+    $inspect = $method.CreateDelegate([Action[Basaltwater.Desktop.Scan,Action]])
+    $scan = New-Object Basaltwater.Desktop.Scan
+    $available = [DesktopInspectionFixture].GetMethod('Available').CreateDelegate([Action])
+    $inspect.Invoke($scan, $available)
+    Assert-True (-not $scan.truncated) 'Healthy inspection was marked incomplete'
+    $scan.elements.Add($dto)
+    $disappeared = [DesktopInspectionFixture].GetMethod('Disappeared').CreateDelegate([Action])
+    $inspect.Invoke($scan, $disappeared)
+    Assert-True ($scan.truncated -and $scan.elements.Count -eq 1 -and $scan.elements[0].reference -eq 'r') 'Provider loss discarded the observed prefix or claimed completeness'
+    $broken = [DesktopInspectionFixture].GetMethod('Broken').CreateDelegate([Action])
+    $caught = $null
+    try { $inspect.Invoke($scan, $broken) } catch { $caught = $_ }
+    Assert-True ($null -ne $caught -and $caught.Exception.Message -match 'fixture provider failure') 'Inspection swallowed an unrelated provider error'
     # Exercise actual worker transport/timeout using code with NO native APIs.
     $originalSource = $script:NativeDesktopSource
     $fixtureSource = Join-Path $temporary "worker's unicode $([char]0x03bb)"

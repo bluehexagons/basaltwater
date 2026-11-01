@@ -130,13 +130,28 @@ public static class Native {
     public static Scan Inspect(int pid,Element root,string name,string role) {
         if(String.IsNullOrEmpty(name)) name=null; if(String.IsNullOrEmpty(role)) role=null;
         var scan=new Scan(); var clock=Stopwatch.StartNew();
-        if(root!=null) { if(root.pid!=pid) throw new Exception("Root PID mismatch"); Walk(Resolve(root),root.window,root.identity,root.path,scan,clock,name,role); }
+        if(root!=null) {
+            if(root.pid!=pid) throw new Exception("Root PID mismatch");
+            var element=Resolve(root); // Explicit stale references still fail closed.
+            InspectAvailable(scan,delegate { Walk(element,root.window,root.identity,root.path,scan,clock,name,role); });
+        }
         else {
             bool found=false;
-            foreach(var w in Windows()) if(w.pid==pid) { found=true; Walk(AutomationElement.FromHandle(new IntPtr(w.id)),w.id,w.identity,new int[0],scan,clock,name,role); }
+            foreach(var w in Windows()) if(w.pid==pid) {
+                found=true;
+                InspectAvailable(scan,delegate { Walk(AutomationElement.FromHandle(new IntPtr(w.id)),w.id,w.identity,new int[0],scan,clock,name,role); });
+            }
             if(!found) throw new Exception("No accessible current-account/session window for PID");
         }
         return scan;
+    }
+    static void InspectAvailable(Scan scan,Action inspect) {
+        try { inspect(); }
+        catch(ElementNotAvailableException) {
+            // Providers can disappear between enumeration and property reads.
+            // Keep the observed prefix but never present it as a complete tree.
+            scan.truncated=true;
+        }
     }
     static void Walk(AutomationElement e,long window,string identity,int[] path,Scan scan,Stopwatch clock,string name,string role) {
         if(scan.visited>=512 || scan.elements.Count>=128 || path.Length>20 || clock.ElapsedMilliseconds>2500) { scan.truncated=true; return; }

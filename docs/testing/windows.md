@@ -21,7 +21,7 @@ web services, privilege broker or remote setup profiles. See the
 | Native launcher and task help | 🟢 **Labbed** | Installed executable preserved literal/empty/quoted/Unicode argv, working directory and task-local environment on 2026-11-01; namespace help explains npm scripts, explicit executables and waiting | Compilation rollback and active replacement have fixture coverage; fresh installation and other invoking-shell binders remain separate |
 | Local process supervision | 🟢 **Labbed** | Real corrected checkout guardians settled timeout and cancellation after owned parent/child exit, private-request removal and verified Scheduler retirement; native fixtures also cover failures and cleanup uncertainty | The installed guardian's premature-completion failure is retained in the follow-up below; logoff, reboot and additional interruption boundaries remain open |
 | Scheduled development tasks | 🟢 **Labbed** | Installed `5f549204` preserves late flood output, separate byte counters and exit 7; caller wait timeout leaves work running. This round also ran real pinned npm, MSVC and Godot tasks | Logoff/reconnect, T3 closure during active work and live reboot/interruption remain open |
-| Desktop observation and control | 🟢 **Labbed**, scoped WinForms fixture | Installed and corrected checkout CLIs exercised UI Automation, literal Unicode text, stale-reference rejection, invoke, window actions, inspected window capture, raw keys/text/click and close | One transient UIA inspection failure remains unresolved. Hardware-rendered capture, physical interaction, mixed DPI, secure desktop and lock/reconnect remain separate |
+| Desktop observation and control | 🟢 **Labbed**, scoped WinForms fixtures | Installed and corrected checkout CLIs exercised UI Automation, literal Unicode text, stale-reference rejection, invoke, window actions, inspected window capture, raw keys/text/click and close. Provider disappearance now returns an explicit partial scan in the corrected checkout | Other provider errors remain failures. Hardware-rendered capture, physical interaction, mixed DPI, secure desktop and lock/reconnect remain separate |
 | Supervised native workloads | 🟢 **Labbed** | Installed public CLI selected an installed fnm runtime/npm in a spaced Unicode project; task-local MSVC/SDK compiled and ran C; managed Godot imported and ran a disposable headless project | Synthetic projects, not a complete project build/export, template, performance or physical presentation qualification |
 | Physical presentation, audio and input | ⚪ **Untested** | No complete manual interaction pass recorded; bounded OpenGL project fixtures are separate evidence | Actual display presentation, audible audio, physical input, lock and reconnect |
 | Sunshine streaming | 🟡 **Partial** | Installed service observed running with automatic startup on 2026-11-01; offline package/service fixtures pass | Fresh install, firewall, actual boot startup, pairing and Moonlight video/audio/input/reconnect remain open |
@@ -62,6 +62,7 @@ restore to normal size. Captured window pixels were inspected. Raw input was
 verified in the fixture's text and button state, rather than inferred from
 input-queue acceptance. One earlier UIA inspection raced an unavailable element;
 fresh observation succeeded, but no fix is claimed for that intermittent error.
+The later provider-disappearance qualification below addresses that failure.
 
 A real timeout also exposed `wait` publishing completion before Scheduler
 unregistration. The corrected guardian retires and verifies registration before
@@ -88,6 +89,18 @@ registrations were gone at the final check. Corrected behavior was tested from
 the checkout; no installed refresh, reboot, WSL, streaming or physical-input
 qualification is implied.
 
+### Provider-disappearance qualification: 2026-11-01
+
+A disposable changing-controls WinForms application reproduced the installed
+adapter's unavailable-element error. The corrected checkout retained observed
+controls and marked incomplete scans explicitly, without swallowing unrelated
+provider errors or accepting stale action references. All six checkout
+observations succeeded, including three partial scans; the installed baseline
+failed two of its six observations. These are bounded functional probes, not a
+reliability benchmark. Fake-provider regressions exercise the production
+observation boundary without desktop APIs, and the full native suite passed.
+The installed copy remains unchanged until a later refresh applies the fix.
+
 Selected project checks retain their own dates and limits in the public
 [native game QA record](https://github.com/bluehexagons/antistatic/blob/main/docs/qa/native.md#verified-windows-local-qualification)
 and [Godot project QA record](https://github.com/bluehexagons/snake2d/blob/main/docs/manual-testing.md#recorded-windows-automated-qualification--2026-10-28).
@@ -113,8 +126,8 @@ Windows host setup and the Linux environment have separate evidence. See the
 
 ## Next checks
 
-1. Reproduce the intermittent UIA inspection failure with a disposable changing
-   application; keep transient provider loss separate from successful mutations.
+1. Expand changing-application coverage to other UIA providers; partial scans
+   must remain distinguishable from complete trees and successful mutations.
 2. Use a fresh disposable Windows VM to exercise installer, package, reboot
    and recovery paths; retain individual failures and retries in private evidence.
 3. Separately exercise native desktop/streaming hardware and any project-owned
