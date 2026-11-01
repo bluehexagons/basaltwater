@@ -1,6 +1,6 @@
 # Debian and Proxmox testing status
 
-**Evidence recorded through 2026-10-31.** Selected live workflows cover Debian
+**Evidence reconciled through 2026-11-01.** Selected live workflows cover Debian
 12/13 guests and a physical Proxmox host; they do not establish a pass on every
 machine type. Status applies only to the workflow described in each row; see
 the [legend](README.md#status-legend).
@@ -9,6 +9,8 @@ repository test coverage. Consult the
 [detailed coverage map](../plans/testing-coverage.md) for exact observations
 and the [release matrix](../release-qualification.md#stable-qualification-matrix)
 for candidate-specific status.
+The [dated evidence summaries](evidence.md) identify the latest tested revisions;
+older rows retain their earlier scope. No new live checks ran during this refresh.
 
 Debian is the project's officially supported distribution on physical machines,
 VMs and unprivileged Proxmox LXC where each profile permits. Selected runs
@@ -31,8 +33,9 @@ availability from test status.
 | Approval and admin jobs | 🟢 **Labbed** | Selected approval/refresh; controlled failure and browser fixtures | Package-changing upgrades and uncertain/power-loss boundaries |
 | mDNS and automatic updates | 🟡 **Partial** | Packaged services and timer handoff failure/retry components | Full setup, remote discovery and scheduled upgrades |
 | Sync and PAR2 | 🟢 **Labbed** | Selected mirror, mount guards and repair; controlled failures | Hard-mounted network storage and power loss |
-| Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and scrub | Scheduled scrub, multi-device and self-repair |
+| Btrfs | 🟢 **Labbed** | Single-device setup, rerun, reboot and read-only native scrub | Diagnostic integration and scheduled native scrub; multi-device/subvolume support needs design, and single-copy data cannot self-repair |
 | Samba and Syncthing | 🟢 **Labbed** | SMB3 access/reconnect and two-peer synchronization | Other client OSs, hard mounts and relay/discovery |
+| Shares & Data management | 🟢 **Labbed** | Installed HTTPS forms, independent approvals and root workers: Samba accounts/shares, mirror routines, PAR2 findings, verify/restore/accept | Later per-task UI and recovery guards have local regression/browser evidence only; current installed-system and installed-browser qualification remain open |
 | Gogs and mirrors | 🟢 **Labbed** | Git/LFS, rerun, reboot and same-host restore | GitHub transport and off-host recovery |
 | HomeBox | 🟢 **Labbed** | Loopback API, upgrade, restore, reboot and re-enable | Browser, public TLS, replacement host and rollback |
 | Web deployment | 🟢 **Labbed** | Selected Go, Node and SPA/API workflows, rollback and same-host recovery | Public tunnel/ACME, off-host restore and power loss |
@@ -43,7 +46,7 @@ availability from test status.
 | Web panels | 🟢 **Labbed** | Selected setup/auth and component lifecycle/recovery; browser fixtures | Full removal/interruption, additional browsers and native console |
 | Managed user rename | 🟢 **Labbed** | Selected identity, home and recovery cases | More interruption points and application-specific migration |
 | Resource-constrained development | 🟢 **Labbed** | Selected 1 vCPU / 1 GiB Debian workload | Full suite, browser and other platforms at that floor |
-| Repository checks | 🟡 **Partial** | Debian 13: [9,009 tests, six skips, 82% coverage](../plans/workstation-feedback-debian.md#debian-completion-record-2026-10-31), 2026-10-31 | Historical revision only; browser and physical hardware are separate |
+| Repository checks | 🟡 **Partial** | [Proxmox-fix revision: 9,243 tests, six skips, 82% branch-aware coverage](evidence.md#automated-validation), 2026-10-31; full Debian and Node compatibility CI passed | Historical revision only; browser and physical hardware are separate |
 | Desktop development and visual checks | 🟡 **Partial** | Debian 13 software GLX, small Blender CPU render and XRDP edit/save fixture | Native GPU/display, audio, Wayland and full project images |
 | T3 Code and provider workflows | 🟡 **Partial** | Selected enrollment and task checks; additional T3 components | Exact-candidate install, pairing, migration and complete live workflow |
 | Game publishing and external alerts | 🟡 **Partial** | Automated checks or selected observations | Full publishing and external-provider paths |
@@ -55,13 +58,20 @@ setup is selected evidence on one physical node, not cluster qualification.
 
 | Feature | Status | Evidence | Major remaining boundary |
 | --- | --- | --- | --- |
+| Setup repair and management CLI | 🟢 **Labbed** | Saved public patch completed 21 steps and recovered an interrupted panel operation; installed `basaltw --help`, update preview and busy-lock refusal passed | Fresh complete host installation, package-changing upgrade and interrupted host upgrade remain unqualified |
+| Proxmox panel identity and authentication | 🟢 **Labbed** | Automated root payload regression; native isolated Nginx accepted generated root auth and rejected another user/anonymous access; actual panel accepted the operator credential over verified TLS on 2026-11-01 | Isolated auth is component evidence; public password-replacement flow and interrupted auth replacement still need native qualification |
+| Guarded host maintenance | 🟡 **Partial** | Installed updater and cleanup succeeded with no package upgrades available; update preview and maintenance-lock exclusion passed | No package-changing transaction or Admin-triggered power action was exercised |
 | VM lifecycle | 🟢 **Labbed** | Provision, clone, snapshot, backup and same-host restore | Off-host recovery, multi-node and EFI/TPM variants |
 | LXC suspend | 🔴 **Failed** | Live CRIU attempt failed | Suspend remains unqualified |
 | Storage and networking guards | 🟢 **Labbed** | Selected capacity, mount and access checks; automated tests | HA/Ceph, management isolation and interrupted upgrades |
+| USB SSD test-pool activation | 🟢 **Labbed** | 2026-11-01: existing ext4 mounted by UUID, pool enabled with mount-point guard, temporary 1 MiB fsynced write/read hash passed; guest configurations/states and existing disk retained | New mount declaration has not been reboot-qualified; no endurance, physical disconnect or power-loss qualification |
 | Local browser kiosk | 🟡 **Partial** | Debian VM lifecycle and browser/input component checks | Full Proxmox profile and physical display/input |
 
 ## Next checks
 
+- Follow the [bounded continuation batch](continuing.md): requalify current
+  Shares & Data on a disposable non-root Debian operator installation, then
+  exercise a package-changing Admin update on a separate disposable target.
 - On disposable targets, qualify off-host restore and interrupted setup/recovery;
   repeat relevant cases on the exact release candidate.
 - Exercise registered GitHub runner jobs and cancellation, then implement and

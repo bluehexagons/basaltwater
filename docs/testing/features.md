@@ -1,6 +1,6 @@
 # Feature availability and testing by platform
 
-**Snapshot: 2026-11-01; historical evidence recorded through 2026-10-31.**
+**Snapshot: 2026-11-01; retained evidence reconciled through 2026-11-01.**
 The table shows what the documented profiles offer, not whether a feature
 passed on that platform. Follow each link for scoped status, evidence and
 next checks. The [status legend](README.md#status-legend) explains the labels.
@@ -28,3 +28,5 @@ Unlisted combinations have no availability claim here.
 These are historical observations, not a percentage of features tested or a
 statement about a later commit. The [release matrix](../release-qualification.md)
 owns exact-candidate qualification.
+See the [dated evidence summaries](evidence.md) for the latest Proxmox repair,
+storage activation and installed-versus-local Shares & Data boundaries.

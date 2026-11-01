@@ -1,9 +1,9 @@
 # Testing methodology and environments
 
-**Snapshot: 2026-11-01.** Platform and workflow evidence below comes from
-repository records through 2026-10-31 and a private lab inventory reviewed
-2026-11-01. That inventory describes a point in time; it does not establish
-current guest health or a new test result.
+**Snapshot: 2026-11-01.** Platform and workflow evidence comes from repository
+records and retained private live-test reports through 2026-11-01. The latest
+refresh reconciled those records without executing new live tests. Historical
+inventory and service observations do not establish current guest health.
 
 ## Intended use cases
 
@@ -36,6 +36,19 @@ Use private storage for raw evidence and publish only sanitized summaries.
 Selected successes do not imply hardware endurance, off-host recovery, every
 option combination, or current status on a later revision.
 
+Use the [dated evidence summaries](evidence.md) to distinguish installed-system
+checks from local browser fixtures and automated regressions. In particular,
+an actual authenticated HTTP request is not an interactive browser pass;
+a browser using simulated approvals is not a real privileged-worker pass.
+A user-initiated reboot is not qualification of the Admin power-action path.
+Verifying a persistent mount declaration and its current generated unit does
+not prove the newly added declaration survived a subsequent reboot.
+
+Keep the test result and fixture availability separate. A stopped guest can
+retain valid historical evidence; enabling a storage pool makes it available
+for tests without qualifying all workloads on that pool. Recheck live state
+before starting the next batch and preserve retained failure checkpoints.
+
 ## Environments
 
 | Environment | Purpose and limits |
@@ -63,3 +76,5 @@ for current commands, versions and selection rules.
 The [platform index](features.md) links to scoped feature results; the
 [detailed coverage map](../plans/testing-coverage.md) retains narrower evidence
 and open checks. Neither replaces exact-candidate release qualification.
+The [continuation guide](continuing.md) defines the next bounded live-test batch
+and the evidence needed to update these records.

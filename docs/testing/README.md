@@ -1,9 +1,10 @@
 # Testing status
 
-**Snapshot: 2026-11-01.** The feature assessment summarizes repository
-coverage recorded through 2026-10-31; it does not establish that every check
-was repeated on the current commit. The private test-environment inventory was
-reviewed as of 2026-11-01. See each linked record for its scope and date.
+**Snapshot: 2026-11-01.** Reconciled with retained live-test evidence through
+2026-11-01, including the Proxmox setup repair, USB storage activation and
+installed Shares & Data checks. This documentation refresh ran no new live
+tests; results apply to their recorded revisions, not automatically to the
+current commit. See the [evidence summaries](evidence.md) for dates and limits.
 
 | At a glance | Status |
 | --- | --- |
@@ -43,7 +44,9 @@ do not infer deployed or verified status from lab or automated results.
 | [Debian and Proxmox](debian.md) · [CachyOS](cachyos.md) · [Windows and WSL](windows.md) | Feature status, evidence, limits and next checks for each environment |
 | [Tested workflows](workflows.md) | Examples and procedures corresponding to selected live checks |
 | [Methodology and environments](methodology.md) | Test levels, CI, anonymized platforms and intended use cases |
-| [Detailed coverage map](../plans/testing-coverage.md) | Supporting observations, narrower boundaries and next checks, recorded through 2026-10-31 |
+| [Dated evidence summaries](evidence.md) | Reconciled host, storage, Shares & Data and automated results, with tested revisions |
+| [Continue testing on Proxmox](continuing.md) | First bounded test batch, acceptance criteria and handoff requirements |
+| [Detailed coverage map](../plans/testing-coverage.md) | Supporting observations, narrower boundaries and next checks |
 | [Release qualification](../release-qualification.md) | Exact-candidate cases and publication gate |
 
 Important open areas include off-host recovery, broader interrupted-setup and
@@ -56,6 +59,12 @@ On 2026-11-01, the documentation/privacy cleanup passed 33 focused agent and
 documentation tests, followed by 868 tests across affected Python modules.
 These runs qualified those changes only; native Windows tests were not run.
 Keep per-run revisions, exact commands and private evidence outside this page.
+
+Earlier full validation of the Proxmox fixes passed 9,243 tests with six skips
+and 82% branch-aware aggregate coverage. That is automated evidence for its
+revision, separate from the live host checks and the later documentation work.
+Shares & Data has installed HTTP/worker coverage, but its later UI and recovery
+guard changes have not been requalified on an installed guest.
 
 Update the affected status and its evidence date when new checks complete;
 preserve older dates for areas not retested. Keep raw logs, personal addresses,

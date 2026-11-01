@@ -1,6 +1,6 @@
 # Tested workflow examples
 
-**Evidence through 2026-10-31.** These are representative commands and
+**Evidence reconciled through 2026-11-01.** These are representative commands and
 procedures for workflows with selected live evidence. Values are fictional;
 the exact commands, versions and configuration used in a private run can
 differ. A successful dry run checks planning only. Read each linked guide and
@@ -44,6 +44,37 @@ Gogs Git/LFS, HomeBox API backup/restore and same-host guest recovery. Follow
 the [storage procedures](../storage/storage-operations.md), [Gogs guide](../services/gogs.md)
 or [HomeBox guide](../services/homebox.md) for the relevant workflow. Verify
 restored data and service behavior; same-host restore is not off-host recovery.
+
+## Proxmox maintenance and setup repair
+
+🟢 **Labbed:** selected saved patch and CLI/auth checks; package-changing upgrades remain open.
+
+A saved public Proxmox patch recovered the interrupted panel setup and completed
+all 21 steps. Installed CLI help, an update preview and refusal under an occupied
+maintenance lock passed. Before/after checks preserved guest states, running
+processes, configuration, network/storage policy and existing panel auth. The
+installed updater found no packages to upgrade. Follow
+[Proxmox troubleshooting](../operations/proxmox-setup-troubleshooting.md) for the
+root-identity and missing-command fixes; this does not qualify a fresh host
+installation or the complete public password-replacement flow.
+
+The separately authorized USB test-pool activation mounted existing ext4 by UUID,
+retained the mount-point guard and passed a temporary 1 MiB write/read hash check.
+It started no guests and reformatted no data. This establishes bounded availability,
+not endurance or survival of a subsequent reboot with the new mount declaration.
+
+## Shares & Data approvals and recovery
+
+🟢 **Labbed:** earlier installed backend; current installed UI requalification remains open.
+
+Installed HTTPS forms, a separate approval identity and actual root workers
+exercised Samba account/share lifecycle, backup mirrors, PAR2 scans and targeted
+verify/restore/accept. SMB permissions, retained files and credentials were checked.
+Later per-task filtering, drafts and recovery-guard changes passed local regression
+and Chromium/Firefox checks using simulated services; they were not redeployed for
+installed-system qualification. See the [evidence boundary](evidence.md#shares-and-data)
+and [operator procedure](../services/shares-data.md). The Proxmox root panel cannot
+substitute for the required non-root guest operator and separate approval service.
 
 ## Offline developer checks
 

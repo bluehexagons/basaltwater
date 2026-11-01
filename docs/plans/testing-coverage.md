@@ -1,6 +1,7 @@
 # Test coverage and next checks
 
-Updated 2026-10-31. This is a current testing map, not a run log or the
+Updated 2026-11-01 from retained live evidence; this refresh ran no new live
+tests. This is a current testing map, not a run log or the
 [release qualification gate](../release-qualification.md). Coverage below is
 partial: selected live workflows passed, with automated or controlled probes
 where stated. CI success does not establish live coverage; repeat affected
@@ -9,6 +10,8 @@ checks when behavior changes.
 For the dated overview, concise feature table, tested workflow examples and
 methodology, start at [Testing status](../testing/README.md). This page retains
 the detailed supporting observations and qualification boundaries.
+The [dated evidence summaries](../testing/evidence.md) distinguish the latest
+Proxmox, USB storage and Shares & Data results by revision and test level.
 
 Selected bounded storage checks include SSD-backed guests and USB-backed
 storage. They do not qualify drive reliability. Keep fault experiments
@@ -17,8 +20,8 @@ tests are excluded.
 
 ## Surface
 
-The declared surface has **15 setup profiles, 50 top-level commands, 307 command
-paths and 537 distinct long-option spellings**, with aliases collapsed. These
+The declared surface, regenerated 2026-11-01, has **15 setup profiles, 50 top-level
+commands, 312 command paths and 547 distinct long-option spellings**, with aliases collapsed. These
 counts describe breadth, not a percentage tested. Regenerate the inventory with:
 
 ```bash
@@ -49,12 +52,15 @@ installations; optional combinations need their own checks.
 | Approvals and follow-ups | Separate HTTPS approval, prerequisite expiry/retry, broker restart and credential lifecycle. Controlled process crashes and independent-process decisions cover child publication with synthetic execution and no broker/provider actions; unresolved receipt/request-ID retention is bounded. Local Chromium covers saved-submission and cancellation controls with simulated broker/provider actions | Power loss, further crash boundaries, manual reconciliation of uncertain remote outcomes and remaining live follow-up browser flows |
 | Admin jobs | Approved refresh and no-op APT updates preserve tasks; live Chromium approval controls and job status; Chromium/Firefox layouts and rejected power confirmations. Controlled metadata/fetch/status failures and synthetic-source crash/setup-exclusion probes | Package-changing upgrades, executed power actions, power loss and other interruption boundaries |
 | Proxmox guests | Provisioning, identity/reboot, lifecycle controls, disk/resource flags, snapshots, full/linked clones, selected storage moves, backups and same-host restores | Off-host restore/retention, reverse storage moves, EFI/TPM layouts and template retirement. LXC CRIU suspend failed |
+| Proxmox setup and maintenance | Saved public patch completes 21 steps, recovers the interrupted panel operation and preserves guest states/PIDs, configurations, SSH identity, network/storage policy and existing panel auth. Installed management launcher help, local-update dry run and occupied-maintenance-lock refusal pass. Installed updater and cleanup complete with no packages requiring upgrade. Root identity/password-payload regression has automated coverage; isolated native Nginx accepts generated root auth and rejects another user/anonymous requests. The operator-configured actual panel accepts its credential over verified TLS | The saved patch preserves existing auth; isolated Nginx does not qualify public password replacement. Fresh complete host installation, native password-replacement/interruption, package-changing upgrades, Admin power actions and interrupted host upgrades remain open. The user-initiated host reboot is separate from those workflows |
 | Host storage and networking | Passive capacity audit, storage persistence, selected maintenance guards, local orphan protection, firewall allowlists and strict SSH/TLS | Management-network isolation, multi-node/HA/Ceph, interrupted host upgrades and live remote-node/RBD/VirtioFS deletion guards |
+| USB SSD test-pool activation | Existing ext4 mounted by UUID and enabled as image storage with the mount-point guard retained. A temporary 1 MiB fsynced write/read hash check passes; the existing raw guest disk, all guest configurations/states and running PIDs are preserved. Generated mount unit and declaration validate; no guest starts or formatting | Current availability and bounded I/O only. The new mount declaration has not been qualified through a subsequent reboot. No drive-endurance, physical disconnect or power-loss qualification |
 | mDNS hostname discovery | Native Debian 13 packaged Avahi component checks cover absent/repeated disable, installation/enable, real socket/service stop refusal, corrected failure propagation, repaired retry, re-enable and final inactive/disabled state with no Unix listener. Automated cases cover partial/masked/runtime-enabled units, failed or incomplete inspection, postcondition failures and dry-run/capability guards | Component checks load candidate code in memory. Full setup/firewall integration, remote client hostname resolution, reboot, interrupted setup and other distributions remain unqualified. Earlier successful stops are not rolled back after a later failure |
 | Automatic APT update handoff | Automated checks retain distro units and legacy policy after replacement failure, reject failed/incomplete inspection, propagate refused retirement, verify final states, and cover absent/masked/runtime-enabled units, repeated handoff and dry-run/capability guards. Native Debian 13 real systemd fixtures verify a controlled replacement failure, actual timer stop refusal, retained policy and verified replacement, repaired retry, policy cleanup and repeated handoff with an unchanged nonrandomized replacement deadline | Native competitors, replacement and legacy files are isolated fixtures; candidate security code is loaded in memory. Real updater definitions and enabled/active states remain unchanged, while daemon reload can recalculate their randomized deadlines. Full setup with packaged distro units, scheduled package updates, interruption and other distributions remain unqualified. Earlier successful retirement is not rolled back after a later failure |
 | Sync and PAR2 | Mirrors, mount-loss guards, interrupted replacement, unreadable-source preservation and logical-damage repair; supervised CIFS sync failure handling and incomplete-run health. Controlled scrub child-teardown checks; native PAR2 verification, missing-mount rejection and selected soft-CIFS preflight/work timeouts, successful retry and parity preservation; enumeration I/O regressions | Hard-mounted CIFS scrubs, other network filesystems, mount changes during scrubs and power loss. A failed mirror can still apply unrelated deletions; kernel I/O can delay teardown indefinitely |
 | Btrfs | Single-device data mounts through a full `server_lite` setup, populated rerun/reboot, sync/PAR2 and read-only native scrub on USB-backed storage; UUID preservation, injected checksum detection and unsafe-mount guards | Diagnostic integration and automatic native scrub; multi-device/subvolume support needs separate design. Single-copy data cannot self-repair |
 | Samba and Syncthing | SMB3 encryption/access control, automount repair/reconnect and selected soft-mounted Linux CIFS stopped-server/blackhole cases; two-peer exchange, conflicts, version restoration, credential rotation, rerun/reboot and removal/re-enable | Hard-mounted CIFS, other network filesystems, Windows/macOS SMB clients, Syncthing browser GUI and relays/discovery |
+| Shares & Data panel | Earlier installed backend passes actual HTTPS forms, separate approvals and root-worker Samba account/share lifecycle, rsync mirror controls, PAR2 scans/findings, targeted verify/restore/accept and retention checks. Real PAR2 component checks also cover targeted repair. Later per-task selection/filtering, retained drafts and canonical recovery-lock changes have local regressions and six Chromium/Firefox cases without JavaScript | Latest UI/recovery changes are not redeployed or requalified on an installed guest. Local browser cases use simulated services; installed HTTP is not installed browser coverage. Repeat the current non-root operator/approval/worker path and setup-exclusion checks; keep original guest/account/parity/history evidence |
 | Gogs and Git mirrors | HTTPS/SSH Git, LFS hashes, access control, rerun/reboot and same-host recovery; mirror routing/configuration guards and transfers against Gogs plus a local primary | Actual GitHub transport/permissions, off-host recovery, database migration rollback, restored SSH transfers and attachments |
 | HomeBox inventory | Native Debian 13 public loopback setup, authenticated API item/attachment creation, populated rerun, public backup/full restore after API changes and attachment deletion, publisher-digest-verified v0.27.0 to v0.27.1 upgrade, real reboot and immediate public disable/re-enable preserve inventory, exact attachment bytes and secrets. Real timer-stop refusal preserves the running application and managed state; explicit unit-absence checks distinguish an optional updater from an incomplete pair. Native port checks permit closed-connection TIME_WAIT while rejecting live listeners | Browser login/WebSockets, public TLS/DNS/ACME and firewall reachability, separate data mounts and replacement-host recovery, migration rollback, scheduled updater execution, interrupted setup and the exact-candidate matrix remain unqualified |
 | Deployment | Signed loopback webhooks, separate build/app hosts, SSH publication and queue recovery; real Go services, Node-built root/subpath sites and a same-origin React/Go/SQLite app. Manifest SPA reloads, populated reruns/reboots, selected Chromium flows, private SQLite backups and unhealthy-candidate rollback. Separate-guest restore on the same physical host preserves login, data and new writes over verified private HTTPS | Native SPA webhook publication, off-host recovery, public sender/Tunnel/ACME, Godot publishing, database migration recovery and power loss |
@@ -70,6 +76,12 @@ installations; optional combinations need their own checks.
 | Other surfaces | Selected loopback notifications and external Codex enrollment | Other desktop profiles, CachyOS/WSL/Windows, GitHub runner jobs, game publishing, external alerts/public DNS and exact-candidate installer qualification |
 
 ## Next useful checks
+
+For an immediately runnable live-test batch, follow
+[Continue testing on Proxmox](../testing/continuing.md): requalify the current
+Shares & Data installation, then a package-changing Admin update. The priorities
+below also include implementation and work requiring additional infrastructure;
+they are not all ready to execute on one node.
 
 1. **Combined build/CI host:** implement role composition and shared capacity,
    then qualify existing-runner conversion, real allowed/denied GitHub jobs,
